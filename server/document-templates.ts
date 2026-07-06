@@ -380,7 +380,7 @@ async function autoDesignWithClaude(templateContent: string, templateName: strin
   if (gemini) {
     try {
       const geminiResponse = await gemini.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-2.5-flash",
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         config: { maxOutputTokens: 2048, temperature: 0.2 },
       });
@@ -450,7 +450,7 @@ async function autoDesignWithClaude(templateContent: string, templateName: strin
   }
 }
 
-const GEMINI_IMAGE_MODELS = ["gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
+const GEMINI_IMAGE_MODELS = ["gemini-3-pro-image-preview", "gemini-3-pro-image", "gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
 
 async function generateImageWithGemini(element: any): Promise<void> {
   const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
@@ -639,7 +639,7 @@ async function generateImageForDocument(prompt: string): Promise<string | null> 
       quality: "hd",
       response_format: "b64_json",
     });
-    const b64 = resp.data[0]?.b64_json || null;
+    const b64 = resp.data?.[0]?.b64_json || null;
     if (b64) {
       console.log(`[doc-images] Image generated successfully (${Math.round(b64.length / 1024)}KB base64)`);
     }
@@ -661,7 +661,7 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 },
 });
 
-async function renderPdfPagesToImages(filePath: string, maxPages: number = 12, _scale: number = 1.5): Promise<string[]> {
+async function renderPdfPagesToImages(filePath: string, maxPages: number = 30, _scale: number = 1.5): Promise<string[]> {
   try {
     const { execSync } = await import("child_process");
     const tmpDir = path.join(os.tmpdir(), `pdf-render-${Date.now()}`);
@@ -670,7 +670,7 @@ async function renderPdfPagesToImages(filePath: string, maxPages: number = 12, _
     const prefix = path.join(tmpDir, "page");
     const cmd = `pdftoppm -png -r 150 -l ${maxPages} "${filePath}" "${prefix}"`;
     console.log(`[pdf-render] Running: ${cmd}`);
-    execSync(cmd, { timeout: 60000 });
+    execSync(cmd, { timeout: 180000 });
 
     const files = fs.readdirSync(tmpDir)
       .filter(f => f.endsWith(".png"))
@@ -816,13 +816,20 @@ Return valid JSON only with this structure:
 }
 
 function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-  const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
-  if (!apiKey || !baseUrl) return null;
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: { apiVersion: "", baseUrl },
-  });
+  // Prefer the Replit AI Integrations setup if both vars are present (gives us a
+  // pre-configured proxy host); otherwise fall back to a direct Google Gemini
+  // call using the standard GEMINI_API_KEY (what Railway has set).
+  const integrationsKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+  const integrationsBase = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
+  if (integrationsKey && integrationsBase) {
+    return new GoogleGenAI({
+      apiKey: integrationsKey,
+      httpOptions: { apiVersion: "", baseUrl: integrationsBase },
+    });
+  }
+  const directKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!directKey) return null;
+  return new GoogleGenAI({ apiKey: directKey });
 }
 
 async function analyzeDocumentWithGemini(text: string, fileName: string): Promise<{
@@ -861,7 +868,7 @@ Return ONLY valid JSON with this structure:
 }`;
 
   const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-2.5-flash",
     contents: [
       {
         role: "user",
@@ -915,7 +922,7 @@ Instructions:
 Return ONLY a valid JSON object where keys are field IDs and values are the extracted/generated text.`;
 
   const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-2.5-flash",
     contents: [
       {
         role: "user",
@@ -957,7 +964,7 @@ Do NOT include HTML tags, CSS, or placeholder text like "[BGP LOGO]".`;
   if (gemini) {
     try {
       const geminiResponse = await gemini.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-2.5-flash",
         contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
         config: { maxOutputTokens: 8192, temperature: 0.3 },
       });
@@ -1230,7 +1237,7 @@ export function setupDocumentTemplateRoutes(app: Express) {
       }
 
       console.log(`[doc-template] Re-rendering pages for template ${id} from ${filePath}`);
-      const images = await renderPdfPagesToImages(filePath, 12, 1.5);
+      const images = await renderPdfPagesToImages(filePath, 30, 1.5);
       console.log(`[doc-template] Re-rendered ${images.length} pages`);
 
       await storage.updateDocumentTemplate(id, {
@@ -1294,7 +1301,7 @@ export function setupDocumentTemplateRoutes(app: Express) {
           console.error("Auto-design failed, using defaults:", err.message);
           return null;
         }),
-        isPdf ? renderPdfPagesToImages(req.file.path, 12, 1.5) : Promise.resolve([]),
+        isPdf ? renderPdfPagesToImages(req.file.path, 30, 1.5) : Promise.resolve([]),
       ]);
 
       if (designResult.status === "fulfilled" && designResult.value) {
@@ -1514,7 +1521,7 @@ Return ONLY valid JSON:
       if (geminiDesign) {
         try {
           const geminiResponse = await geminiDesign.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             config: { maxOutputTokens: 12000, temperature: 0.2 },
           });
@@ -1718,7 +1725,7 @@ Keep your reply concise (1-2 sentences). Always return the COMPLETE design, not 
           }
           console.log("[design-assistant] Using Gemini 3.1 Pro");
           const geminiResponse = await geminiChat.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: geminiContents,
             config: { maxOutputTokens: 8000, temperature: 0.3, systemInstruction: systemPrompt },
           });
@@ -2246,33 +2253,35 @@ Generate the complete document now.`;
       const gemini = getGeminiClient();
       if (gemini) {
         try {
-          console.log("[doc-generate] Using Gemini 3.1 Pro");
+          console.log("[doc-generate] Using Gemini 2.5 Flash");
           const geminiResponse = await gemini.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
             config: { maxOutputTokens: 8192, temperature: 0.3 },
           });
           content = geminiResponse.text || "";
         } catch (geminiErr: any) {
-          console.log("[doc-generate] Gemini 3.1 Pro failed, falling back to GPT-4o:", geminiErr?.message);
+          console.log("[doc-generate] Gemini failed, falling back to Opus:", geminiErr?.message);
         }
       }
       if (!content) {
-        // Use Opus for high-value document types, Sonnet for routine docs
-        const OPUS_DOCUMENT_TYPES = ["Investment Memo", "Pitch Deck", "Pitch Presentation", "Marketing Particulars", "Board Report", "Client Report"];
-        const docModel = OPUS_DOCUMENT_TYPES.some(t => documentType?.toLowerCase().includes(t.toLowerCase()))
-          ? "claude-opus-4-6"
-          : CHATBGP_HELPER_MODEL;
-        console.log(`[doc-generate] Using model: ${docModel} for type: ${documentType || "unspecified"}`);
-        const completion = await callClaude({
-          model: docModel,
+        // Opus fallback. Cap output at 6000 tokens so the response stays under
+        // Railway's 60s proxy timeout even at Opus's slower output speed
+        // (~30 tok/s for 4.7, so 6000 tokens ≈ 3 minutes worst-case → 6000
+        // is still ambitious; we use a hard 50s wall-clock timeout below).
+        console.log(`[doc-generate] Using Opus for type: ${documentType || "unspecified"}`);
+        const opusPromise = callDocOpus({
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
           temperature: 0.3,
-          max_completion_tokens: docModel === "claude-opus-4-6" ? 8192 : 4000,
+          max_completion_tokens: 6000,
         });
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error("Opus took longer than 50s — try a shorter document or upload fewer source files")), 50_000);
+        });
+        const completion = await Promise.race([opusPromise, timeoutPromise]);
         content = completion.choices[0]?.message?.content || "No content generated.";
       }
 
@@ -2386,7 +2395,7 @@ Be concise, professional, and use British English. All document advice should al
           }
           geminiContents.push({ role: "user", parts: [{ text: question + fileContext }] });
           const geminiResponse = await gemini.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: geminiContents,
             config: {
               maxOutputTokens: 4096,
@@ -2467,7 +2476,7 @@ Be concise, professional, and use British English. All document advice should al
 
   app.get("/api/doc-runs/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const run = await storage.getDocumentRun(req.params.id);
+      const run = await storage.getDocumentRun(req.params.id as string);
       if (!run) return res.status(404).json({ message: "Document run not found" });
       res.json(run);
     } catch (err: any) {
@@ -3091,7 +3100,7 @@ Be concise, professional, and use British English. All document advice should al
         });
         titleSlide.addText(
           `PREPARED FOR CLIENT, ${new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase()}`,
-          { x: 0.6, y: 7.2, w: 7.5, h: 0.44, fontSize: 20, color: "FFFFFF", fontFace: brandFont, bold: false, letterSpacing: 2 }
+          { x: 0.6, y: 7.2, w: 7.5, h: 0.44, fontSize: 20, color: "FFFFFF", fontFace: brandFont, bold: false, charSpacing: 2 }
         );
         // Slide number not shown on cover
         titleSlide.addText(
@@ -3128,7 +3137,7 @@ Be concise, professional, and use British English. All document advice should al
               if (s.sectionLabel) {
                 slide.addText(String(s.sectionLabel).toUpperCase(), {
                   x: 0.5, y: 0.18, w: 12.0, h: 0.32,
-                  fontSize: 9, color: brandMid, fontFace: brandFont, bold: false, letterSpacing: 2,
+                  fontSize: 9, color: brandMid, fontFace: brandFont, bold: false, charSpacing: 2,
                 });
               }
               // Heading
@@ -3166,7 +3175,7 @@ Be concise, professional, and use British English. All document advice should al
               if (s.sectionLabel) {
                 slide.addText(String(s.sectionLabel).toUpperCase(), {
                   x: 0.5, y: 0.18, w: 12.0, h: 0.32,
-                  fontSize: 9, color: brandMid, fontFace: brandFont, bold: false, letterSpacing: 2,
+                  fontSize: 9, color: brandMid, fontFace: brandFont, bold: false, charSpacing: 2,
                 });
               }
               if (s.heading) {
@@ -3189,7 +3198,7 @@ Be concise, professional, and use British English. All document advice should al
                 });
                 slide.addText(String(stat.label || "").toUpperCase(), {
                   x, y: 4.3, w: boxW, h: 0.6,
-                  fontSize: 11, color: brandMid, fontFace: brandFont, bold: false, align: "center", letterSpacing: 1,
+                  fontSize: 11, color: brandMid, fontFace: brandFont, bold: false, align: "center", charSpacing: 1,
                 });
               });
 
@@ -3207,7 +3216,7 @@ Be concise, professional, and use British English. All document advice should al
                 quoteSlide.addShape(pptx.ShapeType.rect, { x: 1.0, y: 5.7, w: 1.5, h: 0.04, fill: { color: brandGreen } });
                 quoteSlide.addText(String(s.attribution).toUpperCase(), {
                   x: 1.0, y: 5.9, w: 11.0, h: 0.4,
-                  fontSize: 11, color: brandMid, fontFace: brandFont, bold: false, letterSpacing: 2,
+                  fontSize: 11, color: brandMid, fontFace: brandFont, bold: false, charSpacing: 2,
                 });
               }
             }
@@ -3265,7 +3274,7 @@ Be concise, professional, and use British English. All document advice should al
               if (batch.every(l => !l.trim())) continue;
               const slide = pptx.addSlide({ masterName: "BGP_CONTENT" });
               if (group.heading) {
-                slide.addText(group.heading.toUpperCase(), { x: 0.5, y: 0.18, w: 12.0, h: 0.32, fontSize: 9, color: brandMid, fontFace: brandFont, letterSpacing: 2 });
+                slide.addText(group.heading.toUpperCase(), { x: 0.5, y: 0.18, w: 12.0, h: 0.32, fontSize: 9, color: brandMid, fontFace: brandFont, charSpacing: 2 });
               }
               const textParts: any[] = [];
               for (const line of batch) {
@@ -3306,7 +3315,8 @@ Be concise, professional, and use British English. All document advice should al
           { x: 0.6, y: 6.2, w: 10.0, h: 1.5, fontSize: 32, color: "FFFFFF", fontFace: brandFont, bold: false }
         );
 
-        const pptxBuffer = await pptx.write({ outputType: "nodebuffer" }) as Buffer;
+        const { fixPptxSchemaViolations } = await import("./pptx-rectify");
+        const pptxBuffer = await fixPptxSchemaViolations(await pptx.write({ outputType: "nodebuffer" }) as Buffer);
         const filename = `${docTitle.replace(/[^a-zA-Z0-9\s-]/g, "").replace(/\s+/g, "_")}.pptx`;
         res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
         res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
@@ -3335,7 +3345,7 @@ Be concise, professional, and use British English. All document advice should al
       if (design !== undefined && typeof design !== "string") {
         return res.status(400).json({ message: "Invalid design" });
       }
-      const updated = await storage.updateDocumentRun(req.params.id, { name, content, status, design });
+      const updated = await storage.updateDocumentRun(req.params.id as string, { name, content, status, design });
       if (!updated) return res.status(404).json({ message: "Document run not found" });
       res.json(updated);
     } catch (err: any) {
@@ -3349,7 +3359,7 @@ Be concise, professional, and use British English. All document advice should al
       if (!message || typeof message !== "string" || message.length > 5000) {
         return res.status(400).json({ message: "A valid message is required (max 5,000 chars)" });
       }
-      const run = await storage.getDocumentRun(req.params.id);
+      const run = await storage.getDocumentRun(req.params.id as string);
       if (!run) return res.status(404).json({ message: "Document run not found" });
 
       const systemPrompt = `You are refining a BGP (Bruce Gillingham Pollard) professional property document.
@@ -3383,7 +3393,7 @@ RULES:
       const newContent = completion.choices[0]?.message?.content;
       if (!newContent) return res.status(500).json({ message: "No content returned from AI" });
 
-      await storage.updateDocumentRun(req.params.id, { content: newContent });
+      await storage.updateDocumentRun(req.params.id as string, { content: newContent });
       res.json({ content: newContent });
     } catch (err: any) {
       console.error("[doc-refine]", err?.message || err);
@@ -3393,7 +3403,7 @@ RULES:
 
   app.delete("/api/doc-runs/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      await storage.deleteDocumentRun(req.params.id);
+      await storage.deleteDocumentRun(req.params.id as string);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: "Failed to delete document run" });

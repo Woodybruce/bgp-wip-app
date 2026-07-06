@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Popover,
   PopoverContent,
@@ -63,7 +62,7 @@ export function ColumnFilterPopover({
             />
           </div>
         </div>
-        <ScrollArea className="max-h-[250px]">
+        <div className="max-h-[250px] overflow-y-auto">
           <div className="p-1">
             {filteredOptions.map((val) => {
               const isSelected = activeFilters.includes(val);
@@ -95,7 +94,7 @@ export function ColumnFilterPopover({
               <p className="text-xs text-muted-foreground text-center py-3">No matches</p>
             )}
           </div>
-        </ScrollArea>
+        </div>
         {hasActive && (
           <div className="p-2 border-t">
             <Button

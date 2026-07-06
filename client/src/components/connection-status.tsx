@@ -1,11 +1,18 @@
 import { useState, useEffect } from "react";
-import { WifiOff, Wifi } from "lucide-react";
-import { getSocket } from "@/lib/socket";
+import { WifiOff } from "lucide-react";
 
+// Connection banner. Driven SOLELY by the browser's online/offline
+// state (navigator.onLine + the online/offline events) — a genuine,
+// actionable signal the user can do something about.
+//
+// It deliberately does NOT track the socket.io connection. That socket
+// only powers chat typing indicators + live notifications, which
+// degrade gracefully (everything refreshes on the next poll). The WS
+// upgrade is unreliable through the chatbgp.app proxy and flaps in and
+// out; surfacing that as a red "Connection lost" banner was a constant
+// false alarm for something the user can't fix. So we don't.
 export function ConnectionStatus() {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [socketConnected, setSocketConnected] = useState(true);
-  const [showReconnected, setShowReconnected] = useState(false);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -18,42 +25,7 @@ export function ConnectionStatus() {
     };
   }, []);
 
-  useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-
-    const checkSocket = () => {
-      const socket = getSocket();
-      const connected = socket?.connected ?? true;
-      setSocketConnected(prev => {
-        if (!prev && connected) {
-          setShowReconnected(true);
-          setTimeout(() => setShowReconnected(false), 3000);
-        }
-        return connected;
-      });
-    };
-
-    interval = setInterval(checkSocket, 2000);
-    checkSocket();
-
-    return () => clearInterval(interval);
-  }, []);
-
-  const disconnected = !isOnline || !socketConnected;
-
-  if (!disconnected && !showReconnected) return null;
-
-  if (showReconnected && !disconnected) {
-    return (
-      <div
-        className="fixed top-0 left-0 right-0 z-[100] flex items-center justify-center gap-2 bg-green-600 text-white text-sm py-1.5 px-4 animate-in slide-in-from-top duration-300"
-        data-testid="banner-reconnected"
-      >
-        <Wifi className="w-4 h-4" />
-        <span>Connection restored</span>
-      </div>
-    );
-  }
+  if (isOnline) return null;
 
   return (
     <div
@@ -61,7 +33,7 @@ export function ConnectionStatus() {
       data-testid="banner-disconnected"
     >
       <WifiOff className="w-4 h-4" />
-      <span>{!isOnline ? "You're offline — check your internet connection" : "Connection lost — trying to reconnect..."}</span>
+      <span>You're offline — check your internet connection</span>
     </div>
   );
 }

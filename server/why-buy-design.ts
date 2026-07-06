@@ -1,0 +1,413 @@
+// Why Buy — Claude Design variant.
+//
+// Streams Claude-generated, self-contained HTML for the Why Buy deck so users
+// can preview and iterate live in the app. Same brief as the Gamma path; the
+// difference is Claude renders the deck inline as HTML (sandboxed iframe in
+// the UI) rather than handing it to Gamma. Iterations layer on top — the user
+// types "make it more punchy / drop section 3 / use BGP teal" and Claude
+// re-emits the full HTML which we save as a new version.
+
+import type { Express, Request, Response } from "express";
+import path from "path";
+import fs from "fs";
+import crypto from "crypto";
+import { pool } from "./db";
+import { requireAuth } from "./auth";
+import { buildBrief } from "./why-buy-gamma";
+import { preferencesPromptFor } from "./document-preferences";
+import { BGP_BRAND, renderHtmlWithClaude } from "./doc-engine";
+import { applyEdit, type EditType } from "./html-edit";
+
+const PREFERENCES_SCOPE = "why_buy";
+
+// Fingerprint of the brief a deck version was generated from — lets the
+// in-app pane flag when the pathway data has drifted since the latest
+// version was made (stale deck → offer a one-click regenerate).
+function briefHash(brief: string): string {
+  return crypto.createHash("sha256").update(brief).digest("hex");
+}
+
+// BGP logo — embedded into the deck. We keep the STORED html using short
+// __BGP_LOGO_*__ placeholders (Claude reliably preserves a short token across
+// iterations, but mangles a ~50KB base64 string if asked to re-emit it), then
+// swap in the real base64 data URIs only when serving HTML / rendering the PDF.
+let _logoCache: { dark: string; light: string } | null = null;
+function logoDataUris(): { dark: string; light: string } {
+  if (_logoCache) return _logoCache;
+  const read = (file: string): string => {
+    const candidates = [
+      path.join(process.cwd(), "server", "assets", file),
+      path.join(process.cwd(), "dist", "server", "assets", file),
+    ];
+    for (const p of candidates) {
+      try { if (fs.existsSync(p)) return `data:image/png;base64,${fs.readFileSync(p).toString("base64")}`; } catch {}
+    }
+    return "";
+  };
+  _logoCache = { dark: read("BGP_BlackHolder.png"), light: read("BGP_WhiteHolder.png") };
+  return _logoCache;
+}
+function injectLogos(html: string): string {
+  const { dark, light } = logoDataUris();
+  return html.replaceAll("__BGP_LOGO_DARK__", dark).replaceAll("__BGP_LOGO_LIGHT__", light);
+}
+
+// Load the run's saved hero + location-plan images as base64 data URIs so the
+// deck embeds the curated Why Buy imagery directly — not admin-only
+// /api/image-studio URLs (which break for viewers) or Claude-invented srcs.
+async function deckImageDataUris(runId: string): Promise<{ hero: string; locationPlan: string }> {
+  try {
+    const { rows } = await pool.query(`SELECT stage_results FROM property_pathway_runs WHERE id = $1`, [runId]);
+    const sr: any = rows[0]?.stage_results || {};
+    const s8 = sr.stage8 || {};
+    const { imageStudioDataUri } = await import("./image-studio");
+    const heroId = s8.streetViewImageId || (Array.isArray(s8.additionalImageIds) ? s8.additionalImageIds[0] : undefined);
+    const hero = heroId ? (await imageStudioDataUri(heroId)) || "" : "";
+    const locationPlan = s8.retailContextImageId ? (await imageStudioDataUri(s8.retailContextImageId)) || "" : "";
+    return { hero, locationPlan };
+  } catch {
+    return { hero: "", locationPlan: "" };
+  }
+}
+
+// Inject logos + the run's curated imagery, then strip any <img> still pointing
+// at an unfilled __BGP_*__ placeholder (or empty src) so the deck never shows a
+// broken / 404 image. Used at render (iframe) + PDF time.
+async function injectDeckAssets(html: string, runId: string): Promise<string> {
+  let out = injectLogos(html);
+  try {
+    const { hero, locationPlan } = await deckImageDataUris(runId);
+    out = out.replaceAll("__BGP_HERO_IMAGE__", hero).replaceAll("__BGP_LOCATION_PLAN__", locationPlan);
+  } catch { /* ignore */ }
+  // Remove imgs whose src is still a bare placeholder token or empty (logos too).
+  out = out.replace(/<img\b[^>]*\bsrc=["'](?:__BGP_[A-Z_]*__)?["'][^>]*>/gi, "");
+  return out;
+}
+
+const BASE_PROMPT = `You are designing a Why Buy investment pitch deck for Bruce Gillingham Pollard (BGP), a UK commercial property advisor.
+
+Output a SINGLE self-contained HTML document — no external assets, no scripts, all CSS inline in a <style> tag. Make it print-ready (A4 landscape, one slide per page using @page and page-break-after on each section). It should look like a polished pitch deck, not a webpage.
+
+${BGP_BRAND}
+
+The structure:
+1. Cover slide — address, big hero number (price or yield), instructed-by line
+2. Executive summary — 3-4 bullet "why this works" items
+3. Property — area, use, key stats
+4. Tenant / brand — who they are, covenant strength
+5. Numbers — model outputs, IRR, equity multiple, exit
+6. Comparable evidence — recent comps, market context
+7. Risks & mitigants — honest, brief
+8. Asks / next steps
+
+Each slide:
+- Full-page section with page-break-after: always
+- A bold section number top-left, title in serif
+- Big hero number or chart-like data viz where relevant
+- Supporting data/text below
+- BGP footer band on every slide
+
+BGP LOGO — put the BGP logo on the cover slide (top) and in the footer band of EVERY slide. Use an <img> with the EXACT placeholder src below (do not invent or inline any other logo) and a data-edit-id:
+- On light / cream backgrounds: <img src="__BGP_LOGO_DARK__" class="bgp-logo" alt="BGP" data-edit-id="image-{slide}-logo">
+- On dark backgrounds (teal / charcoal footer bands etc.): <img src="__BGP_LOGO_LIGHT__" class="bgp-logo" alt="BGP" data-edit-id="image-{slide}-logo">
+Keep it small (height ~28-40px). The placeholders are swapped for the real logo when the deck is rendered — leave the src strings exactly as written.
+
+PROPERTY IMAGERY — for real photos use ONLY these exact placeholder srcs (swapped for the run's saved images at render time; if no image exists the <img> is removed cleanly, so they're always safe to include):
+- Cover hero / building shot: <img src="__BGP_HERO_IMAGE__" class="hero" alt="" data-edit-id="image-cover-hero">
+- Location / context plan: <img src="__BGP_LOCATION_PLAN__" alt="" data-edit-id="image-6-locationplan">
+Do NOT invent any other image src, and NEVER reference /api/image-studio/ URLs — only these placeholders plus the logo placeholders above.
+
+EDITABLE MARKERS — IMPORTANT:
+The user can click images and text in the rendered deck to edit them
+inline. For that to work, every editable element MUST carry a stable
+\`data-edit-id\` attribute, unique within the document. Apply markers to:
+  - Every <img> → \`data-edit-id="image-{slide}-{role}"\` (e.g. "image-cover-hero", "image-2-property", "image-6-comp1")
+  - Every slide headline (h1/h2 at top of slide) → \`data-edit-id="heading-{slide}"\`
+  - Every big KPI / hero number → \`data-edit-id="kpi-{slide}-{label}"\` (e.g. "kpi-cover-price", "kpi-5-irr")
+  - Every key body paragraph or bullet line → \`data-edit-id="text-{slide}-{n}"\`
+
+IDs must be globally unique within the document. Stable across iterations
+(don't renumber when adding/removing slides — pick semantic names).
+
+Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.`;
+
+export function setupWhyBuyDesignRoutes(app: Express) {
+  // List versions for a run
+  app.get("/api/property-pathway/:runId/why-buy-design", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, version, prompt, created_at, created_by_user_id
+         FROM why_buy_designs WHERE run_id = $1 ORDER BY version DESC`,
+        [req.params.runId]
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Staleness — is the latest version built from data that has since
+  // changed? Registered BEFORE the /:id route so "stale" isn't captured as
+  // an id. Compares a fingerprint of the current brief to the hash stored
+  // when the latest version was generated. Versions with no stored hash
+  // (generated before this feature) report not-stale, so we never nag a
+  // hand-edited legacy deck into a destructive regenerate.
+  app.get("/api/property-pathway/:runId/why-buy-design/stale", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT brief_hash FROM why_buy_designs WHERE run_id = $1 ORDER BY version DESC LIMIT 1`,
+        [req.params.runId]
+      );
+      if (!rows[0]) return res.json({ hasDeck: false, stale: false });
+      const latestHash: string | null = rows[0].brief_hash || null;
+      if (!latestHash) return res.json({ hasDeck: true, stale: false });
+      let currentHash: string;
+      try {
+        const built = await buildBrief(req.params.runId as string);
+        currentHash = briefHash(built.brief);
+      } catch {
+        return res.json({ hasDeck: true, stale: false });
+      }
+      res.json({ hasDeck: true, stale: latestHash !== currentHash });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Get a specific version (full HTML)
+  app.get("/api/property-pathway/:runId/why-buy-design/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, version, prompt, html, created_at FROM why_buy_designs WHERE id = $1 AND run_id = $2`,
+        [req.params.id, req.params.runId]
+      );
+      if (!rows[0]) return res.status(404).json({ error: "Not found" });
+      res.json(rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Render a single version as HTML for the iframe — text/html, X-Frame-
+  // Options: SAMEORIGIN so the parent page can sandbox-embed it.
+  app.get("/api/property-pathway/:runId/why-buy-design/:id/render", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { rows } = await pool.query(`SELECT html FROM why_buy_designs WHERE id = $1`, [req.params.id]);
+      if (!rows[0]) return res.status(404).send("Not found");
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("X-Frame-Options", "SAMEORIGIN");
+      res.setHeader("Content-Security-Policy", "default-src 'unsafe-inline' data: blob:; img-src * data: blob:; font-src * data:; style-src 'unsafe-inline' *;");
+      res.send(await injectDeckAssets(rows[0].html, req.params.runId as string));
+    } catch (e: any) {
+      res.status(500).send(`<pre>${e.message}</pre>`);
+    }
+  });
+
+  // Generate first version from the brief
+  app.post("/api/property-pathway/:runId/why-buy-design/generate", requireAuth, async (req: any, res: Response) => {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId || null;
+      const built = await buildBrief(req.params.runId);
+      // Active house preferences are injected as a prompt fragment so
+      // every generation respects accumulated team direction (Nick saying
+      // "always use the brochure hero on the cover" etc.) without
+      // hardcoding it. Empty string when there are no prefs yet.
+      const housePrefs = await preferencesPromptFor(PREFERENCES_SCOPE);
+      const userPrompt = housePrefs
+        ? `${BASE_PROMPT}\n\n${housePrefs}\n\n--- DEAL BRIEF ---\n\n${built.brief}`
+        : `${BASE_PROMPT}\n\n--- DEAL BRIEF ---\n\n${built.brief}`;
+
+      const html = await renderHtmlWithClaude(userPrompt);
+
+      const next = await pool.query(
+        `SELECT COALESCE(MAX(version), 0) + 1 AS v FROM why_buy_designs WHERE run_id = $1`,
+        [req.params.runId]
+      );
+      const version = next.rows[0].v;
+
+      const inserted = await pool.query(
+        `INSERT INTO why_buy_designs (run_id, version, prompt, html, brief_snapshot, brief_hash, created_by_user_id)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7) RETURNING id, version, created_at`,
+        [req.params.runId, version, "Initial generation from brief", html, JSON.stringify({ title: built.title, address: built.address }), briefHash(built.brief), userId]
+      );
+      res.json({ id: inserted.rows[0].id, version, createdAt: inserted.rows[0].created_at });
+    } catch (e: any) {
+      console.error("[why-buy-design] generate error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Iterate — user types a prompt, Claude re-emits the full HTML based on the
+  // last version. Saves a new row so the version history is preserved.
+  app.post("/api/property-pathway/:runId/why-buy-design/iterate", requireAuth, async (req: any, res: Response) => {
+    const { prompt, baseVersionId } = req.body || {};
+    if (!prompt) return res.status(400).json({ error: "prompt required" });
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId || null;
+
+      // Find the base HTML — caller-provided id wins, else latest.
+      let baseRows = baseVersionId
+        ? await pool.query("SELECT html, version, brief_hash FROM why_buy_designs WHERE id = $1 AND run_id = $2", [baseVersionId, req.params.runId])
+        : await pool.query("SELECT html, version, brief_hash FROM why_buy_designs WHERE run_id = $1 ORDER BY version DESC LIMIT 1", [req.params.runId]);
+      if (!baseRows.rows[0]) return res.status(400).json({ error: "No base design — generate first" });
+      const baseHtml = baseRows.rows[0].html;
+      // Iterations are design edits, not data changes — carry the base
+      // version's brief fingerprint forward so manual tweaks don't reset
+      // staleness tracking.
+      const baseHash = baseRows.rows[0].brief_hash || null;
+
+      // House preferences also flow into iterations so the team's
+      // accumulated direction stays in scope as the deck evolves — the
+      // user's per-iteration prompt is layered on top.
+      const housePrefs = await preferencesPromptFor(PREFERENCES_SCOPE);
+      const prefsBlock = housePrefs ? `\n\n${housePrefs}\n` : "";
+
+      const html = await renderHtmlWithClaude(
+        `Here is the current HTML of a BGP Why Buy investment deck:\n\n${baseHtml}${prefsBlock}\n---\n\nUser request: ${prompt}\n\nReturn the FULL updated HTML (single self-contained document, inline CSS, print-ready A4 landscape). Apply the user's change while keeping everything else intact AND respecting the house preferences above. PRESERVE every existing \`data-edit-id\` attribute on its element — these power inline editing in the app. Also PRESERVE any \`__BGP_LOGO_DARK__\` / \`__BGP_LOGO_LIGHT__\` / \`__BGP_HERO_IMAGE__\` / \`__BGP_LOCATION_PLAN__\` placeholder src values exactly as-is (they are swapped for the real BGP logo + saved imagery at render time). If you add new editable elements (images, headings, KPIs, text), give them unique \`data-edit-id\` attributes following the same naming pattern. Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.`,
+      );
+
+      const next = await pool.query(
+        `SELECT COALESCE(MAX(version), 0) + 1 AS v FROM why_buy_designs WHERE run_id = $1`,
+        [req.params.runId]
+      );
+      const version = next.rows[0].v;
+      const inserted = await pool.query(
+        `INSERT INTO why_buy_designs (run_id, version, prompt, html, brief_hash, created_by_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, version, created_at`,
+        [req.params.runId, version, prompt, html, baseHash, userId]
+      );
+      res.json({ id: inserted.rows[0].id, version, createdAt: inserted.rows[0].created_at });
+    } catch (e: any) {
+      console.error("[why-buy-design] iterate error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Surgical inline edit — DocumentEditor calls this when the user clicks
+  // an editable element in the iframe and changes it (image swap, text
+  // edit). We mutate exactly that element via data-edit-id and save the
+  // result as a new version (auto-save). Undo = navigate to the previous
+  // version in the dropdown.
+  app.patch("/api/property-pathway/:runId/why-buy-design/:id/element", requireAuth, async (req: any, res: Response) => {
+    const { editId, type, value } = req.body || {};
+    if (!editId || !type || typeof value !== "string") {
+      return res.status(400).json({ error: "editId, type, value required" });
+    }
+    if (type !== "image" && type !== "text") {
+      return res.status(400).json({ error: `type must be 'image' or 'text' (got ${type})` });
+    }
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId || null;
+      const baseRows = await pool.query(
+        "SELECT html, brief_hash FROM why_buy_designs WHERE id = $1 AND run_id = $2",
+        [req.params.id, req.params.runId],
+      );
+      if (!baseRows.rows[0]) return res.status(404).json({ error: "version not found" });
+      const baseHtml = baseRows.rows[0].html as string;
+      const baseHash = baseRows.rows[0].brief_hash || null;
+
+      const result = applyEdit(baseHtml, String(editId), type as EditType, value);
+      if (!result.changed) {
+        return res.status(404).json({ error: `no element with data-edit-id="${editId}"` });
+      }
+
+      // Auto-save: every direct edit becomes a new version. Cheap (HTML
+      // string copy) and gives the user free undo via the version
+      // dropdown.
+      const next = await pool.query(
+        `SELECT COALESCE(MAX(version), 0) + 1 AS v FROM why_buy_designs WHERE run_id = $1`,
+        [req.params.runId],
+      );
+      const version = next.rows[0].v;
+      const editLabel = type === "image" ? `Swapped image: ${editId}` : `Edited text: ${editId}`;
+      const inserted = await pool.query(
+        `INSERT INTO why_buy_designs (run_id, version, prompt, html, brief_hash, created_by_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, version, created_at`,
+        [req.params.runId, version, editLabel, result.html, baseHash, userId],
+      );
+      res.json({ id: inserted.rows[0].id, version, createdAt: inserted.rows[0].created_at, label: editLabel });
+    } catch (e: any) {
+      console.error("[why-buy-design] element edit error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Pathway Stage 9 entry point — Claude-designed Why Buy → PDF → SharePoint.
+//
+// Sole Why Buy renderer (the legacy pdfkit template was deleted Nov
+// 2025 so the output is binary: a properly designed Claude deck, or
+// Stage 9 fails loudly). Builds the brief, runs Claude with the
+// house-style preferences, saves the HTML to why_buy_designs (so the
+// in-app preview shows the same artefact), renders headless-Chrome
+// PDF, and uploads to SharePoint.
+// ─────────────────────────────────────────────────────────────────────────
+export async function renderClaudeWhyBuy(args: { runId: string }): Promise<{ documentUrl?: string; sharepointUrl?: string; pdfPath: string; designVersionId?: string }> {
+  const runId = args.runId;
+
+  // 1. Brief + house style preferences
+  const built = await buildBrief(runId);
+  const housePrefs = await preferencesPromptFor(PREFERENCES_SCOPE);
+  const userPrompt = housePrefs
+    ? `${BASE_PROMPT}\n\n${housePrefs}\n\n--- DEAL BRIEF ---\n\n${built.brief}`
+    : `${BASE_PROMPT}\n\n--- DEAL BRIEF ---\n\n${built.brief}`;
+
+  // 2. Claude → HTML (shared design core)
+  const html = await renderHtmlWithClaude(userPrompt);
+  if (!html || html.length < 200) throw new Error("Claude returned empty/too-short HTML for Why Buy");
+
+  // 3. Save the design as version N so the in-app preview lights up
+  // and the user can iterate from there. Skipped silently if the
+  // run row isn't found (table also serves the legacy path).
+  let designVersionId: string | undefined;
+  try {
+    const next = await pool.query(
+      `SELECT COALESCE(MAX(version), 0) + 1 AS v FROM why_buy_designs WHERE run_id = $1`,
+      [runId]
+    );
+    const version = next.rows[0].v;
+    const inserted = await pool.query(
+      `INSERT INTO why_buy_designs (run_id, version, prompt, html, brief_snapshot, brief_hash)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6) RETURNING id`,
+      [runId, version, "Stage 9 — Pathway auto-generation", html, JSON.stringify({ title: built.title, address: built.address }), briefHash(built.brief)]
+    );
+    designVersionId = inserted.rows[0].id;
+  } catch (e: any) {
+    console.warn("[stage9-claude] saving design version failed:", e?.message);
+  }
+
+  // 4. HTML → PDF via the shared puppeteer helper
+  const { htmlToPdfForWhyBuy } = await import("./document-briefs");
+  const pdfBuf = await htmlToPdfForWhyBuy(await injectDeckAssets(html, runId));
+
+  // 5. Persist + upload
+  const OUT_DIR = path.join(process.cwd(), "uploads", "why-buy");
+  if (!fs.existsSync(OUT_DIR)) fs.mkdirSync(OUT_DIR, { recursive: true });
+  const fileName = `why-buy-${runId}-${Date.now()}.pdf`;
+  const pdfPath = path.join(OUT_DIR, fileName);
+  fs.writeFileSync(pdfPath, pdfBuf);
+
+  let sharepointUrl: string | undefined;
+  try {
+    const { uploadFileToSharePoint } = await import("./microsoft");
+    const { db } = await import("./db");
+    const { propertyPathwayRuns } = await import("@shared/schema");
+    const { eq } = await import("drizzle-orm");
+    const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
+    const folderPath = run?.sharepointFolderPath
+      ? `${run.sharepointFolderPath}/Why Buy Deck`
+      : `BGP share drive/Investment/${(run?.address || built.address || "Property").replace(/[\/\\:*?"<>|]/g, "-")}/Why Buy Deck`;
+    const upload = await uploadFileToSharePoint(pdfBuf, fileName, "application/pdf", folderPath);
+    sharepointUrl = upload.webUrl;
+  } catch (err: any) {
+    console.warn("[stage9-claude] SharePoint upload failed:", err?.message);
+  }
+
+  return {
+    documentUrl: `/uploads/why-buy/${fileName}`,
+    sharepointUrl,
+    pdfPath,
+    designVersionId,
+  };
+}

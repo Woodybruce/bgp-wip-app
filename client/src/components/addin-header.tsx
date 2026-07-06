@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useTheme, COLOR_SCHEMES } from "@/components/theme-provider";
 import { Palette, Moon, Sun, Check, Plus, Settings2 } from "lucide-react";
+import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
+import bgpLogoLight from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 
 interface AddinHeaderProps {
   title: string;
@@ -17,6 +19,12 @@ export function AddinHeader({ title, subtitle, children, onNewChat }: AddinHeade
   return (
     <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border/50 bg-card/80 backdrop-blur-sm shrink-0" data-testid="addin-header">
       <div className="flex-1 min-w-0 flex items-center gap-2">
+        <img
+          src={theme === "dark" ? bgpLogoLight : bgpLogoDark}
+          alt="BGP"
+          className="h-5 w-auto shrink-0"
+          data-testid="addin-header-logo"
+        />
         <h1 className="text-[15px] font-semibold tracking-tight leading-none">{title}</h1>
         {subtitle && (
           <span className="text-[10px] text-muted-foreground/70 font-medium bg-muted/60 px-1.5 py-0.5 rounded-full leading-none">{subtitle}</span>

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { getAuthHeaders } from "@/lib/queryClient";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -88,7 +89,7 @@ export function SharePointWidget() {
       const params = new URLSearchParams();
       if (folderId) params.set("folderId", folderId);
       if (driveId) params.set("driveId", driveId);
-      const res = await fetch(`/api/microsoft/files?${params}`, { credentials: "include" });
+      const res = await fetch(`/api/microsoft/files?${params}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) {
         const err = new Error(res.status === 401 ? "auth" : "server") as Error & { status: number };
         err.status = res.status;
@@ -134,7 +135,7 @@ export function SharePointWidget() {
   };
 
   return (
-    <Card className="h-full flex flex-col" data-testid="widget-sharepoint">
+    <Card className="h-full flex flex-col overflow-hidden" data-testid="widget-sharepoint">
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2 pt-4 px-4">
         <div className="flex items-center gap-2">
           <FolderOpen className="w-4 h-4 text-blue-600" />

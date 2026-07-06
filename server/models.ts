@@ -9,7 +9,7 @@ import * as path from "path";
 import Anthropic from "@anthropic-ai/sdk";
 import { setupAdvancedModelsRoutes } from "./models-advanced";
 import { buildInvestmentModel, buildDCFModel, analyzeAdvancedWorkbook, applyBGPBranding, buildModelForAddin } from "./excel-builder";
-import { getValidMsToken } from "./microsoft";
+import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
 import { performPropertyLookup, formatPropertyReport } from "./property-lookup";
 import { crmDeals, crmContacts, crmCompanies, crmProperties, chatbgpLearnings, appFeedbackLog, appChangeRequests, excelTemplates, excelModelRuns, excelModelRunVersions } from "@shared/schema";
 import { ilike, or, eq, sql, desc, and } from "drizzle-orm";
@@ -286,7 +286,7 @@ function expandQuarterColumns(modelDef: any): void {
       if (decoded.c >= col0Idx) continue;
       if (/XIRR|IRR|NPV/i.test(cd.f)) {
         const original = cd.f;
-        cd.f = cd.f.replace(rangeEndRe, (match, d1, startC, d2, startR, d3, _endC, d4, endR) => {
+        cd.f = cd.f.replace(rangeEndRe, (match: string, d1: string, startC: string, d2: string, startR: string, d3: string, _endC: string, d4: string, endR: string) => {
           const sColIdx = XLSX.utils.decode_col(startC);
           if (sColIdx > col1Idx) return match;
           return `${d1}${startC}${d2}${startR}:${d3}${lastColLetter}${d4}${endR}`;
@@ -660,7 +660,7 @@ async function extractPropertyDataWithAI(documentTexts: { name: string; text: st
     .join("\n\n");
 
   const response = await anthropic.messages.create({
-    model: "claude-opus-4-6",
+    model: "claude-opus-4-8",
     max_tokens: 8192,
     system: SMART_EXTRACT_PROMPT,
     messages: [
@@ -716,7 +716,7 @@ Guidelines:
 - Return ONLY the JSON, no markdown`;
 
   const response = await anthropic.messages.create({
-    model: "claude-opus-4-6",
+    model: "claude-opus-4-8",
     max_tokens: 8192,
     system: systemPrompt,
     messages: [
@@ -746,7 +746,7 @@ async function askAboutModel(wb: XLSX.WorkBook, question: string, templateName: 
   }
 
   const response = await anthropic.messages.create({
-    model: "claude-opus-4-6",
+    model: "claude-opus-4-8",
     max_tokens: 8192,
     system: `You are an expert Excel financial modelling analyst at BGP (Bruce Gillingham Pollard), a London property consultancy. You have full visibility of a workbook including:
 - Every cell's value and formula (formulas shown as =FORMULA → calculated_value)
@@ -796,7 +796,7 @@ async function analyzeModelResults(
     .join("\n");
 
   const response = await anthropic.messages.create({
-    model: "claude-opus-4-6",
+    model: "claude-opus-4-8",
     max_tokens: 8192,
     system: `You are a senior investment analyst at BGP (Bruce Gillingham Pollard), a London property consultancy. Provide a concise, professional analysis of these model results. Cover:
 1. Overall attractiveness of the investment (based on IRR, MOIC, yields)
@@ -829,7 +829,7 @@ async function suggestInputValues(
     .join("\n");
 
   const response = await anthropic.messages.create({
-    model: "claude-opus-4-6",
+    model: "claude-opus-4-8",
     max_tokens: 8192,
     system: `You are a senior property investment analyst at BGP, a London property consultancy. Suggest reasonable default/market-standard values for a property investment model. Base suggestions on current London property market conditions. Return JSON with:
 {
@@ -1115,7 +1115,7 @@ export function setupModelsRoutes(app: Express) {
       if (propertyId !== undefined) updates.propertyId = propertyId || null;
       if (name !== undefined) updates.name = name;
       if (Object.keys(updates).length === 0) return res.status(400).json({ message: "No updates provided" });
-      await db.update(excelTemplates).set(updates).where(eq(excelTemplates.id, req.params.id));
+      await db.update(excelTemplates).set(updates).where(eq(excelTemplates.id, req.params.id as string));
       const updated = await storage.getExcelTemplate(req.params.id as string);
       if (!updated) return res.status(404).json({ message: "Template not found" });
       res.json(updated);
@@ -1128,7 +1128,7 @@ export function setupModelsRoutes(app: Express) {
     try {
       const { propertyId } = req.body;
       if (propertyId === undefined) return res.status(400).json({ message: "No updates provided" });
-      await db.update(excelModelRuns).set({ propertyId: propertyId || null }).where(eq(excelModelRuns.id, req.params.id));
+      await db.update(excelModelRuns).set({ propertyId: propertyId || null }).where(eq(excelModelRuns.id, req.params.id as string));
       res.json({ message: "Updated" });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to update run" });
@@ -1334,9 +1334,7 @@ export function setupModelsRoutes(app: Express) {
       const msToken = await getValidMsToken(req);
       if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected" });
 
-      const SP_HOST = "brucegillinghampollard.sharepoint.com";
-      const SP_SITE = "/sites/BGPsharedrive";
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (!siteRes.ok) return res.status(500).json({ message: "Could not access SharePoint" });
       const site = await siteRes.json();
 
@@ -1426,9 +1424,7 @@ export function setupModelsRoutes(app: Express) {
         const { getValidMsToken } = await import("./microsoft");
         const msToken = await getValidMsToken(req);
         if (msToken) {
-          const SP_HOST = "brucegillinghampollard.sharepoint.com";
-          const SP_SITE = "/sites/BGPsharedrive";
-          const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+          const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
           if (siteRes.ok) {
             const site = await siteRes.json();
             const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
@@ -1557,9 +1553,7 @@ export function setupModelsRoutes(app: Express) {
       const msToken = await getValidMsToken(req);
       if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected" });
 
-      const SP_HOST = "brucegillinghampollard.sharepoint.com";
-      const SP_SITE = "/sites/BGPsharedrive";
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (!siteRes.ok) return res.status(500).json({ message: "Could not access SharePoint" });
       const site = await siteRes.json();
 
@@ -1614,9 +1608,7 @@ export function setupModelsRoutes(app: Express) {
       const msToken = await getValidMsToken(req);
       if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected — required for embedded Excel" });
 
-      const SP_HOST = "brucegillinghampollard.sharepoint.com";
-      const SP_SITE = "/sites/BGPsharedrive";
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (!siteRes.ok) return res.status(500).json({ message: "Could not access SharePoint" });
       const site = await siteRes.json();
 
@@ -1835,7 +1827,7 @@ Return ONLY valid JSON. No markdown, no code fences.`;
           }
           console.log("[model-design-chat] Using Gemini 3.1 Pro");
           const geminiResponse = await gemini.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: geminiContents,
             config: { maxOutputTokens: 4096, temperature: 0.3, systemInstruction: systemPrompt },
           });
@@ -1849,7 +1841,7 @@ Return ONLY valid JSON. No markdown, no code fences.`;
         console.log("[model-design-chat] Using Claude Sonnet fallback");
         const anthropic = getAnthropicClient();
         const response = await anthropic.messages.create({
-          model: "claude-opus-4-6",
+          model: "claude-opus-4-8",
           max_tokens: 4096,
           system: systemPrompt,
           messages,
@@ -2128,7 +2120,7 @@ Return ONLY valid JSON. No markdown, no code fences.`;
   }).array("documents", 10);
 
   app.get("/api/models/create-model/status/:jobId", requireAuth, (req: Request, res: Response) => {
-    const job = modelJobs.get(req.params.jobId);
+    const job = modelJobs.get(req.params.jobId as string);
     if (!job) return res.json({ status: "error", message: "Model creation was interrupted (server restarted). Please try again." });
     if (job.status === "processing") return res.json({ status: "processing" });
     if (job.status === "error") return res.json({ status: "error", message: job.error });
@@ -2201,7 +2193,7 @@ Also include:
 Only include keys where the user has specified or implied a value. Use sensible London commercial property defaults for anything not mentioned. Percentages should be decimals (e.g., 5% = 0.05).`;
 
           const extractResponse = await anthropic.messages.create({
-            model: "claude-opus-4-6",
+            model: "claude-opus-4-8",
             max_tokens: 4000,
             system: extractPrompt,
             messages: [{ role: "user", content: `Create an investment appraisal model for: ${description}${modelType ? `\nModel type: ${modelType}` : ""}` }],
@@ -2319,7 +2311,7 @@ CRITICAL RULES:
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         const attemptStart = Date.now();
         fullResponse = await anthropic.messages.create({
-          model: "claude-opus-4-6",
+          model: "claude-opus-4-8",
           max_tokens: 12000,
           system: systemPrompt,
           messages: currentMessages,
@@ -2655,7 +2647,7 @@ CRITICAL RULES:
           input_schema: {
             type: "object" as const,
             properties: {
-              folderPath: { type: "string", description: "Folder path relative to drive root. Examples: 'BGP share drive', 'BGP share drive/Investment', 'BGP share drive/London Leasing'. Use empty string for root." },
+              folderPath: { type: "string", description: "Folder path relative to drive root. Examples: 'BGP share drive', 'BGP share drive/Investment', 'BGP share drive/London Retail'. Use empty string for root." },
             },
             required: ["folderPath"],
           },
@@ -2673,7 +2665,7 @@ CRITICAL RULES:
         },
         {
           name: "sharepoint_create_folder",
-          description: "Create a new folder on SharePoint. All folders should be inside 'BGP share drive'. Team folders: Investment, London Leasing, National Leasing, Tenant Rep, Development, Lease Advisory, Office / Corporate.",
+          description: "Create a new folder on SharePoint. All folders should be inside 'BGP share drive'. Team folders: Investment, London F&B, London Retail, National Leasing, Tenant Rep, Development, Lease Advisory, Office / Corporate.",
           input_schema: {
             type: "object" as const,
             properties: {
@@ -2740,7 +2732,7 @@ CRITICAL RULES:
             type: "object" as const,
             properties: {
               name: { type: "string", description: "Deal name (usually the property address)" },
-              team: { type: "array", items: { type: "string" }, description: "Team(s): London Leasing, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
+              team: { type: "array", items: { type: "string" }, description: "Team(s): London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
               groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
               dealType: { type: "string", description: "Type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
               status: { type: "string", description: "Status of the deal" },
@@ -3564,7 +3556,19 @@ CRITICAL RULES:
               });
               return JSON.stringify({ success: true, action: "email_sent", to: input.to, subject: input.subject });
             } catch (err: any) {
-              return JSON.stringify({ error: `Failed to send email: ${err?.message}` });
+              const msg = err?.message || "unknown error";
+              console.error("[send_email] send failed:", msg);
+              // Surface the LITERAL error and forbid the model from inventing a
+              // cause. The repeated "mailbox is mid-migration, retry in 20 mins"
+              // story was a hallucination — the real error code never appears in
+              // our logs. Likely app-side causes (expired Azure client secret,
+              // missing AZURE_* env var, revoked Graph Mail.Send permission) are
+              // suggested only as possibilities, never asserted.
+              return JSON.stringify({
+                error: `Email send failed. Exact server error: ${msg}`,
+                retryable: false,
+                guidance: "Report this EXACT error text to the user, verbatim. Do NOT paraphrase it as a mailbox migration, do NOT invent any cause, and do NOT promise it will clear on its own or keep offering to retry. If the cause is not stated in the error itself, say you do not know the exact cause and that it most likely needs the app's Microsoft 365 / Azure configuration checked — e.g. an expired Azure client secret, a missing credential, or a revoked Graph Mail.Send permission. The user can send from their own Outlook in the meantime.",
+              });
             }
           }
 
@@ -3630,7 +3634,7 @@ Available keys (with defaults): purchasePrice (10000000), stampDutyRate (0.05), 
 Also include: "modelName" (string), "quarters" (integer, default holdPeriodYears*4). Percentages as decimals (5% = 0.05).`;
 
               const extractResp = await anthropic.messages.create({
-                model: "claude-opus-4-6",
+                model: "claude-opus-4-8",
                 max_tokens: 4000,
                 system: extractPrompt,
                 messages: [{ role: "user", content: `Create an investment appraisal for: ${input.description}${input.modelType ? `\nType: ${input.modelType}` : ""}` }],
@@ -3694,7 +3698,7 @@ Formats: £#,##0;(£#,##0);"-" (GBP), #,##0;(#,##0);"-" (int), #,##0.0%;(#,##0.0
 CRITICAL: For Cash Flow, ONLY define 2 quarter columns (E,F). Keep JSON under 30KB. Use numeric 0 for nil values.`;
 
             const createResponse = await anthropic.messages.create({
-              model: "claude-opus-4-6",
+              model: "claude-opus-4-8",
               max_tokens: 12000,
               system: createSystemPrompt,
               messages: [{
@@ -3707,7 +3711,7 @@ CRITICAL: For Cash Flow, ONLY define 2 quarter columns (E,F). Keep JSON under 30
 
             if (createResponse.stop_reason === "max_tokens") {
               const contResponse = await anthropic.messages.create({
-                model: "claude-opus-4-6",
+                model: "claude-opus-4-8",
                 max_tokens: 12000,
                 system: createSystemPrompt,
                 messages: [
@@ -3917,7 +3921,7 @@ Use professional UK property investment language. Format currency as GBP (£).`;
 
       for (let i = 0; i < maxIterations; i++) {
         const response = await anthropic.messages.create({
-          model: "claude-opus-4-6",
+          model: "claude-opus-4-8",
           max_tokens: 8192,
           system: systemPrompt,
           tools,
@@ -3925,8 +3929,8 @@ Use professional UK property investment language. Format currency as GBP (£).`;
         });
 
         if (response.stop_reason === "tool_use") {
-          const toolBlocks = response.content.filter((b: any) => b.type === "tool_use");
-          const textBlocks = response.content.filter((b: any) => b.type === "text");
+          const toolBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+          const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
 
           currentMessages.push({ role: "assistant", content: response.content });
 
@@ -3953,7 +3957,7 @@ Use professional UK property investment language. Format currency as GBP (£).`;
 
           currentMessages.push({ role: "user", content: toolResults });
         } else {
-          const text = response.content.find((b: any) => b.type === "text");
+          const text = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
           finalAnswer = text?.text || "I completed the request but have no additional comments.";
           break;
         }

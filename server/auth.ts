@@ -9,18 +9,25 @@ import { loginSchema } from "@shared/schema";
 import crypto from "crypto";
 import { resolveCompanyScope, getClientTeamInfo } from "./company-scope";
 
-const ADMIN_EMAILS = new Set([
+export const ADMIN_EMAILS = new Set([
   "woody@brucegillinghampollard.com",
   "rupert@brucegillinghampollard.com",
+  "layla@brucegillinghampollard.com",
+  "wendy@brucegillinghampollard.com",
+  "accounts@brucegillinghampollard.com",   // Wendy McKenzie's actual login
+  "charlotte@brucegillinghampollard.com",
+  "jack@brucegillinghampollard.com",
 ]);
 
 async function ensureAdminFlag(userId: string, email: string) {
   const normalised = email.toLowerCase().trim();
   try {
+    // ADMIN_EMAILS is the permanent baseline — the core team is always
+    // promoted and can't be accidentally locked out. For everyone else we
+    // leave is_admin untouched, so admin granted/revoked via the Team page
+    // (PATCH /api/hr/team/:id) survives login instead of being reset here.
     if (ADMIN_EMAILS.has(normalised)) {
       await pool.query("UPDATE users SET is_admin = true WHERE id = $1 AND (is_admin IS NULL OR is_admin = false)", [userId]);
-    } else {
-      await pool.query("UPDATE users SET is_admin = false WHERE id = $1 AND is_admin = true", [userId]);
     }
   } catch (err: any) {
     console.error("Failed to update admin flag:", err.message);
@@ -164,7 +171,32 @@ export function setupAuth(app: Express) {
     })
   );
 
-  app.use(async (req: Request, _res: Response, next: NextFunction) => {
+  // Account-deactivation gate. requireAuth re-checks is_active, but most
+  // routes resolve the user themselves and never do — so a deactivated
+  // account with a live session could keep using chat, mail, pathway etc.
+  // (visible in prod logs as a user whose only failures were the
+  // requireAuth-gated endpoints). Any /api request from a deactivated
+  // account now gets 401 + session destroyed, which lands the client on
+  // the login screen. Result cached 60s per user so the app's polling
+  // endpoints don't add a users lookup on every request.
+  const activeCache = new Map<string, { active: boolean; at: number }>();
+  const ACTIVE_TTL_MS = 60_000;
+  async function isUserActive(userId: string): Promise<boolean> {
+    const hit = activeCache.get(userId);
+    if (hit && Date.now() - hit.at < ACTIVE_TTL_MS) return hit.active;
+    let active = true;
+    try {
+      const r = await pool.query("SELECT is_active FROM users WHERE id = $1", [userId]);
+      active = r.rows.length > 0 && r.rows[0].is_active !== false;
+    } catch {
+      // DB hiccup — fail open so a transient outage doesn't lock everyone out.
+      active = true;
+    }
+    activeCache.set(userId, { active, at: Date.now() });
+    return active;
+  }
+
+  app.use(async (req: Request, res: Response, next: NextFunction) => {
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith("Bearer ")) {
       const token = authHeader.slice(7);
@@ -177,6 +209,17 @@ export function setupAuth(app: Express) {
           }
         }
       } catch (err: any) { console.error("[auth] token validation error:", err?.message); }
+    }
+
+    const userId = req.session.userId || req.tokenUserId;
+    // Logout stays reachable so a deactivated user can still clear their
+    // cookie cleanly; everything else under /api is gated.
+    if (userId && req.path.startsWith("/api") && req.path !== "/api/auth/logout") {
+      if (!(await isUserActive(userId))) {
+        console.warn(`[auth] blocked deactivated user: user=${userId} path=${req.path}`);
+        try { req.session.destroy(() => {}); } catch {}
+        return res.status(401).json({ message: "Your account has been deactivated. Please contact an administrator." });
+      }
     }
     next();
   });
@@ -428,14 +471,22 @@ export function setupAuth(app: Express) {
         return res.status(500).json({ message: "Microsoft SSO not configured" });
       }
       const useBasic = req.query.basic === "1";
+      const isAddin = req.query.addin === "1";
       const scopes = useBasic ? SSO_SCOPES_BASIC : SSO_SCOPES_FULL;
       const state = crypto.randomBytes(32).toString("hex");
       req.session.ssoState = state;
       if (useBasic) {
         (req.session as any).ssoBasicMode = true;
       }
+      // Office add-in task panes open this in a dialog window. The dialog can't
+      // read a JSON body, so it needs a real redirect to Microsoft; and the
+      // callback must bounce back to the add-in completion page (which posts
+      // the one-time code to the task pane) rather than the main app.
+      if (isAddin) {
+        (req.session as any).ssoAddin = true;
+      }
       const redirectUri = getSsoRedirectUri(req);
-      console.log("SSO: initiating login, redirect URI =", redirectUri, "basic:", useBasic);
+      console.log("SSO: initiating login, redirect URI =", redirectUri, "basic:", useBasic, "addin:", isAddin);
 
       const authUrl = await client.getAuthCodeUrl({
         scopes,
@@ -446,7 +497,8 @@ export function setupAuth(app: Express) {
       });
 
       req.session.save(() => {
-        res.json({ authUrl });
+        if (isAddin) res.redirect(authUrl);
+        else res.json({ authUrl });
       });
     } catch (err: any) {
       console.error("SSO auth error:", err.message);
@@ -510,6 +562,9 @@ export function setupAuth(app: Express) {
       const redirectUri = getSsoRedirectUri(req);
       const useBasicScopes = !!(req.session as any).ssoBasicMode;
       delete (req.session as any).ssoBasicMode;
+      // Capture the add-in flag now — req.session.regenerate() below wipes it.
+      const isAddinFlow = !!(req.session as any).ssoAddin;
+      delete (req.session as any).ssoAddin;
       const scopes = useBasicScopes ? SSO_SCOPES_BASIC : SSO_SCOPES_FULL;
       const result = await client.acquireTokenByCode({
         code: code as string,
@@ -612,8 +667,12 @@ export function setupAuth(app: Express) {
           trackLogin(user.id, 'sso', true);
           ensureAdminFlag(user.id, msEmail);
 
+          // Add-in dialog flow lands on a tiny completion page that posts the
+          // one-time code back to the task pane via Office.messageParent; the
+          // normal web flow drops the code on the main app for exchange.
+          // (isAddinFlow was captured above, before session.regenerate wiped it.)
           req.session.save(() => {
-            res.redirect("/?sso_code=" + exchangeCode);
+            res.redirect((isAddinFlow ? "/addin-sso-complete.html?sso_code=" : "/?sso_code=") + exchangeCode);
           });
         })();
       });
@@ -722,11 +781,34 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     req.session.userId = req.tokenUserId;
   }
   try {
-    const result = await pool.query("SELECT is_active FROM users WHERE id = $1", [userId]);
+    const result = await pool.query("SELECT is_active, email FROM users WHERE id = $1", [userId]);
     if (result.rows.length > 0 && result.rows[0].is_active === false) {
+      // Reaching here means the global deactivation gate didn't intercept —
+      // log enough to identify the user + path so we can see why.
+      console.warn(`[auth] deactivated user hit requireAuth (gate missed): user=${userId} email=${result.rows[0].email || "?"} path=${req.path}`);
       return res.status(403).json({ message: "Your account has been deactivated. Please contact an administrator." });
     }
   } catch (_e) {}
+  next();
+}
+
+export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const userId = req.session.userId || req.tokenUserId;
+  if (!userId) return res.status(401).json({ message: "Not authenticated" });
+  if (!req.session.userId && req.tokenUserId) req.session.userId = req.tokenUserId;
+  try {
+    const result = await pool.query("SELECT is_active, is_admin, email FROM users WHERE id = $1", [userId]);
+    if (result.rows.length === 0) return res.status(401).json({ message: "Not authenticated" });
+    const row = result.rows[0];
+    if (row.is_active === false) return res.status(403).json({ message: "Account deactivated" });
+    const emailMatches = ADMIN_EMAILS.has(String(row.email || "").toLowerCase().trim());
+    if (!row.is_admin && !emailMatches) {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+  } catch (e: any) {
+    console.error("[requireAdmin] DB check failed:", e?.message);
+    return res.status(500).json({ message: "Auth check failed", detail: e?.message });
+  }
   next();
 }
 

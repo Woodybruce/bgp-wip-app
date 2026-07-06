@@ -51,6 +51,20 @@ export const CRM_OPTIONS = {
     "Tenant - Wellness",
     "Tenant - Yoga",
     "Agent",
+    // ── Lenders ──
+    "Lender",
+    "Clearing Bank",
+    "Investment Bank",
+    "Debt Fund",
+    "Insurance Lender",
+    "Pension Fund",
+    "Private Credit",
+    "Mezzanine",
+    "Bridging",
+    "Development Finance",
+    "Building Society",
+    // ── Other ──
+    "Billing Entity",
   ],
   companyTypeColors: {
     "Landlord": "bg-amber-500",
@@ -96,6 +110,18 @@ export const CRM_OPTIONS = {
     "Tenant - Wellness": "bg-orange-500",
     "Tenant - Yoga": "bg-orange-400",
     "Agent": "bg-blue-500",
+    "Lender": "bg-slate-600",
+    "Clearing Bank": "bg-blue-700",
+    "Investment Bank": "bg-indigo-700",
+    "Debt Fund": "bg-emerald-700",
+    "Insurance Lender": "bg-purple-700",
+    "Pension Fund": "bg-violet-700",
+    "Private Credit": "bg-teal-700",
+    "Mezzanine": "bg-orange-700",
+    "Bridging": "bg-amber-700",
+    "Development Finance": "bg-yellow-700",
+    "Building Society": "bg-slate-500",
+    "Billing Entity": "bg-zinc-500",
   } as Record<string, string>,
 
   propertyStatus: ["BGP Targeting", "BGP Active", "Leasing Instruction", "Lease Advisory Instruction", "Sales Instruction", "Archive"],
@@ -111,40 +137,24 @@ export const CRM_OPTIONS = {
   propertyAssetClass: ["Office", "Leisure", "Retail", "Industrial", "Mixed Use"],
   propertyTenure: ["Freehold", "Leasehold"],
 
-  dealStatus: [
-    "Targeting",
-    "Available",
-    "Marketing",
-    "NEG",
-    "HOTs",
-    "SOLs",
-    "Exchanged",
-    "Completed",
-    "Live",
-    "Invoiced",
-    "Speculative",
-    "Dead",
-    "Leasing Comps",
-    "Investment Comps",
-  ],
+  // Canonical 10-code set — see shared/deal-status.ts. INV is system-set on Xero invoice sync.
+  dealStatus: ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"],
   dealType: [
-    "Acquisition",
     "Sale",
-    "Leasing",
+    "Purchase",
     "Lease Renewal",
     "Rent Review",
-    "Investment",
-    "Lease Advisory",
-    "Tenant Rep",
     "Lease Acquisition",
+    "Tenant Acquisition",
     "Lease Disposal",
     "Regear",
-    "Purchase",
     "New Letting",
     "Sub-Letting",
-    "Assignment",
+    "Temp Lease",
+    "Consultancy",
+    "Secondment",
   ],
-  dealTeam: ["Development", "London Leasing", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"],
+  dealTeam: ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"],
   dealAssetClass: ["Retail", "Leisure", "Office", "Hotel", "Resi", "Mixed Use", "Other"],
   dealFeeAgreement: ["YES", "NO"],
   dealAmlCheck: ["YES", "NO"],
@@ -434,3 +444,13 @@ export const CRM_OPTIONS = {
 
   compDealType: ["Purchase", "Lease Acquisition", "Lease Disposal", "Sale"],
 } as const;
+
+const GIA_CLASSES = ["Industrial", "Warehouse", "Residential", "Logistics", "Car Park", "Land", "Student"];
+
+export function areaBasisFromAssetClass(assetClass: string | null | undefined): "GIA" | "NIA" {
+  return GIA_CLASSES.some(c => (assetClass || "").includes(c)) ? "GIA" : "NIA";
+}
+
+export function isRetailAssetClass(assetClass: string | null | undefined): boolean {
+  return /retail/i.test(assetClass || "");
+}

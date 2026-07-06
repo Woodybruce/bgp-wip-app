@@ -385,13 +385,119 @@ export function sortDocsByPriority(docs: PlanningDoc[]): PlanningDoc[] {
 let lastDownloadError = "";
 export function getPlanningDownloadLastError(): string { return lastDownloadError; }
 
-export async function downloadPlanningPdf(url: string): Promise<Buffer | null> {
-  const apiKey = process.env.SCRAPERAPI_KEY;
-  if (!apiKey) { lastDownloadError = "SCRAPERAPI_KEY not configured"; return null; }
+export async function downloadPlanningPdf(url: string, refererUrl?: string): Promise<Buffer | null> {
   lastDownloadError = "";
+  const apiKey = process.env.SCRAPERAPI_KEY;
 
   const isPdfBuffer = (buf: Buffer): boolean =>
     buf.length >= 1024 && buf.slice(0, 4).toString("latin1") === "%PDF";
+
+  // Strategy 0: Webshare two-step session — establish JSESSIONID by browsing
+  // the app documents tab first, then fetch the PDF with that cookie.
+  // This mirrors what a human browser does and is required by Westminster Idox.
+  if (isProxyConfigured() && refererUrl) {
+    try {
+      // Step 1: GET the documents tab page via Webshare — Idox sets JSESSIONID
+      const sessionRes = await webshareF(refererUrl, {
+        headers: {
+          "User-Agent": BROWSER_UA,
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-GB,en;q=0.9",
+        },
+        signal: AbortSignal.timeout(20000),
+        redirect: "follow",
+      });
+      // undici uses getSetCookie() for multiple Set-Cookie headers (not .get())
+      const rawHeaders = (sessionRes as any).headers;
+      let sessionCookie = "";
+      if (typeof rawHeaders?.getSetCookie === "function") {
+        sessionCookie = rawHeaders.getSetCookie()
+          .map((h: string) => h.split(";")[0].trim()).filter(Boolean).join("; ");
+      } else {
+        const combined = rawHeaders?.get?.("set-cookie") || "";
+        sessionCookie = combined.split(/,(?=\s*[A-Za-z0-9_-]+=)/)
+          .map((p: string) => p.split(";")[0].trim()).filter(Boolean).join("; ");
+      }
+
+      if (sessionCookie) {
+        // Step 2: GET the PDF with the session cookie + Referer
+        const pdfRes = await webshareF(url, {
+          headers: {
+            "User-Agent": BROWSER_UA,
+            Accept: "application/pdf,*/*;q=0.8",
+            "Accept-Language": "en-GB,en;q=0.9",
+            Referer: refererUrl,
+            Cookie: sessionCookie,
+          },
+          signal: AbortSignal.timeout(30000),
+          redirect: "follow",
+        });
+        if (pdfRes.ok) {
+          const buf = Buffer.from(await pdfRes.arrayBuffer());
+          if (isPdfBuffer(buf)) {
+            console.log(`[planning-docs] Webshare session download OK: ${url}`);
+            return buf;
+          }
+          console.warn(`[planning-docs] Webshare session got non-PDF (${buf.length}B)`);
+        } else {
+          console.warn(`[planning-docs] Webshare session PDF fetch ${pdfRes.status}`);
+        }
+      } else {
+        console.warn(`[planning-docs] Webshare session: no JSESSIONID in Set-Cookie`);
+      }
+    } catch (err: any) {
+      console.warn(`[planning-docs] Webshare session strategy failed: ${err?.message}`);
+    }
+  }
+
+  // Strategy 0b: ScraperAPI sticky-session two-step.
+  // Uses session_number to pin both requests to the same egress IP, avoiding
+  // the rotating-proxy problem that breaks Webshare for Idox JSESSIONID flows.
+  if (apiKey && refererUrl) {
+    try {
+      const sessionNum = Math.floor(Math.random() * 999999);
+      const step1 = await fetch(
+        `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(refererUrl)}&session_number=${sessionNum}&country_code=uk&render=false`,
+        { signal: AbortSignal.timeout(20000), redirect: "follow" },
+      );
+      const h1 = (step1 as any).headers;
+      let cookies = "";
+      if (typeof h1?.getSetCookie === "function") {
+        cookies = h1.getSetCookie().map((c: string) => c.split(";")[0].trim()).filter(Boolean).join("; ");
+      } else {
+        const raw = h1?.get?.("set-cookie") || "";
+        cookies = raw.split(/,(?=\s*[A-Za-z0-9_-]+=)/).map((c: string) => c.split(";")[0].trim()).filter(Boolean).join("; ");
+      }
+      console.log(`[planning-docs] ScraperAPI session ${sessionNum}: referer cookies="${cookies}"`);
+      if (cookies) {
+        const step2 = await fetch(
+          `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&session_number=${sessionNum}&keep_headers=true&country_code=uk&render=false`,
+          {
+            headers: { Cookie: cookies, Referer: refererUrl, "User-Agent": BROWSER_UA },
+            signal: AbortSignal.timeout(30000),
+            redirect: "follow",
+          },
+        );
+        if (step2.ok) {
+          const buf = Buffer.from(await step2.arrayBuffer());
+          if (isPdfBuffer(buf)) {
+            console.log(`[planning-docs] ScraperAPI session download OK: ${url}`);
+            return buf;
+          }
+          console.warn(`[planning-docs] ScraperAPI session got non-PDF (${buf.length}B)`);
+        } else {
+          console.warn(`[planning-docs] ScraperAPI session PDF fetch ${step2.status}`);
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[planning-docs] ScraperAPI session strategy failed: ${err?.message}`);
+    }
+  }
+
+  if (!apiKey) {
+    lastDownloadError = "SCRAPERAPI_KEY not configured and Webshare session failed";
+    return null;
+  }
 
   const tryFetch = async (label: string, scraperUrl: string, timeoutMs: number): Promise<Buffer | null> => {
     try {
@@ -430,19 +536,16 @@ export async function downloadPlanningPdf(url: string): Promise<Buffer | null> {
   const s1 = await tryFetch("no-render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=false`, 25000);
   if (s1) return s1;
 
-  // Strategy 2: premium proxy (residential IPs) — often enough on its own
-  // to get past Idox IP-block lists without needing JS render.
-  const s2 = await tryFetch("premium", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&premium=true&render=false`, 30000);
+  // Strategy 2: premium proxy (residential IPs).
+  const s2 = await tryFetch("premium", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&premium=true&country_code=uk&render=false`, 30000);
   if (s2) return s2;
 
-  // Strategy 3: enable JS rendering. Some Idox endpoints fire a JS
-  // redirect from the viewer page to the actual PDF stream.
+  // Strategy 3: JS rendering for viewer-page redirects.
   const s3 = await tryFetch("render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=true`, 45000);
   if (s3) return s3;
 
-  // Strategy 4: premium + render. Last resort — slow but handles
-  // JS-gated + IP-gated Idox the same way a human browser does.
-  const s4 = await tryFetch("premium+render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&premium=true&render=true`, 60000);
+  // Strategy 4: premium + render. Slow but handles JS-gated + IP-gated Idox.
+  const s4 = await tryFetch("premium+render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&premium=true&country_code=uk&render=true`, 60000);
   if (s4) return s4;
 
   return null;

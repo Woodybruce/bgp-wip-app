@@ -213,9 +213,17 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
       }
       if (clickFilterField && clickFilterValue) {
         if (clickFilterField === "agent") {
-          if (!e.agent) return false;
-          const agentParts = (e.agent as string).split(",").map((a: string) => a.trim()).filter(Boolean);
-          if (!agentParts.some((a: string) => a === clickFilterValue)) return false;
+          const agentParts = e.agent
+            ? (e.agent as string).split(",").map((a: string) => a.trim()).filter(Boolean)
+            : [];
+          // Agent summary buckets null agents under "Other" — clicking
+          // that bucket has to match entries with no agent, not look up
+          // a literal "Other" agent.
+          if (clickFilterValue === "Other") {
+            if (agentParts.length > 0) return false;
+          } else if (!agentParts.some((a: string) => a === clickFilterValue)) {
+            return false;
+          }
         } else {
           const fieldMap: Record<string, string> = {
             groupName: e.groupName || "Other",

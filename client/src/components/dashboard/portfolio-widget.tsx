@@ -18,7 +18,10 @@ interface PortfolioProperty {
     dealType: string | null;
     status: string | null;
     fee: number | null;
-    completionDate: string | null;
+    targetDate: string | null;
+    exchangedAt: string | null;
+    completedAt: string | null;
+    invoicedAt: string | null;
   }>;
   expiringUnits: Array<{
     id: string;

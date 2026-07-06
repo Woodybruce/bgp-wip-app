@@ -5,6 +5,7 @@ import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { MessageSquare, ArrowLeft, Sparkles, Menu, Smartphone } from "lucide-react";
 import { Toaster } from "@/components/ui/toaster";
 import { HandwritingPanel } from "@/components/handwriting-panel";
+import { GlobalPdfHandler } from "@/components/global-pdf-handler";
 import { useToast } from "@/hooks/use-toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -15,13 +16,15 @@ import { TeamProvider, useTeam } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
 import { BrandProvider } from "@/lib/brand-context";
 import { EntitySidebarProvider } from "@/components/crm/entity-sidebar";
-import { ChatBGPProvider } from "@/contexts/chatbgp-context";
+import { ChatBGPProvider, useChatBGPState } from "@/contexts/chatbgp-context";
 import { ChatPanel } from "@/components/chat-panel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { ConnectionStatus } from "@/components/connection-status";
+import { UpdatePrompt } from "@/components/update-prompt";
 import { GlobalSearch } from "@/components/global-search";
 import { NotificationCenter } from "@/components/notification-center";
+import { GlobalDropZone } from "@/components/global-drop-zone";
 import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
 import bgpLogoLight from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import LoginPage from "@/pages/login";
@@ -32,8 +35,8 @@ import { useSocket } from "@/hooks/use-socket";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { useIsMobile, isNativeMobile, getForceDesktop, setForceDesktop } from "@/hooks/use-mobile";
 import MobileApp from "@/components/mobile-app";
+import MobileHome from "@/components/mobile-home";
 import { MobileBottomNav, BOTTOM_NAV_PATHS } from "@/components/mobile-bottom-nav";
-import { MobileSidebarOverlay } from "@/components/app-sidebar";
 import type { User } from "@shared/schema";
 
 const NotFound = lazy(() => import("@/pages/not-found"));
@@ -43,24 +46,29 @@ const DealsHub = lazy(() => import("@/pages/deals-hub"));
 const Requirements = lazy(() => import("@/pages/requirements"));
 const News = lazy(() => import("@/pages/news"));
 const PeoplePage = lazy(() => import("@/pages/people"));
+const LandlordsPage = lazy(() => import("@/pages/landlords"));
 const SharePoint = lazy(() => import("@/pages/sharepoint"));
 const Calendar = lazy(() => import("@/pages/calendar"));
 const Mail = lazy(() => import("@/pages/mail"));
 const WhatsApp = lazy(() => import("@/pages/whatsapp"));
 const Models = lazy(() => import("@/pages/models"));
-const DocumentTemplates = lazy(() => import("@/pages/document-templates"));
+// DocumentTemplates + Decks are now rendered as tabs inside Document Studio
+// (client/src/pages/document-briefs.tsx); /templates and /decks redirect in.
+const DeckDetail = lazy(() => import("@/pages/deck-detail"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
 const Comps = lazy(() => import("@/pages/comps"));
 const InvestmentComps = lazy(() => import("@/pages/investment-comps"));
+const HuntersLetting = lazy(() => import("@/pages/hunters-letting"));
+const HuntersInvestment = lazy(() => import("@/pages/hunters-investment"));
 const Leads = lazy(() => import("@/pages/leads"));
 const Subscriptions = lazy(() => import("@/pages/subscriptions"));
+const ExperianAudit = lazy(() => import("@/pages/experian-audit"));
 const ChatBGP = lazy(() => import("@/pages/chatbgp"));
 const Instructions = lazy(() => import("@/pages/instructions"));
 const Enrichment = lazy(() => import("@/pages/enrichment"));
-const LandRegistry = lazy(() => import("@/pages/land-registry"));
-const VoaRatings = lazy(() => import("@/pages/voa-ratings"));
 const BoardReport = lazy(() => import("@/pages/board-report"));
 const LeasingSchedule = lazy(() => import("@/pages/leasing-schedule"));
+const TenancyScheduleFull = lazy(() => import("@/pages/tenancy-schedule-full"));
 const UploadPage = lazy(() => import("@/pages/upload"));
 const MarketingFilesPage = lazy(() => import("@/pages/marketing-files"));
 const AddinOutlook = lazy(() => import("@/pages/addin-outlook"));
@@ -70,22 +78,50 @@ const AddinPowerPoint = lazy(() => import("@/pages/addin-powerpoint"));
 const AddinAdobe = lazy(() => import("@/pages/addin-adobe"));
 const ImageStudio = lazy(() => import("@/pages/image-studio"));
 const AddinsPage = lazy(() => import("@/pages/addins"));
+const ExpensesAdmin = lazy(() => import("@/pages/expenses-admin"));
+const Portfolios = lazy(() => import("@/pages/portfolios"));
+const MyExpenses = lazy(() => import("@/pages/my-expenses"));
+const MobileExpenses = lazy(() => import("@/pages/mobile-expenses"));
+const MobileAdminExpenses = lazy(() => import("@/pages/mobile-admin-expenses"));
+const MobileImages = lazy(() => import("@/pages/mobile-images"));
+const ExpensesApprovals = lazy(() => import("@/pages/expenses-approvals"));
+const ExpensesRevolut = lazy(() => import("@/pages/expenses-revolut"));
 const AvailableUnitsPage = lazy(() => import("@/pages/available-units"));
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const BrandsHub = lazy(() => import("@/pages/brands-hub"));
 const TasksPage = lazy(() => import("@/pages/tasks"));
 const CadMeasure = lazy(() => import("@/pages/cad-measure"));
 const LeaseEvents = lazy(() => import("@/pages/lease-events"));
-const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
 const AmlCompliance = lazy(() => import("@/pages/aml-compliance"));
 const ComplianceBoard = lazy(() => import("@/pages/compliance-board"));
 const AmlTraining = lazy(() => import("@/pages/aml-training"));
 const KycHub = lazy(() => import("@/pages/kyc-hub"));
 const PropertyIntelligence = lazy(() => import("@/pages/property-intelligence"));
+const MapBgp = lazy(() => import("@/pages/map-bgp"));
 const Reporting = lazy(() => import("@/pages/reporting"));
 const TodayPage = lazy(() => import("@/pages/today"));
 const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
 const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
+const TenantRep = lazy(() => import("@/pages/tenant-rep"));
+const PlaMatters = lazy(() => import("@/pages/pla-matters"));
+const WestminsterRestaurants = lazy(() => import("@/pages/westminster-restaurants"));
+const DocumentBriefs = lazy(() => import("@/pages/document-briefs"));
+const DocumentStudioV2 = lazy(() => import("@/pages/document-studio"));
+const HRPage = lazy(() => import("@/pages/hr"));
+const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
+const FinancePage = lazy(() => import("@/pages/finance"));
+
+function PublicKycUploadRoute() {
+  return (
+    <ErrorBoundary>
+      <Suspense fallback={<PageLoader />}>
+        <Switch>
+          <Route path="/kyc-upload/:token" component={KycUploadPage} />
+        </Switch>
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
 
 
 function PageLoader() {
@@ -100,7 +136,49 @@ function PageLoader() {
 
 function DiaryRedirect() {
   const [, setLocation] = useLocation();
-  useEffect(() => { setLocation("/calendar"); }, [setLocation]);
+  useEffect(() => { setLocation("/calendar", { replace: true }); }, [setLocation]);
+  return null;
+}
+
+// Document Studio is now one cockpit with tabs. The old standalone
+// /templates and /decks pages fold in as tabs, so their URLs redirect into
+// the Studio with the right tab pre-selected (the deck editor /decks/:id
+// stays a full page).
+function StudioTabRedirect({ tab }: { tab: string }) {
+  const [, setLocation] = useLocation();
+  useEffect(() => { setLocation(`/document-briefs?tab=${tab}`, { replace: true }); }, [setLocation, tab]);
+  return null;
+}
+
+// Legacy tool URLs (/map-bgp, /map, /land-registry, /business-rates) all
+// live on as tabs inside Property Intelligence. Each redirect keeps the
+// incoming query string (address/postcode/layer/title…) and replaces the
+// history entry so Back doesn't bounce the user forward again.
+function PropertyIntelligenceTabRedirect({ tab }: { tab: string }) {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.set("tab", tab);
+    setLocation(`/property-intelligence?${params.toString()}`, { replace: true });
+  }, [setLocation, tab]);
+  return null;
+}
+
+// Comps "Leads" tab is parked out of the comps page (it's messy / WIP) and
+// reachable only here, admin-only, so it can be worked on later.
+function CompsLeadsRedirect() {
+  const [, setLocation] = useLocation();
+  useEffect(() => { setLocation("/comps?tab=leads", { replace: true }); }, [setLocation]);
+  return null;
+}
+
+// /hr/:userId deep links (org chart, profile shares) — the HR page reads
+// ?person= from the query string, so translate the path param across.
+function HrPersonRedirect({ params }: { params: { userId: string } }) {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    setLocation(`/hr?person=${encodeURIComponent(params.userId)}`, { replace: true });
+  }, [setLocation, params.userId]);
   return null;
 }
 
@@ -119,12 +197,24 @@ function Router() {
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/instructions" component={Instructions} />
-      <Route path="/properties" component={PropertiesHub} />
+      {/* Properties list now lives as a tab inside Deals Hub. /properties
+          keeps working but mounts DealsHub so the user sees the unified
+          tabs. /properties/:id continues to serve the per-property
+          detail page (PropertiesHub still routes to Properties.tsx). */}
+      <Route path="/properties" component={DealsHub} />
       <Route path="/properties/:id" component={PropertiesHub} />
-      <Route path="/map" component={PropertiesHub} />
+      <Route path="/map">{() => <PropertyIntelligenceTabRedirect tab="map" />}</Route>
       <Route path="/deals" component={DealsHub} />
       <Route path="/deals/:rest*" component={DealsHub} />
       <Route path="/requirements" component={Requirements} />
+      <Route path="/tenant-rep" component={TenantRep} />
+      <Route path="/pla/matters" component={PlaMatters} />
+      <Route path="/pla/matters/:id" component={PlaMatters} />
+      <Route path="/westminster-restaurants" component={WestminsterRestaurants} />
+      <Route path="/document-briefs" component={DocumentBriefs} />
+      <Route path="/document-studio" component={DocumentStudioV2} />
+      <Route path="/hunters/letting" component={HuntersLetting} />
+      <Route path="/hunters/investment" component={HuntersInvestment} />
       <Route path="/today" component={TodayPage} />
       <Route path="/news" component={News} />
       <Route path="/diary" component={DiaryRedirect} />
@@ -132,36 +222,42 @@ function Router() {
       <Route path="/companies/:id" component={PeoplePage} />
       <Route path="/contacts" component={PeoplePage} />
       <Route path="/contacts/:id" component={PeoplePage} />
+      <Route path="/landlords" component={LandlordsPage} />
       <Route path="/sharepoint" component={SharePoint} />
       <Route path="/calendar" component={Calendar} />
       <Route path="/mail" component={Mail} />
       <Route path="/whatsapp" component={WhatsApp} />
       <Route path="/models" component={Models} />
-      <Route path="/templates" component={DocumentTemplates} />
+      <Route path="/templates">{() => <StudioTabRedirect tab="templates" />}</Route>
+      <Route path="/decks">{() => <StudioTabRedirect tab="decks" />}</Route>
+      <Route path="/decks/:id" component={DeckDetail} />
       <Route path="/image-studio">{() => <AdminRoute><ImageStudio /></AdminRoute>}</Route>
       <Route path="/settings" component={SettingsPage} />
       <Route path="/comps" component={Comps} />
       <Route path="/comps/:id" component={Comps} />
-      <Route path="/investment-comps" component={InvestmentComps} />
+      <Route path="/admin/comps-leads">{() => <AdminRoute><CompsLeadsRedirect /></AdminRoute>}</Route>
+      <Route path="/investment-comps">{() => <InvestmentComps />}</Route>
       <Route path="/leads" component={Leads} />
       <Route path="/subscriptions" component={Subscriptions} />
+      <Route path="/experian-audit" component={ExperianAudit} />
       <Route path="/chatbgp" component={ChatBGP} />
       <Route path="/enrichment" component={Enrichment} />
       <Route path="/admin/dedupe" component={AdminDedupe} />
-      <Route path="/land-registry" component={LandRegistry} />
-      <Route path="/business-rates" component={VoaRatings} />
       <Route path="/board-report" component={BoardReport} />
       <Route path="/reporting" component={Reporting} />
       <Route path="/leasing-schedule" component={LeasingSchedule} />
       <Route path="/leasing-schedule/:propertyId" component={LeasingSchedule} />
+      <Route path="/tenancy-schedule/:propertyId" component={TenancyScheduleFull} />
       <Route path="/tasks" component={TasksPage} />
       <Route path="/cad-measure" component={CadMeasure} />
-      <Route path="/lease-events" component={LeaseEvents} />
-      {/* Property Intelligence Hub — unified investigation hub with 5 tabs.
-          Legacy tool routes redirect here so old links keep working. */}
+      <Route path="/lease-events">{() => <LeaseEvents />}</Route>
+      {/* Property Intelligence Hub — unified investigation hub.
+          Legacy tool routes redirect to the matching tab so old links
+          keep working (query strings are preserved). */}
       <Route path="/property-intelligence" component={PropertyIntelligence} />
-      <Route path="/land-registry" component={PropertyIntelligence} />
-      <Route path="/business-rates" component={PropertyIntelligence} />
+      <Route path="/map-bgp">{() => <PropertyIntelligenceTabRedirect tab="map" />}</Route>
+      <Route path="/land-registry">{() => <PropertyIntelligenceTabRedirect tab="land-registry" />}</Route>
+      <Route path="/business-rates">{() => <PropertyIntelligenceTabRedirect tab="business-rates" />}</Route>
       {/* AML / KYC hub — compliance-focused tabs (board, training, settings).
           The Investigator tool has moved to Property Intelligence. */}
       <Route path="/kyc-clouseau" component={KycHub} />
@@ -172,7 +268,7 @@ function Router() {
       <Route path="/aml-training/:id" component={AmlTraining} />
       <Route path="/brands" component={BrandsHub} />
       <Route path="/property-pathway" component={PropertyPathway} />
-      <Route path="/turnover" component={TurnoverBoard} />
+      <Route path="/turnover">{() => <TurnoverBoard />}</Route>
       <Route path="/wip-report" component={DealsHub} />
       <Route path="/upload" component={UploadPage} />
       <Route path="/available" component={AvailableUnitsPage} />
@@ -180,6 +276,18 @@ function Router() {
       <Route path="/marketing-files" component={MarketingFilesPage} />
       <Route path="/addins" component={AddinsPage} />
       <Route path="/edozo" component={PropertiesHub} />
+      <Route path="/finance">{() => <AdminRoute><FinancePage /></AdminRoute>}</Route>
+      <Route path="/expenses" component={ExpensesAdmin} />
+      <Route path="/expenses/approvals" component={ExpensesApprovals} />
+      <Route path="/expenses/revolut" component={ExpensesRevolut} />
+      <Route path="/my-expenses" component={MyExpenses} />
+      <Route path="/portfolios/:id" component={Portfolios} />
+      <Route path="/portfolios" component={Portfolios} />
+      <Route path="/m/expenses" component={MobileExpenses} />
+      <Route path="/m/team-expenses" component={MobileAdminExpenses} />
+      <Route path="/m/images" component={MobileImages} />
+      <Route path="/hr" component={HRPage} />
+      <Route path="/hr/:userId">{(params) => <HrPersonRedirect params={params as { userId: string }} />}</Route>
       <Route component={NotFound} />
     </Switch>
     </Suspense>
@@ -190,10 +298,33 @@ function Router() {
 function AuthenticatedApp() {
   const { toast } = useToast();
   const isMobile = useIsMobile();
-  const [chatOpen, setChatOpen] = useState(true);
+  // Chat panel open/close state is shared via ChatBGPContext so other
+  // pages can read it (e.g. property-detail hides its inner sidebar
+  // when chat is consuming the right side of the screen).
+  const { panelOpen: chatOpen, setPanelOpen: setChatOpen } = useChatBGPState();
   const [aiChatRequested, setAiChatRequested] = useState(false);
+  // Chat peek: hover opens it, click pins it open (so it doesn't tuck away on
+  // mouse-leave). Mirrors the old left-sidebar peek behaviour.
+  const [chatPinned, setChatPinned] = useState(false);
   const [location, navigate] = useLocation();
   const isChatBGP = location === "/chatbgp";
+
+  // Sidebar open state is owned here so we can auto-collapse it when
+  // ChatBGP opens (otherwise the main content gets squeezed between
+  // the 256px sidebar and the 340px chat panel and the leftmost column
+  // bleeds against the sidebar edge). We remember the user's manual
+  // preference and restore it when chat closes.
+  const [sidebarManualOpen, setSidebarManualOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem("sidebar:open") !== "false"; } catch { return true; }
+  });
+  const sidebarEffectiveOpen = chatOpen ? false : sidebarManualOpen;
+  const handleSidebarOpenChange = (open: boolean) => {
+    // Only the user's deliberate toggle should update the persisted
+    // preference — automatic close-on-chat-open shouldn't overwrite it.
+    if (chatOpen) return;
+    setSidebarManualOpen(open);
+    try { localStorage.setItem("sidebar:open", String(open)); } catch {}
+  };
   const { data: currentUser } = useQuery<User | null>({
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
@@ -265,10 +396,26 @@ function AuthenticatedApp() {
   }, []);
 
   const nativeMobile = isNativeMobile();
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
-  if ((isMobile || nativeMobile) && (location === "/" || location === "/chatbgp")) {
+  if ((isMobile || nativeMobile) && location === "/chatbgp") {
     return <MobileApp initialTab="ai" />;
+  }
+
+  // Mobile Home — a focused "what do I do today" dashboard (alerts, tasks,
+  // recent deals, quick links) rather than the ChatBGP screen, so Home and
+  // ChatBGP are distinct destinations.
+  if ((isMobile || nativeMobile) && location === "/") {
+    return (
+      <div className="flex flex-col" style={{ height: "100dvh" }}>
+        <div
+          className="flex-1 overflow-y-auto min-h-0"
+          style={{ paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom) + 0.5rem)" }}
+        >
+          <MobileHome />
+        </div>
+        <MobileBottomNav />
+      </div>
+    );
   }
 
   if ((isMobile || nativeMobile) && location === "/upload") {
@@ -279,25 +426,65 @@ function AuthenticatedApp() {
     );
   }
 
+  // /m/* routes own their own header & layout — skip the generic mobile shell
+  // (which otherwise stacks a "M" title on top of the page's own header).
+  if ((isMobile || nativeMobile) && location.startsWith("/m/")) {
+    return (
+      <div className="flex flex-col" style={{ height: "100dvh" }}>
+        <div
+          className="flex-1 overflow-y-auto overflow-x-hidden min-h-0"
+          style={{ paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom) + 0.5rem)" }}
+        >
+          <Router />
+        </div>
+        <MobileBottomNav />
+      </div>
+    );
+  }
+
   if (isMobile || nativeMobile) {
     const isBottomNavRoute = BOTTOM_NAV_PATHS.some(p => p !== "/" && location.startsWith(p));
     return (
       <div className="flex flex-col" style={{ height: "100dvh" }}>
         <div className="flex items-center gap-2 px-3 py-2 border-b shrink-0" style={{ paddingTop: "calc(0.5rem + env(safe-area-inset-top))" }}>
           {!isBottomNavRoute && (
-            <button onClick={() => navigate("/")} className="p-1" data-testid="button-mobile-page-back">
+            <button
+              onClick={() => {
+                if (window.history.length > 1) window.history.back();
+                else navigate("/");
+              }}
+              className="p-1"
+              data-testid="button-mobile-page-back"
+            >
               <ArrowLeft className="w-5 h-5" />
             </button>
           )}
-          <span className="text-sm font-semibold flex-1">
-            {location === "/" ? "Dashboard" : location.replace(/^\//, "").replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+          <span className="text-sm font-semibold flex-1 truncate">
+            {(() => {
+              // Slug-from-URL fallback for normal routes. Detail pages
+              // (/deals/:id, /properties/:id, /companies/:id…) used to
+              // render their UUID as the title — show a friendly section
+              // label instead and let the inner page own the real heading.
+              if (location === "/") return "Dashboard";
+              const seg = location.replace(/^\//, "").split("/");
+              const root = seg[0];
+              const hasId = seg.length > 1 && seg[1] && !["letting", "investment", "report", "properties", "list"].includes(seg[1]);
+              const DETAIL_LABELS: Record<string, string> = {
+                deals: "Deal", properties: "Property", companies: "Company",
+                contacts: "Contact", hr: "Profile", comps: "Comp",
+              };
+              if (hasId && DETAIL_LABELS[root]) return DETAIL_LABELS[root];
+              return root.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+            })()}
           </span>
         </div>
-        <div className="flex-1 overflow-y-auto min-h-0 pb-14 md:pb-0">
+        <div
+          className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 md:pb-0"
+          style={{ paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom) + 0.5rem)" }}
+        >
           <Router />
         </div>
-        <MobileBottomNav onMoreTap={() => setMobileSidebarOpen(true)} />
-        <MobileSidebarOverlay open={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)} />
+        <MobileBottomNav />
       </div>
     );
   }
@@ -340,7 +527,12 @@ function AuthenticatedApp() {
   const isForceDesktop = getForceDesktop();
 
   return (
-    <SidebarProvider style={style as React.CSSProperties}>
+    <GlobalDropZone>
+    <SidebarProvider
+      style={style as React.CSSProperties}
+      open={sidebarEffectiveOpen}
+      onOpenChange={handleSidebarOpenChange}
+    >
       {/* ChatBGPProvider is hoisted to AppContent so the full-page /chatbgp
           view and the side panel share the same messages / activeThreadId —
           toggling between them keeps the conversation alive. */}
@@ -349,7 +541,8 @@ function AuthenticatedApp() {
           <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
             <header className="flex items-center justify-between gap-2 p-2 border-b h-12 shrink-0">
               <div className="flex items-center gap-2">
-                <SidebarTrigger data-testid="button-sidebar-toggle" />
+                {/* Left nav is pinned open (collapsible="none"), so the
+                    sidebar toggle is gone. */}
                 <GlobalSearch />
               </div>
               <div className="flex items-center gap-2">
@@ -357,7 +550,7 @@ function AuthenticatedApp() {
                 <NotificationCenter />
                 <button
                   data-testid="button-chat-toggle"
-                  onClick={() => setChatOpen(prev => !prev)}
+                  onClick={() => { const n = !chatOpen; setChatPinned(n); setChatOpen(n); }}
                   className="relative inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
                   title="Team Chat"
                 >
@@ -370,11 +563,27 @@ function AuthenticatedApp() {
                 </button>
               </div>
             </header>
-            <div className="flex-1 overflow-y-auto min-h-0">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
               <Router />
             </div>
           </div>
-          <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} />
+          {/* ChatBGP: minimised to a right-edge rail; hover peeks it open,
+              click pins it. Mouse-leaving the chat area tucks it back unless
+              pinned. (Desktop; on mobile the header button opens it full-screen.) */}
+          <div className="flex" onMouseLeave={() => { if (!chatPinned) setChatOpen(false); }}>
+            <ChatPanel open={chatOpen} onClose={() => { setChatPinned(false); setChatOpen(false); }} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} />
+            <button
+              type="button"
+              data-testid="button-chatbgp-rail"
+              className="hidden md:flex flex-col items-center gap-3 w-10 shrink-0 border-l bg-primary text-primary-foreground py-4 cursor-pointer hover:opacity-90 transition-opacity"
+              onMouseEnter={() => { if (!chatPinned) setChatOpen(true); }}
+              onClick={() => { if (chatOpen && chatPinned) { setChatPinned(false); setChatOpen(false); } else { setChatPinned(true); setChatOpen(true); } }}
+              title="ChatBGP"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span className="[writing-mode:vertical-rl] rotate-180 text-[10px] tracking-widest uppercase">ChatBGP</span>
+            </button>
+          </div>
       </div>
       {isForceDesktop && (
         <button
@@ -387,6 +596,7 @@ function AuthenticatedApp() {
         </button>
       )}
     </SidebarProvider>
+    </GlobalDropZone>
   );
 }
 
@@ -421,11 +631,16 @@ function AppContent() {
   // the initial pathname in iframe contexts (Office task panes).
   const isAddin = location.startsWith("/addin/") ||
     (typeof window !== "undefined" && window.location.pathname.startsWith("/addin/"));
+  // Public KYC upload portal — no BGP login required, the URL token is the
+  // auth. Skip the /api/auth/me probe so external customers don't get bounced
+  // to the login page.
+  const isPublicKycUpload = location.startsWith("/kyc-upload/") ||
+    (typeof window !== "undefined" && window.location.pathname.startsWith("/kyc-upload/"));
   const { data: user, isLoading } = useQuery<User | null>({
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
     retry: false,
-    enabled: !isAddin,
+    enabled: !isAddin && !isPublicKycUpload,
   });
 
   useEffect(() => {
@@ -443,6 +658,10 @@ function AppContent() {
 
   if (isAddin) {
     return <AddinRouter />;
+  }
+
+  if (isPublicKycUpload) {
+    return <PublicKycUploadRoute />;
   }
 
   if (isLoading) {
@@ -472,8 +691,57 @@ function AppContent() {
   return (
     <ChatBGPProvider>
       <ConnectionStatus />
-      <AuthenticatedApp />
+      {/* Update banner disabled — was misfiring. Service worker still
+          refreshes the bundle on its own on next reload. */}
+      {/* <UpdatePrompt /> */}
+      {/* Boundary around the whole authenticated shell: the full-page
+          /chatbgp branch (and the mobile shells) render OUTSIDE Router's
+          boundary, so a crash or a stale-deploy chunk failure there used
+          to unmount the entire tree — a hard white screen. The boundary
+          also triggers the one-shot reload recovery for stale chunks. */}
+      <ErrorBoundary name="App">
+        <AuthenticatedApp />
+      </ErrorBoundary>
     </ChatBGPProvider>
+  );
+}
+
+// Shown only when the dashboard is opened on the OLD railway URL. The app's
+// home is chatbgp.app (same backend — we just want one address). A server
+// redirect can't be used here because it breaks the Office add-ins, which are
+// pinned to the railway domain — so this is a gentle, dismissible banner
+// instead. Self-gating so it can never reach an add-in: the Excel task pane is
+// a separate static page (no React at all), and the other add-ins live under
+// /addin/, which this skips (along with the public KYC portal).
+function OldUrlBanner() {
+  const [dismissed, setDismissed] = useState(() => {
+    try { return sessionStorage.getItem("bgp_old_url_dismissed") === "1"; } catch { return false; }
+  });
+  if (typeof window === "undefined") return null;
+  const host = window.location.hostname.toLowerCase();
+  const path = window.location.pathname;
+  if (!host.endsWith(".up.railway.app")) return null;
+  if (path.startsWith("/addin/") || path.startsWith("/kyc-upload/")) return null;
+  if (dismissed) return null;
+  const target = `https://chatbgp.app${window.location.pathname}${window.location.search}`;
+  return (
+    <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 9999,
+      background: "#7c2d12", color: "#fff", fontSize: 13, lineHeight: 1.4, padding: "8px 12px",
+      display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap",
+      boxShadow: "0 -1px 6px rgba(0,0,0,0.25)" }}>
+      <span>
+        You're on the <strong>old address</strong>. BGP has moved to{" "}
+        <a href={target} style={{ color: "#fff", textDecoration: "underline", fontWeight: 600 }}>chatbgp.app</a>{" "}
+        — please update your bookmark, and re-install the phone app from there.
+      </span>
+      <a href={target} style={{ background: "#fff", color: "#7c2d12", borderRadius: 6, padding: "4px 10px",
+        fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" }}>Open chatbgp.app →</a>
+      <button
+        onClick={() => { try { sessionStorage.setItem("bgp_old_url_dismissed", "1"); } catch {} setDismissed(true); }}
+        aria-label="Dismiss"
+        style={{ background: "transparent", border: "none", color: "#fff", fontSize: 18, cursor: "pointer", lineHeight: 1, padding: "0 4px" }}
+      >×</button>
+    </div>
   );
 }
 
@@ -486,7 +754,9 @@ function App() {
             <TooltipProvider>
               <EntitySidebarProvider>
                 <AppContent />
+                <OldUrlBanner />
                 <Toaster />
+                <GlobalPdfHandler />
                 <HandwritingPanel />
               </EntitySidebarProvider>
             </TooltipProvider>

@@ -1,9 +1,18 @@
-import type { Express, Request, Response } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { requireAuth } from "./auth";
+import { logAiUsage } from "./api-usage";
 import { pool } from "./db";
 import { db } from "./db";
-import { imageStudioImages, imageStudioCollections, imageStudioCollectionImages } from "@shared/schema";
-import { eq, desc, ilike, or, sql, inArray, count } from "drizzle-orm";
+import { imageStudioImages, imageStudioCollections, imageStudioCollectionImages, propertyImageryAssets, propertyPathwayRuns } from "@shared/schema";
+
+// Image kinds accepted on the property_imagery_assets row when a capture
+// or upload is linked to a property. Mirrors ImageryKind in property-imagery.ts.
+const ALL_KINDS = [
+  "hero", "internal", "secondary_external",
+  "location_plan", "floor_plan", "covenant_card",
+  "comps_chart", "erv_walk", "overlay",
+] as const;
+import { eq, desc, ilike, or, sql, inArray, count, and } from "drizzle-orm";
 import multer from "multer";
 import sharp from "sharp";
 import path from "path";
@@ -49,15 +58,17 @@ async function generateWithDallE3(prompt: string, size: string): Promise<Buffer 
       quality: "hd",
       response_format: "b64_json",
     });
-    if (!response.data[0]?.b64_json) return null;
-    return Buffer.from(response.data[0].b64_json, "base64");
+    const b64 = response.data?.[0]?.b64_json;
+    if (!b64) return null;
+    logAiUsage({ provider: "openai", model: "dall-e-3", feature: "image-studio-generate", images: 1 });
+    return Buffer.from(b64, "base64");
   } catch (e: any) {
     console.warn("[image-studio] DALL-E 3 failed:", e.message);
     return null;
   }
 }
 
-async function generateWithGemini(prompt: string, _size: string): Promise<Buffer | null> {
+async function generateWithGemini(prompt: string, size: string): Promise<Buffer | null> {
   const apiKey = process.env.GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
   const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
   if (!apiKey) return null;
@@ -67,23 +78,30 @@ async function generateWithGemini(prompt: string, _size: string): Promise<Buffer
     if (baseUrl) aiOpts.httpOptions = { apiVersion: "", baseUrl };
     const ai = new GoogleGenAI(aiOpts);
 
-    const MODELS = ["gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
+    const MODELS = ["gemini-3-pro-image-preview", "gemini-3-pro-image", "gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
     for (const model of MODELS) {
       try {
         console.log(`[image-studio] Gemini generate: trying ${model}`);
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 90000);
         try {
+          // Gemini 3 Pro Image renders native 4K + honours aspect ratio; the
+          // 2.5 fallbacks don't accept imageConfig, so only send it to gemini-3.
+          const config: any = { responseModalities: [Modality.TEXT, Modality.IMAGE], abortSignal: controller.signal as any };
+          if (model.startsWith("gemini-3")) {
+            config.imageConfig = { imageSize: "4K", aspectRatio: size === "portrait" ? "9:16" : size === "square" ? "1:1" : "16:9" };
+          }
           const response = await ai.models.generateContent({
             model,
             contents: [{ role: "user", parts: [{ text: prompt }] }],
-            config: { responseModalities: [Modality.TEXT, Modality.IMAGE], abortSignal: controller.signal as any },
+            config,
           });
           clearTimeout(timeout);
 
           if (response && typeof response === "object" && "candidates" in response) {
             const candidate = (response as any).candidates?.[0];
             const imagePart = candidate?.content?.parts?.find((part: any) => part.inlineData);
+            if (imagePart) logAiUsage({ provider: "google", model, feature: "image-studio-generate", images: 1 });
             if (imagePart?.inlineData?.data) {
               console.log(`[image-studio] Gemini generate: success with ${model}`);
               return Buffer.from(imagePart.inlineData.data, "base64");
@@ -125,6 +143,41 @@ async function enhanceLocally(buffer: Buffer, opts: { cropBottomPx?: number } = 
     .toBuffer();
 }
 
+async function editWithOpenAI(prompt: string, imageBuffer: Buffer, inputMime: string): Promise<Buffer | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const openai = new OpenAI({ apiKey });
+    const { toFile } = await import("openai");
+    const ext = inputMime.includes("png") ? "png" : inputMime.includes("webp") ? "webp" : "jpg";
+    const file = await toFile(imageBuffer, `source.${ext}`, { type: inputMime });
+    console.log(`[image-studio] OpenAI edit: trying gpt-image-1`);
+    // quality:high = the model's best output tier; input_fidelity:high makes
+    // gpt-image-1 stick much closer to the source pixels (faces, signage,
+    // brickwork) instead of loosely re-imagining them — both matter for
+    // repeat amendments, where softness compounds with every pass.
+    const response = await openai.images.edit({
+      model: "gpt-image-1",
+      image: file,
+      prompt,
+      n: 1,
+      size: "auto" as any,
+      quality: "high",
+      input_fidelity: "high",
+    } as any);
+    const b64 = response?.data?.[0]?.b64_json;
+    if (b64) {
+      console.log(`[image-studio] OpenAI edit: success with gpt-image-1`);
+      logAiUsage({ provider: "openai", model: "gpt-image-1", feature: "image-studio-edit", images: 1 });
+      return Buffer.from(b64, "base64");
+    }
+    return null;
+  } catch (e: any) {
+    console.warn("[image-studio] OpenAI edit failed:", e?.message);
+    return null;
+  }
+}
+
 async function editWithGemini(prompt: string, imageBase64: string, inputMime: string): Promise<Buffer | null> {
   const apiKey = process.env.GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
   const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
@@ -135,13 +188,22 @@ async function editWithGemini(prompt: string, imageBase64: string, inputMime: st
     if (baseUrl) aiOpts.httpOptions = { apiVersion: "", baseUrl };
     const ai = new GoogleGenAI(aiOpts);
 
-    const MODELS = ["gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
+    const MODELS = ["gemini-3-pro-image-preview", "gemini-3-pro-image", "gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
     for (const model of MODELS) {
       try {
         console.log(`[image-studio] Gemini edit: trying ${model}`);
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 90000);
         try {
+          // Ask Gemini 3 for 2K output. The default (~1K) is what made repeat
+          // amendments go blurry: a ~4000px iPhone source came back at a
+          // quarter the resolution, then each further edit re-generated from
+          // the already-shrunk image — photocopy-of-a-photocopy. 4K fixed that
+          // but blew the old 45s route budget (since raised to 120s); 2K is
+          // 4× the pixels of 1K at a fraction of 4K's latency and fits well
+          // inside the 90s abort below. 2.5 fallbacks don't support imageConfig.
+          const config: any = { responseModalities: [Modality.TEXT, Modality.IMAGE], abortSignal: controller.signal as any };
+          if (model.startsWith("gemini-3")) config.imageConfig = { imageSize: "2K" };
           const response = await ai.models.generateContent({
             model,
             contents: [{
@@ -151,7 +213,7 @@ async function editWithGemini(prompt: string, imageBase64: string, inputMime: st
                 { text: prompt },
               ],
             }],
-            config: { responseModalities: [Modality.TEXT, Modality.IMAGE], abortSignal: controller.signal as any },
+            config,
           });
           clearTimeout(timeout);
 
@@ -160,6 +222,7 @@ async function editWithGemini(prompt: string, imageBase64: string, inputMime: st
             const imagePart = candidate?.content?.parts?.find((part: any) => part.inlineData);
             if (imagePart?.inlineData?.data) {
               console.log(`[image-studio] Gemini edit: success with ${model}`);
+              logAiUsage({ provider: "google", model, feature: "image-studio-edit", images: 1 });
               return Buffer.from(imagePart.inlineData.data, "base64");
             }
           }
@@ -182,6 +245,40 @@ async function editWithGemini(prompt: string, imageBase64: string, inputMime: st
 
 const IMAGE_DIR = path.join(process.cwd(), "uploads", "image-studio");
 if (!fs.existsSync(IMAGE_DIR)) fs.mkdirSync(IMAGE_DIR, { recursive: true });
+
+// ─── AI touch-up undo stack ───────────────────────────────────────────────
+// Each AI edit pushes the pre-edit version onto a per-image stack so Revert
+// undoes ONE amendment at a time (rather than a single snapshot that jumps
+// straight back to the original). Files are named
+// `undo-<imageId>-<timestamp>-<rand>.png`; the zero-padded ms timestamp is a
+// fixed width, so a lexical filename sort is chronological (oldest → newest).
+// Disk-only, like the original single-snapshot scheme — these don't survive a
+// redeploy, same as before.
+const MAX_UNDO_LEVELS = 15;
+function undoStackPaths(imageId: string): string[] {
+  try {
+    return fs.readdirSync(IMAGE_DIR)
+      .filter((f) => f.startsWith(`undo-${imageId}-`) && f.endsWith(".png"))
+      .sort()
+      .map((f) => path.join(IMAGE_DIR, f));
+  } catch {
+    return [];
+  }
+}
+function pushUndoSnapshot(imageId: string, buffer: Buffer): void {
+  try {
+    const p = path.join(IMAGE_DIR, `undo-${imageId}-${Date.now()}-${crypto.randomBytes(3).toString("hex")}.png`);
+    fs.writeFileSync(p, buffer);
+    // Cap the history so a heavily-iterated image doesn't grow without bound.
+    const stack = undoStackPaths(imageId);
+    while (stack.length > MAX_UNDO_LEVELS) {
+      const oldest = stack.shift();
+      if (oldest) { try { fs.unlinkSync(oldest); } catch {} }
+    }
+  } catch (e: any) {
+    console.warn(`[image-studio] pushUndoSnapshot failed: ${e?.message}`);
+  }
+}
 
 // ─── Durable image storage ────────────────────────────────────────────────
 // Railway redeploys wipe the uploads/ directory, so any image only stored
@@ -206,7 +303,21 @@ async function persistImage(filePath: string, buffer: Buffer, mimeType: string, 
   }
 }
 
-async function readPersistedImage(localPath: string | null | undefined): Promise<Buffer | null> {
+// Load an Image Studio image as a base64 data URI for embedding in
+// server-rendered PDFs (puppeteer can't fetch the auth-protected /full route).
+export async function imageStudioDataUri(id: string): Promise<string | null> {
+  try {
+    const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
+    if (!image) return null;
+    const buf = await readPersistedImage(image.localPath);
+    if (!buf) return null;
+    return `data:${image.mimeType || "image/jpeg"};base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
+export async function readPersistedImage(localPath: string | null | undefined): Promise<Buffer | null> {
   if (!localPath) return null;
   try {
     if (fs.existsSync(localPath)) return fs.readFileSync(localPath);
@@ -229,12 +340,38 @@ async function readPersistedImage(localPath: string | null | undefined): Promise
 
 const imageUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 },
+  // 50MB caters for iPhone Live Photos / 48MP / ProRAW captures, which
+  // routinely top 25MB and used to silently bounce on upload.
+  limits: { fileSize: 50 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype.startsWith("image/")) cb(null, true);
-    else cb(new Error("Only image files are allowed"));
+    const mime = (file.mimetype || "").toLowerCase();
+    const name = (file.originalname || "").toLowerCase();
+    if (mime.startsWith("image/")) return cb(null, true);
+    // iOS frequently sends HEIC (and sometimes JPEG/PNG via the share
+    // sheet) as application/octet-stream. Trust a known image extension
+    // — the HEIC→JPEG conversion downstream catches anything that isn't
+    // really an image and reports a clear error.
+    // .jfif is just JPEG (common from Windows / Outlook); .avif is HEIF-family.
+    if (/\.(heic|heif|jpe?g|jfif|png|webp|gif|tiff?|avif)$/i.test(name)) return cb(null, true);
+    cb(new Error(`File type not supported (mime=${mime || "unknown"}, name=${name || "unnamed"})`));
   },
 });
+
+// Run multer with explicit error capture so file-filter rejections + size-limit
+// hits come back as a clean JSON error instead of a default HTML 500. The
+// client just sees "Upload failed (500)" otherwise, with no way to know
+// whether to shrink the photo, switch off HEIC, or fix something else.
+function uploadImagesMw(req: Request, res: Response, next: NextFunction) {
+  imageUpload.array("images", 20)(req, res, (err: any) => {
+    if (!err) return next();
+    const code = err?.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+    const msg = err?.code === "LIMIT_FILE_SIZE"
+      ? "That photo is too big (over 50MB). On iPhone try a smaller share size or turn off Live Photo."
+      : (err?.message || "Upload rejected");
+    console.warn(`[image-studio/upload] multer rejected: code=${err?.code} msg=${err?.message}`);
+    res.status(code).json({ error: msg, code: err?.code });
+  });
+}
 
 async function ensureTable() {
   await pool.query(`
@@ -287,6 +424,29 @@ async function ensureTable() {
       created_at TIMESTAMP DEFAULT NOW()
     )
   `);
+  // CRM linkage columns added later — keep existing rows untouched.
+  await pool.query(`ALTER TABLE image_studio_collections ADD COLUMN IF NOT EXISTS property_id VARCHAR`);
+  await pool.query(`ALTER TABLE image_studio_collections ADD COLUMN IF NOT EXISTS company_id VARCHAR`);
+  await pool.query(`ALTER TABLE image_studio_collections ADD COLUMN IF NOT EXISTS kind TEXT`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_collections_property ON image_studio_collections (property_id) WHERE property_id IS NOT NULL`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_collections_company ON image_studio_collections (company_id) WHERE company_id IS NOT NULL`);
+  // One-shot backfill: every existing "Pathway · ..." collection inherits
+  // the propertyId from the majority of its images (which always carry
+  // it). Safe to re-run — only updates rows where property_id IS NULL.
+  await pool.query(`
+    UPDATE image_studio_collections c
+    SET property_id = sub.property_id,
+        kind = COALESCE(c.kind, 'pathway')
+    FROM (
+      SELECT ci.collection_id, i.property_id, COUNT(*) AS n,
+             ROW_NUMBER() OVER (PARTITION BY ci.collection_id ORDER BY COUNT(*) DESC) AS rn
+      FROM image_studio_collection_images ci
+      JOIN image_studio_images i ON i.id = ci.image_id
+      WHERE i.property_id IS NOT NULL
+      GROUP BY ci.collection_id, i.property_id
+    ) sub
+    WHERE c.id = sub.collection_id AND sub.rn = 1 AND c.property_id IS NULL AND c.name LIKE 'Pathway · %'
+  `).catch((e: any) => console.warn("[image-studio] pathway backfill skipped:", e?.message));
   await pool.query(`
     CREATE TABLE IF NOT EXISTS image_studio_collection_images (
       id SERIAL PRIMARY KEY,
@@ -303,8 +463,15 @@ async function ensureTable() {
 }
 
 async function generateThumbnail(buffer: Buffer): Promise<{ thumbnail: string; width: number; height: number }> {
-  const metadata = await sharp(buffer).metadata();
-  const thumbBuffer = await sharp(buffer)
+  // limitInputPixels:false so large scans / panoramas / floor-plan exports
+  // don't trip sharp's ~268MP guard and fail the whole upload. failOn:"none"
+  // lets sharp best-effort a slightly-truncated or odd-profile file instead
+  // of throwing. .rotate() bakes in EXIF orientation so portrait photos
+  // aren't sideways in the thumbnail.
+  const opts = { limitInputPixels: false, failOn: "none" as const };
+  const metadata = await sharp(buffer, opts).metadata();
+  const thumbBuffer = await sharp(buffer, opts)
+    .rotate()
     .resize(400, 400, { fit: "cover", position: "centre" })
     .jpeg({ quality: 70 })
     .toBuffer();
@@ -315,72 +482,141 @@ async function generateThumbnail(buffer: Buffer): Promise<{ thumbnail: string; w
   };
 }
 
+// Background AI edit worker — same pipeline as the /ai-edit endpoint
+// but with no Express response. Used by /ai-edit-async so the mobile
+// app can fire an edit and walk away. Always clears the "ai-pending"
+// tag at the end (success or failure) so the gallery isn't stuck on
+// the Processing chip.
+async function runAiEditInBackground(
+  imageId: string,
+  editPrompt: string,
+  preferProvider?: string,
+): Promise<void> {
+  const t0 = Date.now();
+  let didSucceed = false;
+  try {
+    const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, imageId));
+    if (!image) throw new Error("Image not found");
+    const sourceBuffer = await readPersistedImage(image.localPath);
+    if (!sourceBuffer) throw new Error("Image file not found on disk");
+
+    const preferred = (typeof preferProvider === "string" && preferProvider
+      ? preferProvider
+      : "gemini"
+    ).toLowerCase();
+
+    // Push the pre-edit version onto the undo stack so Revert can step back
+    // through each amendment one at a time.
+    const undoBuffer = (image.mimeType === "image/png") ? sourceBuffer : await sharp(sourceBuffer).png().toBuffer();
+    pushUndoSnapshot(imageId, undoBuffer);
+
+    const base64 = sourceBuffer.toString("base64");
+    const inputMime = image.mimeType || "image/jpeg";
+    const fullPrompt = `Edit this specific photograph: ${editPrompt}. PRESERVE the exact building, composition, and architectural details — only apply the requested edit. Professional property photography standard.`;
+
+    let resultBuffer: Buffer | null = null;
+    let provider = "unknown";
+    const tryGemini = async () => {
+      const r = await editWithGemini(fullPrompt, base64, inputMime);
+      if (r) provider = "gemini";
+      return r;
+    };
+    const tryOpenAI = async () => {
+      const r = await editWithOpenAI(fullPrompt, sourceBuffer, inputMime);
+      if (r) provider = "openai";
+      return r;
+    };
+    if (preferred === "openai") {
+      resultBuffer = await tryOpenAI();
+      if (!resultBuffer) resultBuffer = await tryGemini();
+    } else {
+      resultBuffer = await tryGemini();
+      if (!resultBuffer) resultBuffer = await tryOpenAI();
+    }
+    if (!resultBuffer) {
+      const isPolish = /\b(enhance|brighten|sharpen|clean\s*up|remove\s+watermark|marketing|professional)\b/i.test(editPrompt);
+      if (isPolish) {
+        try { resultBuffer = await enhanceLocally(sourceBuffer); provider = "local"; } catch {}
+      }
+    }
+    if (!resultBuffer) throw new Error("No provider returned a result");
+
+    const filename = `edited-${crypto.randomUUID()}.png`;
+    const filePath = path.join(IMAGE_DIR, filename);
+    await persistImage(filePath, resultBuffer, "image/png");
+    const { thumbnail, width, height } = await generateThumbnail(resultBuffer);
+
+    const oldPath = image.localPath;
+    const baseTags = (image.tags || []).filter((t) => t !== "ai-pending" && t !== "ai-failed");
+    await db.update(imageStudioImages).set({
+      mimeType: "image/png",
+      fileSize: resultBuffer.length,
+      width,
+      height,
+      thumbnailData: thumbnail,
+      localPath: filePath,
+      tags: [...new Set([...baseTags, "AI Edited", provider])],
+      source: "ai-edited",
+    } as any).where(eq(imageStudioImages.id, imageId));
+
+    if (oldPath && oldPath !== filePath) {
+      try { fs.unlinkSync(oldPath); } catch {}
+    }
+    didSucceed = true;
+    console.log(`[image-studio] background edit ${imageId} done via ${provider} in ${Date.now() - t0}ms`);
+  } catch (e: any) {
+    console.error(`[image-studio] background edit ${imageId} failed in ${Date.now() - t0}ms: ${e?.message}`);
+  } finally {
+    if (!didSucceed) {
+      // Clear pending tag + add failed marker so the client can show an
+      // error chip and the user can retry.
+      try {
+        const [img] = await db.select({ tags: imageStudioImages.tags })
+          .from(imageStudioImages).where(eq(imageStudioImages.id, imageId));
+        const tags = (img?.tags || []).filter((t) => t !== "ai-pending");
+        await db.update(imageStudioImages)
+          .set({ tags: [...new Set([...tags, "ai-failed"])] } as any)
+          .where(eq(imageStudioImages.id, imageId));
+      } catch {}
+    }
+  }
+}
+
 async function requireAdmin(req: Request, res: Response, next: Function) {
   const userId = req.session?.userId || (req as any).tokenUserId;
   if (!userId) return res.status(401).json({ error: "Not authenticated" });
-  const result = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
-  if (!result.rows[0]?.is_admin) return res.status(403).json({ error: "Admin access required" });
-  next();
-}
-
-/**
- * Capture a Google Street View image for an address and save to image_studio_images.
- * Exposed for the property-pathway orchestrator (Stage 8 — Studio Time).
- */
-export async function captureStreetViewForAddress(args: { address: string; propertyId?: string | null; heading?: number; pitch?: number; fov?: number }): Promise<{ id: string; localPath: string }> {
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) throw new Error("GOOGLE_API_KEY not configured");
-
-  const params = new URLSearchParams({
-    size: "1200x800",
-    location: args.address,
-    heading: String(args.heading ?? 0),
-    pitch: String(args.pitch ?? 0),
-    fov: String(args.fov ?? 90),
-    key: apiKey,
-  });
-  const resp = await fetch(`https://maps.googleapis.com/maps/api/streetview?${params}`);
-  if (!resp.ok) throw new Error(`Street View fetch failed: ${resp.status}`);
-  const buffer = Buffer.from(await resp.arrayBuffer());
-  const safeName = args.address.replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-").slice(0, 80);
-  const filename = `streetview-${safeName}-${crypto.randomUUID().slice(0, 8)}.jpg`;
-  const filePath = path.join(IMAGE_DIR, filename);
-  fs.writeFileSync(filePath, buffer);
-
-  const { thumbnail, width, height } = await generateThumbnail(buffer);
-
-  const [inserted] = await db.insert(imageStudioImages).values({
-    fileName: `Street View — ${args.address}`,
-    category: "Street Views",
-    tags: ["Street View", "Google", "Exterior", "pathway"],
-    description: `Google Street View capture of ${args.address} (auto — property pathway Stage 8)`,
-    source: "streetview",
-    propertyId: args.propertyId || undefined,
-    address: args.address,
-    mimeType: "image/jpeg",
-    fileSize: buffer.length,
-    width,
-    height,
-    thumbnailData: thumbnail,
-    localPath: filePath,
-  }).returning();
-
-  return { id: inserted.id, localPath: filePath };
+  try {
+    // Match auth.ts: admin if is_admin=true OR email is in ADMIN_EMAILS.
+    // Without the email fallback, a user gated by email-only admin could
+    // load image-studio (other routes use auth.ts requireAdmin) but get
+    // 403 on bulk-categorize / bulk-tag / etc.
+    const { ADMIN_EMAILS } = await import("./auth");
+    const result = await pool.query("SELECT is_admin, email FROM users WHERE id = $1", [userId]);
+    const row = result.rows[0];
+    if (!row) return res.status(401).json({ error: "Not authenticated" });
+    const emailMatches = (ADMIN_EMAILS as Set<string>).has(String(row.email || "").toLowerCase().trim());
+    if (!row.is_admin && !emailMatches) {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+    next();
+  } catch (e: any) {
+    console.error("[image-studio requireAdmin] DB check failed:", e?.message);
+    res.status(500).json({ error: "Auth check failed", detail: e?.message });
+  }
 }
 
 // ─── Stage 8 bulk image sweep ─────────────────────────────────────────────
-// Runs after the business plan and Excel model are agreed. Sweeps every
-// source we have — Street View (4 headings + ±offsets along the street),
-// Google Places photos, Clearbit logos for tenants — and files the results
-// into three named collections on the run: Building / Tenants / Area.
-//
-// Nothing here is expensive enough to gate on — API keys burn a few hundred
-// quota points per run, not dollars. No image generation (Flux/DALL-E) is
-// triggered; we only harvest real photography.
+// Runs after the business plan and Excel model are agreed. Harvests Google
+// Places photos of the building + neighbours and any embedded images from
+// uploaded brochures, then files them into three named collections on the
+// run: Building / Tenants / Area. Street View auto-capture was removed —
+// it filled folders with low-quality drive-by shots; users can grab a
+// specific Street View via the manual capture button in Image Studio if
+// they actually want one.
 
 type StoredImage = { id: string; localPath: string };
 
-async function storeImageFromBuffer(args: {
+export async function storeImageFromBuffer(args: {
   buffer: Buffer;
   fileName: string;
   category: string;
@@ -388,6 +624,12 @@ async function storeImageFromBuffer(args: {
   description: string;
   source: string;
   propertyId?: string | null;
+  /**
+   * FK into crm_companies. Set this for any brand / landlord-attributed
+   * image so the Image Studio can filter by company without falling
+   * back on brand_name string matching.
+   */
+  companyId?: string | null;
   address?: string;
   brandName?: string;
   mimeType?: string;
@@ -406,6 +648,7 @@ async function storeImageFromBuffer(args: {
     description: args.description,
     source: args.source,
     propertyId: args.propertyId || undefined,
+    companyId: args.companyId || undefined,
     address: args.address,
     brandName: args.brandName,
     mimeType: args.mimeType || "image/jpeg",
@@ -415,6 +658,20 @@ async function storeImageFromBuffer(args: {
     thumbnailData: thumbnail,
     localPath: filePath,
   }).returning();
+
+  // Auto-fold into the umbrella property / brand folders. Fire-and-
+  // forget so any failure here never blocks the actual image save.
+  if (args.propertyId) {
+    maybeAddToPropertyCollection({ imageId: inserted.id, propertyId: args.propertyId }).catch(e =>
+      console.warn("[image-studio] property auto-fold failed:", e?.message)
+    );
+  }
+  if (args.companyId) {
+    maybeAddToBrandCollection({ imageId: inserted.id, companyId: args.companyId, brandName: args.brandName || null }).catch(e =>
+      console.warn("[image-studio] brand auto-fold failed:", e?.message)
+    );
+  }
+
   return { id: inserted.id, localPath: filePath };
 }
 
@@ -422,18 +679,220 @@ async function ensureRunCollection(args: {
   runId: string;
   address: string;
   bucket: "Building" | "Tenants" | "Area";
+  propertyId?: string | null;
   userId?: string;
 }): Promise<string> {
   const name = `Pathway · ${args.address} · ${args.bucket}`;
   const existing = await db.select().from(imageStudioCollections)
     .where(eq(imageStudioCollections.name, name)).limit(1);
-  if (existing[0]?.id) return existing[0].id;
+  if (existing[0]?.id) {
+    // Backfill propertyId on existing rows once we know it — older runs
+    // pre-date the CRM link and would otherwise stay orphaned.
+    if (args.propertyId && !existing[0].propertyId) {
+      await pool.query(
+        `UPDATE image_studio_collections SET property_id = $1, kind = COALESCE(kind, 'pathway') WHERE id = $2`,
+        [args.propertyId, existing[0].id]
+      );
+    }
+    return existing[0].id;
+  }
   const [created] = await db.insert(imageStudioCollections).values({
     name,
     description: `Auto-created for property pathway run ${args.runId} (${args.bucket})`,
+    propertyId: args.propertyId || undefined,
+    kind: "pathway",
     createdBy: args.userId || undefined,
   }).returning();
   return created.id;
+}
+
+// Brand auto-folder — created when a company has 2+ images so the logo
+// stops being the sole marker. Cover defaults to the first image tagged
+// 'logo' (or just the first image, if no logo is on file yet).
+export async function ensureBrandCollection(args: {
+  companyId: string;
+  brandName: string;
+  userId?: string;
+}): Promise<string | null> {
+  if (!args.companyId) return null;
+  const name = `Brand · ${args.brandName}`;
+  const existing = await db.select().from(imageStudioCollections)
+    .where(eq(imageStudioCollections.companyId, args.companyId)).limit(1);
+  if (existing[0]?.id) return existing[0].id;
+
+  // Pick a sensible cover: prefer a logo, fall back to oldest image.
+  const coverRow = await pool.query(
+    `SELECT id FROM image_studio_images
+     WHERE company_id = $1
+     ORDER BY
+       CASE WHEN 'logo' = ANY(LOWER(ARRAY(SELECT lower(t) FROM unnest(tags) AS t))::text[]) THEN 0
+            WHEN category = 'Brands' THEN 1
+            ELSE 2 END,
+       created_at ASC
+     LIMIT 1`,
+    [args.companyId]
+  ).catch(() => ({ rows: [] as any[] }));
+  const coverImageId = coverRow.rows[0]?.id || null;
+
+  const [created] = await db.insert(imageStudioCollections).values({
+    name,
+    description: `Auto-created brand folder for ${args.brandName}.`,
+    coverImageId: coverImageId || undefined,
+    companyId: args.companyId,
+    kind: "brand",
+    createdBy: args.userId || undefined,
+  }).returning();
+  return created.id;
+}
+
+// Property auto-folder — same pattern as the brand version. A property
+// might accumulate images from many Pathway runs, brochure imports,
+// manual captures and ChatBGP saves. The umbrella "Property · <Name>"
+// collection groups them all in one place; the per-run sub-collections
+// ("Pathway · <Addr> · Building") stay for context.
+export async function ensurePropertyCollection(args: {
+  propertyId: string;
+  propertyName?: string;
+  userId?: string;
+}): Promise<string | null> {
+  if (!args.propertyId) return null;
+  const existing = await db.select().from(imageStudioCollections)
+    .where(and(eq(imageStudioCollections.propertyId, args.propertyId), eq(imageStudioCollections.kind, "property"))).limit(1);
+  if (existing[0]?.id) return existing[0].id;
+
+  // Resolve a display name from the CRM if the caller didn't provide one.
+  let displayName = args.propertyName || "";
+  if (!displayName) {
+    const r = await pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [args.propertyId]).catch(() => ({ rows: [] as any[] }));
+    displayName = r.rows[0]?.name || "Property";
+  }
+
+  // Pick a cover: prefer the oldest brochure exterior, else the first image.
+  const coverRow = await pool.query(
+    `SELECT id FROM image_studio_images
+     WHERE property_id = $1
+     ORDER BY
+       CASE WHEN category IN ('Exteriors', 'Brochures') THEN 0
+            WHEN category = 'Properties' THEN 1
+            ELSE 2 END,
+       created_at ASC
+     LIMIT 1`,
+    [args.propertyId]
+  ).catch(() => ({ rows: [] as any[] }));
+  const coverImageId = coverRow.rows[0]?.id || null;
+
+  const [created] = await db.insert(imageStudioCollections).values({
+    name: `Property · ${displayName}`,
+    description: `Auto-created umbrella folder for all imagery filed against ${displayName}.`,
+    coverImageId: coverImageId || undefined,
+    propertyId: args.propertyId,
+    kind: "property",
+    createdBy: args.userId || undefined,
+  }).returning();
+  return created.id;
+}
+
+export async function maybeAddToPropertyCollection(args: {
+  imageId: string;
+  propertyId: string;
+  propertyName?: string;
+  userId?: string;
+}): Promise<{ collectionId: string | null; created: boolean }> {
+  if (!args.propertyId) return { collectionId: null, created: false };
+  const countRes = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM image_studio_images WHERE property_id = $1`,
+    [args.propertyId]
+  );
+  const count = countRes.rows[0]?.n || 0;
+  if (count < 2) return { collectionId: null, created: false };
+  const before = await db.select().from(imageStudioCollections)
+    .where(and(eq(imageStudioCollections.propertyId, args.propertyId), eq(imageStudioCollections.kind, "property"))).limit(1);
+  const wasNew = !before[0];
+  const collectionId = await ensurePropertyCollection({ propertyId: args.propertyId, propertyName: args.propertyName, userId: args.userId });
+  if (!collectionId) return { collectionId: null, created: false };
+  if (wasNew) {
+    const all = await pool.query(`SELECT id FROM image_studio_images WHERE property_id = $1`, [args.propertyId]);
+    for (const r of all.rows) {
+      await pool.query(
+        `INSERT INTO image_studio_collection_images (collection_id, image_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [collectionId, r.id]
+      ).catch(() => {});
+    }
+  } else {
+    await pool.query(
+      `INSERT INTO image_studio_collection_images (collection_id, image_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [collectionId, args.imageId]
+    ).catch(() => {});
+  }
+  return { collectionId, created: wasNew };
+}
+
+// One-shot backfill: ensure a "Property · <name>" folder exists for every
+// property that has images, and link ALL of that property's images into it.
+// Idempotent (ON CONFLICT DO NOTHING) so it's safe to re-run.
+export async function backfillAllPropertyCollections(userId?: string): Promise<{ properties: number; linked: number }> {
+  const props = await pool.query<{ property_id: string }>(
+    `SELECT DISTINCT property_id FROM image_studio_images WHERE property_id IS NOT NULL AND property_id <> ''`,
+  );
+  let linked = 0;
+  for (const row of props.rows) {
+    const pid = row.property_id;
+    try {
+      const collectionId = await ensurePropertyCollection({ propertyId: pid, userId });
+      if (!collectionId) continue;
+      const r = await pool.query(
+        `INSERT INTO image_studio_collection_images (collection_id, image_id)
+         SELECT $1, id FROM image_studio_images WHERE property_id = $2
+         ON CONFLICT DO NOTHING`,
+        [collectionId, pid],
+      );
+      linked += r.rowCount ?? 0;
+    } catch (e: any) {
+      console.warn(`[image-studio] property-collection backfill failed for ${pid}:`, e?.message);
+    }
+  }
+  return { properties: props.rows.length, linked };
+}
+
+// Wrapper: when an image is saved with companyId set, ensure the brand
+// folder exists (only once the company has 2+ images — single-logo
+// companies don't need a folder yet) and add this image to it.
+export async function maybeAddToBrandCollection(args: {
+  imageId: string;
+  companyId: string;
+  brandName?: string | null;
+  userId?: string;
+}): Promise<{ collectionId: string | null; created: boolean }> {
+  if (!args.companyId) return { collectionId: null, created: false };
+  const countRes = await pool.query(
+    `SELECT COUNT(*)::int AS n, MAX(brand_name) AS brand FROM image_studio_images WHERE company_id = $1`,
+    [args.companyId]
+  );
+  const count = countRes.rows[0]?.n || 0;
+  if (count < 2) return { collectionId: null, created: false }; // logo-only, no folder yet
+  const resolvedBrand = args.brandName || countRes.rows[0]?.brand || "Brand";
+  const before = await db.select().from(imageStudioCollections)
+    .where(eq(imageStudioCollections.companyId, args.companyId)).limit(1);
+  const wasNew = !before[0];
+  const collectionId = await ensureBrandCollection({ companyId: args.companyId, brandName: resolvedBrand, userId: args.userId });
+  if (!collectionId) return { collectionId: null, created: false };
+  // Add the just-saved image; if folder is brand-new, also retroactively
+  // add every other image for this company so the folder is complete.
+  if (wasNew) {
+    const all = await pool.query(`SELECT id FROM image_studio_images WHERE company_id = $1`, [args.companyId]);
+    for (const r of all.rows) {
+      await pool.query(
+        `INSERT INTO image_studio_collection_images (collection_id, image_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [collectionId, r.id]
+      ).catch(() => {});
+    }
+  } else {
+    await pool.query(
+      `INSERT INTO image_studio_collection_images (collection_id, image_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [collectionId, args.imageId]
+    ).catch(() => {});
+  }
+  return { collectionId, created: wasNew };
 }
 
 async function addImagesToCollection(collectionId: string, imageIds: string[]): Promise<number> {
@@ -459,32 +918,6 @@ async function geocodeAddress(address: string, apiKey: string): Promise<{ lat: n
     const c = data?.candidates?.[0];
     if (!c?.geometry?.location) return null;
     return { lat: c.geometry.location.lat, lng: c.geometry.location.lng, placeId: c.place_id };
-  } catch {
-    return null;
-  }
-}
-
-async function streetViewBuffer(args: { lat?: number; lng?: number; address?: string; heading: number; pitch?: number; apiKey: string }): Promise<Buffer | null> {
-  const params = new URLSearchParams({
-    size: "1200x800",
-    heading: String(args.heading),
-    pitch: String(args.pitch ?? 0),
-    fov: "90",
-    key: args.apiKey,
-  });
-  if (args.lat != null && args.lng != null) {
-    params.set("location", `${args.lat},${args.lng}`);
-  } else if (args.address) {
-    params.set("location", args.address);
-  } else return null;
-  try {
-    const r = await fetch(`https://maps.googleapis.com/maps/api/streetview?${params}`);
-    if (!r.ok) return null;
-    const buf = Buffer.from(await r.arrayBuffer());
-    // Google returns a tiny generic "Sorry, we have no imagery here" for blind
-    // locations (~2-6KB). Filter those.
-    if (buf.length < 7000) return null;
-    return buf;
   } catch {
     return null;
   }
@@ -555,23 +988,6 @@ async function nearbyPlaces(lat: number, lng: number, apiKey: string, radius = 8
   }
 }
 
-async function clearbitLogoBuffer(companyName: string): Promise<{ buffer: Buffer; domain: string } | null> {
-  try {
-    const sugResp = await fetch(`https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(companyName)}`);
-    if (!sugResp.ok) return null;
-    const suggestions: any[] = await sugResp.json().catch(() => []);
-    const domain = suggestions?.[0]?.domain;
-    if (!domain) return null;
-    const logoResp = await fetch(`https://logo.clearbit.com/${domain}?size=512`);
-    if (!logoResp.ok) return null;
-    const buf = Buffer.from(await logoResp.arrayBuffer());
-    if (buf.length < 400) return null;
-    return { buffer: buf, domain };
-  } catch {
-    return null;
-  }
-}
-
 export async function sweepStage8ImagesForRun(args: {
   runId: string;
   address: string;
@@ -585,7 +1001,6 @@ export async function sweepStage8ImagesForRun(args: {
   tenantsCollectionId?: string;
   areaCollectionId?: string;
   imagesAdded: number;
-  streetViewImageId?: string;
   collections: Array<{ id: string; name: string; bucket: "building" | "tenants" | "area"; imageCount: number }>;
 }> {
   const apiKey = process.env.GOOGLE_API_KEY;
@@ -597,41 +1012,22 @@ export async function sweepStage8ImagesForRun(args: {
   await ensureTable().catch(() => {});
 
   const [buildingId, tenantsId, areaId] = await Promise.all([
-    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Building", userId: args.userId }),
-    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Tenants", userId: args.userId }),
-    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Area", userId: args.userId }),
+    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Building", propertyId: args.propertyId, userId: args.userId }),
+    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Tenants", propertyId: args.propertyId, userId: args.userId }),
+    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Area", propertyId: args.propertyId, userId: args.userId }),
   ]);
 
-  const buildingImages: string[] = [];
+  let buildingImages: string[] = [];
+  // Brochure-extracted exteriors are the best on-asset photography we get —
+  // kept in their own array so they can lead the Building collection ahead of
+  // the (mostly interior) Google Places shots.
+  const brochureBuildingImages: string[] = [];
   const tenantImages: string[] = [];
   const areaImages: string[] = [];
-  let firstStreetViewImageId: string | undefined;
 
   const geo = await geocodeAddress(args.address, apiKey);
 
-  // ─── Building: 4-heading street view + Places photos of the building ────
-  for (const heading of [0, 90, 180, 270]) {
-    const buf = await streetViewBuffer({ lat: geo?.lat, lng: geo?.lng, address: args.address, heading, apiKey });
-    if (!buf) continue;
-    try {
-      const stored = await storeImageFromBuffer({
-        buffer: buf,
-        fileName: `Street View ${heading}° — ${args.address}`,
-        category: "Street Views",
-        tags: ["Street View", "Building", "Exterior", "pathway", `heading-${heading}`],
-        description: `Google Street View of ${args.address} at ${heading}° heading (auto — pathway Stage 8).`,
-        source: "streetview",
-        propertyId: args.propertyId,
-        address: args.address,
-        filenameHint: `${args.address}-${heading}`,
-      });
-      buildingImages.push(stored.id);
-      if (!firstStreetViewImageId) firstStreetViewImageId = stored.id;
-    } catch (err: any) {
-      console.warn(`[pathway sweep] SV ${heading}° failed:`, err?.message);
-    }
-  }
-
+  // ─── Building: Places photos of the building ────────────────────────────
   if (geo?.placeId) {
     const refs = await placeDetailsPhotos(geo.placeId, apiKey, 15);
     let idx = 0;
@@ -644,9 +1040,8 @@ export async function sweepStage8ImagesForRun(args: {
           buffer: buf,
           fileName: `Place photo ${idx} — ${args.address}`,
           category: "Places",
-          // Google building photos are overwhelmingly interior. Tag them that
-          // way so Why Buy / Image Studio filters can favour exteriors
-          // (Street View) when an exterior is needed.
+          // Google building photos are overwhelmingly interior; tag as such
+          // so Why Buy / Image Studio filters can favour brochure exteriors.
           tags: ["Google Places", "Building", "Interior-likely", "pathway"],
           description: `Google Places photo ${idx} of ${args.address} (auto — pathway Stage 8).`,
           source: "places",
@@ -659,34 +1054,12 @@ export async function sweepStage8ImagesForRun(args: {
     }
   }
 
-  // ─── Tenants: Clearbit logos + Places photos of flagship stores ─────────
+  // ─── Tenants: Places photos of flagship stores ──────────────────────────
   const uniqueTenants = Array.from(new Set((args.tenantNames || []).map(t => t.trim()).filter(t => t && t.length > 1)));
   for (const tenant of uniqueTenants.slice(0, 6)) {
-    // Clearbit logo
-    try {
-      const logo = await clearbitLogoBuffer(tenant);
-      if (logo) {
-        const stored = await storeImageFromBuffer({
-          buffer: logo.buffer,
-          fileName: `${tenant} — Logo`,
-          category: "Brands",
-          tags: ["Logo", "Tenant", tenant, "pathway"],
-          description: `Clearbit logo for ${tenant} (${logo.domain}) — pathway Stage 8.`,
-          source: "clearbit",
-          propertyId: args.propertyId,
-          brandName: tenant,
-          mimeType: "image/png",
-          filenameHint: tenant,
-        });
-        tenantImages.push(stored.id);
-      }
-    } catch (err: any) {
-      console.warn(`[pathway sweep] Clearbit ${tenant} failed:`, err?.message);
-    }
-
-    // Places findplace → photos + shopfront Street View. Bias the search
-    // to the subject building so we resolve the correct branch (e.g. the
-    // Haymarket Pret, not a Pret 5 miles away).
+    // Places findplace → photos. Bias the search to the subject building so
+    // we resolve the correct branch (e.g. the Haymarket Pret, not a Pret 5
+    // miles away).
     try {
       const bias = geo ? { lat: geo.lat, lng: geo.lng, radiusM: 250 } : undefined;
       const place = await findPlaceByText(`${tenant}`, apiKey, bias)
@@ -713,64 +1086,14 @@ export async function sweepStage8ImagesForRun(args: {
           });
           tenantImages.push(stored.id);
         }
-        // Guaranteed shopfront exterior via Street View at the tenant's own
-        // coord. Pull two headings so one reads well even if facing away.
-        if (place.lat && place.lng) {
-          for (const heading of [0, 180]) {
-            const svBuf = await streetViewBuffer({ lat: place.lat, lng: place.lng, heading, apiKey });
-            if (!svBuf) continue;
-            try {
-              const stored = await storeImageFromBuffer({
-                buffer: svBuf,
-                fileName: `${tenant} — Shopfront ${heading}°`,
-                category: "Street Views",
-                tags: ["Street View", "Tenant", "Brand", "Exterior", "Shopfront", tenant, `brand:${tenant}`, "pathway"],
-                description: `Street View shopfront of ${place.name} (tenant: ${tenant}) at ${heading}° — pathway Stage 8.`,
-                source: "streetview",
-                propertyId: args.propertyId,
-                brandName: tenant,
-                filenameHint: `${tenant}-shopfront-${heading}`,
-              });
-              tenantImages.push(stored.id);
-            } catch {}
-          }
-        }
       }
     } catch (err: any) {
       console.warn(`[pathway sweep] Places ${tenant} failed:`, err?.message);
     }
   }
 
-  // ─── Area: street view ± offsets along the street + nearby places ───────
+  // ─── Area: nearby place photos ──────────────────────────────────────────
   if (geo) {
-    // 30m and 60m offsets in four cardinal directions
-    const M_IN_DEG_LAT = 1 / 111_000;
-    const M_IN_DEG_LNG = 1 / (111_000 * Math.cos((geo.lat * Math.PI) / 180));
-    const offsets: Array<{ dLat: number; dLng: number; heading: number; label: string }> = [
-      { dLat:  30 * M_IN_DEG_LAT, dLng: 0,                        heading: 180, label: "+30m N" },
-      { dLat: -30 * M_IN_DEG_LAT, dLng: 0,                        heading: 0,   label: "-30m S" },
-      { dLat: 0,                   dLng:  30 * M_IN_DEG_LNG,      heading: 270, label: "+30m E" },
-      { dLat: 0,                   dLng: -30 * M_IN_DEG_LNG,      heading: 90,  label: "-30m W" },
-    ];
-    for (const off of offsets) {
-      const buf = await streetViewBuffer({ lat: geo.lat + off.dLat, lng: geo.lng + off.dLng, heading: off.heading, apiKey });
-      if (!buf) continue;
-      try {
-        const stored = await storeImageFromBuffer({
-          buffer: buf,
-          fileName: `Area SV ${off.label} — ${args.address}`,
-          category: "Street Views",
-          tags: ["Street View", "Area", "Context", "pathway"],
-          description: `Street View ${off.label} from ${args.address} — pathway Stage 8.`,
-          source: "streetview",
-          propertyId: args.propertyId,
-          address: args.address,
-          filenameHint: `${args.address}-${off.label}`,
-        });
-        areaImages.push(stored.id);
-      } catch {}
-    }
-
     const neighbours = await nearbyPlaces(geo.lat, geo.lng, apiKey, 80, 6);
     for (const p of neighbours) {
       // skip the building's own place_id
@@ -818,7 +1141,7 @@ export async function sweepStage8ImagesForRun(args: {
                 mimeType: img.mimeType,
                 filenameHint: `${bro.name}-${img.filename}`,
               });
-              buildingImages.push(stored.id);
+              brochureBuildingImages.push(stored.id);
             } catch (err: any) {
               console.warn(`[pathway sweep] brochure store failed:`, err?.message);
             }
@@ -831,6 +1154,10 @@ export async function sweepStage8ImagesForRun(args: {
       console.warn("[pathway sweep] pdf-image-extract unavailable:", err?.message);
     }
   }
+
+  // Brochure exteriors lead, then Google Places — so the Building collection
+  // cover and ordering favour real on-asset photography.
+  buildingImages = [...brochureBuildingImages, ...buildingImages];
 
   const [buildingAdded, tenantAdded, areaAdded] = await Promise.all([
     addImagesToCollection(buildingId, buildingImages),
@@ -851,7 +1178,6 @@ export async function sweepStage8ImagesForRun(args: {
     tenantsCollectionId: tenantsId,
     areaCollectionId: areaId,
     imagesAdded: buildingAdded + tenantAdded + areaAdded,
-    streetViewImageId: firstStreetViewImageId,
     collections,
   };
 }
@@ -859,9 +1185,44 @@ export async function sweepStage8ImagesForRun(args: {
 export function registerImageStudioRoutes(app: Express) {
   ensureTable().catch(err => console.error("[image-studio] Table setup error:", err.message));
 
-  app.get("/api/image-studio", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  // List images — DOES NOT return thumbnail_data (a base64 column that runs
+  // 5-10KB per row and balloons the response into multi-MB territory once
+  // the library has more than a few hundred images). The client fetches
+  // thumbnails individually via /api/image-studio/:id/thumb, which the
+  // browser then HTTP-caches.
+  const LIST_COLS = {
+    id: imageStudioImages.id,
+    fileName: imageStudioImages.fileName,
+    category: imageStudioImages.category,
+    tags: imageStudioImages.tags,
+    description: imageStudioImages.description,
+    source: imageStudioImages.source,
+    propertyId: imageStudioImages.propertyId,
+    companyId: imageStudioImages.companyId,
+    area: imageStudioImages.area,
+    address: imageStudioImages.address,
+    brandName: imageStudioImages.brandName,
+    brandSector: imageStudioImages.brandSector,
+    propertyType: imageStudioImages.propertyType,
+    mimeType: imageStudioImages.mimeType,
+    fileSize: imageStudioImages.fileSize,
+    width: imageStudioImages.width,
+    height: imageStudioImages.height,
+    sharepointItemId: imageStudioImages.sharepointItemId,
+    sharepointDriveId: imageStudioImages.sharepointDriveId,
+    localPath: imageStudioImages.localPath,
+    uploadedBy: imageStudioImages.uploadedBy,
+    createdAt: imageStudioImages.createdAt,
+    hasThumbnail: sql<boolean>`(${imageStudioImages.thumbnailData} IS NOT NULL)`.as("has_thumbnail"),
+  };
+
+  // Browsing the library is open to any logged-in user — the Image Studio
+  // is a shared firm-wide asset pool, and non-admins (e.g. Luke on mobile)
+  // need to see thumbnails to use their own uploads + ChatBGP edits.
+  // Destructive + bulk ops below still require admin.
+  app.get("/api/image-studio", requireAuth, async (_req: Request, res: Response) => {
     try {
-      const images = await db.select().from(imageStudioImages).orderBy(desc(imageStudioImages.createdAt));
+      const images = await db.select(LIST_COLS).from(imageStudioImages).orderBy(desc(imageStudioImages.createdAt));
       res.json(images);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -871,10 +1232,15 @@ export function registerImageStudioRoutes(app: Express) {
   app.get("/api/image-studio/search", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const q = (req.query.q as string || "").trim();
-      if (!q) return res.json([]);
-      const pattern = `%${q}%`;
-      const images = await db.select().from(imageStudioImages)
-        .where(or(
+      const companyId = (req.query.companyId as string || "").trim();
+      const propertyId = (req.query.propertyId as string || "").trim();
+      // Need at least one of: free-text query, companyId, or propertyId.
+      // Without any filter we'd return the whole table.
+      if (!q && !companyId && !propertyId) return res.json([]);
+      const pattern = q ? `%${q}%` : null;
+      const conditions: any[] = [];
+      if (pattern) {
+        conditions.push(or(
           ilike(imageStudioImages.fileName, pattern),
           ilike(imageStudioImages.description, pattern),
           ilike(imageStudioImages.area, pattern),
@@ -884,7 +1250,12 @@ export function registerImageStudioRoutes(app: Express) {
           ilike(imageStudioImages.brandSector, pattern),
           ilike(imageStudioImages.propertyType, pattern),
           sql`${pattern} ILIKE ANY(${imageStudioImages.tags})`,
-        ))
+        ));
+      }
+      if (companyId) conditions.push(eq(imageStudioImages.companyId, companyId));
+      if (propertyId) conditions.push(eq(imageStudioImages.propertyId, propertyId));
+      const images = await db.select(LIST_COLS).from(imageStudioImages)
+        .where(conditions.length === 1 ? conditions[0] : and(...conditions))
         .orderBy(desc(imageStudioImages.createdAt));
       res.json(images);
     } catch (e: any) {
@@ -892,9 +1263,56 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.post("/api/image-studio/upload", requireAuth, requireAdmin, imageUpload.array("images", 20), async (req: Request, res: Response) => {
+  // Recent uploads with no property assigned. Used by the Pathway Why Buy
+  // "Re-link uploads" picker to fix the 95%-NULL problem on
+  // image_studio_images.property_id, which leaves the imagery manifest
+  // empty for the assigned property. Capped + ordered newest-first so
+  // a human can eyeball the picker without scrolling forever.
+  app.get("/api/image-studio/orphans", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(parseInt((req.query.limit as string) || "200"), 500);
+      const images = await db.select(LIST_COLS)
+        .from(imageStudioImages)
+        .where(sql`${imageStudioImages.propertyId} IS NULL`)
+        .orderBy(desc(imageStudioImages.createdAt))
+        .limit(limit);
+      res.json(images);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+
+  // thumbnail_data, decoded). Cached aggressively — the row is small but
+  // the trip to Postgres still adds up at scale, so let the browser cache
+  // it for a day.
+  app.get("/api/image-studio/:id/thumb", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const [row] = await db
+        .select({ thumbnailData: imageStudioImages.thumbnailData, mimeType: imageStudioImages.mimeType })
+        .from(imageStudioImages)
+        .where(eq(imageStudioImages.id, String(req.params.id)));
+      if (!row?.thumbnailData) return res.status(404).end();
+      // thumbnailData is stored as a full data URL ("data:image/jpeg;base64,…")
+      // by generateThumbnail(). Strip the prefix + pick up the real mime so
+      // the binary we send actually decodes in the browser.
+      const match = row.thumbnailData.match(/^data:([^;]+);base64,(.+)$/);
+      const base64 = match ? match[2] : row.thumbnailData;
+      const mime = match ? match[1] : "image/jpeg";
+      const buf = Buffer.from(base64, "base64");
+      res.setHeader("Content-Type", mime);
+      res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+      res.end(buf);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/image-studio/upload", requireAuth, uploadImagesMw, async (req: Request, res: Response) => {
+    const t0 = Date.now();
     try {
       const files = req.files as Express.Multer.File[];
+      console.log(`[image-studio/upload] start files=${files?.length || 0} body.tags=${req.body?.tags || ""} body.category=${req.body?.category || ""}`);
       if (!files || files.length === 0) return res.status(400).json({ error: "No files uploaded" });
 
       const userId = req.session?.userId || (req as any).tokenUserId;
@@ -906,58 +1324,143 @@ export function registerImageStudioRoutes(app: Express) {
       const propertyType = (req.body.propertyType as string) || null;
       const tagsRaw = req.body.tags as string || "";
       const tags = tagsRaw ? tagsRaw.split(",").map(t => t.trim()).filter(Boolean) : [];
+      // Optional: link uploaded files to a CRM property as imagery assets
+      // so they appear in the Pathway picker / Property Intelligence
+      // imagery tab without a separate Discover step.
+      const linkPropertyId = (req.body.propertyId as string) || null;
+      const linkKind = (req.body.kind as string) || "secondary_external";
 
       const results = [];
+      const failures: { filename: string; error: string }[] = [];
       for (const file of files) {
-        const ext = path.extname(file.originalname) || ".jpg";
-        const filename = `${crypto.randomUUID()}${ext}`;
-        const filePath = path.join(IMAGE_DIR, filename);
-        await persistImage(filePath, file.buffer, file.mimetype || "image/jpeg", file.originalname);
+        const original = file.originalname || "unnamed";
+        try {
+          console.log(`[image-studio/upload] file=${original} mime=${file.mimetype} bytes=${file.size}`);
+          // iPhone "High Efficiency" mode sends HEIC. Sharp can decode it
+          // if libheif is present (the Railway base image has it) but
+          // we normalise to JPEG up-front so the thumbnail + downstream
+          // AI edits all get a known-safe format.
+          let workingBuffer = file.buffer;
+          let workingMime = file.mimetype || "image/jpeg";
+          const isHeic = /heic|heif/i.test(workingMime) || /\.heic$|\.heif$/i.test(original);
+          if (isHeic) {
+            try {
+              // sharp's prebuilt binaries ship WITHOUT a HEIC/HEIF decoder
+              // (libheif codec licensing), so sharp(file.buffer) throws
+              // "Support for this compression format has not been built in"
+              // on every iPhone photo. Decode with the pure-JS WASM libheif
+              // (heic-convert) instead, then hand the JPEG to sharp as normal.
+              const heicConvert = (await import("heic-convert")).default;
+              const jpeg = await heicConvert({ buffer: file.buffer, format: "JPEG", quality: 0.92 });
+              workingBuffer = Buffer.from(jpeg);
+              workingMime = "image/jpeg";
+              console.log(`[image-studio/upload] file=${original} HEIC → JPEG (heic-convert) ok (${workingBuffer.length} bytes)`);
+            } catch (heicErr: any) {
+              throw new Error(`HEIC conversion failed (${heicErr?.message}). On iPhone, Settings > Camera > Formats > Most Compatible avoids this.`);
+            }
+          }
 
-        const { thumbnail, width, height } = await generateThumbnail(file.buffer);
+          const ext = workingMime === "image/jpeg" ? ".jpg" : (path.extname(original) || ".jpg");
+          const filename = `${crypto.randomUUID()}${ext}`;
+          const filePath = path.join(IMAGE_DIR, filename);
+          await persistImage(filePath, workingBuffer, workingMime, original);
 
-        const [inserted] = await db.insert(imageStudioImages).values({
-          fileName: file.originalname,
-          category,
-          tags,
-          description: null,
-          source: "upload",
-          area,
-          address,
-          brandName,
-          brandSector,
-          propertyType,
-          mimeType: file.mimetype,
-          fileSize: file.size,
-          width,
-          height,
-          thumbnailData: thumbnail,
-          localPath: filePath,
-          uploadedBy: userId,
-        }).returning();
+          const { thumbnail, width, height } = await generateThumbnail(workingBuffer);
 
-        results.push(inserted);
+          const [inserted] = await db.insert(imageStudioImages).values({
+            fileName: original,
+            category,
+            tags,
+            description: null,
+            source: "upload",
+            area,
+            address,
+            brandName,
+            brandSector,
+            propertyType,
+            mimeType: workingMime,
+            fileSize: workingBuffer.length,
+            width,
+            height,
+            thumbnailData: thumbnail,
+            localPath: filePath,
+            uploadedBy: userId,
+          }).returning();
+
+          // Link to a CRM property (imagery asset) when caller provided one.
+          if (linkPropertyId) {
+            try {
+              await db.insert(propertyImageryAssets).values({
+                propertyId: linkPropertyId,
+                kind: ALL_KINDS.includes(linkKind as any) ? linkKind : "secondary_external",
+                source: "manual_upload",
+                imageStudioId: inserted.id,
+                score: 0.6,
+                width,
+                height,
+                caption: original,
+                generatedBy: userId,
+              } as any);
+            } catch (linkErr: any) {
+              console.warn("[image-studio/upload] property_imagery_assets link failed:", linkErr?.message);
+            }
+          }
+
+          results.push(inserted);
+          console.log(`[image-studio/upload] file=${original} inserted id=${inserted.id}`);
+        } catch (fileErr: any) {
+          console.error(`[image-studio/upload] file=${original} FAILED: ${fileErr?.message}`, fileErr?.stack);
+          failures.push({ filename: original, error: fileErr?.message || "Unknown error" });
+        }
       }
 
-      res.json(results);
+      console.log(`[image-studio/upload] done in ${Date.now() - t0}ms ok=${results.length} failed=${failures.length}`);
+      // Even if some failed, return the successes — the client can show
+      // a partial-failure toast instead of losing the good rows.
+      if (results.length === 0 && failures.length > 0) {
+        return res.status(500).json({ error: failures[0].error, failures });
+      }
+      res.json(failures.length > 0 ? { results, failures } : results);
+    } catch (e: any) {
+      console.error(`[image-studio/upload] crashed in ${Date.now() - t0}ms:`, e?.message, e?.stack);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/image-studio/:id/full", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
+      if (!image) return res.status(404).json({ error: "Not found" });
+
+      const imgBuffer = await readPersistedImage(image.localPath);
+      if (imgBuffer) {
+        res.setHeader("Content-Type", image.mimeType || "image/jpeg");
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        return res.end(imgBuffer);
+      }
+
+      res.status(404).json({ error: "Image not found" });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
 
-  app.get("/api/image-studio/:id/full", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  // MUST be registered before /:id — Express matches in order and "bulk-categorize"
+  // would otherwise be captured as an :id parameter.
+  app.patch("/api/image-studio/bulk-categorize", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
-      if (!image) return res.status(404).json({ error: "Not found" });
-
-      if (image.localPath && fs.existsSync(image.localPath)) {
-        res.setHeader("Content-Type", image.mimeType);
-        res.setHeader("Cache-Control", "public, max-age=86400");
-        return res.sendFile(image.localPath);
+      const { ids, category } = req.body;
+      if (!Array.isArray(ids) || !ids.length || !category) {
+        return res.status(400).json({ error: "ids (array) and category (string) required" });
       }
-
-      res.status(404).json({ error: "File not found on disk" });
+      const placeholders = ids.map((_: string, i: number) => `$${i + 1}`).join(", ");
+      const r = await pool.query(
+        `UPDATE image_studio_images SET category = $${ids.length + 1} WHERE id IN (${placeholders})`,
+        [...ids, category]
+      );
+      res.json({ success: true, updated: r.rowCount ?? 0 });
     } catch (e: any) {
+      console.error("[image-studio bulk-categorize] failed:", e?.code, e?.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -978,7 +1481,7 @@ export function registerImageStudioRoutes(app: Express) {
 
       const [updated] = await db.update(imageStudioImages)
         .set(updates)
-        .where(eq(imageStudioImages.id, req.params.id))
+        .where(eq(imageStudioImages.id, req.params.id as string))
         .returning();
 
       if (!updated) return res.status(404).json({ error: "Not found" });
@@ -995,22 +1498,27 @@ export function registerImageStudioRoutes(app: Express) {
         return res.status(400).json({ error: "ids (array) required" });
       }
       const images = await db.select().from(imageStudioImages).where(inArray(imageStudioImages.id, ids));
+
+      // Delete local files (synchronous fs calls — fast)
       for (const image of images) {
         if (image.localPath && fs.existsSync(image.localPath)) {
           try { fs.unlinkSync(image.localPath); } catch {}
         }
-        if (image.sharepointDriveId && image.sharepointItemId) {
-          await pool.query(
-            "INSERT INTO deleted_sharepoint_images (sharepoint_drive_id, sharepoint_item_id) VALUES ($1, $2) ON CONFLICT (sharepoint_drive_id, sharepoint_item_id) DO NOTHING",
-            [image.sharepointDriveId, image.sharepointItemId]
-          );
-        }
       }
-      // Clean up collection references before deleting images
-      await pool.query(
-        `DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`,
-        [ids]
-      );
+
+      // Batch-insert SharePoint tombstones in one query instead of N round-trips
+      const spPairs = images.filter(img => img.sharepointDriveId && img.sharepointItemId);
+      if (spPairs.length > 0) {
+        const values = spPairs.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(", ");
+        const params = spPairs.flatMap(img => [img.sharepointDriveId, img.sharepointItemId]);
+        await pool.query(
+          `INSERT INTO deleted_sharepoint_images (sharepoint_drive_id, sharepoint_item_id) VALUES ${values} ON CONFLICT (sharepoint_drive_id, sharepoint_item_id) DO NOTHING`,
+          params
+        );
+      }
+
+      // Clean up collection references and delete records — both already batched
+      await pool.query(`DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`, [ids]);
       await db.delete(imageStudioImages).where(inArray(imageStudioImages.id, ids));
       res.json({ success: true, deleted: images.length });
     } catch (e: any) {
@@ -1018,18 +1526,339 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/image-studio/bulk-categorize", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  // Dedupe brand logos — keep oldest per brand_name (case-insensitive),
+  // delete the rest. Run this manually after a logo.dev import that left
+  // duplicate pairs in the library.
+  app.post("/api/image-studio/dedupe-brand-logos", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const { ids, category } = req.body;
-      if (!Array.isArray(ids) || !ids.length || !category) {
-        return res.status(400).json({ error: "ids (array) and category (string) required" });
+      const { rows: dupeIds } = await pool.query<{ id: string; local_path: string | null; sharepoint_drive_id: string | null; sharepoint_item_id: string | null }>(`
+        SELECT id, local_path, sharepoint_drive_id, sharepoint_item_id
+        FROM image_studio_images
+        WHERE brand_name IS NOT NULL AND brand_name <> ''
+          AND id NOT IN (
+            SELECT DISTINCT ON (lower(trim(brand_name))) id
+            FROM image_studio_images
+            WHERE brand_name IS NOT NULL AND brand_name <> ''
+            ORDER BY lower(trim(brand_name)), created_at ASC
+          )
+      `);
+
+      if (!dupeIds.length) return res.json({ success: true, deleted: 0, kept: 0 });
+
+      for (const row of dupeIds) {
+        if (row.local_path && fs.existsSync(row.local_path)) {
+          try { fs.unlinkSync(row.local_path); } catch {}
+        }
       }
-      const placeholders = ids.map((_: string, i: number) => `$${i + 1}`).join(", ");
-      await pool.query(
-        `UPDATE image_studio_images SET category = $${ids.length + 1} WHERE id IN (${placeholders})`,
-        [...ids, category]
+
+      const spPairs = dupeIds.filter(r => r.sharepoint_drive_id && r.sharepoint_item_id);
+      if (spPairs.length) {
+        const values = spPairs.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(", ");
+        const params = spPairs.flatMap(r => [r.sharepoint_drive_id, r.sharepoint_item_id]);
+        await pool.query(
+          `INSERT INTO deleted_sharepoint_images (sharepoint_drive_id, sharepoint_item_id) VALUES ${values} ON CONFLICT (sharepoint_drive_id, sharepoint_item_id) DO NOTHING`,
+          params
+        );
+      }
+
+      const ids = dupeIds.map(r => r.id);
+      await pool.query(`DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`, [ids]);
+      await db.delete(imageStudioImages).where(inArray(imageStudioImages.id, ids));
+
+      const { rows: remaining } = await pool.query<{ count: string }>(`SELECT COUNT(*) FROM image_studio_images WHERE brand_name IS NOT NULL AND brand_name <> ''`);
+      res.json({ success: true, deleted: dupeIds.length, kept: parseInt(remaining[0].count, 10) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Public-ish brand logo lookup — used by Brand Explorer thumbnails.
+  // Returns the most recent Image Studio logo for the given brand name.
+  // 404 → frontend falls back to Clearbit. Auth required, but not admin.
+  app.get("/api/brand-logo/:name", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const name = String(req.params.name || "").trim();
+      if (!name) return res.status(400).json({ error: "name required" });
+      const domain = String(req.query.domain || "").trim().toLowerCase().replace(/^www\./, "");
+
+      // Build a set of name variants to try matching against. Brand names in
+      // crm_companies often have suffixes ("Ltd", "Limited", "Group", "plc")
+      // that aren't in the logo library filenames. We strip those and also
+      // try the first significant word as a loose fallback.
+      const stripped = name.replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp)\b\.?/gi, "").replace(/\s+/g, " ").trim();
+      const firstWord = name.split(/\s+/)[0] || name;
+      const variants = Array.from(new Set([name, stripped, firstWord].filter(Boolean).map(s => s.toLowerCase().trim())));
+
+      // Domain stem: "pretamanger.com" → "pretamanger"
+      const domainStem = domain ? domain.split(".")[0] : "";
+
+      const { rows } = await pool.query<{ id: string; local_path: string | null; mime_type: string; thumbnail_data: string | null; brand_name: string | null; file_name: string }>(
+        `SELECT id, local_path, mime_type, thumbnail_data, brand_name, file_name
+         FROM image_studio_images
+         WHERE lower(trim(brand_name)) = ANY($1::text[])
+            OR (category = 'Brands' AND lower(trim(file_name)) = ANY($1::text[]))
+            OR (category = 'Brands' AND lower(file_name) LIKE lower($2) || '%')
+            OR (category = 'Brands' AND $3 <> '' AND lower(file_name) LIKE '%' || $3 || '%')
+            OR (category = 'Brands' AND $3 <> '' AND lower(trim(brand_name)) LIKE '%' || $3 || '%')
+         ORDER BY
+           CASE WHEN lower(trim(brand_name)) = lower(trim($4)) THEN 0
+                WHEN lower(trim(file_name))  = lower(trim($4)) THEN 1
+                WHEN $3 <> '' AND lower(file_name) LIKE $3 || '%' THEN 2
+                ELSE 3 END,
+           created_at DESC
+         LIMIT 1`,
+        [variants, name, domainStem, name]
       );
-      res.json({ success: true, updated: ids.length });
+
+      const row = rows[0];
+      if (!row) {
+        // No local hit. Redirect to logo.dev (or Google favicons) so the <img>
+        // renders something rather than 404. Clearbit's logo API was killed by
+        // HubSpot March 2025. If no domain was supplied, slugify the name and
+        // guess `<slug>.com` — logo.dev returns a placeholder for unknown
+        // domains so the image element always loads.
+        let effectiveDomain = domain;
+        if (!effectiveDomain) {
+          const slug = name
+            .toLowerCase()
+            .replace(/['']/g, "")
+            .replace(/&/g, "and")
+            .replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp|co|company|the)\b/gi, "")
+            .replace(/[^a-z0-9]+/g, "")
+            .trim();
+          if (slug.length >= 3) effectiveDomain = `${slug}.com`;
+        }
+        if (effectiveDomain) {
+          const token = process.env.LOGO_DEV_TOKEN;
+          const target = token
+            ? `https://img.logo.dev/${encodeURIComponent(effectiveDomain)}?token=${token}&size=256&format=png`
+            : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(effectiveDomain)}&sz=128`;
+          res.setHeader("Cache-Control", "public, max-age=3600");
+          return res.redirect(302, target);
+        }
+        // Short TTL on the no-logo 404 so we don't get stuck serving stale
+        // misses for a day after a fix lands.
+        res.setHeader("Cache-Control", "public, max-age=60");
+        return res.status(404).json({ error: "no logo" });
+      }
+
+      const imgBuffer = await readPersistedImage(row.local_path);
+      if (imgBuffer) {
+        res.setHeader("Content-Type", row.mime_type || "image/jpeg");
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        return res.end(imgBuffer);
+      }
+
+      if (row.thumbnail_data) {
+        const b64Match = row.thumbnail_data.match(/^data:([^;]+);base64,(.+)$/);
+        if (b64Match) {
+          const buf = Buffer.from(b64Match[2], "base64");
+          res.setHeader("Content-Type", b64Match[1]);
+          res.setHeader("Cache-Control", "public, max-age=86400");
+          return res.end(buf);
+        }
+      }
+
+      // Row exists but the blob is missing/unreadable. Don't 404 — fall through
+      // to the same logo.dev redirect path used when there's no row at all.
+      let effectiveDomain = domain;
+      if (!effectiveDomain) {
+        const slug = name
+          .toLowerCase()
+          .replace(/['']/g, "")
+          .replace(/&/g, "and")
+          .replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp|co|company|the)\b/gi, "")
+          .replace(/[^a-z0-9]+/g, "")
+          .trim();
+        if (slug.length >= 3) effectiveDomain = `${slug}.com`;
+      }
+      if (effectiveDomain) {
+        const token = process.env.LOGO_DEV_TOKEN;
+        const target = token
+          ? `https://img.logo.dev/${encodeURIComponent(effectiveDomain)}?token=${token}&size=256&format=png`
+          : `https://www.google.com/s2/favicons?domain=${encodeURIComponent(effectiveDomain)}&sz=128`;
+        res.setHeader("Cache-Control", "public, max-age=3600");
+        return res.redirect(302, target);
+      }
+      res.setHeader("Cache-Control", "public, max-age=60");
+      return res.status(404).json({ error: "no readable blob" });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // One-shot stats — client calls this once per session to decide whether
+  // /api/brand-logo/:name is worth hitting at all.
+  //
+  // Threshold: hasLogos = true once there's at least 1 brand logo. Earlier
+  // we had a 50-row threshold to prevent spam when the library was empty;
+  // that's no longer needed because (a) 404 responses are now cached by the
+  // browser for 24h, (b) /api/brand-logo/* is exempt from the global rate
+  // limiter, and (c) access logs are suppressed. So as soon as a single
+  // logo lands, surface it.
+  app.get("/api/brand-logo-stats", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const { rows } = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+           FROM image_studio_images
+          WHERE category = 'Brands'
+            AND brand_name IS NOT NULL
+            AND brand_name <> ''`
+      );
+      const count = Number(rows[0]?.count || 0);
+      // No browser cache — used to be 5 min, but that locked in a stale
+      // 'hasLogos: false' for users who loaded the page before the bulk
+      // logo import ran. UI now always tries the local URL anyway, so
+      // this endpoint is mostly informational.
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ count, hasLogos: count >= 1 });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Diagnostic — for a specific brand row, report which storage paths are
+  // populated (disk file? file_storage backup? thumbnailData?). Helps
+  // pinpoint why an existing row 404s even though the SQL match found it.
+  app.get("/api/brand-logo-row-debug", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const name = String(req.query.name || "").trim();
+      if (!name) return res.status(400).json({ error: "name required" });
+
+      const { rows } = await pool.query<{ id: string; local_path: string | null; mime_type: string; thumbnail_data: string | null; file_size: number | null; brand_name: string | null; file_name: string }>(
+        `SELECT id, local_path, mime_type, thumbnail_data, file_size, brand_name, file_name
+         FROM image_studio_images
+         WHERE category = 'Brands' AND lower(trim(brand_name)) = lower(trim($1))
+         LIMIT 1`,
+        [name]
+      );
+      const row = rows[0];
+      if (!row) return res.json({ matched: false });
+
+      const onDisk = !!row.local_path && fs.existsSync(row.local_path);
+      let inFileStorage: any = null;
+      if (row.local_path) {
+        try {
+          const f = await getFile(storageKeyForImage(row.local_path));
+          inFileStorage = f ? { size: f.data.length, mimeType: f.contentType } : null;
+        } catch (e: any) {
+          inFileStorage = { error: e?.message };
+        }
+      }
+      const thumbStartsWithData = !!(row.thumbnail_data && row.thumbnail_data.startsWith("data:"));
+      const thumbLength = row.thumbnail_data ? row.thumbnail_data.length : 0;
+      const thumbHead = row.thumbnail_data ? row.thumbnail_data.slice(0, 50) : null;
+
+      res.json({
+        matched: true,
+        row: {
+          id: row.id,
+          brand_name: row.brand_name,
+          file_name: row.file_name,
+          mime_type: row.mime_type,
+          file_size: row.file_size,
+          local_path: row.local_path,
+        },
+        on_disk: onDisk,
+        in_file_storage: inFileStorage,
+        thumbnail: {
+          present: !!row.thumbnail_data,
+          starts_with_data_url: thumbStartsWithData,
+          length: thumbLength,
+          head: thumbHead,
+        },
+        verdict: onDisk
+          ? "ok-disk"
+          : inFileStorage
+            ? "ok-file-storage-fallback"
+            : thumbStartsWithData
+              ? "ok-thumbnail-fallback"
+              : "NO BYTES — row exists but no readable image. Re-import needed.",
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Diagnostic — shows what's in the brand library and whether a given name
+  // matches anything. Hit /api/brand-logo-debug?name=Pret to test from the
+  // browser. Auth required, but anyone can use.
+  app.get("/api/brand-logo-debug", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const name = String(req.query.name || "").trim();
+      const domain = String(req.query.domain || "").trim().toLowerCase().replace(/^www\./, "");
+
+      const { rows: counts } = await pool.query<{ total: string; with_brand_name: string; brands_category: string }>(
+        `SELECT
+           COUNT(*)::text AS total,
+           COUNT(*) FILTER (WHERE brand_name IS NOT NULL AND brand_name <> '')::text AS with_brand_name,
+           COUNT(*) FILTER (WHERE category = 'Brands')::text AS brands_category
+         FROM image_studio_images`
+      );
+
+      const { rows: samples } = await pool.query<{ brand_name: string | null; file_name: string; category: string | null; created_at: string }>(
+        `SELECT brand_name, file_name, category, created_at
+         FROM image_studio_images
+         WHERE category = 'Brands' OR (brand_name IS NOT NULL AND brand_name <> '')
+         ORDER BY created_at DESC
+         LIMIT 10`
+      );
+
+      let matchInfo: any = null;
+      if (name) {
+        const stripped = name.replace(/\b(ltd|limited|group|holdings|plc|inc|llc|llp)\b\.?/gi, "").replace(/\s+/g, " ").trim();
+        const firstWord = name.split(/\s+/)[0] || name;
+        const variants = Array.from(new Set([name, stripped, firstWord].filter(Boolean).map(s => s.toLowerCase().trim())));
+        const domainStem = domain ? domain.split(".")[0] : "";
+
+        const { rows: matches } = await pool.query<{ id: string; brand_name: string | null; file_name: string; category: string | null }>(
+          `SELECT id, brand_name, file_name, category
+           FROM image_studio_images
+           WHERE lower(trim(brand_name)) = ANY($1::text[])
+              OR (category = 'Brands' AND lower(trim(file_name)) = ANY($1::text[]))
+              OR (category = 'Brands' AND lower(file_name) LIKE lower($2) || '%')
+              OR (category = 'Brands' AND $3 <> '' AND lower(file_name) LIKE '%' || $3 || '%')
+              OR (category = 'Brands' AND $3 <> '' AND lower(trim(brand_name)) LIKE '%' || $3 || '%')
+           LIMIT 5`,
+          [variants, name, domainStem]
+        );
+        matchInfo = { variants, domainStem, matches };
+      }
+
+      res.json({
+        counts: counts[0],
+        samples,
+        query: { name, domain },
+        match: matchInfo,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Soft delete — tag with "trashed" so the mobile gallery can hide
+  // it but the bytes survive long enough to undo. Hard delete is the
+  // existing route below.
+  app.post("/api/image-studio/:id/trash", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const [image] = await db.select({ tags: imageStudioImages.tags })
+        .from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
+      if (!image) return res.status(404).json({ error: "Not found" });
+      const tags = [...new Set([...(image.tags || []), "trashed"])];
+      await db.update(imageStudioImages).set({ tags } as any).where(eq(imageStudioImages.id, req.params.id as string));
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+  app.post("/api/image-studio/:id/restore", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const [image] = await db.select({ tags: imageStudioImages.tags })
+        .from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
+      if (!image) return res.status(404).json({ error: "Not found" });
+      const tags = (image.tags || []).filter((t) => t !== "trashed");
+      await db.update(imageStudioImages).set({ tags } as any).where(eq(imageStudioImages.id, req.params.id as string));
+      res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1037,7 +1866,7 @@ export function registerImageStudioRoutes(app: Express) {
 
   app.delete("/api/image-studio/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
+      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
       if (!image) return res.status(404).json({ error: "Not found" });
 
       if (image.localPath && fs.existsSync(image.localPath)) {
@@ -1056,7 +1885,7 @@ export function registerImageStudioRoutes(app: Express) {
         "DELETE FROM image_studio_collection_images WHERE image_id = $1",
         [req.params.id]
       );
-      await db.delete(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
+      await db.delete(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1132,38 +1961,72 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.post("/api/image-studio/ai-edit", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/ai-edit", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { imageId, editPrompt } = req.body;
+      const { imageId, editPrompt, preferProvider } = req.body;
       const trimmedEdit = (editPrompt || "").trim();
       if (!imageId || !trimmedEdit) return res.status(400).json({ error: "imageId and editPrompt required" });
       if (trimmedEdit.length > 1000) return res.status(400).json({ error: "Edit prompt too long (max 1000 characters)" });
+      // Provider selection: honour an explicit preferProvider, otherwise
+      // default to Gemini (Nano Banana Pro) — now the strongest option for
+      // both atmospheric tweaks and placemaking CGI work (compositional
+      // adds, signage text, multi-element placement). OpenAI gpt-image-1 is
+      // the fallback.
+      const preferred = (typeof preferProvider === "string" && preferProvider
+        ? preferProvider
+        : "gemini"
+      ).toLowerCase();
 
       const userId = req.session?.userId || (req as any).tokenUserId;
 
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, imageId));
       if (!image) return res.status(404).json({ error: "Image not found" });
-      if (image.uploadedBy && image.uploadedBy !== userId) return res.status(403).json({ error: "Not authorised to edit this image" });
+      // Team-shared imagery (property captures, etc.) — anyone signed in can iterate.
       const sourceBuffer = await readPersistedImage(image.localPath);
       if (!sourceBuffer) return res.status(400).json({ error: "Image file not found. The original image was lost on a deploy — re-capture / re-upload the source image and try again." });
+
+      // Push the pre-edit version onto the undo stack so each amendment can
+      // be reverted one at a time (not jumped straight back to the original).
+      const undoBuffer = (image.mimeType === "image/png") ? sourceBuffer : await sharp(sourceBuffer).png().toBuffer();
+      pushUndoSnapshot(imageId, undoBuffer);
+
       const base64 = sourceBuffer.toString("base64");
       const inputMime = image.mimeType || "image/jpeg";
 
       const fullPrompt = `Edit this specific photograph: ${trimmedEdit}. PRESERVE the exact building, composition, and architectural details — only apply the requested edit. Professional property photography standard.`;
 
-      // Gemini first — real image-to-image editing with the source pixels
-      // as inline input. DALL-E 3 is a text-to-image model so it regenerated
-      // an entirely new building from the prompt ('mad different buildings'
-      // bug). Local Sharp enhancement is a deterministic fallback when the
-      // user's edit is generic enough ('enhance', 'brighten', etc).
+      // Two real image-to-image providers — Gemini (pixel-faithful, cheap)
+      // and OpenAI gpt-image-1 (stronger at compositional/instruction-led
+      // adds like "add festoon lighting and outdoor tables"). Caller's
+      // preferProvider picks which goes first; the other is the fallback.
+      // DALL-E 3 is deliberately not in this chain — it's text-to-image
+      // and regenerated entirely new buildings ('mad different buildings'
+      // bug). Local Sharp is a last-resort polish for generic edits.
       let resultBuffer: Buffer | null = null;
       let provider = "unknown";
 
-      console.log("[image-studio] AI edit: trying Gemini...");
-      resultBuffer = await editWithGemini(fullPrompt, base64, inputMime);
-      if (resultBuffer) provider = "gemini";
+      const tryGemini = async () => {
+        console.log("[image-studio] AI edit: trying Gemini...");
+        const r = await editWithGemini(fullPrompt, base64, inputMime);
+        if (r) provider = "gemini";
+        return r;
+      };
+      const tryOpenAI = async () => {
+        console.log("[image-studio] AI edit: trying OpenAI gpt-image-1...");
+        const r = await editWithOpenAI(fullPrompt, sourceBuffer, inputMime);
+        if (r) provider = "openai";
+        return r;
+      };
 
-      // If Gemini is unavailable AND the user's request is a generic visual
+      if (preferred === "openai") {
+        resultBuffer = await tryOpenAI();
+        if (!resultBuffer) resultBuffer = await tryGemini();
+      } else {
+        resultBuffer = await tryGemini();
+        if (!resultBuffer) resultBuffer = await tryOpenAI();
+      }
+
+      // If neither real editor returned anything AND the user's request is a generic visual
       // polish (enhance/brighten/sharpen/cleanup), try the local Sharp path
       // so they at least get a cropped + colour-graded result — never a
       // different building. For other requests, report failure honestly.
@@ -1188,26 +2051,189 @@ export function registerImageStudioRoutes(app: Express) {
 
       const { thumbnail, width, height } = await generateThumbnail(resultBuffer);
 
-      const [inserted] = await db.insert(imageStudioImages).values({
-        fileName: `Edit: ${trimmedEdit.slice(0, 50)} (from ${image.fileName})`,
-        category: image.category || "Generated",
-        tags: [...(image.tags || []), "AI Edited", provider].filter((v: any, i: any, a: any) => a.indexOf(v) === i),
-        description: `AI edit of "${image.fileName}": ${trimmedEdit}`,
-        source: "ai-edited",
-        area: image.area,
+      // Update the existing record in place so the user can keep amending the same image
+      const oldPath = image.localPath;
+      const [updated] = await db.update(imageStudioImages).set({
         mimeType: "image/png",
         fileSize: resultBuffer.length,
         width,
         height,
         thumbnailData: thumbnail,
         localPath: filePath,
-        uploadedBy: userId,
-        propertyId: image.propertyId,
-      }).returning();
+        tags: [...new Set([...(image.tags || []), "AI Edited", provider])],
+        source: "ai-edited",
+      }).where(eq(imageStudioImages.id, imageId)).returning();
 
-      res.json({ ...inserted, provider });
+      // Clean up old file (best-effort — a different path means the old bytes are orphaned)
+      if (oldPath && oldPath !== filePath) {
+        try { fs.unlinkSync(oldPath); } catch {}
+      }
+
+      // The edit is now saved. If the request already timed out (504) while a
+      // slow provider finished, the response is gone — skip it (writing would
+      // throw ERR_HTTP_HEADERS_SENT). The client picks up the saved edit on
+      // its next refresh.
+      if (res.headersSent) return;
+      res.json({ ...updated, provider });
     } catch (e: any) {
       console.error("[image-studio] AI edit error:", e.message);
+      if (res.headersSent) return;
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Fire-and-forget version of /ai-edit — kicks off the AI work in the
+  // background so the mobile client doesn't need to keep the sheet open
+  // (iOS aggressively kills network requests when the app backgrounds).
+  // The image is tagged "ai-pending" while running; the gallery polls
+  // and removes the chip when the tag drops or "AI Edited" appears.
+  app.post("/api/image-studio/ai-edit-async", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { imageId, editPrompt, preferProvider } = req.body;
+      const trimmedEdit = (editPrompt || "").trim();
+      if (!imageId || !trimmedEdit) return res.status(400).json({ error: "imageId and editPrompt required" });
+      if (trimmedEdit.length > 1000) return res.status(400).json({ error: "Edit prompt too long (max 1000 characters)" });
+
+      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, imageId));
+      if (!image) return res.status(404).json({ error: "Image not found" });
+      const existingTags = image.tags || [];
+      if (existingTags.includes("ai-pending")) {
+        return res.json({ ok: true, imageId, status: "already_running" });
+      }
+      // Mark as pending so the gallery shows a Processing chip. The
+      // background worker clears the tag whether it succeeds or fails.
+      await db.update(imageStudioImages)
+        .set({ tags: [...new Set([...existingTags, "ai-pending"])] } as any)
+        .where(eq(imageStudioImages.id, imageId));
+
+      // Fire-and-forget — don't await. Any thrown error is logged + the
+      // pending tag is removed so the gallery doesn't get stuck.
+      runAiEditInBackground(imageId, trimmedEdit, preferProvider).catch((e) =>
+        console.error(`[image-studio] background edit ${imageId} threw: ${e?.message}`),
+      );
+
+      res.status(202).json({ ok: true, imageId, status: "queued" });
+    } catch (e: any) {
+      console.error("[image-studio] ai-edit-async error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Unified attach — link an image_studio_images row to a property,
+  // brand/company, deal, or pathway run. Mobile gallery calls this so
+  // a phone-uploaded photo can be wired into the rest of the app without
+  // a separate flow per target. Returns { ok, where } describing what
+  // was written so the client can show the right toast.
+  app.post("/api/image-studio/:id/attach", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      const targetType = String(req.body?.targetType || "").toLowerCase();
+      const targetId = String(req.body?.targetId || "").trim();
+      const caption = req.body?.caption ? String(req.body.caption).slice(0, 500) : null;
+      if (!id || !targetId) return res.status(400).json({ error: "id and targetId required" });
+
+      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
+      if (!image) return res.status(404).json({ error: "Image not found" });
+
+      if (targetType === "property") {
+        await db.insert(propertyImageryAssets).values({
+          propertyId: targetId,
+          kind: "secondary_external",
+          source: "image_studio",
+          imageStudioId: id,
+          width: image.width,
+          height: image.height,
+          caption,
+        });
+        return res.json({ ok: true, where: "property", targetId });
+      }
+
+      if (targetType === "brand" || targetType === "company") {
+        await db.update(imageStudioImages)
+          .set({ companyId: targetId } as any)
+          .where(eq(imageStudioImages.id, id));
+        return res.json({ ok: true, where: "brand", targetId });
+      }
+
+      if (targetType === "pathway" || targetType === "pathway_run") {
+        // Resolve the pathway's property — attach there so the image
+        // shows up in the pathway's imagery tab via the existing join.
+        const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, targetId)).limit(1);
+        if (!run) return res.status(404).json({ error: "Pathway run not found" });
+        if (!run.propertyId) return res.status(400).json({ error: "Pathway has no property yet — pick the property first, then attach the image to that" });
+        await db.insert(propertyImageryAssets).values({
+          propertyId: run.propertyId,
+          kind: "secondary_external",
+          source: "image_studio",
+          imageStudioId: id,
+          width: image.width,
+          height: image.height,
+          caption: caption || `Attached from pathway ${run.address}`,
+        });
+        return res.json({ ok: true, where: "pathway", targetId, propertyId: run.propertyId });
+      }
+
+      return res.status(400).json({ error: `Unknown targetType "${targetType}" — try property, brand, or pathway` });
+    } catch (e: any) {
+      console.error("[image-studio/attach] failed:", e?.message);
+      res.status(500).json({ error: e?.message || "Attach failed" });
+    }
+  });
+
+  app.post("/api/image-studio/:id/revert", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id as string;
+      // Pop the most-recent snapshot off the stack (newest is last). Fall back
+      // to the legacy single-snapshot file for images edited before this change.
+      const stack = undoStackPaths(id);
+      let undoFile = stack.length ? stack[stack.length - 1] : null;
+      if (!undoFile) {
+        const legacy = path.join(IMAGE_DIR, `undo-${id}.png`);
+        if (fs.existsSync(legacy)) undoFile = legacy;
+      }
+      if (!undoFile) return res.status(404).json({ error: "No undo snapshot available for this image" });
+
+      const undoBuffer = fs.readFileSync(undoFile);
+      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
+      if (!image) return res.status(404).json({ error: "Image not found" });
+
+      const filename = `reverted-${crypto.randomUUID()}.png`;
+      const filePath = path.join(IMAGE_DIR, filename);
+      await persistImage(filePath, undoBuffer, "image/png");
+
+      const { thumbnail, width, height } = await generateThumbnail(undoBuffer);
+      const oldPath = image.localPath;
+
+      // Drop just this snapshot, then see whether earlier amendments remain.
+      // Only when the stack is empty have we walked all the way back to the
+      // original — that's when we clear the AI flags so the Revert button
+      // hides. Otherwise the image is still an edited version (one step back)
+      // and stays revertible.
+      try { fs.unlinkSync(undoFile); } catch {}
+      const remaining = undoStackPaths(id).length;
+      const backToOriginal = remaining === 0;
+
+      const cleanedTags = backToOriginal
+        ? (image.tags || []).filter(t => !["AI Edited", "gemini", "local", "openai"].includes(t))
+        : (image.tags || []);
+      const [updated] = await db.update(imageStudioImages).set({
+        mimeType: "image/png",
+        fileSize: undoBuffer.length,
+        width,
+        height,
+        thumbnailData: thumbnail,
+        localPath: filePath,
+        tags: cleanedTags,
+        source: backToOriginal
+          ? (image.source === "ai-edited" ? "uploaded" : (image.source || "uploaded"))
+          : "ai-edited",
+      }).where(eq(imageStudioImages.id, id)).returning();
+
+      if (oldPath && oldPath !== filePath) { try { fs.unlinkSync(oldPath); } catch {} }
+
+      res.json({ ...updated, undoLevelsRemaining: remaining });
+    } catch (e: any) {
+      console.error("[image-studio] revert error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -1261,6 +2287,221 @@ export function registerImageStudioRoutes(app: Express) {
       res.json(updated);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Batch AI-tag the uncategorised pile — processes a chunk per call (vision is
+  // slow), returns how many remain so the UI can loop. Shrinks the rubbish into
+  // real categories instead of deleting blind.
+  // AI-tag uncategorised — background job. The synchronous version 504'd:
+  // even a batch of 8-12 vision calls (~2-5s each) could blow Railway's 45s
+  // gateway ceiling. POST now kicks off ONE run over the whole backlog and
+  // returns immediately; the client polls /status and can /cancel. Job
+  // state is in-memory — fine on Railway's single instance, and a stale
+  // flag (30 min) lets a crashed run be restarted.
+  const aiTagJob = {
+    running: false,
+    cancelled: false,
+    processed: 0,
+    failed: 0,
+    total: 0,
+    startedAt: 0,
+  };
+  const aiTagJobStale = () => aiTagJob.running && Date.now() - aiTagJob.startedAt > 30 * 60_000;
+
+  async function runAiTagJob(ids: string[]): Promise<void> {
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const sharpMod = (await import("sharp")).default;
+    const anthropic = new Anthropic();
+
+    // Anthropic vision rejects images >10 MB after base64 encoding. We
+    // downscale anything large to a 1568px long edge (Claude's recommended
+    // resolution cap) and re-encode as JPEG q85, which keeps quality high
+    // for tagging while staying well under the limit. Tiny / already-small
+    // files pass through untouched to avoid double-encoding artefacts.
+    const MAX_BYTES_RAW = 4 * 1024 * 1024;
+    const MAX_EDGE = 1568;
+    const prepareForVision = async (buf: Buffer, mime: string): Promise<{ buf: Buffer; mime: string }> => {
+      try {
+        const meta = await sharpMod(buf).metadata();
+        const longest = Math.max(meta.width || 0, meta.height || 0);
+        if (buf.length <= MAX_BYTES_RAW && longest <= MAX_EDGE) return { buf, mime };
+        const out = await sharpMod(buf).rotate().resize({ width: MAX_EDGE, height: MAX_EDGE, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer();
+        return { buf: out, mime: "image/jpeg" };
+      } catch {
+        return { buf, mime };
+      }
+    };
+
+    for (const id of ids) {
+      if (aiTagJob.cancelled) break;
+      try {
+        const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
+        if (!image) continue;
+        const buf0 = await readPersistedImage(image.localPath);
+        if (!buf0) continue;
+        const { buf, mime } = await prepareForVision(buf0, image.mimeType || "image/jpeg");
+        const response = await anthropic.messages.create({
+          model: "claude-sonnet-4-6", max_tokens: 500,
+          messages: [{ role: "user", content: [
+            { type: "image", source: { type: "base64", media_type: mime as any, data: buf.toString("base64") } },
+            { type: "text", text: `Analyze this image for a London commercial property agency (BGP). Return JSON only:\n{"description": "one sentence", "tags": ["tag1","tag2"], "category": "one of: Properties, Areas, Marketing, Events, Headshots, Floor Plans, Interiors, Exteriors, Street Views, Generated, Other", "area": "London area or null"}` },
+          ] }],
+        });
+        logAiUsage({ provider: "anthropic", model: "claude-sonnet-4-6", feature: "image-studio-tag", usage: (response as any)?.usage });
+        const text = response.content[0].type === "text" ? response.content[0].text : "";
+        const m = text.match(/\{[\s\S]*\}/);
+        if (!m) { aiTagJob.failed++; continue; }
+        const ai = JSON.parse(m[0]);
+        await db.update(imageStudioImages).set({
+          description: ai.description || image.description,
+          tags: ai.tags || image.tags,
+          category: ai.category || image.category,
+          area: ai.area || image.area,
+        }).where(eq(imageStudioImages.id, id));
+        aiTagJob.processed++;
+      } catch (e: any) {
+        aiTagJob.failed++;
+        console.warn("[ai-tag-uncategorised] failed for", id, e?.message);
+      }
+    }
+  }
+
+  app.post("/api/image-studio/ai-tag-uncategorised", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      if (aiTagJob.running && !aiTagJobStale()) {
+        return res.json({ started: false, alreadyRunning: true, processed: aiTagJob.processed, total: aiTagJob.total });
+      }
+      const idRows = await pool.query<{ id: string }>(
+        `SELECT id FROM image_studio_images
+         WHERE (category IS NULL OR category = 'Uncategorised') AND local_path IS NOT NULL
+         ORDER BY created_at ASC`);
+      if (idRows.rows.length === 0) return res.json({ started: false, total: 0, remaining: 0 });
+
+      aiTagJob.running = true;
+      aiTagJob.cancelled = false;
+      aiTagJob.processed = 0;
+      aiTagJob.failed = 0;
+      aiTagJob.total = idRows.rows.length;
+      aiTagJob.startedAt = Date.now();
+
+      runAiTagJob(idRows.rows.map(r => r.id))
+        .catch((e: any) => console.error("[ai-tag-uncategorised] job crashed:", e?.message))
+        .finally(() => { aiTagJob.running = false; });
+
+      res.json({ started: true, total: aiTagJob.total });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  app.get("/api/image-studio/ai-tag-uncategorised/status", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const remRes = await pool.query<{ n: number }>(`SELECT COUNT(*)::int AS n FROM image_studio_images WHERE category IS NULL OR category = 'Uncategorised'`);
+      res.json({
+        running: aiTagJob.running,
+        processed: aiTagJob.processed,
+        failed: aiTagJob.failed,
+        total: aiTagJob.total,
+        remaining: remRes.rows[0]?.n ?? 0,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  app.post("/api/image-studio/ai-tag-uncategorised/cancel", requireAuth, requireAdmin, (_req: Request, res: Response) => {
+    aiTagJob.cancelled = true;
+    res.json({ ok: true });
+  });
+
+  // Dedupe: find exact-duplicate images (same byte hash) and delete all but the
+  // oldest of each. Only hashes within (file_size,width,height) collision groups
+  // so it doesn't read every file.
+  app.post("/api/image-studio/dedupe", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const crypto = await import("crypto");
+      const groups = await pool.query<{ ids: string[] }>(
+        `SELECT array_agg(id ORDER BY created_at ASC) AS ids
+         FROM image_studio_images
+         WHERE file_size IS NOT NULL AND file_size > 0
+         GROUP BY file_size, width, height HAVING COUNT(*) > 1`);
+      const toDelete: string[] = [];
+      for (const g of groups.rows) {
+        const byHash = new Map<string, string[]>();
+        for (const id of g.ids) {
+          const [img] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
+          const buf = img?.localPath ? await readPersistedImage(img.localPath) : null;
+          if (!buf) continue;
+          const h = crypto.createHash("sha256").update(buf).digest("hex");
+          const arr = byHash.get(h) || []; arr.push(id); byHash.set(h, arr);
+        }
+        for (const ids of byHash.values()) {
+          if (ids.length > 1) toDelete.push(...ids.slice(1)); // keep the oldest
+        }
+      }
+      if (toDelete.length > 0) {
+        await pool.query(`DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`, [toDelete]);
+        await pool.query(`DELETE FROM property_imagery_assets WHERE image_studio_id = ANY($1::text[])`, [toDelete]).catch(() => {});
+        await pool.query(`DELETE FROM image_studio_images WHERE id = ANY($1::text[])`, [toDelete]);
+      }
+      res.json({ success: true, duplicatesRemoved: toDelete.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Perceptual dedupe: catches NEAR-duplicates (resized / re-saved versions of
+  // the same shot) that exact-hash dedupe misses. Computes an 8x8 average-hash
+  // per image, groups by Hamming distance, keeps the highest-resolution of each
+  // group and deletes the rest. Heavy (reads each file) so capped + one-shot.
+  app.post("/api/image-studio/dedupe-perceptual", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const apply = req.body?.apply === true;
+      const threshold = Math.min(Math.max(Number(req.body?.threshold) || 6, 1), 16);
+      // Cap of 4000 was hitting Railway's 45s gateway timeout (each image is
+      // a disk read + sharp 8x8 hash). 1200 reliably finishes in ~30s on
+      // production. Client paginates by created_at if more scans needed.
+      const cap = Math.min(Math.max(Number(req.body?.cap) || 1200, 1), 2500);
+      const rows = await pool.query<{ id: string; local_path: string | null; width: number | null; height: number | null; file_size: number | null }>(
+        `SELECT id, local_path, width, height, file_size FROM image_studio_images
+         WHERE local_path IS NOT NULL ORDER BY created_at ASC LIMIT $1`, [cap]);
+      const sharpMod = (await import("sharp")).default;
+      const items: Array<{ id: string; hash: bigint; px: number }> = [];
+      for (const r of rows.rows) {
+        try {
+          const buf = await readPersistedImage(r.local_path);
+          if (!buf) continue;
+          const raw = await sharpMod(buf).resize(8, 8, { fit: "fill" }).grayscale().raw().toBuffer();
+          let avg = 0; for (let i = 0; i < raw.length; i++) avg += raw[i]; avg /= raw.length;
+          let hash = 0n; for (let i = 0; i < raw.length; i++) hash = (hash << 1n) | (raw[i] >= avg ? 1n : 0n);
+          items.push({ id: r.id, hash, px: (r.width || 0) * (r.height || 0) || (r.file_size || 0) });
+        } catch { /* skip unreadable */ }
+      }
+      const popcount = (x: bigint) => { let c = 0; while (x > 0n) { c += Number(x & 1n); x >>= 1n; } return c; };
+      const used = new Set<number>();
+      let groups = 0; const toDelete: string[] = [];
+      for (let i = 0; i < items.length; i++) {
+        if (used.has(i)) continue;
+        const group = [i];
+        for (let j = i + 1; j < items.length; j++) {
+          if (used.has(j)) continue;
+          if (popcount(items[i].hash ^ items[j].hash) <= threshold) { group.push(j); used.add(j); }
+        }
+        if (group.length > 1) {
+          used.add(i); groups++;
+          group.sort((a, b) => items[b].px - items[a].px); // keep highest-res
+          for (let k = 1; k < group.length; k++) toDelete.push(items[group[k]].id);
+        }
+      }
+      if (apply && toDelete.length > 0) {
+        await pool.query(`DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`, [toDelete]);
+        await pool.query(`DELETE FROM property_imagery_assets WHERE image_studio_id = ANY($1::text[])`, [toDelete]).catch(() => {});
+        await pool.query(`DELETE FROM image_studio_images WHERE id = ANY($1::text[])`, [toDelete]);
+      }
+      if (!res.headersSent) res.json({ success: true, scanned: items.length, groups, duplicates: toDelete.length, duplicatesRemoved: apply ? toDelete.length : 0 });
+    } catch (e: any) {
+      if (!res.headersSent) res.status(500).json({ error: e?.message });
     }
   });
 
@@ -1382,9 +2623,68 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
+  // ─── AI image finder ─────────────────────────────────────────────────────
+  // Uses Perplexity to surface real exterior / interior photos of a specific
+  // property from UK commercial-property sources (Knight Frank / Savills /
+  // JLL / Estates Gazette / Property Week / CoStar marketing pages).
+  // Returns ranked image URLs the user can preview + import via the existing
+  // /import-stock flow. Replaces the rubbish auto-Wikipedia search for
+  // 'real' (non-generic) building imagery.
+  app.post("/api/image-studio/ai-find-images", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { address, postcode, tenantName } = req.body as { address?: string; postcode?: string; tenantName?: string };
+      if (!address && !postcode) return res.status(400).json({ error: "address or postcode required" });
+      const { askPerplexity, isPerplexityConfigured } = await import("./perplexity");
+      if (!isPerplexityConfigured()) {
+        return res.status(503).json({ error: "Perplexity not configured (set PERPLEXITY_API_KEY on Railway)" });
+      }
+      const target = [address, postcode].filter(Boolean).join(", ");
+      const tenantHint = tenantName ? ` Current/recent tenant: ${tenantName}.` : "";
+      // Tight, JSON-only prompt — we want URLs we can fetch, not prose.
+      const prompt = `Find exterior building photos for this UK commercial property:
+${target}.${tenantHint}
+
+Look at: knightfrank.co.uk, savills.com, jll.co.uk, cbre.co.uk, costar.com, propertyweek.com, egi.co.uk, realla.co.uk, allsop.co.uk, and the tenant brand's own website.
+
+Return STRICT JSON — no commentary, no markdown. Schema:
+{"images":[{"url":"<direct image URL ending in .jpg/.png/.webp>","sourceUrl":"<page where it came from>","sourceName":"<e.g. Knight Frank>","description":"<one-line caption>","quality":"high|medium|low"}]}
+
+Only include images you've actually confirmed exist on those pages. Skip stock libraries (Unsplash/Pexels/Wikipedia) — we want real listing photos of the specific building. Max 8 results.`;
+
+      const r = await askPerplexity(prompt, { maxTokens: 1500, temperature: 0.0 });
+
+      // Parse the JSON out of the response — Perplexity sometimes wraps it
+      // in a ```json block despite instructions, so we strip if needed.
+      let parsed: any = null;
+      const raw = r.answer.trim();
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try { parsed = JSON.parse(jsonMatch[0]); } catch { /* fall through */ }
+      }
+
+      const images = Array.isArray(parsed?.images) ? parsed.images : [];
+      // Sanity-check: every image must be a direct HTTPS URL to a known image extension.
+      const safe = images
+        .filter((i: any) => typeof i?.url === "string" && /^https:\/\//.test(i.url) && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(i.url))
+        .slice(0, 8);
+
+      res.json({
+        target,
+        images: safe,
+        citations: r.citations,
+        rawAnswer: safe.length === 0 ? r.answer : undefined, // surface for debugging when extraction fails
+      });
+    } catch (err: any) {
+      console.error("[ai-find-images] error:", err?.message);
+      res.status(500).json({ error: err?.message || "AI image search failed" });
+    }
+  });
+
   app.post("/api/image-studio/import-stock", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    const t0 = Date.now();
     try {
       const { imageUrl, fileName, photographer, category, area, tags } = req.body;
+      console.log(`[image-studio/import-stock] start url=${imageUrl} fileName=${fileName || ""} category=${category || ""}`);
       if (!imageUrl) return res.status(400).json({ error: "imageUrl required" });
 
       const ALLOWED_STOCK_HOSTS = [
@@ -1408,9 +2708,13 @@ export function registerImageStudioRoutes(app: Express) {
       const userId = req.session?.userId || (req as any).tokenUserId;
 
       const resp = await fetch(imageUrl);
-      if (!resp.ok) return res.status(400).json({ error: "Failed to download image" });
+      if (!resp.ok) {
+        console.warn(`[image-studio/import-stock] fetch failed status=${resp.status} url=${imageUrl}`);
+        return res.status(400).json({ error: `Failed to download image (HTTP ${resp.status})` });
+      }
 
       const buffer = Buffer.from(await resp.arrayBuffer());
+      console.log(`[image-studio/import-stock] fetched bytes=${buffer.length} url=${imageUrl}`);
       const ext = ".jpg";
       const filename = `stock-${crypto.randomUUID()}${ext}`;
       const filePath = path.join(IMAGE_DIR, filename);
@@ -1420,7 +2724,13 @@ export function registerImageStudioRoutes(app: Express) {
 
       const [inserted] = await db.insert(imageStudioImages).values({
         fileName: fileName || "Stock Image",
-        category: category || "Stock",
+        // Stock imports are treated as prunable junk by the cleanup scripts
+        // (image-studio-categorise-and-prune.sql keys off source='stock' +
+        // an uncategorised category). The UI has no 'Stock' category, so an
+        // un-curated import stays in the 'Uncategorised' bucket (carrying the
+        // 'Stock' tag + source='stock' so it's filterable/prunable) unless the
+        // caller explicitly files it under a real category.
+        category: category || "Uncategorised",
         tags: [...(tags || []), "Stock", photographer ? `Photo: ${photographer}` : ""].filter(Boolean),
         description: `Stock photo by ${photographer || "Unknown"}`,
         source: "stock",
@@ -1434,8 +2744,10 @@ export function registerImageStudioRoutes(app: Express) {
         uploadedBy: userId,
       }).returning();
 
+      console.log(`[image-studio/import-stock] done in ${Date.now() - t0}ms id=${inserted.id}`);
       res.json(inserted);
     } catch (e: any) {
+      console.error(`[image-studio/import-stock] crashed in ${Date.now() - t0}ms:`, e?.message, e?.stack);
       res.status(500).json({ error: e.message });
     }
   });
@@ -1454,7 +2766,7 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.get("/api/image-studio/streetview-proxy", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.get("/api/image-studio/streetview-proxy", requireAuth, async (req: Request, res: Response) => {
     try {
       const { location, heading, pitch, fov, size } = req.query;
       if (!location) return res.status(400).json({ error: "location required" });
@@ -1483,9 +2795,9 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.post("/api/image-studio/capture-streetview", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/capture-streetview", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { location, heading, pitch, fov, category, area, tags } = req.body;
+      const { location, heading, pitch, fov, category, area, tags, propertyId, kind } = req.body;
       if (!location) return res.status(400).json({ error: "location required" });
 
       const apiKey = process.env.GOOGLE_API_KEY;
@@ -1529,6 +2841,49 @@ export function registerImageStudioRoutes(app: Express) {
         uploadedBy: userId,
       }).returning();
 
+      // If a property was specified, link this capture to it as a
+      // property_imagery_asset so it shows up in the Pathway picker
+      // (and Property Intelligence imagery tab) without anyone having
+      // to manually re-link. Default kind is secondary_external —
+      // user can re-tag as hero from the picker.
+      if (propertyId && typeof propertyId === "string") {
+        try {
+          await db.insert(propertyImageryAssets).values({
+            propertyId,
+            kind: (kind && ALL_KINDS.includes(kind)) ? kind : "secondary_external",
+            source: "street_view",
+            imageStudioId: inserted.id,
+            score: 0.7,
+            width,
+            height,
+            caption: `Street View · heading ${heading || 0}°`,
+            generatedBy: userId,
+          } as any);
+        } catch (linkErr: any) {
+          console.warn("[capture-streetview] property_imagery_assets link failed:", linkErr?.message);
+        }
+
+        // Also save into entity_images so the Images panel on the property
+        // sidebar picks it up. file_blobs gets a copy of the bytes; the same
+        // file_id is referenced from uploaded_files + entity_images.
+        try {
+          const fileMeta = await pool.query(
+            `INSERT INTO uploaded_files (owner_user_id, uploaded_by_user_id, kind, name, mime_type, size_bytes, visibility)
+             VALUES ($1, $1, 'entity_image', $2, 'image/jpeg', $3, 'team') RETURNING id`,
+            [userId, filename, buffer.length]
+          );
+          const fileId = fileMeta.rows[0].id;
+          await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [fileId, buffer]);
+          await pool.query(
+            `INSERT INTO entity_images (entity_type, entity_id, file_id, image_studio_id, kind, title, created_by_user_id)
+             VALUES ('property', $1, $2, $3, 'street_view', $4, $5)`,
+            [propertyId, fileId, inserted.id, `Street View · ${heading || 0}° / ${pitch || 0}° / fov ${fov || 90}`, userId]
+          );
+        } catch (entityErr: any) {
+          console.warn("[capture-streetview] entity_images link failed:", entityErr?.message);
+        }
+      }
+
       res.json(inserted);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1536,9 +2891,9 @@ export function registerImageStudioRoutes(app: Express) {
   });
 
   // Combined capture + AI enhance endpoint — one-click professional property photography
-  app.post("/api/image-studio/capture-and-enhance", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/capture-and-enhance", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { location, heading, pitch, fov, category, area, tags } = req.body;
+      const { location, heading, pitch, fov, category, area, tags, propertyId } = req.body;
       if (!location) return res.status(400).json({ error: "location required" });
 
       const apiKey = process.env.GOOGLE_API_KEY;
@@ -1648,10 +3003,47 @@ export function registerImageStudioRoutes(app: Express) {
 
         enhancedRecord = { ...inserted, provider: enhanceProvider };
         console.log(`[capture-enhance] Enhanced image saved: ${inserted.id}`);
+
+        // Link the enhanced image to the property if propertyId was passed —
+        // shows up in property sidebar Images panel + Pathway imagery picker.
+        if (propertyId && typeof propertyId === "string") {
+          try {
+            await db.insert(propertyImageryAssets).values({
+              propertyId,
+              kind: "secondary_external",
+              source: "street_view",
+              imageStudioId: inserted.id,
+              score: 0.8,
+              width: enhThumb.width,
+              height: enhThumb.height,
+              caption: `Street View · enhanced · ${heading || 0}°`,
+              generatedBy: userId,
+            } as any);
+          } catch (linkErr: any) {
+            console.warn("[capture-enhance] property_imagery_assets link failed:", linkErr?.message);
+          }
+          try {
+            const fileMeta = await pool.query(
+              `INSERT INTO uploaded_files (owner_user_id, uploaded_by_user_id, kind, name, mime_type, size_bytes, visibility)
+               VALUES ($1, $1, 'entity_image', $2, $3, $4, 'team') RETURNING id`,
+              [userId, enhFilename, enhExt === ".png" ? "image/png" : "image/jpeg", enhancedBuffer.length]
+            );
+            const fileId = fileMeta.rows[0].id;
+            await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [fileId, enhancedBuffer]);
+            await pool.query(
+              `INSERT INTO entity_images (entity_type, entity_id, file_id, image_studio_id, kind, title, created_by_user_id)
+               VALUES ('property', $1, $2, $3, 'street_view', $4, $5)`,
+              [propertyId, fileId, inserted.id, `Street View · enhanced · ${heading || 0}°`, userId]
+            );
+          } catch (entityErr: any) {
+            console.warn("[capture-enhance] entity_images link failed:", entityErr?.message);
+          }
+        }
       } else {
         console.warn(`[capture-enhance] AI enhancement failed for ${location}, returning raw only`);
       }
 
+      if (res.headersSent) return;
       res.json({
         raw: rawRecord,
         enhanced: enhancedRecord,
@@ -1661,6 +3053,7 @@ export function registerImageStudioRoutes(app: Express) {
       });
     } catch (e: any) {
       console.error("[capture-enhance] Error:", e.message);
+      if (res.headersSent) return;
       res.status(500).json({ error: e.message });
     }
   });
@@ -1717,7 +3110,7 @@ export function registerImageStudioRoutes(app: Express) {
   });
 
   // Bulk assign property endpoint
-  app.post("/api/image-studio/bulk-assign-property", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/bulk-assign-property", requireAuth, async (req: Request, res: Response) => {
     try {
       const { ids, propertyId, address } = req.body;
       if (!Array.isArray(ids) || !ids.length || !propertyId) {
@@ -1728,13 +3121,117 @@ export function registerImageStudioRoutes(app: Express) {
       await db.update(imageStudioImages)
         .set(updates)
         .where(inArray(imageStudioImages.id, ids));
+
+      // Sync to property_imagery_assets + entity_images so the property
+      // sidebar Images panel + Pathway imagery picker pick the images up
+      // automatically. Idempotent per (image_studio_id, property_id).
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      for (const imgId of ids) {
+        try {
+          const [img] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, imgId));
+          if (!img) continue;
+
+          // property_imagery_assets (skip if one already exists for this image+property)
+          const existingAsset = await pool.query(
+            "SELECT id FROM property_imagery_assets WHERE property_id = $1 AND image_studio_id = $2 LIMIT 1",
+            [propertyId, imgId]
+          );
+          if (existingAsset.rows.length === 0) {
+            await pool.query(
+              `INSERT INTO property_imagery_assets (property_id, kind, source, image_studio_id, caption, generated_by)
+               VALUES ($1, 'secondary_external', $2, $3, $4, $5)`,
+              [propertyId, img.source || "uploaded", imgId, img.fileName || null, userId]
+            );
+          }
+
+          // entity_images (skip if already linked)
+          const existingEntity = await pool.query(
+            "SELECT id FROM entity_images WHERE entity_type = 'property' AND entity_id = $1 AND image_studio_id = $2 LIMIT 1",
+            [propertyId, imgId]
+          );
+          if (existingEntity.rows.length === 0 && img.localPath) {
+            // Read bytes from disk so the sidebar thumbnail renders without
+            // a separate Image Studio request.
+            try {
+              const buf = await readPersistedImage(img.localPath);
+              if (buf) {
+                const fileMeta = await pool.query(
+                  `INSERT INTO uploaded_files (owner_user_id, uploaded_by_user_id, kind, name, mime_type, size_bytes, visibility)
+                   VALUES ($1, $1, 'entity_image', $2, $3, $4, 'team') RETURNING id`,
+                  [userId, img.fileName, img.mimeType || "image/jpeg", buf.length]
+                );
+                const fileId = fileMeta.rows[0].id;
+                await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [fileId, buf]);
+                await pool.query(
+                  `INSERT INTO entity_images (entity_type, entity_id, file_id, image_studio_id, kind, title, created_by_user_id)
+                   VALUES ('property', $1, $2, $3, $4, $5, $6)`,
+                  [propertyId, fileId, imgId, img.source === "streetview" ? "street_view" : "photo", img.fileName, userId]
+                );
+              }
+            } catch (blobErr: any) {
+              console.warn(`[bulk-assign-property] entity_images sync for ${imgId} failed:`, blobErr?.message);
+            }
+          }
+        } catch (linkErr: any) {
+          console.warn(`[bulk-assign-property] link failed for ${imgId}:`, linkErr?.message);
+        }
+      }
+
+      // Auto-file the assigned images into the property's umbrella folder.
+      try {
+        const collectionId = await ensurePropertyCollection({ propertyId, userId });
+        if (collectionId) {
+          await pool.query(
+            `INSERT INTO image_studio_collection_images (collection_id, image_id)
+             SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING`,
+            [collectionId, ids],
+          );
+        }
+      } catch (colErr: any) {
+        console.warn("[bulk-assign-property] property-collection link failed:", colErr?.message);
+      }
+
       res.json({ success: true, updated: ids.length });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
 
+  // Backfill: create/refresh a "Property · <name>" folder for every property
+  // that has images, and link all their images. The "do the whole thing" button.
+  app.post("/api/image-studio/collections/rebuild-properties", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      const result = await backfillAllPropertyCollections(userId);
+      res.json({ success: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Collections CRUD
+  // IDs of images that sit in a hand-made folder (mirrors the client's
+  // isUserFolder filter: no kind, no CRM link, no auto-folder name prefix).
+  // The mobile gallery uses this to show only *unfiled* photos by default.
+  app.get("/api/image-studio/filed-image-ids", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const result = await pool.query(`
+        SELECT DISTINCT ci.image_id
+          FROM image_studio_collection_images ci
+          JOIN image_studio_collections c ON c.id = ci.collection_id
+         WHERE c.kind IS NULL
+           AND c.property_id IS NULL
+           AND c.company_id IS NULL
+           AND c.name NOT LIKE 'Pathway · %'
+           AND c.name NOT LIKE 'Brand · %'
+           AND c.name NOT LIKE 'Property · %'
+      `);
+      res.json({ imageIds: result.rows.map((r) => r.image_id) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/image-studio/collections", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const { name, description } = req.body;
@@ -1775,11 +3272,18 @@ export function registerImageStudioRoutes(app: Express) {
       const [collection] = await db.select().from(imageStudioCollections).where(eq(imageStudioCollections.id, collectionId));
       if (!collection) return res.status(404).json({ error: "Collection not found" });
 
+      // Drop thumbnail_data (large base64) — client falls back to /thumb endpoint.
       const result = await pool.query(`
-        SELECT i.* FROM image_studio_images i
-        JOIN image_studio_collection_images ci ON ci.image_id = i.id
-        WHERE ci.collection_id = $1
-        ORDER BY ci.added_at DESC
+        SELECT i.id, i.file_name, i.category, i.tags, i.description, i.source,
+               i.property_id, i.area, i.address, i.brand_name, i.brand_sector,
+               i.property_type, i.mime_type, i.file_size, i.width, i.height,
+               i.sharepoint_item_id, i.sharepoint_drive_id, i.local_path,
+               i.uploaded_by, i.created_at,
+               (i.thumbnail_data IS NOT NULL) AS has_thumbnail
+          FROM image_studio_images i
+          JOIN image_studio_collection_images ci ON ci.image_id = i.id
+         WHERE ci.collection_id = $1
+         ORDER BY ci.added_at DESC
       `, [collectionId]);
 
       res.json({ ...collection, images: result.rows });
@@ -2148,7 +3652,7 @@ async function browseForImages(
   }
 }
 
-async function runImageSync(opts: { forceReimport?: boolean } = {}) {
+export async function runImageSync(opts: { forceReimport?: boolean } = {}) {
   if (imageSyncRunning) return;
   imageSyncRunning = true;
   imageSyncProgress = "Starting...";

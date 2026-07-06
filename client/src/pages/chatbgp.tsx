@@ -1566,7 +1566,7 @@ function ThreadInfoPanel({
       <div className="px-4 pt-4 pb-3 border-b shrink-0">
         <div className="flex items-center justify-between mb-3">
           <button
-            onClick={() => onNavigate(`/properties?id=${propertyId}`)}
+            onClick={() => onNavigate(`/properties/${propertyId}`)}
             className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors"
             data-testid="button-view-property-board"
           >
@@ -2100,8 +2100,7 @@ export default function ChatBGP() {
       for (const t of allThreads) {
         if (
           t.title?.toLowerCase().includes(q) ||
-          t.linkedName?.toLowerCase().includes(q) ||
-          t.lastMessage?.content?.toLowerCase().includes(q)
+          t.linkedName?.toLowerCase().includes(q)
         ) {
           matched.push(t);
         }
@@ -2283,7 +2282,7 @@ export default function ChatBGP() {
       const attemptSend = async (attempt: number): Promise<any> => {
         const controller = new AbortController();
         abortControllerRef.current = controller;
-        const timeoutId = setTimeout(() => controller.abort(), 300000);
+        const timeoutId = setTimeout(() => controller.abort(), 600000);  // 10 min — long Why Buy / Pathway turns hit 4-5 min routinely
         let streamedText = "";
         try {
           const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -2365,13 +2364,20 @@ export default function ChatBGP() {
       };
       return attemptSend(1);
     },
-    onSuccess: async (data: { reply: string; action?: any }) => {
+    onSuccess: async (data: { reply: string; action?: any; savedToThread?: boolean }) => {
       setProgressLabel("");
       setStreamingContent("");
       setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
       const threadId = activeThreadIdRef.current;
       if (threadId) {
-        await saveMessageMutation.mutateAsync({ threadId, role: "assistant", content: data.reply });
+        // Server already wrote the assistant reply via sendResult ->
+        // storage.createChatMessage and tells us so with savedToThread.
+        // Don't double-save here — otherwise the same reply ends up on
+        // the thread twice and shows up duplicated whenever the thread
+        // gets reloaded (or any consumer refetches /chat/threads/:id).
+        if (!data.savedToThread) {
+          await saveMessageMutation.mutateAsync({ threadId, role: "assistant", content: data.reply });
+        }
         apiRequest("POST", `/api/chat/threads/${threadId}/auto-title`, {})
           .then(() => queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] }))
           .catch(() => {});
@@ -2426,6 +2432,17 @@ export default function ChatBGP() {
       loadThread(initialThreadId);
     }
   }, [status?.connected, initialThreadId]);
+
+  // Safety net: if we land here with an active thread already in context
+  // (e.g. expanded from the dock, or restored after a reload) but no
+  // messages loaded yet, pull them from the server so the conversation
+  // doesn't appear blank. Only fires when there's nothing to lose.
+  useEffect(() => {
+    if (!initialThreadId && activeThreadId && status?.connected && messagesRef.current.length === 0) {
+      loadThread(activeThreadId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status?.connected]);
 
   const isNearBottom = useCallback(() => {
     if (!scrollRef.current) return true;
@@ -2522,7 +2539,18 @@ export default function ChatBGP() {
           content: m.content,
           userId: m.userId,
         }));
-        setMessages(loaded);
+        // Defensive dedup — older threads have consecutive identical
+        // assistant replies from the double-save bug (server + client
+        // both wrote the same reply). Collapse them so old threads
+        // render cleanly. New replies don't hit this path because the
+        // double-save was fixed at source.
+        const deduped: LocalMessage[] = [];
+        for (const m of loaded) {
+          const last = deduped[deduped.length - 1];
+          if (last && last.role === m.role && last.content === m.content) continue;
+          deduped.push(m);
+        }
+        setMessages(deduped);
       }
     } catch {
       setMessages([]);
@@ -2548,7 +2576,10 @@ export default function ChatBGP() {
     const headers: Record<string, string> = {};
     if (token) headers["Authorization"] = `Bearer ${token}`;
     const res = await fetch("/api/chat/upload", { method: "POST", body: formData, credentials: "include", headers });
-    if (!res.ok) throw new Error("Upload failed");
+    if (!res.ok) {
+      const detail = await res.json().catch(() => null);
+      throw new Error(detail?.message || "Upload failed");
+    }
     const data = await res.json();
     return data.files || data;
   };
@@ -2661,8 +2692,8 @@ export default function ChatBGP() {
       try {
         setUploading(true);
         uploadedAttachments = await uploadFiles(attachedFiles);
-      } catch {
-        toast({ title: "Upload failed", description: "Could not upload files. Please try again.", variant: "destructive" });
+      } catch (err: any) {
+        toast({ title: "Upload failed", description: err?.message || "Could not upload files. Please try again.", variant: "destructive" });
         setUploading(false);
         return;
       }
@@ -2824,6 +2855,17 @@ export default function ChatBGP() {
     const clipData = e.clipboardData;
     if (!clipData) return;
 
+    // Prefer text. macOS Word / Pages / Google Docs / styled web pages
+    // put BOTH text/plain AND an image preview on the clipboard when
+    // you copy formatted text. Without this guard, pasted text lands
+    // as an image attachment. If meaningful plain text is present, let
+    // the default browser paste insert it into the textarea and skip
+    // image extraction entirely. Same fix as chat-panel.tsx (9109144).
+    const plainText = clipData.getData("text/plain");
+    if (plainText && plainText.trim().length > 0) {
+      return;
+    }
+
     const imageFiles = extractImagesFromClipboardEvent(clipData);
 
     if (imageFiles.length > 0) {
@@ -2911,6 +2953,12 @@ export default function ChatBGP() {
       if (pasteHandledRef.current) return;
       const clipData = e.clipboardData;
       if (!clipData) return;
+      // Same text-preference rule as handlePaste — the document-level
+      // listener also has to bail out when text is present, or pasting
+      // Word/Docs text outside the textarea still gets hijacked into
+      // an image attachment.
+      const plainText = clipData.getData("text/plain");
+      if (plainText && plainText.trim().length > 0) return;
       const imageFiles = extractImagesFromClipboardEvent(clipData);
       if (imageFiles.length > 0) {
         e.preventDefault();
@@ -3284,7 +3332,7 @@ export default function ChatBGP() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => navigate(`/properties?id=${activeProjectView.id}`)} data-testid="menu-edit-property">
+                  <DropdownMenuItem onClick={() => navigate(`/properties/${activeProjectView.id}`)} data-testid="menu-edit-property">
                     <Pencil className="w-4 h-4 mr-2" />
                     Edit Property
                   </DropdownMenuItem>
@@ -3901,6 +3949,10 @@ export default function ChatBGP() {
                   placeholder="Ask ChatBGP..."
                   className="flex-1 resize-none min-h-[44px] max-h-[200px] rounded-2xl bg-muted/50 border-0 px-4 py-3 text-[16px] focus-visible:ring-1 transition-colors"
                   rows={1}
+                  spellCheck
+                  autoCorrect="on"
+                  autoCapitalize="sentences"
+                  lang="en-GB"
                   data-testid="input-chat-message"
                 />
                 {sendMutation.isPending ? (

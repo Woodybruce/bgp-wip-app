@@ -1,5 +1,6 @@
 import { useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { useState, useRef, useEffect } from "react";
 import bgpLogoWhite from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTheme, COLOR_SCHEMES } from "@/components/theme-provider";
 import {
@@ -10,6 +11,7 @@ import {
   BarChart3,
   Newspaper,
   Users,
+  Handshake,
   X,
 
   FileText,
@@ -26,8 +28,11 @@ import {
   Puzzle,
   Sparkles,
   Landmark,
+  Layers,
   UserPlus,
   ChevronsUpDown,
+  ChevronDown,
+  ChevronRight,
   Check,
   MapPin,
   Receipt,
@@ -42,6 +47,7 @@ import {
   GraduationCap,
   Store,
   Globe,
+  Target,
 } from "lucide-react";
 import {
   Sidebar,
@@ -55,6 +61,7 @@ import {
   SidebarHeader,
   SidebarFooter,
   SidebarSeparator,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import {
   DropdownMenu,
@@ -72,26 +79,31 @@ import type { TeamName } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
 import type { User } from "@shared/schema";
 import { useRecentItems, type RecentItem } from "@/hooks/use-recent-items";
-import { History } from "lucide-react";
+import { History, ClipboardCheck } from "lucide-react";
 
 const coreNavBase = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
-  { title: "Properties", url: "/properties", icon: Building2 },
+  // Properties is reachable as a tab inside Deals (alongside Letting
+  // Tracker / Investment / WIP Report), so the standalone sidebar entry
+  // was dropped — it duplicated the Deals view.
   { title: "Deals", url: "/deals", icon: BarChart3 },
-  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
   { title: "Requirements", url: "/requirements", icon: FileText },
+  // Work-in-progress modules (AML, Tenant Rep, hunters, Landlord Intel,
+  // Leasing Schedule, Lease Advisory, London Restaurants) moved to the
+  // "Unfinished" group below so the everyday Core nav stays clean.
   { title: "Brand Intelligence", url: "/brands", icon: Store },
-  { title: "People Hub", url: "/contacts", icon: Users },
-  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
+  { title: "CRM", url: "/contacts", icon: Handshake },
+  { title: "People & HR", url: "/hr", icon: Users },
+  { title: "My Card", url: "/my-expenses", icon: CreditCard },
   { title: "Comps", url: "/comps", icon: Scale },
-  { title: "Lease Events", url: "/lease-events", icon: Calendar },
 ];
 
 const aiNav = [
   { title: "Chat BGP", url: "/chatbgp", icon: Sparkles },
-  { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
-  { title: "Document Studio", url: "/templates", icon: FileTextIcon },
+  // Shown to all staff. Admins get the full /image-studio power page; the
+  // render swaps non-admins (e.g. CGI partners like Luke) to /m/images, which
+  // works on auth alone — so they finally have web access, not just mobile.
   { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe, badge: "AI" },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
@@ -103,24 +115,57 @@ const microsoftNav = [
   { title: "Mail", url: "/mail", icon: Mail },
 ];
 
-const adminNavBase = [
+// Modules being polished — grouped together so they're easy for admins to
+// find without cluttering Core. Hidden from non-admins entirely. Order
+// matches the list Woody dictated (AML → Enrichment Hub).
+const unfinishedNav = [
+  { title: "Portfolios", url: "/portfolios", icon: Layers },
+  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
+  { title: "Tenant Rep", url: "/tenant-rep", icon: Target },
+  { title: "Letting Hunter", url: "/hunters/letting", icon: Target },
+  { title: "Investment Hunter", url: "/hunters/investment", icon: Target },
+  { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase },
+  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
+  { title: "Lease Advisory", url: "/pla/matters", icon: Landmark },
+  { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, badge: "BD" },
+  { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
+  // Document Studio v2 — the unified documents hub (library + previews +
+  // upload + SharePoint filing). The briefs cockpit (/document-briefs, with
+  // Templates + Decks folded in as tabs) stays as its own entry — the hub's
+  // "New document → AI briefs" also links into it.
+  { title: "Document Studio", url: "/document-studio", icon: FileTextIcon },
+  { title: "Document Briefs", url: "/document-briefs", icon: FileTextIcon, badge: "AI" },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
   { title: "Board Report", url: "/board-report", icon: Presentation },
-  { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
-  { title: "News", url: "/news", icon: Newspaper, badge: "AI" },
   { title: "Leads", url: "/leads", icon: UserPlus },
   { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles, badge: "AI" },
+];
+
+const adminNavBase = [
+  { title: "Finance", url: "/finance", icon: Landmark },
+  { title: "Expenses", url: "/expenses", icon: Receipt },
+  { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
+  { title: "News", url: "/news", icon: Newspaper, badge: "AI" },
   { title: "Subscriptions & APIs", url: "/subscriptions", icon: CreditCard },
   { title: "Office Add-ins", url: "/addins", icon: Puzzle },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 
-function NavSection({ label, items }: { label: string; items: Array<{ title: string; url: string; icon: any; badge?: string }> }) {
+function NavSection({
+  label,
+  items,
+  defaultOpen = true,
+  storageKey,
+}: {
+  label: string;
+  items: Array<{ title: string; url: string; icon: any; badge?: string }>;
+  defaultOpen?: boolean;
+  storageKey?: string;
+}) {
   const [location] = useLocation();
   const isActive = (url: string) => {
     if (url === "/") return location === "/";
     if (url.startsWith("#")) return false;
-    // Strip query params for path-only matching
     const path = url.split("?")[0];
     if (path === "/contacts") return location.startsWith("/contacts") || location.startsWith("/companies");
     if (path === "/properties") return location.startsWith("/properties") || location.startsWith("/map") || location.startsWith("/edozo");
@@ -130,18 +175,43 @@ function NavSection({ label, items }: { label: string; items: Array<{ title: str
     return location.startsWith(path);
   };
 
+  // Always expand if a child is active so users never lose their bearings
+  const sectionHasActive = items.some(i => isActive(i.url));
+  const key = storageKey ? `bgp-nav-section-${storageKey}` : null;
+  const [open, setOpen] = useState<boolean>(() => {
+    if (sectionHasActive) return true;
+    if (key && typeof window !== "undefined") {
+      const stored = localStorage.getItem(key);
+      if (stored !== null) return stored === "1";
+    }
+    return defaultOpen;
+  });
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (key) localStorage.setItem(key, next ? "1" : "0");
+  };
+
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>{label}</SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          {items.map((item) => {
-            return (
+      <SidebarGroupLabel
+        onClick={toggle}
+        className="cursor-pointer select-none flex items-center justify-between hover:text-sidebar-foreground transition-colors"
+      >
+        <span>{label}</span>
+        {open ? <ChevronDown className="w-3 h-3 opacity-60" /> : <ChevronRight className="w-3 h-3 opacity-60" />}
+      </SidebarGroupLabel>
+      {open && (
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {items.map((item) => (
               <SidebarMenuItem key={item.title}>
                 <SidebarMenuButton
                   asChild
                   data-active={isActive(item.url)}
                   data-testid={`nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
+                  tooltip={item.title}
                 >
                   <Link href={item.url}>
                     <item.icon className="w-4 h-4" />
@@ -152,19 +222,19 @@ function NavSection({ label, items }: { label: string; items: Array<{ title: str
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
-            );
-          })}
-        </SidebarMenu>
-      </SidebarGroupContent>
+            ))}
+          </SidebarMenu>
+        </SidebarGroupContent>
+      )}
     </SidebarGroup>
   );
 }
 
 const TYPE_CONFIG: Record<RecentItem["type"], { icon: any; path: string; color: string }> = {
-  deal: { icon: BarChart3, path: "/deals", color: "text-blue-400" },
-  contact: { icon: Users, path: "/contacts", color: "text-green-400" },
-  company: { icon: Briefcase, path: "/companies", color: "text-amber-400" },
-  property: { icon: Building2, path: "/properties", color: "text-purple-400" },
+  deal: { icon: BarChart3, path: "/deals", color: "text-sidebar-primary opacity-80" },
+  contact: { icon: Users, path: "/contacts", color: "text-sidebar-foreground opacity-60" },
+  company: { icon: Briefcase, path: "/companies", color: "text-sidebar-primary opacity-70" },
+  property: { icon: Building2, path: "/properties", color: "text-sidebar-foreground opacity-50" },
 };
 
 function QuickAccessSection() {
@@ -189,6 +259,7 @@ function QuickAccessSection() {
                   asChild
                   className="h-7"
                   data-testid={`nav-recent-${item.type}-${item.id.substring(0, 8)}`}
+                  tooltip={item.name}
                 >
                   <Link href={`${config.path}/${item.id}`}>
                     <Icon className={`w-3.5 h-3.5 ${config.color}`} />
@@ -210,13 +281,59 @@ export function AppSidebar() {
   const { colorScheme, setColorScheme } = useTheme();
   const { brand, isLandsec } = useBrand();
 
-  // Reporting lives in Core for Landsec tenants, otherwise it's hidden in Admin.
+  // Hover-to-peek: when the sidebar is collapsed to an icon rail, hovering
+  // expands it as a floating overlay over the main content (no layout
+  // shift). Click on a nav item or mouse-leave tucks it back.
+  const { open, isMobile, setPeeking } = useSidebar();
+  const peekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const schedulePeek = (next: boolean) => {
+    if (open || isMobile) {
+      setPeeking(false);
+      return;
+    }
+    if (peekTimerRef.current) clearTimeout(peekTimerRef.current);
+    peekTimerRef.current = setTimeout(() => setPeeking(next), next ? 180 : 120);
+  };
+  useEffect(() => {
+    if (open || isMobile) setPeeking(false);
+    return () => {
+      if (peekTimerRef.current) clearTimeout(peekTimerRef.current);
+    };
+  }, [open, isMobile, setPeeking]);
+  const collapsePeekNow = () => {
+    if (peekTimerRef.current) clearTimeout(peekTimerRef.current);
+    setPeeking(false);
+  };
+
+  // Core hides anything still admin-gated for non-admins (none at present —
+  // Team now lives in the Admin group).
+  // Reporting is surfaced inside Core for Landsec tenants — for everyone else
+  // it lives in the Unfinished group along with the other modules being
+  // polished.
+  const coreNavFiltered = coreNavBase.filter((i: any) => !i.adminOnly || user?.isAdmin);
+  // Surface an "Approvals" entry (with a count badge) for anyone who actually
+  // has expenses assigned to them to approve — Wendy/Layla (Stage 1) and the
+  // directors (Stage 2). Without this there was no nav route to the approvals
+  // inbox, so approvers couldn't find their queue even though items were
+  // correctly assigned. /expenses/approvals is not admin-gated, so this works
+  // for Wendy's non-admin "Accounts" login too.
+  const { data: pendingApprovals } = useQuery<any[]>({
+    queryKey: ["/api/expenses/pending-approval"],
+    refetchInterval: 60_000,
+  });
+  const approvalCount = Array.isArray(pendingApprovals) ? pendingApprovals.length : 0;
+  const coreWithApprovals = approvalCount > 0
+    ? [...coreNavFiltered, { title: "Approvals", url: "/expenses/approvals", icon: ClipboardCheck, badge: String(approvalCount) }]
+    : coreNavFiltered;
   const coreNav = isLandsec
-    ? [...coreNavBase, { title: "Reporting", url: "/reporting", icon: TrendingUp }]
-    : coreNavBase;
-  const adminNav = isLandsec
-    ? adminNavBase.filter(i => i.url !== "/reporting")
-    : adminNavBase;
+    ? [...coreWithApprovals, { title: "Reporting", url: "/reporting", icon: TrendingUp }]
+    : coreWithApprovals;
+  // Drop Reporting from Unfinished when it's already promoted into Core for
+  // Landsec, so it doesn't appear twice in the sidebar.
+  const unfinishedNavCleaned = isLandsec
+    ? unfinishedNav.filter(i => i.url !== "/reporting")
+    : unfinishedNav;
+  const adminNav = adminNavBase;
 
   const handleLogout = async () => {
     await apiRequest("POST", "/api/auth/logout");
@@ -231,7 +348,9 @@ export function AppSidebar() {
     : "?";
 
   return (
-    <Sidebar>
+    // collapsible="none" pins the left nav permanently open (the hover-peek
+    // behaviour moved to the chat panel on the right edge — see App.tsx).
+    <Sidebar collapsible="none">
       <SidebarHeader className="p-3 pt-5 pb-5">
         <Link href="/">
           {isLandsec ? (
@@ -255,26 +374,46 @@ export function AppSidebar() {
       <SidebarSeparator />
 
       <SidebarContent>
-        <NavSection label="Core" items={coreNav} />
+        <NavSection label="Core" items={coreNav} storageKey="core" />
         <QuickAccessSection />
         <SidebarSeparator />
-        <NavSection label="AI Tools" items={user?.isAdmin ? aiNav : aiNav.filter(i => i.url !== "/image-studio")} />
+        <NavSection
+          label="AI Tools"
+          items={aiNav.map(i =>
+            // The full /image-studio page is admin-only (it calls admin
+            // endpoints). Non-admins (e.g. CGI partners like Luke) get the
+            // lightweight images page that works on auth alone.
+            i.url === "/image-studio" && !user?.isAdmin ? { ...i, url: "/m/images" } : i
+          )}
+          storageKey="ai"
+        />
         <SidebarSeparator />
-        <NavSection label="Microsoft 365" items={microsoftNav} />
+        <NavSection label="Microsoft 365" items={microsoftNav} storageKey="ms" defaultOpen={false} />
         <SidebarSeparator />
-        <NavSection label="Admin" items={adminNav} />
+        {user?.isAdmin && (
+          <>
+            <NavSection
+              label="Unfinished"
+              items={unfinishedNavCleaned}
+              storageKey="unfinished"
+              defaultOpen={false}
+            />
+            <SidebarSeparator />
+            <NavSection label="Admin" items={adminNav} storageKey="admin" defaultOpen={false} />
+          </>
+        )}
       </SidebarContent>
 
-      <SidebarFooter className="p-3 space-y-2">
-        <div className="flex items-center gap-1 px-1">
+      <SidebarFooter className="p-3 space-y-2 group-data-[collapsible=icon]:overflow-hidden group-data-[collapsible=icon]:p-2">
+        <div className="flex items-center gap-1 px-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:justify-center">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
-                className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs hover:bg-sidebar-accent transition-colors text-sidebar-foreground/70 hover:text-sidebar-foreground"
+                className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs hover:bg-sidebar-accent transition-colors text-sidebar-foreground/70 hover:text-sidebar-foreground group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:justify-center"
                 data-testid="button-color-scheme"
               >
-                <Palette className="w-3.5 h-3.5" />
-                <span className="truncate">{COLOR_SCHEMES.find(s => s.id === colorScheme)?.label}</span>
+                <Palette className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate group-data-[collapsible=icon]:hidden">{COLOR_SCHEMES.find(s => s.id === colorScheme)?.label}</span>
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" side="top" className="w-48">
@@ -304,16 +443,16 @@ export function AppSidebar() {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
-              className="flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium hover:bg-sidebar-accent transition-colors"
+              className="flex items-center justify-between w-full px-2 py-1.5 rounded-md text-xs font-medium hover:bg-sidebar-accent transition-colors group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:justify-center"
               data-testid="button-team-switcher"
             >
               <div className="flex items-center gap-2 min-w-0">
                 <div className="w-5 h-5 rounded bg-primary/20 flex items-center justify-center shrink-0">
                   <Users className="w-3 h-3 text-primary" />
                 </div>
-                <span className="truncate">{activeTeam === "all" ? "All Teams" : activeTeam || "Select Team"}</span>
+                <span className="truncate group-data-[collapsible=icon]:hidden">{activeTeam === "all" ? "All Teams" : activeTeam || "Select Team"}</span>
               </div>
-              <ChevronsUpDown className="w-3.5 h-3.5 shrink-0 opacity-50" />
+              <ChevronsUpDown className="w-3.5 h-3.5 shrink-0 opacity-50 group-data-[collapsible=icon]:hidden" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" side="top" className="w-52">
@@ -343,18 +482,18 @@ export function AppSidebar() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center">
+        <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
+          <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
             <span className="text-xs font-medium text-primary">{initials}</span>
           </div>
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
             <p className="text-xs font-medium truncate" data-testid="text-current-user">{user?.name || "Loading..."}</p>
             <p className="text-[10px] text-muted-foreground truncate">{user?.role || "BGP Team"}</p>
           </div>
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 shrink-0"
+            className="h-7 w-7 shrink-0 group-data-[collapsible=icon]:hidden"
             onClick={handleLogout}
             data-testid="button-logout"
           >
@@ -371,40 +510,55 @@ export function AppSidebar() {
  * in the bottom nav bar. Shows all navigation items not present in the
  * bottom nav (Home, ChatBGP, Properties, Deals are in the bottom nav).
  */
-const mobileOverlayItems = [
+export const mobileOverlayItems = [
   { title: "Today", url: "/today", icon: Sun },
-  { title: "Properties", url: "/properties", icon: Building2 },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Requirements", url: "/requirements", icon: FileText },
+  { title: "Tenant Rep", url: "/tenant-rep", icon: Target, adminOnly: true },
+  { title: "Letting Hunter", url: "/hunters/letting", icon: Target, adminOnly: true },
+  { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
-  { title: "People Hub", url: "/contacts", icon: Users },
-  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
+  { title: "CRM", url: "/contacts", icon: Handshake },
+  { title: "People & HR", url: "/hr", icon: Users },
+  { title: "My Card", url: "/my-expenses", icon: CreditCard },
+  { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase, adminOnly: true },
+  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },
-  { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
-  { title: "Document Studio", url: "/templates", icon: FileTextIcon },
-  { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
+  { title: "Lease Advisory", url: "/pla/matters", icon: Landmark, adminOnly: true },
+  { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
+  // Studio tools admin-only on mobile too (parity with desktop Admin section) — WIP.
+  { title: "Model Studio", url: "/models", icon: FileSpreadsheet, adminOnly: true },
+  { title: "Document Studio", url: "/document-studio", icon: FileTextIcon, adminOnly: true },
+  { title: "Document Briefs", url: "/document-briefs", icon: FileTextIcon, badge: "AI", adminOnly: true },
+  // On mobile everyone uses the lightweight images page (works on auth; the
+  // full /image-studio power page is desktop-admin only).
+  { title: "Image Studio", url: "/m/images", icon: ImageIcon },
   { title: "SharePoint", url: "/sharepoint", icon: Cloud },
   { title: "Calendar", url: "/calendar", icon: Calendar },
   { title: "Mail", url: "/mail", icon: Mail },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
-  { title: "Board Report", url: "/board-report", icon: Presentation },
-  { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
-  { title: "News", url: "/news", icon: Newspaper },
-  { title: "Leads", url: "/leads", icon: UserPlus },
+  // Admin gating mirrors the desktop sidebar (Admin + Unfinished groups)
+  // so non-admins don't get mobile links into pages whose APIs will 403.
+  { title: "Board Report", url: "/board-report", icon: Presentation, adminOnly: true },
+  { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle, adminOnly: true },
+  { title: "News", url: "/news", icon: Newspaper, adminOnly: true },
+  { title: "Leads", url: "/leads", icon: UserPlus, adminOnly: true },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
-  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
-  { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles },
-  { title: "Office Add-ins", url: "/addins", icon: FileSpreadsheet },
-  { title: "Settings", url: "/settings", icon: Settings },
+  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck, adminOnly: true },
+  { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles, adminOnly: true },
+  { title: "Office Add-ins", url: "/addins", icon: Puzzle, adminOnly: true },
+  { title: "Settings", url: "/settings", icon: Settings, adminOnly: true },
 ];
 
 export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [location] = useLocation();
   const { isLandsec } = useBrand();
+  const { data: user } = useQuery<any>({ queryKey: ["/api/auth/me"] });
 
   // Hide Reporting in mobile overlay for non-Landsec tenants (parity with desktop).
-  const items = isLandsec ? mobileOverlayItems : mobileOverlayItems.filter(i => i.url !== "/reporting");
+  const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
+  const items = isLandsec ? filteredByAdmin : filteredByAdmin.filter(i => i.url !== "/reporting");
 
   const isActive = (url: string) => {
     if (url === "/") return location === "/";
@@ -440,26 +594,42 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
           </button>
         </div>
         <div className="flex-1 overflow-y-auto py-2">
-          {items.map((item) => {
-            const Icon = item.icon;
-            const active = isActive(item.url);
+          {(() => {
+            // Surface the field-relevant boards first; tuck tools/utilities
+            // under a "Tools & more" divider so the phone menu isn't a wall.
+            const PRIMARY = new Set(["/today", "/tasks", "/requirements", "/contacts", "/brands", "/comps", "/leads", "/calendar", "/mail", "/news", "/property-intelligence"]);
+            const primary = items.filter((i: any) => PRIMARY.has(i.url));
+            const more = items.filter((i: any) => !PRIMARY.has(i.url));
+            const renderRow = (item: any) => {
+              const Icon = item.icon;
+              const active = isActive(item.url);
+              return (
+                <Link key={item.url} href={item.url}>
+                  <div
+                    onClick={onClose}
+                    className={`flex items-center gap-3 px-4 py-3 mx-2 rounded-lg text-sm font-medium transition-colors min-h-[44px] ${
+                      active
+                        ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
+                        : "text-foreground hover:bg-muted"
+                    }`}
+                    data-testid={`mobile-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
+                  >
+                    <Icon className={`w-5 h-5 shrink-0 ${active ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
+                    <span>{item.title}</span>
+                  </div>
+                </Link>
+              );
+            };
             return (
-              <Link key={item.url} href={item.url}>
-                <div
-                  onClick={onClose}
-                  className={`flex items-center gap-3 px-4 py-3 mx-2 rounded-lg text-sm font-medium transition-colors min-h-[44px] ${
-                    active
-                      ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
-                      : "text-foreground hover:bg-muted"
-                  }`}
-                  data-testid={`mobile-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
-                >
-                  <Icon className={`w-5 h-5 shrink-0 ${active ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
-                  <span>{item.title}</span>
-                </div>
-              </Link>
+              <>
+                {primary.map(renderRow)}
+                {more.length > 0 && (
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-5 pt-3 pb-1">Tools &amp; more</p>
+                )}
+                {more.map(renderRow)}
+              </>
             );
-          })}
+          })()}
         </div>
       </div>
     </>

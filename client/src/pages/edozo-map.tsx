@@ -12,6 +12,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { PropertyResolverBar } from "@/components/property-resolver-bar";
+import { loadGoogleMaps } from "@/lib/google-maps-loader";
 import {
   Search,
   X,
@@ -750,6 +752,157 @@ async function generatePropertyPDF(data: PropertyData, postcode: string) {
   }
 
   doc.save(`Property-Report-${postcode.replace(/\s/g, "-")}.pdf`);
+}
+
+// Leasehold → superior freehold. PropertyData has no structured
+// leasehold→freehold link, so the reliable path is to order the leasehold's
+// official register (£3–4, cached server-side) — its property section names
+// the lessor / superior freehold title. One click, reuses the existing
+// purchase-title endpoint.
+// HMLR fallback picker — shown in the polygon-context drawer when no
+// titles matched the clicked unit's address. Hits the OS Places postcode
+// endpoint (returns every UPRN-keyed building in the postcode), lets the
+// user pick the right one, and bubbles the choice back so the parent
+// re-fetches polygon-context against the corrected address.
+function HmlrFallbackPicker({ postcode, onPick }: { postcode: string; onPick: (addr: { uprn: string; number: string | null; street: string | null; postcode: string }) => void }) {
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState<Array<{ uprn: string; address: string; postcode: string }> | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+
+  const load = async () => {
+    if (!postcode) { setErr("No postcode known for this polygon."); return; }
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch(`/api/os/places/postcode/${encodeURIComponent(postcode)}`, { credentials: "include" });
+      if (!r.ok) throw new Error(`OS Places returned ${r.status}`);
+      const j: any = await r.json();
+      setResults(j.results || []);
+      setOpen(true);
+    } catch (e: any) {
+      setErr(e?.message || "OS Places lookup failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Heuristic: split "43 Curzon Street, Mayfair, London, W1J 7UF" into
+  // number + street so the picked row can re-key polygon-context.
+  const splitAddress = (addr: string): { number: string | null; street: string | null } => {
+    const m = addr.match(/^(\d+[a-z\-]*)\s+([^,]+?)(?:,|$)/i);
+    if (m) return { number: m[1], street: m[2].toUpperCase().trim() };
+    return { number: null, street: addr.split(",")[0]?.toUpperCase().trim() || null };
+  };
+
+  return (
+    <div className="rounded border border-gray-200 bg-gray-50 p-2 text-[11px]">
+      {!open ? (
+        <button
+          type="button"
+          onClick={load}
+          disabled={loading || !postcode}
+          className="text-[11px] font-medium text-blue-700 hover:underline disabled:opacity-40"
+          data-testid="button-hmlr-fallback-picker"
+        >
+          {loading ? "Loading addresses…" : `Try a different address in ${postcode || "this postcode"} →`}
+        </button>
+      ) : (
+        <>
+          <div className="text-[10px] text-gray-600 mb-1">
+            Pick the right building in {postcode} ({results?.length || 0} found):
+          </div>
+          <div className="max-h-48 overflow-y-auto space-y-0.5">
+            {(results || []).map((r) => {
+              const split = splitAddress(r.address);
+              return (
+                <button
+                  key={r.uprn}
+                  type="button"
+                  onClick={() => { onPick({ uprn: r.uprn, number: split.number, street: split.street, postcode: r.postcode }); setOpen(false); }}
+                  className="w-full text-left px-1.5 py-1 rounded hover:bg-white border border-transparent hover:border-gray-200 text-[10px]"
+                  data-testid={`button-hmlr-fallback-pick-${r.uprn}`}
+                >
+                  <div className="text-gray-900 truncate">{r.address}</div>
+                  <div className="text-gray-400 font-mono text-[9px]">UPRN {r.uprn}</div>
+                </button>
+              );
+            })}
+            {(results || []).length === 0 && (
+              <p className="text-[10px] text-gray-500 italic">OS Places returned no addresses for {postcode}.</p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="text-[10px] text-gray-500 hover:text-gray-700 mt-1"
+          >
+            Cancel
+          </button>
+        </>
+      )}
+      {err && <p className="text-[10px] text-red-600 mt-1">{err}</p>}
+    </div>
+  );
+}
+
+function LeaseholdFreeholdFinder({ titleNumber }: { titleNumber?: string | null }) {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [err, setErr] = useState<string | null>(null);
+  if (!titleNumber) return null;
+  const run = async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch("/api/land-registry/purchase-title", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ title: titleNumber, documents: "register", extract_proprietor_data: true }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!r.ok) {
+        setErr(j?.error || `HTTP ${r.status}`);
+        return;
+      }
+      setResult(j?.data || j);
+    } catch (e: any) {
+      setErr(e?.message || "request failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+  if (err) {
+    return <p className="mt-1 text-[10px] text-red-600">Freehold lookup failed: {err}</p>;
+  }
+  if (result) {
+    const reg = result.document_url || result.register_url || result.register?.url || null;
+    const prop = result.proprietor || result.extracted || null;
+    return (
+      <div className="mt-1 text-[10px] text-gray-600 space-y-0.5">
+        {reg && (
+          <a href={reg} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline block">
+            Open title register →
+          </a>
+        )}
+        {prop && (
+          <div className="[overflow-wrap:anywhere]">{typeof prop === "string" ? prop : JSON.stringify(prop)}</div>
+        )}
+        <p className="italic text-gray-400">Read the register's property section for the superior freehold title.</p>
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={run}
+      disabled={loading}
+      className="mt-1 text-[10px] text-blue-700 hover:underline disabled:opacity-50"
+    >
+      {loading ? "Ordering register…" : "Find freehold (order register £3–4)"}
+    </button>
+  );
 }
 
 function RawDataToggle({ data }: { data: any }) {
@@ -3291,10 +3444,18 @@ out body;>;out skel qt;`;
   }
 }
 
-export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialSearch?: { address: string; postcode: string | null } | null; onSearchConsumed?: () => void } = {}) {
+export default function EdozoMap({ initialSearch, onSearchConsumed, onResolveProperty }: { initialSearch?: { address: string; postcode: string | null } | null; onSearchConsumed?: () => void; onResolveProperty?: (p: { id: string; name: string; postcode: string | null }) => void } = {}) {
   const { toast } = useToast();
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  // Google Places autocomplete input rendered as an overlay on the map.
+  // The autocomplete instance + the marker we drop on the selected place
+  // both live in refs so we can clear them imperatively without re-rendering
+  // the entire map.
+  const placesSearchInputRef = useRef<HTMLInputElement>(null);
+  const placesAutocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+  const placesMarkerRef = useRef<L.Marker | null>(null);
+  const [placesSearchValue, setPlacesSearchValue] = useState("");
   const buildingLayerRef = useRef<L.LayerGroup | null>(null);
   const markerRef = useRef<L.CircleMarker | null>(null);
   const lastBoundsRef = useRef("");
@@ -3307,7 +3468,10 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const [postcode, setSelectedPostcode] = useState("");
   const [propertyData, setPropertyData] = useState<PropertyData | null>(null);
   const [loadingData, setLoadingData] = useState(false);
-  const [currentArea, setCurrentArea] = useState("Belgravia");
+  // Starts blank — the PDF export reverse-geocodes the current map
+  // centre at export time so the header reflects what the user is
+  // actually looking at, not a hardcoded default.
+  const [currentArea, setCurrentArea] = useState("");
   const [activeTool, setActiveTool] = useState<string>("select");
   const [saveToOrg, setSaveToOrg] = useState(false);
   const searchTimeout = useRef<ReturnType<typeof setTimeout>>();
@@ -3316,15 +3480,27 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   // Search history & CRM layers
   const [recentSearches, setRecentSearches] = useState<any[]>([]);
   const [crmProperties, setCrmProperties] = useState<any[]>([]);
-  const [showSearchHistory, setShowSearchHistory] = useState(false);
-  const [showCrmLayer, setShowCrmLayer] = useState(false);
+  // Landing-on-map defaults: every useful layer on so the operator
+  // sees everything BGP knows about an area at a glance. Street View
+  // stays off because turning it on hijacks the click handler.
+  const [showSearchHistory, setShowSearchHistory] = useState(true);
+  const [showCrmLayer, setShowCrmLayer] = useState(true);
+  // Investment comps were bulk-loaded into crm_properties (~553 rows) and
+  // clutter "CRM Properties". Split them onto their own default-off layer so
+  // CRM Properties only shows properties BGP is directly involved with.
+  const [showInvestmentComps, setShowInvestmentComps] = useState(false);
   const searchMarkersRef = useRef<L.LayerGroup | null>(null);
   const crmMarkersRef = useRef<L.LayerGroup | null>(null);
+  const investmentCompsMarkersRef = useRef<L.LayerGroup | null>(null);
+
+  // A crm_property row that is really an investment comparable, not one of our
+  // own properties. Excluded from the CRM Properties layer/views.
+  const isInvestmentComp = (p: any) => p?.status === "Investment Comp" || p?.groupName === "Investment Comps";
 
   // OS Data layers
   const [showOSBuildings, setShowOSBuildings] = useState(true);
   const [showOSUprns, setShowOSUprns] = useState(false);
-  const [showOSSites, setShowOSSites] = useState(false);
+  const [showOSSites, setShowOSSites] = useState(true);
   const osBuildingLayerRef = useRef<L.LayerGroup | null>(null);
   const osUprnLayerRef = useRef<L.LayerGroup | null>(null);
   const osSiteLayerRef = useRef<L.LayerGroup | null>(null);
@@ -3332,17 +3508,115 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const osDebounceRef = useRef<ReturnType<typeof setTimeout>>();
   const [mapZoom, setMapZoom] = useState(17);
 
-  // CRM data layers — Deals, Comps, Lease Events
-  const [showDeals, setShowDeals] = useState(false);
-  const [showComps, setShowComps] = useState(false);
-  const [showLeaseEvents, setShowLeaseEvents] = useState(false);
+  // CRM data layers — Deals, Comps, Lease Events. All default-on so
+  // landing on the map shows every signal at once.
+  const [showDeals, setShowDeals] = useState(true);
+  const [showComps, setShowComps] = useState(true);
+  const [showLeaseEvents, setShowLeaseEvents] = useState(true);
+  const [showPathway, setShowPathway] = useState(true);
+  const pathwayMarkersRef = useRef<L.LayerGroup | null>(null);
+  // Available Properties layer — market listings (external_properties: PIPnet /
+  // emailed / WhatsApp flyers) + BGP's own available units, shown together.
+  const [showAvailable, setShowAvailable] = useState(true);
+  const [availableProps, setAvailableProps] = useState<any[]>([]);
+  const availableMarkersRef = useRef<L.LayerGroup | null>(null);
+  // ── Annotations layer ───────────────────────────────────────────────────
+  // User-drawn pins + text labels saved to /api/map-annotations. When
+  // annotateMode is "pin" or "label" the next map click drops one.
+  // Postcode highlight is the orange/red rectangle for an outcode or
+  // unit postcode fetched from /api/postcode-boundary/:postcode.
+  const [showAnnotations, setShowAnnotations] = useState(true);
+  const [annotations, setAnnotations] = useState<any[]>([]);
+  const annotationsLayerRef = useRef<L.LayerGroup | null>(null);
+  type AnnotMode = null | "pin" | "label" | "polygon" | "drive_time";
+  const [annotateMode, setAnnotateMode] = useState<AnnotMode>(null);
+  const [annotateColor, setAnnotateColor] = useState<string>("#ef4444");
+  const annotateModeRef = useRef<{ mode: AnnotMode; color: string }>({ mode: null, color: "#ef4444" });
+  useEffect(() => { annotateModeRef.current = { mode: annotateMode, color: annotateColor }; }, [annotateMode, annotateColor]);
+  // In-progress polygon vertices + drive-time waypoint. Cleared when
+  // mode changes or the user double-clicks to finalise.
+  const polygonPointsRef = useRef<L.LatLng[]>([]);
+  const polygonGhostRef = useRef<L.Polyline | null>(null);
+  const driveOriginRef = useRef<L.LatLng | null>(null);
+  const driveOriginMarkerRef = useRef<L.CircleMarker | null>(null);
+
+  const [postcodeQuery, setPostcodeQuery] = useState("");
+  const [postcodeBoundary, setPostcodeBoundary] = useState<any>(null);
+  const postcodeLayerRef = useRef<L.LayerGroup | null>(null);
+
+  // HMLR title polygons overlay — fetched per viewport.
+  const [showHmlrTitles, setShowHmlrTitles] = useState(false);
+  const [hmlrPolygons, setHmlrPolygons] = useState<any>(null);
+  const hmlrLayerRef = useRef<L.LayerGroup | null>(null);
+
+  // ── Named layers ───────────────────────────────────────────────────────
+  // Group annotations into named layers ("Brent Cross deck", "Old Street
+  // catchment") so they can be toggled, shared, deleted as one unit.
+  interface MapLayer { id: string; name: string; color: string | null; ownerId: string | null; sharedWithTeam: boolean; annotationCount: number; mine: boolean; }
+  const [mapLayers, setMapLayers] = useState<MapLayer[]>([]);
+  const [activeLayerId, setActiveLayerId] = useState<string | null>(null);
+  const [hiddenLayerIds, setHiddenLayerIds] = useState<Set<string>>(new Set());
+  const [newLayerName, setNewLayerName] = useState("");
+
+  // ── Street View on-click ───────────────────────────────────────────────────
+  // When toggled on, clicking the map opens an embedded Google Street View
+  // panorama at that lat/lng in a popup. Reuses the GOOGLE_API_KEY already
+  // wired through /api/config/maps-key.
+  const [showStreetView, setShowStreetView] = useState(false);
+  const [googleMapsKey, setGoogleMapsKey] = useState<string | null>(null);
+  const streetViewClickRef = useRef<((e: L.LeafletMouseEvent) => void) | null>(null);
+
+  // ── Tenancy Plans layer ──────────────────────────────────────────────────
+  // Phase 1 of the 'upload any plan' flow — fetches geo-tagged tenancy
+  // plans (GeoJSON) for the current viewport and renders them as a layer.
+  // Each polygon is later clickable; for now they just sit on the map
+  // as an outline pass.
+  const [showTenancyPlans, setShowTenancyPlans] = useState(true);
+  const [tenancyPlanCount, setTenancyPlanCount] = useState(0);
+  const tenancyPlansLayerRef = useRef<L.LayerGroup | null>(null);
+  // ── Retail Context layer (real Experian Goad polygons) ────────────────────
+  // When toggled on, loads the licensed Goad GeoJSON layers for the West End
+  // (centre 9033MM, ~10,600 unit footprints across LG/GF/F1/F2) and renders
+  // them as colour-coded polygons. The previous synthesised version (CRM +
+  // VOA + Places mash-up) is retained server-side for the Goad-plan PDF
+  // export but is no longer the source of truth for the live map layer.
+  // Default-on: the Goad layer is the single most useful overlay so
+  // it loads on first landing. The ~9.6MB GeoJSON fetch is cached for
+  // the rest of the session.
+  const [showRetailContext, setShowRetailContext] = useState(true);
+  // Mirror state into a ref so closures captured in the map-init effect
+  // (renderBuildings, fetchOSData, …) can read the live value without
+  // being recreated on every toggle.
+  const showRetailContextRef = useRef(true);
+  useEffect(() => { showRetailContextRef.current = showRetailContext; }, [showRetailContext]);
+  const [goadFeatures, setGoadFeatures] = useState<any[]>([]);
+  const [retailFetching, setRetailFetching] = useState(false);
+  const [excludedRetailCategories, setExcludedRetailCategories] = useState<Set<string>>(new Set());
+  const retailMarkersRef = useRef<L.LayerGroup | null>(null);
+  const retailLabelLayerRef = useRef<L.LayerGroup | null>(null);
+  // Goad polygon → combined side panel. Holds the clicked feature's
+  // properties plus any joined context fetched via /api/goad/polygon-context.
+  const [goadPanelUnit, setGoadPanelUnit] = useState<any | null>(null);
+  const [goadPanelContext, setGoadPanelContext] = useState<{ crmProperties: any[]; deals: any[]; parentCompany: any | null; parentCompanyCandidates: any[]; landRegistry: any | null; rates: any[]; planningApplications: any[]; pathwayRun: any | null; tenantCompany: any | null; tenantCompanyCandidates: any[]; tenantPlace: { name: string; website: string | null; phone: string | null; placeId: string; address: string | null; businessStatus: string | null } | null; diagnostics?: { voaAvailable: boolean; propertyDataKeyAvailable: boolean; landRegistryRan: boolean; landRegistryError: string | null; postcodeUsed?: string | null; postcodeRecoveredFromGeocode?: boolean } } | null>(null);
+  // Tenant-resolver state for the polygon drawer. Separate from the
+  // polygon context so a click → verify → create lifecycle doesn't
+  // re-render the entire panel.
+  const [tenantVerifyState, setTenantVerifyState] = useState<{
+    loading: boolean;
+    result: { scraped: { entityName: string | null; chNumber: string | null; sourceUrl: string | null }; chProfile: any | null; verifyError?: string } | null;
+    error: string | null;
+  }>({ loading: false, result: null, error: null });
+  const [tenantCreateState, setTenantCreateState] = useState<{ loading: boolean; companyId: string | null; error: string | null }>({ loading: false, companyId: null, error: null });
+  const [goadPanelStartingPathway, setGoadPanelStartingPathway] = useState(false);
+  const [goadPanelLoading, setGoadPanelLoading] = useState(false);
   const dealsLayerRef = useRef<any>(null);
   const compsLayerRef = useRef<any>(null);
   const leaseEventsLayerRef = useRef<any>(null);
-  const [mapPins, setMapPins] = useState<{ deals: any[]; comps: any[]; leaseEvents: any[] } | null>(null);
+  const [mapPins, setMapPins] = useState<{ deals: any[]; comps: any[]; leaseEvents: any[]; pathway?: any[] } | null>(null);
 
   // Land Registry title boundaries — always-on red-line layer
   const titleBoundaryLayerRef = useRef<L.LayerGroup | null>(null);
+  const centreTenantLayerRef = useRef<L.LayerGroup | null>(null);
   const titleBoundaryBboxRef = useRef<string>("");
   const baseLayerRef = useRef<{ map: L.LayerGroup; sat: L.LayerGroup } | null>(null);
   const [baseLayer, setBaseLayer] = useState<"map" | "sat">("map");
@@ -3417,7 +3691,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     L.control.zoom({ position: "bottomright" }).addTo(map);
     L.control.scale({ position: "bottomleft", imperial: false, maxWidth: 100 }).addTo(map);
 
-    buildingLayerRef.current = L.layerGroup({ pane: "buildingPane" }).addTo(map);
+    buildingLayerRef.current = L.layerGroup([], { pane: "buildingPane" }).addTo(map);
 
     // OS Data layer groups
     const osPane = map.createPane("osPane");
@@ -3426,19 +3700,29 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     osUprnPane.style.zIndex = "445";
     const osSitePane = map.createPane("osSitePane");
     osSitePane.style.zIndex = "443";
-    osBuildingLayerRef.current = L.layerGroup({ pane: "osPane" }).addTo(map);
-    osUprnLayerRef.current = L.layerGroup({ pane: "osUprnPane" }).addTo(map);
-    osSiteLayerRef.current = L.layerGroup({ pane: "osSitePane" }).addTo(map);
+    osBuildingLayerRef.current = L.layerGroup([], { pane: "osPane" }).addTo(map);
+    osUprnLayerRef.current = L.layerGroup([], { pane: "osUprnPane" }).addTo(map);
+    osSiteLayerRef.current = L.layerGroup([], { pane: "osSitePane" }).addTo(map);
 
     // Land Registry title boundaries — always-on red-line layer. Sits above
     // buildings so proprietor polygons are the most visible feature.
     const titlePane = map.createPane("titlePane");
     titlePane.style.zIndex = "455";
-    titleBoundaryLayerRef.current = L.layerGroup({ pane: "titlePane" }).addTo(map);
+    titleBoundaryLayerRef.current = L.layerGroup([], { pane: "titlePane" }).addTo(map);
+    centreTenantLayerRef.current = L.layerGroup().addTo(map);
 
     // CRM data layer groups — clustered (Deals / Comps / Lease Events)
     const crmPane = map.createPane("crmPane");
     crmPane.style.zIndex = "460";
+
+    // Goad polygons need to sit above the auto-classified buildings
+    // (zIndex 450) AND the CRM markers (460) so clicking a Goad unit
+    // opens the new polygon-context side panel rather than firing
+    // loadPropertyData() via an underlying CRM/building click.
+    const goadPane = map.createPane("goadPane");
+    goadPane.style.zIndex = "475";
+    const goadLabelPane = map.createPane("goadLabelPane");
+    goadLabelPane.style.zIndex = "476";
     const clusterOpts = { maxClusterRadius: 40, disableClusteringAtZoom: 17 };
     dealsLayerRef.current = (L as any).markerClusterGroup(clusterOpts);
     compsLayerRef.current = (L as any).markerClusterGroup(clusterOpts);
@@ -3449,79 +3733,12 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       setMapZoom(map.getZoom());
     });
 
-    const renderBuildings = (buildings: any[]) => {
-      if (!buildingLayerRef.current || !mapRef.current) return;
-      buildingLayerRef.current.clearLayers();
-
-      for (const b of buildings) {
-        const hasInfo = b.label || b.houseNum;
-        const isUnit = b.isUnit;
-
-        // Goad-style categorical palette by use-class / label heuristics
-        const classify = (label: string): string => {
-          const l = (label || "").toLowerCase();
-          if (!l) return hasInfo ? "other" : "empty";
-          if (/(restaurant|cafe|café|bar|pub|kitchen|grill|sushi|pizza|burger|coffee|starbucks|pret|deli|chop|steak|dine)/.test(l)) return "fb";
-          if (/(bank|hsbc|barclays|natwest|lloyds|santander|metro|post office|bureau|exchange)/.test(l)) return "services";
-          if (/(hotel|hostel|inn|lodge|premier|travelodge|radisson|edwardian)/.test(l)) return "hotel";
-          if (/(theatre|cinema|odeon|vue|fountain|monument|gallery|museum|institute|embassy|church|palace|park|square)/.test(l)) return "civic";
-          if (/(vac|vacant|to let|available)/.test(l)) return "vacant";
-          return "retail";
-        };
-        const category = b.isVacant ? "vacant" : classify(b.label || "");
-        const catFill: Record<string, string> = {
-          retail:   "#fff4e0",  // warm cream
-          fb:       "#ffe8d4",  // peach
-          services: "#e8f0ff",  // pale blue
-          hotel:    "#f0e8ff",  // pale purple
-          civic:    "#e8f5e8",  // pale green
-          vacant:   "#e8e8e8",  // grey
-          empty:    "#f4f2eb",  // off-white
-          other:    "#fbf9f2",
-        };
-
-        const polygon = L.polygon(b.latLngs, {
-          color: "#1a1a1a",
-          weight: isUnit ? 1.4 : 2.2,
-          fillColor: catFill[category] || catFill.other,
-          fillOpacity: 1,
-          opacity: 1,
-          pane: "buildingPane",
-          lineJoin: "miter",
-          lineCap: "butt",
-        });
-
-        // Oriented bounding box: we measure the polygon along its own
-        // principal axis, not the screen axis. A narrow shopfront that
-        // happens to run north-south gets a "width" that's its long side,
-        // and we rotate the label to match. This is how Goad plans keep
-        // text readable inside narrow units.
-        const obb = polygonOBBPixels(b.latLngs, mapRef.current);
-        const zoom = mapRef.current.getZoom();
-        const fitted = zoom < 18 ? null : fitTextToBuilding(b.label, b.houseNum, b.isVacant, obb.w, obb.h);
-
-        if (fitted) {
-          const cssClass = b.isVacant && !b.label
-            ? `edozo-label edozo-label-vacant edozo-fs-${fitted.fontSize}`
-            : `edozo-label edozo-fs-${fitted.fontSize}`;
-          // If the principal axis is meaningfully rotated (>8° off
-          // horizontal), wrap the text in an inline-block that rotates
-          // inside the Leaflet-positioned tooltip. Small angles are left
-          // alone so labels on near-horizontal frontages don't wobble.
-          const rot = Math.abs(obb.rotationDeg) > 8 ? obb.rotationDeg : 0;
-          const htmlLines = fitted.text.split("\n").map(l => `<div>${l.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`).join("");
-          const content = rot === 0
-            ? fitted.text
-            : `<div style="display:inline-block;transform:rotate(${rot}deg);transform-origin:center;white-space:nowrap;line-height:1.1;">${htmlLines}</div>`;
-          polygon.bindTooltip(content, {
-            permanent: true,
-            direction: "center",
-            className: cssClass,
-          });
-        }
-
-        buildingLayerRef.current.addLayer(polygon);
-      }
+    const renderBuildings = (_buildings: any[]) => {
+      // Retired. The auto-classified pale-yellow building layer is
+      // superseded by the real Experian Goad polygons on the Retail
+      // Context toggle. Stub kept so existing callers don't need
+      // surgery — it just clears the layer and exits.
+      if (buildingLayerRef.current) buildingLayerRef.current.clearLayers();
     };
 
     const loadBuildings = async () => {
@@ -3533,8 +3750,56 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       loadCounterRef.current += 1;
       const thisLoad = loadCounterRef.current;
 
-      // Fetch buildings (OSM) and label overrides (CRM > Comps > Google) in parallel
       const bboxParam = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
+
+      // Prefer the occupier plan (Goad/Edozo) — names live on the polygons, so
+      // no OSM/NGD label-guessing is needed where we have coverage. Only at
+      // street zoom, matching the label-render gate.
+      if (map.getZoom() >= 17) {
+        try {
+          const opResp = await fetch(`/api/map/occupier-plan?bbox=${bboxParam}`, {
+            credentials: "include",
+            headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+          });
+          if (opResp.ok) {
+            const fc = await opResp.json();
+            if (loadCounterRef.current !== thisLoad) return;
+            const feats: any[] = fc?.features || [];
+            if (feats.length > 0) {
+              const geomToRings = (g: any): number[][][] => {
+                if (!g) return [];
+                if (g.type === "Polygon") return [g.coordinates[0]];
+                if (g.type === "MultiPolygon") return g.coordinates.map((p: number[][][]) => p[0]);
+                return [];
+              };
+              const occBuildings: any[] = [];
+              for (const f of feats) {
+                for (const ring of geomToRings(f.geometry)) {
+                  if (!Array.isArray(ring) || ring.length < 3) continue;
+                  const latLngs = ring.map((c: number[]) => [c[1], c[0]] as [number, number]);
+                  const p = f.properties || {};
+                  occBuildings.push({
+                    latLngs,
+                    label: p.name || "",
+                    houseNum: p.streetNum || "",
+                    isVacant: p.classification === "vacant",
+                    areaSqM: polygonAreaSqM(latLngs),
+                    isUnit: true,
+                    _source: "occupier",
+                    _category: p.category || null,
+                  });
+                }
+              }
+              renderBuildings(occBuildings);
+              return;
+            }
+          }
+        } catch {
+          // fall through to the OSM/NGD path below
+        }
+      }
+
+      // Fetch buildings (OSM) and label overrides (CRM > Comps > Google) in parallel
       const labelsPromise = fetch(`/api/map/labels?bbox=${bboxParam}`, {
         credentials: "include",
         headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
@@ -3571,14 +3836,16 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         }).then(r => r.ok ? r.json() : null).catch(() => null).then(d => d ? { ...d, _centreLat: c.lat, _centreLng: c.lng, _radiusKm: c.radiusKm } : null)
       )).then(rs => rs.filter(Boolean));
 
-      const [buildings, labelsResp, centreDirectories] = await Promise.all([
-        fetchBuildings(map),
+      // Auto-classified building layer is retired — superseded by real
+      // Goad polygons on the Retail Context layer. We still keep the
+      // sibling fetches (centre directories, search-label cache) because
+      // the rest of this effect uses them.
+      const [labelsResp, centreDirectories] = await Promise.all([
         labelsPromise,
         centreDirectoriesPromise,
       ]);
-
+      const buildings: any[] = []; // retired — see renderBuildings() below
       if (loadCounterRef.current !== thisLoad) return;
-      if (buildings.length === 0 && buildingLayerRef.current && buildingLayerRef.current.getLayers().length > 0) return;
 
       // Flatten centre directory tenants into label points. We don't know
       // each tenant's exact position inside the centre, so we space them
@@ -3586,6 +3853,14 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       // polygon and adopts the tenant name. Good enough to put "Boots",
       // "Pret", "Costa" etc. into Cardinal Place's subdivided NGD parts.
       const centreLabels: Array<{ lat: number; lng: number; label: string }> = [];
+      // Also draw each tenant as an independent on-map text marker so
+      // centres that NGD doesn't subdivide (Cardinal Place shows as one
+      // big polygon) still get every tenant's name rendered. These
+      // markers live on centreTenantLayerRef and are refreshed on every
+      // moveend.
+      if (centreTenantLayerRef.current && mapRef.current) {
+        centreTenantLayerRef.current.clearLayers();
+      }
       for (const c of (centreDirectories || []) as any[]) {
         const tenants: any[] = Array.isArray(c?.tenants) ? c.tenants : [];
         if (!tenants.length) continue;
@@ -3596,7 +3871,20 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           const angle = (2 * Math.PI * i) / Math.max(tenants.length, 1);
           const dLat = (R / 111) * Math.cos(angle);
           const dLng = (R / (111 * Math.cos(c._centreLat * Math.PI / 180))) * Math.sin(angle);
-          centreLabels.push({ lat: c._centreLat + dLat, lng: c._centreLng + dLng, label: t.unit ? `${t.unit} ${t.name}` : t.name });
+          const labelText = t.unit ? `${t.unit} ${t.name}` : t.name;
+          centreLabels.push({ lat: c._centreLat + dLat, lng: c._centreLng + dLng, label: labelText });
+          // Also drop an independent label marker at this ring position
+          // so the tenant name shows even when NGD gives us one big
+          // polygon for the whole centre.
+          if (centreTenantLayerRef.current && mapRef.current && mapRef.current.getZoom() >= 17) {
+            const icon = L.divIcon({
+              html: `<div class="centre-tenant-label">${labelText.replace(/</g, "&lt;")}</div>`,
+              className: "centre-tenant-icon",
+              iconSize: [80, 14],
+              iconAnchor: [40, 7],
+            });
+            L.marker([c._centreLat + dLat, c._centreLng + dLng], { icon, interactive: false }).addTo(centreTenantLayerRef.current);
+          }
         });
       }
 
@@ -3691,9 +3979,84 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
 
     mapRef.current = map;
 
+    // Leaflet measures its container once at init. This page mounts inside a
+    // lazy tab and shares the row with collapsible chrome (sidebar, ChatBGP
+    // rail), so the container often settles at a different width after init —
+    // leaving tiles frozen at the stale size with dead space beside them.
+    // Re-measure on any container resize.
+    const resizeObserver = new ResizeObserver(() => map.invalidateSize());
+    resizeObserver.observe(mapContainerRef.current);
+
     return () => {
+      resizeObserver.disconnect();
       map.remove();
       mapRef.current = null;
+    };
+  }, []);
+
+  // Google Places autocomplete on the in-map search box. Loads the
+  // Google Maps JS API the same way the rest of the app does (shared
+  // singleton loader), then attaches an Autocomplete to the input ref.
+  // When the user picks a suggestion we flyTo the Leaflet map and drop a
+  // marker — no map provider change needed, Places works standalone.
+  useEffect(() => {
+    let cancelled = false;
+    let listener: google.maps.MapsEventListener | null = null;
+    let inputChangeListener: ((e: Event) => void) | null = null;
+
+    (async () => {
+      const ok = await loadGoogleMaps();
+      if (cancelled || !ok || !placesSearchInputRef.current) return;
+      if (typeof google === "undefined" || !google.maps?.places) return;
+
+      const ac = new google.maps.places.Autocomplete(placesSearchInputRef.current, {
+        types: ["geocode", "establishment"],
+        componentRestrictions: { country: "gb" },
+        fields: ["geometry", "formatted_address", "name", "place_id"],
+      });
+      placesAutocompleteRef.current = ac;
+
+      // Reflect the typed value into state so we know when to show the
+      // clear (X) button. Google's autocomplete writes back to the input
+      // imperatively on select, so we listen to native input events.
+      inputChangeListener = () => {
+        setPlacesSearchValue(placesSearchInputRef.current?.value || "");
+      };
+      placesSearchInputRef.current.addEventListener("input", inputChangeListener);
+
+      listener = ac.addListener("place_changed", () => {
+        const place = ac.getPlace();
+        const loc = place?.geometry?.location;
+        if (!loc || !mapRef.current) return;
+        const lat = loc.lat();
+        const lng = loc.lng();
+
+        mapRef.current.flyTo([lat, lng], 17, { duration: 0.8 });
+
+        if (placesMarkerRef.current) {
+          mapRef.current.removeLayer(placesMarkerRef.current);
+        }
+        placesMarkerRef.current = L.marker([lat, lng], {
+          icon: L.divIcon({
+            className: "places-search-pin",
+            html: `<div style="width:18px;height:18px;border-radius:50%;background:#4285f4;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>`,
+            iconSize: [18, 18],
+            iconAnchor: [9, 9],
+          }),
+        }).addTo(mapRef.current);
+        const label = place.name || place.formatted_address || "Location";
+        placesMarkerRef.current.bindPopup(`<strong>${label}</strong>${place.formatted_address && place.name !== place.formatted_address ? `<br/><span style="color:#666;font-size:11px">${place.formatted_address}</span>` : ""}`, { closeButton: false, offset: L.point(0, -8) }).openPopup();
+        setPlacesSearchValue(placesSearchInputRef.current?.value || "");
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      if (listener) listener.remove();
+      if (inputChangeListener && placesSearchInputRef.current) {
+        placesSearchInputRef.current.removeEventListener("input", inputChangeListener);
+      }
+      placesAutocompleteRef.current = null;
     };
   }, []);
 
@@ -3717,6 +4080,26 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         setCrmProperties(props);
       })
       .catch(() => {});
+
+    // Available Properties layer data — external (scraped/emailed/WhatsApp)
+    // listings + BGP's own available units, normalised to {kind,lat,lng,...}.
+    Promise.all([
+      fetch("/api/external-properties", { credentials: "include", headers }).then(r => r.ok ? r.json() : []).catch(() => []),
+      fetch("/api/available-units", { credentials: "include", headers }).then(r => r.ok ? r.json() : []).catch(() => []),
+    ]).then(([ext, units]) => {
+      const out: any[] = [];
+      for (const p of (Array.isArray(ext) ? ext : [])) {
+        const lat = parseFloat(p.latitude), lng = parseFloat(p.longitude);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) out.push({ kind: "market", lat, lng, ...p });
+      }
+      for (const u of (Array.isArray(units) ? units : [])) {
+        let addr: any = u.propertyAddress;
+        if (typeof addr === "string") { try { addr = JSON.parse(addr); } catch { addr = null; } }
+        const lat = parseFloat(addr?.lat), lng = parseFloat(addr?.lng);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) out.push({ kind: "bgp", lat, lng, address: addr?.address, ...u });
+      }
+      setAvailableProps(out);
+    }).catch(() => {});
   }, []);
 
   // Fetch CRM map pins (Deals, Comps, Lease Events) on mount
@@ -3800,6 +4183,81 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     }
   }, [showComps, mapPins]);
 
+  // Render Pathway runs layer — pins for active investigations.
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (!pathwayMarkersRef.current) {
+      pathwayMarkersRef.current = L.layerGroup().addTo(mapRef.current);
+    }
+    pathwayMarkersRef.current.clearLayers();
+    if (!showPathway || !mapPins?.pathway?.length) return;
+    for (const r of mapPins.pathway) {
+      if (!Number.isFinite(r.lat) || !Number.isFinite(r.lng)) continue;
+      const stage = r.currentStage || 0;
+      const stageLabel = stage > 0 ? `Stage ${stage}` : "Not started";
+      const marker = L.circleMarker([r.lat, r.lng], {
+        radius: 7,
+        fillColor: "#10b981", // emerald — pathway = active investigation
+        color: "#fff",
+        weight: 2,
+        opacity: 1,
+        fillOpacity: 0.85,
+      });
+      marker.bindPopup(`
+        <div style="font-size:12px;max-width:240px">
+          <strong>${r.label || "Pathway run"}</strong>
+          ${r.postcode ? `<br/><span style="color:#666">${r.postcode}</span>` : ""}
+          ${r.tenant ? `<br/><span style="color:#666">Tenant: ${r.tenant}</span>` : ""}
+          <br/><span style="font-size:10px;background:#10b981;color:white;padding:1px 6px;border-radius:8px;display:inline-block;margin-top:3px">${stageLabel}</span>
+          <br/><a href="/property-pathway?runId=${r.id}" style="display:inline-block;margin-top:8px;font-size:11px;color:#10b981;text-decoration:none;border:1px solid #d1fae5;padding:3px 8px;border-radius:4px">Open run →</a>
+        </div>
+      `, { closeButton: false, offset: L.point(0, -5), maxWidth: 260 });
+      pathwayMarkersRef.current.addLayer(marker);
+    }
+  }, [showPathway, mapPins]);
+
+  // Render Available Properties layer — market listings (cyan) + BGP's own
+  // available units (emerald), with rent / service charge / area in the popup.
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (!availableMarkersRef.current) availableMarkersRef.current = L.layerGroup().addTo(mapRef.current);
+    availableMarkersRef.current.clearLayers();
+    if (!showAvailable || !availableProps.length) return;
+    const money = (v: any) => { const n = parseFloat(String(v ?? "").replace(/[^\d.]/g, "")); return isNaN(n) ? null : `£${n.toLocaleString()}`; };
+    for (const p of availableProps) {
+      const isBgp = p.kind === "bgp";
+      const color = isBgp ? "#10b981" : "#06b6d4";
+      const marker = L.circleMarker([p.lat, p.lng], { radius: 7, fillColor: color, color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9 });
+      let pack: any = null; try { pack = p.landlord_pack ? JSON.parse(p.landlord_pack) : null; } catch {}
+      const rent = isBgp ? p.askingRent : p.rent;
+      const sc = isBgp ? p.serviceChargePa : p.service_charge;
+      const area = isBgp ? p.sqft : p.area_sqft;
+      const use = isBgp ? p.useClass : p.use_category;
+      const statusTxt = isBgp ? p.marketingStatus : p.availability;
+      const rows = [
+        area ? `${Number(area).toLocaleString()} sq ft` : null,
+        rent ? `Rent: ${money(rent) || rent}${isBgp ? " pa" : " pa"}` : null,
+        sc ? `Service charge: ${money(sc) || sc}` : null,
+        use ? `Use: ${use}` : null,
+        !isBgp && p.tenure ? `Tenure: ${p.tenure}` : null,
+        statusTxt ? `${statusTxt}` : null,
+        !isBgp && p.agent ? `Agent: ${p.agent}` : null,
+      ].filter(Boolean).map((t) => `<p style="margin:2px 0;font-size:11px;color:#555">${t}</p>`).join("");
+      const title = isBgp ? `${p.propertyName || "Property"}${p.unitName ? " — " + p.unitName : ""}` : (p.address || "Available property");
+      const badge = isBgp
+        ? `<span style="background:#10b981;color:#fff;font-size:10px;padding:1px 6px;border-radius:8px">BGP available</span>`
+        : `<span style="background:#06b6d4;color:#fff;font-size:10px;padding:1px 6px;border-radius:8px">Market listing</span>`;
+      const link = isBgp
+        ? `<a href="/properties/${p.propertyId}" style="display:inline-block;margin-top:8px;font-size:11px;color:#10b981;text-decoration:none;border:1px solid #d1fae5;padding:3px 8px;border-radius:4px">View property →</a>`
+        : (pack?.url ? `<div style="margin-top:8px;display:flex;gap:6px;align-items:center">
+             <a href="${pack.url}" target="_blank" rel="noopener" style="font-size:11px;color:#0891b2;text-decoration:none;border:1px solid #cffafe;padding:3px 8px;border-radius:4px">📄 View pack</a>
+             <a href="${pack.url}${pack.url.includes('?') ? '&' : '?'}download=1" style="font-size:11px;color:#64748b;text-decoration:none">Download</a>
+           </div>` : "");
+      marker.bindPopup(`<div style="font-size:12px;max-width:250px"><strong>${title}</strong><br/>${badge}${rows}${link}</div>`, { closeButton: false, offset: L.point(0, -5), maxWidth: 270 });
+      availableMarkersRef.current.addLayer(marker);
+    }
+  }, [showAvailable, availableProps]);
+
   // Render Lease Events layer
   useEffect(() => {
     const map = mapRef.current;
@@ -3845,6 +4303,14 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     const layer = titleBoundaryLayerRef.current;
 
     const refresh = async () => {
+      // Don't fetch / repaint title boundaries while Retail Context is on
+      // — the always-on red lines compete visually with the Goad colours
+      // and made the map feel busy.
+      if (showRetailContextRef.current) {
+        layer.clearLayers();
+        titleBoundaryBboxRef.current = "";
+        return;
+      }
       const bounds = map.getBounds();
       const bbox = `${bounds.getSouth().toFixed(4)},${bounds.getWest().toFixed(4)},${bounds.getNorth().toFixed(4)},${bounds.getEast().toFixed(4)}`;
       if (bbox === titleBoundaryBboxRef.current) return;
@@ -3953,6 +4419,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     if (!showCrmLayer) return;
 
     for (const p of crmProperties) {
+      if (isInvestmentComp(p)) continue; // shown on the separate Investment Comps layer
       if (!p.latitude || !p.longitude) continue;
 
       const marker = L.circleMarker([p.latitude, p.longitude], {
@@ -3985,6 +4452,881 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     }
   }, [showCrmLayer, crmProperties]);
 
+  // Render Investment Comps layer (the bulk-loaded comparables) — default-off,
+  // purple, so the data is still reachable but doesn't clutter CRM Properties.
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (!investmentCompsMarkersRef.current) {
+      investmentCompsMarkersRef.current = L.layerGroup().addTo(mapRef.current);
+    }
+    investmentCompsMarkersRef.current.clearLayers();
+    if (!showInvestmentComps) return;
+    for (const p of crmProperties) {
+      if (!isInvestmentComp(p) || !p.latitude || !p.longitude) continue;
+      const marker = L.circleMarker([p.latitude, p.longitude], {
+        radius: 6, fillColor: "#8b5cf6", color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.85,
+      });
+      marker.bindPopup(`
+        <div style="font-size:12px;max-width:220px">
+          <strong>${p.name || "Investment comp"}</strong>
+          ${p.postcode ? `<br/><span style="color:#666">${p.postcode}</span>` : ""}
+          ${p.assetClass ? `<br/><span style="color:#666">${String(p.assetClass).replace(/[{}]/g, "")}</span>` : ""}
+          <br/><span style="font-size:10px;background:#8b5cf6;color:white;padding:1px 6px;border-radius:8px;display:inline-block;margin-top:3px">Investment comp</span>
+        </div>
+      `, { closeButton: false, offset: L.point(0, -5) });
+      investmentCompsMarkersRef.current.addLayer(marker);
+    }
+  }, [showInvestmentComps, crmProperties]);
+
+  // When Retail Context is on, suppress the legacy layers underneath it:
+  //   - buildingLayerRef: pale-yellow auto-classified buildings with dark
+  //     #1a1a1a outlines that bleed through Goad polygons
+  //   - titleBoundaryLayerRef: always-on red Land Registry boundary lines
+  //   - centreTenantLayerRef: old centre tenant text markers
+  // All three are superseded by the real Goad data — keeping them painted
+  // underneath just creates the 'messy lines' Woody flagged.
+  useEffect(() => {
+    if (!showRetailContext) return;
+    buildingLayerRef.current?.clearLayers();
+    titleBoundaryLayerRef.current?.clearLayers();
+    centreTenantLayerRef.current?.clearLayers();
+  }, [showRetailContext, goadFeatures.length]);
+
+  // ─── Retail Context layer (Goad GeoJSON loader) ─────────────────────
+  // Loads all four floor layers (LG/GF/F1/F2) once on first toggle-on and
+  // caches them in component state. The data is static — no pan-refetch
+  // needed. The render effect below picks up changes to goadFeatures
+  // (initial load) or excludedRetailCategories (band-filter changes).
+  // Loads the harvested occupier units (all 76 licensed areas, from goad_units)
+  // for the current viewport, and re-fetches on pan/zoom. Replaces the old
+  // static West-End-only /api/goad/{floor} files so the Retail Context layer
+  // covers everywhere. Fetches only at street zoom (units are tiny above that).
+  useEffect(() => {
+    if (!showRetailContext) {
+      retailMarkersRef.current?.clearLayers();
+      retailLabelLayerRef.current?.clearLayers();
+      return;
+    }
+    const map = mapRef.current;
+    if (!map) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let lastKey = "";
+
+    const fetchUnits = async () => {
+      if (map.getZoom() < 16) return; // too far out — units unreadable
+      const b = map.getBounds();
+      const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
+      const key = `${b.getSouth().toFixed(3)},${b.getWest().toFixed(3)},${b.getNorth().toFixed(3)},${b.getEast().toFixed(3)}`;
+      if (key === lastKey) return;
+      lastKey = key;
+      setRetailFetching(true);
+      try {
+        const r = await fetch(`/api/map/retail-units?bbox=${bbox}`, { credentials: "include" });
+        const gj = r.ok ? await r.json() : null;
+        if (cancelled) return;
+        setGoadFeatures(gj?.features || []);
+      } catch {
+        /* swallow — toggle still works, just no data this pan */
+      } finally {
+        if (!cancelled) setRetailFetching(false);
+      }
+    };
+
+    const onMove = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(fetchUnits, 300);
+    };
+    map.on("moveend", onMove);
+    fetchUnits();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      map.off("moveend", onMove);
+    };
+  }, [showRetailContext]);
+
+  // ── Persist last map centre to localStorage ───────────────────────────────
+  // Lets sibling components (e.g. the MAP BGP "🌐 3D View" button) pick up
+  // wherever the user last looked, even though they live outside this map.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const onMove = () => {
+      try {
+        const c = map.getCenter();
+        localStorage.setItem(
+          "bgp_map_last_centre",
+          JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom(), ts: Date.now() }),
+        );
+      } catch { /* localStorage may be disabled */ }
+    };
+    map.on("moveend", onMove);
+    onMove();
+    return () => { map.off("moveend", onMove); };
+  }, []);
+
+  // ── Street View on-click toggle ────────────────────────────────────────────
+  // Fetch Google Maps API key once so we can build embed URLs.
+  useEffect(() => {
+    if (googleMapsKey !== null) return;
+    fetch("/api/config/maps-key", { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setGoogleMapsKey(d?.key || ""))
+      .catch(() => setGoogleMapsKey(""));
+  }, [googleMapsKey]);
+
+  // Bind a map-click handler when the toggle is on; clean up on toggle off.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const container = map.getContainer();
+    if (!showStreetView) {
+      container.style.cursor = "";
+      if (streetViewClickRef.current) {
+        map.off("click", streetViewClickRef.current);
+        streetViewClickRef.current = null;
+      }
+      return;
+    }
+    container.style.cursor = "crosshair";
+    const handler = (e: L.LeafletMouseEvent) => {
+      const { lat, lng } = e.latlng;
+      const key = googleMapsKey || "";
+      // Embed URL works with any key that has Maps Embed enabled. If the
+      // key is missing, fall back to a public Maps link.
+      const embedSrc = key
+        ? `https://www.google.com/maps/embed/v1/streetview?key=${encodeURIComponent(key)}&location=${lat},${lng}&heading=0&pitch=0&fov=90`
+        : "";
+      const fallback = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}`;
+      const html = embedSrc
+        ? `<div style="width:360px"><iframe src="${embedSrc}" width="360" height="240" style="border:0;border-radius:6px" allow="fullscreen" referrerpolicy="no-referrer-when-downgrade"></iframe>
+            <div style="text-align:right;margin-top:4px"><a href="${fallback}" target="_blank" rel="noreferrer" style="font-size:11px;color:#1a73e8">Open in Maps ↗</a></div></div>`
+        : `<div style="width:240px;font-size:12px"><p>Google Maps key not configured.</p><a href="${fallback}" target="_blank" rel="noreferrer" style="font-size:11px;color:#1a73e8">Open Street View in Maps ↗</a></div>`;
+      L.popup({ maxWidth: 380, closeButton: true })
+        .setLatLng(e.latlng)
+        .setContent(html)
+        .openOn(map);
+    };
+    streetViewClickRef.current = handler;
+    map.on("click", handler);
+    return () => {
+      map.off("click", handler);
+      container.style.cursor = "";
+      streetViewClickRef.current = null;
+    };
+  }, [showStreetView, googleMapsKey]);
+
+  // ── Annotations layer ──────────────────────────────────────────────────
+  // Fetch + render pins / labels stored in map_annotations. Click handler
+  // is bound when annotateMode is set; click drops a new pin or label.
+  const loadAnnotations = useCallback(async () => {
+    try {
+      const r = await fetch("/api/map-annotations", { credentials: "include" });
+      if (!r.ok) return;
+      const data = await r.json();
+      setAnnotations(Array.isArray(data) ? data : []);
+    } catch {}
+  }, []);
+  useEffect(() => { loadAnnotations(); }, [loadAnnotations]);
+
+  const loadMapLayers = useCallback(async () => {
+    try {
+      const r = await fetch("/api/map-layers", { credentials: "include" });
+      if (!r.ok) return;
+      const data = await r.json();
+      const list: MapLayer[] = Array.isArray(data) ? data : [];
+      setMapLayers(list);
+      // Pick the first owned layer as active by default. Falls back
+      // to the first shared layer, then no layer (annotations go to
+      // the "unfiled" bucket — still visible, just not in a layer).
+      setActiveLayerId((cur) => {
+        if (cur && list.some((l) => l.id === cur)) return cur;
+        const mine = list.find((l) => l.mine);
+        if (mine) return mine.id;
+        const any = list[0];
+        return any ? any.id : null;
+      });
+    } catch {}
+  }, []);
+  useEffect(() => { loadMapLayers(); }, [loadMapLayers]);
+
+  const createMapLayer = useCallback(async () => {
+    const name = newLayerName.trim();
+    if (!name) return;
+    const r = await fetch("/api/map-layers", {
+      method: "POST", credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, color: annotateColor }),
+    });
+    const body = await r.json().catch(() => ({} as any));
+    if (r.ok && body?.id) {
+      setNewLayerName("");
+      await loadMapLayers();
+      setActiveLayerId(body.id);
+    }
+  }, [newLayerName, annotateColor, loadMapLayers]);
+
+  const deleteMapLayer = useCallback(async (id: string, name: string) => {
+    if (!window.confirm(`Delete layer "${name}" and all its annotations?`)) return;
+    await fetch(`/api/map-layers/${id}`, { method: "DELETE", credentials: "include" });
+    await loadMapLayers();
+    await loadAnnotations();
+    if (activeLayerId === id) setActiveLayerId(null);
+  }, [activeLayerId, loadMapLayers, loadAnnotations]);
+
+  const toggleLayerVisibility = useCallback((id: string) => {
+    setHiddenLayerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Reset in-progress polygon / drive-time when mode changes.
+  useEffect(() => {
+    polygonPointsRef.current = [];
+    if (polygonGhostRef.current && mapRef.current) {
+      mapRef.current.removeLayer(polygonGhostRef.current);
+      polygonGhostRef.current = null;
+    }
+    driveOriginRef.current = null;
+    if (driveOriginMarkerRef.current && mapRef.current) {
+      mapRef.current.removeLayer(driveOriginMarkerRef.current);
+      driveOriginMarkerRef.current = null;
+    }
+  }, [annotateMode]);
+
+  // Bind click handlers for every annotate mode. Pin/label = single
+  // click. Polygon = multiple clicks + double-click to finish. Drive
+  // time = two clicks (origin, destination).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const container = map.getContainer();
+    if (!annotateMode) {
+      container.style.cursor = "";
+      return;
+    }
+    container.style.cursor = "crosshair";
+
+    const handler = async (e: L.LeafletMouseEvent) => {
+      const { mode, color } = annotateModeRef.current;
+      if (!mode) return;
+      const { lat, lng } = e.latlng;
+
+      if (mode === "pin" || mode === "label") {
+        let label: string | null = null;
+        if (mode === "label") {
+          label = window.prompt("Label text:") || null;
+          if (!label) return;
+        } else {
+          label = window.prompt("Note for this pin (optional):") || null;
+        }
+        const resp = await fetch("/api/map-annotations", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: mode, label, color, lat, lng, layerId: activeLayerId }),
+        });
+        if (resp.ok) { await loadAnnotations(); await loadMapLayers(); setAnnotateMode(null); }
+        return;
+      }
+
+      if (mode === "polygon") {
+        polygonPointsRef.current.push(e.latlng);
+        if (polygonGhostRef.current) map.removeLayer(polygonGhostRef.current);
+        polygonGhostRef.current = L.polyline(polygonPointsRef.current, {
+          color, weight: 3, dashArray: "6 4", opacity: 0.9,
+        }).addTo(map);
+        return;
+      }
+
+      if (mode === "drive_time") {
+        if (!driveOriginRef.current) {
+          driveOriginRef.current = e.latlng;
+          driveOriginMarkerRef.current = L.circleMarker(e.latlng, {
+            radius: 7, fillColor: color, color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9,
+          }).addTo(map);
+          return;
+        }
+        // Second click → request directions
+        const origin = driveOriginRef.current;
+        const destination = e.latlng;
+        if (driveOriginMarkerRef.current) map.removeLayer(driveOriginMarkerRef.current);
+        driveOriginRef.current = null;
+        driveOriginMarkerRef.current = null;
+        try {
+          const r = await fetch("/api/maps/directions", {
+            method: "POST", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ origin: { lat: origin.lat, lng: origin.lng }, destination: { lat: destination.lat, lng: destination.lng } }),
+          });
+          const data = await r.json();
+          if (!r.ok || !data.polyline) {
+            window.alert(`Directions failed: ${data?.error || r.status}`);
+            return;
+          }
+          // Save the drive-time as a polygon annotation with geometry
+          // = the decoded polyline (LineString GeoJSON), label = duration.
+          const coords = decodeGooglePolyline(data.polyline);
+          const geometry = {
+            type: "LineString",
+            coordinates: coords.map((p) => [p[1], p[0]]),     // [lng,lat]
+          };
+          const label = `${data.durationText || "?"} · ${data.distanceText || ""}`.trim();
+          const resp = await fetch("/api/map-annotations", {
+            method: "POST", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ kind: "drive_time", label, color, lat: origin.lat, lng: origin.lng, geometry, layerId: activeLayerId }),
+          });
+          if (resp.ok) { await loadAnnotations(); await loadMapLayers(); setAnnotateMode(null); }
+        } catch (err: any) {
+          window.alert(`Couldn't fetch route: ${err?.message}`);
+        }
+      }
+    };
+
+    const dblHandler = async () => {
+      const { color } = annotateModeRef.current;
+      if (annotateModeRef.current.mode !== "polygon") return;
+      const pts = polygonPointsRef.current;
+      if (pts.length < 3) {
+        window.alert("Click at least 3 points before double-clicking to close the shape.");
+        return;
+      }
+      const geometry = {
+        type: "Polygon",
+        coordinates: [[...pts, pts[0]].map((p) => [p.lng, p.lat])],
+      };
+      const label = window.prompt("Name this redline (optional):") || null;
+      const resp = await fetch("/api/map-annotations", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "polygon", label, color, lat: pts[0].lat, lng: pts[0].lng, geometry, layerId: activeLayerId }),
+      });
+      if (resp.ok) { await loadAnnotations(); await loadMapLayers(); setAnnotateMode(null); }
+    };
+
+    map.on("click", handler);
+    map.on("dblclick", dblHandler);
+    // Disable Leaflet's default double-click-to-zoom while in polygon
+    // mode so it doesn't fight the finish gesture.
+    if (annotateMode === "polygon") map.doubleClickZoom.disable();
+    return () => {
+      map.off("click", handler);
+      map.off("dblclick", dblHandler);
+      map.doubleClickZoom.enable();
+      container.style.cursor = "";
+    };
+  }, [annotateMode, loadAnnotations]);
+
+  // Render annotations whenever the list or visibility changes.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!annotationsLayerRef.current) {
+      annotationsLayerRef.current = L.layerGroup().addTo(map);
+    }
+    const layer = annotationsLayerRef.current;
+    layer.clearLayers();
+    if (!showAnnotations) return;
+    for (const a of annotations) {
+      if (a.lat == null || a.lng == null) continue;
+      if (a.layerId && hiddenLayerIds.has(a.layerId)) continue;
+      const color = a.color || "#ef4444";
+      if (a.kind === "pin") {
+        const marker = L.circleMarker([a.lat, a.lng], {
+          radius: 8,
+          fillColor: color,
+          color: "#ffffff",
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.9,
+        });
+        const popup = `<div style="min-width:160px"><div style="font-weight:600;margin-bottom:4px">${(a.label || "Pin").replace(/</g, "&lt;")}</div><button id="del-${a.id}" style="font-size:11px;color:#dc2626;text-decoration:underline;cursor:pointer;background:none;border:0;padding:0">Delete pin</button></div>`;
+        marker.bindPopup(popup);
+        marker.on("popupopen", () => {
+          const btn = document.getElementById(`del-${a.id}`);
+          if (btn) btn.onclick = async () => {
+            await fetch(`/api/map-annotations/${a.id}`, { method: "DELETE", credentials: "include" });
+            map.closePopup();
+            loadAnnotations();
+          };
+        });
+        layer.addLayer(marker);
+      } else if (a.kind === "label") {
+        const icon = L.divIcon({
+          className: "",
+          iconSize: undefined as any,
+          html: `<div style="background:${color};color:#ffffff;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.2);transform:translate(-50%,-50%);" data-ann="${a.id}">${(a.label || "Label").replace(/</g, "&lt;")}</div>`,
+        });
+        const marker = L.marker([a.lat, a.lng], { icon });
+        marker.on("click", async () => {
+          if (window.confirm(`Delete label "${a.label}"?`)) {
+            await fetch(`/api/map-annotations/${a.id}`, { method: "DELETE", credentials: "include" });
+            loadAnnotations();
+          }
+        });
+        layer.addLayer(marker);
+      } else if (a.kind === "polygon" && a.geometry?.type === "Polygon") {
+        const poly = L.geoJSON(a.geometry, {
+          style: { color, weight: 3, fillColor: color, fillOpacity: 0.18 },
+        } as any);
+        const safeLabel = (a.label || "Redline").replace(/</g, "&lt;");
+        const popup = `<div style="min-width:160px"><div style="font-weight:600;margin-bottom:4px">${safeLabel}</div><button id="del-${a.id}" style="font-size:11px;color:#dc2626;text-decoration:underline;cursor:pointer;background:none;border:0;padding:0">Delete redline</button></div>`;
+        poly.bindPopup(popup);
+        poly.on("popupopen", () => {
+          const btn = document.getElementById(`del-${a.id}`);
+          if (btn) btn.onclick = async () => {
+            await fetch(`/api/map-annotations/${a.id}`, { method: "DELETE", credentials: "include" });
+            map.closePopup();
+            loadAnnotations();
+          };
+        });
+        layer.addLayer(poly);
+      } else if (a.kind === "drive_time" && a.geometry?.type === "LineString") {
+        const line = L.geoJSON(a.geometry, {
+          style: { color, weight: 4, opacity: 0.85 },
+        } as any);
+        const safeLabel = (a.label || "Drive time").replace(/</g, "&lt;");
+        const popup = `<div style="min-width:160px"><div style="font-weight:600;margin-bottom:4px">${safeLabel}</div><button id="del-${a.id}" style="font-size:11px;color:#dc2626;text-decoration:underline;cursor:pointer;background:none;border:0;padding:0">Delete route</button></div>`;
+        line.bindPopup(popup);
+        line.on("popupopen", () => {
+          const btn = document.getElementById(`del-${a.id}`);
+          if (btn) btn.onclick = async () => {
+            await fetch(`/api/map-annotations/${a.id}`, { method: "DELETE", credentials: "include" });
+            map.closePopup();
+            loadAnnotations();
+          };
+        });
+        layer.addLayer(line);
+        // Duration label at the midpoint
+        const coords = a.geometry.coordinates as [number, number][];
+        if (coords.length > 1) {
+          const mid = coords[Math.floor(coords.length / 2)];
+          const icon = L.divIcon({
+            className: "",
+            html: `<div style="background:${color};color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.2);transform:translate(-50%,-50%);">${safeLabel}</div>`,
+          });
+          layer.addLayer(L.marker([mid[1], mid[0]], { icon }));
+        }
+      }
+    }
+  }, [annotations, showAnnotations, hiddenLayerIds, loadAnnotations]);
+
+  // ── HMLR title polygons overlay ─────────────────────────────────────────
+  // Fetches polygons in the current viewport when the layer is on; debounced
+  // so panning around doesn't hammer Postgres. Server caps at 500 polygons
+  // and returns nothing if the bbox is too wide (zoom-in nudge).
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!showHmlrTitles) {
+      if (hmlrLayerRef.current) {
+        map.removeLayer(hmlrLayerRef.current);
+        hmlrLayerRef.current = null;
+      }
+      setHmlrPolygons(null);
+      return;
+    }
+    let cancelled = false;
+    const fetchForBounds = async () => {
+      const b = map.getBounds();
+      try {
+        const url = `/api/hmlr-polygons-in-bbox?n=${b.getNorth()}&s=${b.getSouth()}&e=${b.getEast()}&w=${b.getWest()}`;
+        const r = await fetch(url, { credentials: "include" });
+        if (!r.ok) return;
+        const data = await r.json();
+        if (!cancelled) setHmlrPolygons(data);
+      } catch {}
+    };
+    fetchForBounds();
+    const onMove = () => { window.clearTimeout((map as any)._hmlrDebounce); (map as any)._hmlrDebounce = window.setTimeout(fetchForBounds, 600); };
+    map.on("moveend", onMove);
+    return () => { cancelled = true; map.off("moveend", onMove); };
+  }, [showHmlrTitles]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (hmlrLayerRef.current) {
+      map.removeLayer(hmlrLayerRef.current);
+      hmlrLayerRef.current = null;
+    }
+    if (!showHmlrTitles || !hmlrPolygons?.features?.length) return;
+    const group = L.layerGroup().addTo(map);
+    // Colour by tenure — freehold = blue, leasehold = orange, unknown = grey.
+    // Matches the legend below the layer toggle in the sidebar.
+    const styleFor = (tenure: string) => {
+      if (tenure === "freehold") return { color: "#1e40af", weight: 1.5, fillColor: "#3b82f6", fillOpacity: 0.12 };
+      if (tenure === "leasehold") return { color: "#c2410c", weight: 1.5, fillColor: "#f97316", fillOpacity: 0.12 };
+      return { color: "#6b7280", weight: 1.2, fillColor: "#9ca3af", fillOpacity: 0.06, dashArray: "3 3" };
+    };
+    const gj = L.geoJSON(hmlrPolygons, {
+      style: (feat: any) => styleFor(feat?.properties?.tenure || "unknown") as any,
+      onEachFeature: (feat: any, lyr: any) => {
+        const title = feat?.properties?.titleNumber || "Title";
+        const tenure = feat?.properties?.tenure || "unknown";
+        const tenurePill = tenure === "freehold"
+          ? `<span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600">FREEHOLD</span>`
+          : tenure === "leasehold"
+            ? `<span style="background:#ffedd5;color:#c2410c;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600">LEASEHOLD</span>`
+            : `<span style="background:#f3f4f6;color:#374151;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600">UNKNOWN</span>`;
+        lyr.bindPopup(`<div style="font-weight:600">${title}</div><div style="margin-top:4px">${tenurePill}</div><div style="font-size:11px;color:#6b7280;margin-top:4px">Region: ${feat?.properties?.region || "—"}</div>`);
+      },
+    } as any);
+    group.addLayer(gj);
+    hmlrLayerRef.current = group;
+  }, [hmlrPolygons, showHmlrTitles]);
+
+  // ── Postcode boundary highlight ────────────────────────────────────────
+  // Type a postcode → red rectangle on the map. Calls postcodes.io via
+  // /api/postcode-boundary/:postcode, which returns the centroid + bbox.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (postcodeLayerRef.current) {
+      map.removeLayer(postcodeLayerRef.current);
+      postcodeLayerRef.current = null;
+    }
+    if (!postcodeBoundary?.geojson) return;
+    const group = L.layerGroup().addTo(map);
+    const gj = L.geoJSON(postcodeBoundary.geojson, {
+      style: { color: "#dc2626", weight: 3, fillColor: "#dc2626", fillOpacity: 0.08, dashArray: "6 4" },
+    } as any);
+    group.addLayer(gj);
+    // Postcode label at the centroid
+    const labelIcon = L.divIcon({
+      className: "",
+      html: `<div style="background:#dc2626;color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:700;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,0.3);transform:translate(-50%,-50%);">${postcodeBoundary.postcode}</div>`,
+    });
+    group.addLayer(L.marker([postcodeBoundary.lat, postcodeBoundary.lng], { icon: labelIcon }));
+    postcodeLayerRef.current = group;
+    map.flyToBounds(
+      [[postcodeBoundary.south, postcodeBoundary.west], [postcodeBoundary.north, postcodeBoundary.east]],
+      { padding: [40, 40], duration: 0.8 } as any,
+    );
+  }, [postcodeBoundary]);
+
+  // Decode a Google Maps "overview_polyline" string into [lat,lng] pairs.
+  // Pure-JS implementation of the algorithm from Google's docs — no
+  // external dependency.
+  function decodeGooglePolyline(str: string): [number, number][] {
+    const out: [number, number][] = [];
+    let lat = 0, lng = 0, i = 0;
+    while (i < str.length) {
+      let b: number, shift = 0, result = 0;
+      do { b = str.charCodeAt(i++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+      lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+      shift = 0; result = 0;
+      do { b = str.charCodeAt(i++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+      lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+      out.push([lat * 1e-5, lng * 1e-5]);
+    }
+    return out;
+  }
+
+  const highlightPostcode = useCallback(async () => {
+    const q = postcodeQuery.trim();
+    if (!q) return;
+    try {
+      const r = await fetch(`/api/postcode-boundary/${encodeURIComponent(q)}`, { credentials: "include" });
+      if (!r.ok) { setPostcodeBoundary(null); return; }
+      const data = await r.json();
+      setPostcodeBoundary(data);
+    } catch {}
+  }, [postcodeQuery]);
+
+  // Map Experian Goad `Category` strings onto the 6-band palette below.
+  // Kept in this file (not goad-taxonomy.ts) because the server-side
+  // taxonomy operates on synthesised data with different field names.
+  const classifyGoadCategory = useCallback((rawCategory: string, activity: string): string => {
+    const c = (rawCategory || "").toUpperCase();
+    const a = (activity || "").toUpperCase();
+    if (a === "VACANT" || c.startsWith("VACANT")) return "vacant";
+    if (c === "OFFICES" || c.includes("BANK") || c.includes("BUILDING SOC") || c.includes("ESTATE AGENT") ||
+        c.includes("SOLICITOR") || c.includes("POST OFFICE") || c.includes("TRAVEL AGENT") ||
+        c.includes("INSURANCE") || c.includes("ACCOUNTANT") || c.includes("EMPLOYMENT") ||
+        c.includes("BUREAU") || c.includes("REPAIRS") || c.includes("CAR PARK")) return "services";
+    if (c.includes("RESTAURANT") || c.includes("CAFE") || c.includes("PUB") || c === "BARS & WINE BARS" ||
+        c.includes("TAKE AWAY") || c.includes("BAKER") || c.includes("FAST FOOD") || c.includes("WINE")) return "fnb";
+    if (c.includes("HEALTH & BEAUTY") || c.includes("COSMETICS") || c.includes("HAIRDRESS") ||
+        c.includes("BARBER") || c.includes("BEAUTY SALON") || c.includes("SPA")) return "beauty";
+    if (c.includes("LADIES") || c.includes("MENS WEAR") || c.includes("FOOTWEAR") || c.includes("JEWEL") ||
+        c.includes("ART ") || c === "ART & ART DEALERS" || c.includes("CHILDREN") ||
+        c.includes("HANDBAGS") || c.includes("SPORTS GOODS") || c.includes("TOYS") ||
+        c.includes("HOUSEHOLD GOODS") || c.includes("FURNITURE") || c.includes("ELECTRICAL") ||
+        c.includes("CHARITY") || c.includes("BOOKS") || c.includes("MUSIC")) return "fashion";
+    if (c.includes("SUPERMARKET") || c.includes("GROCER") || c.includes("BUTCHER") || c.includes("FISHMONGER") ||
+        c.includes("CONVENIENCE") || c.includes("OFF LICEN") || c.includes("NEWSAGENT") ||
+        c.includes("CHEMIST") || c.includes("PHARMACY") || c.includes("FRUIT") || c.includes("VEGET")) return "convenience";
+    return "other";
+  }, []);
+
+  // Render the licensed Goad polygons. Re-runs when the dataset arrives
+  // or the user toggles a band filter. Polygons live in retailMarkersRef
+  // (despite the legacy name — kept so the panel toggle still binds).
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (!retailMarkersRef.current) {
+      retailMarkersRef.current = L.layerGroup({ pane: "goadPane" } as any).addTo(mapRef.current);
+    }
+    if (!retailLabelLayerRef.current) {
+      retailLabelLayerRef.current = L.layerGroup({ pane: "goadLabelPane" } as any).addTo(mapRef.current);
+    }
+    retailMarkersRef.current.clearLayers();
+    retailLabelLayerRef.current.clearLayers();
+    if (!showRetailContext) return;
+
+    const COLOURS: Record<string, { fill: string; stroke: string; label: string }> = {
+      fashion:     { fill: "#C9A961", stroke: "#8A7237", label: "Fashion & Comparison" },
+      convenience: { fill: "#7FA99B", stroke: "#4F7064", label: "Convenience & Food Retail" },
+      fnb:         { fill: "#D08F6E", stroke: "#8A5A3F", label: "Food & Beverage" },
+      services:    { fill: "#8B9DC3", stroke: "#5C6E94", label: "Services" },
+      beauty:      { fill: "#B8A4B6", stroke: "#7C6A7A", label: "Beauty & Personal Care" },
+      vacant:      { fill: "#FF7D00", stroke: "#B25600", label: "Vacant" },
+      other:       { fill: "#A8A8A8", stroke: "#707070", label: "Other / Unknown" },
+    };
+
+    const currentZoom = mapRef.current?.getZoom() ?? 0;
+    // West End polygons are tiny — labels only become readable at 18+.
+    const showLabels = currentZoom >= 18;
+
+    for (const feature of goadFeatures) {
+      const props = feature.properties || {};
+      const category = props._group || classifyGoadCategory(props.Category || "", props.Activity || "");
+      if (excludedRetailCategories.has(category)) continue;
+      const style = COLOURS[category] || COLOURS.other;
+
+      const polygon = L.geoJSON(feature, {
+        pane: "goadPane",
+        style: () => ({
+          fillColor: style.fill,
+          color: style.stroke,
+          weight: 0.8,
+          opacity: 1,
+          fillOpacity: 0.7,
+        }),
+      } as any);
+
+      const fascia = (props.FasciaMas || props.Fascia || "").trim();
+      const activity = (props.PrimaryAc || props.Activity || "").trim();
+      const tenant = fascia || activity || "(no fascia)";
+      const isVacant = category === "vacant";
+      const num = (props.StreetNum || "").trim();
+      const street = (props.StreetName || "").trim();
+      const postcode = (props.Postcode || "").trim();
+      const holding = (props.HoldingCo || "").trim();
+      const useClass = (props.UseClass || "").trim();
+      const sqft = props.Area_ft2;
+      const subclass = props.Subclass || "";
+      const floor =
+        subclass === "Retailgf" ? "Ground" :
+        subclass === "Retaillg" ? "Lower Ground" :
+        subclass === "Retailf1" ? "First Floor" :
+        subclass === "Retailf2" ? "Second Floor" : "";
+
+      const centroidLng = parseFloat(props.Centroid_X);
+      const centroidLat = parseFloat(props.Centroid_Y);
+      polygon.on("click", (e: L.LeafletMouseEvent) => {
+        // Stop the click bubbling to the map's general click handler —
+        // otherwise both the polygon panel (Goad data) and the map-click
+        // panel (reverse-geocoded) would fight to open the side panel.
+        L.DomEvent.stopPropagation(e);
+        setGoadPanelUnit({
+          tenant,
+          activity,
+          category: props.Category,
+          band: style.label,
+          bandFill: style.fill,
+          useClass,
+          floor,
+          sqft,
+          holding,
+          num,
+          street,
+          postcode,
+          isVacant,
+          goadNumber: props.GoadNumber,
+          precName: props.PrecName,
+          surveyDate: props.SurveyDate,
+          lat: Number.isFinite(centroidLat) ? centroidLat : undefined,
+          lng: Number.isFinite(centroidLng) ? centroidLng : undefined,
+        });
+      });
+
+      retailMarkersRef.current.addLayer(polygon);
+
+      // Fascia label — Goad-plan style, constrained to the polygon's
+      // actual on-screen bounding box. No more labels overflowing into
+      // adjacent units: we measure the polygon in pixels at the current
+      // zoom and clamp font + width to that. If the text won't fit even
+      // at the smallest readable size, we hide the label entirely.
+      const ft2Raw = Number(sqft) || 0;
+      const map = mapRef.current;
+      if (showLabels && map && fascia && !isVacant && ft2Raw >= 80) {
+        const ring: [number, number][] | undefined = feature.geometry?.coordinates?.[0];
+        const cx = parseFloat(props.Centroid_X);
+        const cy = parseFloat(props.Centroid_Y);
+        if (Array.isArray(ring) && ring.length > 2 && Number.isFinite(cx) && Number.isFinite(cy)) {
+          // 1) Project every vertex to screen pixels at the current zoom.
+          //    Working in screen space (where Y points DOWN) means PCA
+          //    angle plugs straight into CSS rotate() without sign
+          //    gymnastics — that was the bug in the previous attempts.
+          const screenPts = (ring.slice(0, -1) as [number, number][]).map(
+            ([lng, lat]) => map.latLngToLayerPoint([lat, lng]),
+          );
+          if (screenPts.length < 3) continue;
+
+          // Axis-aligned bbox — only used to decide whether the unit is
+          // big enough to bother labelling.
+          let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+          for (const p of screenPts) {
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
+          }
+          const widthPx = Math.max(0, maxX - minX);
+          const heightPx = Math.max(0, maxY - minY);
+          if (Math.min(widthPx, heightPx) < 14 || Math.max(widthPx, heightPx) < 30) {
+            // too small — no label
+          } else {
+            // 2) PCA on the screen-pixel vertices → angle of the long
+            //    axis. Because we're in screen space, this angle plugs
+            //    straight into CSS transform: rotate() with no sign flip.
+            let mx = 0, my = 0;
+            for (const p of screenPts) { mx += p.x; my += p.y; }
+            mx /= screenPts.length; my /= screenPts.length;
+            let cxx = 0, cxy = 0, cyy = 0;
+            for (const p of screenPts) {
+              const dx = p.x - mx;
+              const dy = p.y - my;
+              cxx += dx * dx; cxy += dx * dy; cyy += dy * dy;
+            }
+            const angleRad = 0.5 * Math.atan2(2 * cxy, cxx - cyy);
+
+            // 3) Project every vertex onto (long axis, short axis) so we
+            //    know the true space available for text along the shop's
+            //    length, not the wider axis-aligned bbox.
+            const ca = Math.cos(angleRad);
+            const sa = Math.sin(angleRad);
+            let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+            for (const p of screenPts) {
+              const u = (p.x - mx) * ca + (p.y - my) * sa;       // along long axis
+              const v = -(p.x - mx) * sa + (p.y - my) * ca;      // perpendicular
+              if (u < minU) minU = u; if (u > maxU) maxU = u;
+              if (v < minV) minV = v; if (v > maxV) maxV = v;
+            }
+            const longPx = maxU - minU;
+            const shortPx = maxV - minV;
+
+            // 4) Keep text right-side-up — never upside-down. CSS rotation
+            //    is CW positive (screen-y points down), so the angle in
+            //    radians from atan2 maps directly to degrees here.
+            let deg = (angleRad * 180) / Math.PI;
+            if (deg > 90) deg -= 180;
+            if (deg < -90) deg += 180;
+
+            // 4b) HORIZONTAL FIRST. Even on a clearly elongated narrow
+            //     strip, a short fascia like 'VERTEX' or 'MISTO' reads
+            //     better horizontally than rotated 90°. Only commit to
+            //     a rotated label when horizontal genuinely can't fit.
+            const fontFor = (long: number, short: number) => {
+              const safeLong = Math.max(0, long - 6);
+              const safeShort = Math.max(6, short - 2);
+              const byLength = (safeLong / Math.max(fascia.length, 1)) / 0.55;
+              const byHeight = safeShort * 0.9;
+              return Math.floor(Math.min(13, Math.min(byLength, byHeight)));
+            };
+            const horizontalFont = fontFor(widthPx, heightPx);
+            const rotatedFont = fontFor(longPx, shortPx);
+            // Prefer horizontal whenever it gives ≥ 7px AND isn't dramatically
+            // smaller than the rotated alternative (within 2px). The PCA
+            // angle is only used when rotating actually buys us a much bigger,
+            // readable font — typically the case for very long fascias on
+            // very narrow strips ('CHARLES TYRWHITT, BAR DES PRES' etc.).
+            // Never run a fascia near-vertical — that's the "names in the
+            // wrong direction" bug (deep narrow units whose PCA long-axis is
+            // the depth, perpendicular to the street). Goad keeps names along
+            // the frontage, so for steep angles prefer a horizontal label —
+            // smaller / truncated if need be — over rotating it upright.
+            // ALWAYS horizontal. Rotating to the polygon's principal axis kept
+            // producing wrong-angle / near-vertical labels on narrow + angled
+            // units (the "names in the wrong direction" complaint, 7 attempts
+            // deep). Horizontal-with-truncation is predictable and readable —
+            // long fascias ellipsis-clip via the wrapper below. We accept the
+            // odd truncated name over ever rendering one sideways.
+            void rotatedFont; void longPx; void shortPx; // rotation deliberately unused now
+            deg = 0;
+            let fontPx: number = horizontalFont >= 5 ? horizontalFont : 0; // hide only if unreadably small
+
+            const textBudget = deg === 0 ? widthPx : longPx;
+            const shortBudget = deg === 0 ? heightPx : shortPx;
+            const safeLong = Math.max(0, textBudget - 6);
+            const safeShort = Math.max(6, shortBudget - 2);
+            // Skip entirely if the smallest readable font won't fit —
+            // better than overflow.
+            if (fontPx >= 7) {
+              void safeShort; // size already chosen above; keep for future use
+              const innerWidth = Math.round(safeLong);
+              // Outer wrapper matches the polygon's screen bbox so
+              // overflow:hidden tightly clips anything that escapes.
+              const outerW = Math.round(widthPx + 2);
+              const outerH = Math.round(Math.max(heightPx, fontPx + 2) + 2);
+              const label = L.marker([cy, cx], {
+                interactive: false,
+                pane: "goadLabelPane",
+                icon: L.divIcon({
+                  className: "",
+                  html: `<div data-goad-label-v5="1" style="width:${outerW}px;height:${outerH}px;display:flex;align-items:center;justify-content:center;pointer-events:none;overflow:hidden;"><div style="font-family:'Helvetica Neue Condensed','Arial Narrow','Helvetica',sans-serif;font-size:${fontPx}px;font-weight:600;letter-spacing:-0.2px;color:#0a0a0a;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 2px #fff;text-align:center;white-space:nowrap;width:${innerWidth}px;max-width:${innerWidth}px;overflow:hidden;text-overflow:ellipsis;transform:rotate(${deg.toFixed(1)}deg);transform-origin:center;text-transform:uppercase;line-height:1;">${fascia}</div></div>`,
+                  iconSize: [outerW, outerH],
+                  iconAnchor: [outerW / 2, outerH / 2],
+                }),
+              });
+              retailLabelLayerRef.current.addLayer(label);
+            }
+          }
+        }
+      }
+    }
+  }, [showRetailContext, goadFeatures, excludedRetailCategories, classifyGoadCategory, mapZoom]);
+
+  // When a Goad polygon is clicked, fetch BGP context (CRM properties at
+  // this address, recent deals, parent-company match by HoldingCo).
+  useEffect(() => {
+    if (!goadPanelUnit) {
+      setGoadPanelContext(null);
+      setTenantVerifyState({ loading: false, result: null, error: null });
+      setTenantCreateState({ loading: false, companyId: null, error: null });
+      return;
+    }
+    let cancelled = false;
+    setGoadPanelLoading(true);
+    // Reset the per-click tenant-resolver lifecycle whenever the user
+    // opens a different polygon.
+    setTenantVerifyState({ loading: false, result: null, error: null });
+    setTenantCreateState({ loading: false, companyId: null, error: null });
+    const params = new URLSearchParams();
+    if (goadPanelUnit.postcode) params.set("postcode", goadPanelUnit.postcode);
+    if (goadPanelUnit.num) params.set("streetNum", goadPanelUnit.num);
+    if (goadPanelUnit.street) params.set("street", goadPanelUnit.street);
+    if (goadPanelUnit.holding) params.set("holding", goadPanelUnit.holding);
+    if (goadPanelUnit.tenant) params.set("fascia", goadPanelUnit.tenant);
+    if (goadPanelUnit.lat) params.set("lat", String(goadPanelUnit.lat));
+    if (goadPanelUnit.lng) params.set("lng", String(goadPanelUnit.lng));
+    fetch(`/api/goad/polygon-context?${params}`, { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        setGoadPanelContext(data || { crmProperties: [], deals: [], parentCompany: null, parentCompanyCandidates: [], landRegistry: null, rates: [], planningApplications: [], pathwayRun: null, tenantCompany: null, tenantCompanyCandidates: [] });
+      })
+      .catch(() => { /* swallow — panel still shows raw Goad data */ })
+      .finally(() => { if (!cancelled) setGoadPanelLoading(false); });
+    return () => { cancelled = true; };
+  }, [goadPanelUnit]);
+
   // ─── OS Data Layers: fetch buildings / sites on map move ─────────
   const [highlightedBuildingLayer, setHighlightedBuildingLayer] = useState<L.GeoJSON | null>(null);
 
@@ -4001,7 +5343,10 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         const headers: Record<string, string> = { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` };
 
         // ── Buildings (zoom >= 16) ──
-        if (showOSBuildings && zoom >= 16) {
+        // Suppress OS Buildings while Retail Context is on — Goad polygons
+        // already outline every building and stacking the two produces the
+        // blue-tinted double-border that Woody flagged.
+        if (showOSBuildings && !showRetailContext && zoom >= 16) {
           if (bboxStr !== osLastBboxRef.current.buildings) {
             osLastBboxRef.current.buildings = bboxStr;
             fetch(`/api/os/buildings?bbox=${bboxStr}`, { headers })
@@ -4168,7 +5513,98 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       map.off("moveend", fetchOSData);
       if (osDebounceRef.current) clearTimeout(osDebounceRef.current);
     };
-  }, [showOSBuildings, showOSSites, mapZoom]);
+  }, [showOSBuildings, showOSSites, showRetailContext, mapZoom]);
+
+  // ─── Tenancy Plans layer fetch + render ────────────────────────────────
+  // Refetches on map move. Polygons are drawn with a thick red stroke
+  // so they read as 'BGP tenancy data' rather than generic OS shapes.
+  // Click handler is wired the same way as Goad polygons — opens the
+  // unified side panel via setGoadPanelUnit with the plan's metadata.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!tenancyPlansLayerRef.current) {
+      tenancyPlansLayerRef.current = L.layerGroup({ pane: "goadPane" } as any).addTo(map);
+    }
+    const layer = tenancyPlansLayerRef.current;
+    if (!showTenancyPlans) {
+      layer.clearLayers();
+      setTenancyPlanCount(0);
+      return;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      const bounds = map.getBounds();
+      const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
+      try {
+        const r = await fetch(`/api/property-plans/in-viewport?bbox=${bbox}`, {
+          credentials: "include",
+          headers: getAuthHeaders(),
+        });
+        if (!r.ok) return;
+        const data = await r.json();
+        if (cancelled) return;
+        layer.clearLayers();
+        let count = 0;
+        for (const plan of (data.plans || []) as any[]) {
+          const gj = plan.geojson;
+          if (!gj?.features) continue;
+          const gjLayer = L.geoJSON(gj, {
+            pane: "goadPane",
+            style: () => ({
+              fillColor: "#fee2e2",
+              fillOpacity: 0.35,
+              color: "#dc2626",
+              weight: 1.4,
+              opacity: 0.95,
+            }),
+            onEachFeature: (feature: any, lyr: any) => {
+              const props = feature?.properties || {};
+              const unitRef = props.unit_ref || props.UNIT_REF || props.Unit || props.unit_number || "";
+              lyr.bindTooltip(
+                `<div style="font-family:sans-serif;font-size:11px"><strong>${unitRef || plan.property_name || "Unit"}</strong>${plan.floor ? `<br/><span style="color:#666">${plan.floor}</span>` : ""}</div>`,
+                { sticky: true, opacity: 0.95 },
+              );
+              lyr.on("click", (e: any) => {
+                L.DomEvent.stopPropagation(e);
+                setGoadPanelUnit({
+                  tenant: unitRef || plan.property_name || "Tenancy plan unit",
+                  activity: "",
+                  category: "Tenancy plan",
+                  band: plan.floor || "Plan",
+                  bandFill: "#fee2e2",
+                  useClass: "",
+                  floor: plan.floor || "",
+                  sqft: props.sqft || props.area_ft2 || 0,
+                  holding: "",
+                  num: "",
+                  street: "",
+                  postcode: "",
+                  isVacant: false,
+                  goadNumber: "",
+                  precName: plan.property_name || "",
+                  surveyDate: "",
+                  lat: e?.latlng?.lat,
+                  lng: e?.latlng?.lng,
+                  source: "tenancy-plan",
+                  unitRef,
+                  planId: plan.id,
+                  propertyId: plan.property_id,
+                });
+              });
+            },
+          });
+          gjLayer.addTo(layer);
+          count += Array.isArray(gj.features) ? gj.features.length : 0;
+        }
+        if (!cancelled) setTenancyPlanCount(count);
+      } catch { /* ignore */ }
+    };
+    refresh();
+    const onMove = () => refresh();
+    map.on("moveend", onMove);
+    return () => { cancelled = true; map.off("moveend", onMove); };
+  }, [showTenancyPlans]);
 
   const handleSearch = useCallback(async (q: string) => {
     if (q.length < 2) { setSearchResults([]); return; }
@@ -4369,6 +5805,8 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   };
 
   const handleMapClick = async (lat: number, lng: number) => {
+    // Street View has its own click handler — let it own clicks while on.
+    if (showStreetView) return;
     try {
       const resp = await fetch(`/api/reverse-geocode?lat=${lat}&lng=${lng}`, {
         headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
@@ -4376,17 +5814,48 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       if (!resp.ok) return;
       const data = await resp.json();
       const { displayAddr, postcode } = data;
-
       if (!postcode) return;
 
-      if (markerRef.current) markerRef.current.remove();
-      markerRef.current = L.circleMarker([lat, lng], {
-        radius: 8, fillColor: "#6366f1", color: "#fff", weight: 2.5, opacity: 1, fillOpacity: 0.9,
-      }).addTo(mapRef.current!).bindPopup(`<strong>${displayAddr || postcode}</strong><br/><span style="color:#666;font-size:11px">${postcode}</span>`, { closeButton: false, offset: L.point(0, -5) }).openPopup();
+      // Pull a street number + street out of the formatted address so the
+      // polygon-context endpoint can narrow VOA rates / LR resolver / planning
+      // apps to the right building rather than the whole postcode.
+      let num = "";
+      let street = "";
+      if (displayAddr) {
+        const m = displayAddr.match(/^(\d+[A-Z]?(?:\s*-\s*\d+[A-Z]?)?)\s+(.+?)(?:,|$)/);
+        if (m) {
+          num = m[1].trim();
+          street = m[2].trim();
+        } else {
+          street = displayAddr.split(",")[0]?.trim() || "";
+        }
+      }
 
-      setSelectedPostcode(postcode);
-      setCurrentArea(displayAddr || postcode);
-      loadPropertyData(postcode, undefined, displayAddr || undefined, { lat, lng });
+      // Open the new polygon side panel with synthesised "click-point" data.
+      // Goad-specific fields are left empty; everything downstream (BGP CRM,
+      // Rates, Land Registry, Planning, Pathway) still works off postcode +
+      // street + lat/lng — which is what the operator actually wants when
+      // clicking an OS-only building outside the West End Goad coverage.
+      setGoadPanelUnit({
+        tenant: displayAddr || postcode,
+        activity: "",
+        category: "Map click",
+        band: "Click point",
+        bandFill: "#94a3b8",
+        useClass: "",
+        floor: "",
+        sqft: 0,
+        holding: "",
+        num,
+        street: street.toUpperCase(),
+        postcode,
+        isVacant: false,
+        goadNumber: "",
+        precName: "",
+        surveyDate: "",
+        lat,
+        lng,
+      });
     } catch (e) {
       console.error("Reverse geocode error:", e);
     }
@@ -4399,6 +5868,24 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     if (!map || !container) return;
     setExportingPlan(true);
     try {
+      // Reverse-geocode the current map centre so the header reflects
+      // where the user is *now*, not the stale 'Belgravia' default
+      // (or whatever address was last searched).
+      let areaLabel = currentArea || postcode || "London";
+      try {
+        const c = map.getCenter();
+        const rgResp = await fetch(`/api/reverse-geocode?lat=${c.lat}&lng=${c.lng}`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+        });
+        if (rgResp.ok) {
+          const rg = await rgResp.json();
+          // Use a sensible short label — neighbourhood / locality, not the full
+          // formatted address (which can be a 100-char string). Falls back to
+          // postcode then displayAddr.
+          areaLabel = rg.neighbourhood || rg.locality || rg.postcode || rg.displayAddr || areaLabel;
+        }
+      } catch { /* offline / no key — keep existing label */ }
+
       const { toPng } = await import("html-to-image");
       const { jsPDF } = await import("jspdf");
       const dataUrl = await toPng(container, { cacheBust: true, pixelRatio: 2, backgroundColor: "#faf8f2" });
@@ -4415,7 +5902,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       pdf.text("BRUCE GILLINGHAM POLLARD", margin, 9);
       pdf.setFontSize(9);
       pdf.setFont("helvetica", "normal");
-      pdf.text(`${currentArea || postcode || "London"}  ·  Intelligence Plan  ·  ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`, pageW - margin, 9, { align: "right" });
+      pdf.text(`${areaLabel}  ·  Intelligence Plan  ·  ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`, pageW - margin, 9, { align: "right" });
 
       const imgW = pageW - margin * 2;
       const imgH = pageH - 14 - margin * 2;
@@ -4423,9 +5910,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
 
       pdf.setTextColor(80, 80, 80);
       pdf.setFontSize(7);
-      pdf.text("Data: OS Zoomstack, OpenStreetMap, Valuation Office Agency, HM Land Registry, Google Places. BGP Intelligence Map.", margin, pageH - 4);
+      pdf.text("Data: OS Zoomstack, OpenStreetMap, Valuation Office Agency, HM Land Registry, Google Places, Experian Goad. BGP Intelligence Map.", margin, pageH - 4);
 
-      const filename = `BGP_Plan_${(currentArea || postcode || "map").replace(/[^a-zA-Z0-9]/g, "_")}_${new Date().toISOString().slice(0, 10)}.pdf`;
+      const filename = `BGP_Plan_${areaLabel.replace(/[^a-zA-Z0-9]/g, "_")}_${new Date().toISOString().slice(0, 10)}.pdf`;
       pdf.save(filename);
     } catch (err: any) {
       console.error("[map] export PDF failed:", err);
@@ -4443,6 +5930,12 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     { key: "rect", icon: Square, label: "Rectangle" },
     { key: "circle", icon: Circle, label: "Circle" },
   ];
+
+  // Mobile bottom-sheet: the right detail panel becomes a slide-up sheet.
+  // The drag handle toggles between a peek (header only) and expanded.
+  const [sheetCollapsed, setSheetCollapsed] = useState(false);
+  // Selecting a new unit should always open the sheet expanded.
+  useEffect(() => { if (goadPanelUnit) setSheetCollapsed(false); }, [goadPanelUnit]);
 
   return (
     <div className="relative w-full h-full flex font-sans">
@@ -4482,6 +5975,23 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         .edozo-label::before {
           display: none !important;
         }
+        .centre-tenant-icon {
+          background: transparent !important;
+          border: none !important;
+        }
+        .centre-tenant-label {
+          font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+          font-size: 9px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.2px;
+          color: #0a0a0a;
+          text-align: center;
+          line-height: 1.1;
+          white-space: nowrap;
+          text-shadow: 0 0 2px rgba(255,255,255,0.95), 0 0 3px rgba(255,255,255,0.8);
+          pointer-events: none;
+        }
         .leaflet-control-attribution {
           font-size: 9px !important;
           background: rgba(255,255,255,0.8) !important;
@@ -4498,63 +6008,30 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         .leaflet-tile-container img { filter: grayscale(0.35) brightness(1.02); }
       `}</style>
 
-      <div className="w-[220px] border-r bg-white flex flex-col z-[1001] relative shrink-0">
+      <div className="w-[220px] border-r bg-white hidden lg:flex flex-col z-[1001] relative shrink-0">
         <div className="px-3 pt-3 pb-2">
           <p className="text-xs text-gray-500 mb-2.5">
             Current area: <span className="font-semibold text-gray-900">{currentArea}</span>
           </p>
 
           <p className="text-[11px] font-semibold mb-1.5 text-gray-700">Search new plan</p>
-          <div className="relative">
-            <Input
-              placeholder="Search by area, address or grid ref"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-8 text-xs pr-7 bg-white border-gray-300 rounded"
-              data-testid="map-search-input"
-            />
-            {searchQuery ? (
-              <button onClick={() => { setSearchQuery(""); setSearchResults([]); }} className="absolute right-2 top-2">
-                <X className="w-3.5 h-3.5 text-gray-400" />
-              </button>
-            ) : (
-              <Search className="absolute right-2.5 top-2.5 w-3 h-3 text-gray-400" />
-            )}
-          </div>
-
-          {searching && (
-            <div className="flex items-center gap-1.5 text-[10px] text-gray-400 mt-1.5">
-              <Loader2 className="w-3 h-3 animate-spin" /> Searching...
-            </div>
-          )}
-
-          {searchResults.length > 0 && (
-            <div className="border rounded mt-1.5 max-h-64 overflow-auto bg-white shadow-lg">
-              {searchResults.map((r, i) => {
-                const isExact = r.addressType === "address" || r.type === "postcode";
-                const parts = r.label.split(" — ");
-                const mainAddr = parts[0] || "";
-                const pcPart = parts[1] || r.postcode || "";
-                return (
-                  <button
-                    key={i}
-                    onClick={() => selectSearchResult(r)}
-                    className="w-full text-left px-2.5 py-2 hover:bg-indigo-50 text-[11px] border-b last:border-0 flex items-start gap-2"
-                    data-testid={`search-result-${i}`}
-                  >
-                    <MapPin className={`w-3 h-3 mt-0.5 flex-shrink-0 ${isExact ? "text-indigo-500" : "text-gray-300"}`} />
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium text-gray-800 leading-tight">{mainAddr}</div>
-                      {pcPart && <div className="text-[10px] text-gray-400 mt-0.5">{pcPart}</div>}
-                    </div>
-                    {isExact && (
-                      <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded font-medium shrink-0 mt-0.5">EXACT</span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          {/* New resolver — same engine the Property Intelligence page-level
+              bar used to call (Address Resolver: autocomplete → resolve →
+              canonical crm_property). Replaces the legacy /api/address-search
+              dropdown that fed loadPropertyData with stale postcode-only
+              hits. When a property resolves we both navigate the map AND
+              bubble the resolution up so other Property Intelligence tabs
+              prefill via PropertyContext. */}
+          <PropertyResolverBar
+            placeholder="Address, postcode, UPRN, or title number…"
+            onResolve={(id, prop) => {
+              if (prop.postcode) {
+                setSelectedPostcode(prop.postcode);
+                loadPropertyData(prop.postcode, undefined, prop.name || undefined, null);
+              }
+              onResolveProperty?.({ id, name: prop.name, postcode: prop.postcode });
+            }}
+          />
         </div>
 
         <div className="border-t" />
@@ -4564,10 +6041,20 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           <div className="space-y-2.5">
             {[
               { key: "search", label: "Search History", count: recentSearches.length, dot: "#ef4444", on: showSearchHistory, set: setShowSearchHistory },
-              { key: "crm",    label: "CRM Properties", count: crmProperties.length, dot: "#3b82f6", on: showCrmLayer, set: setShowCrmLayer },
+              { key: "crm",    label: "CRM Properties", count: crmProperties.filter((p: any) => !isInvestmentComp(p)).length, dot: "#3b82f6", on: showCrmLayer, set: setShowCrmLayer },
+              { key: "icomps", label: "Investment Comps", count: crmProperties.filter((p: any) => isInvestmentComp(p)).length, dot: "#8b5cf6", on: showInvestmentComps, set: setShowInvestmentComps },
               { key: "deals",  label: "Deals",          count: mapPins?.deals.length ?? 0, dot: "#f59e0b", on: showDeals, set: setShowDeals },
               { key: "comps",  label: "Comps",          count: mapPins?.comps.length ?? 0, dot: "#8b5cf6", on: showComps, set: setShowComps },
               { key: "lease",  label: "Lease Events",   count: mapPins?.leaseEvents.length ?? 0, dot: "#ec4899", on: showLeaseEvents, set: setShowLeaseEvents },
+              { key: "pathway",label: "Pathway runs",   count: mapPins?.pathway?.length ?? 0, dot: "#10b981", on: showPathway, set: setShowPathway },
+              { key: "avail",  label: "Available Properties", count: availableProps.length, dot: "#06b6d4", on: showAvailable, set: setShowAvailable },
+              { key: "retail", label: retailFetching ? "Retail Context (loading…)" : "Retail Context", count: goadFeatures.length, dot: "#15616D", on: showRetailContext, set: setShowRetailContext },
+              { key: "sv",     label: showStreetView ? "Street View (click map)" : "Street View",      count: 0, dot: "#FBBC04", on: showStreetView, set: setShowStreetView },
+              { key: "osb",    label: showOSBuildings && showRetailContext ? "OS Buildings (hidden — Goad on)" : (mapZoom < 16 && showOSBuildings ? "OS Buildings (zoom 16+)" : "OS Buildings"),     count: 0, dot: "#3b82f6", on: showOSBuildings, set: setShowOSBuildings },
+              { key: "oss",    label: mapZoom < 14 && showOSSites ? "Named Sites (zoom 14+)" : "Named Sites", count: 0, dot: "#15616D", on: showOSSites,     set: setShowOSSites },
+              { key: "tp",     label: "Tenancy Plans",  count: tenancyPlanCount, dot: "#dc2626", on: showTenancyPlans, set: setShowTenancyPlans },
+              { key: "annot",  label: "Annotations",     count: annotations.length, dot: "#a855f7", on: showAnnotations, set: setShowAnnotations },
+              { key: "hmlr",   label: "HMLR Titles", count: hmlrPolygons?.features?.length ?? 0, dot: "#1e40af", on: showHmlrTitles, set: setShowHmlrTitles },
             ].map((row) => (
               <button
                 key={row.key}
@@ -4588,18 +6075,253 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
               </button>
             ))}
           </div>
+          {/* Category filter for the Retail Context layer — only shown
+              when the layer is on. Click to exclude / include a band. */}
+          {showRetailContext && (
+            <div className="mt-3 pt-2.5 border-t">
+              <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-wide mb-1.5">Retail bands</p>
+              {!retailFetching && goadFeatures.length === 0 && (
+                <p className="text-[10px] text-gray-500 italic mb-1.5 leading-snug">
+                  Loading the Goad dataset… If this persists, the layer files may be missing from data/goad/.
+                </p>
+              )}
+              {goadFeatures.length > 0 && mapZoom < 17 && (
+                <p className="text-[10px] text-gray-500 italic mb-1.5 leading-snug">
+                  Zoom in (≥ 17) to see fascia labels on each unit.
+                </p>
+              )}
+              <div className="grid grid-cols-2 gap-1">
+                {[
+                  { k: "fashion",     l: "Fashion",     c: "#C9A961" },
+                  { k: "convenience", l: "Convenience", c: "#7FA99B" },
+                  { k: "fnb",         l: "Food & Drink",c: "#D08F6E" },
+                  { k: "services",    l: "Services",    c: "#8B9DC3" },
+                  { k: "beauty",      l: "Beauty",      c: "#B8A4B6" },
+                  { k: "vacant",      l: "Vacant",      c: "#FF7D00" },
+                  { k: "other",       l: "Other",       c: "#A8A8A8" },
+                ].map((cat) => {
+                  const showing = !excludedRetailCategories.has(cat.k);
+                  return (
+                    <button
+                      key={cat.k}
+                      onClick={() => setExcludedRetailCategories((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(cat.k)) next.delete(cat.k); else next.add(cat.k);
+                        return next;
+                      })}
+                      className={`flex items-center gap-1.5 text-[10px] rounded px-1.5 py-0.5 border ${
+                        showing ? "bg-white border-gray-200" : "bg-gray-100 border-gray-200 opacity-50 line-through"
+                      }`}
+                    >
+                      <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: cat.c }} />
+                      <span>{cat.l}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
-        <ScrollArea className="flex-1">
-          <div className="px-3 py-2.5">
-            <p className="text-[11px] font-semibold text-gray-700 mb-2">
-              Recent Searches {recentSearches.length > 0 && <span className="font-normal text-gray-400">({recentSearches.length})</span>}
+        {/* HMLR tenure legend — only shown when the layer is on. */}
+        {showHmlrTitles && (
+          <div className="px-3 pb-2 pt-1 flex items-center gap-3 text-[10px] text-gray-600">
+            <div className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#3b82f6" }} />Freehold</div>
+            <div className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#f97316" }} />Leasehold</div>
+            <div className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: "#9ca3af" }} />Unknown</div>
+          </div>
+        )}
+
+        {/* Named annotation layers — group pins / labels / polygons /
+            drive-times into a coherent set (e.g. "Brent Cross deck"),
+            toggle visibility, share with the team. */}
+        <div className="border-t" />
+        <div className="px-3 py-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-semibold text-gray-700">Annotation layers</p>
+            <span className="text-[10px] text-gray-400">{mapLayers.length}</span>
+          </div>
+          {mapLayers.length > 0 && (
+            <div className="space-y-1">
+              {mapLayers.map((layer) => {
+                const hidden = hiddenLayerIds.has(layer.id);
+                const active = activeLayerId === layer.id;
+                return (
+                  <div key={layer.id} className={`flex items-center gap-1.5 px-1.5 py-1 rounded border ${active ? "border-gray-900 bg-gray-50" : "border-transparent"}`}>
+                    <button
+                      type="button"
+                      onClick={() => toggleLayerVisibility(layer.id)}
+                      className="w-3 h-3 rounded-full shrink-0 border-2"
+                      style={{ background: hidden ? "transparent" : (layer.color || "#a855f7"), borderColor: layer.color || "#a855f7" }}
+                      aria-label={hidden ? "Show layer" : "Hide layer"}
+                      title={hidden ? "Show" : "Hide"}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setActiveLayerId(layer.id)}
+                      className="flex-1 min-w-0 text-left text-[11px] truncate"
+                      title={`Set as active layer for new annotations · ${layer.annotationCount} item${layer.annotationCount === 1 ? "" : "s"}`}
+                      data-testid={`layer-pick-${layer.id}`}
+                    >
+                      <span className={hidden ? "text-gray-400 line-through" : "text-gray-800"}>{layer.name}</span>
+                      <span className="ml-1 text-gray-400">{layer.annotationCount}</span>
+                      {layer.sharedWithTeam && <span className="ml-1 text-[9px] uppercase tracking-wider text-emerald-600">shared</span>}
+                    </button>
+                    {layer.mine && (
+                      <button
+                        type="button"
+                        onClick={() => deleteMapLayer(layer.id, layer.name)}
+                        className="text-[11px] text-red-500 hover:text-red-700"
+                        title="Delete layer + its annotations"
+                        data-testid={`layer-delete-${layer.id}`}
+                      >×</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="flex gap-1">
+            <input
+              value={newLayerName}
+              onChange={(e) => setNewLayerName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); createMapLayer(); } }}
+              placeholder='+ new layer'
+              className="flex-1 min-w-0 h-7 px-2 text-[11px] rounded border border-gray-200 focus:border-gray-400 outline-none"
+              data-testid="new-layer-input"
+            />
+            <button
+              type="button"
+              onClick={createMapLayer}
+              disabled={!newLayerName.trim()}
+              className="h-7 px-2 rounded bg-gray-900 text-white text-[11px] font-medium disabled:opacity-40"
+              data-testid="new-layer-btn"
+            >Add</button>
+          </div>
+          {activeLayerId && (
+            <p className="text-[10px] text-gray-500">
+              New annotations land in {mapLayers.find((l) => l.id === activeLayerId)?.name || "current layer"}.
             </p>
+          )}
+        </div>
+
+        {/* Annotation tools — drop coloured pins / text labels, plus a
+            postcode-highlight box. Saves to map_annotations. */}
+        <div className="border-t" />
+        <div className="px-3 py-3 space-y-2.5">
+          <p className="text-[11px] font-semibold text-gray-700">Annotate</p>
+          <div className="flex flex-wrap gap-1.5 items-center">
+            {["#ef4444", "#f59e0b", "#10b981", "#3b82f6", "#8b5cf6", "#111827"].map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setAnnotateColor(c)}
+                className={`w-5 h-5 rounded-full border-2 transition-transform ${annotateColor === c ? "border-gray-900 scale-110" : "border-white"}`}
+                style={{ background: c }}
+                aria-label={`Pick ${c}`}
+                data-testid={`annot-color-${c.slice(1)}`}
+              />
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            <button
+              type="button"
+              onClick={() => setAnnotateMode(annotateMode === "pin" ? null : "pin")}
+              className={`px-2 py-1.5 rounded border text-[11px] font-medium ${
+                annotateMode === "pin" ? "bg-gray-900 text-white border-gray-900" : "bg-white border-gray-200 hover:border-gray-300"
+              }`}
+              data-testid="annot-mode-pin"
+            >
+              {annotateMode === "pin" ? "Click map to drop…" : "Drop pin"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAnnotateMode(annotateMode === "label" ? null : "label")}
+              className={`px-2 py-1.5 rounded border text-[11px] font-medium ${
+                annotateMode === "label" ? "bg-gray-900 text-white border-gray-900" : "bg-white border-gray-200 hover:border-gray-300"
+              }`}
+              data-testid="annot-mode-label"
+            >
+              {annotateMode === "label" ? "Click map to place…" : "Add label"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAnnotateMode(annotateMode === "polygon" ? null : "polygon")}
+              className={`px-2 py-1.5 rounded border text-[11px] font-medium ${
+                annotateMode === "polygon" ? "bg-gray-900 text-white border-gray-900" : "bg-white border-gray-200 hover:border-gray-300"
+              }`}
+              data-testid="annot-mode-polygon"
+            >
+              {annotateMode === "polygon" ? "Click vertices · dbl-click to close" : "Redline area"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAnnotateMode(annotateMode === "drive_time" ? null : "drive_time")}
+              className={`px-2 py-1.5 rounded border text-[11px] font-medium ${
+                annotateMode === "drive_time" ? "bg-gray-900 text-white border-gray-900" : "bg-white border-gray-200 hover:border-gray-300"
+              }`}
+              data-testid="annot-mode-drive-time"
+            >
+              {annotateMode === "drive_time" ? (driveOriginRef.current ? "Click destination…" : "Click origin…") : "Drive time"}
+            </button>
+          </div>
+          <p className="text-[10px] text-gray-500 leading-snug">
+            Tap any annotation on the map to delete it. Saved per user.
+          </p>
+        </div>
+
+        {/* Postcode boundary highlight — quick red rectangle around an
+            outcode or unit postcode via postcodes.io. Outcodes get the
+            exact bounding box; unit postcodes synth a ~250m box. */}
+        <div className="border-t" />
+        <div className="px-3 py-3 space-y-2">
+          <p className="text-[11px] font-semibold text-gray-700">Highlight postcode</p>
+          <div className="flex gap-1.5">
+            <input
+              value={postcodeQuery}
+              onChange={(e) => setPostcodeQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); highlightPostcode(); } }}
+              placeholder="SW1Y or SW1Y 4DG"
+              className="flex-1 min-w-0 h-7 px-2 text-[11px] rounded border border-gray-200 focus:border-gray-400 outline-none"
+              data-testid="postcode-highlight-input"
+            />
+            <button
+              type="button"
+              onClick={highlightPostcode}
+              disabled={!postcodeQuery.trim()}
+              className="h-7 px-2.5 rounded bg-gray-900 text-white text-[11px] font-medium disabled:opacity-50"
+              data-testid="postcode-highlight-btn"
+            >
+              Show
+            </button>
+          </div>
+          {postcodeBoundary && (
+            <button
+              type="button"
+              onClick={() => { setPostcodeBoundary(null); setPostcodeQuery(""); }}
+              className="text-[11px] text-red-600 hover:underline"
+            >
+              Clear {postcodeBoundary.postcode} highlight
+            </button>
+          )}
+        </div>
+
+        {/* Recent Searches — capped at a sensible chunk of the sidebar
+            so it doesn't run all the way to the bottom, and tightly
+            clipped so long addresses don't bleed across the divider. */}
+        <div className="border-t flex flex-col overflow-hidden max-h-64">
+          <div className="px-3 pt-2.5 pb-1 shrink-0">
+            <p className="text-[11px] font-semibold text-gray-700">
+              Recent Searches {recentSearches.length > 0 && <span className="font-normal text-gray-400">(last 10 of {recentSearches.length})</span>}
+            </p>
+          </div>
+          <ScrollArea className="flex-1 min-h-0 overflow-hidden">
+            <div className="px-3 pb-2.5">
             {recentSearches.length === 0 ? (
               <p className="text-[10px] text-gray-400 py-3 text-center">No recent searches yet.</p>
             ) : (
               <div className="space-y-1">
-                {recentSearches.slice(0, 20).map((s: any) => {
+                {recentSearches.slice(0, 10).map((s: any) => {
                   const isAcquired = s.status === "Acquired";
                   const pinColor = isAcquired ? "text-emerald-500" : "text-red-400";
                   const ownerName = s.ownership?.freeholders?.[0]?.name;
@@ -4617,17 +6339,17 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                           loadPropertyData(s.postcode, undefined, s.address || undefined, coords?.lat && coords?.lng ? { lat: coords.lat, lng: coords.lng } : null);
                         }
                       }}
-                      className="w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors group/item"
+                      className="w-full max-w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors group/item overflow-hidden"
                       data-testid={`map-search-history-${s.id}`}
                     >
-                      <div className="flex items-start gap-1.5">
+                      <div className="flex items-start gap-1.5 min-w-0">
                         <MapPin className={`w-3 h-3 mt-0.5 shrink-0 ${pinColor}`} />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[11px] font-medium text-gray-800 truncate leading-tight">{s.address}</p>
-                          <div className="flex items-center gap-1.5 mt-0.5">
-                            {s.postcode && <span className="text-[9px] text-gray-400 font-mono">{s.postcode}</span>}
+                        <div className="min-w-0 flex-1 overflow-hidden">
+                          <p className="text-[11px] font-medium text-gray-800 truncate leading-tight max-w-full">{s.address}</p>
+                          <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+                            {s.postcode && <span className="text-[9px] text-gray-400 font-mono truncate">{s.postcode}</span>}
                             {s.status && s.status !== "New" && (
-                              <span className={`text-[8px] px-1 py-0.5 rounded font-medium ${
+                              <span className={`text-[8px] px-1 py-0.5 rounded font-medium shrink-0 ${
                                 isAcquired ? "bg-emerald-100 text-emerald-700" :
                                 s.status === "Investigating" ? "bg-blue-100 text-blue-700" :
                                 s.status === "Contacted Owner" ? "bg-amber-100 text-amber-700" :
@@ -4636,7 +6358,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                             )}
                           </div>
                           {ownerName && (
-                            <p className="text-[9px] text-gray-400 truncate mt-0.5">{ownerName}</p>
+                            <p className="text-[9px] text-gray-400 truncate mt-0.5 max-w-full">{ownerName}</p>
                           )}
                         </div>
                         <span className="text-[8px] text-gray-300 shrink-0 mt-0.5">
@@ -4648,12 +6370,51 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                 })}
               </div>
             )}
-          </div>
-        </ScrollArea>
+            </div>
+          </ScrollArea>
+        </div>
       </div>
 
       <div className="flex-1 relative">
         <div ref={mapContainerRef} className="w-full h-full" data-testid="edozo-map" />
+
+        {/* Google Places search — top-left so it doesn't collide with the
+            Download Plan + base-layer pills at top-right. Lets Woody jump
+            the map to any UK address from his phone instead of pinching
+            around. On mobile this sits at ~calc(100% - 240px) width so the
+            existing pills still fit on the same row; on desktop it's a
+            fixed 320px. The Leaflet flyTo + marker happen via the
+            handlePlaceSelected callback wired up in a useEffect. */}
+        <div className="absolute top-3 left-3 z-[1000] w-[calc(100%-260px)] sm:w-[320px] max-w-[420px]">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+            <input
+              ref={placesSearchInputRef}
+              type="search"
+              placeholder="Search any address or place…"
+              className="w-full h-10 pl-9 pr-9 rounded-full bg-white border border-border/60 shadow-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              data-testid="map-places-search"
+              autoComplete="off"
+            />
+            {placesSearchValue && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (placesSearchInputRef.current) placesSearchInputRef.current.value = "";
+                  setPlacesSearchValue("");
+                  if (placesMarkerRef.current && mapRef.current) {
+                    mapRef.current.removeLayer(placesMarkerRef.current);
+                    placesMarkerRef.current = null;
+                  }
+                }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
+                aria-label="Clear search"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
 
         {/* Map / Satellite base-layer pill toggle — top-right of the map */}
         <div className="absolute top-3 right-3 z-[1000] flex items-center gap-2" data-testid="base-layer-toggle">
@@ -4685,50 +6446,716 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           </div>
         </div>
 
-        {/* Goad-style building key — floating panel top-right */}
-        <div className="absolute top-20 right-3 z-[1000] bg-white/95 backdrop-blur rounded-lg shadow-lg border border-gray-200 p-3 w-[200px]" data-testid="map-key-panel">
-          <p className="text-[10px] font-bold text-gray-800 uppercase tracking-wider mb-2">Building Key</p>
-          <div className="space-y-1.5">
-            {[
-              { c: "#fff4e0", l: "Retail" },
-              { c: "#ffe8d4", l: "Food & Drink" },
-              { c: "#e8f0ff", l: "Services" },
-              { c: "#f0e8ff", l: "Hotel" },
-              { c: "#e8f5e8", l: "Civic / Cultural" },
-              { c: "#e8e8e8", l: "Vacant" },
-            ].map((k) => (
-              <div key={k.l} className="flex items-center gap-2 text-[10px]">
-                <span className="w-4 h-3 border border-gray-900 rounded-sm shrink-0" style={{ background: k.c }} />
-                <span className="text-gray-700">{k.l}</span>
+        {/* Goad polygon side-panel — slides in from the right when a unit
+            on the Retail Context layer is clicked. Shows Goad attributes
+            up top, joins in BGP CRM + recent deals + parent company below. */}
+        {goadPanelUnit && (
+          <div
+            className={`absolute z-[1001] bg-white shadow-2xl border border-gray-200 flex flex-col overflow-hidden transition-[max-height] duration-200 inset-x-2 bottom-2 rounded-2xl ${sheetCollapsed ? "max-h-[4.5rem]" : "max-h-[65vh]"} lg:inset-x-auto lg:top-3 lg:right-3 lg:bottom-3 lg:max-h-none lg:w-[340px] lg:rounded-lg`}
+            data-testid="goad-polygon-panel"
+          >
+            {/* Drag handle — mobile only. Tap to peek/expand the sheet. */}
+            <button
+              type="button"
+              onClick={() => setSheetCollapsed(v => !v)}
+              className="lg:hidden w-full flex items-center justify-center pt-2 pb-1 shrink-0 touch-manipulation"
+              aria-label={sheetCollapsed ? "Expand details" : "Collapse details"}
+              data-testid="goad-panel-sheet-handle"
+            >
+              <span className="w-10 h-1.5 rounded-full bg-gray-300" />
+            </button>
+            <div className="px-4 py-3 border-b flex items-start gap-2" style={{ background: goadPanelUnit.bandFill + "22" }}>
+              <div className="min-w-0 flex-1">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                  {goadPanelUnit.isVacant ? "Vacant unit" : goadPanelUnit.band || "Retail"}
+                </div>
+                <div className="text-base font-bold text-gray-900 truncate mt-0.5">
+                  {goadPanelUnit.tenant}
+                </div>
+                {goadPanelUnit.activity && goadPanelUnit.activity !== goadPanelUnit.tenant && (
+                  <div className="text-xs text-gray-600 truncate">{goadPanelUnit.activity}</div>
+                )}
               </div>
-            ))}
+              <button
+                onClick={() => setGoadPanelUnit(null)}
+                className="text-gray-400 hover:text-gray-700 p-0.5"
+                aria-label="Close"
+                data-testid="goad-panel-close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0">
+              <div className="px-4 py-3 space-y-3 min-w-0 [overflow-wrap:anywhere]">
+                {/* Address + Goad attributes */}
+                <section>
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                    Goad
+                  </div>
+                  <div className="space-y-1 text-[12px]">
+                    {(goadPanelUnit.num || goadPanelUnit.street) && (
+                      <div className="text-gray-800">
+                        {goadPanelUnit.num} {goadPanelUnit.street}
+                      </div>
+                    )}
+                    {goadPanelUnit.postcode && (
+                      <div className="font-mono text-gray-700">{goadPanelUnit.postcode}</div>
+                    )}
+                    {goadPanelUnit.precName && (
+                      <div className="text-gray-600 italic">{goadPanelUnit.precName}</div>
+                    )}
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-2">
+                      {goadPanelUnit.category && (
+                        <div>
+                          <span className="text-gray-500">Category:</span>{" "}
+                          <span className="text-gray-800">{goadPanelUnit.category}</span>
+                        </div>
+                      )}
+                      {goadPanelUnit.useClass && (
+                        <div>
+                          <span className="text-gray-500">Use class:</span>{" "}
+                          <span className="text-gray-800">{goadPanelUnit.useClass}</span>
+                        </div>
+                      )}
+                      {goadPanelUnit.floor && (
+                        <div>
+                          <span className="text-gray-500">Floor:</span>{" "}
+                          <span className="text-gray-800">{goadPanelUnit.floor}</span>
+                        </div>
+                      )}
+                      {goadPanelUnit.sqft && (
+                        <div>
+                          <span className="text-gray-500">Area:</span>{" "}
+                          <span className="text-gray-800">{Number(goadPanelUnit.sqft).toLocaleString()} sqft</span>
+                        </div>
+                      )}
+                    </div>
+                    {goadPanelUnit.holding && goadPanelUnit.holding !== "NON MULTIPLE" && (
+                      <div className="pt-1.5">
+                        <span className="text-gray-500">Parent: </span>
+                        <span className="text-gray-800 font-medium">{goadPanelUnit.holding}</span>
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                {/* BGP CRM matches */}
+                <section className="border-t pt-3">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5 flex items-center justify-between">
+                    <span>BGP CRM</span>
+                    {goadPanelLoading && <Loader2 className="w-3 h-3 animate-spin text-gray-400" />}
+                  </div>
+                  {!goadPanelLoading && goadPanelContext && goadPanelContext.crmProperties.length === 0 && (
+                    <p className="text-[11px] text-gray-500 italic">No BGP property at this postcode.</p>
+                  )}
+                  {goadPanelContext?.crmProperties.map((p) => (
+                    <div key={p.id} className="bg-emerald-50 border border-emerald-200 rounded p-2 mb-1.5">
+                      <a href={`/properties/${p.id}`} className="block hover:underline">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[12px] font-medium text-gray-900 truncate flex-1">{p.name}</span>
+                          {p.status && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white text-emerald-700 border border-emerald-200 font-medium">
+                              {p.status}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-gray-600 mt-0.5">
+                          {[p.asset_class, p.sqft ? `${Number(p.sqft).toLocaleString()} sqft` : null].filter(Boolean).join(" · ")}
+                        </div>
+                      </a>
+                      {(p.landlord_id || p.freeholder_id) && (
+                        <div className="flex flex-wrap items-center gap-1 mt-1.5 pt-1.5 border-t border-emerald-100">
+                          {p.landlord_id && p.landlord_name && (
+                            <a
+                              href={`/companies/${p.landlord_id}`}
+                              className="text-[10px] inline-flex items-center gap-1 bg-white border border-emerald-200 rounded px-1.5 py-0.5 hover:bg-emerald-50"
+                            >
+                              <span className="text-gray-500">Landlord:</span>
+                              <span className="font-medium text-gray-800 truncate max-w-[150px]">{p.landlord_name}</span>
+                            </a>
+                          )}
+                          {p.freeholder_id && p.freeholder_name && p.freeholder_id !== p.landlord_id && (
+                            <a
+                              href={`/companies/${p.freeholder_id}`}
+                              className="text-[10px] inline-flex items-center gap-1 bg-white border border-emerald-200 rounded px-1.5 py-0.5 hover:bg-emerald-50"
+                            >
+                              <span className="text-gray-500">Freeholder:</span>
+                              <span className="font-medium text-gray-800 truncate max-w-[150px]">{p.freeholder_name}</span>
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </section>
+
+                {/* Tenant CRM match — looks up the fascia (the brand
+                    currently trading) in crm_companies. Distinct from the
+                    Parent company section below, which uses HoldingCo. */}
+                {goadPanelContext?.tenantCompany && (
+                  <section className="border-t pt-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                      Tenant (CRM)
+                    </div>
+                    <a
+                      href={`/companies/${goadPanelContext.tenantCompany.id}`}
+                      className="block bg-rose-50 border border-rose-200 rounded p-2 hover:bg-rose-100"
+                    >
+                      <div className="text-[12px] font-medium text-gray-900">{goadPanelContext.tenantCompany.name}</div>
+                      <div className="text-[10px] text-gray-600 mt-0.5">
+                        {[
+                          goadPanelContext.tenantCompany.company_type,
+                          goadPanelContext.tenantCompany.company_number,
+                          goadPanelContext.tenantCompany.status,
+                        ].filter(Boolean).join(" · ")}
+                      </div>
+                    </a>
+                    {goadPanelContext.tenantCompanyCandidates.length > 1 && (
+                      <p className="text-[9px] text-gray-400 italic mt-1">
+                        +{goadPanelContext.tenantCompanyCandidates.length - 1} other possible match{goadPanelContext.tenantCompanyCandidates.length > 2 ? "es" : ""}
+                      </p>
+                    )}
+                  </section>
+                )}
+
+                {/* Tenant resolver — fires when fascia is set but no CRM
+                    match. Two explicit buttons: Verify (website footer
+                    scrape + CH lookup, no DB write), Add (creates the
+                    brand + fires auto-KYC + RocketReach property contacts). */}
+                {goadPanelContext && !goadPanelContext.tenantCompany && goadPanelContext.tenantPlace && (
+                  <section className="border-t pt-3" data-testid="goad-tenant-resolver">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                      Tenant brand · not in CRM
+                    </div>
+                    <div className="bg-amber-50 border border-amber-200 rounded p-2 space-y-1.5">
+                      <div className="text-[12px] font-medium text-gray-900">{goadPanelContext.tenantPlace.name}</div>
+                      {goadPanelContext.tenantPlace.website && (
+                        <a href={goadPanelContext.tenantPlace.website} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 hover:underline block truncate">
+                          {goadPanelContext.tenantPlace.website.replace(/^https?:\/\//, "").replace(/\/$/, "")}
+                        </a>
+                      )}
+                      {goadPanelContext.tenantPlace.phone && (
+                        <div className="text-[10px] text-gray-600">{goadPanelContext.tenantPlace.phone}</div>
+                      )}
+
+                      {/* Stage 1 — Verify on Companies House */}
+                      {!tenantVerifyState.result && !tenantCreateState.companyId && (
+                        <div className="pt-1.5">
+                          <button
+                            type="button"
+                            disabled={tenantVerifyState.loading || !goadPanelContext.tenantPlace.website}
+                            onClick={async () => {
+                              setTenantVerifyState({ loading: true, result: null, error: null });
+                              try {
+                                const r = await fetch("/api/goad/tenant-verify", {
+                                  method: "POST",
+                                  credentials: "include",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    website: goadPanelContext.tenantPlace!.website,
+                                    fascia: goadPanelContext.tenantPlace!.name,
+                                  }),
+                                });
+                                const j = await r.json();
+                                if (!r.ok) throw new Error(j.error || "Verify failed");
+                                setTenantVerifyState({ loading: false, result: j, error: null });
+                              } catch (e: any) {
+                                setTenantVerifyState({ loading: false, result: null, error: e?.message || "Verify failed" });
+                              }
+                            }}
+                            className="text-[11px] font-medium px-2 py-1 rounded bg-gray-900 text-white disabled:opacity-40"
+                            data-testid="button-tenant-verify"
+                          >
+                            {tenantVerifyState.loading ? "Verifying…" : "Verify on Companies House"}
+                          </button>
+                          {!goadPanelContext.tenantPlace.website && (
+                            <p className="text-[9px] text-gray-500 italic mt-1">No website on Google Places — can't auto-verify.</p>
+                          )}
+                          {tenantVerifyState.error && (
+                            <p className="text-[9px] text-red-600 mt-1">{tenantVerifyState.error}</p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Stage 2 — Verify result + Add to CRM */}
+                      {tenantVerifyState.result && !tenantCreateState.companyId && (
+                        <div className="pt-1.5 space-y-1.5">
+                          {tenantVerifyState.result.chProfile ? (
+                            <div className="text-[10px] bg-white border border-gray-200 rounded p-1.5">
+                              <div className="font-medium text-gray-900">{tenantVerifyState.result.chProfile.company_name}</div>
+                              <div className="text-gray-600 mt-0.5">
+                                CH #{tenantVerifyState.result.chProfile.company_number} · {tenantVerifyState.result.chProfile.company_status}
+                                {tenantVerifyState.result.chProfile.date_of_creation && ` · Incorp ${tenantVerifyState.result.chProfile.date_of_creation}`}
+                              </div>
+                              {tenantVerifyState.result.scraped.sourceUrl && (
+                                <div className="text-gray-400 mt-0.5 truncate">via {tenantVerifyState.result.scraped.sourceUrl}</div>
+                              )}
+                            </div>
+                          ) : tenantVerifyState.result.scraped.entityName ? (
+                            <div className="text-[10px] bg-white border border-gray-200 rounded p-1.5">
+                              <div className="font-medium text-gray-900">{tenantVerifyState.result.scraped.entityName}</div>
+                              <div className="text-gray-500 mt-0.5">No CH number found in footer · will resolve on add</div>
+                            </div>
+                          ) : (
+                            <div className="text-[10px] text-gray-600 italic">
+                              Website didn't disclose UK entity. Can still add as brand — KYC will run Perplexity fallback.
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            disabled={tenantCreateState.loading}
+                            onClick={async () => {
+                              setTenantCreateState({ loading: true, companyId: null, error: null });
+                              try {
+                                const r = await fetch("/api/goad/tenant-create", {
+                                  method: "POST",
+                                  credentials: "include",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    fascia: goadPanelContext.tenantPlace!.name,
+                                    website: goadPanelContext.tenantPlace!.website,
+                                    chNumber: tenantVerifyState.result?.scraped?.chNumber || null,
+                                    entityName: tenantVerifyState.result?.scraped?.entityName || null,
+                                    goadCategory: goadPanelUnit?.category || null,
+                                    headOfficeAddress: goadPanelContext.tenantPlace!.address,
+                                    phone: goadPanelContext.tenantPlace!.phone,
+                                  }),
+                                });
+                                const j = await r.json();
+                                if (!r.ok) throw new Error(j.error || "Create failed");
+                                setTenantCreateState({ loading: false, companyId: j.companyId, error: null });
+                              } catch (e: any) {
+                                setTenantCreateState({ loading: false, companyId: null, error: e?.message || "Create failed" });
+                              }
+                            }}
+                            className="text-[11px] font-medium px-2 py-1 rounded bg-emerald-600 text-white disabled:opacity-40"
+                            data-testid="button-tenant-create"
+                          >
+                            {tenantCreateState.loading ? "Adding…" : "Add to CRM"}
+                          </button>
+                          {tenantCreateState.error && (
+                            <p className="text-[9px] text-red-600">{tenantCreateState.error}</p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Stage 3 — Created */}
+                      {tenantCreateState.companyId && (
+                        <div className="pt-1.5 bg-emerald-50 border border-emerald-200 rounded p-1.5">
+                          <div className="text-[11px] font-medium text-emerald-900">✓ Added to CRM</div>
+                          <div className="text-[9px] text-emerald-700 mt-0.5">KYC + RocketReach running in background</div>
+                          <a
+                            href={`/companies/${tenantCreateState.companyId}`}
+                            className="inline-block text-[10px] text-emerald-700 underline mt-1"
+                            data-testid="link-tenant-view"
+                          >
+                            View brand profile →
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                )}
+
+                {/* Recent deals at this address */}
+                {goadPanelContext && goadPanelContext.deals.length > 0 && (
+                  <section className="border-t pt-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                      Recent deals ({goadPanelContext.deals.length})
+                    </div>
+                    {goadPanelContext.deals.slice(0, 5).map((d) => (
+                      <a
+                        key={d.id}
+                        href={`/deals/${d.id}`}
+                        className="block text-[11px] py-1 border-b last:border-b-0 hover:bg-gray-50"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-gray-800 truncate">{d.name}</span>
+                          {d.deal_type && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 shrink-0">{d.deal_type}</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-gray-500 mt-0.5">
+                          {d.status} {d.completed_at ? `· ${new Date(d.completed_at).toLocaleDateString("en-GB")}` : ""}
+                        </div>
+                      </a>
+                    ))}
+                  </section>
+                )}
+
+                {/* Parent company match */}
+                {goadPanelContext?.parentCompany && (
+                  <section className="border-t pt-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                      Parent company
+                    </div>
+                    <a
+                      href={`/companies/${goadPanelContext.parentCompany.id}`}
+                      className="block bg-violet-50 border border-violet-200 rounded p-2 hover:bg-violet-100"
+                    >
+                      <div className="text-[12px] font-medium text-gray-900">{goadPanelContext.parentCompany.name}</div>
+                      <div className="text-[10px] text-gray-600 mt-0.5">
+                        {[
+                          goadPanelContext.parentCompany.company_number,
+                          goadPanelContext.parentCompany.company_type,
+                          goadPanelContext.parentCompany.status,
+                        ].filter(Boolean).join(" · ")}
+                      </div>
+                    </a>
+                  </section>
+                )}
+
+                {/* Rates — actual unit-level rateable values from the
+                    VOA snapshot, narrowed by the Goad street number.
+                    Always shown so the user knows whether VOA was even
+                    consulted. */}
+                {goadPanelContext && (
+                  <section className="border-t pt-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5 flex items-center justify-between">
+                      <span>Rates {goadPanelContext.rates.length > 0 ? `(${goadPanelContext.rates.length})` : ""}</span>
+                      {!goadPanelContext.diagnostics?.voaAvailable && (
+                        <span className="text-[9px] text-amber-600 normal-case">VOA file not on server</span>
+                      )}
+                    </div>
+                    {goadPanelContext.rates.length === 0 && (
+                      <p className="text-[11px] text-gray-500 italic mb-1.5">
+                        {goadPanelContext.diagnostics?.voaAvailable
+                          ? "No rateable values matched at this address."
+                          : "VOA snapshot not deployed — rates lookup skipped."}
+                      </p>
+                    )}
+                    {goadPanelContext.rates.slice(0, 5).map((r: any, i: number) => (
+                      <div key={`rt-${i}`} className="bg-amber-50/40 border border-amber-100 rounded p-2 mb-1 text-[11px]">
+                        <div className="flex items-baseline gap-2">
+                          <span className="font-medium text-gray-900 truncate flex-1">{r.firmName || r.address}</span>
+                          {r.rateableValue != null && (
+                            <span className="font-mono text-[12px] text-amber-700 font-semibold">£{Number(r.rateableValue).toLocaleString()}</span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-gray-600 truncate">{r.address}</div>
+                        {r.description && (
+                          <div className="text-[10px] text-gray-500 italic">{r.description}</div>
+                        )}
+                        {(r.baRef || r.uarn || r.effectiveDate) && (
+                          <div className="text-[9px] text-gray-400 font-mono mt-0.5">
+                            {[r.baRef, r.uarn, r.effectiveDate].filter(Boolean).join(" · ")}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {goadPanelContext.rates.length > 5 && (
+                      <p className="text-[10px] text-gray-500 italic">+{goadPanelContext.rates.length - 5} more rating entries on this postcode</p>
+                    )}
+                  </section>
+                )}
+
+                {/* Land Registry — via the real LR API through
+                    resolveBuildingTitles(). Always shown so the user can
+                    tell whether the resolver ran. */}
+                {goadPanelContext && (
+                  <section className="border-t pt-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5 flex items-center justify-between">
+                      <span>Land Registry</span>
+                      {goadPanelContext.landRegistry ? (
+                        <span className={`text-[9px] normal-case font-medium ${
+                          goadPanelContext.landRegistry.source === "uprn" ? "text-emerald-600" :
+                          goadPanelContext.landRegistry.source === "street_number" ? "text-amber-600" : "text-gray-500"
+                        }`}>
+                          {goadPanelContext.landRegistry.source === "uprn" ? "UPRN-matched" :
+                           goadPanelContext.landRegistry.source === "street_number" ? "by street number" :
+                           "postcode-only"}
+                        </span>
+                      ) : (
+                        <span className="text-[9px] text-amber-600 normal-case">
+                          {goadPanelContext.diagnostics?.landRegistryError ? `failed: ${goadPanelContext.diagnostics.landRegistryError.slice(0, 40)}` : "no result"}
+                        </span>
+                      )}
+                    </div>
+                    {!goadPanelContext.landRegistry && (
+                      <p className="text-[11px] text-gray-500 italic">
+                        {goadPanelContext.diagnostics?.propertyDataKeyAvailable === false
+                          ? "PropertyData key not configured on server — LR lookup skipped."
+                          : "Resolver returned no result for this address."}
+                      </p>
+                    )}
+                    {goadPanelContext.landRegistry && (() => {
+                      const lr = goadPanelContext.landRegistry;
+                      const fhs = (lr.matched?.freeholds || []).length > 0 ? lr.matched.freeholds : lr.fallback?.freeholds || [];
+                      const lhs = (lr.matched?.leaseholds || []).length > 0 ? lr.matched.leaseholds : lr.fallback?.leaseholds || [];
+                      // Postcode-level (estate) freeholds — surfaced when the unit
+                      // match found no freehold of its own (typical in Mayfair etc.
+                      // where the freehold is a blanket Grosvenor estate title).
+                      const ctxFhs = (lr.context?.freeholds || []);
+                      if (fhs.length === 0 && lhs.length === 0 && ctxFhs.length === 0) {
+                        // Fallback: HMLR doesn't have a registered title against
+                        // this exact address (could be unregistered land, an
+                        // individual-owned residence, a sublet that never had
+                        // its own title, or the address resolved to the wrong
+                        // building). Offer an OS Places picker of every
+                        // building in the postcode — clicking one re-fires
+                        // the polygon-context lookup against that address.
+                        return (
+                          <div className="space-y-1.5">
+                            <p className="text-[11px] text-gray-600 italic">No HMLR title matched this exact building. Resolver source: {lr.source || "n/a"}.</p>
+                            <HmlrFallbackPicker
+                              postcode={goadPanelUnit?.postcode || ""}
+                              onPick={(addr) => {
+                                // Re-key the polygon drawer to the picked
+                                // address: update the unit's number + street
+                                // + postcode and the parent effect will re-
+                                // fetch polygon-context with the new keys.
+                                setGoadPanelUnit((prev: any) => prev ? {
+                                  ...prev,
+                                  num: addr.number || prev.num,
+                                  street: addr.street || prev.street,
+                                  postcode: addr.postcode || prev.postcode,
+                                  uprn: addr.uprn,
+                                } : prev);
+                              }}
+                            />
+                          </div>
+                        );
+                      }
+                      // Click a proprietor → jump to the Investigator (KYC Clouseau)
+                      // tab pre-loaded with that company name. We push the URL and
+                      // fire popstate so the Property Intelligence hub re-reads its
+                      // tab from the query string (it listens for popstate).
+                      const openInvestigator = (n?: string | null) => {
+                        if (!n) return;
+                        const url = new URL(window.location.href);
+                        url.pathname = "/property-intelligence";
+                        url.searchParams.set("tab", "investigator");
+                        url.searchParams.set("name", n);
+                        window.history.pushState({}, "", url.toString());
+                        window.dispatchEvent(new PopStateEvent("popstate"));
+                      };
+                      // Ranked chain — freeholder + head-leaseholder picked
+                      // from postcode-wide titles. Rendered above the raw
+                      // freehold/leasehold lists so the user sees a clear
+                      // answer first, with the detail still browsable below.
+                      const chain = (lr as any).chain;
+                      const renderChainRow = (label: string, accent: string, c: any) => {
+                        if (!c) return null;
+                        // ChatBGP narrative-research deep-link. Clouseau (the
+                        // openInvestigator click) gives the structured CH +
+                        // PSC + UBO chain. ChatBGP fills the gap by walking
+                        // news/Perplexity/BGP CRM for the "who is this
+                        // really" narrative — fund, family office, investor
+                        // cluster, BGP relationship history.
+                        const askChatBGP = () => {
+                          const prompt =
+                            `Investigate the ultimate ownership and BGP history of "${c.proprietorName}"` +
+                            (c.companyRegistrationNo ? ` (Companies House #${c.companyRegistrationNo})` : ``) +
+                            `, the ${label.toLowerCase()} of ${goadPanelUnit?.num || ""} ${goadPanelUnit?.street || ""} ${goadPanelUnit?.postcode || ""}.\n\n` +
+                            `Walk the PSC + corporate chain via Companies House, then find the fund / family office / investor cluster behind it via Perplexity and BGP CRM. Output:\n` +
+                            `- Who really controls this entity (1-2 sentences)\n` +
+                            `- BGP relationship status (any deals, properties, contacts)\n` +
+                            `- Other notable UK properties they hold\n` +
+                            `- Risk flags`;
+                          window.location.href = `/chatbgp?message=${encodeURIComponent(prompt)}`;
+                        };
+                        return (
+                          <div className={`rounded p-2 mb-1.5 text-[11px] border ${accent}`}>
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="text-[9px] uppercase tracking-wide text-gray-600 font-semibold">{label}</div>
+                              <div className="text-[9px] text-gray-500">score {c.score}</div>
+                            </div>
+                            {c.crmCompanyId ? (
+                              <a href={`/companies/${c.crmCompanyId}`} className="font-medium text-blue-700 hover:underline block mt-0.5">{c.proprietorName}</a>
+                            ) : (
+                              <button type="button" onClick={() => openInvestigator(c.proprietorName)} className="font-medium text-gray-900 text-left hover:text-blue-700 hover:underline">{c.proprietorName}</button>
+                            )}
+                            <div className="text-[10px] text-gray-600 mt-0.5 font-mono">{c.titleNumber}{c.companyRegistrationNo ? ` · CH ${c.companyRegistrationNo}` : ""}</div>
+                            {c.reasons?.length > 0 && (
+                              <div className="text-[10px] text-gray-500 mt-0.5 italic">{c.reasons.slice(0, 3).join(" · ")}</div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={askChatBGP}
+                              className="text-[10px] text-gray-700 hover:text-gray-900 hover:underline mt-1 inline-flex items-center gap-0.5"
+                              data-testid={`button-chatbgp-${c.titleNumber}`}
+                            >
+                              💬 Ask ChatBGP who they really are
+                            </button>
+                          </div>
+                        );
+                      };
+                      return (
+                        <>
+                          {chain && (chain.freeholder || chain.headLeaseholder) && (
+                            <div className="mb-2 space-y-0.5">
+                              {renderChainRow("Likely freeholder", "bg-amber-50 border-amber-300", chain.freeholder)}
+                              {renderChainRow("Likely head-leaseholder", "bg-violet-50 border-violet-300", chain.headLeaseholder)}
+                            </div>
+                          )}
+                          {fhs.length > 0 && (
+                            <div className="mb-2">
+                              <div className="text-[10px] text-gray-600 mb-0.5">Freehold ({fhs.length})</div>
+                              {fhs.slice(0, 5).map((f: any, i: number) => (
+                                <div key={`fh-${i}`} className="bg-amber-50 border border-amber-200 rounded p-2 mb-1 text-[11px]">
+                                  <button type="button" onClick={() => openInvestigator(f.proprietor_name || f.proprietorName || f.proprietor_name_1)} className="font-medium text-gray-900 text-left hover:text-blue-700 hover:underline">{f.proprietor_name || f.proprietorName || f.proprietor_name_1 || "Unknown proprietor"}</button>
+                                  {(f.title_number || f.titleNumber) && (
+                                    <div className="text-gray-600 font-mono text-[10px] mt-0.5">{f.title_number || f.titleNumber}</div>
+                                  )}
+                                  {(f.proprietor_address || f.proprietorAddress) && (
+                                    <div className="text-gray-500 text-[10px] mt-0.5 truncate">{f.proprietor_address || f.proprietorAddress}</div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {lhs.length > 0 && (
+                            <div>
+                              <div className="text-[10px] text-gray-600 mb-0.5">Leasehold ({lhs.length})</div>
+                              {lhs.slice(0, 3).map((l: any, i: number) => (
+                                <div key={`lh-${i}`} className="bg-sky-50 border border-sky-200 rounded p-2 mb-1 text-[11px]">
+                                  <button type="button" onClick={() => openInvestigator(l.proprietor_name || l.proprietorName || l.proprietor_name_1)} className="font-medium text-gray-900 truncate text-left hover:text-blue-700 hover:underline block w-full">{l.proprietor_name || l.proprietorName || l.proprietor_name_1 || "Unknown leaseholder"}</button>
+                                  {(l.title_number || l.titleNumber) && (
+                                    <div className="text-gray-600 font-mono text-[10px] mt-0.5">{l.title_number || l.titleNumber}</div>
+                                  )}
+                                  <LeaseholdFreeholdFinder titleNumber={l.title_number || l.titleNumber} />
+                                </div>
+                              ))}
+                              {lhs.length > 3 && (
+                                <p className="text-[10px] text-gray-500 italic">+{lhs.length - 3} more leaseholds</p>
+                              )}
+                            </div>
+                          )}
+                          {ctxFhs.length > 0 && fhs.length === 0 && (
+                            <div className="mt-2">
+                              <div className="text-[10px] text-gray-600 mb-0.5">Freeholds in this postcode ({ctxFhs.length})</div>
+                              <p className="text-[10px] text-gray-500 italic mb-1">Estate-level titles — not matched to this exact unit. The superior freeholder is likely here.</p>
+                              {ctxFhs.slice(0, 5).map((f: any, i: number) => (
+                                <div key={`cfh-${i}`} className="bg-stone-50 border border-stone-200 rounded p-2 mb-1 text-[11px]">
+                                  <button type="button" onClick={() => openInvestigator(f.proprietor_name || f.proprietorName || f.proprietor_name_1)} className="font-medium text-gray-900 text-left hover:text-blue-700 hover:underline">{f.proprietor_name || f.proprietorName || f.proprietor_name_1 || "Unknown proprietor"}</button>
+                                  {(f.title_number || f.titleNumber) && (
+                                    <div className="text-gray-600 font-mono text-[10px] mt-0.5">{f.title_number || f.titleNumber}</div>
+                                  )}
+                                  {Array.isArray(f.property) && f.property[0] && (
+                                    <div className="text-gray-500 text-[10px] mt-0.5 truncate">{f.property[0]}</div>
+                                  )}
+                                </div>
+                              ))}
+                              {ctxFhs.length > 5 && (
+                                <p className="text-[10px] text-gray-500 italic">+{ctxFhs.length - 5} more freeholds in postcode</p>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </section>
+                )}
+
+                {/* Planning applications — last 10 years via PlanIt (planit.org.uk),
+                    the same source the Pathway planning card uses. */}
+                {goadPanelContext && (
+                  <section className="border-t pt-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5 flex items-center justify-between">
+                      <span>Planning apps — last 10 yrs {goadPanelContext.planningApplications.length > 0 ? `(${goadPanelContext.planningApplications.length})` : ""}</span>
+                      <span className="text-[9px] text-gray-400 normal-case">via PlanIt</span>
+                    </div>
+                    {goadPanelContext.planningApplications.length === 0 && (
+                      <p className="text-[11px] text-gray-500 italic mb-1.5">
+                        No planning applications found within ~200m in the last 10 years.
+                      </p>
+                    )}
+                    {goadPanelContext.planningApplications.slice(0, 5).map((a: any, i: number) => {
+                      const dec = (a.decision || a.status || "").toLowerCase();
+                      const dot = dec.includes("approved") || dec.includes("permit") || dec.includes("granted") ? "#10b981" :
+                                  dec.includes("refused") || dec.includes("dismissed") ? "#ef4444" :
+                                  dec.includes("withdrawn") ? "#9ca3af" : "#f59e0b";
+                      const dateStr = a.decided_date || a.received_date || a.date;
+                      return (
+                        <div key={`pa-${i}`} className="text-[11px] py-1 border-b last:border-b-0">
+                          <div className="flex items-start gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full shrink-0 mt-1" style={{ background: dot }} />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-gray-900 line-clamp-2 leading-tight">{a.description || a.proposal || "(no description)"}</div>
+                              <div className="text-[10px] text-gray-500 mt-0.5">
+                                {[a.decision || a.status, dateStr ? new Date(dateStr).toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : null, a.reference || a.ref].filter(Boolean).join(" · ")}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {goadPanelContext.planningApplications.length > 5 && (
+                      <p className="text-[10px] text-gray-500 italic mt-1">+{goadPanelContext.planningApplications.length - 5} more applications</p>
+                    )}
+                  </section>
+                )}
+
+                {/* Pathway run — link to existing run if one exists, else
+                    offer to start one. Replaces the old 'Search in Pathway'
+                    that just dumped the address into the postcode search. */}
+                <section className="border-t pt-3">
+                  {goadPanelContext?.pathwayRun ? (
+                    <a
+                      href={`/property-pathway?runId=${goadPanelContext.pathwayRun.id}`}
+                      className="block w-full text-center text-[11px] bg-emerald-600 text-white rounded px-2 py-1.5 hover:bg-emerald-700"
+                      data-testid="goad-panel-open-pathway"
+                    >
+                      Open Pathway run →
+                      <span className="text-[9px] ml-1 opacity-75">
+                        {goadPanelContext.pathwayRun.status || "in progress"}
+                      </span>
+                    </a>
+                  ) : (
+                    <button
+                      disabled={goadPanelStartingPathway || !goadPanelUnit.postcode}
+                      onClick={async () => {
+                        if (!goadPanelUnit.postcode) return;
+                        setGoadPanelStartingPathway(true);
+                        try {
+                          const fullAddress = `${goadPanelUnit.num} ${goadPanelUnit.street}, ${goadPanelUnit.postcode}`.replace(/\s+/g, " ").trim();
+                          const resp = await fetch("/api/property-pathway/start", {
+                            method: "POST",
+                            credentials: "include",
+                            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+                            body: JSON.stringify({ address: fullAddress, postcode: goadPanelUnit.postcode }),
+                          });
+                          if (resp.ok) {
+                            const run = await resp.json();
+                            if (run?.id || run?.runId) {
+                              const id = run.id || run.runId;
+                              window.location.href = `/property-pathway?runId=${id}`;
+                              return;
+                            }
+                          }
+                        } catch { /* ignore */ }
+                        setGoadPanelStartingPathway(false);
+                      }}
+                      className="w-full text-[11px] bg-gray-900 text-white rounded px-2 py-1.5 hover:bg-gray-800 disabled:opacity-60"
+                      data-testid="goad-panel-start-pathway"
+                    >
+                      {goadPanelStartingPathway ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <Loader2 className="w-3 h-3 animate-spin" /> Starting…
+                        </span>
+                      ) : (
+                        "Start Pathway →"
+                      )}
+                    </button>
+                  )}
+                </section>
+
+                {goadPanelUnit.surveyDate && (
+                  <p className="text-[9px] text-gray-400 text-right">
+                    Goad surveyed {new Date(goadPanelUnit.surveyDate).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}
+                  </p>
+                )}
+              </div>
+            </div>
           </div>
-          <div className="border-t mt-2.5 pt-2 space-y-1.5">
-            <p className="text-[10px] font-bold text-gray-800 uppercase tracking-wider mb-1">OS Data</p>
-            <label className="flex items-center gap-2 text-[10px] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showOSBuildings}
-                onChange={() => setShowOSBuildings(!showOSBuildings)}
-                className="rounded accent-gray-900"
-                data-testid="toggle-os-buildings"
-              />
-              <span className="text-gray-700">Building Footprints</span>
-              {mapZoom < 16 && showOSBuildings && <span className="text-[9px] text-gray-400 ml-auto">zoom in</span>}
-            </label>
-            <label className="flex items-center gap-2 text-[10px] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showOSSites}
-                onChange={() => setShowOSSites(!showOSSites)}
-                className="rounded accent-gray-900"
-                data-testid="toggle-os-sites"
-              />
-              <span className="text-gray-700">Named Sites</span>
-              {mapZoom < 14 && showOSSites && <span className="text-[9px] text-gray-400 ml-auto">zoom in</span>}
-            </label>
-          </div>
-        </div>
+        )}
+
+        {/* The old floating right-side "Building Key" panel was removed —
+            its toggles (OS Buildings, Named Sites) now live in the unified
+            Map Layers list on the left. The pastel auto-classifier legend
+            it carried is no longer needed because Retail Context shows the
+            real Goad data with the band filter directly below the toggle. */}
 
         {(postcode || loadingData) && (
           <PropertyPanel

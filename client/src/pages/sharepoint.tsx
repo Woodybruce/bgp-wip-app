@@ -148,12 +148,14 @@ function formatDate(dateStr?: string) {
 
 const teamColors: Record<string, string> = {
   "Investment": "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  "London Leasing": "bg-sky-500/10 text-sky-600 dark:text-sky-400",
-  "Lease Advisory": "bg-teal-500/10 text-teal-600 dark:text-teal-400",
+  "London F&B": "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+  "London Retail": "bg-teal-500/10 text-teal-600 dark:text-teal-400",
+  "Lease Advisory": "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
   "National Leasing": "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
   "Tenant Rep": "bg-purple-500/10 text-purple-600 dark:text-purple-400",
   "Development": "bg-amber-500/10 text-amber-600 dark:text-amber-400",
   "Office / Corporate": "bg-gray-500/10 text-gray-600 dark:text-gray-400",
+  "Landsec": "bg-orange-500/10 text-orange-600 dark:text-orange-400",
 };
 
 function FileThumbnail({ item, driveId, size = "small" }: { item: DriveItem; driveId: string | null; size?: "small" | "medium" | "large" }) {
@@ -610,6 +612,21 @@ export default function SharePoint() {
     }
   }, [toast]);
 
+  // Listen for OAuth completion from popup (for reconnect flow). Must run
+  // before any early return below so the hook order stays stable.
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === "microsoft_connected") {
+        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/status"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/team-folders"] });
+        toast({ title: "Reconnected to Microsoft 365" });
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [toast]);
+
   if (statusLoading) {
     return (
       <div className="p-4 sm:p-6 space-y-4">
@@ -670,20 +687,6 @@ export default function SharePoint() {
       toast({ title: "Reconnect failed", description: "Could not start Microsoft sign-in.", variant: "destructive" });
     }
   };
-
-  // Listen for OAuth completion from popup (for reconnect flow)
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === "microsoft_connected") {
-        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/status"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/team-folders"] });
-        toast({ title: "Reconnected to Microsoft 365" });
-      }
-    };
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [toast]);
 
   const breadcrumb = [{ id: "root", name: "BGP SharePoint" }, ...folderStack];
 

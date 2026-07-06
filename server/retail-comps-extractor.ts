@@ -229,8 +229,21 @@ export async function ensureRetailLeasingCompsTable(): Promise<void> {
 }
 
 /**
- * Upserts extracted comps. Dedupes by `dedupe_key` (addressNorm|tenant|YYYY-MM).
- * Returns the number of rows actually inserted (ignores conflicts).
+ * Upserts extracted comps into crm_comps (the canonical comps table that
+ * the comps page reads). Tags each row with source_evidence = "Pathway"
+ * so they can be filtered as Pathway-extracted vs manually-entered.
+ *
+ * Dedupe by email message id (source_url): if a row with the same Pathway
+ * sourceMsgId already exists we skip. Pathway re-runs over the same emails
+ * won't duplicate. The deterministic comp key (address|tenant|month) is
+ * stored in `comments` as `[pathway-key:XYZ]` for forensic searchability.
+ *
+ * source_title preserves the original email subject so the comps page can
+ * surface the human-readable provenance.
+ *
+ * (Previously wrote to retail_leasing_comps which was an orphan table no
+ * UI / API read from. Backfill of existing retail_leasing_comps rows
+ * into crm_comps is in migration 0008.)
  */
 export async function upsertExtractedComps(
   comps: ExtractedComp[],
@@ -240,43 +253,72 @@ export async function upsertExtractedComps(
   let inserted = 0;
   for (const c of comps) {
     const key = makeDedupeKey(c);
+    // Dedupe by the Pathway key marker in comments (resilient to re-runs
+    // even when sourceMsgId varies — e.g. an email forwarded twice).
+    const existing = await pool.query(
+      `SELECT id FROM crm_comps
+       WHERE source_evidence = 'Pathway'
+         AND comments LIKE $1
+       LIMIT 1`,
+      [`%[pathway-key:${key}]%`],
+    );
+    if ((existing.rowCount ?? 0) > 0) continue;
+    // Address as jsonb so it matches the rest of the comps in crm_comps.
+    const addrJson = c.address ? { formatted: c.address, line1: c.address } : null;
+    // crm_comps name is required and notNull — use the address or tenant.
+    const name = c.address || c.tenant || "Pathway-extracted comp";
     const res = await pool.query(
-      `INSERT INTO retail_leasing_comps (
-         address, postcode, outward_code, submarket, tenant, landlord,
-         use_class, sector, rent_pa, rent_psf, area_sqft, premium,
-         rent_free_months, lease_date, term_years, break_years,
-         source_type, source_id, source_ref, source_date,
-         agent, notes, confidence, dedupe_key, created_by
+      `INSERT INTO crm_comps (
+         name, address, postcode, area_location,
+         tenant, landlord, use_class, comp_type,
+         headline_rent, rent_psf_overall, rent_psf_nia, rent_psf_gia,
+         area_sqft, rent_free_months, fitout_contribution,
+         completion_date, term, break_clause,
+         source_evidence, source_url, source_title, comments,
+         created_by
        ) VALUES (
-         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
-         $17,$18,$19,$20,$21,$22,$23,$24,$25
-       )
-       ON CONFLICT (dedupe_key) DO NOTHING`,
+         $1, $2::jsonb, $3, $4,
+         $5, $6, $7, $8,
+         $9, $10, $11, $12,
+         $13, $14, $15,
+         $16, $17, $18,
+         $19, $20, $21, $22,
+         $23
+       )`,
       [
-        c.address,
+        name,
+        addrJson ? JSON.stringify(addrJson) : null,
         c.postcode || null,
-        outwardCode(c.postcode) || null,
         opts.submarket || null,
         c.tenant || null,
         c.landlord || null,
         c.useClass || null,
-        c.sector || null,
-        c.rentPa ?? null,
-        c.rentPsf ?? null,
-        c.areaSqft ?? null,
-        c.premium ?? null,
-        c.rentFreeMonths ?? null,
+        // BGP comp_type uses retail / office / F&B etc. Stage 1 extractor
+        // is retail-only so default the tag — sector field still preserved
+        // in comments for fidelity.
+        c.sector || "retail",
+        c.rentPa != null ? String(c.rentPa) : null,
+        c.rentPsf != null ? String(c.rentPsf) : null,
+        c.rentPsf != null ? String(c.rentPsf) : null,
+        c.rentPsf != null ? String(c.rentPsf) : null,
+        c.areaSqft != null ? String(c.areaSqft) : null,
+        c.rentFreeMonths != null ? String(c.rentFreeMonths) : null,
+        c.premium != null ? `£${c.premium}` : null,
         c.leaseDate || null,
-        c.termYears ?? null,
-        c.breakYears ?? null,
-        "email",
-        c.sourceMsgId,
-        c.sourceSubject,
-        c.sourceDate,
-        c.agent || null,
-        c.notes || null,
-        c.confidence,
-        key,
+        c.termYears != null ? `${c.termYears} years` : null,
+        c.breakYears != null ? `${c.breakYears} years` : null,
+        "Pathway",
+        c.sourceMsgId || null,
+        c.sourceSubject || null,                    // preserve email subject
+        // Pathway-key marker in comments enables dedupe + forensic search.
+        // Notes / sector / submarket / confidence preserved alongside.
+        [
+          `[pathway-key:${key}]`,
+          c.notes,
+          c.sector ? `Sector: ${c.sector}` : null,
+          opts.submarket ? `Submarket: ${opts.submarket}` : null,
+          c.confidence != null ? `Confidence: ${c.confidence}` : null,
+        ].filter(Boolean).join(" · "),
         opts.createdBy || null,
       ],
     );
@@ -286,8 +328,10 @@ export async function upsertExtractedComps(
 }
 
 /**
- * Look up retail leasing comps near a postcode. Matches full postcode first,
- * falls back to outward code. Returns up to `limit` most-recent rows.
+ * Look up retail leasing comps near a postcode from crm_comps. Reads the
+ * canonical comps table (NOT the orphan retail_leasing_comps). Matches
+ * full postcode first, then outward-code prefix. Returns up to `limit`
+ * most-recent rows that look like retail leasing comps.
  */
 export async function findNearbyComps(
   postcode: string,
@@ -296,12 +340,15 @@ export async function findNearbyComps(
   const out = outwardCode(postcode);
   if (!postcode && !out) return [];
   const { rows } = await pool.query(
-    `SELECT * FROM retail_leasing_comps
-       WHERE ($1::text IS NOT NULL AND postcode = $1)
-          OR ($2::text IS NOT NULL AND outward_code = $2)
-       ORDER BY COALESCE(lease_date, source_date) DESC NULLS LAST, created_at DESC
-       LIMIT $3`,
-    [postcode || null, out || null, limit],
+    `SELECT * FROM crm_comps
+       WHERE (
+         ($1::text IS NOT NULL AND postcode = $1)
+         OR ($2::text IS NOT NULL AND UPPER(REPLACE(COALESCE(postcode, ''), ' ', '')) LIKE $3)
+       )
+       AND (use_class IS NULL OR use_class NOT ILIKE '%office%')
+       ORDER BY completion_date DESC NULLS LAST, created_at DESC
+       LIMIT $4`,
+    [postcode || null, out || null, out ? out.replace(/\s+/g, "") + "%" : "%", limit],
   );
   return rows;
 }

@@ -88,62 +88,11 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
 import type { CrmComp } from "@shared/schema";
 
 
-function SystemActivityWidget() {
-  const { data: activities, isLoading: actLoading } = useQuery<any[]>({ queryKey: ["/api/activity-feed"] });
-  const sourceIcons: Record<string, { icon: React.ElementType; color: string }> = {
-    "email-processor": { icon: MailIcon, color: "text-blue-500" },
-    "auto-enrich": { icon: Sparkles, color: "text-purple-500" },
-    "news-feed": { icon: Newspaper, color: "text-orange-500" },
-    "comp-extract": { icon: BarChart3, color: "text-green-500" },
-    "archivist": { icon: FolderOpen, color: "text-amber-500" },
-    "interaction-sync": { icon: Users, color: "text-cyan-500" },
-  };
-  return (
-    <Card key="system-activity" className="h-full flex flex-col" data-testid="widget-system-activity">
-      <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2 pt-4 px-4">
-        <div className="flex items-center gap-2">
-          <Zap className="w-4 h-4 text-primary" />
-          <CardTitle className="text-sm font-semibold">System Activity</CardTitle>
-        </div>
-        <Badge variant="secondary" className="text-[10px]">Live</Badge>
-      </CardHeader>
-      <CardContent className="flex-1 overflow-hidden px-4 pb-4">
-        <ScrollArea className="h-full">
-          {actLoading ? (
-            <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-12 w-full" />)}</div>
-          ) : !activities?.length ? (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-              <Zap className="w-8 h-8 text-muted-foreground/30 mb-2" />
-              <p className="text-xs text-muted-foreground">No automated activity yet</p>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {activities.map((a: any) => {
-                const config = sourceIcons[a.source] || { icon: Zap, color: "text-muted-foreground" };
-                const Icon = config.icon;
-                return (
-                  <div key={a.id} className="flex items-start gap-2.5 p-2 rounded-md hover:bg-muted/50 transition-colors" data-testid={`activity-item-${a.id}`}>
-                    <div className={`w-6 h-6 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5`}>
-                      <Icon className={`w-3 h-3 ${config.color}`} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium leading-tight">{a.detail}</p>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">{a.source.replace(/-/g, " ")} · {timeAgo(a.created_at)}</p>
-                    </div>
-                    {a.count > 1 && <Badge variant="outline" className="text-[9px] shrink-0">{a.count}</Badge>}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </ScrollArea>
-      </CardContent>
-    </Card>
-  );
-}
-
-function DailyDigestWidget() {
+// Merged "Activity Feed" = Daily Digest alerts (proactive) + System Activity (automated background processes).
+function ActivityFeedWidget() {
   const { data: alerts, isLoading: digestLoading } = useQuery<any[]>({ queryKey: ["/api/daily-digest"] });
+  const { data: activities, isLoading: actLoading } = useQuery<any[]>({ queryKey: ["/api/activity-feed"] });
+
   const severityConfig: Record<string, { color: string; bg: string }> = {
     critical: { color: "text-red-600 dark:text-red-400", bg: "bg-red-100 dark:bg-red-900/30" },
     warning: { color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-100 dark:bg-amber-900/30" },
@@ -155,43 +104,88 @@ function DailyDigestWidget() {
     kyc_gap: ShieldCheck,
     cooling_contact: Users,
   };
+  const sourceIcons: Record<string, { icon: React.ElementType; color: string }> = {
+    "email-processor": { icon: MailIcon, color: "text-blue-500" },
+    "auto-enrich": { icon: Sparkles, color: "text-purple-500" },
+    "news-feed": { icon: Newspaper, color: "text-orange-500" },
+    "comp-extract": { icon: BarChart3, color: "text-green-500" },
+    "archivist": { icon: FolderOpen, color: "text-amber-500" },
+    "interaction-sync": { icon: Users, color: "text-cyan-500" },
+  };
+
+  const digestHref = (alert: any): string | null =>
+    alert.entityType === "deal" ? `/deals/${alert.entityId}`
+    : alert.entityType === "contact" ? `/contacts/${alert.entityId}`
+    : alert.entityType === "requirement" ? `/requirements`
+    : null;
+
+  const isLoading = digestLoading || actLoading;
+  const hasAlerts = !!alerts?.length;
+  const hasActivity = !!activities?.length;
+
   return (
-    <Card key="daily-digest" className="h-full flex flex-col" data-testid="widget-daily-digest">
+    <Card key="system-activity" className="h-full flex flex-col" data-testid="widget-activity-feed">
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2 pt-4 px-4">
         <div className="flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 text-amber-500" />
-          <CardTitle className="text-sm font-semibold">Daily Digest</CardTitle>
+          <Zap className="w-4 h-4 text-primary" />
+          <CardTitle className="text-sm font-semibold">Activity Feed</CardTitle>
+          {hasAlerts && <Badge variant="destructive" className="text-[10px]">{alerts!.length}</Badge>}
         </div>
-        {alerts && alerts.length > 0 && <Badge variant="destructive" className="text-[10px]">{alerts.length}</Badge>}
+        <Badge variant="secondary" className="text-[10px]">Live</Badge>
       </CardHeader>
       <CardContent className="flex-1 overflow-hidden px-4 pb-4">
         <ScrollArea className="h-full">
-          {digestLoading ? (
-            <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-14 w-full" />)}</div>
-          ) : !alerts?.length ? (
+          {isLoading ? (
+            <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-12 w-full" />)}</div>
+          ) : !hasAlerts && !hasActivity ? (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <Check className="w-8 h-8 text-green-500/30 mb-2" />
-              <p className="text-xs text-muted-foreground">All clear — no alerts today</p>
+              <p className="text-xs text-muted-foreground">All clear — nothing to report</p>
             </div>
           ) : (
             <div className="space-y-1">
-              {alerts.map((alert: any, idx: number) => {
+              {hasAlerts && (
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-1 pt-1">Alerts</p>
+              )}
+              {alerts?.map((alert: any, idx: number) => {
                 const sev = severityConfig[alert.severity] || severityConfig.info;
                 const Icon = typeIcons[alert.type] || AlertTriangle;
-                const href = alert.entityType === "deal" ? `/deals/${alert.entityId}` : alert.entityType === "contact" ? `/contacts/${alert.entityId}` : alert.entityType === "requirement" ? `/requirements` : "#";
-                return (
-                  <Link key={idx} href={href}>
-                    <div className="flex items-start gap-2.5 p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer" data-testid={`digest-alert-${idx}`}>
-                      <div className={`w-6 h-6 rounded-full ${sev.bg} flex items-center justify-center shrink-0 mt-0.5`}>
-                        <Icon className={`w-3 h-3 ${sev.color}`} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium leading-tight">{alert.title}</p>
-                        <p className="text-[10px] text-muted-foreground mt-0.5">{alert.detail}</p>
-                      </div>
-                      <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0 mt-1" />
+                const href = digestHref(alert);
+                const row = (
+                  <div className="flex items-start gap-2.5 p-2 rounded-md hover:bg-muted/50 transition-colors" data-testid={`digest-alert-${idx}`}>
+                    <div className={`w-6 h-6 rounded-full ${sev.bg} flex items-center justify-center shrink-0 mt-0.5`}>
+                      <Icon className={`w-3 h-3 ${sev.color}`} />
                     </div>
-                  </Link>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium leading-tight">{alert.title}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">{alert.detail}</p>
+                    </div>
+                    {href && <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0 mt-1" />}
+                  </div>
+                );
+                return href ? (
+                  <Link key={`alert-${idx}`} href={href} className="block cursor-pointer">{row}</Link>
+                ) : (
+                  <div key={`alert-${idx}`}>{row}</div>
+                );
+              })}
+              {hasActivity && (
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-1 pt-2">System Activity</p>
+              )}
+              {activities?.map((a: any) => {
+                const config = sourceIcons[a.source] || { icon: Zap, color: "text-muted-foreground" };
+                const Icon = config.icon;
+                return (
+                  <div key={`act-${a.id}`} className="flex items-start gap-2.5 p-2 rounded-md hover:bg-muted/50 transition-colors" data-testid={`activity-item-${a.id}`}>
+                    <div className={`w-6 h-6 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5`}>
+                      <Icon className={`w-3 h-3 ${config.color}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium leading-tight">{a.detail}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">{a.source.replace(/-/g, " ")} · {timeAgo(a.created_at)}</p>
+                    </div>
+                    {a.count > 1 && <Badge variant="outline" className="text-[9px] shrink-0">{a.count}</Badge>}
+                  </div>
                 );
               })}
             </div>
@@ -220,11 +214,17 @@ function MyTasksWidget() {
   });
   const [quickInput, setQuickInput] = useState("");
   const activeTasks = tasksData.filter((t: any) => t.status !== "done");
-  const overdueTasks = activeTasks.filter((t: any) => t.due_date && new Date(t.due_date) < new Date());
+  const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+  const overdueTasks = activeTasks.filter((t: any) => {
+    if (!t.due_date) return false;
+    const due = new Date(t.due_date); due.setHours(0, 0, 0, 0);
+    return due < startOfToday();
+  });
   const priorityIcon = (p: string) => p === "urgent" ? <Flame className="w-2.5 h-2.5 text-red-500" /> : p === "high" ? <AlertTriangle className="w-2.5 h-2.5 text-orange-500" /> : null;
   const dueLabel = (d: string | null) => {
     if (!d) return null;
-    const diff = Math.floor((new Date(d).getTime() - new Date().setHours(0,0,0,0)) / 86400000);
+    const due = new Date(d); due.setHours(0, 0, 0, 0);
+    const diff = Math.floor((due.getTime() - startOfToday().getTime()) / 86400000);
     if (diff < 0) return <span className="text-[10px] text-red-600 font-medium">{Math.abs(diff)}d overdue</span>;
     if (diff === 0) return <span className="text-[10px] text-orange-600 font-medium">Today</span>;
     if (diff === 1) return <span className="text-[10px] text-blue-600">Tomorrow</span>;
@@ -341,23 +341,6 @@ function MyTasksWidget() {
         </ScrollArea>
       </CardContent>
     </Card>
-  );
-}
-
-function QuickAction({ title, subtitle, icon: Icon, href }: { title: string; subtitle: string; icon: React.ElementType; href: string }) {
-  return (
-    <Link href={href}>
-      <div className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/50 transition-colors cursor-pointer" data-testid={`quick-action-${title.toLowerCase().replace(/\s/g, "-")}`}>
-        <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
-          <Icon className="w-4 h-4 text-primary" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium">{title}</p>
-          <p className="text-xs text-muted-foreground truncate">{subtitle}</p>
-        </div>
-        <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
-      </div>
-    </Link>
   );
 }
 
@@ -509,12 +492,13 @@ export default function Dashboard() {
   });
 
   const [dashboardViewMode, setDashboardViewMode] = useState<"team" | "individual">(() => {
-    return (localStorage.getItem("bgp_dashboard_view_mode") as "team" | "individual") || "team";
+    try { return (localStorage.getItem("bgp_dashboard_view_mode") as "team" | "individual") || "team"; }
+    catch { return "team"; }
   });
   const [diaryRange, setDiaryRange] = useState<"today" | "week">("week");
   const handleViewModeChange = useCallback((mode: "team" | "individual") => {
     setDashboardViewMode(mode);
-    localStorage.setItem("bgp_dashboard_view_mode", mode);
+    try { localStorage.setItem("bgp_dashboard_view_mode", mode); } catch { /* private browsing */ }
   }, []);
   const { isLoading: statsLoading } = useQuery<CrmStats>({
     queryKey: ["/api/crm/stats"],
@@ -693,8 +677,9 @@ export default function Dashboard() {
   }, [layoutSaveMutation, user]);
 
   const handleResetLayout = useCallback(() => {
-    layoutSaveMutation.mutate(null as any);
-    window.location.reload();
+    layoutSaveMutation.mutate(null as any, {
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/dashboard-template"] }),
+    });
   }, [layoutSaveMutation]);
 
   useEffect(() => {
@@ -709,13 +694,15 @@ export default function Dashboard() {
   const allDeals = crmDeals || [];
 
   const TEAM_ALIASES: Record<string, string[]> = useMemo(() => ({
-    "London Leasing": ["London Leasing", "London"],
+    "London F&B": ["London F&B"],
+    "London Retail": ["London Retail"],
     "National Leasing": ["National Leasing", "National"],
     "Investment": ["Investment"],
     "Tenant Rep": ["Tenant Rep"],
     "Development": ["Development"],
     "Lease Advisory": ["Lease Advisory"],
     "Office / Corporate": ["Office / Corporate", "Office", "Corporate"],
+    "Landsec": ["Landsec"],
   }), []);
 
   const matchesTeam = useCallback((teamField: string | string[] | null | undefined) => {
@@ -797,27 +784,22 @@ export default function Dashboard() {
   }, [crmReqInvestment, isAllTeams, reqMatchesTeam]);
 
   const knownIds = WIDGET_REGISTRY.map(w => w.id);
-  const rawWidgets = (user?.dashboardWidgets ?? DEFAULT_WIDGETS)
-    .map((id: string) => id === "recent-properties" ? "key-instructions" : id)
-    .filter((id: string) => id !== "latest-news" && id !== "stats" && id !== "quick-access");
-  const withNews = rawWidgets.includes("news-summary") ? rawWidgets : ["news-summary", ...rawWidgets];
-  const withLeads = withNews.includes("my-leads") ? withNews : ["my-leads", ...withNews];
-  const withKpi = withLeads.includes("kpi-overview") ? withLeads : [...withLeads, "kpi-overview"];
-  const topWidgets = ["my-leads", "news-summary", "kpi-overview"];
-  const reordered = withKpi.filter((id: string) => !topWidgets.includes(id));
-  reordered.unshift("kpi-overview");
-  reordered.unshift("my-leads", "news-summary");
-  const tripleIds = ["today-diary", "key-instructions", "active-contacts"];
-  const hasAll = tripleIds.every(id => reordered.includes(id));
-  if (hasAll) {
-    const without = reordered.filter((id: string) => !tripleIds.includes(id));
-    const insertAt = Math.min(...tripleIds.map(id => reordered.indexOf(id)));
-    const adjustedAt = Math.min(insertAt, without.length);
-    without.splice(adjustedAt, 0, ...tripleIds);
-    reordered.length = 0;
-    reordered.push(...without);
-  }
-  const activeWidgets = Array.from(new Set(reordered.filter((id: string) => knownIds.includes(id))));
+  // Preferred display order; any known widget not listed here falls to the end.
+  const WIDGET_ORDER = [
+    "my-leads", "news-summary", "kpi-overview",
+    "today-diary", "key-instructions", "active-contacts",
+  ];
+  const orderIndex = (id: string) => {
+    const i = WIDGET_ORDER.indexOf(id);
+    return i === -1 ? WIDGET_ORDER.length : i;
+  };
+  // Migrate one renamed legacy id, then ensure the three always-on widgets are present.
+  const requested = (user?.dashboardWidgets ?? DEFAULT_WIDGETS)
+    .map((id: string) => id === "recent-properties" ? "key-instructions" : id);
+  const withDefaults = Array.from(new Set([...requested, "my-leads", "news-summary", "kpi-overview"]));
+  const activeWidgets = withDefaults
+    .filter((id: string) => knownIds.includes(id)) // single filter: drop unknown ids
+    .sort((a: string, b: string) => orderIndex(a) - orderIndex(b)); // single sort
 
   const widgetLabelMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -1014,9 +996,9 @@ export default function Dashboard() {
                           <div>
                             <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mb-0.5">KYC & Ownership</p>
                             <div className="flex items-center gap-2">
-                              <Badge className={`text-[10px] ${companyInfo.kycStatus === "pass" ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300"}`}>
+                              <Badge className={`text-[10px] ${companyInfo.kycStatus === "approved" ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" : "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-300"}`}>
                                 <ShieldCheck className="w-3 h-3 mr-0.5" />
-                                {companyInfo.kycStatus === "pass" ? "KYC Passed" : companyInfo.kycStatus}
+                                {companyInfo.kycStatus === "approved" ? "KYC Passed" : companyInfo.kycStatus}
                               </Badge>
                               {companyInfo.kycCheckedAt && (
                                 <span className="text-[10px] text-muted-foreground">
@@ -1107,7 +1089,7 @@ export default function Dashboard() {
             content: (
               <Card className="h-full">
                 <CardContent className="p-3 h-full">
-                  <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 h-full">
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 h-full">
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800" data-testid="kpi-properties">
                       <p className="text-[10px] text-teal-600 dark:text-teal-400 font-medium uppercase tracking-wider">Properties</p>
                       <p className="text-2xl font-bold text-teal-700 dark:text-teal-300">{stats.totalProperties}</p>
@@ -1833,31 +1815,23 @@ export default function Dashboard() {
           </Card>
         );
 
+        // Action-framed shortcuts (not nav duplicates): each kicks off a task rather than
+        // just opening the matching sidebar page.
         if (widgetId === "quick-actions") return (
           <div key="quick-actions" className="flex items-center gap-2 flex-wrap">
             <Link href="/models">
               <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="quick-action-models">
-                <FileSpreadsheet className="w-3.5 h-3.5" /> Models
+                <FileSpreadsheet className="w-3.5 h-3.5" /> Generate Model
               </Button>
             </Link>
             <Link href="/templates">
               <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="quick-action-docs">
-                <FileText className="w-3.5 h-3.5" /> Documents
-              </Button>
-            </Link>
-            <Link href="/news">
-              <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="quick-action-news">
-                <Zap className="w-3.5 h-3.5" /> News & Leads
-              </Button>
-            </Link>
-            <Link href="/deals">
-              <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="quick-action-deals">
-                <BarChart3 className="w-3.5 h-3.5" /> Deals
+                <FileText className="w-3.5 h-3.5" /> Generate Document
               </Button>
             </Link>
             <Link href="/chatbgp">
               <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="quick-action-chat">
-                <Sparkles className="w-3.5 h-3.5" /> ChatBGP
+                <Sparkles className="w-3.5 h-3.5" /> Ask ChatBGP
               </Button>
             </Link>
           </div>
@@ -2204,9 +2178,9 @@ export default function Dashboard() {
               </div>
               <Link href={`/requirements?type=${reqType}&team=${encodeURIComponent(reqTeam)}`}><Button variant="ghost" size="sm" className="text-xs h-7">View all <ArrowRight className="w-3 h-3 ml-1" /></Button></Link>
             </CardHeader>
-            <CardContent className="pt-0">
+            <CardContent className="pt-0 flex-1 overflow-hidden flex flex-col">
               {filteredReqs.length > 0 ? (
-                <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
+                <div className="space-y-1.5 flex-1 overflow-y-auto">
                   {filteredReqs.map(r => (
                     <div key={r.id} className="flex items-center gap-2.5 p-2 rounded-md border text-xs" data-testid={`new-req-${r.id}`}>
                       <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${isInvestmentTeam ? "bg-amber-500/10" : "bg-blue-500/10"}`}>
@@ -2370,6 +2344,9 @@ export default function Dashboard() {
         );
 
         if (widgetId === "properties-deals") return (() => {
+          // The Landsec portfolio board already shows properties grouped with their deals,
+          // so suppress this general widget for Landsec to avoid showing the same content twice.
+          if (isLandsecTeam && portfolioData) return null;
           const scopedDeals = deals || [];
           const scopedProps = properties || [];
           const propMap = new Map(scopedProps.map(p => [p.id, p]));
@@ -2474,9 +2451,12 @@ export default function Dashboard() {
           );
         })();
 
-        if (widgetId === "system-activity") return <SystemActivityWidget />;
+        // System Activity + Daily Digest merged into one "Activity Feed" widget.
+        if (widgetId === "system-activity") return <ActivityFeedWidget />;
 
-        if (widgetId === "daily-digest") return <DailyDigestWidget />;
+        // daily-digest is now folded into the Activity Feed; render nothing so it
+        // drops out of the grid (filtered by content !== null) without duplicating content.
+        if (widgetId === "daily-digest") return null;
 
         if (widgetId === "my-tasks") return <MyTasksWidget />;
 

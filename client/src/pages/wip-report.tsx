@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { toDateInputValue } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -24,26 +25,39 @@ import bgpLogo from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTeam } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
 import { Link } from "wouter";
-import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
+import { apiRequest, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
+import { legacyToCode, WIP_STATUSES } from "@shared/deal-status";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SortableTableHead } from "@/components/sortable-table-head";
+import { useTableSort } from "@/hooks/use-table-sort";
 
 type SortDirection = "asc" | "desc";
 
 interface WipDealEntry {
   id: string;
   dealId: string;
+  dealRef?: number | null;
   dealType: string | null;
   ref: string;
   groupName: string | null;
+  // Resolved counterparty name (landlord → vendor → purchaser fallback)
+  // — this is the "Client" the WIP filter card and drilldown column show.
+  client: string | null;
   project: string | null;
   tenant: string | null;
+  billingEntity: string | null;
   team: string | null;
   agent: string | null;
   assetClass: string | null;
   amtWip: number | null;
   amtInvoice: number | null;
   month: string | null;
+  instructedAt: string | null;
+  targetDate: string | null;
+  exchangedAt: string | null;
+  completedAt: string | null;
+  invoicedAt: string | null;
   dealStatus: string | null;
   stage: string | null;
   invoiceNo: string | null;
@@ -52,50 +66,31 @@ interface WipDealEntry {
   source?: "crm" | "spreadsheet";
 }
 
-interface ReconciliationData {
-  dealsWithoutWip: Array<{
-    id: string;
-    name: string;
-    dealType: string | null;
-    status: string | null;
-    fee: number | null;
-    team: string[] | null;
-    internalAgent: string[] | null;
-    propertyName: string | null;
-  }>;
-  wipWithoutDeals: Array<{
-    id: string;
-    ref: string | null;
-    project: string | null;
-    agent: string | null;
-    team: string | null;
-    amtWip: number | null;
-    amtInvoice: number | null;
-    groupName: string | null;
-    dealStatus: string | null;
-  }>;
-}
-
 const DEAL_TYPE_BADGE_COLORS: Record<string, string> = {
+  // Legacy — still exist in older deals
   "Acquisition": "bg-blue-100 text-blue-800",
-  "Sale": "bg-red-100 text-red-800",
   "Leasing": "bg-green-100 text-green-800",
-  "Lease Renewal": "bg-purple-100 text-purple-800",
-  "Rent Review": "bg-orange-100 text-orange-800",
   "Investment": "bg-indigo-100 text-indigo-800",
   "Lease Advisory": "bg-cyan-100 text-cyan-800",
+  // Current types
+  "Sale": "bg-red-100 text-red-800",
+  "Purchase": "bg-emerald-100 text-emerald-800",
+  "Investment Sale": "bg-red-200 text-red-900",
+  "Investment Acquisition": "bg-indigo-200 text-indigo-900",
+  "Lease Renewal": "bg-purple-100 text-purple-800",
+  "Rent Review": "bg-orange-100 text-orange-800",
   "Tenant Rep": "bg-rose-100 text-rose-800",
   "Lease Acquisition": "bg-violet-100 text-violet-800",
   "Lease Disposal": "bg-amber-100 text-amber-800",
   "Regear": "bg-teal-100 text-teal-800",
-  "Purchase": "bg-emerald-100 text-emerald-800",
   "New Letting": "bg-lime-100 text-lime-800",
   "Sub-Letting": "bg-sky-100 text-sky-800",
+  "Temp Lease": "bg-cyan-100 text-cyan-800",
   "Assignment": "bg-slate-100 text-slate-800",
 };
 
 type ClickFilter = {
-  field: "groupName" | "team" | "agent" | "project" | "dealStatus" | "month";
+  field: "client" | "groupName" | "team" | "agent" | "project" | "dealStatus" | "month";
   value: string;
 } | null;
 
@@ -151,6 +146,7 @@ function ClickableSummaryTable({
   activeValue,
   onRowClick,
   field,
+  overrideTotal,
 }: {
   title: string;
   data: Array<{ label: string; value: number; clickValue?: string }>;
@@ -158,8 +154,9 @@ function ClickableSummaryTable({
   activeValue: string | null;
   onRowClick: (field: string, value: string) => void;
   field: string;
+  overrideTotal?: number;
 }) {
-  const total = data.reduce((s, d) => s + d.value, 0);
+  const total = overrideTotal ?? data.reduce((s, d) => s + d.value, 0);
 
   return (
     <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid={`wip-summary-${title.toLowerCase().replace(/\s/g, "-")}`}>
@@ -176,16 +173,16 @@ function ClickableSummaryTable({
                 key={cv}
                 className={`flex items-center justify-between px-3 py-1.5 text-sm cursor-pointer transition-colors ${
                   activeValue === cv
-                    ? "bg-green-100 border-l-2 border-green-600"
-                    : "hover:bg-gray-50"
+                    ? "bg-primary/8 border-l-2 border-primary"
+                    : "hover:bg-muted/50"
                 }`}
                 onClick={() => onRowClick(field, cv)}
                 data-testid={`wip-click-${field}-${cv}`}
               >
-                <span className={`truncate flex-1 mr-1 ${activeValue === cv ? "text-green-900 font-semibold" : "text-gray-800"}`}>
+                <span className={`truncate flex-1 mr-1 ${activeValue === cv ? "text-foreground font-semibold" : "text-gray-800"}`}>
                   {row.label}
                 </span>
-                <span className={`font-mono font-medium text-right whitespace-nowrap ${activeValue === cv ? "text-green-900" : "text-gray-900"}`}>
+                <span className={`font-mono font-medium text-right whitespace-nowrap ${activeValue === cv ? "text-foreground" : "text-gray-900"}`}>
                   {formatFullCurrency(row.value)}
                 </span>
               </div>
@@ -294,7 +291,7 @@ function FilterSection({
           Clear
         </button>
       </div>
-      <ScrollArea className="max-h-[160px] px-2 py-1">
+      <div className="max-h-[220px] overflow-y-auto px-2 py-1">
         {filtered.map((item) => (
           <label
             key={item}
@@ -309,148 +306,6 @@ function FilterSection({
             <span className="truncate">{item}</span>
           </label>
         ))}
-      </ScrollArea>
-    </div>
-  );
-}
-
-function ReconciliationTab() {
-  const { data, isLoading } = useQuery<ReconciliationData>({
-    queryKey: ["/api/wip/reconciliation"],
-    queryFn: async () => {
-      const res = await fetch("/api/wip/reconciliation", { headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("Failed to fetch reconciliation data");
-      return res.json();
-    },
-  });
-
-  const dealsWithoutWip = data?.dealsWithoutWip || [];
-  const wipWithoutDeals = data?.wipWithoutDeals || [];
-
-  if (isLoading) {
-    return (
-      <div className="space-y-3 p-4">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <Skeleton key={i} className="h-12 w-full rounded-lg" />
-        ))}
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6 overflow-y-auto flex-1 min-h-0">
-      {/* Deals without WIP */}
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid="recon-deals-without-wip">
-        <div className="bg-gray-50 border-b px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-gray-700">Deals not on WIP</span>
-            <Badge variant="secondary" className="text-xs">
-              {dealsWithoutWip.length}
-            </Badge>
-          </div>
-        </div>
-        {dealsWithoutWip.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-gray-500">
-            All active deals are matched to WIP entries
-          </div>
-        ) : (
-          <ScrollableTable minWidth={900}>
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-48">Deal Name</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-40">Property</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-32">Assigned To</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-24">Status</th>
-                  <th className="px-3 py-2 text-right font-medium text-gray-600 w-28">Expected Fee</th>
-                  <th className="px-3 py-2 text-center font-medium text-gray-600 w-28">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 text-xs">
-                {dealsWithoutWip.map((deal) => (
-                  <tr key={deal.id} className="hover:bg-gray-50" data-testid={`recon-deal-row-${deal.id}`}>
-                    <td className="px-3 py-2 text-gray-700">
-                      <Link href={`/deals/${deal.id}`}>
-                        <span className="text-blue-600 hover:underline cursor-pointer">{deal.name}</span>
-                      </Link>
-                    </td>
-                    <td className="px-3 py-2 text-gray-700 truncate max-w-[160px]">{deal.propertyName || "—"}</td>
-                    <td className="px-3 py-2 text-gray-700 truncate max-w-[130px]">
-                      {Array.isArray(deal.internalAgent) ? deal.internalAgent.join(", ") : deal.internalAgent || "—"}
-                    </td>
-                    <td className="px-3 py-2">
-                      <Badge variant="secondary" className="text-[10px]">
-                        {deal.status || "—"}
-                      </Badge>
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono text-gray-900">
-                      {deal.fee ? `£${deal.fee.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <Button variant="outline" size="sm" className="h-6 text-[10px] gap-1">
-                        <Link2 className="w-3 h-3" />
-                        Link to WIP
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </ScrollableTable>
-        )}
-      </div>
-
-      {/* WIP entries without deals */}
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid="recon-wip-without-deals">
-        <div className="bg-gray-50 border-b px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-gray-700">WIP entries without a deal</span>
-            <Badge variant="secondary" className="text-xs">
-              {wipWithoutDeals.length}
-            </Badge>
-          </div>
-        </div>
-        {wipWithoutDeals.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-gray-500">
-            All WIP entries are matched to CRM deals
-          </div>
-        ) : (
-          <ScrollableTable minWidth={800}>
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-32">Ref</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-40">Project / Property</th>
-                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-28">Fee Earner</th>
-                  <th className="px-3 py-2 text-right font-medium text-gray-600 w-28">WIP Amount</th>
-                  <th className="px-3 py-2 text-right font-medium text-gray-600 w-28">Invoice Amount</th>
-                  <th className="px-3 py-2 text-center font-medium text-gray-600 w-28">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 text-xs">
-                {wipWithoutDeals.map((wip) => (
-                  <tr key={wip.id} className="hover:bg-gray-50" data-testid={`recon-wip-row-${wip.id}`}>
-                    <td className="px-3 py-2 text-gray-700 truncate max-w-[130px]">{wip.ref || "—"}</td>
-                    <td className="px-3 py-2 text-gray-700 truncate max-w-[160px]">{wip.project || "—"}</td>
-                    <td className="px-3 py-2 text-gray-700 truncate max-w-[120px]">{wip.agent || "—"}</td>
-                    <td className="px-3 py-2 text-right font-mono text-gray-900">
-                      {wip.amtWip ? `£${wip.amtWip.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono text-green-700">
-                      {wip.amtInvoice ? `£${wip.amtInvoice.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : "—"}
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      <Button variant="outline" size="sm" className="h-6 text-[10px] gap-1">
-                        <Plus className="w-3 h-3" />
-                        Create Deal
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </ScrollableTable>
-        )}
       </div>
     </div>
   );
@@ -480,6 +335,8 @@ interface AgentDrilldownRow {
 
 function AgentSummaryTab() {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const summarySort = useTableSort<AgentSummaryRow>(null, "asc");
+  const drillSort = useTableSort<AgentDrilldownRow>(null, "asc");
 
   const { data: summaryData, isLoading } = useQuery<AgentSummaryRow[]>({
     queryKey: ["/api/wip/agent-summary"],
@@ -501,7 +358,15 @@ function AgentSummaryTab() {
     enabled: !!selectedAgent,
   });
 
-  const agents = summaryData || [];
+  const agentsRaw = summaryData || [];
+  const agents = summarySort.sortKey
+    ? summarySort.sorted(agentsRaw, {
+        agent: a => a.agent,
+        wip: a => a.wip,
+        invoiced: a => a.invoiced,
+        total: a => a.wip + a.invoiced,
+      })
+    : agentsRaw;
   const grandTotal = agents.reduce((s, a) => s + a.wip + a.invoiced, 0);
   const maxBarValue = agents.length > 0 ? Math.max(...agents.map(a => a.wip + a.invoiced)) : 1;
 
@@ -595,10 +460,10 @@ function AgentSummaryTab() {
           <table className="w-full">
             <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
               <tr>
-                <th className="px-4 py-2 text-left font-medium text-gray-600">Agent Name</th>
-                <th className="px-4 py-2 text-right font-medium text-gray-600">WIP Amount</th>
-                <th className="px-4 py-2 text-right font-medium text-gray-600">Invoiced Amount</th>
-                <th className="px-4 py-2 text-right font-medium text-gray-600">Total</th>
+                <SortableTableHead sortKey="agent" sort={summarySort} raw className="px-4 py-2 text-left font-medium text-gray-600">Agent Name</SortableTableHead>
+                <SortableTableHead sortKey="wip" sort={summarySort} raw align="right" className="px-4 py-2 font-medium text-gray-600">WIP Amount</SortableTableHead>
+                <SortableTableHead sortKey="invoiced" sort={summarySort} raw align="right" className="px-4 py-2 font-medium text-gray-600">Invoiced Amount</SortableTableHead>
+                <SortableTableHead sortKey="total" sort={summarySort} raw align="right" className="px-4 py-2 font-medium text-gray-600">Total</SortableTableHead>
                 <th className="px-4 py-2 text-right font-medium text-gray-600">% of Total</th>
               </tr>
             </thead>
@@ -674,17 +539,28 @@ function AgentSummaryTab() {
               <table className="w-full">
                 <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
                   <tr>
-                    <th className="px-3 py-2 text-left font-medium text-gray-600">Deal Name</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-600">Property</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-600">Type</th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-600">Total Fee</th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-600">Allocated</th>
-                    <th className="px-3 py-2 text-center font-medium text-gray-600">Status</th>
-                    <th className="px-3 py-2 text-center font-medium text-gray-600">Stage</th>
+                    <SortableTableHead sortKey="name" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-gray-600">Deal Name</SortableTableHead>
+                    <SortableTableHead sortKey="property" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-gray-600">Property</SortableTableHead>
+                    <SortableTableHead sortKey="dealType" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-gray-600">Type</SortableTableHead>
+                    <SortableTableHead sortKey="totalFee" sort={drillSort} raw align="right" className="px-3 py-2 font-medium text-gray-600">Total Fee</SortableTableHead>
+                    <SortableTableHead sortKey="allocated" sort={drillSort} raw align="right" className="px-3 py-2 font-medium text-gray-600">Allocated</SortableTableHead>
+                    <SortableTableHead sortKey="status" sort={drillSort} raw align="center" className="px-3 py-2 font-medium text-gray-600">Status</SortableTableHead>
+                    <SortableTableHead sortKey="stage" sort={drillSort} raw align="center" className="px-3 py-2 font-medium text-gray-600">Stage</SortableTableHead>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-xs">
-                  {drilldownData.map((d) => (
+                  {(drillSort.sortKey
+                    ? drillSort.sorted(drilldownData, {
+                        name: d => d.name,
+                        property: d => d.property,
+                        dealType: d => d.dealType,
+                        totalFee: d => d.totalFee,
+                        allocated: d => d.allocatedAmount,
+                        status: d => d.status,
+                        stage: d => d.stage,
+                      })
+                    : drilldownData
+                  ).map((d) => (
                     <tr key={d.dealId} className="hover:bg-gray-50">
                       <td className="px-3 py-2 text-gray-700">
                         <Link href={`/deals/${d.dealId}`}>
@@ -747,22 +623,15 @@ export default function WipReport() {
   const { toast } = useToast();
   const { activeTeam } = useTeam();
   const { brand, isLandsec } = useBrand();
-  const [activeTab, setActiveTab] = useState<"report" | "reconciliation" | "agent-summary">("report");
+  // Sage WIP reconciliation tab retired — Deals Board + Letting Tracker
+  // are now the canonical source. The page shows the live deals view
+  // and the per-agent summary only.
+  const [activeTab, setActiveTab] = useState<"report" | "agent-summary">("report");
 
   const { data: user } = useQuery<{ id: string; name: string; email: string; team: string; isAdmin?: boolean }>({
     queryKey: ["/api/auth/me"],
   });
 
-  const { data: reconData } = useQuery<ReconciliationData>({
-    queryKey: ["/api/wip/reconciliation"],
-    queryFn: async () => {
-      const res = await fetch("/api/wip/reconciliation", { headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("Failed to fetch reconciliation data");
-      return res.json();
-    },
-  });
-
-  const reconCount = (reconData?.dealsWithoutWip?.length || 0) + (reconData?.wipWithoutDeals?.length || 0);
 
   const WIP_SENIOR_EMAILS = useMemo(() => new Set([
     "woody@brucegillinghampollard.com",
@@ -787,11 +656,35 @@ export default function WipReport() {
   const rawEntries = Array.isArray(wipResponse) ? wipResponse : (wipResponse?.entries || []);
   const isWipAdmin = Array.isArray(wipResponse) ? false : (wipResponse?.isAdmin || false);
   const wipUserTeam = Array.isArray(wipResponse) ? null : (wipResponse?.userTeam || null);
+  // "Normal" hides the restricted-director fees (Charlotte / Jack / Rupert /
+  // Woody); "Admin" shows everything. Only senior / full-view users
+  // (canSeeAll) can switch to Admin — everyone else only ever receives the
+  // Normal data from the server, so the toggle isn't shown to them.
+  const canSeeAll = !Array.isArray(wipResponse) && !!(wipResponse as any)?.canSeeAll;
+  const [wipViewMode, setWipViewMode] = useState<"normal" | "admin">("normal");
 
   const isLandsecView = activeTeam === "Landsec";
 
   const entries = useMemo(() => {
-    let filtered = rawEntries;
+    // Client-side safety net: strip any rows whose status maps to a non-WIP
+    // canonical code (REP/SPEC/LIVE/AVA/WIT). The server applies the same
+    // filter, but this catches stale cached responses or deployment lag.
+    let filtered = rawEntries.filter(e => {
+      const code = legacyToCode(e.dealStatus);
+      if (!code) return true; // unknown/null status — keep
+      return WIP_STATUSES.includes(code);
+    });
+    // Normal view hides the restricted-director fees. Non-senior users never
+    // receive these from the server; this also enforces it for senior users
+    // who are viewing in Normal mode.
+    if (wipViewMode === "normal") {
+      const directors = ["woody bruce", "charlotte roberts", "rupert bentley-smith", "jack barratt"];
+      filtered = filtered.filter((e) => {
+        if (!e.agent) return true;
+        const agents = (e.agent as string).split(",").map((a) => a.trim().toLowerCase());
+        return !agents.some((a) => directors.includes(a));
+      });
+    }
     if (isLandsecView) {
       filtered = filtered.filter((e) => {
         const gn = (e.groupName || "").toLowerCase().replace(/\s+/g, "");
@@ -806,7 +699,7 @@ export default function WipReport() {
       });
     }
     return filtered;
-  }, [rawEntries, isLandsecView, activeTeam, isWipAdmin]);
+  }, [rawEntries, isLandsecView, activeTeam, isWipAdmin, wipViewMode]);
 
   const INVOICED_STATUSES = useMemo(() => ["Invoiced", "Billed"], []);
   const [selectedTeams, setSelectedTeams] = useState<Set<string>>(new Set());
@@ -816,11 +709,7 @@ export default function WipReport() {
   const [selectedFiscalYears, setSelectedFiscalYears] = useState<Set<number>>(new Set());
   const [clickFilter, setClickFilter] = useState<ClickFilter>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [uploading, setUploading] = useState(false);
-  const [appendUploading, setAppendUploading] = useState(false);
   const [syncingXero, setSyncingXero] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const queryClient = useQueryClient();
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -838,40 +727,44 @@ export default function WipReport() {
     }
   }, []);
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>, append = false) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const setter = append ? setAppendUploading : setUploading;
-    setter(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const token = localStorage.getItem("bgp_auth_token");
-      const url = append ? "/api/wip/import?append=true" : "/api/wip/import";
-      const res = await fetch(url, {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || "Upload failed");
-      }
-      const data = await res.json();
-      toast({ title: append ? "Data Added" : "WIP Updated", description: `${append ? "Appended" : "Imported"} ${data.imported} entries from spreadsheet.` });
-      filtersInitialized.current = false;
-      queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
-    } catch (err: any) {
-      toast({ title: "Upload failed", description: err?.message || "Could not import file.", variant: "destructive" });
-    } finally {
-      setter(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  };
+  // Sage WIP import flow removed — the Deals Board + Letting Tracker
+  // are now the canonical fee source.
   const [detailSort, setDetailSort] = useState<{ column: string; direction: SortDirection }>({
     column: "amtWip",
     direction: "desc",
+  });
+
+  // Deal Detail column show/hide. Checkbox + Ref + Deal stay; the rest can be
+  // toggled off to fit more on screen. Persisted per browser. The lead/trail
+  // key groups drive the footer's colSpans so the totals stay column-aligned.
+  const WIP_DETAIL_COLS: { key: string; label: string; width: string }[] = [
+    { key: "dealRef", label: "Ref", width: "w-12" },
+    { key: "ref", label: "Deal", width: "w-32" },
+    { key: "client", label: "Client", width: "w-24" },
+    { key: "tenant", label: "Tenant", width: "w-28" },
+    { key: "project", label: "Property", width: "w-28" },
+    { key: "billingEntity", label: "Billing Entity", width: "w-24" },
+    { key: "team", label: "Team", width: "w-24" },
+    { key: "amtWip", label: "Fee", width: "w-20" },
+    { key: "amtInvoice", label: "Fee Split", width: "w-20" },
+    { key: "dealDate", label: "Target Date", width: "w-24" },
+    { key: "dealType", label: "Deal Type", width: "w-20" },
+    { key: "agent", label: "BGP Contact", width: "w-20" },
+    { key: "dealStatus", label: "Deal Status", width: "w-20" },
+    { key: "stage", label: "Stage", width: "w-20" },
+  ];
+  const WIP_LEAD_KEYS = ["dealRef", "ref", "client", "tenant", "project", "billingEntity", "team"];
+  const WIP_TRAIL_KEYS = ["dealDate", "dealType", "agent", "dealStatus", "stage"];
+  const [hiddenWipCols, setHiddenWipCols] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(localStorage.getItem("bgp_wip_hidden_cols") || "[]")); } catch { return new Set(); }
+  });
+  const [colMenuOpen, setColMenuOpen] = useState(false);
+  const showCol = (k: string) => !hiddenWipCols.has(k);
+  const toggleWipCol = (k: string) => setHiddenWipCols((prev) => {
+    const n = new Set(prev);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    try { localStorage.setItem("bgp_wip_hidden_cols", JSON.stringify([...n])); } catch {}
+    return n;
   });
 
   const handleClickFilter = useCallback((field: string, value: string) => {
@@ -884,7 +777,11 @@ export default function WipReport() {
   const clearClickFilter = useCallback(() => setClickFilter(null), []);
 
   const allTeams = useMemo(() => {
-    const set = new Set(entries.map((e) => e.team).filter(Boolean) as string[]);
+    const set = new Set<string>();
+    entries.forEach((e) => {
+      if (!e.team) return;
+      (e.team as string).split(",").map(t => t.trim()).filter(Boolean).forEach(t => set.add(t));
+    });
     return [...set].sort();
   }, [entries]);
 
@@ -893,15 +790,20 @@ export default function WipReport() {
     return [...set].sort((a, b) => getMonthSortKey(a) - getMonthSortKey(b));
   }, [entries]);
 
+  const normalizeAgent = (a: string) => a.replace(/\s*\(BGP House\)/i, "").trim();
+
   const allAgents = useMemo(() => {
-    const set = new Set<string>();
+    const map = new Map<string, string>(); // lowercase key → display value
     entries.forEach((e) => {
       if (e.agent) {
-        const parts = (e.agent as string).split(",").map(a => a.trim()).filter(Boolean);
-        parts.forEach(a => set.add(a));
+        const parts = (e.agent as string).split(",").map(a => normalizeAgent(a.trim())).filter(Boolean);
+        parts.forEach(a => {
+          const k = a.toLowerCase();
+          if (!map.has(k)) map.set(k, a.toUpperCase());
+        });
       }
     });
-    return [...set].sort();
+    return [...map.values()].sort();
   }, [entries]);
 
   const allStatuses = useMemo(() => {
@@ -913,8 +815,10 @@ export default function WipReport() {
     const set = new Set<number>();
     let hasNullFY = false;
     entries.forEach((e) => {
-      if (e.fiscalYear) {
-        set.add(e.fiscalYear);
+      // Guard: fiscal years must be plausible 4-digit years — reject Excel serial numbers
+      const fy = e.fiscalYear && e.fiscalYear >= 2000 && e.fiscalYear <= 2100 ? e.fiscalYear : null;
+      if (fy) {
+        set.add(fy);
       } else if (e.month) {
         const fy = getFiscalYear(e.month);
         if (fy) set.add(fy);
@@ -946,10 +850,13 @@ export default function WipReport() {
   const sidebarFilteredEntries = useMemo(() => {
     return entries.filter((e) => {
       if (selectedTeams.size > 0 && selectedTeams.size < allTeams.length) {
-        if (!e.team || !selectedTeams.has(e.team)) return false;
+        if (!e.team) return false;
+        const entryTeams = (e.team as string).split(",").map(t => t.trim()).filter(Boolean);
+        if (!entryTeams.some(t => selectedTeams.has(t))) return false;
       }
       if (selectedFiscalYears.size > 0 && selectedFiscalYears.size < allFiscalYears.length) {
-        const fy = e.fiscalYear || (e.month ? getFiscalYear(e.month) : null);
+        const rawFy = e.fiscalYear && e.fiscalYear >= 2000 && e.fiscalYear <= 2100 ? e.fiscalYear : null;
+        const fy = rawFy || (e.month ? getFiscalYear(e.month) : null);
         if (fy) {
           if (!selectedFiscalYears.has(fy)) return false;
         } else {
@@ -961,7 +868,7 @@ export default function WipReport() {
       }
       if (selectedAgents.size > 0 && selectedAgents.size < allAgents.length) {
         if (!e.agent) return false;
-        const agentParts = (e.agent as string).split(",").map(a => a.trim()).filter(Boolean);
+        const agentParts = (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean);
         if (!agentParts.some(a => selectedAgents.has(a))) return false;
       }
       if (selectedStatuses.size > 0 && selectedStatuses.size < allStatuses.length) {
@@ -973,13 +880,28 @@ export default function WipReport() {
 
   const filteredEntries = useMemo(() => {
     if (!clickFilter) return sidebarFilteredEntries;
+    // "Unknown" is the bucket label used by every summary card when the
+    // underlying field is null/empty. Clicking that bucket has to filter
+    // to entries where the field is missing — not literally match the
+    // string "Unknown", which never appears in the data.
+    const isUnknownTarget = clickFilter.value === "Unknown";
     return sidebarFilteredEntries.filter((e) => {
       if (clickFilter.field === "agent") {
-        const agentField = (e.agent || "unknown").toLowerCase().trim();
+        const agentField = (e.agent || "").trim();
         const agents = agentField.split(",").map(a => a.trim()).filter(Boolean);
-        return agents.some(a => a === clickFilter.value) || agentField === clickFilter.value;
+        if (isUnknownTarget) return agents.length === 0;
+        const target = clickFilter.value.toLowerCase();
+        return agents.some(a => a.toLowerCase() === target);
+      }
+      if (clickFilter.field === "team") {
+        const entryTeams = e.team
+          ? (e.team as string).split(",").map(t => t.trim()).filter(Boolean)
+          : [];
+        if (isUnknownTarget) return entryTeams.length === 0;
+        return entryTeams.some(t => t === clickFilter.value);
       }
       const val = e[clickFilter.field];
+      if (isUnknownTarget) return !val;
       return val === clickFilter.value;
     });
   }, [sidebarFilteredEntries, clickFilter]);
@@ -997,7 +919,12 @@ export default function WipReport() {
   const groupData = useMemo(() => {
     const map: Record<string, number> = {};
     filteredEntries.forEach((e) => {
-      const g = e.groupName || "Unknown";
+      // "Client" card now groups by the resolved counterparty name
+      // (landlord / vendor / purchaser) so clicking Canary Wharf
+      // actually surfaces every deal where Canary Wharf is the client.
+      // Old behaviour grouped by the stage-bucket `groupName` and never
+      // matched a real client.
+      const g = e.client || "Unknown";
       map[g] = (map[g] || 0) + (e.amtWip || 0) + (e.amtInvoice || 0);
     });
     return Object.entries(map)
@@ -1007,9 +934,24 @@ export default function WipReport() {
 
   const teamData = useMemo(() => {
     const map: Record<string, number> = {};
+    // Count each deal's fee against every team it belongs to (no split).
+    // This matches click-filter behaviour: clicking a team shows all deals
+    // that include it, at full fee.
+    const counted = new Set<string>();
     filteredEntries.forEach((e) => {
-      const t = e.team || "Unknown";
-      map[t] = (map[t] || 0) + (e.amtWip || 0) + (e.amtInvoice || 0);
+      const fee = (e.amtWip || 0) + (e.amtInvoice || 0);
+      const teams = e.team
+        ? (e.team as string).split(",").map(t => t.trim()).filter(Boolean)
+        : ["Unknown"];
+      teams.forEach(t => {
+        // Deduplicate per (entry, team) so a deal split across agents
+        // doesn't multiply the team total.
+        const key = `${e.id}::${t}`;
+        if (!counted.has(key)) {
+          counted.add(key);
+          map[t] = (map[t] || 0) + fee;
+        }
+      });
     });
     return Object.entries(map)
       .map(([label, value]) => ({ label, value }))
@@ -1020,14 +962,14 @@ export default function WipReport() {
     const map: Record<string, number> = {};
     filteredEntries.forEach((e) => {
       const agentField = e.agent || "Unknown";
-      const agents = agentField.split(",").map(a => a.trim()).filter(Boolean);
+      const agents = agentField.split(",").map(a => normalizeAgent(a.trim())).filter(Boolean);
       const fee = (e.amtWip || 0) + (e.amtInvoice || 0);
       const perAgent = agents.length > 0 ? fee / agents.length : fee;
       if (agents.length === 0) {
         map["Unknown"] = (map["Unknown"] || 0) + fee;
       } else {
         agents.forEach(a => {
-          const key = a.toLowerCase().trim();
+          const key = a.trim().toUpperCase();
           map[key] = (map[key] || 0) + perAgent;
         });
       }
@@ -1035,8 +977,8 @@ export default function WipReport() {
     return Object.entries(map)
       .map(([key, value]) => {
         const display = key.includes(" ")
-          ? key.split(" ").map(p => p[0]).join("").toUpperCase()
-          : key.charAt(0).toUpperCase() + key.slice(1);
+          ? key.split(" ").map(p => p[0].toUpperCase()).join("")
+          : key.toUpperCase();
         return { label: display, value, fullName: key };
       })
       .sort((a, b) => b.value - a.value);
@@ -1087,8 +1029,10 @@ export default function WipReport() {
     sorted.sort((a, b) => {
       let aVal: any, bVal: any;
       switch (detailSort.column) {
+        case "dealRef": aVal = a.dealRef || 0; bVal = b.dealRef || 0; break;
         case "ref": aVal = a.ref || ""; bVal = b.ref || ""; break;
         case "groupName": aVal = a.groupName || ""; bVal = b.groupName || ""; break;
+        case "client": aVal = a.client || ""; bVal = b.client || ""; break;
         case "project": aVal = a.project || ""; bVal = b.project || ""; break;
         case "tenant": aVal = a.tenant || ""; bVal = b.tenant || ""; break;
         case "team": aVal = a.team || ""; bVal = b.team || ""; break;
@@ -1097,6 +1041,12 @@ export default function WipReport() {
         case "amtWip": aVal = a.amtWip || 0; bVal = b.amtWip || 0; break;
         case "amtInvoice": aVal = a.amtInvoice || 0; bVal = b.amtInvoice || 0; break;
         case "month": aVal = getMonthSortKey(a.month || ""); bVal = getMonthSortKey(b.month || ""); break;
+        case "dealDate": {
+          const pick = (e: WipDealEntry) => e.invoicedAt || e.completedAt || e.exchangedAt || e.targetDate || "";
+          aVal = pick(a) ? new Date(pick(a)).getTime() : 0;
+          bVal = pick(b) ? new Date(pick(b)).getTime() : 0;
+          break;
+        }
         case "dealStatus": aVal = a.dealStatus || ""; bVal = b.dealStatus || ""; break;
         case "stage": aVal = a.stage || ""; bVal = b.stage || ""; break;
         default: aVal = 0; bVal = 0;
@@ -1160,7 +1110,7 @@ export default function WipReport() {
         description: parts.join(", "),
         variant: data.errors?.length ? "destructive" : "default",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
+      invalidateDealCaches();
     } catch (err: any) {
       toast({ title: "Sync failed", description: err.message, variant: "destructive" });
     } finally {
@@ -1189,7 +1139,7 @@ export default function WipReport() {
   const clickFilterActiveValue = clickFilter?.value || null;
 
   return (
-    <div className="h-[calc(100vh-64px)] flex flex-col overflow-hidden p-4 sm:p-6 print:p-2 print:h-auto print:overflow-visible" data-testid="wip-report-page">
+    <div className="min-h-[calc(100vh-64px)] md:h-[calc(100vh-64px)] flex flex-col md:overflow-hidden p-4 sm:p-6 print:p-2 print:h-auto print:overflow-visible" data-testid="wip-report-page">
       <style>{`
         @media print {
           .no-print { display: none !important; }
@@ -1198,7 +1148,7 @@ export default function WipReport() {
         }
       `}</style>
 
-      <div className="flex items-center justify-between flex-shrink-0 mb-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between flex-shrink-0 mb-4">
         <div className="flex items-center gap-4">
           {isLandsec ? (
             <div
@@ -1233,34 +1183,12 @@ export default function WipReport() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2 no-print">
+        <div className="flex flex-wrap items-center gap-2 no-print">
           {clickFilter && (
             <Button variant="outline" size="sm" onClick={clearClickFilter} data-testid="wip-clear-click-filter">
               <X className="h-4 w-4 mr-1" />
               Clear: {clickFilter.value}
             </Button>
-          )}
-          {isSeniorWipUser && (
-            <>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                className="hidden"
-                onChange={(e) => handleUpload(e, false)}
-                data-testid="wip-upload-input"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                data-testid="wip-upload-button"
-              >
-                {uploading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />}
-                {uploading ? "Importing..." : "Upload WIP"}
-              </Button>
-            </>
           )}
           <Button
             variant="outline"
@@ -1284,54 +1212,58 @@ export default function WipReport() {
       </div>
 
       {/* Tab switcher */}
-      <div className="flex items-center gap-1 mb-4 flex-shrink-0 no-print border-b" data-testid="wip-tabs">
-        <button
-          onClick={() => setActiveTab("report")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === "report"
-              ? "border-green-600 text-green-700"
-              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-          }`}
-          data-testid="wip-tab-report"
-        >
-          WIP Report
-        </button>
-        <button
-          onClick={() => setActiveTab("reconciliation")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
-            activeTab === "reconciliation"
-              ? "border-green-600 text-green-700"
-              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-          }`}
-          data-testid="wip-tab-reconciliation"
-        >
-          Reconciliation
-          {reconCount > 0 && (
-            <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
-              {reconCount}
-            </Badge>
-          )}
-        </button>
-        <button
-          onClick={() => setActiveTab("agent-summary")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === "agent-summary"
-              ? "border-green-600 text-green-700"
-              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-          }`}
-          data-testid="wip-tab-agent-summary"
-        >
-          Agent Summary
-        </button>
+      <div className="flex items-center justify-between gap-2 mb-4 flex-shrink-0 no-print border-b" data-testid="wip-tabs">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setActiveTab("report")}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "report"
+                ? "border-green-600 text-green-700"
+                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+            }`}
+            data-testid="wip-tab-report"
+          >
+            WIP Report
+          </button>
+          <button
+            onClick={() => setActiveTab("agent-summary")}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "agent-summary"
+                ? "border-green-600 text-green-700"
+                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+            }`}
+            data-testid="wip-tab-agent-summary"
+          >
+            Agent Summary
+          </button>
+        </div>
+        {/* Normal vs Admin — only senior/full-view users can switch to Admin
+            (everyone else only ever receives Normal data from the server). */}
+        {canSeeAll && (
+          <div className="flex items-center gap-0.5 rounded-lg border bg-muted p-0.5 mb-1" data-testid="wip-view-mode" title="Normal hides director fees (Charlotte, Jack, Rupert, Woody); Admin shows everything">
+            <button
+              onClick={() => setWipViewMode("normal")}
+              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${wipViewMode === "normal" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              data-testid="wip-view-normal"
+            >
+              Normal
+            </button>
+            <button
+              onClick={() => setWipViewMode("admin")}
+              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${wipViewMode === "admin" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              data-testid="wip-view-admin"
+            >
+              Admin
+            </button>
+          </div>
+        )}
       </div>
 
-      {activeTab === "reconciliation" ? (
-        <ReconciliationTab />
-      ) : activeTab === "agent-summary" ? (
+      {activeTab === "agent-summary" ? (
         <AgentSummaryTab />
       ) : (
-      <div className="flex gap-4 flex-1 min-h-0">
-        <div className="flex-1 overflow-y-auto space-y-4 min-h-0">
+      <div className="flex flex-col md:flex-row gap-4 flex-1 min-h-0">
+        <div className="flex-1 md:overflow-y-auto space-y-4 min-h-0">
           {/* KPI stat cards — matching Investment Tracker style */}
           <ScrollArea className="w-full shrink-0">
             <div className="flex items-center gap-3 pb-1">
@@ -1362,12 +1294,12 @@ export default function WipReport() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <ClickableSummaryTable
-              title="Group"
+              title="Client"
               data={groupData}
               valueLabel="Net fees"
-              activeValue={clickFilterActiveField === "groupName" ? clickFilterActiveValue : null}
+              activeValue={clickFilterActiveField === "client" ? clickFilterActiveValue : null}
               onRowClick={handleClickFilter}
-              field="groupName"
+              field="client"
             />
             <ClickableSummaryTable
               title="Team"
@@ -1376,6 +1308,7 @@ export default function WipReport() {
               activeValue={clickFilterActiveField === "team" ? clickFilterActiveValue : null}
               onRowClick={handleClickFilter}
               field="team"
+              overrideTotal={totalNetFees}
             />
             <ClickableSummaryTable
               title="BGP Contact"
@@ -1389,7 +1322,7 @@ export default function WipReport() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <ClickableSummaryTable
-              title="Project"
+              title="Property"
               data={projectData}
               valueLabel="Net fees"
               activeValue={clickFilterActiveField === "project" ? clickFilterActiveValue : null}
@@ -1427,11 +1360,36 @@ export default function WipReport() {
                 </span>
                 <span className="text-xs text-gray-500 ml-2">({sortedDetailEntries.length} rows)</span>
               </div>
-              {clickFilter && (
-                <Badge variant="secondary" className="text-[10px]">
-                  Filtered by {clickFilter.field === "groupName" ? "Group" : clickFilter.field === "dealStatus" ? "Status" : clickFilter.field}: {clickFilter.value}
-                </Badge>
-              )}
+              <div className="flex items-center gap-2">
+                {clickFilter && (
+                  <Badge variant="secondary" className="text-[10px]">
+                    Filtered by {clickFilter.field === "client" || clickFilter.field === "groupName" ? "Client" : clickFilter.field === "project" ? "Property" : clickFilter.field === "dealStatus" ? "Status" : clickFilter.field}: {clickFilter.value}
+                  </Badge>
+                )}
+                <div className="relative no-print">
+                  <button
+                    onClick={() => setColMenuOpen((o) => !o)}
+                    className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-600 hover:text-gray-900 border border-gray-200 rounded px-2 py-1 bg-white"
+                    data-testid="wip-columns-button"
+                  >
+                    Columns{hiddenWipCols.size > 0 ? ` (${WIP_DETAIL_COLS.length - hiddenWipCols.size}/${WIP_DETAIL_COLS.length})` : ""}
+                  </button>
+                  {colMenuOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setColMenuOpen(false)} />
+                      <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-lg shadow-xl p-2 w-48 max-h-[320px] overflow-y-auto">
+                        <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide px-1 pb-1">Show columns</p>
+                        {WIP_DETAIL_COLS.map((c) => (
+                          <label key={c.key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-gray-50 cursor-pointer text-xs text-gray-700">
+                            <Checkbox checked={showCol(c.key)} onCheckedChange={() => toggleWipCol(c.key)} className="h-3.5 w-3.5" />
+                            <span>{c.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
             {selectedIds.size > 0 && (
               <div className="flex items-center gap-3 px-4 py-2 bg-primary/5 border-b">
@@ -1456,20 +1414,7 @@ export default function WipReport() {
                         data-testid="checkbox-select-all"
                       />
                     </th>
-                    {[
-                      { key: "ref", label: "Deal", width: "w-40" },
-                      { key: "groupName", label: "Group", width: "w-28" },
-                      { key: "project", label: "Project", width: "w-32" },
-                      { key: "tenant", label: "Tenant", width: "w-32" },
-                      { key: "team", label: "Team", width: "w-32" },
-                      { key: "dealType", label: "Deal Type", width: "w-24" },
-                      { key: "agent", label: "BGP Contact", width: "w-20" },
-                      { key: "amtWip", label: "Amt WIP", width: "w-24" },
-                      { key: "amtInvoice", label: "Amt invoice", width: "w-24" },
-                      { key: "month", label: "Month", width: "w-16" },
-                      { key: "dealStatus", label: "Deal Status", width: "w-24" },
-                      { key: "stage", label: "Stage", width: "w-24" },
-                    ].map((col) => (
+                    {WIP_DETAIL_COLS.filter((col) => showCol(col.key)).map((col) => (
                       <th
                         key={col.key}
                         className={`px-2 py-2 text-left font-medium text-gray-600 cursor-pointer hover:text-gray-900 ${col.width}`}
@@ -1497,6 +1442,12 @@ export default function WipReport() {
                           />
                         )}
                       </td>
+                      {showCol("dealRef") && (
+                      <td className="px-2 py-1.5 text-xs font-mono text-gray-400 whitespace-nowrap">
+                        {e.dealRef ? `#${e.dealRef}` : "—"}
+                      </td>
+                      )}
+                      {showCol("ref") && (
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[180px]">
                         {e.dealId ? (
                           <Link href={`/deals/${e.dealId}`}>
@@ -1504,24 +1455,75 @@ export default function WipReport() {
                           </Link>
                         ) : (e.ref || "—")}
                       </td>
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">{e.groupName || "—"}</td>
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.project || "—"}</td>
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.tenant || "—"}</td>
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.team || "—"}</td>
+                      )}
+                      {showCol("client") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">{e.client || "—"}</td>}
+                      {showCol("tenant") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.tenant || "—"}</td>}
+                      {showCol("project") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.project || "—"}</td>}
+                      {showCol("billingEntity") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.billingEntity || "—"}</td>}
+                      {showCol("team") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.team || "—"}</td>}
+                      {showCol("amtWip") && (
+                      <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
+                        {e.amtWip ? formatFullCurrency(e.amtWip) : "—"}
+                      </td>
+                      )}
+                      {showCol("amtInvoice") && (
+                      <td className="px-2 py-1.5 text-green-700 font-mono text-right">
+                        {e.amtInvoice ? formatFullCurrency(e.amtInvoice) : "—"}
+                      </td>
+                      )}
+                      {showCol("dealDate") && (
+                      <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">
+                        {(() => {
+                          const isActual = !!(e.exchangedAt || e.completedAt || e.invoicedAt);
+                          const pick = e.invoicedAt
+                            ? { label: "Invoiced", iso: e.invoicedAt, cls: "bg-green-100 text-green-800" }
+                            : e.completedAt
+                            ? { label: "Completed", iso: e.completedAt, cls: "bg-blue-100 text-blue-800" }
+                            : e.exchangedAt
+                            ? { label: "Exchanged", iso: e.exchangedAt, cls: "bg-amber-100 text-amber-800" }
+                            : e.targetDate
+                            ? { label: "Target", iso: e.targetDate, cls: "bg-gray-100 text-gray-700" }
+                            : null;
+                          const dateStr = pick ? (() => { const d = new Date(pick.iso); return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" }); })() : null;
+                          return (
+                            <div className="flex flex-col gap-0.5">
+                              {!isActual && e.dealId ? (
+                                <input
+                                  type="date"
+                                  defaultValue={toDateInputValue(e.targetDate)}
+                                  className="text-xs border border-gray-200 rounded px-1 py-0.5 w-[110px] focus:outline-none focus:border-blue-400"
+                                  onBlur={async (ev) => {
+                                    const val = ev.target.value;
+                                    if (!val) return;
+                                    await fetch(`/api/deals/${e.dealId}`, {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+                                      body: JSON.stringify({ targetDate: val }),
+                                    });
+                                    invalidateDealCaches();
+                                  }}
+                                />
+                              ) : dateStr ? (
+                                <span className="text-xs">{dateStr}</span>
+                              ) : (
+                                <span>—</span>
+                              )}
+                              {pick && <span className={`inline-flex items-center px-1 py-0 rounded text-[9px] font-medium w-fit ${pick.cls}`}>{pick.label}</span>}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      )}
+                      {showCol("dealType") && (
                       <td className="px-2 py-1.5">
                         {e.dealType ? (
                           <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${DEAL_TYPE_BADGE_COLORS[e.dealType] || "bg-gray-100 text-gray-700"}`}>{e.dealType}</span>
                         ) : <span className="text-gray-400">—</span>}
                       </td>
-                      <td className="px-2 py-1.5 text-gray-700">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>
-                      <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
-                        {e.amtWip ? formatFullCurrency(e.amtWip) : "—"}
-                      </td>
-                      <td className="px-2 py-1.5 text-green-700 font-mono text-right">
-                        {e.amtInvoice ? formatFullCurrency(e.amtInvoice) : "—"}
-                      </td>
-                      <td className="px-2 py-1.5 text-gray-600">{e.month || "—"}</td>
-                      <td className="px-2 py-1.5 text-gray-600 truncate max-w-[100px]">{e.dealStatus || "—"}</td>
+                      )}
+                      {showCol("agent") && <td className="px-2 py-1.5 text-gray-700">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>}
+                      {showCol("dealStatus") && <td className="px-2 py-1.5 text-gray-600 truncate max-w-[100px]">{e.dealStatus || "—"}</td>}
+                      {showCol("stage") && (
                       <td className="px-2 py-1.5 text-xs truncate max-w-[100px]">
                         {e.stage === "pipeline" ? (
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">Pipeline</span>
@@ -1533,19 +1535,26 @@ export default function WipReport() {
                           <span className="text-gray-500">{e.stage || "—"}</span>
                         )}
                       </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
                 <tfoot className="bg-gray-100 border-t font-semibold">
                   <tr>
-                    <td colSpan={8} className="px-2 py-1.5 text-gray-800">Total</td>
-                    <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
-                      {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
-                    </td>
-                    <td className="px-2 py-1.5 text-green-700 font-mono text-right">
-                      {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0))}
-                    </td>
-                    <td colSpan={3} className="px-2 py-1.5" />
+                    <td colSpan={1 + WIP_LEAD_KEYS.filter(showCol).length} className="px-2 py-1.5 text-gray-800">Total</td>
+                    {showCol("amtWip") && (
+                      <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
+                        {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
+                      </td>
+                    )}
+                    {showCol("amtInvoice") && (
+                      <td className="px-2 py-1.5 text-green-700 font-mono text-right">
+                        {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0))}
+                      </td>
+                    )}
+                    {WIP_TRAIL_KEYS.filter(showCol).length > 0 && (
+                      <td colSpan={WIP_TRAIL_KEYS.filter(showCol).length} className="px-2 py-1.5" />
+                    )}
                   </tr>
                 </tfoot>
               </table>
@@ -1553,7 +1562,7 @@ export default function WipReport() {
           </div>
         </div>
 
-        <div className="w-52 flex-shrink-0 no-print overflow-y-auto space-y-3" data-testid="wip-filters-panel">
+        <div className="w-full md:w-52 md:flex-shrink-0 no-print md:overflow-y-auto space-y-3 min-h-0 md:max-h-full" data-testid="wip-filters-panel">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide flex items-center gap-1">
               <Filter className="h-3 w-3" /> Filters

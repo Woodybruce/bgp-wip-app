@@ -117,6 +117,19 @@ export const users = pgTable("users", {
   dashboardLayout: jsonb("dashboard_layout").$type<Record<string, any>>(),
   profilePicUrl: text("profile_pic_url"),
   clientViewMode: boolean("client_view_mode").default(false),
+  // HR / org-chart fields
+  managerId: varchar("manager_id"),
+  dob: text("dob"),
+  address: text("address"),
+  personalEmail: text("personal_email"),
+  wfhDays: text("wfh_days").array(),
+  employmentType: text("employment_type"),
+  startDate: text("start_date"),
+  cvUrl: text("cv_url"),
+  bio: text("bio"),
+  boardMember: boolean("board_member").default(false),
+  managementTeam: boolean("management_team").default(false),
+  displayOrder: integer("display_order").default(0),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });
@@ -263,6 +276,23 @@ export const insertNewsSourceSchema = createInsertSchema(newsSources).omit({ id:
 export type InsertNewsSource = z.infer<typeof insertNewsSourceSchema>;
 export type NewsSource = typeof newsSources.$inferSelect;
 
+// Editable controlled vocabulary the AI scorer uses to tag every news article.
+// Any logged-in user can add/remove/disable tags via the news settings UI; the
+// scorer reads this table fresh on each run. Seeded with Harry's wishlist.
+export const newsTags = pgTable("news_tags", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull().unique(),     // lower-case identifier, e.g. "new openings"
+  label: text("label").notNull(),            // display label, e.g. "New openings"
+  active: boolean("active").default(true),
+  sortOrder: integer("sort_order").default(0),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertNewsTagSchema = createInsertSchema(newsTags).omit({ id: true, createdAt: true });
+export type InsertNewsTag = z.infer<typeof insertNewsTagSchema>;
+export type NewsTag = typeof newsTags.$inferSelect;
+
 export const newsArticles = pgTable("news_articles", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   sourceId: varchar("source_id"),
@@ -336,7 +366,7 @@ export const chatThreads = pgTable("chat_threads", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   title: text("title"),
   createdBy: varchar("created_by").notNull(),
-  propertyId: text("property_id"),
+  propertyId: varchar("property_id"),
   propertyName: text("property_name"),
   linkedType: text("linked_type"),
   linkedId: text("linked_id"),
@@ -457,13 +487,77 @@ export const crmCompanies = pgTable("crm_companies", {
   rolloutStatus: text("rollout_status"), // scaling | stable | contracting | entering_uk | rumoured
   backers: text("backers"), // free-text: "Sequoia, Index Ventures" etc.
   instagramHandle: text("instagram_handle"),
+  tiktokHandle: text("tiktok_handle"),
+  xHandle: text("x_handle"),
+  // ── Brand Hunter expansion signals ───────────────────────────────────────
+  deptStorePresence: text("dept_store_presence"), // e.g. "Selfridges (popup 2024), Harvey Nichols"
+  franchiseActivity: text("franchise_activity"),  // e.g. "UAE master franchise 2023, France 2024"
+  hunterFlag: boolean("hunter_flag").default(false), // manually flagged as a hot expansion target
+  stockTicker: text("stock_ticker"), // e.g. "JD.L", "NKE", "LULU" — Yahoo Finance ticker for listed brands
+  ukEntityName: text("uk_entity_name"), // UK contracting/operating entity, e.g. "AFH Stores UK Limited"
+  // Multiple trading/legal entities under one brand — these are the
+  // names that appear on leases / tenancy schedules. Each entry:
+  // { name, companies_house_number?, kyc_status?, notes? }. The
+  // tenancy schedule resolves tenant_name → trading entity → brand,
+  // so the brand board surfaces from any legal-entity tenant name.
+  tradingEntities: jsonb("trading_entities"),
   agentType: text("agent_type"), // tenant_rep | landlord_rep | investment | null (for non-agents)
+  conceptStatus: text("concept_status"), // watching | pitching | parked | won_deal | lost_deal — BGP pipeline stage for the brand
   // AI-enrichment provenance — which fields were auto-written vs human
   aiGeneratedFields: jsonb("ai_generated_fields"),
   // Dedupe — when set, this row is a merged-away duplicate. Hidden from lists.
   mergedIntoId: varchar("merged_into_id"),
   mergedAt: timestamp("merged_at"),
   mergedBy: text("merged_by"),
+  // AI brand analysis — cached paragraph generated on a schedule from
+  // the full brand profile (covenant, turnover, rent affordability, signals,
+  // rollout velocity). Refreshed automatically, never manually.
+  brandAnalysis: text("brand_analysis"),
+  brandAnalysisAt: timestamp("brand_analysis_at"),
+  // ── Landlord / Investor hunter signals ──────────────────────────────
+  // Investment side — buyers
+  mandateAssetClass: text("mandate_asset_class").array(), // ["retail","office","leisure"]
+  mandateLotSizeMin: real("mandate_lot_size_min"), // £m
+  mandateLotSizeMax: real("mandate_lot_size_max"), // £m
+  mandateGeographies: text("mandate_geographies").array(), // ["London","UK Regions","Europe"]
+  acquiringNow: boolean("acquiring_now").default(false),
+  acquiringNowNotes: text("acquiring_now_notes"),
+  capitalSource: text("capital_source"), // balance_sheet | fund | jv | family_office | sovereign | reit | listed
+  aum: real("aum"), // £m AUM
+  fundVintageYear: integer("fund_vintage_year"),
+  fundEndYear: integer("fund_end_year"),
+  // Investment side — sellers / distress
+  disposingNow: boolean("disposing_now").default(false),
+  disposingNowNotes: text("disposing_now_notes"),
+  distressFlag: boolean("distress_flag").default(false),
+  distressNotes: text("distress_notes"),
+  // Letting side — leasing team's hunt criteria for landlords
+  lettingHunterFlag: boolean("letting_hunter_flag").default(false),
+  lettingHunterNotes: text("letting_hunter_notes"),
+  // Investment side — investment team's hunt criteria for landlords
+  investmentHunterFlag: boolean("investment_hunter_flag").default(false),
+  investmentHunterNotes: text("investment_hunter_notes"),
+  assetManagerContactId: varchar("asset_manager_contact_id"), // who signs off lettings
+  // ── Lender profile fields ────────────────────────────────────────────────
+  lenderType: text("lender_type"), // clearing_bank | investment_bank | insurance | pension | debt_fund | private_credit | mezzanine | bridging | development | building_society
+  lendingActive: boolean("lending_active").default(false),
+  typicalLoanSizeMinM: real("typical_loan_size_min_m"), // £m
+  typicalLoanSizeMaxM: real("typical_loan_size_max_m"), // £m
+  typicalLtvMax: real("typical_ltv_max"), // %
+  typicalMarginBps: integer("typical_margin_bps"), // basis points over SONIA
+  typicalLoanTerm: text("typical_loan_term"), // short | medium | long
+  typicalLoanStructure: text("typical_loan_structure"), // senior | mezzanine | whole_loan | construction
+  recourse: text("recourse"), // full | limited | non_recourse
+  preferredAssetClasses: text("preferred_asset_classes").array(),
+  preferredGeographies: text("preferred_geographies").array(),
+  lendingAppetiteNotes: text("lending_appetite_notes"),
+  // Latest curated email/meeting timestamp from ai-activity-curator (ISO string)
+  lastInteraction: text("last_interaction"),
+  // Menu / best-sellers intel for the brand panel. Shape:
+  //   { type: 'menu' | 'bestsellers', items: Array<{ name, description?, price?, category? }>, source_url?: string }
+  // Restaurants / cafés / F&B → 'menu'. Retail/everything else → 'bestsellers'.
+  menuIntel: jsonb("menu_intel"),
+  menuIntelAt: timestamp("menu_intel_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -511,6 +605,18 @@ export const insertBrandSignalSchema = createInsertSchema(brandSignals).omit({ i
 export type InsertBrandSignal = z.infer<typeof insertBrandSignalSchema>;
 export type BrandSignal = typeof brandSignals.$inferSelect;
 
+// ─── Brand social stats — follower counts per platform per brand ─────────
+export const brandSocialStats = pgTable("brand_social_stats", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brandCompanyId: varchar("brand_company_id").notNull(),
+  platform: text("platform").notNull(), // instagram | tiktok
+  handle: text("handle").notNull(),
+  followers: integer("followers"),
+  following: integer("following"),
+  posts: integer("posts"),
+  fetchedAt: timestamp("fetched_at").defaultNow(),
+});
+
 // ─── Brand stores — geocoded UK store locations per brand ─────────────────
 export const brandStores = pgTable("brand_stores", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -520,8 +626,10 @@ export const brandStores = pgTable("brand_stores", {
   lat: doublePrecision("lat"),
   lng: doublePrecision("lng"),
   placeId: text("place_id"),             // Google Places ID
+  crmPropertyId: varchar("crm_property_id"), // → crm_properties.id (resolver-canonical)
   status: text("status").default("open"), // open | closed | unconfirmed
   storeType: text("store_type"),         // flagship | outlet | concession | pop_up | etc.
+  country: text("country"),              // ISO 3166-1 alpha-2, e.g. 'GB', 'US', 'FR'. NULL on legacy rows.
   notes: text("notes"),
   sourceType: text("source_type").default("google_places"), // google_places | manual | goad
   researchedAt: timestamp("researched_at"),
@@ -662,12 +770,42 @@ export const crmProperties = pgTable("crm_properties", {
   proprietorAddress: text("proprietor_address"),
   proprietorCompanyNumber: text("proprietor_company_number"),
   titleSearchDate: timestamp("title_search_date"),
-  proprietorKycStatus: text("proprietor_kyc_status"),
+  proprietorKycStatus: text("proprietor_kyc_status"), // pending | in_review | approved | rejected | expired
   proprietorKycData: jsonb("proprietor_kyc_data"),
   bgpContactCrm: text("bgp_contact_crm"),
   bgpContactUserIds: text("bgp_contact_user_ids").array(),
   leasingPrivacyEnabled: boolean("leasing_privacy_enabled").default(false),
   sharepointFolderUrl: text("sharepoint_folder_url"),
+  // ── Letting hunter — track competitor agent on non-BGP-instructed stock ──
+  competitorAgent: text("competitor_agent"), // legacy free-text e.g. "CBRE"
+  competitorAgentId: varchar("competitor_agent_id"), // FK to crm_companies (company_type='Agent')
+  competitorAgentInstructedAt: timestamp("competitor_agent_instructed_at"),
+  competitorAgentStatus: text("competitor_agent_status"), // active | won_by_bgp | lost
+  // ── Schedule UI flag ─────────────────────────────────────────────────────
+  // When true, the property detail page collapses Leasing Schedule + Tenancy
+  // Schedule into a single Schedule panel with a lens toggle. Per-property
+  // rollout flag so we can test on Bluewater before flipping the firm.
+  unifiedSchedule: boolean("unified_schedule").default(false),
+  // ── Ownership stack ──────────────────────────────────────────────────────
+  freeholderId: varchar("freeholder_id"),       // → crm_companies
+  longLeaseholderId: varchar("long_leaseholder_id"), // → crm_companies
+  seniorLenderId: varchar("senior_lender_id"),  // → crm_companies
+  juniorLenderId: varchar("junior_lender_id"),  // → crm_companies
+  // ── Resolver canonical identifiers ───────────────────────────────────────
+  uprn: text("uprn"),
+  toid: text("toid"),
+  usrn: text("usrn"),
+  osNgdFeatureId: text("os_ngd_feature_id"),
+  inspirePolygonId: text("inspire_polygon_id"),
+  voaBaReference: text("voa_ba_reference"),
+  fhrsId: text("fhrs_id"),
+  ward: text("ward"),
+  lpa: text("lpa"),
+  parlConstituency: text("parl_constituency"),
+  aliases: jsonb("aliases"),
+  resolutionStatus: text("resolution_status"),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: varchar("resolved_by"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -688,30 +826,80 @@ export type CrmPropertyClient = typeof crmPropertyClients.$inferSelect;
 
 export const crmDeals = pgTable("crm_deals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealRef: integer("deal_ref"),
   name: text("name").notNull(),
   mondayItemId: text("monday_item_id"),
   groupName: text("group_name"),
   propertyId: varchar("property_id"),
+  unitId: varchar("unit_id"), // → property_units.id (one unit may have many deals over time)
+  tenancyUnitId: varchar("tenancy_unit_id"), // → tenancy_schedule_units.id (canonical spine)
+  // 'unit' | 'building' | 'portfolio'. Building/portfolio deals
+  // (investment acquisitions, consultancy mandates) keep
+  // tenancyUnitId NULL by design — set scope here rather than
+  // forcing a fake unit link. Migration 0032.
+  dealScope: text("deal_scope").default("unit"),
+  // 'landlord' | 'tenant'. Same process for both — set up property,
+  // capture AML/fees — but Letting Tracker filters to landlord-rep
+  // only. Migration 0034.
+  bgpActingFor: text("bgp_acting_for").default("landlord"),
   landlordId: varchar("landlord_id"),
+  landlordContactId: varchar("landlord_contact_id"),
   dealType: text("deal_type"),
   status: text("status"),
   team: text("team").array(),
+  // internalAgent (names) is the legacy column — kept in sync via
+  // dual-write so existing readers (kanban color map, hr-routes fee
+  // allocation, aml-compliance agent filter) keep working until they
+  // migrate. New reads should prefer internalAgentIds; renames and
+  // departures don't break the ID column the way they break the name
+  // column. Boot-time backfill at server/crm.ts populates IDs from
+  // names by matching users.name. See #12 of the linkage audit.
   internalAgent: text("internal_agent").array(),
+  internalAgentIds: varchar("internal_agent_ids").array(),
   tenantId: varchar("tenant_id"),
+  tenantContactId: varchar("tenant_contact_id"),
   clientContactId: varchar("client_contact_id"),
   vendorId: varchar("vendor_id"),
+  vendorContactId: varchar("vendor_contact_id"),
   purchaserId: varchar("purchaser_id"),
+  purchaserContactId: varchar("purchaser_contact_id"),
+  // Per-counterparty Xero contact link — the formal billing / legal
+  // entity for each role. Xero is the source of truth for these. ID is
+  // a Xero ContactID GUID; name cached locally so the picker can
+  // render without a Xero round-trip. Nullable for back-compat —
+  // when null, AML falls back to the parent brand.
+  landlordEntityId: varchar("landlord_entity_id"),
+  landlordEntityName: text("landlord_entity_name"),
+  tenantEntityId: varchar("tenant_entity_id"),
+  tenantEntityName: text("tenant_entity_name"),
+  vendorEntityId: varchar("vendor_entity_id"),
+  vendorEntityName: text("vendor_entity_name"),
+  purchaserEntityId: varchar("purchaser_entity_id"),
+  purchaserEntityName: text("purchaser_entity_name"),
   vendorAgentId: varchar("vendor_agent_id"),
+  vendorAgentContactId: varchar("vendor_agent_contact_id"),
   acquisitionAgentId: varchar("acquisition_agent_id"),
+  acquisitionAgentContactId: varchar("acquisition_agent_contact_id"),
   purchaserAgentId: varchar("purchaser_agent_id"),
+  purchaserAgentContactId: varchar("purchaser_agent_contact_id"),
   leasingAgentId: varchar("leasing_agent_id"),
-  timelineStart: text("timeline_start"),
-  timelineEnd: text("timeline_end"),
+  leasingAgentContactId: varchar("leasing_agent_contact_id"),
+  // ── Deal date journey: instructed → target → exchanged → completed → invoiced ──
+  // instructedAt = when BGP was formally put on the deal (set once, editable).
+  // targetDate is the working forecast (editable).
+  // The actuals get stamped (or back-filled) when status flips to EXC/COM/INV.
+  instructedAt: timestamp("instructed_at"),
+  targetDate: timestamp("target_date"),
+  exchangedAt: timestamp("exchanged_at"),
+  completedAt: timestamp("completed_at"),
+  invoicedAt: timestamp("invoiced_at"),
   pricing: real("pricing"),
   yieldPercent: real("yield_percent"),
   feeAgreement: text("fee_agreement"),
+  feeAgreementUrl: text("fee_agreement_url"),
   fee: real("fee"),
   amlCheckCompleted: text("aml_check_completed"),
+  areaBasis: text("area_basis"),  // "NIA" | "GIA" — derived from asset class, overridable
   totalAreaSqft: real("total_area_sqft"),
   basementAreaSqft: real("basement_area_sqft"),
   gfAreaSqft: real("gf_area_sqft"),
@@ -724,23 +912,27 @@ export const crmDeals = pgTable("crm_deals", {
   rentFree: real("rent_free"),
   leaseLength: real("lease_length"),
   breakOption: text("break_option"),
-  completionDate: text("completion_date"),
+  breakParty: text("break_party"),  // "Tenant" | "Landlord" | "Mutual"
   rentAnalysis: real("rent_analysis"),
   comments: text("comments"),
   lastInteraction: text("last_interaction"),
   sharepointLink: text("sharepoint_link"),
   tenureText: text("tenure_text"),
   assetClass: text("asset_class"),
-  invoicingEntityId: varchar("invoicing_entity_id"),
+  // Billing identity now lives in Xero — `xeroContactId` is the source of
+  // truth. Account number + billing address are cached from Xero so the
+  // deal list/edit forms can render without an extra API round-trip.
+  xeroContactId: text("xero_contact_id"),
+  xeroContactName: text("xero_contact_name"),
+  xeroAccountNumber: text("xero_account_number"),
+  xeroBillingAddress: jsonb("xero_billing_address"),
   invoicingEmail: text("invoicing_email"),
   feePercentage: real("fee_percentage"),
-  completionTiming: text("completion_timing"),
   invoicingNotes: text("invoicing_notes"),
   poNumber: text("po_number"),
   kycApproved: boolean("kyc_approved").default(false),
   kycApprovedAt: timestamp("kyc_approved_at"),
   kycApprovedBy: text("kyc_approved_by"),
-  hotsCompletedAt: timestamp("hots_completed_at"),
   // AML/MLR 2017 compliance fields
   amlRiskLevel: text("aml_risk_level"), // low, medium, high, critical
   amlSourceOfFunds: text("aml_source_of_funds"), // mortgage, cash, investment, pension, inheritance, sale_proceeds, other
@@ -765,6 +957,21 @@ export const crmDeals = pgTable("crm_deals", {
   amlSarFiledAt: timestamp("aml_sar_filed_at"),
   amlComplianceNotes: text("aml_compliance_notes"),
   amlChecklist: jsonb("aml_checklist"), // structured JSON checklist of all compliance steps
+  // AI-driven AML augments. Keep as JSONB so we can iterate on shape without
+  // schema churn. aml_sof_analysis = output of /api/aml/deal/:id/sof,
+  // aml_ai_triage = Claude's "clear / review / escalate" verdict at end of
+  // runAllAmlChecks.
+  amlSofAnalysis: jsonb("aml_sof_analysis"),
+  amlAiTriage: jsonb("aml_ai_triage"),
+  amlMarketData: jsonb("aml_market_data"),
+  // MLR 2017 scope determination — drives whether CDD is legally mandatory
+  // for this deal. Lettings under €10,000/month (~£100k pa) fall out of scope
+  // of the regulations entirely, so unresponsive small-tenant deals can
+  // proceed without a SAR. Set per-deal so the MLRO can override.
+  mlrScope: text("mlr_scope"), // in_scope | out_of_scope_below_threshold | simplified_dd
+  mlrScopeReason: text("mlr_scope_reason"),
+  mlrScopeAssessedAt: timestamp("mlr_scope_assessed_at"),
+  mlrScopeAssessedBy: text("mlr_scope_assessed_by"),
   // ── Structured deal stage (drives transitions, reports, events) ──────
   stage: text("stage"), // instruction | marketing | viewings | offers | hots | sols | agreed | completed | invoiced
   stageEnteredAt: timestamp("stage_entered_at"),
@@ -775,13 +982,25 @@ export const crmDeals = pgTable("crm_deals", {
   draftLeaseReceivedAt: timestamp("draft_lease_received_at"),
   commentsReturnedAt: timestamp("comments_returned_at"),
   engrossmentAt: timestamp("engrossment_at"),
-  completionTargetDate: timestamp("completion_target_date"),
   solicitorNotes: text("solicitor_notes"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertCrmDealSchema = createInsertSchema(crmDeals).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertCrmDealSchema = createInsertSchema(crmDeals)
+  .omit({ id: true, createdAt: true, updatedAt: true })
+  // Date fields arrive from the HTML <input type="date"> as ISO date
+  // strings ("2026-05-05") or as null when blank. Drizzle's generated
+  // schema expects Date objects, which would 400 the deal create
+  // path. Coerce on the way in.
+  .extend({
+    instructedAt: z.coerce.date().nullable().optional(),
+    targetDate: z.coerce.date().nullable().optional(),
+    exchangedAt: z.coerce.date().nullable().optional(),
+    completedAt: z.coerce.date().nullable().optional(),
+    invoicedAt: z.coerce.date().nullable().optional(),
+    lastInteraction: z.coerce.date().nullable().optional(),
+  });
 export type InsertCrmDeal = z.infer<typeof insertCrmDealSchema>;
 export type CrmDeal = typeof crmDeals.$inferSelect;
 
@@ -811,6 +1030,7 @@ export const crmRequirementsLeasing = pgTable("crm_requirements_leasing", {
   viewing: boolean("viewing").default(false),
   shortlisted: boolean("shortlisted").default(false),
   underOffer: boolean("under_offer").default(false),
+  sources: text("sources").array(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -870,6 +1090,12 @@ export const crmComps = pgTable("crm_comps", {
   address: jsonb("address"),
   tenant: text("tenant"),
   landlord: text("landlord"),
+  // FK overlay added later so comp views can resolve the *current*
+  // brand name + reverse-nav back to the company. The text columns
+  // above stay as a point-in-time snapshot. Nullable for back-compat
+  // — historic comps from Sage / Monday import don't have these.
+  tenantCompanyId: varchar("tenant_company_id"),
+  landlordCompanyId: varchar("landlord_company_id"),
   transaction: text("transaction"),
   term: text("term"),
   demise: text("demise"),
@@ -991,6 +1217,7 @@ export const leaseEvents = pgTable("lease_events", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   propertyId: varchar("property_id"),
   address: text("address"),
+  landlord: text("landlord"),
   tenant: text("tenant"),
   tenantCompanyId: varchar("tenant_company_id"),
   unitRef: text("unit_ref"),
@@ -1010,6 +1237,7 @@ export const leaseEvents = pgTable("lease_events", {
   notes: text("notes"),
   dealId: varchar("deal_id"),
   compId: varchar("comp_id"),
+  matterId: varchar("matter_id"), // → pla_matters.id when this event was generated by a PLA matter
   createdBy: text("created_by"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -1019,10 +1247,55 @@ export const insertLeaseEventSchema = createInsertSchema(leaseEvents).omit({ id:
 export type InsertLeaseEvent = z.infer<typeof insertLeaseEventSchema>;
 export type LeaseEvent = typeof leaseEvents.$inferSelect;
 
+// ─── Landlord debt / capital events — drives the Investment Hunter's
+// distress signals (refinances coming up, breaches, writedowns, fundraises).
+// One row per event. `source = manual | scrape | news` so we know what was
+// typed vs auto-collected.
+export const landlordDebtEvents = pgTable("landlord_debt_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  landlordId: varchar("landlord_id").notNull(),
+  propertyId: varchar("property_id"),
+  eventType: text("event_type").notNull(), // refinance | maturity | breach | writedown | disposal | fundraise | acquisition
+  eventDate: timestamp("event_date"),
+  lender: text("lender"),
+  amount: real("amount"), // £m
+  notes: text("notes"),
+  sourceUrl: text("source_url"),
+  source: text("source").default("manual"), // manual | scrape | news
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertLandlordDebtEventSchema = createInsertSchema(landlordDebtEvents).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertLandlordDebtEvent = z.infer<typeof insertLandlordDebtEventSchema>;
+export type LandlordDebtEvent = typeof landlordDebtEvents.$inferSelect;
+
 export const crmPropertyAgents = pgTable("crm_property_agents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   propertyId: varchar("property_id").notNull(),
   userId: varchar("user_id").notNull(),
+  // Per-property role for this BGP staff member. One of: Lead, Investment,
+  // Leasing, Letting Surveyor. Drives the pill label and sort order on the
+  // property page.
+  role: text("role"),
+});
+
+// BGP team assigned to a client (landlord / investor / etc). One row per
+// (client_company × user) pairing. Reporting lines are loose — reports_to
+// can point at any user, not just one already on this client's team. The
+// org-chart on the company page reads from here; HR (staff_profiles) is
+// the source of truth for headshot + CV summary.
+export const crmClientTeamMembers = pgTable("crm_client_team_members", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientCompanyId: varchar("client_company_id").notNull(),
+  userId: varchar("user_id").notNull(),
+  // Free-typed grouping per client (e.g. "Investment", "Lease Advisory").
+  teamGroup: text("team_group"),
+  // Per-client role label rendered on the org chart card.
+  role: text("role"),
+  // Loose reporting line — null when this person sits at the top.
+  reportsToUserId: varchar("reports_to_user_id"),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const crmPropertyTenants = pgTable("crm_property_tenants", {
@@ -1110,15 +1383,67 @@ export const dealFeeAllocations = pgTable("deal_fee_allocations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   dealId: varchar("deal_id").notNull(),
   agentName: text("agent_name").notNull(),
+  // agentUserId is the canonical link going forward — survives name
+  // changes. Populated by storage.setDealFeeAllocations via a name→id
+  // lookup, plus a one-time boot backfill for historic rows. Nullable
+  // for back-compat: Sage imports and rows from before this migration
+  // may carry agent_name only; commission joins COALESCE through both.
+  agentUserId: varchar("agent_user_id"),
   allocationType: text("allocation_type").notNull(),
   percentage: real("percentage"),
   fixedAmount: real("fixed_amount"),
+  // BGP House slices are the firm's overhead/tax cut. Sage import has
+  // historically tagged these via " (BGP House)" name suffix; this flag
+  // is the canonical signal so the UI and commission calc don't have
+  // to string-match the name.
+  isBgpHouse: boolean("is_bgp_house").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const insertDealFeeAllocationSchema = createInsertSchema(dealFeeAllocations).omit({ id: true, createdAt: true });
 export type InsertDealFeeAllocation = z.infer<typeof insertDealFeeAllocationSchema>;
 export type DealFeeAllocation = typeof dealFeeAllocations.$inferSelect;
+
+// Trading / billing / contracting entities under a parent brand. The brand
+// is what the team thinks in ("Pret"); the entity is what's on the lease and
+// what we KYC ("Pret A Manger UK Ltd", CH 01057547). Previously stored as a
+// {name, added_at} jsonb array on crm_companies — graduated to its own table
+// so we can carry the Companies House number per entity and key AML off the
+// right party. Parent jsonb is kept in sync for back-compat with the tenancy
+// schedule's TenantBrandPicker (will be migrated in phase 4).
+export const crmTradingEntities = pgTable("crm_trading_entities", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  parentCompanyId: varchar("parent_company_id").notNull(),
+  name: text("name").notNull(),
+  companiesHouseNumber: text("companies_house_number"),
+  vatNumber: text("vat_number"),
+  // Marks the canonical entity for the brand. Used as the default pick
+  // on the deal form when the user picks the parent brand. Only one row
+  // per parent_company_id should have isDefault = true (enforced by
+  // logic, not a constraint, so the data layer can heal mid-edit).
+  isDefault: boolean("is_default").notNull().default(false),
+  notes: text("notes"),
+  // DEPRECATED: entity-level KYC fields. The "*EntityId" cols on crm_deals
+  // are Xero ContactID GUIDs (see deal-gates.ts:6-12), not FKs into this
+  // table — so the gate has never read them. KYC happens at the brand
+  // (crm_companies) level. Keep these columns through this release so we
+  // don't break any pre-existing rows; drop in a future migration.
+  // Canonical vocab if anything ever does write here: pending | in_review |
+  // approved | rejected | expired.
+  kycStatus: text("kyc_status"),
+  kycExpiresAt: timestamp("kyc_expires_at"),
+  kycApprovedAt: timestamp("kyc_approved_at"),
+  kycApprovedBy: text("kyc_approved_by"),
+  amlRiskLevel: text("aml_risk_level"),
+  sanctionsScreen: jsonb("sanctions_screen"),
+  lastCheckedAt: timestamp("last_checked_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCrmTradingEntitySchema = createInsertSchema(crmTradingEntities).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertCrmTradingEntity = z.infer<typeof insertCrmTradingEntitySchema>;
+export type CrmTradingEntity = typeof crmTradingEntities.$inferSelect;
 
 export const externalRequirements = pgTable("external_requirements", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1170,7 +1495,7 @@ export const voaRatings = pgTable("voa_ratings", {
   listYear: text("list_year").default("2023"),
 });
 
-export const insertVoaRatingSchema = createInsertSchema(voaRatings).omit({ id: true });
+export const insertVoaRatingSchema = createInsertSchema(voaRatings);
 export type InsertVoaRating = z.infer<typeof insertVoaRatingSchema>;
 export type VoaRating = typeof voaRatings.$inferSelect;
 
@@ -1217,6 +1542,17 @@ export const chatbgpLearnings = pgTable("chatbgp_learnings", {
   sourceThreadId: varchar("source_thread_id", { length: 255 }),
   confidence: varchar("confidence", { length: 50 }).notNull().default("confirmed"),
   active: boolean("active").notNull().default(true),
+  // Subject linkage — lets us supersede stale learnings when a verified
+  // fact lands. e.g. "Sugar/Amsprop owns Haymarket" gets tagged with
+  // subjectPropertyId=<haymarket id>; when HMLR-CCOD later stamps a
+  // different proprietor on the same property, we mark the old one
+  // superseded with a reason. Optional — most learnings (market intel,
+  // BGP process tips) won't have a subject.
+  subjectPropertyId: varchar("subject_property_id", { length: 64 }),
+  subjectCompanyNumber: varchar("subject_company_number", { length: 32 }),
+  supersededAt: timestamp("superseded_at"),
+  supersededByLearningId: integer("superseded_by_learning_id"),
+  supersededReason: text("superseded_reason"),
   createdAt: timestamp("created_at").defaultNow(),
   lastUsedAt: timestamp("last_used_at"),
 });
@@ -1248,8 +1584,17 @@ export const wipEntries = pgTable("wip_entries", {
   groupName: text("group_name"),
   project: text("project"),
   tenant: text("tenant"),
+  // Billing entity name from the Sage NAME column. Cached on
+  // crm_deals.xero_contact_name at sync time; the actual Xero contact
+  // link is set by the user via the deal form.
+  billingEntity: text("billing_entity"),
   team: text("team"),
   agent: text("agent"),
+  // Rename-safe link to users.id. Populated by the Sage import path
+  // via users.name lookup, plus a boot backfill for historic rows.
+  // Commission reads prefer this over the agent name so renames /
+  // first-name collisions don't drift the per-person numbers.
+  agentUserId: varchar("agent_user_id"),
   amtWip: real("amt_wip"),
   amtInvoice: real("amt_invoice"),
   month: text("month"),
@@ -1258,6 +1603,11 @@ export const wipEntries = pgTable("wip_entries", {
   invoiceNo: text("invoice_no"),
   orderNumber: text("order_number"),
   fiscalYear: integer("fiscal_year"),
+  // Hard links populated by syncWipToCrmDeals at import time. Removes the
+  // need to re-derive crm_deals/crm_properties from project/tenant strings
+  // on every read. Nullable for legacy rows pre-backfill.
+  dealId: varchar("deal_id"),
+  propertyId: varchar("property_id"),
 });
 
 export const insertWipEntrySchema = createInsertSchema(wipEntries).omit({ id: true });
@@ -1369,6 +1719,12 @@ export const xeroInvoices = pgTable("xero_invoices", {
   xeroUrl: text("xero_url"),
   errorMessage: text("error_message"),
   syncedAt: timestamp("synced_at"),
+  // Cached so the BGP edit form pre-fills without an extra Graph round-trip
+  // and so edits made in Xero round-trip back via /sync.
+  lineDescription: text("line_description"),
+  lineAmount: real("line_amount"),
+  contactName: text("contact_name"),
+  poNumber: text("po_number"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1379,14 +1735,56 @@ export type XeroInvoice = typeof xeroInvoices.$inferSelect;
 
 export const favoriteInstructions = pgTable("favorite_instructions", {
   id: serial("id").primaryKey(),
-  userId: text("user_id").notNull(),
-  propertyId: text("property_id").notNull(),
+  userId: varchar("user_id").notNull(),
+  propertyId: varchar("property_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+export const propertyUnits = pgTable("property_units", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  propertyId: varchar("property_id").notNull(),
+  unitName: text("unit_name").notNull(),
+  // Unit-level address — anchored so a sub-unit can have its own postal
+  // address / rateable value / EPC, distinct from the parent property.
+  // Free-text fallback for kiosks / pop-ups / shopping-centre sub-units
+  // that aren't on Royal Mail PAF.
+  unitAddress: text("unit_address"),
+  unitPostcode: text("unit_postcode"),
+  unitUprn: text("unit_uprn"),
+  unitAddressFreeText: text("unit_address_free_text"),
+  floor: text("floor"),
+  sqft: real("sqft"),
+  useClass: text("use_class"),
+  condition: text("condition"),
+  epcRating: text("epc_rating"),
+  frontage: text("frontage"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const entityImages = pgTable("entity_images", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  entityType: text("entity_type").notNull(),   // property | unit | deal
+  entityId: varchar("entity_id").notNull(),
+  fileId: varchar("file_id").notNull(),         // → file_blobs
+  imageStudioId: varchar("image_studio_id"),    // → image_studio_images (set if captured via Street View / Image Studio — enables AI re-edit)
+  kind: text("kind"),                           // street_view | photo | floor_plan | other
+  title: text("title"),
+  notes: text("notes"),
+  createdByUserId: varchar("created_by_user_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export type EntityImage = typeof entityImages.$inferSelect;
+
+export const insertPropertyUnitSchema = createInsertSchema(propertyUnits).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertPropertyUnit = z.infer<typeof insertPropertyUnitSchema>;
+export type PropertyUnit = typeof propertyUnits.$inferSelect;
 
 export const availableUnits = pgTable("available_units", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   propertyId: varchar("property_id").notNull(),
+  unitId: varchar("unit_id"), // → property_units.id (master record for the physical space)
   unitName: text("unit_name").notNull(),
   floor: text("floor"),
   sqft: real("sqft"),
@@ -1408,6 +1806,8 @@ export const availableUnits = pgTable("available_units", {
   lastViewingDate: text("last_viewing_date"),
   marketingStartDate: text("marketing_start_date"),
   leasingScheduleUnitId: varchar("leasing_schedule_unit_id"), // → leasing_schedule_units.id (single source of truth link)
+  tenancyUnitId: varchar("tenancy_unit_id"), // → tenancy_schedule_units.id (canonical spine)
+  tenantCompanyId: varchar("tenant_company_id"), // → crm_companies.id (resolved brand for occupied vacant)
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1509,6 +1909,7 @@ export const investmentTracker = pgTable("investment_tracker", {
   feeType: text("fee_type"),
   marketingDate: text("marketing_date"),
   bidDeadline: text("bid_deadline"),
+  completionDate: text("completion_date"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1673,6 +2074,21 @@ export const insertTurnoverDataSchema = createInsertSchema(turnoverData).omit({ 
 export type InsertTurnoverData = z.infer<typeof insertTurnoverDataSchema>;
 export type TurnoverData = typeof turnoverData.$inferSelect;
 
+export const brandMarketCommentary = pgTable("brand_market_commentary", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  scopeKey: text("scope_key").notNull().unique(),
+  scopeLabel: text("scope_label").notNull(),
+  scopeType: text("scope_type").notNull(),
+  parentKey: text("parent_key"),
+  parentLabel: text("parent_label"),
+  content: jsonb("content").notNull(),
+  brandCount: integer("brand_count").default(0),
+  newsCount: integer("news_count").default(0),
+  generatedAt: timestamp("generated_at").defaultNow(),
+});
+
+export type BrandMarketCommentary = typeof brandMarketCommentary.$inferSelect;
+
 export const systemActivityLog = pgTable("system_activity_log", {
   id: serial("id").primaryKey(),
   source: text("source").notNull(),
@@ -1683,6 +2099,90 @@ export const systemActivityLog = pgTable("system_activity_log", {
 });
 
 export type SystemActivityLog = typeof systemActivityLog.$inferSelect;
+
+// ChatBGP-authorable scheduled jobs. The worker in server/scheduled-jobs.ts
+// polls this table every minute and runs whatever's due.
+export const scheduledJobs = pgTable("scheduled_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  scheduleKind: text("schedule_kind").notNull(),    // daily | weekly | hourly | cron
+  scheduleValue: text("schedule_value").notNull(),  // "HH:MM" | "DOW:HH:MM" | "MM" | cron
+  actionKind: text("action_kind").notNull(),        // sql_query | sql_write | send_chat_message | send_email
+  actionPayload: jsonb("action_payload").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  nextRunAt: timestamp("next_run_at").notNull(),
+  lastRunAt: timestamp("last_run_at"),
+  lastRunStatus: text("last_run_status"),
+  lastRunOutput: text("last_run_output"),
+  lastRunMs: integer("last_run_ms"),
+  runCount: integer("run_count").notNull().default(0),
+  errorCount: integer("error_count").notNull().default(0),
+});
+
+export type ScheduledJob = typeof scheduledJobs.$inferSelect;
+
+// Free-text "house style" preferences that flow into Claude-driven document
+// generation (Why Buy decks, etc.). One row per preference, scoped by
+// document type. Active rows are prepended to the generation prompt so
+// Claude designs each doc fresh but follows accumulated team preferences.
+// Manageable via sql_write (ChatBGP) or the inline UI on the Pathway page.
+export const documentDesignPreferences = pgTable("document_design_preferences", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  scope: text("scope").notNull(),                     // 'why_buy' | 'kyc_clouseau' | 'pla_brief' | ...
+  preference: text("preference").notNull(),           // free-text instruction
+  category: text("category"),                         // optional grouping: 'cover' | 'comps' | 'branding'
+  enabled: boolean("enabled").notNull().default(true),
+  addedBy: text("added_by"),
+  addedAt: timestamp("added_at").notNull().defaultNow(),
+  disabledAt: timestamp("disabled_at"),
+  notes: text("notes"),
+});
+
+export type DocumentDesignPreference = typeof documentDesignPreferences.$inferSelect;
+
+// Shopping centres + their tenant directories — hand-curated (or scraped
+// via ChatBGP) for major UK schemes. Feeds the Retail Context Plan
+// renderer as an additional unit source for multi-tenant buildings where
+// VOA records the centre as a single hereditament. ChatBGP can populate
+// via sql_write (run_shell_command + scrape directory page → INSERT).
+export const shoppingCentres = pgTable("shopping_centres", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  shortName: text("short_name"),
+  websiteUrl: text("website_url"),
+  directoryUrl: text("directory_url"),
+  address: text("address"),
+  postcode: text("postcode"),
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
+  bbox: jsonb("bbox"),
+  operator: text("operator"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export type ShoppingCentre = typeof shoppingCentres.$inferSelect;
+
+export const shoppingCentreTenants = pgTable("shopping_centre_tenants", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  centreId: varchar("centre_id").notNull(),
+  tenantName: text("tenant_name").notNull(),
+  unitLabel: text("unit_label"),
+  category: text("category"),                  // fashion|fnb|services|beauty|convenience|vacant|other
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
+  areaSqft: integer("area_sqft"),
+  useClass: text("use_class"),
+  sourceUrl: text("source_url"),
+  lastVerified: timestamp("last_verified"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export type ShoppingCentreTenant = typeof shoppingCentreTenants.$inferSelect;
 
 export const systemSettings = pgTable("system_settings", {
   key: text("key").primaryKey(),
@@ -1698,6 +2198,11 @@ export const imageStudioImages = pgTable("image_studio_images", {
   description: text("description"),
   source: text("source").notNull().default("upload"),
   propertyId: varchar("property_id"),
+  // FK into crm_companies for landlord / brand attribution. Set when
+  // an image is imported via the landlord scraper or refresh-images
+  // pipeline. brandName (text) is still populated for backwards-
+  // compatibility, but companyId is the canonical link going forward.
+  companyId: varchar("company_id"),
   area: text("area"),
   address: text("address"),
   brandName: text("brand_name"),
@@ -1830,6 +2335,109 @@ export const landRegistrySearches = pgTable("land_registry_searches", {
 
 export type LandRegistrySearch = typeof landRegistrySearches.$inferSelect;
 
+// Canonical unit spine — created at boot in server/index.ts:578 (runtime
+// CREATE TABLE IF NOT EXISTS + a fleet of ALTER TABLE addColIfMissing
+// migrations). Declared here for compile-time type safety; this declaration
+// does NOT drive migrations. If you ALTER the runtime DDL, mirror the
+// column here so referencing tables (`tenancyUnitId` on availableUnits /
+// leasingScheduleUnits / crmDeals) get caught by tsc on a rename or typo.
+export const tenancyScheduleUnits = pgTable("tenancy_schedule_units", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  propertyId: varchar("property_id").notNull(),
+  // Unit details
+  grouping: text("grouping"),
+  premises: text("premises"),
+  unitNumber: text("unit_number"),
+  permittedUse: text("permitted_use"),
+  status: text("status"),
+  amInitiative: text("am_initiative"),
+  floorLevel: text("floor_level"),
+  // Tenant details
+  tenantName: text("tenant_name"),
+  tradingName: text("trading_name"),
+  tenantMix: text("tenant_mix"),
+  tenantCompanyId: varchar("tenant_company_id"),
+  creditRating: text("credit_rating"),
+  // Lease details
+  leaseStart: timestamp("lease_start"),
+  breakDate: timestamp("break_date"),
+  breakDetails: text("break_details"),
+  breakNotice: text("break_notice"),
+  breakType: text("break_type"),
+  landlordBreakDate: timestamp("landlord_break_date"),
+  leaseExpiry: timestamp("lease_expiry"),
+  termYears: real("term_years"),
+  unexpiredTermBreak: real("unexpired_term_break"),
+  unexpiredTerm: real("unexpired_term"),
+  nextReviewDate: timestamp("next_review_date"),
+  outsideLtAct: text("outside_lt_act"),
+  measurementType: text("measurement_type"),
+  // Areas
+  areaBasementGia: real("area_basement_gia"),
+  areaGroundGia: real("area_ground_gia"),
+  areaFirstGia: real("area_first_gia"),
+  areaOtherGia: real("area_other_gia"),
+  areaBasementNia: real("area_basement_nia"),
+  areaGroundNia: real("area_ground_nia"),
+  areaFirstNia: real("area_first_nia"),
+  areaFirstSalesNia: real("area_first_sales_nia"),
+  areaOtherNia: real("area_other_nia"),
+  areaGroundItza: real("area_ground_itza"),
+  giaSqft: real("gia_sqft"),
+  niaSqft: real("nia_sqft"),
+  itzaSqft: real("itza_sqft"),
+  unitsApplied: real("units_applied"),
+  // Income
+  passingRentPa: real("passing_rent_pa"),
+  marketingRentPa: real("marketing_rent_pa"),
+  turnoverRentPayable: real("turnover_rent_payable"),
+  ervProfile: text("erv_profile"),
+  ervPa: real("erv_pa"),
+  rentFreeValue: real("rent_free_value"),
+  capexValue: real("capex_value"),
+  depositHeld: real("deposit_held"),
+  arrearsBalance: real("arrears_balance"),
+  // Rates / occ costs
+  rateableValue: real("rateable_value"),
+  ratesPayable: real("rates_payable"),
+  serviceCharge: real("service_charge"),
+  serviceChargeCap: real("service_charge_cap"),
+  insurance: real("insurance"),
+  // Shortfalls / NOI
+  shortfallLiability: text("shortfall_liability"),
+  rentalShortfalls: real("rental_shortfalls"),
+  toppedUpNoi: real("topped_up_noi"),
+  noiPa: real("noi_pa"),
+  // Commentary
+  comments: text("comments"),
+  leasingComments: text("leasing_comments"),
+  targetTenants: text("target_tenants"),
+  targetCompanyIds: text("target_company_ids").array(),
+  underwritingComments: text("underwriting_comments"),
+  // BGP overlay
+  epcRating: text("epc_rating"),
+  rentPsf: real("rent_psf"),
+  turnoverPercent: real("turnover_percent"),
+  blendedErv: real("blended_erv"),
+  dealId: varchar("deal_id"),
+  lettingTrackerUnitId: varchar("letting_tracker_unit_id"),
+  inLeasingSchedule: boolean("in_leasing_schedule").default(false),
+  sortOrder: integer("sort_order").default(0),
+  // ── Stage 1 unit-spine additions (migration 0032). Additive only;
+  // population happens in Stage 2. See docs/target-structure.md.
+  // propertyUnitId is the missing physical→lease link the two-layer
+  // spine needs. occupancy splits "is the unit let?" from deal status;
+  // marketing_active drives Tracker/Leasing visibility independently.
+  propertyUnitId: varchar("property_unit_id"),
+  // occupancy_status (not "occupancy") — two other tables already use
+  // `occupancy` for a numeric %; the suffix avoids confusion.
+  occupancyStatus: text("occupancy_status"),
+  marketingActive: boolean("marketing_active").default(false),
+  marketingReason: text("marketing_reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 export const leasingScheduleUnits = pgTable("leasing_schedule_units", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   propertyId: varchar("property_id").notNull(),
@@ -1855,6 +2463,8 @@ export const leasingScheduleUnits = pgTable("leasing_schedule_units", {
   updates: text("updates"),
   targetCompanyIds: text("target_company_ids").array(),
   sortOrder: integer("sort_order").default(0),
+  tenancyUnitId: varchar("tenancy_unit_id"), // → tenancy_schedule_units.id (canonical spine)
+  tenantCompanyId: varchar("tenant_company_id"), // → crm_companies.id (brand FK)
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1910,6 +2520,13 @@ export const imageStudioCollections = pgTable("image_studio_collections", {
   name: text("name").notNull(),
   description: text("description"),
   coverImageId: varchar("cover_image_id"),
+  // Optional CRM links — a Pathway-run collection is filed against the
+  // property it was generated for; a brand auto-folder is filed against
+  // the crm_companies row. Either or both may be null for ad-hoc
+  // user-made collections.
+  propertyId: varchar("property_id"),
+  companyId: varchar("company_id"),
+  kind: text("kind"),
   createdBy: varchar("created_by"),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -2015,6 +2632,34 @@ export const insertPropertyPathwayRunSchema = createInsertSchema(propertyPathway
 export type InsertPropertyPathwayRun = z.infer<typeof insertPropertyPathwayRunSchema>;
 export type PropertyPathwayRun = typeof propertyPathwayRuns.$inferSelect;
 
+// ─── Portfolios (Jun 2026) ───────────────────────────────────────────────
+// A named bundle of Property Pathway runs that Nick & Jonny assemble to
+// review several assets as one opportunity. The combined outputs (summary
+// table, portfolio Excel, portfolio Why Buy deck) all read from the runs
+// linked here. Runs are linked via portfolioRuns with an `enabled` flag so
+// a run can be toggled in/out of the combined outputs without unlinking it.
+export const portfolios = pgTable("portfolios", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  notes: text("notes"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const portfolioRuns = pgTable("portfolio_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  portfolioId: varchar("portfolio_id").notNull().references(() => portfolios.id, { onDelete: "cascade" }),
+  runId: varchar("run_id").notNull().references(() => propertyPathwayRuns.id, { onDelete: "cascade" }),
+  // Toggle a run in/out of the combined outputs without removing it.
+  enabled: boolean("enabled").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  addedAt: timestamp("added_at").defaultNow(),
+});
+
+export type Portfolio = typeof portfolios.$inferSelect;
+export type PortfolioRun = typeof portfolioRuns.$inferSelect;
+
 export const excelModelRunVersions = pgTable("excel_model_run_versions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   modelRunId: varchar("model_run_id").notNull(),
@@ -2118,8 +2763,722 @@ export const amlTrainingModules = pgTable("aml_training_modules", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Occupier plan units — one row per retail/commercial unit polygon, keyed on
+// OS MasterMap TOID. Fed from two interchangeable sources: `edozo` (pulled
+// per-viewport from the Edozo occupier WFS under our subscription) and
+// `experian` (imported from a licensed Goad MasterMap shapefile). Geometry is
+// stored as WGS84 GeoJSON; the flat min/max lat-lng columns exist so a
+// viewport query is a plain range scan with no PostGIS dependency.
+export const goadUnits = pgTable("goad_units", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  externalKey: text("external_key").notNull().unique(), // e.g. "edozo:GF:osgb1000042217035"
+  source: text("source").notNull(),                     // edozo | experian
+  toid: text("toid"),                                   // OS MasterMap TOID (join key across sources)
+  goadNumber: text("goad_number"),                      // Experian unit id
+  centreCode: text("centre_code"),                      // e.g. 9033MM
+  floorLevel: text("floor_level").default("GF"),        // GF | F1 | F2 | LG
+  occupierName: text("occupier_name"),
+  classification: text("classification"),               // occupied | vacant | unknown
+  category: text("category"),                           // raw source category
+  categoryGroup: text("category_group"),                // normalised RetailCategory
+  useClass: text("use_class"),
+  tradeType: text("trade_type"),
+  streetNum: text("street_num"),
+  streetName: text("street_name"),
+  postcode: text("postcode"),
+  precName: text("prec_name"),
+  areaFt2: integer("area_ft2"),
+  areaM2: integer("area_m2"),
+  centroidLat: doublePrecision("centroid_lat"),
+  centroidLng: doublePrecision("centroid_lng"),
+  minLat: doublePrecision("min_lat"),
+  minLng: doublePrecision("min_lng"),
+  maxLat: doublePrecision("max_lat"),
+  maxLng: doublePrecision("max_lng"),
+  labelRotation: real("label_rotation"),                // Edozo label placement hint (deg)
+  labelSize: real("label_size"),
+  geometry: jsonb("geometry"),                          // WGS84 GeoJSON geometry
+  surveyDate: text("survey_date"),
+  pubDate: text("pub_date"),
+  rawProps: jsonb("raw_props"),
+  fetchedAt: timestamp("fetched_at").defaultNow(),
+});
+
+export const insertGoadUnitSchema = createInsertSchema(goadUnits);
+export type InsertGoadUnit = z.infer<typeof insertGoadUnitSchema>;
+export type GoadUnit = typeof goadUnits.$inferSelect;
+
 export const loginSchema = z.object({
   username: z.string().min(1, "Username is required"),
   password: z.string().min(1, "Password is required"),
 });
 export type LoginData = z.infer<typeof loginSchema>;
+
+// ─── Tenant Rep Status Board ───────────────────────────────────────────────
+export const tenantRepSearches = pgTable("tenant_rep_searches", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientName: text("client_name").notNull(),
+  companyId: varchar("company_id"),          // → crm_companies
+  contactId: varchar("contact_id"),           // → crm_contacts (key contact at brand)
+  dealId: varchar("deal_id"),                 // → crm_deals
+  status: text("status").notNull().default("Brief Received"),
+  targetUse: text("target_use").array(),
+  sizeMin: integer("size_min"),               // sq ft
+  sizeMax: integer("size_max"),               // sq ft
+  targetLocations: text("target_locations").array(),
+  budgetMin: integer("budget_min"),           // £psf
+  budgetMax: integer("budget_max"),           // £psf
+  nextAction: text("next_action"),
+  nextActionDate: text("next_action_date"),   // ISO date string
+  notes: text("notes"),
+  assignedTo: text("assigned_to"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertTenantRepSearchSchema = createInsertSchema(tenantRepSearches).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertTenantRepSearch = z.infer<typeof insertTenantRepSearchSchema>;
+export type TenantRepSearch = typeof tenantRepSearches.$inferSelect;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Project Demeter — c.300 wet-led pub portfolio (Stonegate / Eastdil deal,
+// advised by BGP for Related/Farallon). Underwriting + 5–10 year disposal
+// AM tracker. See server/demeter.ts for the route layer and the brief at
+// the top of that file for the bucket allocation logic.
+// ─────────────────────────────────────────────────────────────────────────
+export const demeterSites = pgTable("demeter_sites", {
+  id: uuid("id").primaryKey().defaultRandom(),
+
+  // Site identity (from Eastdil datatape — Site Overview + Property Information)
+  siteId: text("site_id").notNull().unique(),
+  name: text("name").notNull(),
+  address: text("address"),
+  town: text("town"),
+  postcode: text("postcode"),
+  county: text("county"),
+  region: text("region"),                              // North & Scotland | South West | London & SE | Central & Wales
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
+  googleMapsUrl: text("google_maps_url"),
+
+  // Eastdil datatape — financial & lease fields. Populated from a follow-up
+  // wide datatape drop or manual entry; the initial site-list import only
+  // fills the columns above.
+  tenure: text("tenure"),                              // Freehold | Leasehold
+  leaseType: text("lease_type"),                       // L&T | Tied | Free of Tie
+  currentRent: real("current_rent"),
+  rpiLinked: boolean("rpi_linked"),
+  leaseExpiry: text("lease_expiry"),                   // ISO date string
+  publicanName: text("publican_name"),
+  publicanCompanyNumber: text("publican_company_number"),
+  pAndLSharePct: real("p_and_l_share_pct"),
+  fairMaintainableTrade: real("fair_maintainable_trade"),
+  eastdilPubValue: real("eastdil_pub_value"),
+  eastdilAltUseValue: real("eastdil_alt_use_value"),
+  eastdilNotes: text("eastdil_notes"),
+
+  // BGP enrichment metadata
+  enrichmentTier: integer("enrichment_tier").default(0),  // 0 not run, 1, 2, 3
+  enrichmentLastRun: timestamp("enrichment_last_run"),
+
+  // Constraints (Tier 1 PropertyData lookups)
+  listedStatus: text("listed_status"),                 // None | Grade II | Grade II* | Grade I
+  conservationArea: boolean("conservation_area"),
+  greenBelt: boolean("green_belt"),
+  aonb: boolean("aonb"),
+  floodRisk: text("flood_risk"),                       // Low | Medium | High
+  article4: boolean("article_4"),
+
+  // Catchment
+  areaType: text("area_type"),                         // Urban | Suburban | Rural | Town centre
+  householdIncome: real("household_income"),
+  population1Mile: integer("population_1mile"),
+  ptal: text("ptal"),
+
+  // Valuation benchmarks (PropertyData)
+  pdPubValue: real("pd_pub_value"),
+  pdRetailValue: real("pd_retail_value"),
+  pdRestaurantValue: real("pd_restaurant_value"),
+  pdOfficeValue: real("pd_office_value"),
+  pdResiPsf: real("pd_resi_psf"),
+  pdResiPerUnit: real("pd_resi_per_unit"),
+  rebuildCost: real("rebuild_cost"),
+
+  // Bucket allocation — the core underwriting output
+  bucket: integer("bucket"),                           // 1 Hold | 2 Op uplift | 3 Investment dispose | 4 Alt-use | 5 Resi/redevelop
+  bucketRationale: text("bucket_rationale"),
+  bucketConfidence: text("bucket_confidence"),         // High | Medium | Low
+
+  // AM plan & disposal
+  disposalYear: integer("disposal_year"),              // 1..10 from acquisition
+  underwrittenExitValue: real("underwritten_exit_value"),
+  capexRequired: real("capex_required"),
+  amStatus: text("am_status").default("Not started"),  // Not started | Lease regear | Planning | Marketed | Under offer | Sold
+  amNotes: text("am_notes"),
+  amOwner: text("am_owner"),
+
+  // BGP intel
+  crmPropertyId: varchar("crm_property_id"),           // crm_properties.id when matched
+  crmIntelSummary: text("crm_intel_summary"),
+  pathwayRunId: varchar("pathway_run_id"),             // property_pathway_runs.id when Tier 3 spawned a pathway
+
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertDemeterSiteSchema = createInsertSchema(demeterSites).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertDemeterSite = z.infer<typeof insertDemeterSiteSchema>;
+export type DemeterSite = typeof demeterSites.$inferSelect;
+
+// Append-only AM activity log per site (lease regears, planning submissions,
+// viewings, offers, sales). UI surface deferred to phase 2 per the brief, but
+// the table + endpoints exist from day one so we don't lose history.
+export const demeterSiteEvents = pgTable("demeter_site_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  siteId: uuid("site_id").notNull(),                   // FK demeter_sites.id
+  eventType: text("event_type").notNull(),             // Lease regear | Planning submitted | Marketed | Viewing | Offer | Sold | Note
+  eventDate: text("event_date"),                       // ISO date
+  amount: real("amount"),                              // £ where relevant (offer, sale price, capex)
+  notes: text("notes"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertDemeterSiteEventSchema = createInsertSchema(demeterSiteEvents).omit({ id: true, createdAt: true });
+export type InsertDemeterSiteEvent = z.infer<typeof insertDemeterSiteEventSchema>;
+export type DemeterSiteEvent = typeof demeterSiteEvents.$inferSelect;
+
+// Background enrichment job queue. Worker (server/demeter-enrichment-worker.ts,
+// phase 2) polls queued rows, runs the tier's PropertyData calls, writes
+// results onto demeter_sites, and updates status + cost estimate here.
+export const demeterEnrichmentJobs = pgTable("demeter_enrichment_jobs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  siteId: uuid("site_id").notNull(),                   // FK demeter_sites.id
+  tier: integer("tier").notNull(),                     // 1 | 2 | 3
+  status: text("status").notNull().default("queued"),  // queued | running | done | failed
+  apiCallsMade: integer("api_calls_made").default(0),
+  costEstimate: real("cost_estimate").default(0),      // £ — approx PropertyData spend
+  error: text("error"),
+  startedAt: timestamp("started_at"),
+  finishedAt: timestamp("finished_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertDemeterEnrichmentJobSchema = createInsertSchema(demeterEnrichmentJobs).omit({ id: true, createdAt: true });
+export type InsertDemeterEnrichmentJob = z.infer<typeof insertDemeterEnrichmentJobSchema>;
+export type DemeterEnrichmentJob = typeof demeterEnrichmentJobs.$inferSelect;
+
+// Tunable runtime config — bucket-allocation thresholds, daily spend cap,
+// RBAC allow-list. Stored as a single key/value table so the underwriting
+// rules engine can be tuned without redeploys (per the brief).
+export const demeterConfig = pgTable("demeter_config", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  description: text("description"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type DemeterConfig = typeof demeterConfig.$inferSelect;
+
+// ─── Stripe Issuing / Expenses ────────────────────────────────────────────────
+
+export const stripeCardholders = pgTable("stripe_cardholders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: text("user_id").notNull().unique(),
+  userName: text("user_name").notNull(),
+  email: text("email").notNull(),
+  phone: text("phone"),
+  stripeCardholderId: text("stripe_cardholder_id").unique(),       // null for receipts-only submitters (no card issued)
+  monthlyLimit: integer("monthly_limit").notNull().default(100000),  // pence
+  dailyLimit: integer("daily_limit").notNull().default(25000),       // pence
+  singleTxLimit: integer("single_tx_limit").notNull().default(25000),// pence
+  status: text("status").notNull().default("active"),                // active | inactive | blocked
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const stripeCards = pgTable("stripe_cards", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  cardholderId: varchar("cardholder_id").notNull().references(() => stripeCardholders.id),
+  stripeCardId: text("stripe_card_id").notNull().unique(),
+  last4: text("last4"),
+  status: text("status").notNull().default("active"),  // active | inactive | canceled
+  // Revolut Business extras (columns added via auto-migrate in
+  // server/revolut.ts). Surfaced on My Card so the card visual looks
+  // like a real card — expiry "MM/YYYY", virtual/physical flag, product
+  // code (BPD = Business Prepaid Debit, VWE = physical wave). Nullable
+  // for legacy Stripe-only rows.
+  expiry: text("expiry"),
+  virtual: boolean("virtual"),
+  productCode: text("product_code"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const expenses = pgTable("expenses", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  cardholderId: varchar("cardholder_id").references(() => stripeCardholders.id),
+  stripeTransactionId: text("stripe_transaction_id").unique(),       // null for cash expenses
+  // Revolut Business txn id (column added via auto-migrate in server/
+  // revolut.ts). Set ONLY when the row came from the live Revolut feed —
+  // receipt-photo and manual entries leave this null. The mobile UI uses
+  // this to badge 'Revolut' vs 'Receipt' so card-feed coverage is obvious
+  // at a glance.
+  revolutTransactionId: text("revolut_transaction_id").unique(),
+  type: text("type").notNull().default("card"),                      // card | cash | mileage
+  status: text("status").notNull().default("pending_receipt"),       // pending_receipt | pending_approval | approved | rejected | posted_to_xero
+  merchant: text("merchant"),
+  amountPence: integer("amount_pence").notNull(),
+  currency: text("currency").notNull().default("gbp"),
+  transactionDate: timestamp("transaction_date"),
+  category: text("category"),                                        // maps to Xero account name
+  xeroAccountCode: text("xero_account_code"),
+  xeroTrackingProperty: text("xero_tracking_property"),
+  xeroTrackingPerson: text("xero_tracking_person"),
+  xeroExpenseId: text("xero_expense_id"),                            // set once posted to Xero
+  receiptUrl: text("receipt_url"),
+  receiptFilename: text("receipt_filename"),
+  businessPurpose: text("business_purpose"),                         // "Lunch with Mike Hodgson (Land Sec)"
+  attendees: text("attendees"),                                      // from calendar cross-ref
+  calendarEventId: text("calendar_event_id"),
+  isPersonal: boolean("is_personal").default(false),
+  isClientRechargeable: boolean("is_client_rechargeable").default(false),
+  relatedDealId: varchar("related_deal_id"),
+  relatedPropertyId: varchar("related_property_id"),
+  mileageMiles: real("mileage_miles"),
+  notes: text("notes"),
+  createdBy: text("created_by"),
+  // Approval workflow — populated when the expense is submitted for
+  // approval. submitterUserId is set from the auth session; approverUserId
+  // is resolved from users.managerId at submission time (NULL = falls
+  // into the Layla / Wendy shared inbox). flaggedForReview is auto-set
+  // when the submission fails any of the checks in expense-flags.ts
+  // (no receipt, no business purpose on entertainment, etc.) so the
+  // approver walks into a pre-sorted inbox.
+  submitterUserId: varchar("submitter_user_id"),
+  submittedForApprovalAt: timestamp("submitted_for_approval_at"),
+  approverUserId: varchar("approver_user_id"),
+  // Two-stage approval (Jun 2026). Stage 1 = info check by Wendy/Layla
+  // (random 50/50); stage 2 = director spend sign-off by Woody/Charlotte/
+  // Jack/Rupert (random even). status stays 'pending_approval' across both;
+  // approverUserId holds whoever the current stage is randomly assigned to.
+  approvalStage: integer("approval_stage").default(1),               // 1 = finance check, 2 = director sign-off
+  stage1ApprovedByUserId: varchar("stage1_approved_by_user_id"),     // who did the stage-1 info check
+  stage1ApprovedAt: timestamp("stage1_approved_at"),
+  approvedAt: timestamp("approved_at"),
+  approvedByUserId: varchar("approved_by_user_id"),
+  approvalNotes: text("approval_notes"),
+  rejectedAt: timestamp("rejected_at"),
+  rejectedByUserId: varchar("rejected_by_user_id"),
+  rejectedReason: text("rejected_reason"),
+  flaggedForReview: boolean("flagged_for_review").default(false),
+  flagReasons: text("flag_reasons").array(),
+  // VAT read off the receipt by the parser. vatReclaimable is the per-receipt
+  // override for whether the input VAT can be reclaimed — null = derive from
+  // the category's Xero tax rule; false = treat the VAT as part of the cost
+  // (e.g. client entertainment, where input VAT is irrecoverable).
+  vatPence: integer("vat_pence"),
+  vatRate: real("vat_rate"),
+  netPence: integer("net_pence"),
+  vatReclaimable: boolean("vat_reclaimable"),
+  // Who the cost is for, when that differs from the cardholder who paid (e.g.
+  // Layla books a flight for Victoria → allocate to Victoria). Drives the Xero
+  // "Team Member" tracking category. Null = the cardholder bears the cost.
+  allocatedToUserId: varchar("allocated_to_user_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Split lines — one receipt carved into multiple cost lines, each with its own
+// category, VAT treatment and (optionally) the person it's for. A hotel bill
+// becomes accommodation + subsistence + entertainment, each posted to the
+// right Xero account with the right tax. An expense with no split rows posts
+// as a single line off the parent fields; with splits, the lines drive Xero.
+export const expenseSplits = pgTable("expense_splits", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  expenseId: varchar("expense_id").notNull().references(() => expenses.id, { onDelete: "cascade" }),
+  amountPence: integer("amount_pence").notNull(),
+  category: text("category"),
+  xeroAccountCode: text("xero_account_code"),
+  vatPence: integer("vat_pence"),
+  vatReclaimable: boolean("vat_reclaimable"),
+  allocatedToUserId: varchar("allocated_to_user_id"),
+  businessPurpose: text("business_purpose"),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Join table linking entertainment expenses to the CRM contacts who
+// attended. HMRC needs both "who was there" and "what business was
+// discussed" for client/agent entertainment to be deductible — the
+// legacy `expenses.attendees` text column carries the latter as a
+// fallback (calendar context fills it from Outlook attendee emails),
+// but for manual edits this join is the source of truth.
+export const expenseAttendees = pgTable("expense_attendees", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  expenseId: varchar("expense_id").notNull().references(() => expenses.id, { onDelete: "cascade" }),
+  contactId: varchar("contact_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const expenseReceipts = pgTable("expense_receipts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  expenseId: varchar("expense_id").notNull().references(() => expenses.id),
+  storageKey: text("storage_key").notNull(),     // path in object storage / base64 ref
+  mimeType: text("mime_type"),
+  filename: text("filename"),
+  uploadedAt: timestamp("uploaded_at").defaultNow(),
+});
+
+export type StripeCardholder = typeof stripeCardholders.$inferSelect;
+export type StripeCard = typeof stripeCards.$inferSelect;
+export type Expense = typeof expenses.$inferSelect;
+export type ExpenseReceipt = typeof expenseReceipts.$inferSelect;
+export type ExpenseSplit = typeof expenseSplits.$inferSelect;
+
+// ─── HR Module ────────────────────────────────────────────────────────────────
+
+export const staffProfiles = pgTable("staff_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().unique(),
+  title: text("title"),
+  startDate: text("start_date"),      // ISO date string
+  endDate: text("end_date"),          // set when leaver
+  status: text("status").notNull().default("active"), // active | leaver
+  salaryCurrent: integer("salary_current"),           // pence
+  managerId: varchar("manager_id"),
+  department: text("department"),
+  ricsPathway: text("rics_pathway"),
+  ricsNumber: text("rics_number"),    // RICS member number (e.g. 1234567)
+  apcStatus: text("apc_status"),      // not_started | in_progress | completed
+  apcAssessmentDate: text("apc_assessment_date"),       // confirmed exam / interview date
+  apcPlannedSitting: text("apc_planned_sitting"),       // intent — "Spring 2026", etc.
+  apcSubmissionDeadline: text("apc_submission_deadline"),
+  apcIntentToSubmitDate: text("apc_intent_to_submit_date"),  // grad's declared intent-to-submit date
+  apcSubmissionDate: text("apc_submission_date"),            // actual submission date
+  apcCounsellorName: text("apc_counsellor_name"),       // external counsellor (e.g. Mark Hoffman)
+  apcCounsellorEmail: text("apc_counsellor_email"),
+  cvSummary: text("cv_summary"),
+  cvSpecialisms: text("cv_specialisms").array(),
+  cvNotableClients: text("cv_notable_clients").array(),
+  cvCareerHistory: jsonb("cv_career_history"),
+  education: text("education"),
+  bio: text("bio"),
+  emergencyContactName: text("emergency_contact_name"),
+  emergencyContactPhone: text("emergency_contact_phone"),
+  emergencyContactRelation: text("emergency_contact_relation"),
+  holidayEntitlement: integer("holiday_entitlement").default(25),
+  pensionOptIn: boolean("pension_opt_in").default(true),
+  pensionRate: real("pension_rate").default(5.0),
+  contractSharepointUrl: text("contract_sharepoint_url"),
+  passportSharepointUrl: text("passport_sharepoint_url"),
+  linkedinUrl: text("linkedin_url"),
+  xeroTrackingName: text("xero_tracking_name"), // how they appear in Xero tracking
+  // Xero Payroll employee link. Stored once (auto-matched by email→name, or
+  // set manually) so payslip sync + future payroll features resolve people by
+  // a stable ID rather than re-matching fuzzily on every run.
+  xeroEmployeeId: text("xero_employee_id"),
+  xeroEmployeeName: text("xero_employee_name"), // cached display name from Xero
+  xeroLinkedAt: timestamp("xero_linked_at"),
+  // Org-chart additions (May 2026)
+  dob: text("dob"),
+  address: text("address"),
+  wfhDays: text("wfh_days").array(),
+  employmentType: text("employment_type"),         // FT | PT | Mat | Contract | Grad
+  cvSharepointUrl: text("cv_sharepoint_url"),
+  boardMember: boolean("board_member").default(false),
+  managementTeam: boolean("management_team").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertStaffProfileSchema = createInsertSchema(staffProfiles).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertStaffProfile = z.infer<typeof insertStaffProfileSchema>;
+export type StaffProfile = typeof staffProfiles.$inferSelect;
+
+export const cpdEntries = pgTable("cpd_entries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  entryDate: text("entry_date").notNull(),
+  hours: real("hours").notNull(),
+  kind: text("kind").notNull().default("informal"), // formal | informal
+  activity: text("activity").notNull(),
+  competency: text("competency"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export const insertCpdEntrySchema = createInsertSchema(cpdEntries).omit({ id: true, createdAt: true });
+export type InsertCpdEntry = z.infer<typeof insertCpdEntrySchema>;
+export type CpdEntry = typeof cpdEntries.$inferSelect;
+
+export const salaryHistory = pgTable("salary_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  salaryPence: integer("salary_pence").notNull(),
+  effectiveDate: text("effective_date").notNull(), // ISO date string
+  reason: text("reason"),  // annual_review | promotion | joining | adjustment
+  notes: text("notes"),
+  recordedBy: varchar("recorded_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertSalaryHistorySchema = createInsertSchema(salaryHistory).omit({ id: true, createdAt: true });
+export type InsertSalaryHistory = z.infer<typeof insertSalaryHistorySchema>;
+export type SalaryHistory = typeof salaryHistory.$inferSelect;
+
+// One row per bonus / commission payout / other extra. Drives the orange
+// bars on the salary timeline chart. Kept separate from salary_history so
+// salary uplifts (a state change) and bonuses (one-off events) don't collide
+// when ordering the timeline.
+export const bonusHistory = pgTable("bonus_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  amountPence: integer("amount_pence").notNull(),
+  effectiveDate: text("effective_date").notNull(), // ISO date string
+  kind: text("kind").notNull().default("bonus"),  // bonus | commission_payout | spot | retention | other
+  reason: text("reason"),
+  notes: text("notes"),
+  recordedBy: varchar("recorded_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertBonusHistorySchema = createInsertSchema(bonusHistory).omit({ id: true, createdAt: true });
+export type InsertBonusHistory = z.infer<typeof insertBonusHistorySchema>;
+export type BonusHistory = typeof bonusHistory.$inferSelect;
+
+export const holidayRequests = pgTable("holiday_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  startDate: text("start_date").notNull(),
+  endDate: text("end_date").notNull(),
+  daysCount: real("days_count").notNull(),
+  status: text("status").notNull().default("pending"), // pending | approved | rejected | cancelled
+  notes: text("notes"),
+  approvedBy: varchar("approved_by"),
+  approvedAt: timestamp("approved_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertHolidayRequestSchema = createInsertSchema(holidayRequests).omit({ id: true, createdAt: true, approvedAt: true });
+export type InsertHolidayRequest = z.infer<typeof insertHolidayRequestSchema>;
+export type HolidayRequest = typeof holidayRequests.$inferSelect;
+
+export const hrDocuments = pgTable("hr_documents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id"),           // null = company-wide
+  docType: text("doc_type").notNull(),  // contract | passport | review | policy | payslip | other
+  name: text("name").notNull(),
+  sharepointUrl: text("sharepoint_url"),
+  sharepointDriveId: text("sharepoint_drive_id"),
+  sharepointItemId: text("sharepoint_item_id"),
+  reviewYear: integer("review_year"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertHrDocumentSchema = createInsertSchema(hrDocuments).omit({ id: true, createdAt: true });
+export type InsertHrDocument = z.infer<typeof insertHrDocumentSchema>;
+export type HrDocument = typeof hrDocuments.$inferSelect;
+
+// ─── PLA Matters (Lease Advisory platform) ───────────────────────────────────
+// Tom and Pete's Professional Lease Advisory practice — rent reviews, lease
+// renewals, dilapidations, service charge, general advisory. Each matter is
+// anchored to a canonical property (via the resolver) and gets a SharePoint
+// folder mirroring BGP's Lease Advisory folder template.
+
+export const plaMatters = pgTable("pla_matters", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  propertyId: varchar("property_id").notNull(),         // → crm_properties (resolver-canonical)
+  unitId: varchar("unit_id"),                           // → property_units (optional for "general", required for rent_review / lease_renewal / regear / dilapidations / service_charge)
+  matterType: text("matter_type").notNull(),            // rent_review | lease_renewal | dilapidations | service_charge | general
+  clientContactId: varchar("client_contact_id"),        // → crm_contacts
+  clientCompanyId: varchar("client_company_id"),        // → crm_companies
+  actingFor: text("acting_for"),                        // landlord | tenant
+  leadUserId: varchar("lead_user_id").notNull(),        // → users
+  teamUserIds: text("team_user_ids").array(),
+  // Lease snapshot at matter creation
+  currentRent: real("current_rent"),
+  currentRentReviewDate: timestamp("current_rent_review_date"),
+  breakDate: timestamp("break_date"),
+  expiryDate: timestamp("expiry_date"),
+  // Negotiation positions
+  quotingRent: real("quoting_rent"),
+  counterQuotingRent: real("counter_quoting_rent"),
+  agreedRent: real("agreed_rent"),
+  // Notice tracking (1954 Act / rent review)
+  noticeServedAt: timestamp("notice_served_at"),
+  noticeServedBy: text("notice_served_by"),             // us | them
+  counterNoticeDeadline: timestamp("counter_notice_deadline"),
+  counterNoticeServedAt: timestamp("counter_notice_served_at"),
+  // Workflow — now uses standard DEAL_STATUS_CODES (REP/NEG/SOL/EXC/COM/WIT/INV)
+  // so lease advisory work shows on the deal CRM kanban alongside leasing.
+  status: text("status").notNull().default("REP"),
+  legacyStatus: text("legacy_status"),                  // preserves pre-2026 status if remapped
+  dealId: varchar("deal_id"),                           // → crm_deals.id (auto-created at instruction creation)
+  openedAt: timestamp("opened_at").defaultNow(),
+  settledAt: timestamp("settled_at"),
+  closedAt: timestamp("closed_at"),
+  // SharePoint (folder template applied on creation)
+  sharepointFolderUrl: text("sharepoint_folder_url"),
+  folderTemplateApplied: boolean("folder_template_applied").default(false),
+  notes: text("notes"),
+  tags: text("tags").array(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPlaMatterSchema = createInsertSchema(plaMatters).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertPlaMatter = z.infer<typeof insertPlaMatterSchema>;
+export type PlaMatter = typeof plaMatters.$inferSelect;
+
+// Linked comparables — many comps may inform a matter's valuation
+export const plaMatterComps = pgTable("pla_matter_comps", {
+  matterId: varchar("matter_id").notNull(),
+  compId: varchar("comp_id").notNull(),                 // → crm_comps
+  weight: real("weight").default(1.0),                  // 0–1, how much this comp influences valuation
+  notes: text("notes"),
+  addedBy: varchar("added_by"),
+  addedAt: timestamp("added_at").defaultNow(),
+});
+
+export type PlaMatterComp = typeof plaMatterComps.$inferSelect;
+
+// Workbook artefacts (net effective, devaluation, comparables schedule)
+// generated by the valuation engine and stored in SharePoint. We keep
+// pointers + input snapshots so the workbook can be re-rendered or audited.
+export const plaMatterWorkbooks = pgTable("pla_matter_workbooks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  matterId: varchar("matter_id").notNull(),
+  kind: text("kind").notNull(),                         // net_effective | devaluation | comparables_schedule | representations
+  sharepointUrl: text("sharepoint_url"),
+  generatedAt: timestamp("generated_at").defaultNow(),
+  generatedBy: varchar("generated_by"),
+  inputsSnapshot: jsonb("inputs_snapshot"),
+  outputSummary: jsonb("output_summary"),               // ITZA rate, headline, net-effective psf, etc.
+});
+
+export type PlaMatterWorkbook = typeof plaMatterWorkbooks.$inferSelect;
+
+// Key dates / events — drives dashboards and reminders
+export const plaMatterEvents = pgTable("pla_matter_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  matterId: varchar("matter_id").notNull(),
+  eventKind: text("event_kind").notNull(),              // notice_served | counter_notice_deadline | hearing | inspection | meeting | court | expert_determination | agreed | note
+  eventDate: timestamp("event_date").notNull(),
+  description: text("description"),
+  done: boolean("done").default(false),
+  doneAt: timestamp("done_at"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type PlaMatterEvent = typeof plaMatterEvents.$inferSelect;
+
+// ─── Property Imagery Assets — curation layer over image_studio_images ───────
+// One row = "for property X, this image plays role Y". Discovery service
+// populates these; pickers (Pathway Stage 9, PLA matter pages, Property
+// Intelligence, Document Studio briefs) consume them.
+
+export const propertyImageryAssets = pgTable("property_imagery_assets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  propertyId: varchar("property_id").notNull(),                  // → crm_properties.id
+  kind: text("kind").notNull(),                                  // hero | internal | secondary_external | location_plan | floor_plan | covenant_card | comps_chart | erv_walk | overlay
+  source: text("source").notNull(),                              // brochure | sharepoint | street_view | planning_portal | os_ngd | google_static | edozo | cad_measure | image_studio | generated_chart | manual_upload
+  imageStudioId: varchar("image_studio_id"),                     // → image_studio_images.id (when imported)
+  sourceUrl: text("source_url"),                                 // raw URL for provenance / re-fetch
+  generatedFrom: jsonb("generated_from"),                        // inputs snapshot — lets us regenerate
+  score: real("score"),                                          // ranking 0-1; higher = more relevant
+  width: integer("width"),
+  height: integer("height"),
+  caption: text("caption"),
+  pinned: boolean("pinned").default(false),                      // user marked: "this is THE hero"
+  hidden: boolean("hidden").default(false),                      // user said: not this one
+  generatedAt: timestamp("generated_at").defaultNow(),
+  generatedBy: varchar("generated_by"),
+  pathwayRunId: varchar("pathway_run_id"),                       // discovered via Pathway run
+  matterId: varchar("matter_id"),                                // discovered for a PLA matter
+});
+
+export type PropertyImageryAsset = typeof propertyImageryAssets.$inferSelect;
+export type InsertPropertyImageryAsset = typeof propertyImageryAssets.$inferInsert;
+
+// ─── Decks — generic, app-wide document primitive ──────────────────────────
+// A "deck" is any composable BGP deliverable: Why Buy memo, AM/IM pitch,
+// leasing brochure, rent review pack. Each one is a set of cards that can
+// be individually edited, locked, and assembled into a PDF. Pathway is one
+// populator; ChatBGP is another; manual creation is a third. Templates are
+// just default card sets — not code branches.
+export const decks = pgTable("decks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  // Which template this deck conforms to — drives the default card set,
+  // the assembler's PDF design (passed as scope to generate_claude_designed_pdf),
+  // and any template-specific defaults. New templates are seeded rows in
+  // deck_templates, not new code paths.
+  templateKey: text("template_key").notNull(),
+  // Optional CRM anchors — a deck about a property, brand, deal, or any
+  // combination. Anchors drive auto-population (Pathway run for property,
+  // brand pack for company, etc.) and surface on the relevant CRM pages.
+  propertyId: varchar("property_id"),
+  companyId: varchar("company_id"),
+  dealId: varchar("deal_id"),
+  // Status: draft → ready → archived. Distinct from card-level state.
+  // 'ready' means the deck as a whole is past first review.
+  status: text("status").notNull().default("draft"),
+  // Free-form notes, brief, instructions to the assembler.
+  notes: text("notes"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const deckCards = pgTable("deck_cards", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  deckId: varchar("deck_id").notNull(),
+  // Card type — drives the editor UI and the assembler's render path.
+  // Universal vocabulary across every template: cover, narrative, image,
+  // image_grid, map, kpi_block, data_table, model_link, risk_register,
+  // next_steps, signature_block. New types are additive — render fallback
+  // to narrative if a type isn't recognised.
+  type: text("type").notNull(),
+  // Display order within the deck.
+  sortOrder: integer("sort_order").notNull().default(0),
+  // 'draft' = auto-populated or new, user hasn't approved.
+  // 'locked' = approved, assembler uses this content as-is.
+  state: text("state").notNull().default("draft"),
+  // Card title (e.g. "Executive Summary"). Independent of type.
+  title: text("title"),
+  // Content blob — shape depends on type. e.g.
+  //   narrative: { markdown: string }
+  //   image:     { imageStudioId: string, caption?: string }
+  //   data_table:{ headers: string[], rows: string[][] }
+  // The assembler is responsible for understanding each shape.
+  content: jsonb("content"),
+  // Optional foreign references to assets the card depends on.
+  // Useful for re-resolving images / model files at assembly time even
+  // if the content blob has gone stale.
+  assetRefs: jsonb("asset_refs"),
+  lockedAt: timestamp("locked_at"),
+  lockedBy: varchar("locked_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const deckTemplates = pgTable("deck_templates", {
+  key: text("key").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  // Default card set the deck starts with when created from this
+  // template. Shape: [{ type, title, sortOrder, content? }, ...]
+  defaultCards: jsonb("default_cards").notNull(),
+  // PDF design scope passed to generate_claude_designed_pdf at assembly
+  // time. Maps to the existing house-style preference scopes:
+  // 'why_buy' | 'placemaking' | 'pitch' | 'general'.
+  pdfScope: text("pdf_scope").notNull().default("general"),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type Deck = typeof decks.$inferSelect;
+export type InsertDeck = typeof decks.$inferInsert;
+export type DeckCard = typeof deckCards.$inferSelect;
+export type InsertDeckCard = typeof deckCards.$inferInsert;
+export type DeckTemplate = typeof deckTemplates.$inferSelect;
+export type InsertDeckTemplate = typeof deckTemplates.$inferInsert;
