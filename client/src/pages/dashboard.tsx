@@ -1064,6 +1064,7 @@ export default function Dashboard() {
                     <CalendarDays className="w-3.5 h-3.5 text-teal-500" />
                     Upcoming Events ({portfolioData.events?.length || 0})
                   </h3>
+                  <p className="text-[10px] text-muted-foreground -mt-1">Portfolio meetings, viewings and calls from the BGP account team's diaries.</p>
                   {portfolioData.events?.length > 0 ? (
                     <ScrollArea className="flex-1">
                       <div className="space-y-0.5 pr-2">
@@ -1190,6 +1191,7 @@ export default function Dashboard() {
                       </Link>
                     </div>
                   </div>
+                  <p className="text-[10px] text-muted-foreground -mt-2">Every unit across the portfolio — tenant, occupied/vacant, rent and lease expiry.</p>
                   <ScrollArea className="flex-1">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-2">
                       {Array.from(leasingByProperty.entries()).map(([propId, { name, units: propUnits }]) => {
@@ -1302,6 +1304,7 @@ export default function Dashboard() {
                     <BarChart3 className="w-3.5 h-3.5 text-teal-500" />
                     Properties & Deals ({portfolioData.deals?.length || 0} deal{(portfolioData.deals?.length || 0) !== 1 ? "s" : ""} across {dealsByProperty.size} propert{dealsByProperty.size !== 1 ? "ies" : "y"})
                   </h3>
+                  <p className="text-[10px] text-muted-foreground -mt-1">Each property with its live deals — status and type at a glance.</p>
                   <ScrollArea className="flex-1">
                     <div className="pr-2">
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -1442,6 +1445,7 @@ export default function Dashboard() {
                       Lease Expiry Timeline
                       <Badge variant="secondary" className="text-[10px]">{unitsWithExpiry.length} leases across {propertyNames.size} properties</Badge>
                     </h3>
+                    <p className="text-[10px] text-muted-foreground -mt-1 mb-1">When leases expire over time — the income-at-risk view by month.</p>
                     <div className="flex-1 min-h-0">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
@@ -1526,6 +1530,7 @@ export default function Dashboard() {
                       <TrendingUp className="w-3.5 h-3.5 text-teal-500" />
                       Vacancy Pipeline
                     </h3>
+                    <p className="text-[10px] text-muted-foreground -mt-1">Vacant units per property vs the active deals working to fill them.</p>
                     <ScrollArea className="flex-1">
                       <div className="space-y-2 pr-2">
                         {propStats.filter(p => p.vacantUnits > 0 || p.activeDeals > 0).map(({ propId, propName, vacantUnits, totalUnits, activeDeals }) => {
