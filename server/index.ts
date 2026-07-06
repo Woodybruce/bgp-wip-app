@@ -3122,12 +3122,14 @@ app.use("/api/branding/assets", express.static(
     "/api/image-studio/search", "/api/image-studio/", "/api/ai-briefing",
     "/api/notifications", "/api/daily-digest", "/api/activity-feed",
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
-    "/api/favorite-instructions", "/api/chatbgp/chat", "/api/hr/photo/",
+    "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",
   ];
   // The only writes a client may perform. (heartbeat/push/config are
-  // harmless presence + client-preference pings every user sends.)
+  // harmless presence + client-preference pings every user sends;
+  // /api/chatbgp/ covers chat + chat-with-files — tools are stripped for
+  // clients inside those handlers via clientChatGuard.)
   const CLIENT_ALLOWED_WRITES = [
-    "/api/auth/logout", "/api/chatbgp/chat", "/api/heartbeat",
+    "/api/auth/logout", "/api/chatbgp/", "/api/heartbeat",
     "/api/push/", "/api/config/", "/api/favorite-instructions",
   ];
   // Sub-routes to block even though a parent prefix is allowed (BGP intel /
