@@ -11,6 +11,7 @@ import Consultancy from "./pages/Consultancy";
 import Team from "./pages/Team";
 import News from "./pages/News";
 import ArticlePage from "./pages/Article";
+import CaseStudyPage from "./pages/CaseStudyPage";
 
 export default function App() {
   return (
@@ -28,6 +29,7 @@ export default function App() {
           <Route path="/team" component={Team} />
           <Route path="/news" component={News} />
           <Route path="/news/:slug" component={ArticlePage} />
+          <Route path="/case-studies/:slug" component={CaseStudyPage} />
           <Route>
             <div className="mx-auto max-w-6xl px-4 py-32 text-center">
               <p className="label-caps text-bgp-burgundy">Page not found</p>

@@ -138,9 +138,12 @@ export interface CaseStudy {
   service: string;
   blurb: string;
   image?: string;
+  facts: Array<[string, string]>;
+  body: string[];
 }
 
-// From the projects list on the current site.
+// From the projects list on the current site; bodies marked [Sample] need
+// fuller copy from the relevant team.
 export const CASE_STUDIES: CaseStudy[] = [
   {
     slug: "20-hanover-square",
@@ -149,6 +152,17 @@ export const CASE_STUDIES: CaseStudy[] = [
     image: "/images/restaurant.jpg",
     blurb:
       "A 10,000 sq ft Mayfair restaurant opportunity for Great Portland Estates — one of the West End's landmark restaurant lettings.",
+    facts: [
+      ["Service", "Leasing"],
+      ["Client", "Great Portland Estates"],
+      ["Size", "10,000 sq ft"],
+      ["Sector", "Restaurant"],
+      ["Location", "Mayfair"],
+    ],
+    body: [
+      "A 10,000 sq ft restaurant opportunity at 20 Hanover Square, acting for Great Portland Estates — one of the West End's landmark restaurant lettings.",
+      "[Sample] Full case study copy to follow from the leasing team.",
+    ],
   },
   {
     slug: "19-golden-square",
@@ -157,6 +171,17 @@ export const CASE_STUDIES: CaseStudy[] = [
     image: "/images/city-towers.jpg",
     blurb:
       "Acquired for Vectis Property Group for £10.5m, with redevelopment potential at the heart of Soho.",
+    facts: [
+      ["Service", "Investment"],
+      ["Client", "Vectis Property Group"],
+      ["Status", "Acquired"],
+      ["Price", "£10,500,000"],
+      ["Location", "Soho"],
+    ],
+    body: [
+      "Acquired on behalf of Vectis Property Group for £10.5m, 19 Golden Square offers redevelopment potential at the heart of Soho.",
+      "[Sample] Full case study copy to follow from the investment team.",
+    ],
   },
   {
     slug: "213-214-upper-street",
@@ -165,6 +190,18 @@ export const CASE_STUDIES: CaseStudy[] = [
     image: "/images/shop-boutique.jpg",
     blurb:
       "Sold on behalf of a private client for £5.35m, reflecting a 3.62% cap rate on Islington's prime retail pitch.",
+    facts: [
+      ["Service", "Investment"],
+      ["Strategy", "Value add"],
+      ["Status", "Sold (March 2024)"],
+      ["Sector", "Retail"],
+      ["Price", "£5,350,000 / cap rate 3.62%"],
+      ["Location", "Islington"],
+    ],
+    body: [
+      "Sold on behalf of a private client for £5,350,000, reflecting a 3.62% cap rate on Islington's prime retail pitch.",
+      "[Sample] Full case study copy to follow from the investment team.",
+    ],
   },
   {
     slug: "heddon-street",
@@ -173,8 +210,89 @@ export const CASE_STUDIES: CaseStudy[] = [
     image: "/images/bar.jpg",
     blurb:
       "Long-term advice to The Crown Estate on one of the West End's best-loved restaurant and bar destinations, off Regent Street.",
+    facts: [
+      ["Service", "Consultancy"],
+      ["Client", "The Crown Estate"],
+      ["Sector", "Restaurant & bar"],
+      ["Location", "West End"],
+    ],
+    body: [
+      "Long-term advice to The Crown Estate on Heddon Street — one of the West End's best-loved restaurant and bar destinations, just off Regent Street.",
+      "[Sample] Full case study copy to follow from the consultancy team.",
+    ],
+  },
+  {
+    slug: "atis",
+    title: "ATIS",
+    service: "Brand Representation",
+    image: "/images/cafe.jpg",
+    blurb:
+      "A new healthy grab & go lifestyle restaurant offering seriously tasty bowls and salads. We acquired their first site on City Road in the Atlas Building.",
+    facts: [
+      ["Service", "Brand Representation"],
+      ["Client", "ATIS"],
+      ["Sector", "F&B — healthy grab & go"],
+      ["First site", "City Road, Atlas Building"],
+    ],
+    body: [
+      "A new healthy grab & go lifestyle restaurant offering seriously tasty bowls and salads. We acquired their first site on City Road in the Atlas Building, also serving cold press juices, artisanal coffees and kombucha on tap.",
+    ],
+  },
+  {
+    slug: "fred-perry",
+    title: "Fred Perry",
+    service: "Brand Representation",
+    image: "/images/shop-menswear.jpg",
+    blurb:
+      "One of the UK's most iconic brands, steeped in a rich history of music, sport and culture.",
+    facts: [
+      ["Service", "Brand Representation"],
+      ["Client", "Fred Perry"],
+      ["Sector", "Fashion retail"],
+      ["Coverage", "UK & international"],
+    ],
+    body: [
+      "One of the UK's most iconic brands, steeped in a rich history of music, sport and culture. With stores worldwide and a cult following, Fred Perry continues to increase its presence in key locations.",
+    ],
+  },
+  {
+    slug: "barrys-bootcamp",
+    title: "Barry's Bootcamp",
+    service: "Brand Representation",
+    image: "/images/gym.jpg",
+    blurb:
+      "Described as the 'hardest workout in the world' — acquisition strategy throughout London.",
+    facts: [
+      ["Service", "Brand Representation"],
+      ["Client", "Barry's Bootcamp"],
+      ["Sector", "Fitness & wellness"],
+      ["Coverage", "London & UK"],
+    ],
+    body: [
+      "Described as the 'hardest workout in the world', BGP have been working with Barry's Bootcamp for several years to help with their acquisition strategy throughout London.",
+    ],
+  },
+  {
+    slug: "yolk",
+    title: "YOLK",
+    service: "Brand Representation",
+    image: "/images/food-hall.jpg",
+    blurb:
+      "Fine fast food, freshly prepared — from a 2014 pop-up to ten permanent locations across London.",
+    facts: [
+      ["Service", "Brand Representation"],
+      ["Client", "YOLK"],
+      ["Sector", "F&B — fine fast food"],
+      ["Locations", "10+ across London"],
+    ],
+    body: [
+      "Fine fast food, freshly prepared. From a 2014 pop-up to ten permanent locations across London — most recently Holborn, launched under the brand's refreshed 'Good Bites Only' identity.",
+      "The brand team focuses on visible, high footfall areas. For expansion opportunities, contact Jamie Orme or Evie North.",
+    ],
   },
 ];
+
+export const BRAND_REP_CASE_STUDIES = CASE_STUDIES.filter((c) => c.service === "Brand Representation");
 
 // Real transactions from the current site's investment track record.
 export interface InvestmentDeal {
@@ -199,71 +317,52 @@ export const INVESTMENT_DEALS: InvestmentDeal[] = [
   { image: "/images/grocery-aisle.jpg", name: "Tesco, Fulham Reach", client: "St George PLC", price: "£2,325,000", capRate: "4.60%", sold: true, wide: false },
 ];
 
-// Real client rosters from the projects page.
-export const BRAND_REP_CLIENTS = [
-  "Fred Perry",
-  "Barry's Bootcamp",
-  "YOLK",
-  "ATIS",
-  "Ted's Grooming Room",
-  "Borough Kitchen",
-  "The Black Penny",
-  "Little Houses Group",
-  "Related (Hudson Yards)",
+// Real client rosters from the projects page. Logos resolve via the Clearbit
+// logo API (same source as the dashboard); unresolved domains fall back to the
+// client name in a circle.
+export interface Client {
+  name: string;
+  domain?: string;
+}
+
+export const BRAND_REP_CLIENTS: Client[] = [
+  { name: "Fred Perry", domain: "fredperry.com" },
+  { name: "Barry's Bootcamp", domain: "barrys.com" },
+  { name: "YOLK", domain: "yolklondon.com" },
+  { name: "ATIS", domain: "atisfood.com" },
+  { name: "Ted's Grooming Room", domain: "tedsgroomingroom.com" },
+  { name: "Borough Kitchen", domain: "boroughkitchen.com" },
+  { name: "The Black Penny", domain: "theblackpenny.com" },
+  { name: "Little Houses Group", domain: "littlehousesgroup.com" },
+  { name: "Related", domain: "related.com" },
 ];
 
-export const LEASE_ADVISORY_CLIENTS = [
-  "Canary Wharf Group",
-  "Shaftesbury",
-  "Landsec",
-  "The Portman Estate",
-  "The Crown Estate",
-  "Grosvenor",
-  "Columbia Threadneedle",
-  "Bloomberg",
-  "Schroders",
-  "Brookfield",
-  "Qatari Diar",
-  "Legal & General",
+export const LEASE_ADVISORY_CLIENTS: Client[] = [
+  { name: "Canary Wharf Group", domain: "canarywharf.com" },
+  { name: "Shaftesbury", domain: "shaftesburycapital.com" },
+  { name: "Landsec", domain: "landsec.com" },
+  { name: "The Portman Estate", domain: "portmanestate.co.uk" },
+  { name: "The Crown Estate", domain: "thecrownestate.co.uk" },
+  { name: "Grosvenor", domain: "grosvenor.com" },
+  { name: "Columbia Threadneedle", domain: "columbiathreadneedle.com" },
+  { name: "Bloomberg", domain: "bloomberg.com" },
+  { name: "Schroders", domain: "schroders.com" },
+  { name: "Brookfield", domain: "brookfield.com" },
+  { name: "Qatari Diar", domain: "qataridiar.com" },
+  { name: "Legal & General", domain: "legalandgeneral.com" },
 ];
 
-export const CONSULTANCY_CLIENTS = [
-  "Landsec",
-  "The Crown Estate",
-  "Berkeley Group",
-  "Nuveen",
-  "Hermes",
-  "Almacantar",
-  "Consolidated Land",
-  "St George",
+export const CONSULTANCY_CLIENTS: Client[] = [
+  { name: "Landsec", domain: "landsec.com" },
+  { name: "The Crown Estate", domain: "thecrownestate.co.uk" },
+  { name: "Berkeley Group", domain: "berkeleygroup.co.uk" },
+  { name: "Nuveen", domain: "nuveen.com" },
+  { name: "Hermes", domain: "hermes-investment.com" },
+  { name: "Almacantar", domain: "almacantar.com" },
+  { name: "Consolidated Developments", domain: "consolidateddevelopments.com" },
+  { name: "St George", domain: "stgeorgeplc.co.uk" },
 ];
 
-export const BRAND_REP_CASE_STUDIES = [
-  {
-    name: "ATIS",
-    image: "/images/cafe.jpg",
-    blurb:
-      "A new healthy grab & go lifestyle restaurant offering seriously tasty bowls and salads. We acquired their first site on City Road in the Atlas Building, also serving cold press juices, artisanal coffees and kombucha on tap.",
-  },
-  {
-    name: "Fred Perry",
-    image: "/images/shop-menswear.jpg",
-    blurb:
-      "One of the UK's most iconic brands, steeped in a rich history of music, sport and culture. With stores worldwide and a cult following, Fred Perry continues to increase its presence in key locations.",
-  },
-  {
-    name: "Barry's Bootcamp",
-    image: "/images/gym.jpg",
-    blurb:
-      "Described as the 'hardest workout in the world', BGP have been working with Barry's Bootcamp for several years to help with their acquisition strategy throughout London.",
-  },
-  {
-    name: "YOLK",
-    image: "/images/food-hall.jpg",
-    blurb:
-      "Fine fast food, freshly prepared. From a 2014 pop-up to ten permanent locations across London — most recently Holborn, launched under the brand's refreshed 'Good Bites Only' identity.",
-  },
-];
 
 export const LEASE_ADVISORY_SERVICES = [
   {

@@ -1,3 +1,4 @@
+import { Link } from "wouter";
 import KeyContacts from "../components/KeyContacts";
 import ClientRow from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
@@ -26,7 +27,11 @@ export default function BrandRepresentation() {
                 <Placeholder className="aspect-[4/3] w-full [direction:ltr]" src={cs.image} alt={cs.name} />
                 <div className="[direction:ltr]">
                   <p className="text-sm text-bgp-ink/70 leading-relaxed max-w-sm">{cs.blurb}</p>
-                  <p className="mt-4"><span className="rule-link inline-block cursor-pointer">Read more</span></p>
+                  <p className="mt-4">
+                    <Link href={`/case-studies/${cs.slug}`} className="rule-link inline-block">
+                      Read more
+                    </Link>
+                  </p>
                 </div>
               </div>
             </div>
