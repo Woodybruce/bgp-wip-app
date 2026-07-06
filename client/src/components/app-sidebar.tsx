@@ -2,6 +2,7 @@ import { useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useState, useRef, useEffect } from "react";
 import bgpLogoWhite from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
+import landsecLogo from "@assets/landsec-logo.png";
 import { useTheme, COLOR_SCHEMES } from "@/components/theme-provider";
 import {
   LayoutDashboard,
@@ -325,13 +326,15 @@ export function AppSidebar() {
   const coreWithApprovals = approvalCount > 0
     ? [...coreNavFiltered, { title: "Approvals", url: "/expenses/approvals", icon: ClipboardCheck, badge: String(approvalCount) }]
     : coreNavFiltered;
-  const coreNav = isLandsec
-    ? [...coreWithApprovals, { title: "Reporting", url: "/reporting", icon: TrendingUp }]
+  // Client logins (e.g. Landsec) get a trimmed nav: no People & HR, My Card,
+  // Reporting or WIP — those are BGP-internal. Staff nav is unchanged.
+  const isClientUser = user?.role === "Client";
+  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/reporting", "/wip-report"];
+  const coreNav = isClientUser
+    ? coreWithApprovals.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
     : coreWithApprovals;
-  // Drop Reporting from Unfinished when it's already promoted into Core for
-  // Landsec, so it doesn't appear twice in the sidebar.
-  const unfinishedNavCleaned = isLandsec
-    ? unfinishedNav.filter(i => i.url !== "/reporting")
+  const unfinishedNavCleaned = isClientUser
+    ? unfinishedNav.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
     : unfinishedNav;
   const adminNav = adminNavBase;
 
@@ -355,12 +358,7 @@ export function AppSidebar() {
         <Link href="/">
           {isLandsec ? (
             <div className="cursor-pointer flex flex-col items-center justify-center h-16 gap-1">
-              <span
-                className="text-lg font-bold tracking-tight text-sidebar-foreground"
-                style={{ color: brand.accentColor }}
-              >
-                {brand.headerText}
-              </span>
+              <img src={landsecLogo} alt="Landsec" className="h-11 w-auto object-contain dark:invert" />
               <span className="text-[10px] text-sidebar-foreground/50">Powered by BGP</span>
             </div>
           ) : (
@@ -379,12 +377,16 @@ export function AppSidebar() {
         <SidebarSeparator />
         <NavSection
           label="AI Tools"
-          items={aiNav.map(i =>
-            // The full /image-studio page is admin-only (it calls admin
-            // endpoints). Non-admins (e.g. CGI partners like Luke) get the
-            // lightweight images page that works on auth alone.
-            i.url === "/image-studio" && !user?.isAdmin ? { ...i, url: "/m/images" } : i
-          )}
+          items={aiNav
+            // Clients don't get the firm-wide Image Studio at all — their
+            // property imagery shows on the portfolio boards. (Landsec audit.)
+            .filter(i => !(isClientUser && i.url === "/image-studio"))
+            .map(i =>
+              // The full /image-studio page is admin-only (it calls admin
+              // endpoints). Non-admins (e.g. CGI partners like Luke) get the
+              // lightweight images page that works on auth alone.
+              i.url === "/image-studio" && !user?.isAdmin ? { ...i, url: "/m/images" } : i
+            )}
           storageKey="ai"
         />
         <SidebarSeparator />
@@ -440,6 +442,16 @@ export function AppSidebar() {
           </DropdownMenu>
         </div>
 
+        {isClientUser ? (
+          // Client logins are pinned to their own team — no switching into
+          // BGP's internal team views. (Landsec audit.)
+          <div className="flex items-center gap-2 w-full px-2 py-1.5 text-xs font-medium" data-testid="client-team-label">
+            <div className="w-5 h-5 rounded bg-primary/20 flex items-center justify-center shrink-0">
+              <Users className="w-3 h-3 text-primary" />
+            </div>
+            <span className="truncate group-data-[collapsible=icon]:hidden">{userTeam || activeTeam}</span>
+          </div>
+        ) : (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -481,6 +493,7 @@ export function AppSidebar() {
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        )}
 
         <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
           <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
@@ -556,9 +569,13 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
   const { isLandsec } = useBrand();
   const { data: user } = useQuery<any>({ queryKey: ["/api/auth/me"] });
 
-  // Hide Reporting in mobile overlay for non-Landsec tenants (parity with desktop).
+  // Parity with desktop: Reporting hidden everywhere now, and client logins
+  // also lose the BGP-internal items (People & HR, My Card, WIP).
   const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
-  const items = isLandsec ? filteredByAdmin : filteredByAdmin.filter(i => i.url !== "/reporting");
+  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report"];
+  const items = user?.role === "Client"
+    ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
+    : filteredByAdmin.filter(i => i.url !== "/reporting" || isLandsec);
 
   const isActive = (url: string) => {
     if (url === "/") return location === "/";

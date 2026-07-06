@@ -1793,6 +1793,28 @@ export function invalidateCrmContextCache() {
   contextCache.delete("crmContext");
 }
 
+
+// ── Client-login guard ────────────────────────────────────────────────────
+// External client users (e.g. Landsec) must not reach ChatBGP's CRM/DB
+// tools — sql_query alone would hand them the firm's fee book. For client
+// requests we strip ALL tools and pin a hard constraint block into the
+// prompt. (Landsec audit.)
+const CLIENT_CHAT_CONSTRAINT = `\n\n## EXTERNAL CLIENT SESSION — HARD RULES\nYou are speaking with an EXTERNAL CLIENT of BGP (not BGP staff). You have NO tools in this session. Answer only from the conversation itself and general knowledge. NEVER discuss: BGP fees, commissions, WIP or billing; other BGP clients or their deals/properties; BGP staff personal information; any internal BGP operations. If asked for portfolio data beyond what the user provides, direct them to their portfolio dashboard or their BGP contact. Be warm and helpful within these limits.\n`;
+
+export async function clientChatGuard(req: any): Promise<{ isClient: boolean; constraint: string }> {
+  try {
+    const { isClientRequestUser } = await import("./company-scope");
+    if (await isClientRequestUser(req)) {
+      return { isClient: true, constraint: CLIENT_CHAT_CONSTRAINT };
+    }
+    return { isClient: false, constraint: "" };
+  } catch {
+    // Fail CLOSED: if we can't confirm the user is staff, treat as a client
+    // and strip tools rather than leaving the full toolset attached.
+    return { isClient: true, constraint: CLIENT_CHAT_CONSTRAINT };
+  }
+}
+
 const SYSTEM_PROMPT_FALLBACK = "You are ChatBGP, an AI assistant for Bruce Gillingham Pollard (BGP). You are powered by Claude Fable. IMPORTANT: If deep_investigate returns report.property.ambiguous === true, present the options as a numbered list and ask the user to pick the correct property. Do NOT guess or proceed with unverified property data.";
 
 export async function getAvailableTools(): Promise<{
@@ -12312,7 +12334,7 @@ export function setupChatBGPRoutes(app: Express) {
       }
 
       let tools: any[] = [];
-      try { ({ tools } = await getAvailableTools()); } catch (e: any) {
+      try { ({ tools } = await getAvailableTools()); if ((await clientChatGuard(req)).isClient) tools = []; } catch (e: any) {
         console.error("[ChatBGP file-chat] getAvailableTools failed:", e?.message);
       }
 
@@ -13307,7 +13329,9 @@ export function setupChatBGPRoutes(app: Express) {
 
     let conversationMessages: any[] = [];
     try {
-      const { tools } = await getAvailableTools();
+      let { tools } = await getAvailableTools();
+      const chatGuard = await clientChatGuard(req);
+      if (chatGuard.isClient) tools = [];
       const userId = req.session.userId!;
       // Lean mode: the firm-wide context builders (memory, learnings, CRM
       // summary, knowledge bank, and a live email/calendar Graph fetch) used to
@@ -13323,6 +13347,7 @@ export function setupChatBGPRoutes(app: Express) {
           currentUserContext = `\n\n## Current User\nYou are speaking with **${currentUser.name}**${currentUser.department ? " (" + currentUser.department + " team)" : ""}${currentUser.role ? " — " + currentUser.role : ""}. Personalise your responses accordingly — use their name occasionally, and prioritise information relevant to their team.\n`;
         }
       } catch {}
+      if (chatGuard.isClient) currentUserContext += chatGuard.constraint;
 
       if (verifiedThreadId) {
         try {
@@ -13350,7 +13375,8 @@ export function setupChatBGPRoutes(app: Express) {
               if (dealRows.rows.length > 0) {
                 threadContext += `\n**Active deals on this property:**\n`;
                 for (const d of dealRows.rows) {
-                  threadContext += `- ${d.name} | ${d.deal_type || ""} | ${d.status} | Fee: ${d.fee ? "£" + Number(d.fee).toLocaleString() : "TBC"} | ${d.team || ""}\n`;
+                  const feeText = chatGuard.isClient ? "" : ` | Fee: ${d.fee ? "£" + Number(d.fee).toLocaleString() : "TBC"}`;
+                  threadContext += `- ${d.name} | ${d.deal_type || ""} | ${d.status}${feeText} | ${d.team || ""}\n`;
                 }
               }
               if (unitRows.rows.length > 0) {
@@ -13382,7 +13408,7 @@ export function setupChatBGPRoutes(app: Express) {
               if (deal.property_name) threadContext += `Property: ${deal.property_name}\n`;
               if (deal.tenant_name) threadContext += `Tenant: ${deal.tenant_name}\n`;
               if (deal.landlord_name) threadContext += `Landlord: ${deal.landlord_name}\n`;
-              if (deal.fee) threadContext += `Fee: £${Number(deal.fee).toLocaleString()}\n`;
+              if (deal.fee && !chatGuard.isClient) threadContext += `Fee: £${Number(deal.fee).toLocaleString()}\n`;
               if (deal.team) threadContext += `Team: ${deal.team}\n`;
               if (deal.internal_agent) threadContext += `Agent: ${Array.isArray(deal.internal_agent) ? deal.internal_agent.join(", ") : deal.internal_agent}\n`;
               threadContext += `All questions in this thread should be assumed to relate to this deal unless the user specifies otherwise.\n`;
@@ -13904,7 +13930,8 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
       const systemContent = baseSystemPrompt + dynamicContext;
 
       // Load all the tools the main ChatBGP has
-      const { tools } = await getAvailableTools();
+      let { tools } = await getAvailableTools();
+      if ((await clientChatGuard(req)).isClient) tools = [];
       let msToken: string | null = null;
       try { msToken = await getValidMsToken(req); } catch {}
 
@@ -14198,7 +14225,8 @@ ${safePptContext ? `**Current slide / selection (read live from the open PowerPo
       const dynamicContext = pptSupplement;
       const systemContent = baseSystemPrompt + dynamicContext;
 
-      const { tools } = await getAvailableTools();
+      let { tools } = await getAvailableTools();
+      if ((await clientChatGuard(req)).isClient) tools = [];
       let msToken: string | null = null;
       try { msToken = await getValidMsToken(req); } catch {}
 

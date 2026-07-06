@@ -3104,6 +3104,61 @@ app.use("/api/branding/assets", express.static(
 
 (async () => {
   setupAuth(app);
+
+  // ── Client default-deny backstop ──────────────────────────────────────
+  // Client logins (role='Client', e.g. Landsec) are external — they must
+  // only reach an explicit set of client-safe API surfaces. Rather than
+  // rely on every internal router remembering to guard itself (the opt-in
+  // model that leaked BGP mail, chat, HR, WIP…), we deny clients ALL of
+  // /api by default and allow only the vetted prefixes below. Runs after
+  // setupAuth so req.session.userId is populated for token logins too.
+  // GET/HEAD surfaces a client may read.
+  const CLIENT_ALLOWED_API = [
+    "/api/client/", "/api/crm/", "/api/brands/hub", "/api/client-teams/",
+    "/api/portfolio/", "/api/company-portfolio", "/api/leasing-schedule/",
+    "/api/tenancy-schedule/", "/api/properties/", "/api/property/",
+    "/api/property-intelligence", "/api/land-registry", "/api/business-rates",
+    "/api/voa", "/api/map-layers", "/api/os-data", "/api/edozo",
+    "/api/image-studio/search", "/api/image-studio/", "/api/ai-briefing",
+    "/api/notifications", "/api/daily-digest", "/api/activity-feed",
+    "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
+    "/api/favorite-instructions", "/api/chatbgp/chat", "/api/hr/photo/",
+  ];
+  // The only writes a client may perform.
+  const CLIENT_ALLOWED_WRITES = ["/api/auth/logout", "/api/chatbgp/chat"];
+  // Sub-routes to block even though a parent prefix is allowed (BGP intel /
+  // brand pipeline that isn't the client's own profile).
+  const CLIENT_BLOCKED_SUBPATHS = [
+    /^\/api\/brands\/(hunter|turnover)/,
+    /^\/api\/brand\/[^/]+\/(hunter-score|competitors|suggested-units|ai-take|pack|image-diag)/,
+  ];
+  app.use("/api", async (req: any, res, next) => {
+    // NB: inside app.use("/api", …) the mount path is stripped from req.path,
+    // so match on the full originalUrl (minus query string).
+    const p = (req.originalUrl || req.url || "").split("?")[0];
+    if (p.startsWith("/api/auth/")) return next();
+    try {
+      const { isClientRequestUser } = await import("./company-scope");
+      if (!(await isClientRequestUser(req))) return next(); // BGP staff: unaffected
+      const isWrite = !["GET", "HEAD", "OPTIONS"].includes(req.method);
+      if (isWrite) {
+        if (CLIENT_ALLOWED_WRITES.some(w => p === w || p.startsWith(w + "/"))) return next();
+        return res.status(403).json({ error: "Read-only access for client accounts" });
+      }
+      if (CLIENT_BLOCKED_SUBPATHS.some(re => re.test(p))) {
+        return res.status(403).json({ error: "Not available for client accounts" });
+      }
+      const allowed = CLIENT_ALLOWED_API.some(pre =>
+        pre.endsWith("/") ? p.startsWith(pre) : (p === pre || p.startsWith(pre + "/") || p.startsWith(pre + "?"))
+      );
+      // Allow a client to read only their OWN brand profile / images (scope
+      // enforced in the handlers); other /api/brand/* stays blocked.
+      const ownBrand = /^\/api\/brand\/[^/]+\/(profile|refresh-images\/status)$/.test(p);
+      if (allowed || ownBrand) return next();
+      return res.status(403).json({ error: "Not available for client accounts" });
+    } catch { return next(); }
+  });
+
   setupMicrosoftRoutes(app);
   setupWhatsAppRoutes(app);
   setupChatBGPRoutes(app);

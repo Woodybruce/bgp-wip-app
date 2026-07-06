@@ -6,7 +6,7 @@ import { storage } from "./storage";
 import { requireAuth } from "./auth";
 import { db, pool } from "./db";
 import { saveFile, getFile, deleteFile as deleteStoredFile } from "./file-storage";
-import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientRequestUser } from "./company-scope";
 
 const LANDLORD_PACKS_DIR = path.join(process.cwd(), "ChatBGP", "landlord-packs");
 if (!fs.existsSync(LANDLORD_PACKS_DIR)) fs.mkdirSync(LANDLORD_PACKS_DIR, { recursive: true });
@@ -1389,6 +1389,17 @@ export function setupCrmRoutes(app: Express) {
   })();
 
   app.use("/api/crm", requireAuth);
+  // Client logins are read-only across the whole CRM surface — a client
+  // must never create/edit/delete/merge BGP records. (Landsec audit.)
+  app.use("/api/crm", async (req: any, res: any, next: any) => {
+    if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+    try {
+      if (await isClientRequestUser(req)) {
+        return res.status(403).json({ error: "Read-only access for client accounts" });
+      }
+    } catch {}
+    next();
+  });
   app.get("/api/crm/stats", async (_req, res) => {
     try {
       const stats = await storage.getCrmStats();
@@ -1575,6 +1586,10 @@ export function setupCrmRoutes(app: Express) {
             await tx.update(crmProperties).set({ landlordId: keepId }).where(eq(crmProperties.landlordId, deleteId));
             await tx.execute(sql`UPDATE crm_company_deals SET company_id = ${keepId} WHERE company_id = ${deleteId} AND deal_id NOT IN (SELECT deal_id FROM crm_company_deals WHERE company_id = ${keepId})`);
             await tx.delete(crmCompanyDeals).where(eq(crmCompanyDeals.companyId, deleteId));
+            // Re-point imagery so galleries don't dangle on the deleted row. (Landsec audit.)
+            await tx.execute(sql`UPDATE image_studio_images SET company_id = ${keepId} WHERE company_id = ${deleteId}`);
+            await tx.execute(sql`UPDATE crm_company_properties SET company_id = ${keepId} WHERE company_id = ${deleteId} AND property_id NOT IN (SELECT property_id FROM crm_company_properties WHERE company_id = ${keepId})`);
+            await tx.execute(sql`DELETE FROM crm_company_properties WHERE company_id = ${deleteId}`);
             await tx.delete(crmCompanies).where(eq(crmCompanies.id, deleteId));
             count++;
           } else if (entity === "contact") {
@@ -1603,6 +1618,11 @@ export function setupCrmRoutes(app: Express) {
             await tx.delete(crmPropertyClients).where(eq(crmPropertyClients.propertyId, deleteId));
             await tx.execute(sql`UPDATE crm_contact_properties SET property_id = ${keepId} WHERE property_id = ${deleteId} AND contact_id NOT IN (SELECT contact_id FROM crm_contact_properties WHERE property_id = ${keepId})`);
             await tx.delete(crmContactProperties).where(eq(crmContactProperties.propertyId, deleteId));
+            // Re-point imagery + schedules so they survive the merge. (Landsec audit.)
+            await tx.execute(sql`UPDATE image_studio_images SET property_id = ${keepId} WHERE property_id = ${deleteId}`);
+            await tx.execute(sql`UPDATE property_imagery_assets SET property_id = ${keepId} WHERE property_id = ${deleteId}`);
+            await tx.execute(sql`UPDATE crm_company_properties SET property_id = ${keepId} WHERE property_id = ${deleteId} AND company_id NOT IN (SELECT company_id FROM crm_company_properties WHERE property_id = ${keepId})`);
+            await tx.execute(sql`DELETE FROM crm_company_properties WHERE property_id = ${deleteId}`);
             await tx.delete(crmProperties).where(eq(crmProperties.id, deleteId));
             count++;
           }
@@ -1616,6 +1636,7 @@ export function setupCrmRoutes(app: Express) {
 
   app.get("/api/crm/search", async (req, res) => {
     try {
+      if (await isClientRequestUser(req)) return res.json([]);
       const q = req.query.q as string;
       if (!q) return res.json([]);
       const results = await storage.crmSearchAll(q);
@@ -1648,11 +1669,28 @@ export function setupCrmRoutes(app: Express) {
 
   app.get("/api/crm/companies/:id", async (req, res) => {
     try {
-      const company = await storage.getCrmCompany(req.params.id);
+      const company: any = await storage.getCrmCompany(req.params.id);
       if (!company) return res.status(404).json({ error: "Not found" });
       const scopeCompanyId = await resolveCompanyScope(req);
       if (scopeCompanyId && req.params.id !== scopeCompanyId) {
-        return res.status(403).json({ error: "Access denied" });
+        // Clients may also open a brand in the allowed hospitality/food/
+        // café/fitness slice (the CRM directory links to these) — but nothing
+        // else (other clients, landlords, office occupiers). (Landsec audit.)
+        const ct = String(company.companyType || "");
+        const isAllowedBrand = /^Tenant - /.test(ct) &&
+          /(restaurant|dining|f&b|qsr|fast|food|bakery|patisserie|caf|coffee|bar|leisure|cinema|entertainment|fitness|gym|yoga|hotel|hospitality)/i.test(ct);
+        if (!isAllowedBrand) return res.status(403).json({ error: "Access denied" });
+        // Strip BGP-internal + KYC/AML/PEP fields for client viewers.
+        const {
+          kycStatus, kycCheckedAt, kycApprovedBy, kycExpiresAt,
+          amlChecklist, amlRiskLevel, amlPepStatus, amlSourceOfWealth,
+          amlSourceOfWealthNotes, amlEddRequired, amlEddReason, amlNotes,
+          companiesHouseOfficers, companiesHouseData, hunterFlag, trackingReason,
+          letting_hunter_flag, letting_hunter_notes, distress_flag, distress_notes,
+          bgpContactCrm, bgpContactUserIds, aiGeneratedFields, brandAnalysis,
+          ...safe
+        } = company;
+        return res.json(safe);
       }
       res.json(company);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2065,6 +2103,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   // "is Bluewater's unified_schedule flag actually set?".
   app.get("/api/crm/properties/by-name/:name", async (req, res) => {
     try {
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
       const q = String(req.params.name || "").trim();
       if (!q) return res.status(400).json({ error: "name required" });
       const { rows } = await pool.query(
@@ -2246,9 +2285,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.get("/api/crm/company-property-links", async (_req, res) => {
+  app.get("/api/crm/company-property-links", async (req, res) => {
     try {
       const links = await storage.getAllCompanyPropertyLinks();
+      // Clients see only their own company's links, not the firm-wide
+      // relationship map. (Landsec audit.)
+      const cplScope = await resolveCompanyScope(req);
+      if (cplScope) return res.json(links.filter((l: any) => l.companyId === cplScope));
       res.json(links);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -2384,6 +2427,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.get("/api/crm/companies/:id/properties", async (req, res) => {
     try {
+      const cpScope = await resolveCompanyScope(req);
+      if (cpScope && cpScope !== req.params.id) return res.json([]);
       const properties = await storage.getCompanyProperties(req.params.id);
       res.json(properties);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2425,7 +2470,11 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.get("/api/crm/companies/:id/deals", async (req, res) => {
     try {
+      // Clients: only their own company's deals, with BGP fees stripped.
+      const cdScope = await resolveCompanyScope(req);
+      if (cdScope && cdScope !== req.params.id) return res.json([]);
       const deals = await storage.getCompanyDeals(req.params.id);
+      if (cdScope) return res.json(deals.map((d: any) => ({ ...d, fee: null, feeNotes: null })));
       res.json(deals);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -2448,7 +2497,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.get("/api/crm/properties/:id/deals", async (req, res) => {
     try {
+      const pdScope = await resolveCompanyScope(req);
+      if (pdScope && !(await isPropertyInScope(pdScope, req.params.id))) {
+        return res.status(403).json({ error: "Not available for this account" });
+      }
       const deals = await storage.getCrmDeals({ propertyId: req.params.id });
+      // Fees are BGP-internal — strip for client logins.
+      const dealArr: any[] = Array.isArray(deals) ? deals : (deals as any).data || [];
+      if (pdScope) return res.json(dealArr.map((d: any) => ({ ...d, fee: null, feeNotes: null })));
       res.json(deals);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -2480,6 +2536,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   app.get("/api/crm/property-agents", async (req, res) => {
     try {
       const links = await db.select().from(crmPropertyAgents);
+      const paScope = await resolveCompanyScope(req);
+      if (paScope) {
+        const inScope = await pool.query(
+          `SELECT id FROM crm_properties WHERE landlord_id = $1
+           UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`, [paScope]);
+        const ids = new Set(inScope.rows.map((r: any) => r.id || r.property_id));
+        return res.json(links.filter((l: any) => ids.has(l.propertyId)));
+      }
       res.json(links);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -2657,7 +2721,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           d.purchaserId === scopeCompanyId ||
           linkedDealIds.has(d.id);
         const arr = Array.isArray(result) ? result : result.data;
-        res.json(arr.filter(scopeFilter));
+        // BGP's fee is internal — never send it to a client login.
+        res.json(arr.filter(scopeFilter).map((d: any) => ({ ...d, fee: null, feeNotes: null })));
       } else {
         res.json(result);
       }
@@ -2669,8 +2734,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   // PO number input on the deal form for autocomplete — saves the team
   // typing the same PO twice. Returns deduped + alphabetically sorted.
   // MUST also be registered before the /:id route below.
-  app.get("/api/crm/deals/po-numbers", requireAuth, async (_req, res) => {
+  app.get("/api/crm/deals/po-numbers", requireAuth, async (req, res) => {
     try {
+      if (await isClientRequestUser(req)) return res.json({});
       const { rows } = await pool.query<{ po_number: string }>(
         `SELECT DISTINCT TRIM(po_number) AS po_number FROM (
            SELECT po_number FROM crm_deals     WHERE po_number IS NOT NULL AND TRIM(po_number) <> ''
@@ -2690,6 +2756,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   // in order and "wip-badges" would otherwise be captured as an :id param.
   app.get("/api/crm/deals/wip-badges", requireAuth, async (req: any, res) => {
     try {
+      if (await isClientRequestUser(req)) return res.json({});
       const { rows: deals } = await pool.query(`SELECT id, name FROM crm_deals`);
       const { rows: wips } = await pool.query(`
         SELECT ref, project, amt_wip, amt_invoice, deal_status AS stage, month
@@ -2738,6 +2805,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (scopeCompanyId && !(await isDealInScope(scopeCompanyId, req.params.id))) {
         return res.status(403).json({ error: "Access denied" });
       }
+      // Strip BGP's fee/commission from the deal profile for clients. (Landsec audit.)
+      if (scopeCompanyId) return res.json({ ...deal, fee: null, feeNotes: null });
       res.json(deal);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -3668,6 +3737,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.get("/api/crm/fee-allocations", async (req, res) => {
     try {
+      if (await isClientRequestUser(req)) return res.json({});
       const all = await db.select().from(dealFeeAllocations).orderBy(dealFeeAllocations.createdAt);
       const grouped: Record<string, any[]> = {};
       for (const a of all) {
@@ -3680,6 +3750,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.get("/api/crm/deals/:id/fee-allocations", async (req, res) => {
     try {
+      if (await isClientRequestUser(req)) return res.json([]);
       const allocations = await storage.getDealFeeAllocations(req.params.id);
       res.json(allocations);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -4340,8 +4411,55 @@ Return a JSON object with these fields (use null for any field you cannot find):
     }
   );
 
-  app.get("/api/crm/comps", async (req, res) => {
+  // Comps are BGP market intelligence — client logins (e.g. Landsec) get an
+  // empty table for now rather than BGP's comp evidence.
+  async function isClientRequest(req: any): Promise<boolean> {
+    const uid = req.session?.userId || req.tokenUserId;
+    if (!uid) return false;
+    const r = await pool.query("SELECT role FROM users WHERE id = $1", [uid]);
+    return r.rows[0]?.role === "Client";
+  }
+
+  // Brand slice a client (e.g. Landsec) is allowed to browse: hospitality,
+  // food & dining, cafés and fitness only — matched against the
+  // 'Tenant - <Category>' company_type values. Retail/fashion/office and
+  // everything else in BGP's book stays out of client view for now.
+  const CLIENT_BRAND_TYPE_PATTERNS = [
+    "Tenant -%Restaurant%", "Tenant -%Dining%", "Tenant -%F&B%", "Tenant -%QSR%",
+    "Tenant -%Fast Food%", "Tenant -%Fast Casual%", "Tenant -%Food%",
+    "Tenant -%Bakery%", "Tenant -%Patisserie%",
+    "Tenant -%Café%", "Tenant -%Cafe%", "Tenant -%Coffee%",
+    "Tenant -%Bar%", "Tenant -%Hospitality%", "Tenant -%Hotel%",
+    "Tenant -%Leisure%", "Tenant -%Cinema%", "Tenant -%Entertainment%",
+    "Tenant -%Fitness%", "Tenant -%Gym%", "Tenant -%Yoga%",
+  ];
+
+  // Brand directory for client CRM lookup — brand companies in the allowed
+  // categories with their contacts inlined. Available to all logged-in
+  // users; the category whitelist is what makes it client-safe.
+  app.get("/api/client/brand-directory", requireAuth, async (_req, res) => {
     try {
+      const rows = await pool.query(
+        `SELECT c.id, c.name, c.company_type AS "companyType", c.domain,
+                c.instagram_handle AS "instagramHandle",
+                COALESCE(json_agg(json_build_object(
+                  'id', ct.id, 'name', ct.name, 'role', ct.role,
+                  'email', ct.email, 'phone', COALESCE(ct.phone_mobile, ct.phone)
+                ) ORDER BY ct.name) FILTER (WHERE ct.id IS NOT NULL), '[]') AS contacts
+         FROM crm_companies c
+         LEFT JOIN crm_contacts ct ON ct.company_id = c.id
+         WHERE c.company_type ILIKE ANY($1) AND c.merged_into_id IS NULL
+         GROUP BY c.id
+         ORDER BY c.name`,
+        [CLIENT_BRAND_TYPE_PATTERNS]
+      );
+      res.json(rows.rows);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/crm/comps", requireAuth, async (req, res) => {
+    try {
+      if (await isClientRequest(req)) return res.json([]);
       const filters = {
         search: req.query.search as string | undefined,
         groupName: req.query.groupName as string | undefined,
@@ -5706,6 +5824,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
   app.get("/api/wip/agent-summary", requireAuth, async (req, res) => {
     try {
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
       const senior = await isWipSenior(req);
       const fullView = await hasWipFullView(req);
       const userId = req.session?.userId || (req as any).tokenUserId;
@@ -5778,6 +5897,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
   app.get("/api/wip/agent-drilldown/:agentName", requireAuth, async (req, res) => {
     try {
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
       const senior = await isWipSenior(req);
       const agentName = decodeURIComponent(req.params.agentName as string);
 
@@ -5867,6 +5987,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
   app.get("/api/wip", requireAuth, async (req, res) => {
     try {
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
       const senior = await isWipSenior(req);
       const userId = req.session?.userId || (req as any).tokenUserId;
       const currentUser = userId ? await storage.getUser(userId) : null;
@@ -6236,8 +6357,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
   // of truth. crm_deals + deal_fee_allocations (the Deals Board + Letting
   // Tracker) are. wip_entries data preserved for historic audit only.
 
-  app.get("/api/investment-comps", requireAuth, async (_req, res) => {
+  app.get("/api/investment-comps", requireAuth, async (req, res) => {
     try {
+      if (await isClientRequest(req)) return res.json([]);
       const result = await pool.query(`SELECT
         id, rca_deal_id AS "rcaDealId", rca_property_id AS "rcaPropertyId",
         status, transaction_type AS "transactionType", subtype, features, market,
@@ -6262,8 +6384,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
-  app.get("/api/investment-comps/counts", requireAuth, async (_req, res) => {
+  app.get("/api/investment-comps/counts", requireAuth, async (req, res) => {
     try {
+      if (await isClientRequest(req)) return res.json({ total: 0, bySource: [] });
       const result = await pool.query(`
         SELECT COALESCE(source, 'unknown') AS source, COUNT(*)::int AS count
         FROM investment_comps
@@ -6784,9 +6907,14 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
   });
 
   // ── Brands Hub aggregated data ───────────────────────────────────────
-  app.get("/api/brands/hub", requireAuth, async (_req, res) => {
+  app.get("/api/brands/hub", requireAuth, async (req, res) => {
     try {
-      const tenantFilter = `company_type ILIKE 'Tenant -%'`;
+      // Client logins only see the hospitality / food / café / fitness
+      // slice — same whitelist as the client brand directory.
+      const clientScoped = await isClientRequest(req);
+      const tenantFilter = clientScoped
+        ? `company_type ILIKE ANY(ARRAY[${CLIENT_BRAND_TYPE_PATTERNS.map(p => `'${p}'`).join(",")}])`
+        : `company_type ILIKE 'Tenant -%'`;
 
       // Category counts
       const catRows = await pool.query(
@@ -6840,7 +6968,11 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         ORDER BY t.company_id, t.period DESC, t.turnover DESC
       `).then(r => r.rows);
 
-      const topTurnover = [...turnoverRows].sort((a: any, b: any) => (b.turnover || 0) - (a.turnover || 0)).slice(0, 20);
+      const clientTypeRe = /^tenant -.*(restaurant|dining|f&b|qsr|fast food|fast casual|food|bakery|patisserie|caf[ée]|coffee|bar|hospitality|hotel|leisure|cinema|entertainment|fitness|gym|yoga)/i;
+      const turnoverScoped = clientScoped
+        ? turnoverRows.filter((r: any) => clientTypeRe.test(r.company_type || ""))
+        : turnoverRows;
+      const topTurnover = [...turnoverScoped].sort((a: any, b: any) => (b.turnover || 0) - (a.turnover || 0)).slice(0, 20);
 
       // Active requirements — note size/use/requirement_locations are text[] arrays,
       // not numeric size_min/size_max columns.
@@ -6870,7 +7002,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         stats,
         categoryCounts: catRows,
         hotBrands: hotRows,
-        superBrands: superRows,
+        // Super brands is a luxury/fashion showcase — outside the client slice.
+        superBrands: clientScoped ? [] : superRows,
         topTurnover,
         activeRequirements: reqRows,
       });
@@ -7596,6 +7729,7 @@ Rules:
   // ────────────────────────────────────────────────────────────
   app.get("/api/wip/export-excel", requireAuth, async (req: any, res: any) => {
     try {
+      if (await isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
       const ExcelJS = await import("exceljs");
       const senior = await isWipSenior(req);
       const userId = req.session?.userId || (req as any).tokenUserId;

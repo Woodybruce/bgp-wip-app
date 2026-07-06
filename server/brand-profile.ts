@@ -154,6 +154,13 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
   try {
     const { companyId } = req.params;
 
+    // Clients may only read their OWN company's profile here. (Landsec audit.)
+    const { resolveCompanyScope } = await import("./company-scope");
+    const bpScope = await resolveCompanyScope(req as any);
+    if (bpScope && bpScope !== companyId) {
+      return res.status(403).json({ error: "Not available for this account" });
+    }
+
     const companyQ = pool.query(
       `SELECT id, name, description, company_type, companies_house_number, companies_house_data,
               domain, domain_url, head_office_address,

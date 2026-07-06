@@ -32,6 +32,14 @@ async function checkPropertyAccess(pool: any, req: Request, propertyId: string):
   if (!user) return { allowed: false, user: null };
   if (user.is_admin) return { allowed: true, user };
 
+  // Client logins are confined to their own company's properties regardless
+  // of the per-property privacy flag. (Landsec audit.)
+  {
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req as any);
+    if (scope) return { allowed: await isPropertyInScope(scope, propertyId), user };
+  }
+
   const privacyCheck = await pool.query(
     "SELECT leasing_privacy_enabled FROM crm_properties WHERE id = $1",
     [propertyId]
@@ -62,6 +70,27 @@ router.get("/api/leasing-schedule/properties", requireAuth, async (req, res) => 
     const pool = await getPool();
     const user = await getUserInfo(pool, req);
     if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+    // Client logins see only their own portfolio here, not every BGP-managed
+    // property. (Landsec audit.)
+    const { resolveCompanyScope } = await import("./company-scope");
+    const lsPropsScope = await resolveCompanyScope(req as any);
+    if (lsPropsScope) {
+      const scoped = await pool.query(`
+        SELECT p.id, p.name, p.address, p.asset_class, p.bgp_engagement, p.leasing_privacy_enabled,
+          c.name as landlord_name, c.id as landlord_id,
+          COUNT(CASE WHEN u.status != 'Archived' THEN 1 END)::int as unit_count,
+          COUNT(CASE WHEN u.status = 'Occupied' THEN 1 END)::int as occupied_count,
+          COUNT(CASE WHEN u.status = 'Vacant' THEN 1 END)::int as vacant_count,
+          COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND u.status != 'Archived' THEN 1 END)::int as expiring_soon
+        FROM crm_properties p
+        JOIN leasing_schedule_units u ON u.property_id = p.id
+        LEFT JOIN crm_companies c ON p.landlord_id = c.id
+        WHERE p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+        GROUP BY p.id, p.name, p.address, p.asset_class, p.bgp_engagement, p.leasing_privacy_enabled, c.name, c.id
+        ORDER BY p.name`, [lsPropsScope]);
+      return res.json(scoped.rows);
+    }
 
     let query = `
       SELECT p.id, p.name, p.address, p.asset_class, p.bgp_engagement,
@@ -141,6 +170,11 @@ router.get("/api/leasing-schedule/property/:propertyId", requireAuth, async (req
 
 router.get("/api/leasing-schedule/company/:companyId", requireAuth, async (req, res) => {
   try {
+    const { resolveCompanyScope: rcs } = await import("./company-scope");
+    const lsScope = await rcs(req as any);
+    if (lsScope && lsScope !== req.params.companyId) {
+      return res.status(403).json({ error: "Not available for this account" });
+    }
     const pool = await getPool();
     const user = await getUserInfo(pool, req);
     if (!user) return res.status(401).json({ error: "Unauthorized" });

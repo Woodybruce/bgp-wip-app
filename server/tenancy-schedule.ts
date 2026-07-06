@@ -28,6 +28,14 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     const pool = await getPool();
     const { propertyId } = req.params;
 
+    // Client logins (e.g. Landsec) may only read schedules for properties in
+    // their own scope — never another landlord's rent roll. (Landsec audit.)
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const tsScope = await resolveCompanyScope(req as any);
+    if (tsScope && !(await isPropertyInScope(tsScope, String(propertyId)))) {
+      return res.status(403).json({ error: "Not available for this account" });
+    }
+
     // Real tenancies — passing rent, leases, reviews. LEFT JOIN
     // crm_companies on a lowercased trimmed tenant_name to resolve
     // a clickable company link for the Tenant / Trading As cells
@@ -853,6 +861,11 @@ const EXPORT_COLUMNS: Array<{ field: string; label: string; band: string; width:
 
 router.get("/api/tenancy-schedule/property/:propertyId/export-excel", requireAuth, async (req, res) => {
   try {
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const expScope = await resolveCompanyScope(req as any);
+    if (expScope && !(await isPropertyInScope(expScope, String(req.params.propertyId)))) {
+      return res.status(403).json({ error: "Not available for this account" });
+    }
     const pool = await getPool();
     const { propertyId } = req.params;
 

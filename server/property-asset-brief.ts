@@ -37,6 +37,14 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
   try {
     const propertyId = req.params.id;
 
+    // Clients only read briefs for their own properties, and never BGP's
+    // fee figures. (Landsec audit.)
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const briefScope = await resolveCompanyScope(req as any);
+    if (briefScope && !(await isPropertyInScope(briefScope, String(propertyId)))) {
+      return res.status(403).json({ error: "Not available for this account" });
+    }
+
     // 1. Property + linked landlord / freeholder (whichever wins) so
     //    we can resolve the client logo + asset lead.
     const propRow = await pool.query<{
@@ -309,7 +317,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       owner,
       asset_lead: assetLead,
       weekly_focus: Array.isArray(p.weekly_focus) ? p.weekly_focus : [],
-      active_deals: activeDeals,
+      active_deals: briefScope ? activeDeals.map((d: any) => ({ ...d, fee_pence: null })) : activeDeals,
       pipeline,
       activity,
       risks,
@@ -329,6 +337,9 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
 // the list is small (3-5 entries typical).
 router.patch("/api/properties/:id/weekly-focus", requireAuth, async (req: Request, res: Response) => {
   try {
+    if (await (await import("./company-scope")).isClientRequestUser(req as any)) {
+      return res.status(403).json({ error: "Read-only access for client accounts" });
+    }
     const focus = Array.isArray(req.body?.focus) ? req.body.focus : null;
     if (!focus) return res.status(400).json({ error: "focus must be an array" });
     const cleaned: FocusItem[] = focus
@@ -406,6 +417,9 @@ function buildActivitySummary(a: any): string {
 // always has a value even when offline.
 router.post("/api/properties/:id/bgp-commentary/regenerate", requireAuth, async (req: Request, res: Response) => {
   try {
+    if (await (await import("./company-scope")).isClientRequestUser(req as any)) {
+      return res.status(403).json({ error: "Read-only access for client accounts" });
+    }
     const propertyId = req.params.id;
     // Re-hit our own asset-brief route so we re-use all the join
     // logic (active deals / activity / risks / performance). Easier
@@ -820,6 +834,9 @@ router.get("/api/properties/:id/orphan-deals", requireAuth, async (req: Request,
 // orphan-deals list rendered on the property page.
 router.post("/api/properties/:id/adopt-deal", requireAuth, async (req: Request, res: Response) => {
   try {
+    if (await (await import("./company-scope")).isClientRequestUser(req as any)) {
+      return res.status(403).json({ error: "Read-only access for client accounts" });
+    }
     const propertyId = req.params.id;
     const { dealId } = req.body as { dealId: string };
     if (!dealId) return res.status(400).json({ error: "dealId required" });

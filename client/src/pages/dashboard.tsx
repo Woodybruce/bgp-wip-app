@@ -797,7 +797,11 @@ export default function Dashboard() {
   const requested = (user?.dashboardWidgets ?? DEFAULT_WIDGETS)
     .map((id: string) => id === "recent-properties" ? "key-instructions" : id);
   const withDefaults = Array.from(new Set([...requested, "my-leads", "news-summary", "kpi-overview"]));
-  const activeWidgets = withDefaults
+  // Client logins (e.g. Landsec) get ONLY the portfolio section — the
+  // standard widget grid is BGP-ops (inbox, WIP, SharePoint, org alerts)
+  // and none of it is client-facing.
+  const isClientUser = user?.role === "Client";
+  const activeWidgets = isClientUser ? [] : withDefaults
     .filter((id: string) => knownIds.includes(id)) // single filter: drop unknown ids
     .sort((a: string, b: string) => orderIndex(a) - orderIndex(b)); // single sort
 
@@ -960,7 +964,7 @@ export default function Dashboard() {
             defaultW: 6, defaultH: 12, minW: 4, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-4 flex-1 overflow-hidden">
+                <CardContent className="p-4 flex-1 overflow-hidden flex flex-col">
                   <div className="flex items-start gap-3 mb-3">
                     <div className="w-12 h-12 rounded-lg bg-teal-50 dark:bg-teal-900/30 border flex items-center justify-center flex-shrink-0">
                       <Landmark className="w-6 h-6 text-teal-600 dark:text-teal-400" />
@@ -1051,7 +1055,7 @@ export default function Dashboard() {
             defaultW: 6, defaultH: 12, minW: 3, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <CalendarDays className="w-3.5 h-3.5 text-teal-500" />
                     Upcoming Events ({portfolioData.events?.length || 0})
@@ -1129,7 +1133,7 @@ export default function Dashboard() {
             defaultW: 12, defaultH: 11, minW: 6, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <Building2 className="w-3.5 h-3.5 text-teal-500" />
                     Linked Properties ({portfolioData.properties.length})
@@ -1166,7 +1170,7 @@ export default function Dashboard() {
             defaultW: 6, defaultH: 10, minW: 4, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-3 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-3 flex-1 overflow-hidden flex flex-col">
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold text-sm flex items-center gap-2">
                       <Building2 className="w-4 h-4" />Leasing Schedule
@@ -1213,7 +1217,7 @@ export default function Dashboard() {
             defaultW: 6, defaultH: 10, minW: 3, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <Clock className="w-3.5 h-3.5 text-teal-500" />
                     Recent Activity
@@ -1249,7 +1253,7 @@ export default function Dashboard() {
             defaultW: 4, defaultH: 14, minW: 3, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <Users className="w-3.5 h-3.5 text-teal-500" />
                     Contacts ({portfolioData.contacts?.length || 0})
@@ -1289,7 +1293,7 @@ export default function Dashboard() {
             defaultW: 8, defaultH: 14, minW: 4, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-3 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-3 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <BarChart3 className="w-3.5 h-3.5 text-teal-500" />
                     Properties & Deals ({portfolioData.deals?.length || 0} deal{(portfolioData.deals?.length || 0) !== 1 ? "s" : ""} across {dealsByProperty.size} propert{dealsByProperty.size !== 1 ? "ies" : "y"})
@@ -1715,8 +1719,22 @@ export default function Dashboard() {
           } : null,
         ].filter(Boolean) as any[];
 
-        const visiblePortfolioItems = portfolioGridItems.filter((item: any) => !hiddenPortfolioBoards.includes(item.id));
-        const hiddenPortfolioItems = portfolioGridItems.filter((item: any) => hiddenPortfolioBoards.includes(item.id));
+        // For client logins hide the BGP-internal cards: comps stay blank for
+        // now, and the deal-analytics quartet is fee/agent-centric (WIP,
+        // invoiced, agent performance) which is BGP's side of the ledger.
+        const clientHiddenBoards = new Set([
+          "portfolio-market-comps",
+          "portfolio-landsec-overview",
+          "portfolio-landsec-agents",
+          "portfolio-landsec-pipeline",
+          "portfolio-landsec-activity",
+        ]);
+        const clientScopedItems = isClientUser
+          ? portfolioGridItems.filter((item: any) => !clientHiddenBoards.has(item.id))
+          : portfolioGridItems;
+
+        const visiblePortfolioItems = clientScopedItems.filter((item: any) => !hiddenPortfolioBoards.includes(item.id));
+        const hiddenPortfolioItems = clientScopedItems.filter((item: any) => hiddenPortfolioBoards.includes(item.id));
 
         return (
           <div data-testid="portfolio-overview">

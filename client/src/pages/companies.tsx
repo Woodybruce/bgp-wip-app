@@ -1120,6 +1120,9 @@ function CompanyDetail({ id }: { id: string }) {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [editOpen, setEditOpen] = useState(false);
+  // Client logins get a read-only view — hide BGP staff editing controls.
+  const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = currentUser?.role === "Client";
   const { data: company, isLoading } = useQuery<CrmCompany>({
     queryKey: ["/api/crm/companies", id],
   });
@@ -1342,6 +1345,7 @@ function CompanyDetail({ id }: { id: string }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {!isClientViewer && (<>
           <Button
             variant="outline"
             size="sm"
@@ -1382,6 +1386,7 @@ function CompanyDetail({ id }: { id: string }) {
             <Trash2 className="w-4 h-4 mr-1" />
             Delete
           </Button>
+          </>)}
         </div>
       </div>
 

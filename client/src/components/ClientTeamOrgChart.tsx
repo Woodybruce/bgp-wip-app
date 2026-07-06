@@ -87,25 +87,26 @@ function styleForColumn(col: ColumnDef) {
   return COLOR_PALETTE[key] || COLOR_PALETTE.slate;
 }
 
-function MemberCard({ member, onClick, onDragStart, isLead, onDragOver, onDrop }: {
+function MemberCard({ member, onClick, onDragStart, isLead, onDragOver, onDrop, readOnly }: {
   member: TeamMember;
   onClick: () => void;
   onDragStart: (e: React.DragEvent) => void;
   isLead: boolean;
   onDragOver?: (e: React.DragEvent) => void;
   onDrop?: () => void;
+  readOnly?: boolean;
 }) {
   const photoUrl = `/api/hr/photo/${member.user_id}`;
   const displayName = member.full_name || member.username || "Unknown";
   return (
     <button
       type="button"
-      draggable
-      onDragStart={onDragStart}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-      onClick={onClick}
-      className={`group relative w-full text-left bg-card border rounded-lg shadow-sm hover:shadow-md hover:border-primary/40 transition-all px-2.5 py-2 ${isLead ? "ring-2 ring-amber-400/70 border-amber-300" : ""}`}
+      draggable={!readOnly}
+      onDragStart={readOnly ? undefined : onDragStart}
+      onDragOver={readOnly ? undefined : onDragOver}
+      onDrop={readOnly ? undefined : onDrop}
+      onClick={readOnly ? undefined : onClick}
+      className={`group relative w-full text-left bg-card border rounded-lg shadow-sm transition-all px-2.5 py-2 ${readOnly ? "cursor-default" : "hover:shadow-md hover:border-primary/40"} ${isLead ? "ring-2 ring-amber-400/70 border-amber-300" : ""}`}
       data-testid={`team-member-card-${member.id}`}
     >
       {isLead && (
@@ -119,7 +120,7 @@ function MemberCard({ member, onClick, onDragStart, isLead, onDragOver, onDrop }
         </div>
       )}
       <div className="flex items-center gap-2">
-        <GripVertical className="w-3 h-3 text-muted-foreground/40 group-hover:text-muted-foreground shrink-0" />
+        {!readOnly && <GripVertical className="w-3 h-3 text-muted-foreground/40 group-hover:text-muted-foreground shrink-0" />}
         <img
           src={photoUrl}
           alt={displayName}
@@ -150,6 +151,11 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   const [showAddCol, setShowAddCol] = useState(false);
   const [addColName, setAddColName] = useState("");
 
+  // Client logins get a read-only "Your BGP team" view — no editing, no
+  // drag/drop, and internal-only columns (e.g. "On the Bench") hidden.
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const readOnly = viewer?.role === "Client";
+
   const { data: members = [], isLoading } = useQuery<TeamMember[]>({
     queryKey: ["/api/client-teams", clientCompanyId],
     queryFn: async () => {
@@ -173,12 +179,15 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   // Columns list always includes Unassigned at the end as a catch-all so
   // a freshly added member or a deleted-column orphan is never invisible.
   const columnList = useMemo<ColumnDef[]>(() => {
-    const base = [...columns].sort((a, b) => a.sort_order - b.sort_order);
-    if (!base.find(c => c.name === "Unassigned")) {
+    let base = [...columns].sort((a, b) => a.sort_order - b.sort_order);
+    // Hide internal-only columns from clients (bench = people not on the
+    // account). Unassigned is a staff catch-all, also hidden from clients.
+    if (readOnly) base = base.filter(c => !/bench|unassigned/i.test(c.name));
+    if (!readOnly && !base.find(c => c.name === "Unassigned")) {
       base.push({ name: "Unassigned", sort_order: 999, color_key: "slate" });
     }
     return base;
-  }, [columns]);
+  }, [columns, readOnly]);
 
   // Bucket members by column name. Anything whose team_group doesn't
   // match a real column falls into Unassigned so the card stays visible.
@@ -188,13 +197,16 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     for (const c of columnList) map[c.name] = [];
     for (const m of members) {
       const key = m.team_group && valid.has(m.team_group) ? m.team_group : "Unassigned";
+      // In read-only (client) view the Unassigned/bench columns are hidden,
+      // so drop orphans rather than pushing into a bucket that doesn't exist.
+      if (!map[key]) { if (readOnly) continue; map[key] = []; }
       map[key].push(m);
     }
     for (const k of Object.keys(map)) {
       map[k].sort((a, b) => (a.sort_order - b.sort_order) || (a.full_name || "").localeCompare(b.full_name || ""));
     }
     return map;
-  }, [members, columnList]);
+  }, [members, columnList, readOnly]);
 
   // Pinned lead wins; otherwise fall back to highest property_count as a
   // hint until the user nominates someone explicitly.
@@ -333,14 +345,16 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
             <span className="text-[11px] text-muted-foreground italic">No lead pinned</span>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAddCol(true)} data-testid="btn-add-column">
-            <Plus className="w-3 h-3 mr-1" />Add column
-          </Button>
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowAdd(true)} data-testid="btn-add-team-member">
-            <Plus className="w-3 h-3 mr-1" />Add to team
-          </Button>
-        </div>
+        {!readOnly && (
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAddCol(true)} data-testid="btn-add-column">
+              <Plus className="w-3 h-3 mr-1" />Add column
+            </Button>
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowAdd(true)} data-testid="btn-add-team-member">
+              <Plus className="w-3 h-3 mr-1" />Add to team
+            </Button>
+          </div>
+        )}
       </div>
 
       {showAddCol && (
@@ -390,9 +404,9 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
               return (
                 <div
                   key={col.name}
-                  onDragOver={(e) => { e.preventDefault(); setDragOverCol(col.name); }}
-                  onDragLeave={() => setDragOverCol(prev => prev === col.name ? null : prev)}
-                  onDrop={() => handleDropOnColumn(col.name)}
+                  onDragOver={readOnly ? undefined : (e) => { e.preventDefault(); setDragOverCol(col.name); }}
+                  onDragLeave={readOnly ? undefined : () => setDragOverCol(prev => prev === col.name ? null : prev)}
+                  onDrop={readOnly ? undefined : () => handleDropOnColumn(col.name)}
                   className={`flex-1 min-w-[220px] rounded-lg border ${style.border} ${isOver ? "ring-2 ring-primary/60 ring-offset-1" : ""} ${style.bg} p-2 flex flex-col gap-2`}
                   data-testid={`team-column-${col.name.replace(/\s+/g, "-").toLowerCase()}`}
                 >
@@ -423,7 +437,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
                     </div>
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] text-muted-foreground/70">{peeps.length}</span>
-                      {!isUnassigned && (
+                      {!isUnassigned && !readOnly && (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <button
@@ -459,7 +473,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
                   </div>
                   {peeps.length === 0 ? (
                     <div className="flex-1 min-h-[60px] flex items-center justify-center text-[11px] text-muted-foreground/50 italic">
-                      drop here
+                      {readOnly ? "" : "drop here"}
                     </div>
                   ) : (
                     peeps.map(m => (
@@ -467,6 +481,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
                         key={m.id}
                         member={m}
                         isLead={!!m.is_lead}
+                        readOnly={readOnly}
                         onClick={() => setSelected(m)}
                         onDragStart={(e) => {
                           draggingId.current = m.id;

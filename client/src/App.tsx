@@ -190,10 +190,30 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Prefixes a client login (role='Client', e.g. Landsec) is allowed to open.
+// Everything else redirects home — nav hiding alone doesn't stop a pasted URL.
+const CLIENT_ALLOWED_ROUTES = [
+  "/", "/properties", "/property-intelligence", "/map", "/brands",
+  "/contacts", "/companies", "/comps", "/chatbgp", "/requirements",
+  "/tasks", "/today", "/leasing-schedule", "/land-registry", "/business-rates",
+  "/m/images", "/cad-measure", "/settings/profile",
+];
+function ClientRouteGuard() {
+  const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
+  const [location, navigate] = useLocation();
+  useEffect(() => {
+    if (user?.role !== "Client") return;
+    const ok = CLIENT_ALLOWED_ROUTES.some(p => p === "/" ? location === "/" : (location === p || location.startsWith(p + "/")));
+    if (!ok) navigate("/");
+  }, [user, location, navigate]);
+  return null;
+}
+
 function Router() {
   return (
     <ErrorBoundary>
     <Suspense fallback={<PageLoader />}>
+    <ClientRouteGuard />
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/instructions" component={Instructions} />
@@ -625,7 +645,7 @@ function AddinRouter() {
 }
 
 function AppContent() {
-  const { setUserTeam, setUserId, setAdditionalTeams } = useTeam();
+  const { setUserTeam, setUserId, setAdditionalTeams, setTeamLocked } = useTeam();
   const [location] = useLocation();
   // Also check window.location directly — wouter's location may not reflect
   // the initial pathname in iframe contexts (Office task panes).
@@ -646,6 +666,7 @@ function AppContent() {
   useEffect(() => {
     if (user?.id) {
       setUserId(user.id);
+      setTeamLocked((user as any)?.role === "Client");
     }
     if (user?.team) {
       setUserTeam(user.team as TeamName);

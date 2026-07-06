@@ -1001,6 +1001,7 @@ const LANDSEC_TABS: { key: PeopleTab; label: string; icon: any }[] = [
 export default function PeoplePage() {
   const [, companyParams] = useRoute("/companies/:id");
   const [, contactParams] = useRoute("/contacts/:id");
+  const { data: user, isLoading: userLoading } = useQuery<User>({ queryKey: ["/api/auth/me"] });
 
   if (companyParams?.id) {
     return (
@@ -1018,7 +1019,177 @@ export default function PeoplePage() {
     );
   }
 
+  // Client logins (e.g. Landsec) get a purpose-built CRM: their own
+  // contacts plus a brand-contact directory limited to the hospitality /
+  // food / café / fitness slice. The staff hub (landlords, agents,
+  // lenders) is BGP-internal.
+  if (userLoading) return <PageLoader />;
+  if (user?.role === "Client") return <ClientCrmHub />;
+
   return <PeopleHub />;
+}
+
+// ── Client CRM hub — brand-contact lookup + own contacts ─────────────────
+const CLIENT_BRAND_CATS: { key: string; label: string; re: RegExp | null }[] = [
+  { key: "all", label: "All", re: null },
+  { key: "food", label: "Food & Dining", re: /(restaurant|dining|f&b|qsr|fast|food|bakery|patisserie)/i },
+  { key: "cafe", label: "Cafés & Coffee", re: /(caf|coffee)/i },
+  { key: "bars", label: "Bars", re: /bar/i },
+  { key: "leisure", label: "Leisure", re: /(leisure|cinema|entertainment|hospitality|hotel)/i },
+  { key: "fitness", label: "Fitness", re: /(fitness|gym|yoga)/i },
+];
+
+interface DirectoryBrand {
+  id: string;
+  name: string;
+  companyType: string | null;
+  domain: string | null;
+  contacts: { id: string; name: string; role: string | null; email: string | null; phone: string | null }[];
+}
+
+function ClientCrmHub() {
+  const [tab, setTab] = useState<"brands" | "contacts">("brands");
+  const [search, setSearch] = useState("");
+  const [cat, setCat] = useState("all");
+
+  const { data: brands = [], isLoading: brandsLoading } = useQuery<DirectoryBrand[]>({
+    queryKey: ["/api/client/brand-directory"],
+  });
+  const { data: myContacts = [] } = useQuery<CrmContact[]>({ queryKey: ["/api/crm/contacts"] });
+
+  const filteredBrands = useMemo(() => {
+    const catRe = CLIENT_BRAND_CATS.find(c => c.key === cat)?.re || null;
+    const q = search.trim().toLowerCase();
+    return brands.filter(b => {
+      if (catRe && !catRe.test(b.companyType || "")) return false;
+      if (!q) return true;
+      if (b.name.toLowerCase().includes(q)) return true;
+      return b.contacts.some(c => c.name?.toLowerCase().includes(q));
+    });
+  }, [brands, cat, search]);
+
+  const typeLabel = (t: string | null) => (t || "").replace(/^Tenant - /, "");
+
+  return (
+    <div className="p-4 md:p-6 space-y-4" data-testid="client-crm-hub">
+      <div>
+        <h1 className="text-2xl font-bold">CRM</h1>
+        <p className="text-sm text-muted-foreground">
+          {brands.length.toLocaleString()} brands · {myContacts.length.toLocaleString()} of your contacts
+        </p>
+      </div>
+
+      <div className="flex gap-1 border-b">
+        {([["brands", "Brand Directory"], ["contacts", "My Contacts"]] as const).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              tab === key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+            data-testid={`client-crm-tab-${key}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "brands" ? (
+        <>
+          <div className="flex items-center gap-3 flex-wrap">
+            <Input
+              placeholder="Search brands or people…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="max-w-xs"
+              data-testid="client-brand-search"
+            />
+            <div className="flex gap-1.5 flex-wrap">
+              {CLIENT_BRAND_CATS.map(c => (
+                <button
+                  key={c.key}
+                  onClick={() => setCat(c.key)}
+                  className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                    cat === c.key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-muted-foreground ml-auto">{filteredBrands.length} brands</span>
+          </div>
+
+          {brandsLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {[1, 2, 3, 4, 5, 6].map(i => <Skeleton key={i} className="h-28" />)}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {filteredBrands.map(b => (
+                <Card key={b.id} className="overflow-hidden" data-testid={`client-brand-${b.id}`}>
+                  <CardContent className="p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <CompanyLogo company={{ id: b.id, name: b.name, domain: b.domain } as CrmCompany} size="sm" />
+                      <div className="min-w-0 flex-1">
+                        <Link href={`/companies/${b.id}`}>
+                          <p className="text-sm font-semibold truncate hover:underline cursor-pointer">{b.name}</p>
+                        </Link>
+                        {b.companyType && <Badge variant="secondary" className="text-[9px]">{typeLabel(b.companyType)}</Badge>}
+                      </div>
+                    </div>
+                    {b.contacts.length > 0 ? (
+                      <div className="space-y-1 pt-1 border-t">
+                        {b.contacts.slice(0, 3).map(c => (
+                          <div key={c.id} className="text-xs flex items-baseline gap-2 min-w-0">
+                            <Link href={`/contacts/${c.id}`}>
+                              <span className="font-medium hover:underline cursor-pointer whitespace-nowrap">{c.name}</span>
+                            </Link>
+                            {c.role && <span className="text-muted-foreground truncate">{c.role}</span>}
+                            {c.email && (
+                              <a href={`mailto:${c.email}`} className="text-blue-600 dark:text-blue-400 hover:underline ml-auto shrink-0">email</a>
+                            )}
+                          </div>
+                        ))}
+                        {b.contacts.length > 3 && (
+                          <p className="text-[10px] text-muted-foreground">+{b.contacts.length - 3} more</p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground pt-1 border-t">No contacts on file — ask your BGP team.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+              {filteredBrands.length === 0 && (
+                <p className="text-sm text-muted-foreground col-span-full py-8 text-center">No brands match.</p>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {myContacts.map((c: any) => (
+            <Card key={c.id} data-testid={`client-contact-${c.id}`}>
+              <CardContent className="p-3">
+                <Link href={`/contacts/${c.id}`}>
+                  <p className="text-sm font-semibold hover:underline cursor-pointer">{c.name}</p>
+                </Link>
+                {c.role && <p className="text-xs text-muted-foreground">{c.role}</p>}
+                <div className="flex gap-3 mt-1 text-xs">
+                  {c.email && <a href={`mailto:${c.email}`} className="text-blue-600 dark:text-blue-400 hover:underline">{c.email}</a>}
+                  {(c.phoneMobile || c.phone) && <span className="text-muted-foreground">{c.phoneMobile || c.phone}</span>}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+          {myContacts.length === 0 && (
+            <p className="text-sm text-muted-foreground col-span-full py-8 text-center">No contacts yet.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function PeopleHub() {

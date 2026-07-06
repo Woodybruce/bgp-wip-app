@@ -1447,6 +1447,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   <Phone className="w-3 h-3" /> Email
                 </a>
               )}
+              {currentUser?.role !== "Client" && (
               <button
                 type="button"
                 onClick={() => runContactDiscovery()}
@@ -1456,6 +1457,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               >
                 <Sparkles className="w-3 h-3" /> {contactsFinding ? "Finding…" : "Refresh contacts"}
               </button>
+              )}
               {c.stock_ticker && (
                 <a
                   href={`https://finance.yahoo.com/quote/${encodeURIComponent(c.stock_ticker)}`}
@@ -1466,6 +1468,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   <TrendingUp className="w-3 h-3" /> {c.stock_ticker}
                 </a>
               )}
+              {currentUser?.role !== "Client" && (<>
               <button
                 type="button"
                 onClick={() => navigate("/deals")}
@@ -1482,11 +1485,12 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               >
                 <Building2 className="w-3 h-3" /> Pitch property
               </button>
+              </>)}
             </div>
 
             {/* Single BGP AI take + Ask ChatBGP question runner — sits above all zones */}
             <div className="mt-2 order-2 space-y-3">
-              <BgpTakeStrip companyId={companyId} tab="brand" />
+              {currentUser?.role !== "Client" && <BgpTakeStrip companyId={companyId} tab="brand" />}
               <AskChatBGPInline brandName={c.name} />
             </div>
 

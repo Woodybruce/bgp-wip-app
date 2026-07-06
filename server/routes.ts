@@ -168,9 +168,12 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       chatbgp.getEmailAndCalendarContext(req).catch(() => ""),
     ]);
 
-    const groupTools = (allTools as any).tools?.filter((t: any) =>
+    // Client logins get NO tools in the group-AI path either — this loop is
+    // separate from the main chat handler's clientChatGuard. (Landsec audit.)
+    const groupIsClient = await (await import("./company-scope")).isClientRequestUser(req).catch(() => true);
+    const groupTools = groupIsClient ? [] : ((allTools as any).tools?.filter((t: any) =>
       GROUP_CHAT_TOOLS.includes(t.function?.name)
-    ) || [];
+    ) || []);
 
     const lastUserMsg = recentMessages.filter(m => m.role === "user").pop()?.content || "";
     const mentionsChatBGP = /chat\s*bgp|@chat\s*bgp|@chat\b/i.test(lastUserMsg);
@@ -933,9 +936,14 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/users", requireAuth, async (_req, res) => {
+  app.get("/api/users", requireAuth, async (req, res) => {
     try {
       const allUsers = await storage.getAllUsers();
+      // Client logins only need id+name (agent chips/colors on their boards) —
+      // not the staff directory with emails/teams. (Landsec audit.)
+      if (await (await import("./company-scope")).isClientRequestUser(req)) {
+        return res.json(allUsers.filter(u => u.isActive !== false).map(u => ({ id: u.id, name: u.name })));
+      }
       res.json(allUsers.map(u => ({ id: u.id, name: u.name, username: u.username, email: u.email, role: u.role, department: u.department, team: u.team, additionalTeams: u.additionalTeams || [], profilePicUrl: u.profilePicUrl || null, isActive: u.isActive !== false })));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch users" });
@@ -1513,6 +1521,39 @@ export async function registerRoutes(
       const q = (req.query.q as string || "").trim();
       if (q.length < 2) {
         return res.json({ results: [] });
+      }
+
+      // Client logins search only their own world: their properties, their
+      // contacts, and the client-safe brand slice — never the firm-wide CRM.
+      const searchScopeId = await resolveCompanyScope(req);
+      if (searchScopeId) {
+        const like = `%${q}%`;
+        const [propRows, contactRows, brandRows] = await Promise.all([
+          pool.query(
+            `SELECT id, name FROM crm_properties
+             WHERE name ILIKE $2 AND (landlord_id = $1 OR id IN
+               (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
+             LIMIT 8`, [searchScopeId, like]),
+          pool.query(
+            `SELECT id, name, role FROM crm_contacts WHERE company_id = $1 AND name ILIKE $2 LIMIT 8`,
+            [searchScopeId, like]),
+          pool.query(
+            `SELECT id, name, company_type FROM crm_companies
+             WHERE name ILIKE $1 AND company_type ILIKE 'Tenant -%'
+               AND (company_type ILIKE '%Restaurant%' OR company_type ILIKE '%Dining%' OR company_type ILIKE '%F&B%'
+                 OR company_type ILIKE '%QSR%' OR company_type ILIKE '%Food%' OR company_type ILIKE '%Caf%'
+                 OR company_type ILIKE '%Coffee%' OR company_type ILIKE '%Bar%' OR company_type ILIKE '%Leisure%'
+                 OR company_type ILIKE '%Cinema%' OR company_type ILIKE '%Entertainment%' OR company_type ILIKE '%Fitness%'
+                 OR company_type ILIKE '%Gym%' OR company_type ILIKE '%Yoga%' OR company_type ILIKE '%Hotel%' OR company_type ILIKE '%Hospitality%')
+             LIMIT 8`, [like]),
+        ]);
+        return res.json({
+          results: [
+            ...propRows.rows.map(r => ({ id: r.id, name: r.name, type: "property" })),
+            ...contactRows.rows.map(r => ({ id: r.id, name: r.name, type: "contact", subtitle: r.role || undefined })),
+            ...brandRows.rows.map(r => ({ id: r.id, name: r.name, type: "company", subtitle: (r.company_type || "").replace(/^Tenant - /, "") })),
+          ],
+        });
       }
 
       const crmResults = await storage.crmSearchAll(q);
@@ -3108,6 +3149,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units", requireAuth, async (req, res) => {
     try {
+      // Firm-wide marketing list with BGP fees/agents — staff only. (Landsec audit.)
+      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.json([]);
       // Master physical attributes live on property_units; the listing's columns
       // are kept as a backwards-compat cache. We COALESCE master over listing so
       // every reader sees the source-of-truth values.
@@ -5879,8 +5922,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.get("/api/activity-feed", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/activity-feed", requireAuth, async (req: Request, res: Response) => {
     try {
+    // External client logins get no org-wide feed — their world is the
+    // client-scoped briefing. (Landsec audit.)
+    if (await (await import("./company-scope")).isClientRequestUser(req)) return res.json([]);
+
       const tableCheck = await pool.query(
         `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'system_activity_log')`
       );
@@ -6244,10 +6291,20 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // (or the 6am cron pre-generates it). ?refresh=1 forces a regenerate —
       // wired to the card's manual refresh button.
       const force = req.query.refresh === "1" || req.query.refresh === "true";
+      // The briefing renders the user's PERSONAL calendar + inbox, so only
+      // use a Microsoft token that genuinely belongs to this user. Without
+      // this guard getValidMsToken's org-wide cache fallback would hand a
+      // client (e.g. a Landsec login with no MS account) another user's
+      // token — and their private diary with it.
       let msToken: string | null = null;
       try {
-        const { getValidMsToken } = await import("./microsoft");
-        msToken = await getValidMsToken(req);
+        const ownsMsIdentity = !!req.session.msTokens?.accessToken || (
+          await pool.query("SELECT 1 FROM msal_token_cache WHERE user_id = $1 LIMIT 1", [userId])
+        ).rows.length > 0;
+        if (ownsMsIdentity) {
+          const { getValidMsToken } = await import("./microsoft");
+          msToken = await getValidMsToken(req);
+        }
       } catch (e: any) { console.log("[ai-briefing] MS token fetch error:", e.message); }
 
       const { getOrCreateTodaysBriefing } = await import("./daily-briefing");
@@ -6259,8 +6316,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
-  app.get("/api/daily-digest", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/daily-digest", requireAuth, async (req: Request, res: Response) => {
     try {
+    // External client logins get no org-wide feed — their world is the
+    // client-scoped briefing. (Landsec audit.)
+    if (await (await import("./company-scope")).isClientRequestUser(req)) return res.json([]);
+
       const alerts: any[] = [];
 
       const stuckDeals = await pool.query(
@@ -6674,8 +6735,17 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   });
 
   // === Landsec Portfolio Analytics ===
-  app.get("/api/portfolio/landsec/analytics", requireAuth, async (_req, res) => {
+  app.get("/api/portfolio/landsec/analytics", requireAuth, async (req, res) => {
     try {
+      // BGP staff or Landsec-scoped users only — this payload contains
+      // Landsec fee totals + BGP per-agent splits, so other client teams
+      // must not read it. (Landsec audit.)
+      const scopeId = await resolveCompanyScope(req);
+      if (scopeId) {
+        const ls = await pool.query(
+          `SELECT 1 FROM crm_companies WHERE id = $1 AND LOWER(name) = 'landsec' LIMIT 1`, [scopeId]);
+        if (ls.rows.length === 0) return res.status(403).json({ error: "Not available for this account" });
+      }
       // All deals where groupName contains "Landsec" (case-insensitive)
       const dealsResult = await pool.query(
         `SELECT id, name, group_name, deal_type, status, fee, internal_agent, created_at, updated_at
@@ -6750,16 +6820,23 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       const totalFees = allDeals.reduce((s, d) => s + (parseFloat(d.fee) || 0), 0);
       const averageDealSize = totalDeals > 0 ? totalFees / totalDeals : 0;
 
+      // Client logins may see their own portfolio shape but not BGP's fee
+      // take or per-agent commission attribution. (Landsec audit.)
+      const analyticsClient = await (await import("./company-scope")).isClientRequestUser(req);
       res.json({
         totalDeals,
-        totalWIP,
-        totalInvoiced,
-        byDealType,
+        totalWIP: analyticsClient ? undefined : totalWIP,
+        totalInvoiced: analyticsClient ? undefined : totalInvoiced,
+        byDealType: analyticsClient
+          ? Object.fromEntries(Object.entries(byDealType).map(([k, v]: [string, any]) => [k, { count: v.count }]))
+          : byDealType,
         byStatus,
-        byAgent,
-        recentActivity,
-        pipelineValue,
-        averageDealSize,
+        byAgent: analyticsClient ? {} : byAgent,
+        recentActivity: analyticsClient
+          ? recentActivity.map(({ fee, agent, ...rest }) => rest)
+          : recentActivity,
+        pipelineValue: analyticsClient ? undefined : pipelineValue,
+        averageDealSize: analyticsClient ? undefined : averageDealSize,
       });
     } catch (err: any) {
       console.error("[landsec-analytics] Error:", err?.message);
@@ -6768,8 +6845,11 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   });
 
   // ===== Dashboard KPI Trends =====
-  app.get("/api/dashboard/kpi-trends", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/dashboard/kpi-trends", requireAuth, async (req: Request, res: Response) => {
     try {
+      // Firm-wide fee KPIs are BGP-internal. (Landsec audit.)
+      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+
       // Deals per month (last 6 months)
       const dealsPerMonthResult = await pool.query(`
         SELECT
@@ -6860,8 +6940,12 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   });
 
   // ===== Notifications Center =====
-  app.get("/api/notifications", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/notifications", requireAuth, async (req: Request, res: Response) => {
     try {
+    // External client logins get no org-wide feed — their world is the
+    // client-scoped briefing. (Landsec audit.)
+    if (await (await import("./company-scope")).isClientRequestUser(req)) return res.json([]);
+
       const notifications: any[] = [];
 
       // Deals stuck in same status > 30 days

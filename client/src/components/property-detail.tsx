@@ -58,7 +58,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Link, useLocation } from "wouter";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineLabelSelect, InlineNumber } from "@/components/inline-edit";
 import { buildUserColorMap } from "@/lib/agent-colors";
@@ -1084,7 +1084,7 @@ function BrandPipelineImagesLink({ propertyId, propertyName }: { propertyId: str
   const { data } = useQuery<any[]>({
     queryKey: ["/api/image-studio/search", { propertyId }],
     queryFn: async () => {
-      const r = await fetch(`/api/image-studio/search?propertyId=${encodeURIComponent(propertyId)}`, { credentials: "include" });
+      const r = await fetch(`/api/image-studio/search?propertyId=${encodeURIComponent(propertyId)}`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) return [];
       return r.json();
     },
