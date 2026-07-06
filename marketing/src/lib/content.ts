@@ -6,30 +6,35 @@ export const SERVICES = [
   {
     slug: "leasing",
     name: "Leasing",
+    image: "/images/tower-bridge.jpg",
     intro:
       "Creating neighbourhoods that people love. Retail, restaurant and leisure leasing across London's leading estates and the UK's landmark destinations — acting for landlords including The Portman Estate, Grosvenor, The Crown Estate and Landsec.",
   },
   {
     slug: "investment",
     name: "Investment",
+    image: "/images/skyline-night.jpg",
     intro:
       "Acquisition and disposal advice across retail, leisure and mixed-use investments — from single assets to portfolios, acting for private clients, property companies and institutions including Aviva Investors, Legal & General and LondonMetric.",
   },
   {
     slug: "brand-representation",
     name: "Brand Representation",
+    image: "/images/shop-menswear.jpg",
     intro:
       "Brand led retail estate advisory. Providing strategic support and market analysis for brand expansion across multi sector clients — acquiring space for brands to thrive in.",
   },
   {
     slug: "lease-advisory",
     name: "Lease Advisory",
+    image: "/images/lease-signing.jpg",
     intro:
       "Rent reviews, lease renewals and restructuring — protecting and enhancing value through the life of the lease, with instructions spanning Canary Wharf (20+ years) and Chinatown London (since 1998).",
   },
   {
     slug: "consultancy",
     name: "Consultancy",
+    image: "/images/westminster.jpg",
     intro:
       "Placemaking is central to our business philosophy. As such, we've evolved from traditional leasing to offering clients bespoke reporting, long-term consultancy, and strategic asset management services.",
   },
@@ -132,6 +137,7 @@ export interface CaseStudy {
   title: string;
   service: string;
   blurb: string;
+  image?: string;
 }
 
 // From the projects list on the current site.
@@ -140,6 +146,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "20-hanover-square",
     title: "20 Hanover Square",
     service: "Leasing",
+    image: "/images/restaurant.jpg",
     blurb:
       "A 10,000 sq ft Mayfair restaurant opportunity for Great Portland Estates — one of the West End's landmark restaurant lettings.",
   },
@@ -147,6 +154,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "19-golden-square",
     title: "19 Golden Square, Soho",
     service: "Investment",
+    image: "/images/city-towers.jpg",
     blurb:
       "Acquired for Vectis Property Group for £10.5m, with redevelopment potential at the heart of Soho.",
   },
@@ -154,6 +162,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "213-214-upper-street",
     title: "213–214 Upper Street",
     service: "Investment",
+    image: "/images/shop-boutique.jpg",
     blurb:
       "Sold on behalf of a private client for £5.35m, reflecting a 3.62% cap rate on Islington's prime retail pitch.",
   },
@@ -161,6 +170,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "heddon-street",
     title: "Heddon Street, The Crown Estate",
     service: "Consultancy",
+    image: "/images/bar.jpg",
     blurb:
       "Long-term advice to The Crown Estate on one of the West End's best-loved restaurant and bar destinations, off Regent Street.",
   },
@@ -230,21 +240,25 @@ export const CONSULTANCY_CLIENTS = [
 export const BRAND_REP_CASE_STUDIES = [
   {
     name: "ATIS",
+    image: "/images/cafe.jpg",
     blurb:
       "A new healthy grab & go lifestyle restaurant offering seriously tasty bowls and salads. We acquired their first site on City Road in the Atlas Building, also serving cold press juices, artisanal coffees and kombucha on tap.",
   },
   {
     name: "Fred Perry",
+    image: "/images/shop-menswear.jpg",
     blurb:
       "One of the UK's most iconic brands, steeped in a rich history of music, sport and culture. With stores worldwide and a cult following, Fred Perry continues to increase its presence in key locations.",
   },
   {
     name: "Barry's Bootcamp",
+    image: "/images/gym.jpg",
     blurb:
       "Described as the 'hardest workout in the world', BGP have been working with Barry's Bootcamp for several years to help with their acquisition strategy throughout London.",
   },
   {
     name: "YOLK",
+    image: "/images/food-hall.jpg",
     blurb:
       "Fine fast food, freshly prepared. From a 2014 pop-up to ten permanent locations across London — most recently Holborn, launched under the brand's refreshed 'Good Bites Only' identity.",
   },
@@ -297,6 +311,7 @@ export interface Article {
   author: string;
   standfirst: string;
   body: string[] | null; // null = full copy still to be migrated from the current journal
+  image?: string;
   isSample?: boolean;
 }
 
@@ -304,6 +319,7 @@ export interface Article {
 export const ARTICLES: Article[] = [
   {
     slug: "adieu-2025",
+    image: "/images/hero-london.jpg",
     title: "Adieu 2025…",
     category: "News",
     date: "05.01.26",
@@ -319,6 +335,7 @@ export const ARTICLES: Article[] = [
   },
   {
     slug: "get-ready-for-the-queues",
+    image: "/images/shop-rails.jpg",
     title: "Get Ready for the Queues: How Digital-First Brands are Turning Followers into Footfall",
     category: "Breakthrough brands",
     date: "2026",
@@ -329,6 +346,7 @@ export const ARTICLES: Article[] = [
   },
   {
     slug: "enduring-appeal-portman-estate",
+    image: "/images/cafe.jpg",
     title: "The Enduring Appeal of the Portman Estate",
     category: "Opinion",
     date: "05.11.25",
@@ -381,6 +399,7 @@ export const ARTICLES: Article[] = [
   },
   {
     slug: "why-part-time-staff-are-key",
+    image: "/images/shop-boutique.jpg",
     title: "Why Part Time Staff are Key to the In Store Experience",
     category: "Opinion",
     date: "2025",
@@ -391,6 +410,7 @@ export const ARTICLES: Article[] = [
   },
   {
     slug: "wellness-placemaking-essential",
+    image: "/images/gym.jpg",
     title: "Wellness is No Longer an Afterthought; It's a Placemaking Essential",
     category: "Opinion",
     date: "28.07.25",
@@ -407,6 +427,7 @@ export const ARTICLES: Article[] = [
   },
   {
     slug: "behind-the-brand-yolk",
+    image: "/images/food-hall.jpg",
     title: "Behind the Brand | YOLK",
     category: "Breakthrough brands",
     date: "24.06.25",
@@ -432,6 +453,7 @@ export const ARTICLES: Article[] = [
   },
   {
     slug: "salad-project-nova-victoria",
+    image: "/images/food-hall.jpg",
     title: "The Salad Project set to Open in Nova Victoria",
     category: "News",
     date: "2025",

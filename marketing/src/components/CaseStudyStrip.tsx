@@ -12,7 +12,7 @@ export default function CaseStudyStrip({ caseStudy }: { caseStudy: CaseStudy }) 
             <p className="mt-4 text-sm text-bgp-ink/70 leading-relaxed max-w-sm">{caseStudy.blurb}</p>
             <p className="mt-6"><span className="rule-link inline-block cursor-pointer">Find out more</span></p>
           </div>
-          <Placeholder className="aspect-[4/3] w-full" />
+          <Placeholder className="aspect-[4/3] w-full" src={caseStudy.image} alt={caseStudy.title} />
         </div>
       </div>
     </section>

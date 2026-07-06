@@ -23,7 +23,7 @@ export default function BrandRepresentation() {
             <div key={cs.name} className={`p-6 md:p-8 ${i % 2 === 0 ? "bg-bgp-mist" : ""}`}>
               <p className="label-caps mb-4">{cs.name}</p>
               <div className={`grid grid-cols-1 md:grid-cols-2 gap-8 items-center ${i % 2 === 1 ? "md:[direction:rtl]" : ""}`}>
-                <Placeholder className="aspect-[4/3] w-full [direction:ltr]" />
+                <Placeholder className="aspect-[4/3] w-full [direction:ltr]" src={cs.image} alt={cs.name} />
                 <div className="[direction:ltr]">
                   <p className="text-sm text-bgp-ink/70 leading-relaxed max-w-sm">{cs.blurb}</p>
                   <p className="mt-4"><span className="rule-link inline-block cursor-pointer">Read more</span></p>

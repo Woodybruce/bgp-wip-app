@@ -18,7 +18,7 @@ export default function LeaseAdvisory() {
   return (
     <div>
       <section className="relative">
-        <Placeholder className="h-72 md:h-96 w-full" />
+        <Placeholder className="h-72 md:h-96 w-full" src="/images/lease-signing.jpg" alt="Signing a lease" />
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">
             <p className="max-w-md text-xl md:text-2xl leading-snug bg-bgp-paper/85 p-4 -ml-4">{service.intro}</p>

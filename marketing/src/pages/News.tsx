@@ -42,7 +42,7 @@ export default function News() {
             <span>{featured.category}</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
-            <Placeholder className="aspect-[4/3] w-full" />
+            <Placeholder className="aspect-[4/3] w-full" src={featured.image} alt={featured.title} />
             <div>
               <h2 className="text-2xl md:text-3xl leading-tight group-hover:text-bgp-burgundy transition-colors">
                 {featured.title}
@@ -61,7 +61,7 @@ export default function News() {
               <span>{a.category}</span>
               <span>{a.date}</span>
             </div>
-            <Placeholder className="aspect-[4/3] w-full" />
+            <Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} />
             <h3 className="mt-3 text-lg leading-snug group-hover:text-bgp-burgundy transition-colors">{a.title}</h3>
             <p className="mt-2 label-caps text-bgp-ink/50">Read more</p>
           </Link>

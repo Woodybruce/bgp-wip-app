@@ -35,7 +35,7 @@ export default function ArticlePage() {
       <h1 className="mt-4 text-3xl md:text-4xl leading-tight">{article.title}</h1>
 
       <div className="mt-8 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-8 items-start">
-        <Placeholder className="aspect-[4/3] w-full" />
+        <Placeholder className="aspect-[4/3] w-full" src={article.image} alt={article.title} />
         <p className="text-sm text-bgp-ink/70 leading-relaxed">{article.standfirst}</p>
       </div>
 

@@ -17,7 +17,7 @@ export default function Consultancy() {
   return (
     <div>
       <section className="relative">
-        <Placeholder className="h-72 md:h-96 w-full" />
+        <Placeholder className="h-72 md:h-96 w-full" src="/images/westminster.jpg" alt="Westminster and a London bus" />
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">
             <p className="max-w-md text-xl md:text-2xl leading-snug bg-bgp-paper/85 p-4 -ml-4">{service.intro}</p>

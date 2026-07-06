@@ -7,13 +7,19 @@ export default function Home() {
     <div>
       {/* Hero */}
       <section className="relative bg-bgp-burgundy text-bgp-paper">
-        <div className="mx-auto max-w-6xl px-4 py-28 md:py-40">
+        <img
+          src="/images/hero-london.jpg"
+          alt="Aerial view of London and the Thames"
+          className="absolute inset-0 h-full w-full object-cover opacity-40"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-bgp-burgundy via-bgp-burgundy/60 to-bgp-burgundy/30" />
+        <div className="relative mx-auto max-w-6xl px-4 py-28 md:py-40">
           <img src="/brand/bgp-logo-blush.svg" alt="" aria-hidden className="h-16 w-auto mb-10 opacity-90" />
           <p className="max-w-xl text-2xl md:text-3xl leading-snug">{HERO_STATEMENT}</p>
         </div>
         <a
           href="#contact"
-          className="block bg-bgp-ink text-center label-caps text-bgp-paper py-3 hover:bg-black transition-colors"
+          className="relative block bg-bgp-ink text-center label-caps text-bgp-paper py-3 hover:bg-black transition-colors"
         >
           Talk to us
         </a>
@@ -41,7 +47,7 @@ export default function Home() {
                 i % 2 === 1 ? "md:[direction:rtl]" : ""
               }`}
             >
-              <Placeholder className="aspect-[4/3] w-full [direction:ltr]" />
+              <Placeholder className="aspect-[4/3] w-full [direction:ltr]" src={service.image} alt={service.name} />
               <div className="[direction:ltr]">
                 <p className="text-sm text-bgp-ink/70 leading-relaxed max-w-sm">{service.intro}</p>
                 <p className="mt-6">
@@ -68,7 +74,7 @@ export default function Home() {
             {ARTICLES.slice(0, 3).map((a) => (
               <Link key={a.slug} href={`/news/${a.slug}`} className="group block">
                 <p className="label-caps text-bgp-ink/50 mb-2">{a.category}</p>
-                <Placeholder className="aspect-[4/3] w-full" />
+                <Placeholder className="aspect-[4/3] w-full" src={a.image} alt={a.title} />
                 <p className="mt-3 text-sm font-semibold leading-snug group-hover:text-bgp-burgundy transition-colors">
                   {a.title}
                 </p>
