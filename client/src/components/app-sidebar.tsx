@@ -321,6 +321,7 @@ export function AppSidebar() {
   const { data: pendingApprovals } = useQuery<any[]>({
     queryKey: ["/api/expenses/pending-approval"],
     refetchInterval: 60_000,
+    enabled: user?.role !== "Client",
   });
   const approvalCount = Array.isArray(pendingApprovals) ? pendingApprovals.length : 0;
   const coreWithApprovals = approvalCount > 0

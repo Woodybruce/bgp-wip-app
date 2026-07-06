@@ -539,6 +539,7 @@ export default function Dashboard() {
   });
   const { data: msStatus } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/user-mail/status"],
+    enabled: user?.role !== "Client",
   });
   const diaryDays = 7;
   const { data: teamCalSchedules } = useQuery<any[]>({
@@ -575,6 +576,7 @@ export default function Dashboard() {
   const calInsights = calInsightsData?.insights || [];
   const { data: invTrackerItems } = useQuery<InvTracker[]>({
     queryKey: ["/api/investment-tracker"],
+    enabled: user?.role !== "Client",
   });
   const { data: newsArticles } = useQuery<NewsArticle[]>({
     queryKey: ["/api/news-feed/articles", "dashboard", activeTeam],

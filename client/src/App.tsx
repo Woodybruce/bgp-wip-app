@@ -367,9 +367,11 @@ function AuthenticatedApp() {
       subscribePush();
     }
   }, [currentUser, isPushSupported, isPushSubscribed, subscribePush]);
+  // Team Chat is BGP-internal — clients never poll it (and the button is hidden).
+  const isClientShell = (currentUser as any)?.role === "Client";
   const { data: chatNotifications } = useQuery<{ unseenCount: number }>({
     queryKey: ["/api/chat/notifications"],
-    enabled: !!currentUser,
+    enabled: !!currentUser && !isClientShell,
     refetchInterval: 15000,
   });
   const chatUnseenCount = chatNotifications?.unseenCount || 0;
@@ -568,6 +570,7 @@ function AuthenticatedApp() {
               <div className="flex items-center gap-2">
                 <ColorSchemeSelector />
                 <NotificationCenter />
+                {!isClientShell && (
                 <button
                   data-testid="button-chat-toggle"
                   onClick={() => { const n = !chatOpen; setChatPinned(n); setChatOpen(n); }}
@@ -581,6 +584,7 @@ function AuthenticatedApp() {
                     </span>
                   )}
                 </button>
+                )}
               </div>
             </header>
             <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
