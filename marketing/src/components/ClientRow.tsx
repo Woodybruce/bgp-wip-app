@@ -1,19 +1,19 @@
 import { useState } from "react";
 import type { Client } from "../lib/content";
 
-// "A snapshot of clients" — logos via the Clearbit logo API (same source the
-// dashboard uses); falls back to the client name if no logo resolves.
+// "A snapshot of clients" — logos are self-hosted in public/brand-logos/
+// (fetched once from public sources); missing files fall back to the name.
 function ClientCircle({ client }: { client: Client }) {
   const [failed, setFailed] = useState(false);
   const showLogo = client.domain && !failed;
   return (
     <div
-      className="aspect-square rounded-full border border-bgp-line bg-white flex items-center justify-center overflow-hidden p-4"
+      className="aspect-square rounded-full border border-bgp-line bg-white flex items-center justify-center overflow-hidden p-5"
       title={client.name}
     >
       {showLogo ? (
         <img
-          src={`https://logo.clearbit.com/${client.domain}?size=256`}
+          src={`/brand-logos/${client.domain}.png`}
           alt={`${client.name} logo`}
           loading="lazy"
           className="max-h-full max-w-full object-contain"
