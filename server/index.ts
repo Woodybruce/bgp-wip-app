@@ -3133,6 +3133,10 @@ app.use("/api/branding/assets", express.static(
   const CLIENT_ALLOWED_WRITES = [
     "/api/auth/logout", "/api/chatbgp/", "/api/heartbeat",
     "/api/push/", "/api/config/", "/api/favorite-instructions",
+    // Clients may edit their OWN leasing/tenancy schedule rows (positioning,
+    // bands, targets, meeting updates). Each endpoint verifies the property is
+    // in the client's scope; import/bulk-delete stay staff-only. (Landsec.)
+    "/api/tenancy-schedule/unit", "/api/leasing-schedule/unit",
   ];
   // Sub-routes to block even though a parent prefix is allowed (BGP intel /
   // brand pipeline that isn't the client's own profile).

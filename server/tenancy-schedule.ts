@@ -233,6 +233,15 @@ router.post("/api/tenancy-schedule/unit", requireAuth, async (req, res) => {
     const d = req.body;
     if (!d?.property_id) return res.status(400).json({ error: "property_id required" });
 
+    // Client logins may only edit schedules for their own properties. (Landsec audit.)
+    {
+      const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+      const sc = await resolveCompanyScope(req as any);
+      if (sc && !(await isPropertyInScope(sc, d.property_id))) {
+        return res.status(403).json({ error: "Not available for this account" });
+      }
+    }
+
     const cols: string[] = ["property_id"];
     const placeholders: string[] = ["$1"];
     const values: any[] = [d.property_id];
@@ -330,6 +339,17 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
     const pool = await getPool();
     const id = req.params.id as string;
     const d = req.body;
+    {
+      const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+      const sc = await resolveCompanyScope(req as any);
+      if (sc) {
+        const pr = await pool.query("SELECT property_id FROM tenancy_schedule_units WHERE id = $1", [id]);
+        const pid = pr.rows[0]?.property_id;
+        if (!pid || !(await isPropertyInScope(sc, pid))) {
+          return res.status(403).json({ error: "Not available for this account" });
+        }
+      }
+    }
     const fields: string[] = [];
     const values: any[] = [];
     let idx = 1;
@@ -421,6 +441,18 @@ router.put("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
 
 router.delete("/api/tenancy-schedule/unit/:id", requireAuth, async (req, res) => {
   const pool = await getPool();
+  // Client logins may only delete rows on their own properties. (Landsec audit.)
+  {
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const sc = await resolveCompanyScope(req as any);
+    if (sc) {
+      const pr = await pool.query("SELECT property_id FROM tenancy_schedule_units WHERE id = $1", [req.params.id]);
+      const pid = pr.rows[0]?.property_id;
+      if (!pid || !(await isPropertyInScope(sc, pid))) {
+        return res.status(403).json({ error: "Not available for this account" });
+      }
+    }
+  }
   // Atomic cascade: clear downstream FKs and delete the spine row in
   // a single transaction so we can never end up with FKs cleared and
   // the row still present (or vice versa).
