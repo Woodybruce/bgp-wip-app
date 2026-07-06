@@ -9,7 +9,13 @@ export default function ContactCard({ person }: { person: Person }) {
       <div className="mt-1 text-xs leading-relaxed text-bgp-ink/60">
         <p>{person.title}</p>
         <p className="tabular">{person.phone}</p>
-        <p>{person.email === "TBC" ? "Email TBC" : person.email}</p>
+        <p className="break-all">
+          {person.email === "TBC" ? (
+            "Email TBC"
+          ) : (
+            <a href={`mailto:${person.email}`} className="hover:text-bgp-burgundy">{person.email}</a>
+          )}
+        </p>
         <p><a href="#" className="underline decoration-bgp-stone underline-offset-2 hover:text-bgp-burgundy">LinkedIn</a></p>
       </div>
     </div>

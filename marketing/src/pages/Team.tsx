@@ -15,8 +15,8 @@ export default function Team() {
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">
             <p className="max-w-md text-xl md:text-2xl leading-snug bg-bgp-paper/85 p-4 -ml-4">
-              [Sample] About us — a specialist retail and leisure advisory team built on deep
-              market insight and relationships that stand the test of time.
+              Connecting leading brands with the best international locations. Creating
+              neighbourhoods that people love.
             </p>
           </div>
         </div>

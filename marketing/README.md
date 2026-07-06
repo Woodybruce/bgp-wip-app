@@ -41,8 +41,10 @@ Create a new Railway service with root directory `marketing/`. The included
 - Replace the traced logo SVGs in `public/brand/` with the designer's original
   vector exports (the current ones are traced from a JPEG — accurate but worth
   swapping for the source files).
-- Everything marked `[Sample]` or `TBC` in `src/lib/content.ts` needs real
-  copy: stats, service intros, team job titles/emails, case studies, articles.
+- Content in `src/lib/content.ts` is sourced from the current
+  brucegillinghampollard.com site and the dashboard team directory. Review
+  team titles, and fill anything still marked `[Sample]` or `TBC` (a few
+  article bodies still need migrating from the current journal).
 - Photography: all image placeholders (`Placeholder` component).
 - Typeface is Archivo (Google Fonts) as a stand-in — confirm the brand
   typeface with the designer.

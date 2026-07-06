@@ -1,9 +1,16 @@
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
+import ClientRow from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
-import { CASE_STUDIES, CONSULTANCY_BODY, CONSULTANCY_SERVICES, LEASING_CONTACTS, SERVICES } from "../lib/content";
-
-const CLIENT_COUNT = 14;
+import {
+  CASE_STUDIES,
+  CONSULTANCY_BODY,
+  CONSULTANCY_CLIENTS,
+  CONSULTANCY_CONTACTS,
+  CONSULTANCY_SERVICES,
+  SERVICES,
+  TESTIMONIAL,
+} from "../lib/content";
 
 export default function Consultancy() {
   const service = SERVICES.find((s) => s.slug === "consultancy")!;
@@ -20,16 +27,7 @@ export default function Consultancy() {
 
       <section className="mx-auto max-w-6xl px-4 py-14">
         <h2 className="label-caps border-b border-bgp-ink pb-2 mb-8">A snapshot of clients</h2>
-        <div className="grid grid-cols-4 sm:grid-cols-7 gap-6">
-          {Array.from({ length: CLIENT_COUNT }).map((_, i) => (
-            <div
-              key={i}
-              className="aspect-square rounded-full border border-bgp-line flex items-center justify-center label-caps text-bgp-stone"
-            >
-              Logo
-            </div>
-          ))}
-        </div>
+        <ClientRow clients={CONSULTANCY_CLIENTS} />
       </section>
 
       <section className="mx-auto max-w-6xl px-4 py-6">
@@ -60,16 +58,14 @@ export default function Consultancy() {
         <div className="grid grid-cols-1 md:grid-cols-[200px_1fr] gap-8 items-center max-w-2xl">
           <Placeholder className="aspect-square w-full" />
           <div>
-            <p className="text-lg italic leading-relaxed text-bgp-ink/80">
-              "[Sample] Client quote to follow — a few words from a long-term consultancy client."
-            </p>
-            <p className="label-caps mt-4">Name TBC</p>
-            <p className="text-xs text-bgp-ink/50 uppercase">Title, Company</p>
+            <p className="text-lg italic leading-relaxed text-bgp-ink/80">"{TESTIMONIAL.quote}"</p>
+            <p className="label-caps mt-4">{TESTIMONIAL.name}</p>
+            <p className="text-xs text-bgp-ink/50 uppercase">{TESTIMONIAL.title}</p>
           </div>
         </div>
       </section>
 
-      <KeyContacts people={LEASING_CONTACTS.slice(0, 3)} />
+      <KeyContacts people={CONSULTANCY_CONTACTS} />
       <CaseStudyStrip caseStudy={CASE_STUDIES[3]} />
     </div>
   );

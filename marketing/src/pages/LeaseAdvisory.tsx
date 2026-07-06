@@ -1,14 +1,19 @@
 import { useState } from "react";
 import KeyContacts from "../components/KeyContacts";
 import CaseStudyStrip from "../components/CaseStudyStrip";
+import ClientRow from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
-import { CASE_STUDIES, LEASE_ADVISORY_SERVICES, LEASING_CONTACTS, SERVICES } from "../lib/content";
-
-const CLIENT_COUNT = 14;
+import {
+  CASE_STUDIES,
+  LEASE_ADVISORY_CLIENTS,
+  LEASE_ADVISORY_CONTACTS,
+  LEASE_ADVISORY_SERVICES,
+  SERVICES,
+} from "../lib/content";
 
 export default function LeaseAdvisory() {
   const service = SERVICES.find((s) => s.slug === "lease-advisory")!;
-  const [selected, setSelected] = useState(2); // wireframe shows Lease Restructuring active
+  const [selected, setSelected] = useState(0);
 
   return (
     <div>
@@ -23,16 +28,7 @@ export default function LeaseAdvisory() {
 
       <section className="mx-auto max-w-6xl px-4 py-14">
         <h2 className="label-caps border-b border-bgp-ink pb-2 mb-8">A snapshot of clients</h2>
-        <div className="grid grid-cols-4 sm:grid-cols-7 gap-6">
-          {Array.from({ length: CLIENT_COUNT }).map((_, i) => (
-            <div
-              key={i}
-              className="aspect-square rounded-full border border-bgp-line flex items-center justify-center label-caps text-bgp-stone"
-            >
-              Logo
-            </div>
-          ))}
-        </div>
+        <ClientRow clients={LEASE_ADVISORY_CLIENTS} />
       </section>
 
       <section className="mx-auto max-w-6xl px-4 py-6">
@@ -65,7 +61,7 @@ export default function LeaseAdvisory() {
         </div>
       </section>
 
-      <KeyContacts people={LEASING_CONTACTS.slice(0, 3)} />
+      <KeyContacts people={LEASE_ADVISORY_CONTACTS} />
       <CaseStudyStrip caseStudy={CASE_STUDIES[0]} />
     </div>
   );

@@ -1,8 +1,7 @@
 import KeyContacts from "../components/KeyContacts";
+import ClientRow from "../components/ClientRow";
 import Placeholder from "../components/Placeholder";
-import { BRAND_REP_CASE_STUDIES, LEASING_CONTACTS, SERVICES } from "../lib/content";
-
-const CLIENT_COUNT = 14; // logo placeholders per wireframe
+import { BRAND_REP_CASE_STUDIES, BRAND_REP_CLIENTS, BRAND_REP_CONTACTS, SERVICES } from "../lib/content";
 
 export default function BrandRepresentation() {
   const service = SERVICES.find((s) => s.slug === "brand-representation")!;
@@ -14,16 +13,7 @@ export default function BrandRepresentation() {
 
       <section className="mx-auto max-w-6xl px-4 py-14">
         <h2 className="label-caps border-b border-bgp-ink pb-2 mb-8">A snapshot of clients</h2>
-        <div className="grid grid-cols-4 sm:grid-cols-7 gap-6">
-          {Array.from({ length: CLIENT_COUNT }).map((_, i) => (
-            <div
-              key={i}
-              className="aspect-square rounded-full border border-bgp-line flex items-center justify-center label-caps text-bgp-stone"
-            >
-              Logo
-            </div>
-          ))}
-        </div>
+        <ClientRow clients={BRAND_REP_CLIENTS} />
       </section>
 
       <section className="mx-auto max-w-6xl px-4 py-6">
@@ -45,7 +35,7 @@ export default function BrandRepresentation() {
       </section>
 
       <KeyContacts
-        people={LEASING_CONTACTS.slice(0, 3)}
+        people={BRAND_REP_CONTACTS}
         blurb="Our brand representation team supports occupiers from first site to full network."
       />
     </div>

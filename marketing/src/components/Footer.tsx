@@ -9,6 +9,8 @@ export default function Footer() {
           <div className="text-xs text-bgp-ink/60 space-y-1">
             <p><a href="#" className="hover:text-bgp-burgundy">Privacy Policy</a></p>
             <p><a href="#" className="hover:text-bgp-burgundy">Terms &amp; Conditions</a></p>
+            <p><a href="#" className="hover:text-bgp-burgundy">Careers</a></p>
+            <p><a href="#" className="hover:text-bgp-burgundy">FAQs</a></p>
             <p>© {new Date().getFullYear()} Bruce Gillingham Pollard</p>
           </div>
         </div>
