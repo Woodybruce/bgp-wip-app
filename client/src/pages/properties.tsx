@@ -1,4 +1,5 @@
 import { guessDomain } from "@/lib/company-logos";
+import { logoKitEnabled, logoKitUrl } from "@/lib/logokit";
 import { useTeam } from "@/lib/team-context";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
@@ -155,11 +156,11 @@ export function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | n
 
   const logoSources: string[] = [];
   if (d) {
-    logoSources.push(`https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`);
+    if (logoKitEnabled) logoSources.push(logoKitUrl(d, Math.min(size * 3, 512)));
     logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${d}&size=128`);
   }
   if (guessedDomain && guessedDomain !== d) {
-    logoSources.push(`https://logo.clearbit.com/${guessedDomain}?size=${Math.min(size * 3, 512)}`);
+    if (logoKitEnabled) logoSources.push(logoKitUrl(guessedDomain, Math.min(size * 3, 512)));
     logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${guessedDomain}&size=128`);
   }
 

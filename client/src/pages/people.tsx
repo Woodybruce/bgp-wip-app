@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
+import { logoKitEnabled, logoKitUrl } from "@/lib/logokit";
 import { useRoute, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -53,11 +54,11 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
   // Build ordered list of logo URLs to try
   const logoSources: string[] = [];
   if (d) {
-    logoSources.push(`https://logo.clearbit.com/${d}?size=${Math.min(px * 3, 512)}`);
+    if (logoKitEnabled) logoSources.push(logoKitUrl(d, Math.min(px * 3, 512)));
     logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${d}&size=128`);
   }
   if (guessed && guessed !== d) {
-    logoSources.push(`https://logo.clearbit.com/${guessed}?size=${Math.min(px * 3, 512)}`);
+    if (logoKitEnabled) logoSources.push(logoKitUrl(guessed, Math.min(px * 3, 512)));
     logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${guessed}&size=128`);
   }
 

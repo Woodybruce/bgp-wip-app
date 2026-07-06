@@ -1,23 +1,30 @@
 import { useState } from "react";
 import type { Client } from "../lib/content";
+import { logoKitEnabled, logoKitUrl } from "../lib/logokit";
 
-// "A snapshot of clients" — logos are self-hosted in public/brand-logos/
-// (fetched once from public sources); missing files fall back to the name.
+// "A snapshot of clients" — LogoKit first (when a key is configured), then the
+// self-hosted PNGs in public/brand-logos/, then the client name.
 function ClientCircle({ client }: { client: Client }) {
-  const [failed, setFailed] = useState(false);
-  const showLogo = client.domain && !failed;
+  const [failed, setFailed] = useState(0);
+  const sources: string[] = [];
+  if (client.domain) {
+    if (logoKitEnabled) sources.push(logoKitUrl(client.domain));
+    sources.push(`/brand-logos/${client.domain}.png`);
+  }
+  const src = sources[failed];
+
   return (
     <div
       className="aspect-square rounded-full border border-bgp-line bg-white flex items-center justify-center overflow-hidden p-5"
       title={client.name}
     >
-      {showLogo ? (
+      {src ? (
         <img
-          src={`/brand-logos/${client.domain}.png`}
+          src={src}
           alt={`${client.name} logo`}
           loading="lazy"
           className="max-h-full max-w-full object-contain"
-          onError={() => setFailed(true)}
+          onError={() => setFailed((f) => f + 1)}
         />
       ) : (
         <span className="text-center text-[10px] font-semibold uppercase tracking-widest text-bgp-ink/60">

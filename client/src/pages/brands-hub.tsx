@@ -1,4 +1,5 @@
 import { useState, useMemo, lazy, Suspense } from "react";
+import { logoKitEnabled, logoKitUrl } from "@/lib/logokit";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useSearch } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -102,11 +103,11 @@ function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string 
 
   const sources: string[] = [];
   if (d) {
-    sources.push(`https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`);
+    if (logoKitEnabled) sources.push(logoKitUrl(d, Math.min(size * 3, 512)));
     sources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${d}&size=128`);
   }
   if (guessed && guessed !== d) {
-    sources.push(`https://logo.clearbit.com/${guessed}?size=${Math.min(size * 3, 512)}`);
+    if (logoKitEnabled) sources.push(logoKitUrl(guessed, Math.min(size * 3, 512)));
     sources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${guessed}&size=128`);
   }
 
