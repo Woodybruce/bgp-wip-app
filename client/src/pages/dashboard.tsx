@@ -535,6 +535,7 @@ export default function Dashboard() {
   });
   const { data: myCalEvents } = useQuery<CalendarEvent[]>({
     queryKey: ["/api/microsoft/calendar"],
+    enabled: user?.role !== "Client", // clients have no Microsoft 365 access
   });
   const { data: msStatus } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/user-mail/status"],
@@ -569,6 +570,7 @@ export default function Dashboard() {
     queryKey: ["/api/microsoft/calendar/insights"],
     staleTime: 5 * 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
+    enabled: user?.role !== "Client", // clients have no Microsoft 365 access
   });
   const calInsights = calInsightsData?.insights || [];
   const { data: invTrackerItems } = useQuery<InvTracker[]>({

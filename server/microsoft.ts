@@ -227,6 +227,19 @@ async function getHomeAccountId(userId: string): Promise<string | null> {
 }
 
 export async function getValidMsToken(req: Request): Promise<string | null> {
+  const userId = req.session.userId || (req as any).tokenUserId;
+  if (!userId) return null;
+
+  // Never hand a Microsoft token to an external client — not from the org
+  // fallback AND not from a session that happens to carry msTokens. This
+  // check runs BEFORE any token is returned so a client always gets null.
+  // (Root cause of the client-briefing + /mail/calendar leaks.) (Landsec audit.)
+  const roleRes = await pool.query("SELECT role, email FROM users WHERE id = $1", [userId]);
+  const roleRow = roleRes.rows[0];
+  const isClientPrincipal = roleRow?.role === "Client" ||
+    (roleRow?.email && !String(roleRow.email).toLowerCase().endsWith("@brucegillinghampollard.com"));
+  if (isClientPrincipal) return null;
+
   const expiresOn = req.session.msTokens?.expiresOn;
   const token = req.session.msTokens?.accessToken;
   const isExpired = !expiresOn || new Date(expiresOn) < new Date(Date.now() + 5 * 60 * 1000);
@@ -235,17 +248,6 @@ export async function getValidMsToken(req: Request): Promise<string | null> {
     return token;
   }
 
-  const userId = req.session.userId || (req as any).tokenUserId;
-  if (!userId) return null;
-
-  // Never lend a Microsoft token to an external client — the org fallback
-  // below would otherwise hand a client another BGP user's mailbox/diary
-  // (root cause of the client-briefing + /mail leaks). (Landsec audit.)
-  const roleRes = await pool.query("SELECT role, email FROM users WHERE id = $1", [userId]);
-  const roleRow = roleRes.rows[0];
-  const isClientPrincipal = roleRow?.role === "Client" ||
-    (roleRow?.email && !String(roleRow.email).toLowerCase().endsWith("@brucegillinghampollard.com"));
-
   return withMsalCacheLock(async () => {
     try {
       const client = getMsalClient();
@@ -253,7 +255,6 @@ export async function getValidMsToken(req: Request): Promise<string | null> {
       let homeAccountId = req.session.msAccountHomeId || await getHomeAccountId(String(userId));
 
       if (!cacheData || !homeAccountId) {
-        if (isClientPrincipal) return null; // no cross-user fallback for clients
         const fallback = await pool.query(
           "SELECT user_id, cache_data, home_account_id FROM msal_token_cache WHERE cache_data IS NOT NULL AND home_account_id IS NOT NULL ORDER BY updated_at DESC NULLS LAST LIMIT 1"
         );

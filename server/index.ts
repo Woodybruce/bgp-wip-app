@@ -3124,6 +3124,8 @@ app.use("/api/branding/assets", express.static(
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
     "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",
   ];
+  // Microsoft 365 stays fully blocked for clients (mail/calendar/files all
+  // 403) — the client UI must not call it at all; see nav + poller gating.
   // The only writes a client may perform. (heartbeat/push/config are
   // harmless presence + client-preference pings every user sends;
   // /api/chatbgp/ covers chat + chat-with-files — tools are stripped for

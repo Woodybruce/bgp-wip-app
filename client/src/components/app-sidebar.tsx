@@ -389,8 +389,10 @@ export function AppSidebar() {
             )}
           storageKey="ai"
         />
+        {!isClientUser && (<>
         <SidebarSeparator />
         <NavSection label="Microsoft 365" items={microsoftNav} storageKey="ms" defaultOpen={false} />
+        </>)}
         <SidebarSeparator />
         {user?.isAdmin && (
           <>
