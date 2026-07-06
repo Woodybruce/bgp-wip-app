@@ -2137,6 +2137,22 @@ export async function registerRoutes(
   // restored. mode:"investment_comps" removes the legacy bulk-loaded investment
   // comparables (status 'Investment Comp' / group 'Investment Comps'); ids:[...]
   // removes specific rows (the junk stubs). Dry-run unless confirm:true.
+  // Manual trigger for the client team-diary → events sync (Landsec).
+  app.post("/api/admin/sync-client-events", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { syncClientTeamEvents, syncAllClientTeamEvents } = await import("./client-team-events-sync");
+      const companyId = (req.body?.companyId || req.query.companyId) as string | undefined;
+      if (companyId) {
+        const stats = await syncClientTeamEvents(companyId);
+        return res.json({ ok: true, stats });
+      }
+      await syncAllClientTeamEvents();
+      res.json({ ok: true, message: "Synced all client teams" });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "sync failed" });
+    }
+  });
+
   app.post("/api/admin/cleanup-crm-properties", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { mode, ids, confirm, reason } = req.body || {};
@@ -5613,6 +5629,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       );
       const properties = propsResult.rows;
       const propertyIds = properties.map((p: any) => p.id);
+      // Client account name — lets synced team-diary events (tagged with the
+      // client's name, not a specific property) surface on the events card.
+      const cpCompanyName = (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId])).rows[0]?.name || null;
 
       let totalUnits = 0, vacantUnits = 0, totalPassingRent = 0;
       if (propertyIds.length > 0) {
@@ -5644,8 +5663,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (propertyIds.length > 0) {
         const eventsResult = await pool.query(
           `SELECT COUNT(*) as total FROM team_events
-           WHERE property_id = ANY($1) AND start_time >= NOW()`,
-          [propertyIds]
+           WHERE (property_id = ANY($1) OR company_name = $2) AND start_time >= NOW()`,
+          [propertyIds, cpCompanyName]
         );
         upcomingEvents = parseInt(eventsResult.rows[0]?.total || "0");
       }
@@ -5678,9 +5697,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         const eventsListResult = await pool.query(
           `SELECT id, title, start_time, end_time, event_type, location, property_id
            FROM team_events
-           WHERE property_id = ANY($1) AND start_time >= NOW()
+           WHERE (property_id = ANY($1) OR company_name = $2) AND start_time >= NOW()
            ORDER BY start_time LIMIT 20`,
-          [propertyIds]
+          [propertyIds, cpCompanyName]
         );
         upcomingEventsList = eventsListResult.rows;
 
@@ -5688,11 +5707,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           `SELECT te.id, te.title, te.start_time, te.end_time, te.event_type, te.location, te.property_id, p.name as property_name
            FROM team_events te
            LEFT JOIN crm_properties p ON te.property_id = p.id
-           WHERE te.property_id = ANY($1)
+           WHERE (te.property_id = ANY($1) OR te.company_name = $2)
              AND te.start_time >= NOW() - INTERVAL '7 days'
              AND te.start_time <= NOW() + INTERVAL '30 days'
            ORDER BY te.start_time`,
-          [propertyIds]
+          [propertyIds, cpCompanyName]
         );
         calendarEvents = calendarResult.rows;
       }

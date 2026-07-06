@@ -3442,6 +3442,7 @@ app.use("/api/branding/assets", express.static(
       if (isProduction) {
         setTimeout(() => startAutoEnrichment(), 30000);
         setTimeout(() => startAutoTurnoverResearch(), 30000);
+        import("./client-team-events-sync").then(m => m.startClientEventsSyncLoop()).catch(() => {});
         // Heavy crawls (image-sync + archivist) block the event loop and
         // were starving ChatBGP after every redeploy — a single chat turn
         // would hit the 10-min deadline because the box was saturated. They
