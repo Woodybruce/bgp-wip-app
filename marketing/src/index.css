@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply font-sans text-bgp-ink bg-bgp-paper antialiased;
+  }
+}
+
+@layer components {
+  .label-caps {
+    @apply text-[11px] font-semibold uppercase tracking-widest2;
+  }
+  .rule-link {
+    @apply label-caps border-t border-bgp-ink pt-2 hover:text-bgp-burgundy transition-colors;
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
