@@ -1,6 +1,6 @@
 // LogoKit (logokit.com) — primary logo source once a publishable key is set;
 // self-hosted PNGs in public/brand-logos/ remain the fallback.
-export const LOGOKIT_TOKEN = (import.meta.env.VITE_LOGOKIT_TOKEN as string | undefined) ?? "pk_LK75yvzoTjGg0QP8al5ztg";
+export const LOGOKIT_TOKEN = (import.meta.env.VITE_LOGOKIT_TOKEN as string | undefined) ?? "pk_fr1c952fceb18ba8753374";
 
 export const logoKitEnabled = LOGOKIT_TOKEN.length > 0;
 
