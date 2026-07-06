@@ -1630,7 +1630,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           </div>
           {landlordName && <p className="text-xs text-muted-foreground">{landlordName}</p>}
         </div>
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex flex-wrap gap-2 justify-end">
           {canTogglePrivacy && (
             <Button variant="outline" size="sm" onClick={() => privacyMutation.mutate(!privacyInfo?.privacy_enabled)}
               className={privacyInfo?.privacy_enabled ? "border-violet-300 text-violet-700" : ""}
