@@ -15,6 +15,33 @@ import mammoth from "mammoth";
 import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
 import { getFile, saveFile, findChatMediaByOriginalName, searchChatMedia, getRecentUserUploads } from "./file-storage";
 import { rectifyRows, fixPptxSchemaViolations } from "./pptx-rectify";
+
+// Build a branded BGP deck PPTX (via the shared deck-engine card system) from
+// either the rich card model (fnArgs.cards) or the legacy {title, subtitle,
+// slides:[{title,bullets,table,notes}]} shape. Legacy slides are mapped to
+// content/table/board cards so even old-style calls get the on-brand engine.
+async function buildDeckPptxFromArgs(fnArgs: any): Promise<{ buffer: Buffer; safeName: string; slideCount: number }> {
+  const { assembleDeckPptx } = await import("./deck-engine");
+  const title = String(fnArgs?.title || "Presentation");
+  let cards: any[] = Array.isArray(fnArgs?.cards) ? fnArgs.cards : [];
+  if (!cards.length) {
+    cards.push({ type: "cover", title, subtitle: fnArgs?.subtitle || "", eyebrow: fnArgs?.eyebrow || "Bruce Gillingham Pollard" });
+    for (const sd of (Array.isArray(fnArgs?.slides) ? fnArgs.slides : [])) {
+      const hasT = sd?.table?.headers && sd?.table?.rows;
+      const hasB = Array.isArray(sd?.bullets) && sd.bullets.length > 0;
+      if (hasT && hasB) cards.push({ type: "board", title: sd.title, blocks: [
+        { kind: "text", col: 0, colSpan: 6, row: 0, rowSpan: 1, bullets: sd.bullets },
+        { kind: "table", col: 6, colSpan: 6, row: 0, rowSpan: 1, headers: sd.table.headers, rows: sd.table.rows },
+      ] });
+      else if (hasT) cards.push({ type: "table", title: sd.title, headers: sd.table.headers, rows: sd.table.rows });
+      else cards.push({ type: "content", title: sd.title, bullets: sd.bullets || [] });
+    }
+  }
+  const raw = await assembleDeckPptx({ cards });
+  const buffer = await fixPptxSchemaViolations(raw); // polish OOXML so PowerPoint won't demand a "repair"
+  const safeName = (title.replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_")) || "Presentation";
+  return { buffer, safeName, slideCount: cards.length };
+}
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
@@ -2592,24 +2619,41 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "generate_pptx",
-      description: "Generate a native Microsoft PowerPoint (.pptx) presentation with professional formatting and BGP branding. Use when the user asks for a PowerPoint, presentation, slides, or deck.",
+      description: [
+        "Generate a native, editable Microsoft PowerPoint (.pptx) in BGP house style (green/gold, Georgia). Use for any PowerPoint / presentation / slides / deck / teaser / pitch.",
+        "PREFER the rich `cards` model over `slides` — it produces dense, professional, teaser-grade boards. Each card = { type, ...fields }. Card types:",
+        "• cover {title, subtitle?, eyebrow?, meta:[{label,value}]}  • section {number,title}  • statement {title, kick?, sub?} full-bleed emphasis",
+        "• content {title, kick?, bullets:[string] | body, image?/ref?}  • two_col {title, leftTitle?, left:[string], rightTitle?, right:[string]}",
+        "• highlights {title, items:[{title,body}] (2-6)} callout grid  • kpi {title, kpis:[{value,label}]}  • quote {quote, attribution?}",
+        "• table {title, headers:[string], rows:[[string,...]]}  • comparison {title, columns:[string], rows:[{label,cells:[...]}]} (✓/—)",
+        "• chart {title, chartType:'bar'|'line'|'pie'|'doughnut'|'area', labels:[string], values:[number] OR series:[{name,labels,values}]}",
+        "• board {title, blocks:[{kind:'text'|'stat'|'chart'|'image'|'table'|'quote', col:0-11, colSpan, row:0+, rowSpan, ...}]}  ← DENSE composite: text + chart + photo + stats on ONE slide",
+        "• timeline {title, milestones:[{date,title,body?}]}  • phasing {title, periods:[string], phases:[{label,start,span,note?}]} Gantt",
+        "• map {title, caption?, pins:[{x:0-1,y:0-1,label}], list:[{label,sub?}]}  • disclaimer {title, paragraphs:[string]}  • closing {heading, body, contacts?}",
+        "Any card may add an image via `ref` (a chat-media/image reference) or `image` (data URI). Order logically (cover → highlights/board → detail → closing). Prefer dense boards over one-idea-per-slide.",
+      ].join("\n"),
       parameters: {
         type: "object",
         properties: {
-          title: { type: "string", description: "Presentation title for the filename and title slide" },
-          subtitle: { type: "string", description: "Optional subtitle for the title slide" },
+          title: { type: "string", description: "Presentation title for the filename and cover" },
+          subtitle: { type: "string", description: "Optional subtitle for the cover" },
+          cards: {
+            type: "array",
+            description: "PREFERRED. Array of typed card objects (see the card types in the tool description). Each item is { type, ...fields }.",
+            items: { type: "object", properties: { type: { type: "string", description: "Card type (cover, content, board, chart, table, highlights, two_col, statement, quote, timeline, phasing, map, kpi, comparison, disclaimer, closing, image, section)" } }, required: ["type"] },
+          },
           slides: {
             type: "array",
-            description: "Array of slides to include in the presentation",
+            description: "Legacy fallback (used only if `cards` is omitted). Simple slides.",
             items: {
               type: "object",
               properties: {
                 title: { type: "string", description: "Slide title" },
-                bullets: { type: "array", items: { type: "string" }, description: "Array of bullet point texts for the slide" },
-                notes: { type: "string", description: "Optional speaker notes for the slide" },
+                bullets: { type: "array", items: { type: "string" }, description: "Bullet point texts" },
+                notes: { type: "string", description: "Optional speaker notes" },
                 table: {
                   type: "object",
-                  description: "Optional table to display on the slide",
+                  description: "Optional table",
                   properties: {
                     headers: { type: "array", items: { type: "string" } },
                     rows: { type: "array", items: { type: "array", items: { type: "string" } } },
@@ -2620,7 +2664,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
             },
           },
         },
-        required: ["title", "slides"],
+        required: ["title"],
       },
     },
   });
@@ -7688,62 +7732,16 @@ export async function executeCrmToolRaw(
 
   if (fnName === "generate_pptx") {
     try {
-      const PptxGenJS = (await import("pptxgenjs")).default;
       const crypto = (await import("crypto")).default;
       const { saveFile } = await import("./file-storage");
-
-      const pptx = new PptxGenJS();
-      pptx.layout = "LAYOUT_WIDE";
-      pptx.author = "Bruce Gillingham Pollard";
-      pptx.company = "Bruce Gillingham Pollard";
-      pptx.title = cleanOfficeText(fnArgs.title);
-
-      const titleSlide = pptx.addSlide();
-      titleSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: "100%", fill: { color: "232323" } });
-      titleSlide.addText("BRUCE GILLINGHAM POLLARD", { x: 0.8, y: 0.5, w: 8, h: 0.5, fontSize: 14, color: "AAAAAA", fontFace: "Calibri", bold: true });
-      titleSlide.addText(cleanOfficeText(fnArgs.title), { x: 0.8, y: 2.0, w: 10, h: 1.5, fontSize: 36, color: "FFFFFF", fontFace: "Calibri", bold: true });
-      if (fnArgs.subtitle) {
-        titleSlide.addText(cleanOfficeText(fnArgs.subtitle), { x: 0.8, y: 3.5, w: 10, h: 0.8, fontSize: 18, color: "CCCCCC", fontFace: "Calibri" });
-      }
-
-      const slides = (fnArgs.slides as any[]) || [];
-      for (const slideData of slides) {
-        const slide = pptx.addSlide();
-        slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: 0.8, fill: { color: "232323" } });
-        slide.addText("BGP", { x: 0.3, y: 0.15, w: 1, h: 0.5, fontSize: 12, color: "FFFFFF", fontFace: "Calibri", bold: true });
-        slide.addText(cleanOfficeText(slideData.title || ""), { x: 0.5, y: 1.0, w: 11, h: 0.7, fontSize: 24, color: "232323", fontFace: "Calibri", bold: true });
-
-        let yPos = 1.9;
-        if (slideData.bullets && slideData.bullets.length > 0) {
-          const bulletText = slideData.bullets.map((b: string) => ({ text: cleanOfficeText(b), options: { fontSize: 14, color: "444444", fontFace: "Calibri", bullet: true, breakType: "n" as const, paraSpaceAfter: 6 } }));
-          slide.addText(bulletText, { x: 0.8, y: yPos, w: 10.5, h: 4.0, valign: "top" });
-          yPos += Math.min(slideData.bullets.length * 0.45, 4.0) + 0.3;
-        }
-
-        if (slideData.table && slideData.table.headers && slideData.table.rows) {
-          const tableRows: any[][] = [];
-          tableRows.push(slideData.table.headers.map((h: string) => ({ text: cleanOfficeText(h), options: { bold: true, fontSize: 11, color: "FFFFFF", fill: { color: "232323" }, fontFace: "Calibri" } })));
-          slideData.table.rows.forEach((row: string[], ri: number) => {
-            tableRows.push(row.map((cell: string) => ({ text: cleanOfficeText(cell), options: { fontSize: 10, color: "333333", fill: { color: ri % 2 === 0 ? "F5F5F5" : "FFFFFF" }, fontFace: "Calibri" } })));
-          });
-          slide.addTable(rectifyRows(tableRows, slideData.table.headers.length), { x: 0.5, y: yPos, w: 11.5, fontSize: 10, border: { type: "solid", pt: 0.5, color: "DDDDDD" } });
-        }
-
-        if (slideData.notes) {
-          slide.addNotes(cleanOfficeText(slideData.notes));
-        }
-      }
-
-      const pptxBuffer = await fixPptxSchemaViolations(await pptx.write({ outputType: "nodebuffer" }) as Buffer);
-      const safeName = (fnArgs.title as string).replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_");
+      const { buffer: pptxBuffer, safeName, slideCount } = await buildDeckPptxFromArgs(fnArgs);
       const uniqueId = crypto.randomBytes(8).toString("hex");
       const storageFilename = `${Date.now()}-${uniqueId}-${safeName}.pptx`;
-
       await saveFile(`chat-media/${storageFilename}`, pptxBuffer, "application/vnd.openxmlformats-officedocument.presentationml.presentation", `${safeName}.pptx`);
       const downloadUrl = `/api/chat-media/${storageFilename}`;
       return {
         data: {
-          success: true, downloadUrl, filename: `${safeName}.pptx`, slides: slides.length + 1, action: "pptx_generated",
+          success: true, downloadUrl, filename: `${safeName}.pptx`, slides: slideCount, action: "pptx_generated",
           downloadMarkdown: `[📊 Download ${safeName}.pptx](${downloadUrl})`,
           instruction: "IMPORTANT: Include the downloadMarkdown text EXACTLY as-is in your response so the user can download the file.",
         },
@@ -11786,62 +11784,16 @@ export async function handleCrmToolCall(
 
   if (fnName === "generate_pptx") {
     try {
-      const PptxGenJS = (await import("pptxgenjs")).default;
       const crypto = (await import("crypto")).default;
       const { saveFile } = await import("./file-storage");
-
-      const pptx = new PptxGenJS();
-      pptx.layout = "LAYOUT_WIDE";
-      pptx.author = "Bruce Gillingham Pollard";
-      pptx.company = "Bruce Gillingham Pollard";
-      pptx.title = cleanOfficeText(fnArgs.title);
-
-      const titleSlide = pptx.addSlide();
-      titleSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: "100%", fill: { color: "232323" } });
-      titleSlide.addText("BRUCE GILLINGHAM POLLARD", { x: 0.8, y: 0.5, w: 8, h: 0.5, fontSize: 14, color: "AAAAAA", fontFace: "Calibri", bold: true });
-      titleSlide.addText(cleanOfficeText(fnArgs.title), { x: 0.8, y: 2.0, w: 10, h: 1.5, fontSize: 36, color: "FFFFFF", fontFace: "Calibri", bold: true });
-      if (fnArgs.subtitle) {
-        titleSlide.addText(cleanOfficeText(fnArgs.subtitle), { x: 0.8, y: 3.5, w: 10, h: 0.8, fontSize: 18, color: "CCCCCC", fontFace: "Calibri" });
-      }
-
-      const slides = (fnArgs.slides as any[]) || [];
-      for (const slideData of slides) {
-        const slide = pptx.addSlide();
-        slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: 0.8, fill: { color: "232323" } });
-        slide.addText("BGP", { x: 0.3, y: 0.15, w: 1, h: 0.5, fontSize: 12, color: "FFFFFF", fontFace: "Calibri", bold: true });
-        slide.addText(cleanOfficeText(slideData.title || ""), { x: 0.5, y: 1.0, w: 11, h: 0.7, fontSize: 24, color: "232323", fontFace: "Calibri", bold: true });
-
-        let yPos = 1.9;
-        if (slideData.bullets && slideData.bullets.length > 0) {
-          const bulletText = slideData.bullets.map((b: string) => ({ text: cleanOfficeText(b), options: { fontSize: 14, color: "444444", fontFace: "Calibri", bullet: true, breakType: "n" as const, paraSpaceAfter: 6 } }));
-          slide.addText(bulletText, { x: 0.8, y: yPos, w: 10.5, h: 4.0, valign: "top" });
-          yPos += Math.min(slideData.bullets.length * 0.45, 4.0) + 0.3;
-        }
-
-        if (slideData.table && slideData.table.headers && slideData.table.rows) {
-          const tableRows: any[][] = [];
-          tableRows.push(slideData.table.headers.map((h: string) => ({ text: cleanOfficeText(h), options: { bold: true, fontSize: 11, color: "FFFFFF", fill: { color: "232323" }, fontFace: "Calibri" } })));
-          slideData.table.rows.forEach((row: string[], ri: number) => {
-            tableRows.push(row.map((cell: string) => ({ text: cleanOfficeText(cell), options: { fontSize: 10, color: "333333", fill: { color: ri % 2 === 0 ? "F5F5F5" : "FFFFFF" }, fontFace: "Calibri" } })));
-          });
-          slide.addTable(rectifyRows(tableRows, slideData.table.headers.length), { x: 0.5, y: yPos, w: 11.5, fontSize: 10, border: { type: "solid", pt: 0.5, color: "DDDDDD" } });
-        }
-
-        if (slideData.notes) {
-          slide.addNotes(cleanOfficeText(slideData.notes));
-        }
-      }
-
-      const pptxBuffer = await fixPptxSchemaViolations(await pptx.write({ outputType: "nodebuffer" }) as Buffer);
-      const safeName = (fnArgs.title as string).replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_");
+      const { buffer: pptxBuffer, safeName, slideCount } = await buildDeckPptxFromArgs(fnArgs);
       const uniqueId = crypto.randomBytes(8).toString("hex");
       const storageFilename = `${Date.now()}-${uniqueId}-${safeName}.pptx`;
-
       await saveFile(`chat-media/${storageFilename}`, pptxBuffer, "application/vnd.openxmlformats-officedocument.presentationml.presentation", `${safeName}.pptx`);
       const downloadUrl = `/api/chat-media/${storageFilename}`;
       const downloadLink = `[📊 Download ${safeName}.pptx](${downloadUrl})`;
-      let reply = await summaryHelper({ success: true, downloadUrl, filename: `${safeName}.pptx`, slides: slides.length + 1, action: "pptx_generated" });
-      if (!reply || !reply.includes("/api/chat-media/")) reply = `Your PowerPoint has been generated with ${slides.length + 1} slides.\n\n${downloadLink}`;
+      let reply = await summaryHelper({ success: true, downloadUrl, filename: `${safeName}.pptx`, slides: slideCount, action: "pptx_generated" });
+      if (!reply || !reply.includes("/api/chat-media/")) reply = `Your PowerPoint has been generated with ${slideCount} slides.\n\n${downloadLink}`;
       else if (!reply.includes(downloadUrl)) reply += `\n\n${downloadLink}`;
       return { handled: true, response: { reply, action: { type: "download", url: downloadUrl, filename: `${safeName}.pptx` } } };
     } catch (err: any) {
