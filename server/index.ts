@@ -375,6 +375,24 @@ import { pool } from "./db";
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS formatted_address TEXT`,
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION`,
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION`,
+
+    // Dedupe CRM link tables, then enforce uniqueness so duplicates can't return.
+    // Each dedupe must run before its index creation, which fails while duplicates exist.
+    `DELETE FROM crm_company_properties a USING crm_company_properties b
+      WHERE a.company_id = b.company_id AND a.property_id = b.property_id AND a.id > b.id`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_company_properties_pair ON crm_company_properties(company_id, property_id)`,
+    `DELETE FROM crm_company_deals a USING crm_company_deals b
+      WHERE a.company_id = b.company_id AND a.deal_id = b.deal_id AND a.id > b.id`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_company_deals_pair ON crm_company_deals(company_id, deal_id)`,
+    `DELETE FROM crm_contact_deals a USING crm_contact_deals b
+      WHERE a.contact_id = b.contact_id AND a.deal_id = b.deal_id AND a.id > b.id`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_contact_deals_pair ON crm_contact_deals(contact_id, deal_id)`,
+    `DELETE FROM crm_contact_properties a USING crm_contact_properties b
+      WHERE a.contact_id = b.contact_id AND a.property_id = b.property_id AND a.id > b.id`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_contact_properties_pair ON crm_contact_properties(contact_id, property_id)`,
+    `DELETE FROM crm_contact_requirements a USING crm_contact_requirements b
+      WHERE a.contact_id = b.contact_id AND a.requirement_id = b.requirement_id AND a.id > b.id`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_contact_requirements_pair ON crm_contact_requirements(contact_id, requirement_id)`,
   ];
 
   let ok = 0, skipped = 0;

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, real, jsonb, uuid, serial, doublePrecision } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, real, jsonb, uuid, serial, doublePrecision, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -1059,32 +1059,32 @@ export const crmContactProperties = pgTable("crm_contact_properties", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   contactId: varchar("contact_id").notNull(),
   propertyId: varchar("property_id").notNull(),
-});
+}, (t) => [uniqueIndex("uq_crm_contact_properties_pair").on(t.contactId, t.propertyId)]);
 
 export const crmContactRequirements = pgTable("crm_contact_requirements", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   contactId: varchar("contact_id").notNull(),
   requirementId: varchar("requirement_id").notNull(),
   requirementType: text("requirement_type"),
-});
+}, (t) => [uniqueIndex("uq_crm_contact_requirements_pair").on(t.contactId, t.requirementId)]);
 
 export const crmContactDeals = pgTable("crm_contact_deals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   contactId: varchar("contact_id").notNull(),
   dealId: varchar("deal_id").notNull(),
-});
+}, (t) => [uniqueIndex("uq_crm_contact_deals_pair").on(t.contactId, t.dealId)]);
 
 export const crmCompanyProperties = pgTable("crm_company_properties", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   companyId: varchar("company_id").notNull(),
   propertyId: varchar("property_id").notNull(),
-});
+}, (t) => [uniqueIndex("uq_crm_company_properties_pair").on(t.companyId, t.propertyId)]);
 
 export const crmCompanyDeals = pgTable("crm_company_deals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   companyId: varchar("company_id").notNull(),
   dealId: varchar("deal_id").notNull(),
-});
+}, (t) => [uniqueIndex("uq_crm_company_deals_pair").on(t.companyId, t.dealId)]);
 
 export const crmInteractions = pgTable("crm_interactions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
