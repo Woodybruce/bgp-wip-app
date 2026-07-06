@@ -769,7 +769,7 @@ export class DatabaseStorage implements IStorage {
       and(eq(crmCompanyProperties.companyId, companyId), eq(crmCompanyProperties.propertyId, propertyId))
     );
     if (existing.length === 0) {
-      await db.insert(crmCompanyProperties).values({ companyId, propertyId });
+      await db.insert(crmCompanyProperties).values({ companyId, propertyId }).onConflictDoNothing();
     }
   }
 

@@ -4732,7 +4732,7 @@ async function executeCrmToolRaw(
       };
       const mapping = tableMap[linkType];
       if (!mapping) return { data: { success: false, error: `Unknown link type "${linkType}"` } };
-      await pool.query(`INSERT INTO ${mapping.table} (id, ${mapping.col1}, ${mapping.col2}) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [linkId, sourceId, targetId]);
+      await pool.query(`INSERT INTO ${mapping.table} (id, ${mapping.col1}, ${mapping.col2}) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM ${mapping.table} WHERE ${mapping.col1} = $2 AND ${mapping.col2} = $3)`, [linkId, sourceId, targetId]);
       return { data: { success: true, action: "linked", linkType, sourceId, targetId } };
     } catch (err: any) {
       return { data: { success: false, error: err.message } };
@@ -8172,7 +8172,7 @@ export async function handleCrmToolCall(
       } else if (linkType === "contact-requirement") {
         await pool.query(`INSERT INTO crm_contact_requirements (id, contact_id, requirement_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [linkId, sourceId, targetId]);
       } else if (linkType === "company-property") {
-        await pool.query(`INSERT INTO crm_company_properties (id, company_id, property_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_company_properties (id, company_id, property_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_company_properties WHERE company_id = $2 AND property_id = $3)`, [linkId, sourceId, targetId]);
       } else if (linkType === "company-deal") {
         await pool.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [linkId, sourceId, targetId]);
       } else {

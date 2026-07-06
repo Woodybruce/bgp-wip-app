@@ -175,7 +175,7 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
           await client.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [randomUUID(), tenantId, dealId]);
         }
         if (propertyId && landlordId) {
-          await client.query(`INSERT INTO crm_company_properties (id, company_id, property_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [randomUUID(), landlordId, propertyId]);
+          await client.query(`INSERT INTO crm_company_properties (id, company_id, property_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_company_properties WHERE company_id = $2 AND property_id = $3)`, [randomUUID(), landlordId, propertyId]);
         }
         created++;
       }
