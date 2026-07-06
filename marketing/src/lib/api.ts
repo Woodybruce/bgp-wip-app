@@ -25,6 +25,7 @@ export interface Listing {
   longitude: string | null;
   assetClass: string | null;
   files: ListingFile[];
+  image?: string;
   isSample?: boolean;
 }
 
@@ -33,6 +34,7 @@ const API_BASE = (import.meta.env.VITE_BGP_API_URL as string | undefined)?.repla
 export const SAMPLE_LISTINGS: Listing[] = [
   {
     id: "sample-1",
+    image: "/images/cafe.jpg",
     unitName: "[Sample] 11 Belgrave Road",
     floor: "Ground",
     sqft: 3297,
@@ -56,6 +58,7 @@ export const SAMPLE_LISTINGS: Listing[] = [
   },
   {
     id: "sample-2",
+    image: "/images/shop-menswear.jpg",
     unitName: "[Sample] 20 Hanover Square",
     floor: "Ground + Basement",
     sqft: 5120,
@@ -79,6 +82,7 @@ export const SAMPLE_LISTINGS: Listing[] = [
   },
   {
     id: "sample-3",
+    image: "/images/bar.jpg",
     unitName: "[Sample] 19 Golden Square",
     floor: "Ground",
     sqft: 1480,

@@ -20,7 +20,7 @@ export default function ListingCard({ listing, wide = false }: { listing: Listin
             loading="lazy"
           />
         ) : (
-          <Placeholder className="aspect-[4/3] w-full" />
+          <Placeholder className="aspect-[4/3] w-full" src={listing.image} alt={listing.unitName} />
         )}
         {listing.marketingStatus === "Under Offer" && (
           <span className="absolute top-0 right-0 bg-bgp-burgundy text-bgp-paper label-caps px-3 py-1.5">

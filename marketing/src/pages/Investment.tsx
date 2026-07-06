@@ -26,7 +26,7 @@ export default function Investment() {
           {INVESTMENT_DEALS.map((deal) => (
             <div key={deal.name} className={deal.wide ? "sm:col-span-2" : ""}>
               <div className="relative">
-                <Placeholder className="aspect-[4/3] w-full" />
+                <Placeholder className="aspect-[4/3] w-full" src={deal.image} alt={deal.name} />
                 {deal.sold && (
                   <span className="absolute top-0 right-0 bg-bgp-stone text-bgp-ink label-caps px-3 py-1.5">
                     Completed

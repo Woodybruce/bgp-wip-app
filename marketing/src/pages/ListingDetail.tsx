@@ -70,7 +70,7 @@ export default function ListingDetail() {
             {images.length > 0 ? (
               <img src={fileUrl(images[0].id)} alt={listing.unitName} className="aspect-[16/10] w-full object-cover" />
             ) : (
-              <Placeholder className="aspect-[16/10] w-full" />
+              <Placeholder className="aspect-[16/10] w-full" src={listing.image} alt={listing.unitName} />
             )}
             {images.length > 1 && (
               <div className="mt-3 grid grid-cols-4 gap-3">

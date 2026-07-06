@@ -11,7 +11,7 @@ export default function Team() {
   return (
     <div>
       <section className="relative">
-        <Placeholder label="Team photo TBC" className="h-80 md:h-[28rem] w-full" />
+        <Placeholder className="h-80 md:h-[28rem] w-full" src="/images/office.jpg" alt="Office interior — team photo to follow" />
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">
             <p className="max-w-md text-xl md:text-2xl leading-snug bg-bgp-paper/85 p-4 -ml-4">

@@ -184,18 +184,19 @@ export interface InvestmentDeal {
   capRate: string | null;
   sold: boolean;
   wide: boolean;
+  image?: string;
 }
 
 export const INVESTMENT_DEALS: InvestmentDeal[] = [
-  { name: "LondonMetric Waitrose Portfolio", client: "LondonMetric PLC", price: "£62,000,000", capRate: null, sold: true, wide: true },
-  { name: "St Peters & Four Pools", client: "Brydell Partners", price: "£16,900,000", capRate: null, sold: true, wide: false },
-  { name: "Robin Leisure Park", client: "Otium Real Estate", price: "£12,480,000", capRate: "8.30%", sold: true, wide: false },
-  { name: "19 Golden Square, Soho", client: "Vectis Property Group", price: "£10,500,000", capRate: null, sold: true, wide: false },
-  { name: "The Ivy, 39 Milsom Street, Bath", client: "Legal & General", price: "£8,050,000", capRate: null, sold: true, wide: false },
-  { name: "52–55 Friar Street, Reading", client: "Aviva Investors", price: "£6,500,000", capRate: null, sold: true, wide: false },
-  { name: "Riverlight, Nine Elms", client: "St James / Berkeley", price: "£5,800,000", capRate: "4.22%", sold: true, wide: false },
-  { name: "213–214 Upper Street", client: "Private Client", price: "£5,350,000", capRate: "3.62%", sold: true, wide: false },
-  { name: "Tesco, Fulham Reach", client: "St George PLC", price: "£2,325,000", capRate: "4.60%", sold: true, wide: false },
+  { image: "/images/supermarket.jpg", name: "LondonMetric Waitrose Portfolio", client: "LondonMetric PLC", price: "£62,000,000", capRate: null, sold: true, wide: true },
+  { image: "/images/shop-rails.jpg", name: "St Peters & Four Pools", client: "Brydell Partners", price: "£16,900,000", capRate: null, sold: true, wide: false },
+  { image: "/images/cinema.jpg", name: "Robin Leisure Park", client: "Otium Real Estate", price: "£12,480,000", capRate: "8.30%", sold: true, wide: false },
+  { image: "/images/city-towers.jpg", name: "19 Golden Square, Soho", client: "Vectis Property Group", price: "£10,500,000", capRate: null, sold: true, wide: false },
+  { image: "/images/restaurant.jpg", name: "The Ivy, 39 Milsom Street, Bath", client: "Legal & General", price: "£8,050,000", capRate: null, sold: true, wide: false },
+  { image: "/images/shop-browse.jpg", name: "52–55 Friar Street, Reading", client: "Aviva Investors", price: "£6,500,000", capRate: null, sold: true, wide: false },
+  { image: "/images/apartments.jpg", name: "Riverlight, Nine Elms", client: "St James / Berkeley", price: "£5,800,000", capRate: "4.22%", sold: true, wide: false },
+  { image: "/images/shop-boutique.jpg", name: "213–214 Upper Street", client: "Private Client", price: "£5,350,000", capRate: "3.62%", sold: true, wide: false },
+  { image: "/images/grocery-aisle.jpg", name: "Tesco, Fulham Reach", client: "St George PLC", price: "£2,325,000", capRate: "4.60%", sold: true, wide: false },
 ];
 
 // Real client rosters from the projects page.
