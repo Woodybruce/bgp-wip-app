@@ -169,10 +169,10 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
         );
 
         if (landlordId) {
-          await client.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [randomUUID(), landlordId, dealId]);
+          await client.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_company_deals WHERE company_id = $2 AND deal_id = $3)`, [randomUUID(), landlordId, dealId]);
         }
         if (tenantId && tenantId !== landlordId) {
-          await client.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [randomUUID(), tenantId, dealId]);
+          await client.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_company_deals WHERE company_id = $2 AND deal_id = $3)`, [randomUUID(), tenantId, dealId]);
         }
         if (propertyId && landlordId) {
           await client.query(`INSERT INTO crm_company_properties (id, company_id, property_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_company_properties WHERE company_id = $2 AND property_id = $3)`, [randomUUID(), landlordId, propertyId]);
@@ -2602,7 +2602,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
   });
   app.post("/api/crm/contacts/:id/properties", async (req, res) => {
     try {
-      const [link] = await db.insert(crmContactProperties).values({ contactId: req.params.id, propertyId: req.body.propertyId }).returning();
+      let [link] = await db.insert(crmContactProperties).values({ contactId: req.params.id, propertyId: req.body.propertyId }).onConflictDoNothing().returning();
+      if (!link) [link] = await db.select().from(crmContactProperties).where(and(eq(crmContactProperties.contactId, req.params.id), eq(crmContactProperties.propertyId, req.body.propertyId)));
       res.json(link);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -2657,7 +2658,8 @@ Return a JSON object with these fields (use null for any field you cannot find):
   });
   app.post("/api/crm/contacts/:id/deals", async (req, res) => {
     try {
-      const [link] = await db.insert(crmContactDeals).values({ contactId: req.params.id, dealId: req.body.dealId }).returning();
+      let [link] = await db.insert(crmContactDeals).values({ contactId: req.params.id, dealId: req.body.dealId }).onConflictDoNothing().returning();
+      if (!link) [link] = await db.select().from(crmContactDeals).where(and(eq(crmContactDeals.contactId, req.params.id), eq(crmContactDeals.dealId, req.body.dealId)));
       res.json(link);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -2729,11 +2731,12 @@ Return a JSON object with these fields (use null for any field you cannot find):
   });
   app.post("/api/crm/contacts/:id/requirements", async (req, res) => {
     try {
-      const [link] = await db.insert(crmContactRequirements).values({
+      let [link] = await db.insert(crmContactRequirements).values({
         contactId: req.params.id,
         requirementId: req.body.requirementId,
         requirementType: req.body.requirementType,
-      }).returning();
+      }).onConflictDoNothing().returning();
+      if (!link) [link] = await db.select().from(crmContactRequirements).where(and(eq(crmContactRequirements.contactId, req.params.id), eq(crmContactRequirements.requirementId, req.body.requirementId)));
       res.json(link);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -2899,7 +2902,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
             const existing = await db.select().from(crmContactDeals)
               .where(and(eq(crmContactDeals.contactId, entityId), eq(crmContactDeals.dealId, dealId)));
             if (existing.length === 0) {
-              await db.insert(crmContactDeals).values({ contactId: entityId, dealId });
+              await db.insert(crmContactDeals).values({ contactId: entityId, dealId }).onConflictDoNothing();
             }
             applied++;
           } else if (entityType === "company") {
@@ -2913,7 +2916,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
             const existing = await db.select().from(crmCompanyDeals)
               .where(and(eq(crmCompanyDeals.companyId, entityId), eq(crmCompanyDeals.dealId, dealId)));
             if (existing.length === 0) {
-              await db.insert(crmCompanyDeals).values({ companyId: entityId, dealId });
+              await db.insert(crmCompanyDeals).values({ companyId: entityId, dealId }).onConflictDoNothing();
             }
             applied++;
           }

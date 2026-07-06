@@ -8166,15 +8166,15 @@ export async function handleCrmToolCall(
       if (linkType === "contact-deal") {
         const check = await pool.query(`SELECT id FROM crm_contacts WHERE id = $1`, [sourceId]);
         if (!check.rows.length) return { handled: true, response: { reply: `Contact with ID "${sourceId}" not found.` } };
-        await pool.query(`INSERT INTO crm_contact_deals (id, contact_id, deal_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_contact_deals (id, contact_id, deal_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_contact_deals WHERE contact_id = $2 AND deal_id = $3)`, [linkId, sourceId, targetId]);
       } else if (linkType === "contact-property") {
-        await pool.query(`INSERT INTO crm_contact_properties (id, contact_id, property_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_contact_properties (id, contact_id, property_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_contact_properties WHERE contact_id = $2 AND property_id = $3)`, [linkId, sourceId, targetId]);
       } else if (linkType === "contact-requirement") {
-        await pool.query(`INSERT INTO crm_contact_requirements (id, contact_id, requirement_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_contact_requirements (id, contact_id, requirement_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_contact_requirements WHERE contact_id = $2 AND requirement_id = $3)`, [linkId, sourceId, targetId]);
       } else if (linkType === "company-property") {
         await pool.query(`INSERT INTO crm_company_properties (id, company_id, property_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_company_properties WHERE company_id = $2 AND property_id = $3)`, [linkId, sourceId, targetId]);
       } else if (linkType === "company-deal") {
-        await pool.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_company_deals WHERE company_id = $2 AND deal_id = $3)`, [linkId, sourceId, targetId]);
       } else {
         return { handled: true, response: { reply: `Unknown link type "${linkType}".` } };
       }
