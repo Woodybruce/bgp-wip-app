@@ -3148,7 +3148,11 @@ app.use("/api/branding/assets", express.static(
       if (!(await isClientRequestUser(req))) return next(); // BGP staff: unaffected
       const isWrite = !["GET", "HEAD", "OPTIONS"].includes(req.method);
       if (isWrite) {
-        if (CLIENT_ALLOWED_WRITES.some(w => p === w || p.startsWith(w + "/"))) return next();
+        // Same prefix-matching rule as the read allowlist: entries ending in
+        // "/" match by prefix, others match exactly or as a path segment.
+        if (CLIENT_ALLOWED_WRITES.some(w =>
+          w.endsWith("/") ? p.startsWith(w) : (p === w || p.startsWith(w + "/"))
+        )) return next();
         return res.status(403).json({ error: "Read-only access for client accounts" });
       }
       if (CLIENT_BLOCKED_SUBPATHS.some(re => re.test(p))) {
