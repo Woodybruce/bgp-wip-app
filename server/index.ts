@@ -3124,8 +3124,12 @@ app.use("/api/branding/assets", express.static(
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
     "/api/favorite-instructions", "/api/chatbgp/chat", "/api/hr/photo/",
   ];
-  // The only writes a client may perform.
-  const CLIENT_ALLOWED_WRITES = ["/api/auth/logout", "/api/chatbgp/chat"];
+  // The only writes a client may perform. (heartbeat/push/config are
+  // harmless presence + client-preference pings every user sends.)
+  const CLIENT_ALLOWED_WRITES = [
+    "/api/auth/logout", "/api/chatbgp/chat", "/api/heartbeat",
+    "/api/push/", "/api/config/", "/api/favorite-instructions",
+  ];
   // Sub-routes to block even though a parent prefix is allowed (BGP intel /
   // brand pipeline that isn't the client's own profile).
   const CLIENT_BLOCKED_SUBPATHS = [
