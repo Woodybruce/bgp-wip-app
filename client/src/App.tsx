@@ -195,8 +195,8 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
 const CLIENT_ALLOWED_ROUTES = [
   "/", "/properties", "/property-intelligence", "/map", "/brands",
   "/contacts", "/companies", "/comps", "/chatbgp", "/requirements",
-  "/tasks", "/today", "/leasing-schedule", "/land-registry", "/business-rates",
-  "/m/images", "/cad-measure", "/settings/profile",
+  "/deals", "/tasks", "/today", "/leasing-schedule", "/land-registry",
+  "/business-rates", "/m/images", "/cad-measure", "/settings/profile",
 ];
 function ClientRouteGuard() {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });

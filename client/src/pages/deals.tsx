@@ -4817,17 +4817,23 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "table"
   );
 
+  // Client logins (e.g. Landsec) are already scoped to their company by the
+  // API, and their deals aren't tagged with a BGP team — so never apply the
+  // activeTeam column filter for them (it would hide everything).
+  const isClientDeals = (currentUserForViews as any)?.role === "Client";
+
   useEffect(() => {
     if (!teamFilterInitialised) {
-      const teamToSet = urlTeamParam || (activeTeam && activeTeam !== "all" ? activeTeam : null);
+      const teamToSet = isClientDeals ? null : (urlTeamParam || (activeTeam && activeTeam !== "all" ? activeTeam : null));
       if (teamToSet) {
         setColumnFilters(prev => ({ ...prev, team: [teamToSet] }));
       }
       setTeamFilterInitialised(true);
     }
-  }, [activeTeam, teamFilterInitialised, urlTeamParam]);
+  }, [activeTeam, teamFilterInitialised, urlTeamParam, isClientDeals]);
 
   useEffect(() => {
+    if (isClientDeals) return;
     if (teamFilterInitialised && activeTeam && !urlTeamParam) {
       if (activeTeam === "all") {
         setColumnFilters(prev => { const { team, ...rest } = prev; return rest; });
@@ -4835,7 +4841,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         setColumnFilters(prev => ({ ...prev, team: [activeTeam] }));
       }
     }
-  }, [activeTeam]);
+  }, [activeTeam, isClientDeals]);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
     unit: false,
     // 'landlord' (renders as 'Client') is folded into clientXero by default
