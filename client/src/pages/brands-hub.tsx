@@ -148,9 +148,10 @@ export default function BrandsHub() {
     ? rawTab as HubTab
     : (typeof window !== "undefined" && window.innerWidth < 768 ? "explorer" : "overview");
   const [activeTab, setActiveTab] = useState<HubTab>(initialTab);
-  // Client logins (e.g. Landsec) get Overview + Brand Explorer only —
-  // Turnover Board and Brand Hunter are BGP intel (their APIs 403 for
-  // clients anyway, so the tabs would just error).
+  // Client logins (e.g. Landsec) get ONLY Brand Explorer — the curated
+  // hospitality/F&B/fitness directory. Overview (turnover leaders + the
+  // "Research Turnover" admin panel), Turnover Board and Brand Hunter are all
+  // BGP intel and stay staff-only.
   const { data: hubUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientHub = hubUser?.role === "Client";
   // The other boards (Overview/Turnover/Hunter) are still being built, so on
@@ -162,14 +163,14 @@ export default function BrandsHub() {
     { key: "hunter",  label: "Brand Hunter",   icon: Crosshair },
   ] as { key: HubTab; label: string; icon: any }[])
     .filter(t => !isMobile || t.key === "explorer")
-    .filter(t => !isClientHub || t.key === "overview" || t.key === "explorer");
+    .filter(t => !isClientHub || t.key === "explorer");
   const [search, setSearch] = useState("");
   const [researchingId, setResearchingId] = useState<string | null>(null);
 
-  // If a client deep-links to a blocked board (?tab=turnover|hunter),
-  // bounce them to the explorer.
+  // Clients only have the explorer — force it and bounce any deep-link to a
+  // staff board (overview/turnover/hunter).
   useEffect(() => {
-    if (isClientHub && (activeTab === "turnover" || activeTab === "hunter")) {
+    if (isClientHub && activeTab !== "explorer") {
       setActiveTab("explorer");
     }
   }, [isClientHub, activeTab]);

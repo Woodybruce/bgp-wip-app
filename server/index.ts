@@ -3153,6 +3153,26 @@ app.use("/api/branding/assets", express.static(
     /^\/api\/brands\/(hunter|turnover)/,
     /^\/api\/brand\/[^/]+\/(hunter-score|competitors|suggested-units|ai-take|pack|image-diag)/,
     /^\/api\/tasks\/(onenote|import)/,
+    // ── Firm-wide / cross-company GETs that sit under an allowed parent
+    //    prefix but were never company-scoped. Blocked for clients so a
+    //    Landsec login can't pull other landlords' data via the network tab.
+    //    (Landsec audit, pre-demo sweep.) The scoped equivalents clients DO
+    //    use — /api/crm/companies, /deals, /properties, /available-units,
+    //    /leasing-schedule/property/:id, /company-property-links — are not
+    //    matched here and keep working.
+    /^\/api\/dashboard\/intelligence/,
+    /^\/api\/crm\/(landlords|stats)\b/,
+    /^\/api\/crm\/(contact-property-links|contact-deal-links|contact-requirement-links|company-deal-links|property-deal-links|property-tenants)\b/,
+    /^\/api\/crm\/companies\/[^/]+\/trading-entities/,
+    /^\/api\/crm\/properties\/[^/]+\/agents/,
+    /^\/api\/available-units\/(all-viewings|all-offers|all-files|all-viewings-counts|all-offers-counts|matches)\b/,
+    /^\/api\/leasing-schedule\/export-excel/,           // firm-wide export; per-property /property/:id/export stays scoped
+    /^\/api\/leasing-schedule\/property\/[^/]+\/privacy/,
+    /^\/api\/tenancy-schedule\/property\/[^/]+\/links/,
+    /^\/api\/properties\/[^/]+\/(360|brochures|tasks|orphan-deals|instructions|project-files|duplicate-units|plan-pickable-units|plans|unresolved-tenants|linkage-audit)\b/,
+    /^\/api\/property\/[^/]+\/brand-gaps/,
+    /^\/api\/client-teams\/[^/]+\/candidates/,          // whole BGP staff directory
+    /^\/api\/image-studio\/orphans/,
   ];
   app.use("/api", async (req: any, res, next) => {
     // NB: inside app.use("/api", …) the mount path is stripped from req.path,

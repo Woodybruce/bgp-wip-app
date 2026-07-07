@@ -24,6 +24,13 @@ router.get("/api/client-teams/:clientCompanyId", requireAuth, async (req, res) =
   try {
     const pool = await getPool();
     const { clientCompanyId } = req.params;
+    // A client may only see their OWN account team — never another company's
+    // BGP staff (names, emails, CVs). Staff (null scope) see any. (Landsec audit.)
+    const { resolveCompanyScope } = await import("./company-scope");
+    const scopeCompanyId = await resolveCompanyScope(req);
+    if (scopeCompanyId && scopeCompanyId !== clientCompanyId) {
+      return res.status(403).json({ error: "Access denied" });
+    }
     const rows = await pool.query(`
       SELECT m.id,
              m.client_company_id,

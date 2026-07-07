@@ -1049,6 +1049,7 @@ export default function AvailableUnitsPage() {
             )}
           </p>
         </div>
+        {!isClientTracker && (
         <Button
           onClick={() => {
             // Stage 3b feature flag — when on, the new unified dialog opens
@@ -1065,6 +1066,7 @@ export default function AvailableUnitsPage() {
         >
           <Plus className="h-4 w-4 mr-1" /> Add Unit
         </Button>
+        )}
       </div>
 
       {/* Single thin FY activity strip — was two full cards stacked

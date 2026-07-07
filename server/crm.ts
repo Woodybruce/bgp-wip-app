@@ -1108,6 +1108,13 @@ export function setupCrmRoutes(app: Express) {
   // explorer — hospitality, F&B, café, leisure and fitness tenants only.
   // Keep in sync with CLIENT_BRAND_TYPE_PATTERNS (the SQL ILIKE variant).
   const CLIENT_BRAND_TYPE_RE = /^tenant -.*(restaurant|dining|f&b|qsr|fast food|fast casual|food|bakery|patisserie|caf[ée]|coffee|bar|hospitality|hotel|leisure|cinema|entertainment|fitness|gym|yoga)/i;
+
+  // BGP's fee/commission on a deal is internal — never send any of it to a
+  // client login. One helper so every deal response strips the same fields.
+  const stripDealFees = <T extends Record<string, any>>(d: T): T => ({
+    ...d, fee: null, feeNotes: null, feePercentage: null,
+    feeAgreement: null, feeAgreementUrl: null, commission: null,
+  });
   // Ensure new comp columns exist (safe to re-run)
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS fee_agreement_url TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS area_basis TEXT`).catch(() => {});
@@ -2731,8 +2738,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           d.purchaserId === scopeCompanyId ||
           linkedDealIds.has(d.id);
         const arr = Array.isArray(result) ? result : result.data;
-        // BGP's fee is internal — never send it to a client login.
-        res.json(arr.filter(scopeFilter).map((d: any) => ({ ...d, fee: null, feeNotes: null })));
+        // BGP's fee/commission is internal — strip every fee field before
+        // sending a deal to a client login (fee, %, notes, agreement doc).
+        res.json(arr.filter(scopeFilter).map(stripDealFees));
       } else {
         res.json(result);
       }
@@ -2816,7 +2824,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         return res.status(403).json({ error: "Access denied" });
       }
       // Strip BGP's fee/commission from the deal profile for clients. (Landsec audit.)
-      if (scopeCompanyId) return res.json({ ...deal, fee: null, feeNotes: null });
+      if (scopeCompanyId) return res.json(stripDealFees(deal));
       res.json(deal);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });

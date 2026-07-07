@@ -291,7 +291,7 @@ export function WidgetPickerDialog({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setSelectedBoards([...DEFAULT_BOARDS])}
+            onClick={() => setSelectedBoards(boards.map(b => b.id))}
             data-testid="button-reset-widgets"
           >
             Reset to default

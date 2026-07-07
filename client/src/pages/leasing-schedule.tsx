@@ -1636,6 +1636,10 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           )}
         </div>
         <div className="ml-auto flex flex-wrap gap-2 justify-end">
+          {/* All controls here are staff-only (AI targets, import, sync to
+              tenancy, add/delete units, snapshots). Clients get a read-only
+              board — hide the entire toolbar for them. */}
+          {(currentUser as any)?.role !== "Client" && (<>
           {canTogglePrivacy && (
             <Button variant="outline" size="sm" onClick={() => privacyMutation.mutate(!privacyInfo?.privacy_enabled)}
               className={privacyInfo?.privacy_enabled ? "border-violet-300 text-violet-700" : ""}
@@ -1766,6 +1770,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
               Delete all
             </Button>
           )}
+          </>)}
         </div>
       </div>
       {/* Last updated + meeting month banner */}
@@ -3467,6 +3472,9 @@ export default function LeasingSchedulePage() {
             <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-gray-400" />
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search properties..." className="pl-8 h-8 text-xs w-[200px]" data-testid="search-properties" />
           </div>
+          {/* Import + firm-wide export are staff-only (the export endpoint is
+              blocked for clients server-side). Clients get a read-only board. */}
+          {!isClientBoard && (<>
           <Button size="sm" className="h-8 text-xs gap-1.5" onClick={() => setImportOpen(true)} data-testid="btn-import-board">
             <Upload className="w-3.5 h-3.5" />
             Import Excel
@@ -3483,6 +3491,7 @@ export default function LeasingSchedulePage() {
               </Button>
             </>
           )}
+          </>)}
         </div>
       </div>
 
