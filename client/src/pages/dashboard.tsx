@@ -596,7 +596,6 @@ export default function Dashboard() {
 
   const [dashboardEditing, setDashboardEditing] = useState(false);
 
-  const [closeDialogCb, setCloseDialogCb] = useState<(() => void) | null>(null);
   const saveMutation = useMutation({
     mutationFn: async (widgets: string[]) => {
       await apiRequest("PATCH", "/api/auth/me/dashboard-widgets", { widgets });
@@ -604,10 +603,6 @@ export default function Dashboard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
       toast({ title: "Widgets updated", duration: 1500 });
-      if (closeDialogCb) {
-        closeDialogCb();
-        setCloseDialogCb(null);
-      }
     },
     onError: () => {
       toast({ title: "Failed to update widgets", variant: "destructive" });
@@ -896,8 +891,11 @@ export default function Dashboard() {
               <WidgetPickerDialog
                 activeWidgets={activeWidgets}
                 onSave={(widgets, onDone) => {
-                  setCloseDialogCb(() => onDone);
-                  saveMutation.mutate(widgets);
+                  // Close the dialog via the mutation's per-call onSuccess so
+                  // it fires with a fresh callback (routing it through state
+                  // left the dialog stuck open — widgets saved but nothing
+                  // appeared to happen).
+                  saveMutation.mutate(widgets, { onSuccess: () => onDone() });
                 }}
                 saving={saveMutation.isPending}
                 viewMode={dashboardViewMode}
