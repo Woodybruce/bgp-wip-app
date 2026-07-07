@@ -197,6 +197,7 @@ const CLIENT_ALLOWED_ROUTES = [
   "/contacts", "/companies", "/comps", "/chatbgp", "/requirements",
   "/deals", "/tasks", "/today", "/leasing-schedule", "/land-registry",
   "/business-rates", "/m/images", "/cad-measure", "/settings/profile",
+  "/news",
 ];
 function ClientRouteGuard() {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });

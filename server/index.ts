@@ -3124,7 +3124,7 @@ app.use("/api/branding/assets", express.static(
     "/api/notifications", "/api/daily-digest", "/api/activity-feed",
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
     "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",
-    "/api/available-units",
+    "/api/available-units", "/api/tasks",
   ];
   // Microsoft 365 stays fully blocked for clients (mail/calendar/files all
   // 403) — the client UI must not call it at all; see nav + poller gating.
@@ -3139,12 +3139,20 @@ app.use("/api/branding/assets", express.static(
     // bands, targets, meeting updates). Each endpoint verifies the property is
     // in the client's scope; import/bulk-delete stay staff-only. (Landsec.)
     "/api/tenancy-schedule/unit", "/api/leasing-schedule/unit",
+    // Clients may manage their OWN tasks (every task endpoint is scoped to
+    // user_id); the My Tasks dashboard widget needs create/complete/reorder.
+    "/api/tasks",
+    // Per-user news actions (click/save/dismiss tracking) — harmless and
+    // needed for the News tab; the fetch/scrape trigger stays staff-only.
+    "/api/news-feed/engage",
   ];
   // Sub-routes to block even though a parent prefix is allowed (BGP intel /
-  // brand pipeline that isn't the client's own profile).
+  // brand pipeline that isn't the client's own profile; OneNote task import
+  // rides on Microsoft, which stays sealed for clients).
   const CLIENT_BLOCKED_SUBPATHS = [
     /^\/api\/brands\/(hunter|turnover)/,
     /^\/api\/brand\/[^/]+\/(hunter-score|competitors|suggested-units|ai-take|pack|image-diag)/,
+    /^\/api\/tasks\/(onenote|import)/,
   ];
   app.use("/api", async (req: any, res, next) => {
     // NB: inside app.use("/api", …) the mount path is stripped from req.path,
@@ -3156,6 +3164,11 @@ app.use("/api/branding/assets", express.static(
       if (!(await isClientRequestUser(req))) return next(); // BGP staff: unaffected
       const isWrite = !["GET", "HEAD", "OPTIONS"].includes(req.method);
       if (isWrite) {
+        // Blocked sub-paths win even over an allowed parent (e.g. task import
+        // rides on Microsoft, which stays sealed for clients).
+        if (CLIENT_BLOCKED_SUBPATHS.some(re => re.test(p))) {
+          return res.status(403).json({ error: "Not available for client accounts" });
+        }
         // Same prefix-matching rule as the read allowlist: entries ending in
         // "/" match by prefix, others match exactly or as a path segment.
         if (CLIENT_ALLOWED_WRITES.some(w =>

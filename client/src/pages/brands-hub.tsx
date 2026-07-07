@@ -1,4 +1,4 @@
-import { useState, useMemo, lazy, Suspense } from "react";
+import { useState, useMemo, useEffect, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useSearch } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -148,6 +148,11 @@ export default function BrandsHub() {
     ? rawTab as HubTab
     : (typeof window !== "undefined" && window.innerWidth < 768 ? "explorer" : "overview");
   const [activeTab, setActiveTab] = useState<HubTab>(initialTab);
+  // Client logins (e.g. Landsec) get Overview + Brand Explorer only —
+  // Turnover Board and Brand Hunter are BGP intel (their APIs 403 for
+  // clients anyway, so the tabs would just error).
+  const { data: hubUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientHub = hubUser?.role === "Client";
   // The other boards (Overview/Turnover/Hunter) are still being built, so on
   // mobile we show only Brand Explorer. Desktop keeps the full tab bar.
   const VISIBLE_HUB_TABS = ([
@@ -155,9 +160,19 @@ export default function BrandsHub() {
     { key: "explorer", label: "Brand Explorer", icon: LayoutGrid },
     { key: "turnover", label: "Turnover Board", icon: TrendingUp },
     { key: "hunter",  label: "Brand Hunter",   icon: Crosshair },
-  ] as { key: HubTab; label: string; icon: any }[]).filter(t => !isMobile || t.key === "explorer");
+  ] as { key: HubTab; label: string; icon: any }[])
+    .filter(t => !isMobile || t.key === "explorer")
+    .filter(t => !isClientHub || t.key === "overview" || t.key === "explorer");
   const [search, setSearch] = useState("");
   const [researchingId, setResearchingId] = useState<string | null>(null);
+
+  // If a client deep-links to a blocked board (?tab=turnover|hunter),
+  // bounce them to the explorer.
+  useEffect(() => {
+    if (isClientHub && (activeTab === "turnover" || activeTab === "hunter")) {
+      setActiveTab("explorer");
+    }
+  }, [isClientHub, activeTab]);
 
   const { data, isLoading } = useQuery<HubData>({
     queryKey: ["/api/brands/hub"],
@@ -577,6 +592,11 @@ function subMatch(companyType: string, sub: SubCat): boolean {
 }
 
 function BrandExplorer() {
+  // Clients only receive the curated hospitality/F&B/leisure/fitness slice,
+  // so hide the category cards that can never have brands for them (Luxury,
+  // Fashion & Retail, …) rather than showing a row of zeros.
+  const { data: exUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientExplorer = exUser?.role === "Client";
   const [activeCat, setActiveCat] = useState<string | null>(() => {
     try { return localStorage.getItem("brand-explorer-cat") || null; } catch { return null; }
   });
@@ -673,7 +693,7 @@ function BrandExplorer() {
           <div className="text-2xl font-bold">{companies.length}</div>
           <div className="text-xs font-medium opacity-90 mt-0.5">All Brands</div>
         </div>
-        {BRAND_CATEGORIES.map(cat => {
+        {BRAND_CATEGORIES.filter(cat => !isClientExplorer || (catCounts[cat.key] || 0) > 0).map(cat => {
           const isActive = activeCat === cat.key;
           const Icon = cat.icon;
           return (
@@ -705,7 +725,7 @@ function BrandExplorer() {
           >
             All {activeCatObj.label} <span className="text-xs opacity-75">({catCounts[activeCatObj.key] || 0})</span>
           </button>
-          {activeCatObj.subs.map(sub => {
+          {activeCatObj.subs.filter(sub => !isClientExplorer || (catCounts[sub.key] || 0) > 0).map(sub => {
             const count = catCounts[sub.key] || 0;
             const isActive = activeSub === sub.key;
             const Icon = sub.icon;

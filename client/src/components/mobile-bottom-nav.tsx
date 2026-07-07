@@ -1,4 +1,5 @@
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { LayoutDashboard, Sparkles, Mail, BarChart3, Newspaper } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -11,6 +12,12 @@ const NAV_ITEMS = [
 
 export function MobileBottomNav() {
   const [location, navigate] = useLocation();
+  // Client logins have no Microsoft 365 access, so the Mail tab would just
+  // show a connect screen that can never work — hide it for them.
+  const { data: navUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const items = navUser?.role === "Client"
+    ? NAV_ITEMS.filter((i) => i.label !== "Mail")
+    : NAV_ITEMS;
 
   const isActive = (path: string) => {
     if (path === "/") return location === "/";
@@ -24,7 +31,7 @@ export function MobileBottomNav() {
       data-testid="mobile-bottom-nav"
     >
       <div className="flex items-center justify-around h-14">
-        {NAV_ITEMS.map((item) => {
+        {items.map((item) => {
           const active = isActive(item.path);
           const Icon = item.icon;
           return (

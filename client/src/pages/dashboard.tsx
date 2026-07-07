@@ -79,6 +79,8 @@ import {
   WIDGET_REGISTRY,
   DEFAULT_WIDGETS,
   DEFAULT_BOARDS,
+  CLIENT_BOARD_REGISTRY,
+  CLIENT_SAFE_WIDGET_IDS,
   boardsToWidgets,
   widgetsToBoards,
   timeAgo,
@@ -797,16 +799,21 @@ export default function Dashboard() {
     const i = WIDGET_ORDER.indexOf(id);
     return i === -1 ? WIDGET_ORDER.length : i;
   };
-  // Migrate one renamed legacy id, then ensure the three always-on widgets are present.
-  const requested = (user?.dashboardWidgets ?? DEFAULT_WIDGETS)
-    .map((id: string) => id === "recent-properties" ? "key-instructions" : id);
-  const withDefaults = Array.from(new Set([...requested, "my-leads", "news-summary", "kpi-overview"]));
-  // Client logins (e.g. Landsec) get ONLY the portfolio section — the
-  // standard widget grid is BGP-ops (inbox, WIP, SharePoint, org alerts)
-  // and none of it is client-facing.
+  // Client logins (e.g. Landsec) get the portfolio section plus any widgets
+  // they've added from the vetted client-safe set. Every other standard
+  // widget is BGP-ops (inbox, WIP, SharePoint, KPI fees, org alerts) and is
+  // filtered out even if it somehow ends up saved.
   const isClientUser = user?.role === "Client";
-  const activeWidgets = isClientUser ? [] : withDefaults
+  // Migrate one renamed legacy id, then ensure the three always-on widgets are
+  // present (staff only — clients fully control their own safe widget set).
+  const requested = (user?.dashboardWidgets ?? (isClientUser ? [] : DEFAULT_WIDGETS))
+    .map((id: string) => id === "recent-properties" ? "key-instructions" : id);
+  const withDefaults = isClientUser
+    ? requested
+    : Array.from(new Set([...requested, "my-leads", "news-summary", "kpi-overview"]));
+  const activeWidgets = withDefaults
     .filter((id: string) => knownIds.includes(id)) // single filter: drop unknown ids
+    .filter((id: string) => !isClientUser || CLIENT_SAFE_WIDGET_IDS.includes(id)) // clients: safe set only
     .sort((a: string, b: string) => orderIndex(a) - orderIndex(b)); // single sort
 
   const widgetLabelMap = useMemo(() => {
@@ -895,6 +902,8 @@ export default function Dashboard() {
                 saving={saveMutation.isPending}
                 viewMode={dashboardViewMode}
                 onViewModeChange={handleViewModeChange}
+                boards={isClientUser ? CLIENT_BOARD_REGISTRY : undefined}
+                showViewMode={!isClientUser}
               />
             </>
           )}

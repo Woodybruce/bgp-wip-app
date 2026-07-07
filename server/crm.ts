@@ -1104,6 +1104,10 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
 }
 
 export function setupCrmRoutes(app: Express) {
+  // Company types a client login may browse in the brand directory / hub /
+  // explorer — hospitality, F&B, café, leisure and fitness tenants only.
+  // Keep in sync with CLIENT_BRAND_TYPE_PATTERNS (the SQL ILIKE variant).
+  const CLIENT_BRAND_TYPE_RE = /^tenant -.*(restaurant|dining|f&b|qsr|fast food|fast casual|food|bakery|patisserie|caf[ée]|coffee|bar|hospitality|hotel|leisure|cinema|entertainment|fitness|gym|yoga)/i;
   // Ensure new comp columns exist (safe to re-run)
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS fee_agreement_url TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS area_basis TEXT`).catch(() => {});
@@ -1659,8 +1663,14 @@ export function setupCrmRoutes(app: Express) {
       };
       const result = await storage.getCrmCompanies(filters);
       if (scopeCompanyId) {
+        // Clients get their own company plus the curated brand directory
+        // (hospitality / F&B / café / fitness tenants) — the same slice the
+        // brand hub and client CRM expose. Other landlords, offices and
+        // BGP-side companies stay hidden.
         const arr = Array.isArray(result) ? result : result.data;
-        res.json(arr.filter((c: any) => c.id === scopeCompanyId));
+        res.json(arr.filter((c: any) =>
+          c.id === scopeCompanyId || CLIENT_BRAND_TYPE_RE.test(c.companyType || "")
+        ));
       } else {
         res.json(result);
       }
@@ -4056,7 +4066,16 @@ Return a JSON object with these fields (use null for any field you cannot find):
       let reqs = await storage.getCrmRequirementsLeasing(filters);
       const scopeCompanyId = await resolveCompanyScope(req);
       if (scopeCompanyId) {
-        reqs = reqs.filter((r: any) => r.companyId === scopeCompanyId);
+        // Clients see occupier requirements BGP has imported from PIPnet
+        // (public market listings — useful leasing intel for a landlord)
+        // plus anything scoped to their own company. Manually-entered BGP
+        // requirements stay hidden. Unresolvable clients (NO_ACCESS_SCOPE)
+        // keep the strict own-company filter, which matches nothing.
+        const { NO_ACCESS_SCOPE } = await import("./company-scope");
+        reqs = reqs.filter((r: any) =>
+          r.companyId === scopeCompanyId ||
+          (scopeCompanyId !== NO_ACCESS_SCOPE && Array.isArray(r.sources) && r.sources.includes("PIPnet"))
+        );
       }
       res.json(reqs);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -4066,6 +4085,14 @@ Return a JSON object with these fields (use null for any field you cannot find):
     try {
       const req_ = await storage.getCrmRequirementLeasing(req.params.id);
       if (!req_) return res.status(404).json({ error: "Not found" });
+      const scopeCompanyId = await resolveCompanyScope(req);
+      if (scopeCompanyId) {
+        // Same client rule as the list: PIPnet-sourced or own-company only.
+        const { NO_ACCESS_SCOPE } = await import("./company-scope");
+        const visible = (req_ as any).companyId === scopeCompanyId ||
+          (scopeCompanyId !== NO_ACCESS_SCOPE && Array.isArray((req_ as any).sources) && (req_ as any).sources.includes("PIPnet"));
+        if (!visible) return res.status(404).json({ error: "Not found" });
+      }
       res.json(req_);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
