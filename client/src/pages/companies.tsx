@@ -158,52 +158,8 @@ function KycSection({ title, icon: Icon, children, defaultOpen = false }: { titl
   );
 }
 
-function KycInlineSummary({ company }: { company: CrmCompany }) {
-  const chData = company.companiesHouseData as any;
-  const kycStatus = (company as any).kycStatus;
-  const storedPscs = chData?.pscs || [];
-  const activePscs = storedPscs.filter((p: any) => !p.ceasedOn);
-  const checkedAt = chData?.checkedAt || (company as any).kycCheckedAt;
-  const experian = chData?.experian;
-
-  if (!chData && !kycStatus) return null;
-
-  return (
-    <div className="col-span-2">
-      <p className="text-xs text-muted-foreground mb-1">KYC & Ownership</p>
-      <div className="flex items-center gap-2 flex-wrap">
-        {kycStatus === "approved" && <Badge className="text-[10px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0"><CheckCircle2 className="w-3 h-3 mr-1" />KYC Passed</Badge>}
-        {kycStatus === "in_review" && <Badge className="text-[10px] bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300 border-0"><AlertCircle className="w-3 h-3 mr-1" />Needs Review</Badge>}
-        {kycStatus === "rejected" && <Badge className="text-[10px] bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 border-0"><XCircle className="w-3 h-3 mr-1" />KYC Failed</Badge>}
-        {!kycStatus && chData && <Badge variant="outline" className="text-[10px]"><ShieldCheck className="w-3 h-3 mr-1" />Linked — not checked</Badge>}
-        {checkedAt && <span className="text-[10px] text-muted-foreground">{new Date(checkedAt).toLocaleDateString("en-GB")}</span>}
-      </div>
-      {experian && (
-        <div className="mt-1.5">
-          <p className="text-[10px] text-muted-foreground">Experian covenant</p>
-          <div className="flex items-center gap-2 flex-wrap mt-0.5">
-            {experian.creditBand && <Badge variant="outline" className="text-[10px]">Band {experian.creditBand}</Badge>}
-            {experian.riskIndicator && <Badge variant="outline" className="text-[10px]">{experian.riskIndicator}</Badge>}
-            {experian.creditScore != null && <span className="text-[10px] text-muted-foreground">Score {experian.creditScore}/100</span>}
-            {experian.creditLimit != null && <span className="text-[10px] text-muted-foreground">· Limit £{Number(experian.creditLimit).toLocaleString()}</span>}
-            {!!experian.ccj && <Badge className="text-[10px] bg-red-100 text-red-700 border-0">{experian.ccj} CCJ{experian.ccj === 1 ? "" : "s"}{experian.ccjTotalValue ? ` · £${Number(experian.ccjTotalValue).toLocaleString()}` : ""}</Badge>}
-            {experian.turnover != null && <span className="text-[10px] text-muted-foreground">· Turnover £{Number(experian.turnover).toLocaleString()}</span>}
-          </div>
-        </div>
-      )}
-      {activePscs.length > 0 && (
-        <div className="mt-1.5 space-y-0.5">
-          <p className="text-[10px] text-muted-foreground">Ownership (PSCs)</p>
-          <div className="flex flex-wrap gap-1">
-            {activePscs.map((p: any, i: number) => (
-              <Badge key={i} variant="outline" className="text-[10px] font-normal">{p.name}</Badge>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+// (KycInlineSummary removed — dead component that rendered sandbox Experian data.
+// Covenant surfaces via CovenantBadge / the sidebar Covenant card instead.)
 
 function SubCompaniesPanel({ parentId, parentName }: { parentId: string; parentName: string }) {
   const { data: subs = [] } = useQuery<any[]>({
@@ -1395,7 +1351,7 @@ function CompanyDetail({ id }: { id: string }) {
           {/* Page-level Details card removed May 2026 — BGP Contacts dropdown
               now lives in the brand profile sidebar (BGP Relationship card),
               UK registered office + KYC + Ownership (PSCs) moved into the
-              sidebar Covenant card (collapsed). KycInlineSummary component
+              sidebar Covenant card (collapsed). The old KycInlineSummary component (removed)
               kept in this file for re-use when Red Flag / Experian wiring
               is finalised. */}
 

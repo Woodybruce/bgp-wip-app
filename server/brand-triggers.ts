@@ -5,7 +5,7 @@
 //   1. Recomputes hunter score; emits an alert if it crosses 70 (cold→hot)
 //      or drops below 50 (hot→cooling).
 //   2. Checks covenant signals — new insolvency notice, accounts overdue,
-//      new CCJs from Experian. Emits a covenant-deterioration alert.
+//      covenant deterioration from the house engine. Emits a covenant alert.
 //   3. Checks for new large/funding signals in the last 24h. Emits a
 //      "live deal-scout signal" alert.
 //
@@ -80,27 +80,26 @@ async function ensureScoreHistoryTable(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_brand_score_history_brand_time
       ON brand_score_history(brand_company_id, checked_at DESC);
-    ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS experian_score INTEGER;
-    ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS experian_ccj_count INTEGER;
+    ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS covenant_score INTEGER;
+    ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS covenant_red_flags INTEGER;
   `);
 }
 
 async function getLastSnapshot(brandId: string): Promise<{
   hunterScore: number | null;
-  experianScore: number | null;
-  experianCcjCount: number | null;
+  covenantScore: number | null;
+  covenantRedFlags: number | null;
 }> {
-  const r = await pool.query(
-    `SELECT hunter_score, experian_score, experian_ccj_count FROM brand_score_history
-      WHERE brand_company_id = $1
-      ORDER BY checked_at DESC LIMIT 1`,
+  const { rows } = await pool.query(
+    `SELECT hunter_score, covenant_score, covenant_red_flags FROM brand_score_history
+      WHERE brand_company_id = $1 ORDER BY recorded_at DESC LIMIT 1`,
     [brandId]
   );
-  const row = r.rows[0];
+  const row = rows[0];
   return {
     hunterScore: row?.hunter_score ?? null,
-    experianScore: row?.experian_score ?? null,
-    experianCcjCount: row?.experian_ccj_count ?? null,
+    covenantScore: row?.covenant_score ?? null,
+    covenantRedFlags: row?.covenant_red_flags ?? null,
   };
 }
 
@@ -108,36 +107,30 @@ async function recordScore(
   brandId: string,
   score: number,
   flags: string[],
-  experianScore: number | null,
-  experianCcjCount: number | null,
+  covenantScore: number | null,
+  covenantRedFlags: number | null,
 ): Promise<void> {
   await pool.query(
-    `INSERT INTO brand_score_history (brand_company_id, hunter_score, flags, experian_score, experian_ccj_count)
+    `INSERT INTO brand_score_history (brand_company_id, hunter_score, flags, covenant_score, covenant_red_flags)
      VALUES ($1, $2, $3, $4, $5)`,
-    [brandId, score, flags, experianScore, experianCcjCount]
+    [brandId, score, flags, covenantScore, covenantRedFlags]
   );
 }
 
-// Pull the latest Experian snapshot for a brand from companies_house_data JSONB.
 // Falls back to the most recent KYC investigation if the brand-level cache is empty.
-async function getExperianSnapshot(brandId: string): Promise<{ score: number | null; ccjCount: number | null }> {
-  const r = await pool.query(
-    `SELECT companies_house_data->'experian' AS exp FROM crm_companies WHERE id = $1`,
+// Current covenant position from the house engine's cached reports (written by
+// the covenant engine — Companies House + Gazette + accounts, no Experian).
+async function getCovenantSnapshot(brandId: string): Promise<{ score: number | null; redFlags: number | null; grade: string | null }> {
+  const { rows } = await pool.query(
+    `SELECT r.score, r.grade, jsonb_array_length(COALESCE(r.report->'flags', '[]'::jsonb)) AS n,
+            (SELECT count(*) FROM jsonb_array_elements(COALESCE(r.report->'flags','[]'::jsonb)) fl WHERE fl->>'level' = 'red') AS reds
+       FROM crm_companies c JOIN covenant_reports r
+         ON r.company_number = regexp_replace(upper(c.companies_house_number), '\s', '', 'g')
+      WHERE c.id = $1 LIMIT 1`,
     [brandId]
-  );
-  let exp: any = r.rows[0]?.exp || null;
-  if (!exp) {
-    const inv = await pool.query(
-      `SELECT result->'experian' AS exp FROM kyc_investigations
-        WHERE crm_company_id = $1 ORDER BY conducted_at DESC LIMIT 1`,
-      [brandId]
-    );
-    exp = inv.rows[0]?.exp || null;
-  }
-  if (!exp) return { score: null, ccjCount: null };
-  const score = typeof exp.creditScore === "number" ? exp.creditScore : null;
-  const ccjCount = typeof exp.ccj === "number" ? exp.ccj : null;
-  return { score, ccjCount };
+  ).catch(() => ({ rows: [] as any[] }));
+  const row = rows[0];
+  return { score: row?.score ?? null, redFlags: row?.reds != null ? Number(row.reds) : null, grade: row?.grade ?? null };
 }
 
 // ─── Scan logic ──────────────────────────────────────────────────────────
@@ -173,7 +166,7 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
     });
 
     const prev = await getLastSnapshot(brand.id);
-    const experian = await getExperianSnapshot(brand.id);
+    const covenant = await getCovenantSnapshot(brand.id);
 
     // 1. Score crossings
     if (prev.hunterScore != null) {
@@ -194,32 +187,33 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
       }
     }
 
-    if (!dryRun) await recordScore(brand.id, score, flags, experian.score, experian.ccjCount);
+    if (!dryRun) await recordScore(brand.id, score, flags, covenant.score, covenant.redFlags);
 
-    // 2. Covenant deterioration — three triggers, ordered by signal strength.
-    //    a) Experian CCJ count went up since the last scan (hard data)
-    //    b) Experian credit score dropped 15+ points since the last scan
-    //    c) Recent news signal regex-matches insolvency keywords (legacy fallback)
+    // 2. Covenant deterioration — three triggers, ordered by signal strength,
+    //    all fed by the house covenant engine (CH + Gazette + accounts):
+    //    a) new red flag on the covenant report (petition, insolvency, overdue)
+    //    b) covenant score dropped 15+ points since the last scan
+    //    c) recent news signal regex-matches insolvency keywords (fallback)
     const recipients = await getRecipientsForBrand(brand.id);
 
     if (
-      experian.ccjCount != null && experian.ccjCount > 0 &&
-      prev.experianCcjCount != null && experian.ccjCount > prev.experianCcjCount
+      covenant.redFlags != null && covenant.redFlags > 0 &&
+      prev.covenantRedFlags != null && covenant.redFlags > prev.covenantRedFlags
     ) {
       events.push({
         brandId: brand.id, brandName: brand.name, type: "covenant_risk",
-        headline: `${brand.name} — new CCJ filed`,
-        detail: `Experian CCJ count rose from ${prev.experianCcjCount} to ${experian.ccjCount}. Pull the credit report and review covenant before any new pitch.`,
+        headline: `${brand.name} — new covenant red flag`,
+        detail: `House covenant red flags rose from ${prev.covenantRedFlags} to ${covenant.redFlags} (grade ${covenant.grade ?? "?"}). Open the covenant report before any new pitch.`,
         recipients,
       });
     } else if (
-      experian.score != null && prev.experianScore != null &&
-      prev.experianScore - experian.score >= 15
+      covenant.score != null && prev.covenantScore != null &&
+      prev.covenantScore - covenant.score >= 15
     ) {
       events.push({
         brandId: brand.id, brandName: brand.name, type: "covenant_risk",
-        headline: `${brand.name} — Experian score dropped`,
-        detail: `Credit score fell from ${prev.experianScore} to ${experian.score} (${prev.experianScore - experian.score} points). Worth a quick review of recent filings.`,
+        headline: `${brand.name} — covenant score dropped`,
+        detail: `House covenant score fell from ${prev.covenantScore} to ${covenant.score} (grade ${covenant.grade ?? "?"}). Worth a quick review of recent filings.`,
         recipients,
       });
     } else {
