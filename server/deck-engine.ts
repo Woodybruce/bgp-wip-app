@@ -776,6 +776,36 @@ function rMap(p: pptxgen, c: DeckCard) {
   footer(s, c.footnote);
 }
 
+// Tenant covenant slide: grade lozenge + score, red/amber flag list, verdict.
+// Feed it the /api/covenant/:number report (grade, score, flags, verdict, signals).
+function rCovenant(p: pptxgen, c: DeckCard) {
+  const s = p.addSlide();
+  const y0 = lightHeader(s, c.kick || "Covenant", c.title || `Covenant — ${c.companyName || ""}`, c.sub);
+  const grade = String(c.grade || "?").toUpperCase();
+  const gradeFill = grade === "A" ? NAVY : grade === "B" ? MIDBLUE : grade === "C" ? GOLD : "8A2B26";
+  // Grade lozenge + score
+  s.addShape("roundRect" as any, { x: MX, y: y0 + 0.2, w: 1.7, h: 1.7, fill: { color: gradeFill }, line: { type: "none" } as any, rectRadius: 0.08 });
+  s.addText(grade, { x: MX, y: y0 + 0.2, w: 1.7, h: 1.7, align: "center", valign: "middle", fontFace: DISP, bold: true, fontSize: 40.2, color: PAPER });
+  s.addText(`${c.score ?? "—"}/100`, { x: MX, y: y0 + 2.0, w: 1.7, h: 0.4, align: "center", fontFace: BODY, bold: true, fontSize: 9.4, color: MUTE });
+  if (c.status) s.addText(String(c.status).toUpperCase(), { x: MX, y: y0 + 2.36, w: 1.7, h: 0.3, align: "center", fontFace: BODY, fontSize: 6.5, charSpacing: 1.5, color: MUTE });
+  // Flags
+  const fx = MX + 2.2, fw = CW - 2.2;
+  const flags: Array<any> = Array.isArray(c.flags) ? c.flags.slice(0, 8) : [];
+  let fy = y0 + 0.2;
+  flags.forEach((f) => {
+    const lv = String(f.level || "info");
+    const dot = lv === "red" ? "C0392B" : lv === "amber" ? GOLD : MIDBLUE;
+    s.addShape("ellipse" as any, { x: fx, y: fy + 0.09, w: 0.14, h: 0.14, fill: { color: dot }, line: { type: "none" } as any });
+    s.addText(`${f.label}${f.detail ? ` — ${f.detail}` : ""}`, { x: fx + 0.26, y: fy, w: fw - 0.3, h: 0.34, fontFace: BODY, fontSize: 8.4, color: lv === "red" ? "7A1F1A" : "26303C", valign: "middle" });
+    fy += 0.38;
+  });
+  if (c.verdict) {
+    s.addShape("rect" as any, { x: fx, y: fy + 0.15, w: fw, h: 1.15, fill: { color: STONE }, line: { color: LINE, width: 1 } });
+    s.addText(String(c.verdict), { x: fx + 0.2, y: fy + 0.3, w: fw - 0.4, h: 0.9, fontFace: BODY, italic: true, fontSize: 8.7, color: "26303C", lineSpacingMultiple: 1.25, valign: "top" });
+  }
+  footer(s, c.footnote || "House covenant score — Companies House, The Gazette, filed accounts. Not a credit reference.");
+}
+
 const RENDERERS: Record<string, (p: pptxgen, c: DeckCard) => void> = {
   cover: rCover, contents: rContents, section: rSection, exec_summary: rExecSummary,
   ranked_table: rRankedTable, catchment: rCatchment, asset_overview: rAssetOverview,
@@ -783,7 +813,7 @@ const RENDERERS: Record<string, (p: pptxgen, c: DeckCard) => void> = {
   two_col: rTwoCol, returns: rReturns, schedule_hero: rScheduleHero,
   quote: rQuote, statement: rStatement, timeline: rTimeline, team: rTeam, comparison: rComparison, chart: rChart,
   board: rBoard, composite: rBoard, disclaimer: rDisclaimer, highlights: rHighlights,
-  phasing: rPhasing, gantt: rPhasing, map: rMap,
+  phasing: rPhasing, gantt: rPhasing, map: rMap, covenant: rCovenant,
 };
 
 // PowerPoint rejects XML-1.0-invalid control characters (endemic in text carried
@@ -1173,6 +1203,9 @@ export function deckCardsToSpec(deckName: string, rows: DeckCardRow[]): DeckSpec
         break;
       case "phasing": case "gantt":
         cards.push({ type: "phasing", kick: c.kick, title: title || "Phasing", sub: c.subtitle || c.sub, periods: c.periods || [], phases: c.phases || [], footnote: c.footnote });
+        break;
+      case "covenant":
+        cards.push({ type: "covenant", kick: c.kick, title, sub: c.subtitle || c.sub, companyName: c.companyName, grade: c.grade, score: c.score, status: c.status, flags: c.flags || [], verdict: c.verdict, footnote: c.footnote });
         break;
       case "map":
         cards.push({ type: "map", kick: c.kick, title: title || "Site map", sub: c.subtitle || c.sub, ref: c.ref, dataUri: c.dataUri, image: c.image, caption: c.caption, pins: c.pins || [], list: c.list || [], footnote: c.footnote });

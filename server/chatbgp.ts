@@ -2652,6 +2652,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
         "• board {title, blocks:[{kind:'text'|'stat'|'chart'|'image'|'table'|'quote', col:0-11, colSpan, row:0+, rowSpan, ...}]}  ← DENSE composite: text + chart + photo + stats on ONE slide",
         "• timeline {title, milestones:[{date,title,body?}]}  • phasing {title, periods:[string], phases:[{label,start,span,note?}]} Gantt",
         "• map {title, caption?, pins:[{x:0-1,y:0-1,label}], list:[{label,sub?}]}  • disclaimer {title, paragraphs:[string]}  • closing {heading, body, contacts?}",
+        "• covenant {title, companyName, grade:'A'-'E', score:0-100, status?, flags:[{level:'red'|'amber'|'info', label, detail?}], verdict?}  — tenant covenant slide; populate it from check_covenant results",
         "Any card may add an image via `ref` (a chat-media/image reference) or `image` (data URI). Order logically (cover → highlights/board → detail → closing). Prefer dense boards over one-idea-per-slide.",
       ].join("\n"),
       parameters: {

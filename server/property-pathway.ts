@@ -3508,6 +3508,26 @@ async function runStage4(runId: string, req: Request): Promise<void> {
           }
         }
 
+        // Covenant-score every plain-UK proprietor in the background: caches
+        // the report for deal surfaces / ChatBGP and puts the company on the
+        // nightly covenant watch. Fire-and-forget — never blocks the stage.
+        (async () => {
+          try {
+            const { getCovenantReport, addToWatchlist } = await import("./covenant-engine");
+            for (const t of candidateTitles.filter((c) => c.isLikelyAtAddress)) {
+              for (const p of t.proprietors) {
+                const num = (p.companyRegistrationNo || "").trim().toUpperCase();
+                if (!num || num.startsWith("OE") || num.startsWith("OC")) continue;
+                try {
+                  const rep = await getCovenantReport(num);
+                  await addToWatchlist(num, p.proprietorName || rep.companyName);
+                  console.log(`[pathway stage4] covenant ${num} (${rep.companyName}): ${rep.grade} ${rep.score}/100`);
+                } catch (e: any) { console.warn(`[pathway stage4] covenant ${num} failed:`, e?.message); }
+              }
+            }
+          } catch { /* engine unavailable — skip */ }
+        })();
+
         const chains = await chainEnrich;
         roeFilings = chains.roeFilings;
         llpMembers = chains.llpMembers;
