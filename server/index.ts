@@ -2606,6 +2606,7 @@ import { registerApiUsageRoutes } from "./api-usage";
 import { setupEvernoteRoutes } from "./evernote";
 import { registerLandRegistryRoutes } from "./land-registry";
 import { setupBusinessGatewayRoutes } from "./business-gateway";
+import { setupCovenantRoutes } from "./covenant-engine";
 import { registerPropertyResolverRoutes } from "./property-resolver";
 import { registerPlaMattersRoutes } from "./pla-matters";
 import { registerPlaValuationRoutes, registerComparablesScheduleRoute } from "./pla-valuation";
@@ -3191,6 +3192,7 @@ app.use("/api/branding/assets", express.static(
   setupEvernoteRoutes(app);
   registerLandRegistryRoutes(app);
   setupBusinessGatewayRoutes(app);
+  setupCovenantRoutes(app);
   registerPropertyResolverRoutes(app);
   registerPropertyBrochureRoutes(app);
   registerPlaMattersRoutes(app);

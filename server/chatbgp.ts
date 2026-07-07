@@ -2721,6 +2721,23 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
   tools.push({
     type: "function",
     function: {
+      name: "check_covenant",
+      description: "Financial covenant / risk check on a UK company — the house replacement for Red Flag/Experian. Returns a 0-100 score, A-E grade, red/amber flags and a two-line verdict, built from Companies House (status, charges/debt, insolvency, overdue filings, officer churn, filed-accounts figures) and The Gazette (winding-up petitions and other corporate-insolvency notices). Use whenever the user asks about tenant covenant strength, financial health, credit risk, debt issues, or 'can they pay the rent' for any company. Provide the Companies House number if known, otherwise the exact company name (it will be resolved via CH search).",
+      parameters: {
+        type: "object",
+        properties: {
+          companyNumber: { type: "string", description: "Companies House number (preferred, e.g. '00365335')" },
+          companyName: { type: "string", description: "Exact company name if the number is unknown — resolved via Companies House search" },
+          refresh: { type: "boolean", description: "Force a fresh check instead of the ≤7-day cached report" },
+          watch: { type: "boolean", description: "Also add the company to the nightly covenant watchlist (alerts on deterioration)" },
+        },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "generate_why_buy_deck",
       description: "Generate an EDITABLE, branded 'Why Buy' / investment-memo PowerPoint (.pptx) for a property — the team edits it in PowerPoint and exports to PDF for the final. Pulls the property + its units from the CRM and authors the narrative in BGP house style. Use when the user asks for a Why Buy, IM, investment memo or pitch deck for a specific property. For a locked, non-editable PDF instead, use generate_claude_designed_pdf.",
       parameters: {
@@ -7799,6 +7816,39 @@ export async function executeCrmToolRaw(
     } catch (err: any) {
       console.error("[chatbgp] org chart generation error:", err?.message);
       return { data: { error: `Failed to generate org chart: ${err?.message || "Unknown error"}` } };
+    }
+  }
+
+  if (fnName === "check_covenant") {
+    try {
+      const { getCovenantReport, addToWatchlist } = await import("./covenant-engine");
+      const { chFetch } = await import("./companies-house");
+      let num: string | null = fnArgs.companyNumber ? String(fnArgs.companyNumber).trim() : null;
+      let resolvedFrom: string | null = null;
+      if (!num && fnArgs.companyName) {
+        const search = await chFetch(`/search/companies?q=${encodeURIComponent(String(fnArgs.companyName))}&items_per_page=5`);
+        const hit = (search?.items || [])[0];
+        if (!hit) return { data: { error: `No Companies House match for "${fnArgs.companyName}"` } };
+        num = hit.company_number;
+        resolvedFrom = `${hit.title} (${hit.company_number}) — ${hit.company_status}`;
+      }
+      if (!num) return { data: { error: "Provide companyNumber or companyName" } };
+      const report = await getCovenantReport(num, { refresh: !!fnArgs.refresh });
+      if (fnArgs.watch) await addToWatchlist(num, report.companyName).catch(() => {});
+      return {
+        data: {
+          resolvedFrom,
+          company: `${report.companyName} (${report.companyNumber})`,
+          grade: report.grade, score: report.score, status: report.status,
+          verdict: report.verdict,
+          flags: report.flags,
+          signals: report.signals,
+          ccjNote: `CCJs have no free API — official register search ~£6-10: ${report.ccjCheckUrl}`,
+          watched: !!fnArgs.watch,
+        },
+      };
+    } catch (err: any) {
+      return { data: { error: `Covenant check failed: ${err?.message || "unknown"}` } };
     }
   }
 
