@@ -18,6 +18,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { useState, useEffect } from "react";
 import { PropertyTenancySchedule } from "@/components/PropertyTenancySchedule";
+import { useQuery } from "@tanstack/react-query";
 import { Briefcase, FileSpreadsheet } from "lucide-react";
 
 type Lens = "lettings" | "tenancy";
@@ -26,6 +27,10 @@ export function PropertyUnifiedSchedule({ propertyId }: { propertyId: string }) 
   // Remember the lens per property so jumping between properties
   // doesn't reset the user's preferred view.
   const lensKey = `unified-schedule-lens:${propertyId}`;
+  // Client logins get a fuller "what is this board" explainer instead of
+  // the staff column-picker hint.
+  const { data: schedUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientSched = schedUser?.role === "Client";
   const [lens, setLens] = useState<Lens>(() => {
     try {
       const stored = localStorage.getItem(lensKey);
@@ -75,9 +80,13 @@ export function PropertyUnifiedSchedule({ propertyId }: { propertyId: string }) 
           <FileSpreadsheet className="w-3 h-3" /> Tenancy
         </button>
         <span className="text-[10px] text-muted-foreground ml-3">
-          {lens === "lettings"
-            ? "Voids + marketing focus. Toggle columns from the picker to surface more."
-            : "Full rent roll — every column. Toggle off what you don't need."}
+          {isClientSched
+            ? (lens === "lettings"
+              ? "Vacant units and marketing status at this property. Live deals are worked in the Letting Tracker; brand strategy sits on the Leasing Schedule."
+              : "The master rent roll — every unit with tenant, rent and lease dates. Changes here flow through to the Leasing Schedule and Letting Tracker.")
+            : (lens === "lettings"
+              ? "Voids + marketing focus. Toggle columns from the picker to surface more."
+              : "Full rent roll — every column. Toggle off what you don't need.")}
         </span>
       </div>
 

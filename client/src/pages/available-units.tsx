@@ -366,6 +366,10 @@ export default function AvailableUnitsPage() {
     queryKey: ["/api/available-units"],
   });
 
+  // Client logins get a one-line explainer of what the tracker is for.
+  const { data: auUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientTracker = auUser?.role === "Client";
+
   const { data: properties = [] } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
   });
@@ -1040,6 +1044,9 @@ export default function AvailableUnitsPage() {
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Letting Tracker</h1>
           <p className="text-sm text-muted-foreground">
             {teamUnits.length} unit{teamUnits.length !== 1 ? "s" : ""}
+            {isClientTracker && (
+              <span> — live deals in progress: units being marketed, under offer and completing. Updates flow to the Leasing Schedule and back to the Tenancy Schedule.</span>
+            )}
           </p>
         </div>
         <Button

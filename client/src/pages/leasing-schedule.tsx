@@ -1629,6 +1629,11 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
             )}
           </div>
           {landlordName && <p className="text-xs text-muted-foreground">{landlordName}</p>}
+          {(currentUser as any)?.role === "Client" && (
+            <p className="text-xs text-muted-foreground">
+              The leasing strategy board — zone positioning, target brands and priorities for each key unit, plus live deals mirrored from the Letting Tracker. Unit facts (tenant, rent, dates) pull live from the Tenancy Schedule.
+            </p>
+          )}
         </div>
         <div className="ml-auto flex flex-wrap gap-2 justify-end">
           {canTogglePrivacy && (
@@ -3192,6 +3197,9 @@ export default function LeasingSchedulePage() {
   const { toast } = useToast();
   const [, params] = useRoute("/leasing-schedule/:propertyId");
   const propertyId = params?.propertyId;
+  // Client logins get a one-line explainer of what the board is for.
+  const { data: lsUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientBoard = lsUser?.role === "Client";
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
@@ -3448,6 +3456,9 @@ export default function LeasingSchedulePage() {
           </h1>
           <p className="text-sm text-muted-foreground">
             {filtered.length} {filtered.length === 1 ? "property" : "properties"} · {stats.totalUnits} units
+            {isClientBoard && (
+              <span> — the leasing strategy per property: positioning, target brands and priorities, plus live deals from the Letting Tracker</span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
