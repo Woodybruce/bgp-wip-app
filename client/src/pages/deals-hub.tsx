@@ -61,8 +61,12 @@ export default function DealsHub() {
 
   useEffect(() => {
     if (isProfile) return;
-    if (isClient) { setTab("deals"); return; } // clients only ever see Deals
     const t = getTabFromLocation(location);
+    if (isClient) {
+      // Clients may use Deals + Letting Tracker only; anything else → Deals.
+      setTab(t === "letting" ? "letting" : "deals");
+      return;
+    }
     if (t) setTab(t);
   }, [location, isProfile, isClient]);
 
@@ -77,7 +81,7 @@ export default function DealsHub() {
   ], [isMobile]);
 
   const tabs = useMemo(() => {
-    if (isClient) return allTabs.filter(t => t.key === "deals");
+    if (isClient) return allTabs.filter(t => t.key === "deals" || t.key === "letting");
     if (activeTeam === "Investment") return allTabs.filter(t => t.key !== "letting");
     if (activeTeam && activeTeam !== "all") return allTabs.filter(t => t.key !== "investment");
     return allTabs;

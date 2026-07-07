@@ -3165,13 +3165,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units", requireAuth, async (req, res) => {
     try {
-      // Firm-wide marketing list with BGP fees/agents — staff only. (Landsec audit.)
-      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.json([]);
+      // Clients (e.g. Landsec) see the Letting Tracker for THEIR OWN
+      // properties only, with BGP fees/agents stripped. (Landsec audit.)
+      const auScope = await resolveCompanyScope(req);
       // Master physical attributes live on property_units; the listing's columns
       // are kept as a backwards-compat cache. We COALESCE master over listing so
       // every reader sees the source-of-truth values.
       const params: any[] = [];
       const filters: string[] = [];
+      if (auScope) {
+        params.push(auScope);
+        filters.push(`(p.landlord_id = $${params.length} OR au.property_id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${params.length}))`);
+      }
       if (req.query.propertyId) {
         params.push(req.query.propertyId);
         filters.push(`au.property_id = $${params.length}`);
@@ -3217,6 +3222,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         ${whereClause}
         ORDER BY au.created_at DESC
       `, params);
+      // Strip BGP fee + agent assignments for client logins.
+      if (auScope) {
+        return res.json(result.rows.map((r: any) => ({ ...r, fee: null, agentUserIds: null })));
+      }
       res.json(result.rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch available units" });
