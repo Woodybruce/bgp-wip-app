@@ -13,8 +13,8 @@
  *   EXPERIAN_PASSWORD
  *   EXPERIAN_ENV             sandbox | production (default: sandbox)
  *
- * Used by kyc-orchestrator to populate crm_companies.experian_* fields
- * and auto-tick "financial_profile_obtained" on the AML checklist.
+ * Used by kyc-orchestrator to augment investigations when production Experian
+ * is available. Financial strength is otherwise covered by covenant-engine.ts.
  */
 
 const PROD_HOST = "https://uk-api.experian.com";
@@ -145,7 +145,12 @@ export function experianTurnoverPeriod(accountsDate: string | null): string {
 }
 
 export function isExperianConfigured(): boolean {
-  return !!(process.env.EXPERIAN_CLIENT_ID && process.env.EXPERIAN_CLIENT_SECRET);
+  // Production only: the sandbox returns FAKE credit/turnover data, and callers
+  // persist results into companies_house_data/turnover_data as if real. The
+  // house covenant engine (covenant-engine.ts) covers financial strength on
+  // free data; Experian only participates once a production agreement exists.
+  return !!(process.env.EXPERIAN_CLIENT_ID && process.env.EXPERIAN_CLIENT_SECRET)
+    && (process.env.EXPERIAN_ENV || "sandbox").toLowerCase() === "production";
 }
 
 export async function experianHealth(): Promise<{ ok: boolean; error?: string; env?: string }> {

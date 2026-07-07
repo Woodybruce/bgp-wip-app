@@ -3996,7 +3996,7 @@ export function BrandComplianceCard({
               { key: "psc", label: "Officers + PSCs", done: !!(company.companies_house_data as any)?.pscs?.length },
               { key: "accounts", label: "Latest accounts", done: !!company.last_accounts_storage_key },
               { key: "annual_report", label: "Annual report (PLC)", done: !!company.annual_report_storage_key },
-              { key: "redflag", label: "Red Flag credit score", done: !!(company.kyc_status === "verified") },
+              { key: "covenant", label: "Covenant grade (CH + Gazette)", done: company.kyc_status === "verified" },
               { key: "aml", label: "AML PEP / adverse media", done: !!company.aml_pep_status },
             ].map((row) => (
               <div key={row.key} className="flex items-center gap-1.5 text-[11px]">

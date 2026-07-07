@@ -40,6 +40,7 @@ import { MobileBottomNav, BOTTOM_NAV_PATHS } from "@/components/mobile-bottom-na
 import type { User } from "@shared/schema";
 
 const NotFound = lazy(() => import("@/pages/not-found"));
+const CovenantWatch = lazy(() => import("@/pages/covenant-watch"));
 const Dashboard = lazy(() => import("@/pages/dashboard"));
 const PropertiesHub = lazy(() => import("@/pages/properties-hub"));
 const DealsHub = lazy(() => import("@/pages/deals-hub"));
@@ -282,6 +283,7 @@ function Router() {
       {/* AML / KYC hub — compliance-focused tabs (board, training, settings).
           The Investigator tool has moved to Property Intelligence. */}
       <Route path="/kyc-clouseau" component={KycHub} />
+      <Route path="/covenant-watch" component={CovenantWatch} />
       <Route path="/aml-compliance" component={KycHub} />
       <Route path="/compliance-board" component={KycHub} />
       <Route path="/aml-training" component={KycHub} />

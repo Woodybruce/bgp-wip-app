@@ -2662,7 +2662,7 @@ function ClaudeModelStudio() {
     { label: "BGP Rent Review / Lease Analysis", desc: "A rent review analysis comparing passing rent to ERV with uplift calculations, lease terms, break options, and effective rent calculation" },
     { label: "BGP Portfolio Summary", desc: "A portfolio summary model tracking multiple properties with rental income, yields, void rates, WAULT, and total portfolio valuation" },
     { label: "BGP Acquisition Comparison", desc: "A side-by-side acquisition comparison for 3 properties comparing purchase price, net initial yield, reversionary yield, capital value per sq ft, and risk scoring" },
-    { label: "BGP Tenant Covenant Analysis", desc: "A tenant covenant analysis model with financials (revenue, profit, net assets), Dun & Bradstreet score, and covenant strength grading" },
+    { label: "BGP Tenant Covenant Analysis", desc: "A tenant covenant analysis model with financials (revenue, profit, net assets), house covenant grade (CH + Gazette), and covenant strength grading" },
   ];
 
   const isBusy = createMutation.isPending || askMutation.isPending;

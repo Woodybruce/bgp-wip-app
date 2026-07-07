@@ -63,7 +63,6 @@ async function loadUkSlice(companyId: string) {
   const r = rows[0];
   const ch = r.companies_house_data || {};
   const profile = ch.profile || {};
-  const exp = ch.experian || null;
   // House covenant score (free-data replacement for Experian/Red Flag) — cached
   // in covenant_reports by the covenant engine; read-only here, never computed inline.
   let covenant: any = null;
@@ -93,17 +92,6 @@ async function loadUkSlice(companyId: string) {
     turnover_history: turnoverRows.rows,
     kyc_status: r.kyc_status,
     aml_risk: r.aml_risk_level,
-    experian: exp ? {
-      score: exp.creditScore,
-      limit: exp.creditLimit,
-      band: exp.creditBand,
-      risk: exp.riskIndicator,
-      ccj_count: exp.ccj,
-      ccj_value: exp.ccjTotalValue,
-      turnover: exp.turnover,
-      employees: exp.employees,
-      status: exp.status,
-    } : null,
     covenant: covenant ? {
       grade: covenant.grade,
       score: covenant.score,

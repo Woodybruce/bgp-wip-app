@@ -1097,7 +1097,7 @@ You are an active operational agent with full CRM read/write access, internet se
 ## Key Tool Workflows
 - **CRM**: search_crm (fuzzy matching) → create/update entities. Search broadly with multiple variations before saying something doesn't exist.
 - **Property onboarding**: Read document → create_property with full address → auto Land Registry enrichment runs in background.
-- **KYC**: run_kyc_check for Companies House + sanctions + financial strength. deep_investigate for full D&B-style intelligence combining all sources.
+- **KYC**: run_kyc_check for Companies House + sanctions. check_covenant for covenant strength / financial health / credit risk (house A-E grade — the Red Flag/Experian replacement). deep_investigate for full intelligence combining all sources.
 - **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
 - **Auto-follow news URLs**: When the user pastes a URL from a news outlet, journalist blog, columnist page, research-house insights index, or industry publication (e.g. Sky News, FT, Bloomberg, Reuters, Property Week, Savills/CBRE/Knight Frank research, a Substack), call **follow_url** to register it as a persistent source. The news-feed cron then polls it automatically forever — no further action needed. Confirm in one short line ("Now tracking X — new posts will appear in your news feed"). Skip auto-follow for: internal app URLs, Companies House / planning portals, SharePoint/OneDrive links, social profiles, or one-off article reads (use ingest_url for those). If the user explicitly says "follow / track / watch / scrape this URL" — always call follow_url, regardless of source type. If both reading AND tracking are wanted, run ingest_url first, then follow_url.
 - **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
@@ -9399,7 +9399,16 @@ Be thorough — include every unit row you can classify, across all properties i
         satisfiedCharges,
         lastAccountsFiled: lastAccountsFiling?.date || profile.lastAccountsMadeUpTo || "unknown",
         flags: financialFlags,
-        note: "This is an indicative assessment based on publicly available Companies House data. For definitive covenant checks, obtain and review the actual filed accounts or commission a credit report (D&B/Experian).",
+        houseCovenant: await (async () => {
+          // The canonical grade — same engine as check_covenant, so the two
+          // never diverge. Non-fatal: the heuristic words above remain if it fails.
+          try {
+            const { getCovenantReport } = await import("./covenant-engine");
+            const r = await getCovenantReport(chNumber!);
+            return { grade: r.grade, score: r.score, redFlags: r.flags.filter((fl) => fl.level === "red").map((fl) => fl.label) };
+          } catch { return null; }
+        })(),
+        note: "Indicative wording above; houseCovenant carries the canonical A-E grade (same engine as check_covenant, incl. Gazette insolvency signals).",
       };
 
       const riskAssessment = assessRisk(profile, activeOfficers, activePscs, sanctionsResults as any);
