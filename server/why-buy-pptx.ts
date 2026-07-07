@@ -268,7 +268,28 @@ export async function assembleWhyBuyData(opts: { propertyId?: string; propertyNa
     strengths: narrative?.strengths || [],
     upside: narrative?.upside || [],
     risksLine: narrative?.risksLine,
-    tenantFacts: narrative?.tenantFacts || [],
+    tenantFacts: await (async () => {
+      // Prepend the real house covenant grade when a tenant on this property
+      // resolves to a company with a CH number — authored facts follow it.
+      const facts = [...(narrative?.tenantFacts || [])];
+      try {
+        if (prop?.id) {
+          const { rows } = await pool.query(
+            `SELECT DISTINCT c.companies_house_number, c.name
+               FROM tenancy_schedule_units u
+               JOIN crm_companies c ON c.id = u.tenant_company_id
+              WHERE u.property_id = $1 AND c.companies_house_number IS NOT NULL LIMIT 1`,
+            [prop.id]);
+          const num = rows[0]?.companies_house_number;
+          if (num) {
+            const { getCovenantReport } = await import("./covenant-engine");
+            const rep = await getCovenantReport(num);
+            facts.unshift({ label: "Covenant (house grade)", value: `${rep.grade} — ${rep.score}/100${rep.flags.some(fl => fl.level === "red") ? " ⚑" : ""}` });
+          }
+        }
+      } catch { /* engine/join unavailable — authored facts only */ }
+      return facts;
+    })(),
     locationBullets: narrative?.locationBullets || [],
     zoneNote: narrative?.zoneNote,
     comps: narrative?.comps || [],

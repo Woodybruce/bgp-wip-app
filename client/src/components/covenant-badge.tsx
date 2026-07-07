@@ -54,3 +54,30 @@ export function CovenantBadge({ companyNumber, showScore = true, className = "" 
     </span>
   );
 }
+
+
+// Variant for surfaces that only hold a CRM company id (tenancy schedules,
+// deal rows) — the server resolves the CH number. Renders nothing when the
+// company has no Companies House number linked.
+export function CovenantBadgeByCompany({ companyId, className = "" }: { companyId?: string | null; className?: string }) {
+  const id = (companyId || "").trim();
+  const { data } = useQuery<any>({
+    queryKey: ["covenant-crm", id],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/covenant/by-crm/${encodeURIComponent(id)}`);
+      if (res.status === 204) return null;
+      return res.json();
+    },
+    enabled: !!id,
+    staleTime: 60 * 60 * 1000,
+    retry: 1,
+  });
+  if (!data?.grade) return null;
+  const reds = (data.flags || []).filter((f: any) => f.level === "red");
+  const tip = [`${data.companyName} — covenant ${data.grade} (${data.score}/100)`, ...reds.map((f: any) => `● ${f.label}`), data.verdict || ""].filter(Boolean).join("\n");
+  return (
+    <span title={tip} className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-bold cursor-help ${GRADE_STYLE[data.grade] || "bg-muted"} ${className}`}>
+      {data.grade}{reds.length > 0 && <span className="font-normal">⚑{reds.length}</span>}
+    </span>
+  );
+}

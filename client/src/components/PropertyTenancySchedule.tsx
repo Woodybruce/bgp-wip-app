@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { CovenantBadgeByCompany } from "@/components/covenant-badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -1235,6 +1236,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, deal
                       {displayVal}
                     </span>
                   </Link>
+                  {c.field === "tenant_name" && <CovenantBadgeByCompany companyId={linkedId} />}
                   <InlineEdit
                     value={displayVal}
                     field={c.field as string}

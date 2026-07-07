@@ -261,6 +261,18 @@ export function setupCovenantRoutes(app: Express) {
     res.json(rows);
   });
 
+  // Resolve a CRM company id -> CH number -> covenant report. Lets client
+  // surfaces (tenancy schedules, deal rows) badge tenants that only carry a
+  // crm_companies id. Returns 204 when the company has no CH number linked.
+  app.get("/api/covenant/by-crm/:companyId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { rows } = await pool.query(`SELECT companies_house_number FROM crm_companies WHERE id = $1`, [String(req.params.companyId)]);
+      const num = rows[0]?.companies_house_number;
+      if (!num) return res.status(204).end();
+      res.json(await getCovenantReport(num));
+    } catch (e: any) { res.status(400).json({ error: e?.message || "covenant check failed" }); }
+  });
+
   app.get("/api/covenant/:companyNumber", requireAuth, async (req: Request, res: Response) => {
     try {
       const report = await getCovenantReport(String(req.params.companyNumber), { refresh: req.query.refresh === "1" });
