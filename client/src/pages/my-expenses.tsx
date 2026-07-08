@@ -90,6 +90,7 @@ export default function MyExpenses() {
   const [viewingReceipt, setViewingReceipt] = useState<Expense | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [bulkProgress, setBulkProgress] = useState<{ total: number; done: number } | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string>("all");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bulkInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -273,6 +274,24 @@ export default function MyExpenses() {
   }
 
   const { cardholder, card, expenses, summary } = data;
+
+  // Status filter for the expenses list — tap a chip to isolate e.g.
+  // "Receipt needed" so it's clear at a glance what still needs completing.
+  // Only statuses that actually occur are shown as chips.
+  const EXPENSE_STATUS_LABELS: { key: string; label: string }[] = [
+    { key: "pending_receipt", label: "Receipt needed" },
+    { key: "receipt_uploaded", label: "Receipt added" },
+    { key: "pending_approval", label: "Pending" },
+    { key: "approved", label: "Approved" },
+    { key: "posted_to_xero", label: "In Xero" },
+    { key: "rejected", label: "Rejected" },
+  ];
+  const statusChips = EXPENSE_STATUS_LABELS
+    .map((o) => ({ ...o, count: expenses.filter((e) => e.status === o.key).length }))
+    .filter((o) => o.count > 0);
+  const filteredExpenses = statusFilter === "all"
+    ? expenses
+    : expenses.filter((e) => e.status === statusFilter);
   const utilisation = summary && summary.monthlyLimitPence > 0
     ? Math.min(100, Math.round((summary.monthlySpendPence / summary.monthlyLimitPence) * 100))
     : 0;
@@ -440,11 +459,38 @@ export default function MyExpenses() {
             <Receipt className="w-5 h-5" />
             My Expenses ({expenses.length})
           </CardTitle>
+          {/* Status filter — isolate e.g. "Receipt needed" to see what still
+              needs completing. Chips only appear for statuses that occur. */}
+          {statusChips.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-2" data-testid="my-expenses-status-filter">
+              <button
+                onClick={() => setStatusFilter("all")}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${statusFilter === "all" ? "bg-primary text-primary-foreground border-primary" : "bg-background text-muted-foreground border-border hover:text-foreground"}`}
+                data-testid="my-expenses-filter-all"
+              >
+                All {expenses.length}
+              </button>
+              {statusChips.map((s) => (
+                <button
+                  key={s.key}
+                  onClick={() => setStatusFilter(statusFilter === s.key ? "all" : s.key)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${statusFilter === s.key ? "bg-primary text-primary-foreground border-primary" : "bg-background text-muted-foreground border-border hover:text-foreground"}`}
+                  data-testid={`my-expenses-filter-${s.key}`}
+                >
+                  {s.label} {s.count}
+                </button>
+              ))}
+            </div>
+          )}
         </CardHeader>
         <CardContent className="p-0">
           {expenses.length === 0 ? (
             <div className="p-6 text-center text-sm text-muted-foreground">
               No expenses yet. Tap your card to make a purchase, or say "log £25 cash for taxi" in ChatBGP.
+            </div>
+          ) : filteredExpenses.length === 0 ? (
+            <div className="p-6 text-center text-sm text-muted-foreground">
+              No expenses with that status. <button onClick={() => setStatusFilter("all")} className="text-primary hover:underline">Show all</button>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -460,7 +506,7 @@ export default function MyExpenses() {
                   </tr>
                 </thead>
                 <tbody>
-                  {expenses.map((e) => (
+                  {filteredExpenses.map((e) => (
                     <tr key={e.id} className="border-t hover:bg-muted/20">
                       <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{fmtDate(e.transactionDate)}</td>
                       <td className="px-4 py-2 font-medium">
