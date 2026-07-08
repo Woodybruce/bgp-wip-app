@@ -43,6 +43,7 @@ import {
 } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Link } from "wouter";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface CalendarEvent {
   id: string;
@@ -1302,9 +1303,11 @@ export default function Calendar() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
+  const isMobile = useIsMobile();
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("workWeek");
+  // A 5-column week grid is unreadable on a phone — mobile starts in Day view.
+  const [viewMode, setViewMode] = useState<ViewMode>(isMobile ? "day" : "workWeek");
   const [showCrmEvents, setShowCrmEvents] = useState(true);
   const [showOutlookEvents, setShowOutlookEvents] = useState(true);
   const [showTeam, setShowTeam] = useState(true);
