@@ -158,7 +158,38 @@ export default function TeamExpenses() {
               Nothing matches those filters. <button onClick={() => { setPersonFilter("all"); setStatusFilter("all"); }} className="text-primary hover:underline">Clear</button>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+              {/* Mobile: stacked cards — a 7-column table is unreadable on a
+                  phone, so the same rows render as cards here. */}
+              <div className="sm:hidden divide-y">
+                {filtered.map((e) => (
+                  <div key={e.id} className="px-4 py-3" data-testid={`team-expense-card-${e.id}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-sm truncate">{e.ownerName || "—"}</span>
+                      <span className="font-mono text-sm shrink-0">{fmt(e.amountPence)}</span>
+                    </div>
+                    <div className="text-[13px] text-muted-foreground truncate">{e.merchant || "—"}</div>
+                    <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-muted-foreground">
+                      <span>{fmtDate(e.transactionDate)}</span>
+                      {e.category && <><span>·</span><span className="truncate">{e.category}</span></>}
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-3">
+                      <StatusBadge status={e.status} isPersonal={e.isPersonal} />
+                      {e.receiptFilename && (
+                        <button
+                          onClick={() => setViewing(e)}
+                          className="text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-1 active:opacity-70"
+                          data-testid={`team-expense-m-view-receipt-${e.id}`}
+                        >
+                          <Receipt className="w-3 h-3" /> Receipt
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* Desktop: full table. */}
+              <div className="hidden sm:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/30">
                   <tr className="text-left">
@@ -199,7 +230,8 @@ export default function TeamExpenses() {
                   ))}
                 </tbody>
               </table>
-            </div>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

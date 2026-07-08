@@ -273,6 +273,26 @@ export default function MobileHome() {
         </Link>
       )}
 
+      {/* Team Expenses — read-only, only for designated team overseers
+          (e.g. Victoria → National Leasing). Same responsive page the
+          desktop sidebar links to. */}
+      {Array.isArray(user?.expenseOverseerTeams) && user.expenseOverseerTeams.length > 0 && (
+        <Link
+          href="/team-expenses"
+          className="flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-900/40 px-4 py-3 active:bg-blue-100"
+          data-testid="mobile-home-team-expenses"
+        >
+          <span className="w-9 h-9 rounded-full bg-blue-500/15 text-blue-600 flex items-center justify-center shrink-0">
+            <Receipt className="w-5 h-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold">Team Expenses</div>
+            <div className="text-[11px] text-muted-foreground">{user.expenseOverseerTeams.join(", ")} — view team spend</div>
+          </div>
+          <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+        </Link>
+      )}
+
       {/* Quick links. Admins reach firm-wide spend + approvals via the
           Mine/Team toggle inside the Expenses page — keeps one entry
           point on the home grid for the daily flow. Client homes (Landsec)
