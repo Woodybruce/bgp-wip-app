@@ -1097,6 +1097,22 @@ export default function MobileExpenses() {
     },
   });
 
+  const noReceiptMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await fetch(`/api/expenses/${id}/no-receipt`, { method: "POST", credentials: "include" });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body?.error || "Failed");
+      return body;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      toast({ title: "Submitted without receipt", description: "Sent to Wendy & Layla for review." });
+    },
+    onError: (e: any) => {
+      toast({ title: "Failed", description: e?.message, variant: "destructive" });
+    },
+  });
+
   const askDelete = (e: Expense) => {
     if (!window.confirm(`Delete this ${fmtPence(e.amountPence)} expense at ${e.merchant || "unknown merchant"}?`)) return;
     deleteMutation.mutate(e.id);
@@ -1322,33 +1338,49 @@ export default function MobileExpenses() {
             {pending.map((e) => (
               <div
                 key={e.id}
-                className="rounded-2xl bg-white dark:bg-card border border-border shadow-sm p-3 flex items-center gap-3"
+                className="rounded-2xl bg-white dark:bg-card border border-border shadow-sm p-3"
                 data-testid={`mobile-expense-pending-${e.id}`}
               >
-                <button
-                  type="button"
-                  onClick={() => setEditing(e)}
-                  className="flex-1 min-w-0 text-left active:opacity-70"
-                >
-                  <div className="font-medium text-sm truncate">{e.merchant || "Unknown merchant"}</div>
-                  <div className="text-[11px] text-muted-foreground mt-0.5">
-                    {fmtDate(e.transactionDate)} · {fmtPence(e.amountPence)}
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => snapForExpense(e)}
-                  disabled={uploadingFor === e.id}
-                  className="shrink-0 h-11 px-3 rounded-full bg-primary text-primary-foreground flex items-center gap-1.5 text-sm font-medium disabled:opacity-50 active:scale-95 transition-transform"
-                  data-testid={`mobile-expense-snap-${e.id}`}
-                >
-                  {uploadingFor === e.id ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Camera className="w-4 h-4" />
-                  )}
-                  {uploadingFor === e.id ? "Uploading…" : "Snap"}
-                </button>
+                <div className="flex items-center gap-3 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditing(e)}
+                    className="flex-1 min-w-0 text-left active:opacity-70"
+                  >
+                    <div className="font-medium text-sm truncate">{e.merchant || "Unknown merchant"}</div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">
+                      {fmtDate(e.transactionDate)} · {fmtPence(e.amountPence)}
+                    </div>
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => snapForExpense(e)}
+                    disabled={uploadingFor === e.id}
+                    className="flex-1 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center gap-1.5 text-sm font-medium disabled:opacity-50 active:scale-95 transition-transform"
+                    data-testid={`mobile-expense-snap-${e.id}`}
+                  >
+                    {uploadingFor === e.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Camera className="w-4 h-4" />
+                    )}
+                    {uploadingFor === e.id ? "Uploading…" : "Snap receipt"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => noReceiptMutation.mutate(e.id)}
+                    disabled={noReceiptMutation.isPending && noReceiptMutation.variables === e.id}
+                    className="flex-1 h-10 rounded-full border border-border text-muted-foreground flex items-center justify-center gap-1.5 text-sm font-medium disabled:opacity-50 active:scale-95 transition-transform"
+                    data-testid={`mobile-expense-no-receipt-${e.id}`}
+                  >
+                    {noReceiptMutation.isPending && noReceiptMutation.variables === e.id ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : null}
+                    No receipt
+                  </button>
+                </div>
               </div>
             ))}
           </div>

@@ -48,9 +48,14 @@ export function londonDateKey(d = new Date()): string {
  *  (e.g. the background pre-gen for a user with no cached MS token) the
  *  calendar + inbox sections are simply omitted. */
 export async function generateBriefing(userId: string, msToken: string | null): Promise<BriefingResult> {
-  const userRow = await pool.query("SELECT name, team, email FROM users WHERE id = $1", [userId]);
+  const userRow = await pool.query("SELECT name, team, email, role FROM users WHERE id = $1", [userId]);
   const userName = userRow.rows[0]?.name || "Team member";
   const userTeam = userRow.rows[0]?.team || "";
+  // Client logins (e.g. Landsec) get a briefing built ONLY from their own
+  // company's world — portfolio, leasing events, their deals with BGP —
+  // never BGP-internal diary/inbox/task chatter.
+  const userEmail = (userRow.rows[0]?.email || "").toLowerCase();
+  const isClient = userRow.rows[0]?.role === "Client" || (!!userEmail && !userEmail.endsWith("@brucegillinghampollard.com"));
 
   const tasks = await pool.query(
     `SELECT * FROM user_tasks WHERE user_id = $1 AND status != 'done'
@@ -128,6 +133,78 @@ export async function generateBriefing(userId: string, msToken: string | null): 
   const stuckDeals = stuckRes.rows;
 
   const todayStr = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+
+  // ── Client-scoped briefing (e.g. Landsec) ──────────────────────────────
+  if (isClient) {
+    let portfolioContext = "";
+    try {
+      const co = await pool.query(
+        `SELECT id, name FROM crm_companies WHERE name = $1
+         ORDER BY (company_type = 'Landlord') DESC NULLS LAST LIMIT 1`,
+        [userTeam]
+      );
+      const companyId = co.rows[0]?.id;
+      if (companyId) {
+        const stats = await pool.query(
+          `SELECT count(DISTINCT p.id) AS props, count(t.id) AS units,
+                  count(t.id) FILTER (WHERE t.status IN ('Occupied','Not Vacant','Let')) AS occupied,
+                  count(t.id) FILTER (WHERE t.status IN ('Vacant','Void')) AS vacant
+           FROM crm_properties p LEFT JOIN tenancy_schedule_units t ON t.property_id = p.id
+           WHERE p.landlord_id = $1`, [companyId]);
+        const expiring = await pool.query(
+          `SELECT t.tenant_name, t.trading_name, t.unit_number, t.lease_expiry, p.name AS property
+           FROM tenancy_schedule_units t JOIN crm_properties p ON p.id = t.property_id
+           WHERE p.landlord_id = $1 AND t.lease_expiry BETWEEN NOW() AND NOW() + INTERVAL '6 months'
+             AND coalesce(t.tenant_name,'') <> ''
+           ORDER BY t.lease_expiry ASC LIMIT 10`, [companyId]);
+        const s = stats.rows[0] || {};
+        portfolioContext = `PORTFOLIO (${userTeam}): ${s.props || 0} properties, ${s.units || 0} units — ${s.occupied || 0} occupied, ${s.vacant || 0} vacant.
+${expiring.rows.length > 0 ? `LEASES EXPIRING (next 6 months):\n${expiring.rows.map((r: any) => `- ${r.trading_name || r.tenant_name} — ${r.unit_number || "unit"} @ ${r.property}, expires ${new Date(r.lease_expiry).toLocaleDateString("en-GB")}`).join("\n")}` : "No leases expiring in the next 6 months."}`;
+      }
+    } catch (e: any) { console.log("[ai-briefing] client portfolio context error:", e.message); }
+
+    const clientPrompt = `You are the AI portfolio briefing assistant for ${userName} at ${userTeam}, a client of Bruce Gillingham Pollard (BGP), viewing their ${userTeam} portfolio dashboard. Today is ${todayStr}.
+
+Generate a concise, warm, professional daily briefing about the ${userTeam} portfolio ONLY. Structure:
+
+1. **Greeting** — brief and personalised.
+2. **Portfolio at a glance** — headline numbers (properties, units, occupancy).
+3. **Leasing events** — upcoming lease expiries or vacancies worth attention.
+4. **Deal momentum** — commentary on active ${userTeam} deals with BGP.
+5. **Looking ahead** — what to keep an eye on.
+
+STRICT RULES: mention ONLY ${userTeam}-related information. Never reference BGP internal staff, their diaries, tasks or emails. Under 300 words.
+
+${portfolioContext || `No portfolio data available for ${userTeam}.`}
+
+${calendarContext ? `${userName}'s own calendar today:\n${calendarContext}` : ""}
+
+ACTIVE DEALS (${teamDeals.rows.length} for ${userTeam}):
+${teamDeals.rows.slice(0, 10).map((d: any) => `- ${d.name} — ${d.status}${d.property_name ? ` @ ${d.property_name}` : ""}${d.tenant_name ? ` (tenant: ${d.tenant_name})` : ""}`).join("\n") || "No active deals."}
+
+${stuckDeals.length > 0 ? `DEALS WITH NO RECENT UPDATE (14+ days):\n${stuckDeals.map((d: any) => `- ${d.name} (${d.status})`).join("\n")}` : ""}`;
+
+    const { callClaude } = await import("./utils/anthropic-client");
+    const clientResult = await callClaude({
+      messages: [{ role: "user", content: clientPrompt }],
+      max_completion_tokens: 1000,
+      temperature: 0.7,
+    });
+    const clientText = clientResult?.choices?.[0]?.message?.content || "Unable to generate briefing at this time.";
+    return {
+      briefing: clientText,
+      generatedAt: new Date().toISOString(),
+      stats: {
+        openTasks: tasks.rows.length,
+        overdueTasks: overdueTasks.length,
+        todayTasks: todayTasks.length,
+        completedYesterday: recentDone.rows.length,
+        activeDeals: teamDeals.rows.length,
+        stuckDeals: stuckDeals.length,
+        unreadEmails: 0,
+      },
+    };
+  }
 
   const prompt = `You are the AI briefing assistant for ${userName} at Bruce Gillingham Pollard (BGP), a London commercial property agency. Today is ${todayStr}.
 

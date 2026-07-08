@@ -32,6 +32,14 @@ async function checkPropertyAccess(pool: any, req: Request, propertyId: string):
   if (!user) return { allowed: false, user: null };
   if (user.is_admin) return { allowed: true, user };
 
+  // Client logins are confined to their own company's properties regardless
+  // of the per-property privacy flag. (Landsec audit.)
+  {
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req as any);
+    if (scope) return { allowed: await isPropertyInScope(scope, propertyId), user };
+  }
+
   const privacyCheck = await pool.query(
     "SELECT leasing_privacy_enabled FROM crm_properties WHERE id = $1",
     [propertyId]
@@ -47,7 +55,7 @@ async function checkPropertyAccess(pool: any, req: Request, propertyId: string):
 
 async function logAudit(pool: any, params: {
   unitId?: string; propertyId: string; userId: string; userName: string;
-  action: string; fieldName?: string; oldValue?: string; newValue?: string;
+  action: string; fieldName?: string; oldValue?: string | null; newValue?: string | null;
 }) {
   await pool.query(
     `INSERT INTO leasing_schedule_audit (unit_id, property_id, user_id, user_name, action, field_name, old_value, new_value)
@@ -62,6 +70,27 @@ router.get("/api/leasing-schedule/properties", requireAuth, async (req, res) => 
     const pool = await getPool();
     const user = await getUserInfo(pool, req);
     if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+    // Client logins see only their own portfolio here, not every BGP-managed
+    // property. (Landsec audit.)
+    const { resolveCompanyScope } = await import("./company-scope");
+    const lsPropsScope = await resolveCompanyScope(req as any);
+    if (lsPropsScope) {
+      const scoped = await pool.query(`
+        SELECT p.id, p.name, p.address, p.asset_class, p.bgp_engagement, p.leasing_privacy_enabled,
+          c.name as landlord_name, c.id as landlord_id,
+          COUNT(CASE WHEN u.status != 'Archived' THEN 1 END)::int as unit_count,
+          COUNT(CASE WHEN u.status = 'Occupied' THEN 1 END)::int as occupied_count,
+          COUNT(CASE WHEN u.status = 'Vacant' THEN 1 END)::int as vacant_count,
+          COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND u.status != 'Archived' THEN 1 END)::int as expiring_soon
+        FROM crm_properties p
+        JOIN leasing_schedule_units u ON u.property_id = p.id
+        LEFT JOIN crm_companies c ON p.landlord_id = c.id
+        WHERE p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+        GROUP BY p.id, p.name, p.address, p.asset_class, p.bgp_engagement, p.leasing_privacy_enabled, c.name, c.id
+        ORDER BY p.name`, [lsPropsScope]);
+      return res.json(scoped.rows);
+    }
 
     let query = `
       SELECT p.id, p.name, p.address, p.asset_class, p.bgp_engagement,
@@ -98,7 +127,7 @@ router.get("/api/leasing-schedule/properties", requireAuth, async (req, res) => 
 router.get("/api/leasing-schedule/property/:propertyId", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "You do not have access to this property's leasing schedule" });
 
     // Join the source Tenancy Schedule row (when linked) so the Existing
@@ -141,6 +170,11 @@ router.get("/api/leasing-schedule/property/:propertyId", requireAuth, async (req
 
 router.get("/api/leasing-schedule/company/:companyId", requireAuth, async (req, res) => {
   try {
+    const { resolveCompanyScope: rcs } = await import("./company-scope");
+    const lsScope = await rcs(req as any);
+    if (lsScope && lsScope !== req.params.companyId) {
+      return res.status(403).json({ error: "Not available for this account" });
+    }
     const pool = await getPool();
     const user = await getUserInfo(pool, req);
     if (!user) return res.status(401).json({ error: "Unauthorized" });
@@ -205,7 +239,7 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
         const oldVal = existingUnit[field];
         if (String(oldVal ?? "") !== String(newVal ?? "")) {
           await logAudit(pool, {
-            unitId: req.params.id,
+            unitId: req.params.id as string,
             propertyId: existingUnit.property_id,
             userId: user.id,
             userName: user.username,
@@ -262,7 +296,7 @@ router.put("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) => {
     if ("status" in body) {
       try {
         const { mirrorFromLeasingSchedule } = await import("./lease-status-mirror");
-        await mirrorFromLeasingSchedule(req.params.id, body.status, { pool, reason: "leasing_schedule.PUT" });
+        await mirrorFromLeasingSchedule(req.params.id as string, body.status, { pool, reason: "leasing_schedule.PUT" });
       } catch (e: any) {
         console.warn(`[leasing] status mirror failed for ${req.params.id}:`, e?.message);
         mirrorWarning = `Status saved, but syncing it to the Letting Tracker / Deals board failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
@@ -391,7 +425,7 @@ router.patch("/api/leasing-schedule/units/:id/archive", requireAuth, async (req,
     await pool.query("UPDATE leasing_schedule_units SET status = $2 WHERE id = $1", [req.params.id, newStatus]);
 
     await logAudit(pool, {
-      unitId: req.params.id,
+      unitId: req.params.id as string,
       propertyId: unit.property_id,
       userId: user.id,
       userName: user.username,
@@ -406,7 +440,7 @@ router.patch("/api/leasing-schedule/units/:id/archive", requireAuth, async (req,
     // spine all reflect the move. Best-effort; never fails the primary.
     try {
       const { mirrorFromLeasingSchedule } = await import("./lease-status-mirror");
-      await mirrorFromLeasingSchedule(req.params.id, newStatus, { pool, reason: "leasing.archive" });
+      await mirrorFromLeasingSchedule(req.params.id as string, newStatus, { pool, reason: "leasing.archive" });
     } catch (e: any) {
       console.warn(`[leasing] archive mirror failed for ${req.params.id}:`, e?.message);
     }
@@ -431,7 +465,7 @@ router.delete("/api/leasing-schedule/unit/:id", requireAuth, async (req, res) =>
     await pool.query("DELETE FROM leasing_schedule_units WHERE id = $1", [req.params.id]);
 
     await logAudit(pool, {
-      unitId: req.params.id,
+      unitId: req.params.id as string,
       propertyId: unit.property_id,
       userId: user.id,
       userName: user.username,
@@ -544,7 +578,7 @@ router.post(
   async (req, res) => {
     try {
       const pool = await getPool();
-      const propertyId = req.params.propertyId;
+      const propertyId = req.params.propertyId as string;
       const { allowed, user } = await checkPropertyAccess(pool, req, propertyId);
       if (!allowed) return res.status(403).json({ error: "Access denied" });
       if (!user) return res.status(401).json({ error: "Unauthorized" });
@@ -868,7 +902,7 @@ router.post("/api/leasing-schedule/import-multi", requireAuth, async (req, res) 
 router.put("/api/leasing-schedule/property/:propertyId/privacy", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     const { enabled } = req.body;
@@ -878,7 +912,7 @@ router.put("/api/leasing-schedule/property/:propertyId/privacy", requireAuth, as
     );
 
     await logAudit(pool, {
-      propertyId: req.params.propertyId,
+      propertyId: req.params.propertyId as string,
       userId: user.id,
       userName: user.username,
       action: "privacy_toggle",
@@ -917,7 +951,7 @@ router.get("/api/leasing-schedule/property/:propertyId/privacy", requireAuth, as
 router.get("/api/leasing-schedule/property/:propertyId/audit", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     const result = await pool.query(
@@ -936,7 +970,7 @@ router.get("/api/leasing-schedule/property/:propertyId/audit", requireAuth, asyn
 router.get("/api/leasing-schedule/property/:propertyId/export", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Export denied — you do not have access to this property" });
 
     const result = await pool.query(`
@@ -952,7 +986,7 @@ router.get("/api/leasing-schedule/property/:propertyId/export", requireAuth, asy
     const user = await getUserInfo(pool, req);
     if (user) {
       await logAudit(pool, {
-        propertyId: req.params.propertyId,
+        propertyId: req.params.propertyId as string,
         userId: user.id,
         userName: user.username,
         action: "export",
@@ -969,7 +1003,7 @@ router.get("/api/leasing-schedule/property/:propertyId/export", requireAuth, asy
 router.get("/api/leasing-schedule/property/:propertyId/targets", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     const result = await pool.query(
@@ -1035,7 +1069,7 @@ router.post("/api/leasing-schedule/unit/:unitId/targets", requireAuth, async (re
     );
 
     await logAudit(pool, {
-      unitId: req.params.unitId, propertyId: unitCheck.rows[0].property_id,
+      unitId: req.params.unitId as string, propertyId: unitCheck.rows[0].property_id,
       userId: user.id, userName: user.username, action: "add_target",
       fieldName: "target_tenant", newValue: brand_name,
     });
@@ -1286,7 +1320,7 @@ Return JSON array only, no markdown:
     }
 
     await logAudit(pool, {
-      unitId: req.params.unitId, propertyId: unit.property_id,
+      unitId: req.params.unitId as string, propertyId: unit.property_id,
       userId: user.id, userName: user.username, action: "generate_targets",
       newValue: `AI generated ${inserted.length} target tenants`,
     });
@@ -1301,7 +1335,7 @@ Return JSON array only, no markdown:
 router.post("/api/leasing-schedule/property/:propertyId/generate-targets", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     const units = await pool.query(
@@ -1703,7 +1737,7 @@ async function buildStyledSheet(wb: any, ExcelJS: any, propertyName: string, uni
 router.get("/api/leasing-schedule/property/:propertyId/export-excel", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Export denied" });
 
     const propRes = await pool.query("SELECT name FROM crm_properties WHERE id = $1", [req.params.propertyId]);
@@ -1736,7 +1770,7 @@ router.get("/api/leasing-schedule/property/:propertyId/export-excel", requireAut
 
     if (user) {
       await logAudit(pool, {
-        propertyId: req.params.propertyId, userId: user.id, userName: user.username,
+        propertyId: req.params.propertyId as string, userId: user.id, userName: user.username,
         action: "export_excel", newValue: `${result.rows.length} units exported to Excel`,
       });
     }
@@ -1925,9 +1959,9 @@ router.get("/api/leasing-schedule/export-excel", requireAuth, async (req, res) =
       lease_start: null,
       lease_end: null,
       break_date: null,
-      rent_pa: rows.reduce((s, r) => s + (r.rent_pa ? Number(r.rent_pa) : 0), 0),
+      rent_pa: rows.reduce((s: number, r: any) => s + (r.rent_pa ? Number(r.rent_pa) : 0), 0),
       rent_psf: null,
-      area_sqft: rows.reduce((s, r) => s + (r.sqft ? Number(r.sqft) : 0), 0),
+      area_sqft: rows.reduce((s: number, r: any) => s + (r.sqft ? Number(r.sqft) : 0), 0),
       status: "",
     });
     totalsRow.eachCell({ includeEmpty: true }, (cell: any) => {
@@ -1961,7 +1995,7 @@ router.get("/api/leasing-schedule/export-excel", requireAuth, async (req, res) =
 router.post("/api/leasing-schedule/property/:propertyId/snapshot", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     const meetingMonth = req.body?.meetingMonth || new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase();
@@ -1981,7 +2015,7 @@ router.post("/api/leasing-schedule/property/:propertyId/snapshot", requireAuth, 
     );
 
     await logAudit(pool, {
-      propertyId: req.params.propertyId, userId: user.id, userName: user.username,
+      propertyId: req.params.propertyId as string, userId: user.id, userName: user.username,
       action: "snapshot_approve",
       newValue: `${rows.rows.length} units snapshot for ${meetingMonth}`,
     });
@@ -1997,7 +2031,7 @@ router.post("/api/leasing-schedule/property/:propertyId/snapshot", requireAuth, 
 router.get("/api/leasing-schedule/property/:propertyId/snapshots", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     const rows = await pool.query(
@@ -2040,7 +2074,7 @@ router.get("/api/leasing-schedule/snapshot/:snapshotId", requireAuth, async (req
 router.get("/api/leasing-schedule/property/:propertyId/strategic-principles", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
     const r = await pool.query("SELECT strategic_principles FROM crm_properties WHERE id = $1", [req.params.propertyId]);
     res.json({ principles: r.rows[0]?.strategic_principles || null });
@@ -2052,12 +2086,12 @@ router.get("/api/leasing-schedule/property/:propertyId/strategic-principles", re
 router.put("/api/leasing-schedule/property/:propertyId/strategic-principles", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
     const principles = req.body?.principles || null;
     await pool.query("UPDATE crm_properties SET strategic_principles = $1::jsonb WHERE id = $2", [principles ? JSON.stringify(principles) : null, req.params.propertyId]);
     await logAudit(pool, {
-      propertyId: req.params.propertyId, userId: user.id, userName: user.username,
+      propertyId: req.params.propertyId as string, userId: user.id, userName: user.username,
       action: "edit_strategic_principles",
       newValue: principles?.enabled ? "enabled" : "disabled",
     });
@@ -2076,7 +2110,7 @@ router.put("/api/leasing-schedule/property/:propertyId/strategic-principles", re
 router.post("/api/leasing-schedule/property/:propertyId/sync-to-tenancy", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     const leasing = await pool.query(
@@ -2136,7 +2170,7 @@ router.post("/api/leasing-schedule/property/:propertyId/sync-to-tenancy", requir
     }
 
     await logAudit(pool, {
-      propertyId: req.params.propertyId, userId: user.id, userName: user.username,
+      propertyId: req.params.propertyId as string, userId: user.id, userName: user.username,
       action: "sync_to_tenancy",
       newValue: `${created} created + ${linked} linked`,
     });
@@ -2207,7 +2241,7 @@ router.post("/api/leasing-schedule/unit/:unitId/mention-tasks", requireAuth, asy
 router.post("/api/leasing-schedule/property/:propertyId/auto-status", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed, user } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     const rows = await pool.query(`
@@ -2236,7 +2270,7 @@ Respond as JSON only:
 { "classifications": [ { "id": "<unit-id>", "band": "<enum>", "reason": "<1 sentence>" } ] }
 
 Units:
-${rows.rows.map(u => JSON.stringify({
+${rows.rows.map((u: any) => JSON.stringify({
   id: u.id,
   unit: u.unit_name,
   tenant: u.tenant_name,
@@ -2257,7 +2291,7 @@ ${rows.rows.map(u => JSON.stringify({
       max_tokens: 4000,
       messages: [{ role: "user", content: prompt }],
     });
-    const raw = (ai.content[0] as any)?.text || "";
+    const raw = ai.choices[0]?.message?.content || "";
     const parsed = safeParseJSON(raw);
     const classifications: Array<{ id: string; band: string; reason: string }> = Array.isArray(parsed?.classifications) ? parsed.classifications : [];
 
@@ -2275,7 +2309,7 @@ ${rows.rows.map(u => JSON.stringify({
     }
 
     await logAudit(pool, {
-      propertyId: req.params.propertyId, userId: user.id, userName: user.username,
+      propertyId: req.params.propertyId as string, userId: user.id, userName: user.username,
       action: "ai_auto_status_band",
       newValue: `${updated}/${classifications.length} units auto-classified`,
     });
@@ -2294,7 +2328,7 @@ ${rows.rows.map(u => JSON.stringify({
 router.get("/api/leasing-schedule/property/:propertyId/available-from-tenancy", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId);
+    const { allowed } = await checkPropertyAccess(pool, req, req.params.propertyId as string);
     if (!allowed) return res.status(403).json({ error: "Access denied" });
 
     // Tenancy units not already mirrored into leasing_schedule_units by unit name.

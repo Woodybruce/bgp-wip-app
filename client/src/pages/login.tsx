@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import bgpLogo from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
@@ -8,15 +9,50 @@ interface LoginPageProps {
   onLogin: () => void;
 }
 
-// Single-method login: Microsoft 365 SSO only. The legacy email/password
-// form has been removed from the UI — accounts must be Microsoft-backed.
-// The /api/auth/login + /api/auth/register endpoints are intentionally
-// left running on the server as an admin emergency fallback (curl-able
-// if Entra is down or a new user can't yet provision) but they're not
-// discoverable from the login screen.
+// Two login paths: Microsoft 365 SSO for BGP staff, and an email/password
+// form for clients and guests without a @brucegillinghampollard.com
+// Microsoft account (e.g. Landsec users). The guest form is collapsed
+// behind a button so staff still default to SSO; it posts to the
+// long-standing /api/auth/login endpoint.
 export default function LoginPage({ onLogin }: LoginPageProps) {
   const [isSsoLoading, setIsSsoLoading] = useState(false);
+  const [showGuest, setShowGuest] = useState(false);
+  const [guestEmail, setGuestEmail] = useState("");
+  const [guestPassword, setGuestPassword] = useState("");
+  const [isGuestLoading, setIsGuestLoading] = useState(false);
   const { toast } = useToast();
+
+  async function handleGuestLogin(e: React.FormEvent) {
+    e.preventDefault();
+    if (!guestEmail.trim() || !guestPassword) return;
+    setIsGuestLoading(true);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ username: guestEmail.trim(), password: guestPassword }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.token) {
+        localStorage.setItem("bgp_auth_token", data.token);
+        onLogin();
+        return;
+      }
+      toast({
+        title: "Sign-in failed",
+        description: data.message || "Check your email and password and try again.",
+        variant: "destructive",
+      });
+    } catch {
+      toast({
+        title: "Connection error",
+        description: "Could not reach the server. Check your internet connection and try again.",
+        variant: "destructive",
+      });
+    }
+    setIsGuestLoading(false);
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -167,8 +203,59 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             Sign in with Microsoft
           </Button>
 
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-neutral-200 dark:bg-neutral-800" />
+            <span className="text-[11px] uppercase tracking-wide text-neutral-400">or</span>
+            <div className="flex-1 h-px bg-neutral-200 dark:bg-neutral-800" />
+          </div>
+
+          {!showGuest ? (
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full h-10 font-normal text-neutral-600 dark:text-neutral-300"
+              onClick={() => setShowGuest(true)}
+              data-testid="button-show-guest-login"
+            >
+              Client / guest sign in
+            </Button>
+          ) : (
+            <form onSubmit={handleGuestLogin} className="space-y-3" data-testid="form-guest-login">
+              <Input
+                type="email"
+                autoComplete="email"
+                placeholder="Email address"
+                value={guestEmail}
+                onChange={(e) => setGuestEmail(e.target.value)}
+                autoFocus
+                data-testid="input-guest-email"
+              />
+              <Input
+                type="password"
+                autoComplete="current-password"
+                placeholder="Password"
+                value={guestPassword}
+                onChange={(e) => setGuestPassword(e.target.value)}
+                data-testid="input-guest-password"
+              />
+              <Button
+                type="submit"
+                className="w-full h-10"
+                disabled={isGuestLoading || !guestEmail.trim() || !guestPassword}
+                data-testid="button-guest-login"
+              >
+                {isGuestLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Sign in
+              </Button>
+              <p className="text-[11px] text-center text-neutral-500">
+                For clients and guests without a BGP Microsoft account.<br />
+                No login yet? Ask your BGP contact to set one up.
+              </p>
+            </form>
+          )}
+
           <p className="text-[11px] text-center text-neutral-500 pt-2">
-            Use your @brucegillinghampollard.com Microsoft account.<br />
+            BGP staff — use your @brucegillinghampollard.com Microsoft account.<br />
             New starters — ask IT to provision your Entra account.
           </p>
         </div>

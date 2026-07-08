@@ -435,7 +435,7 @@ export function setupHrRoutes(app: Express) {
         if (cursor === userId) {
           return res.status(400).json({ error: "That would create a reporting cycle." });
         }
-        const { rows } = await pool.query<{ manager_id: string | null }>(
+        const { rows }: { rows: Array<{ manager_id: string | null }> } = await pool.query(
           "SELECT manager_id FROM staff_profiles WHERE user_id = $1",
           [cursor]
         );
@@ -859,7 +859,65 @@ export function setupHrRoutes(app: Express) {
       const paidOnly = req.query?.paidOnly === "true" || req.query?.paidOnly === "1";
       const feeDuePence = Math.round((statement?.billings ?? 0) * 100);
       const paidPence = Math.round((statement?.billingsPaid ?? 0) * 100);
-      const invoicedPence = feeDuePence;
+
+      // WIP-basis invoiced figure — the SAME aggregation the WIP page's
+      // agent summary uses (status INV, credited via fee allocations, or an
+      // equal split across internal agents when the deal has no allocations,
+      // no date gating). The homepage Billed number must match what people
+      // see on the WIP report, so this is the headline figure.
+      let wipInvoicedPence = 0;
+      try {
+        const { isInvoicedStatus } = await import("@shared/deal-status");
+        const nameLower = String(profile.name || "").trim().toLowerCase();
+        const trackLower = String(trackingName || "").trim().toLowerCase();
+        const firstName = nameLower.split(" ")[0] || nameLower;
+        const matchesMe = (agentName: string | null | undefined, agentUserId: string | null | undefined) => {
+          if (agentUserId && String(agentUserId) === String(userId)) return true;
+          const a = String(agentName || "").trim().toLowerCase();
+          if (!a) return false;
+          return a === nameLower || a === trackLower || a === firstName;
+        };
+        const { rows: wipDealRows } = await pool.query(`
+          SELECT d.id, d.fee::float AS fee, d.status, d.internal_agent AS "internalAgent",
+                 dfa.agent_user_id AS "agentUserId", dfa.agent_name AS "agentName",
+                 dfa.fixed_amount::float AS "fixedAmount", dfa.percentage::float AS percentage,
+                 COALESCE(dfa.is_bgp_house, false) AS "isBgpHouse"
+            FROM crm_deals d
+            LEFT JOIN deal_fee_allocations dfa ON dfa.deal_id = d.id
+           WHERE d.fee IS NOT NULL AND d.status IS NOT NULL
+        `);
+        const byDeal = new Map<string, { fee: number; status: string; internalAgent: any; allocs: any[] }>();
+        for (const r of wipDealRows) {
+          if (!byDeal.has(r.id)) byDeal.set(r.id, { fee: r.fee, status: r.status, internalAgent: r.internalAgent, allocs: [] });
+          if (r.agentName != null || r.agentUserId != null) {
+            byDeal.get(r.id)!.allocs.push(r);
+          }
+        }
+        let invoicedPounds = 0;
+        for (const deal of byDeal.values()) {
+          if (!isInvoicedStatus(deal.status)) continue;
+          const realAllocs = deal.allocs.filter(a => !a.isBgpHouse);
+          if (realAllocs.length > 0) {
+            for (const a of realAllocs) {
+              if (!matchesMe(a.agentName, a.agentUserId)) continue;
+              invoicedPounds += (a.fixedAmount && a.fixedAmount !== 0)
+                ? a.fixedAmount
+                : Math.round(deal.fee * ((a.percentage || 0) / 100) * 100) / 100;
+            }
+          } else {
+            const names: string[] = Array.isArray(deal.internalAgent)
+              ? deal.internalAgent
+              : deal.internalAgent ? [deal.internalAgent] : [];
+            if (names.length === 0) continue;
+            if (names.some(n => matchesMe(n, null))) invoicedPounds += deal.fee / names.length;
+          }
+        }
+        wipInvoicedPence = Math.round(invoicedPounds * 100);
+      } catch (wipErr: any) {
+        console.error("[hr] commission WIP-invoiced calc failed, falling back to engine:", wipErr.message);
+        wipInvoicedPence = feeDuePence;
+      }
+      const invoicedPence = wipInvoicedPence;
 
       awaitingPayment = (statement?.allDeals || [])
         .filter(d => !d.clientPaid)
@@ -877,9 +935,9 @@ export function setupHrRoutes(app: Express) {
       // default, "earned") and Paid-only ("payable"). EXC/COM deals already
       // sit inside billings on the fee-due basis, so the incremental
       // pipeline is NEG/SOL only — counting exc/com again would double it.
-      const primaryBilledPence = paidOnly ? paidPence : feeDuePence;
+      const primaryBilledPence = paidOnly ? paidPence : wipInvoicedPence;
       const wipTotal = wipByStage.neg + wipByStage.sol;
-      const forecastPence = feeDuePence + wipTotal;
+      const forecastPence = wipInvoicedPence + wipTotal;
       const commissionEarned = tierCommission(primaryBilledPence);
       const commissionForecast = tierCommission(forecastPence);
 
@@ -4098,9 +4156,14 @@ Return ONLY valid JSON, nothing else.`,
       if (!fileRes.ok) return res.status(502).json({ error: `Graph returned ${fileRes.status}` });
       const buf = Buffer.from(await fileRes.arrayBuffer());
 
-      // Claude can read .docx natively via the document input type.
+      // Extract the .docx text (the Claude API's base64 document block only
+      // accepts application/pdf, so a docx source 400s) and pass it as text —
+      // mammoth is how the rest of the app reads Word buffers.
+      const mammoth = (await import("mammoth")).default;
+      const { value: docText } = await mammoth.extractRawText({ buffer: buf });
+
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      
+
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
       const msg = await client.messages.create({
@@ -4110,16 +4173,12 @@ Return ONLY valid JSON, nothing else.`,
           role: "user",
           content: [
             {
-              type: "document",
-              source: {
-                type: "base64",
-                media_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                data: buf.toString("base64"),
-              },
-            },
-            {
               type: "text",
-              text: `Parse this BGP performance review .docx and return ONLY a JSON object. Money fields in pence. Long-form sections preserve bullet structure.
+              text: `Parse this BGP performance review and return ONLY a JSON object. Money fields in pence. Long-form sections preserve bullet structure.
+
+--- REVIEW DOCUMENT ---
+${docText}
+--- END DOCUMENT ---
 
 {
   "review_date": "YYYY-MM-DD or null",

@@ -3914,7 +3914,7 @@ function MarketingTrendsPanel({ isAdmin }: { isAdmin: boolean }) {
                     <div key={i} className="rounded-md border p-2 text-xs">
                       <div className="font-medium">{e.title}</div>
                       {e.audience && <div className="text-muted-foreground">Audience: {e.audience}</div>}
-                      {e.questions?.length > 0 && (
+                      {e.questions && e.questions.length > 0 && (
                         <ul className="mt-1 space-y-0.5">
                           {e.questions.map((q, j) => <li key={j} className="text-muted-foreground">· {q}</li>)}
                         </ul>

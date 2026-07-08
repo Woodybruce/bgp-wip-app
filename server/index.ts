@@ -1163,6 +1163,23 @@ import { pool } from "./db";
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION`,
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION`,
 
+    // Dedupe CRM link tables, then enforce uniqueness so duplicates can't return.
+    // Each dedupe must run before its index creation, which fails while duplicates exist.
+    `DELETE FROM crm_company_properties a USING crm_company_properties b
+      WHERE a.company_id = b.company_id AND a.property_id = b.property_id AND a.id > b.id`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_company_properties_pair ON crm_company_properties(company_id, property_id)`,
+    `DELETE FROM crm_company_deals a USING crm_company_deals b
+      WHERE a.company_id = b.company_id AND a.deal_id = b.deal_id AND a.id > b.id`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_company_deals_pair ON crm_company_deals(company_id, deal_id)`,
+    `DELETE FROM crm_contact_deals a USING crm_contact_deals b
+      WHERE a.contact_id = b.contact_id AND a.deal_id = b.deal_id AND a.id > b.id`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_contact_deals_pair ON crm_contact_deals(contact_id, deal_id)`,
+    `DELETE FROM crm_contact_properties a USING crm_contact_properties b
+      WHERE a.contact_id = b.contact_id AND a.property_id = b.property_id AND a.id > b.id`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_contact_properties_pair ON crm_contact_properties(contact_id, property_id)`,
+    `DELETE FROM crm_contact_requirements a USING crm_contact_requirements b
+      WHERE a.contact_id = b.contact_id AND a.requirement_id = b.requirement_id AND a.id > b.id`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_crm_contact_requirements_pair ON crm_contact_requirements(contact_id, requirement_id)`,
     // crm_trading_entities — formal legal/billing entities under a brand.
     // The parent brand is what the team picks; the entity is what we KYC
     // and what's on the lease. Previously stored as a {name, added_at}
@@ -2223,6 +2240,39 @@ import { pool } from "./db";
     )`,
     `CREATE INDEX IF NOT EXISTS idx_deck_cards_deck ON deck_cards (deck_id, sort_order)`,
 
+    // Document Studio v2 — one library index for every deliverable (deck / word /
+    // pdf / sheet). The artifact file is the working copy (file_storage); the
+    // canonical record is mirrored to SharePoint. deck_id links deck-type docs
+    // back to deck_cards for card editing.
+    `CREATE TABLE IF NOT EXISTS studio_documents (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      title TEXT NOT NULL,
+      doc_type TEXT NOT NULL,
+      category TEXT,
+      template_key TEXT,
+      deck_id VARCHAR,
+      project TEXT,
+      property_id VARCHAR,
+      company_id VARCHAR,
+      deal_id VARCHAR,
+      storage_key TEXT,
+      file_name TEXT,
+      content_type TEXT,
+      size INTEGER,
+      preview_keys JSONB,
+      sharepoint_web_url TEXT,
+      sharepoint_item_id TEXT,
+      sharepoint_path TEXT,
+      status TEXT NOT NULL DEFAULT 'ready',
+      version INTEGER NOT NULL DEFAULT 1,
+      created_by VARCHAR,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_studio_documents_category ON studio_documents (category)`,
+    `CREATE INDEX IF NOT EXISTS idx_studio_documents_project  ON studio_documents (project)`,
+    `CREATE INDEX IF NOT EXISTS idx_studio_documents_type     ON studio_documents (doc_type)`,
+
     `CREATE TABLE IF NOT EXISTS deck_templates (
       key TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -2555,6 +2605,8 @@ import { registerXeroFinancialRoutes } from "./xero-financials";
 import { registerApiUsageRoutes } from "./api-usage";
 import { setupEvernoteRoutes } from "./evernote";
 import { registerLandRegistryRoutes } from "./land-registry";
+import { setupBusinessGatewayRoutes } from "./business-gateway";
+import { setupCovenantRoutes } from "./covenant-engine";
 import { registerPropertyResolverRoutes } from "./property-resolver";
 import { registerPlaMattersRoutes } from "./pla-matters";
 import { registerPlaValuationRoutes, registerComparablesScheduleRoute } from "./pla-valuation";
@@ -3053,6 +3105,111 @@ app.use("/api/branding/assets", express.static(
 
 (async () => {
   setupAuth(app);
+
+  // ── Client default-deny backstop ──────────────────────────────────────
+  // Client logins (role='Client', e.g. Landsec) are external — they must
+  // only reach an explicit set of client-safe API surfaces. Rather than
+  // rely on every internal router remembering to guard itself (the opt-in
+  // model that leaked BGP mail, chat, HR, WIP…), we deny clients ALL of
+  // /api by default and allow only the vetted prefixes below. Runs after
+  // setupAuth so req.session.userId is populated for token logins too.
+  // GET/HEAD surfaces a client may read.
+  const CLIENT_ALLOWED_API = [
+    "/api/client/", "/api/crm/", "/api/brands/hub", "/api/client-teams/",
+    "/api/portfolio/", "/api/company-portfolio", "/api/leasing-schedule/",
+    "/api/tenancy-schedule/", "/api/properties/", "/api/property/",
+    "/api/property-intelligence", "/api/land-registry", "/api/business-rates",
+    "/api/voa", "/api/map-layers", "/api/os-data", "/api/edozo",
+    "/api/image-studio/search", "/api/image-studio/", "/api/ai-briefing",
+    "/api/notifications", "/api/daily-digest", "/api/activity-feed",
+    "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
+    "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",
+    "/api/available-units", "/api/tasks",
+  ];
+  // Microsoft 365 stays fully blocked for clients (mail/calendar/files all
+  // 403) — the client UI must not call it at all; see nav + poller gating.
+  // The only writes a client may perform. (heartbeat/push/config are
+  // harmless presence + client-preference pings every user sends;
+  // /api/chatbgp/ covers chat + chat-with-files — tools are stripped for
+  // clients inside those handlers via clientChatGuard.)
+  const CLIENT_ALLOWED_WRITES = [
+    "/api/auth/logout", "/api/chatbgp/", "/api/heartbeat",
+    "/api/push/", "/api/config/", "/api/favorite-instructions",
+    // Clients may edit their OWN leasing/tenancy schedule rows (positioning,
+    // bands, targets, meeting updates). Each endpoint verifies the property is
+    // in the client's scope; import/bulk-delete stay staff-only. (Landsec.)
+    "/api/tenancy-schedule/unit", "/api/leasing-schedule/unit",
+    // Clients may manage their OWN tasks (every task endpoint is scoped to
+    // user_id); the My Tasks dashboard widget needs create/complete/reorder.
+    "/api/tasks",
+    // Per-user news actions (click/save/dismiss tracking) — harmless and
+    // needed for the News tab; the fetch/scrape trigger stays staff-only.
+    "/api/news-feed/engage",
+  ];
+  // Sub-routes to block even though a parent prefix is allowed (BGP intel /
+  // brand pipeline that isn't the client's own profile; OneNote task import
+  // rides on Microsoft, which stays sealed for clients).
+  const CLIENT_BLOCKED_SUBPATHS = [
+    /^\/api\/brands\/(hunter|turnover)/,
+    /^\/api\/brand\/[^/]+\/(hunter-score|competitors|suggested-units|ai-take|pack|image-diag)/,
+    /^\/api\/tasks\/(onenote|import)/,
+    // ── Firm-wide / cross-company GETs that sit under an allowed parent
+    //    prefix but were never company-scoped. Blocked for clients so a
+    //    Landsec login can't pull other landlords' data via the network tab.
+    //    (Landsec audit, pre-demo sweep.) The scoped equivalents clients DO
+    //    use — /api/crm/companies, /deals, /properties, /available-units,
+    //    /leasing-schedule/property/:id, /company-property-links — are not
+    //    matched here and keep working.
+    /^\/api\/dashboard\/intelligence/,
+    /^\/api\/crm\/(landlords|stats)\b/,
+    /^\/api\/crm\/(contact-property-links|contact-deal-links|contact-requirement-links|company-deal-links|property-deal-links|property-tenants)\b/,
+    /^\/api\/crm\/companies\/[^/]+\/trading-entities/,
+    /^\/api\/crm\/properties\/[^/]+\/agents/,
+    /^\/api\/available-units\/(all-viewings|all-offers|all-files|all-viewings-counts|all-offers-counts|matches)\b/,
+    /^\/api\/leasing-schedule\/export-excel/,           // firm-wide export; per-property /property/:id/export stays scoped
+    /^\/api\/leasing-schedule\/property\/[^/]+\/privacy/,
+    /^\/api\/tenancy-schedule\/property\/[^/]+\/links/,
+    /^\/api\/properties\/[^/]+\/(360|brochures|tasks|orphan-deals|instructions|project-files|duplicate-units|plan-pickable-units|plans|unresolved-tenants|linkage-audit)\b/,
+    /^\/api\/property\/[^/]+\/brand-gaps/,
+    /^\/api\/client-teams\/[^/]+\/candidates/,          // whole BGP staff directory
+    /^\/api\/image-studio\/orphans/,
+  ];
+  app.use("/api", async (req: any, res, next) => {
+    // NB: inside app.use("/api", …) the mount path is stripped from req.path,
+    // so match on the full originalUrl (minus query string).
+    const p = (req.originalUrl || req.url || "").split("?")[0];
+    if (p.startsWith("/api/auth/")) return next();
+    try {
+      const { isClientRequestUser } = await import("./company-scope");
+      if (!(await isClientRequestUser(req))) return next(); // BGP staff: unaffected
+      const isWrite = !["GET", "HEAD", "OPTIONS"].includes(req.method);
+      if (isWrite) {
+        // Blocked sub-paths win even over an allowed parent (e.g. task import
+        // rides on Microsoft, which stays sealed for clients).
+        if (CLIENT_BLOCKED_SUBPATHS.some(re => re.test(p))) {
+          return res.status(403).json({ error: "Not available for client accounts" });
+        }
+        // Same prefix-matching rule as the read allowlist: entries ending in
+        // "/" match by prefix, others match exactly or as a path segment.
+        if (CLIENT_ALLOWED_WRITES.some(w =>
+          w.endsWith("/") ? p.startsWith(w) : (p === w || p.startsWith(w + "/"))
+        )) return next();
+        return res.status(403).json({ error: "Read-only access for client accounts" });
+      }
+      if (CLIENT_BLOCKED_SUBPATHS.some(re => re.test(p))) {
+        return res.status(403).json({ error: "Not available for client accounts" });
+      }
+      const allowed = CLIENT_ALLOWED_API.some(pre =>
+        pre.endsWith("/") ? p.startsWith(pre) : (p === pre || p.startsWith(pre + "/") || p.startsWith(pre + "?"))
+      );
+      // Allow a client to read only their OWN brand profile / images (scope
+      // enforced in the handlers); other /api/brand/* stays blocked.
+      const ownBrand = /^\/api\/brand\/[^/]+\/(profile|refresh-images\/status)$/.test(p);
+      if (allowed || ownBrand) return next();
+      return res.status(403).json({ error: "Not available for client accounts" });
+    } catch { return next(); }
+  });
+
   setupMicrosoftRoutes(app);
   setupWhatsAppRoutes(app);
   setupChatBGPRoutes(app);
@@ -3067,6 +3224,8 @@ app.use("/api/branding/assets", express.static(
   registerApiUsageRoutes(app);
   setupEvernoteRoutes(app);
   registerLandRegistryRoutes(app);
+  setupBusinessGatewayRoutes(app);
+  setupCovenantRoutes(app);
   registerPropertyResolverRoutes(app);
   registerPropertyBrochureRoutes(app);
   registerPlaMattersRoutes(app);
@@ -3323,6 +3482,7 @@ app.use("/api/branding/assets", express.static(
       if (isProduction) {
         setTimeout(() => startAutoEnrichment(), 30000);
         setTimeout(() => startAutoTurnoverResearch(), 30000);
+        import("./client-team-events-sync").then(m => m.startClientEventsSyncLoop()).catch(() => {});
         // Heavy crawls (image-sync + archivist) block the event loop and
         // were starving ChatBGP after every redeploy — a single chat turn
         // would hit the 10-min deadline because the box was saturated. They

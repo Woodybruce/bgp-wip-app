@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState, useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BarChart3, Store, TrendingUp, Building2, FileText } from "lucide-react";
 import { useTeam } from "@/lib/team-context";
@@ -49,6 +50,10 @@ export default function DealsHub() {
   const [location, setLocation] = useLocation();
   const { activeTeam } = useTeam();
   const isMobile = useIsMobile();
+  // Client logins (e.g. Landsec) only get the Deals list — never the WIP
+  // Report (BGP financials), Letting Tracker or Investment tabs.
+  const { data: dhUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClient = dhUser?.role === "Client";
   const [tab, setTab] = useState<TabKey>(() =>
     getTabFromLocation(location) || ((typeof window !== "undefined" && window.innerWidth < 768) ? "deals" : "wip-report")
   );
@@ -57,8 +62,13 @@ export default function DealsHub() {
   useEffect(() => {
     if (isProfile) return;
     const t = getTabFromLocation(location);
+    if (isClient) {
+      // Clients may use Deals + Letting Tracker only; anything else → Deals.
+      setTab(t === "letting" ? "letting" : "deals");
+      return;
+    }
     if (t) setTab(t);
-  }, [location, isProfile]);
+  }, [location, isProfile, isClient]);
 
   // WIP Report — the financial roll-up every agent wants. Now shown on both
   // desktop and mobile (the wide table scrolls horizontally on a phone).
@@ -71,10 +81,11 @@ export default function DealsHub() {
   ], [isMobile]);
 
   const tabs = useMemo(() => {
+    if (isClient) return allTabs.filter(t => t.key === "deals" || t.key === "letting");
     if (activeTeam === "Investment") return allTabs.filter(t => t.key !== "letting");
     if (activeTeam && activeTeam !== "all") return allTabs.filter(t => t.key !== "investment");
     return allTabs;
-  }, [activeTeam, allTabs]);
+  }, [activeTeam, allTabs, isClient]);
 
   if (isProfile) {
     return (
@@ -99,7 +110,7 @@ export default function DealsHub() {
 
   return (
     <div>
-      <div className="flex items-center gap-1 px-4 pt-4 md:px-6 md:pt-6 shrink-0">
+      <div className={`flex items-center gap-1 px-4 pt-4 md:px-6 md:pt-6 shrink-0 ${tabs.length <= 1 ? "hidden" : ""}`}>
         <div className="flex flex-wrap md:inline-flex md:min-w-max rounded-lg border bg-muted p-0.5 gap-0.5" data-testid="toggle-deals-tabs">
           {tabs.map(({ key, label, icon: Icon }) => (
             <button

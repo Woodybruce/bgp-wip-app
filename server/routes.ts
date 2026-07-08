@@ -50,6 +50,7 @@ import { setupHrRoutes } from "./hr-routes";
 import { setupWhyBuyDesignRoutes } from "./why-buy-design";
 import { setupDocumentPreferencesRoutes } from "./document-preferences";
 import { setupDeckRoutes } from "./decks";
+import { setupDocumentRoutes } from "./documents";
 import { importTrlRequirement } from "./trl";
 import { resolveBuildingTitles } from "./land-registry";
 import { fetchPlanitPlanning } from "./planit-planning";
@@ -167,9 +168,12 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       chatbgp.getEmailAndCalendarContext(req).catch(() => ""),
     ]);
 
-    const groupTools = (allTools as any).tools?.filter((t: any) =>
+    // Client logins get NO tools in the group-AI path either — this loop is
+    // separate from the main chat handler's clientChatGuard. (Landsec audit.)
+    const groupIsClient = await (await import("./company-scope")).isClientRequestUser(req).catch(() => true);
+    const groupTools = groupIsClient ? [] : ((allTools as any).tools?.filter((t: any) =>
       GROUP_CHAT_TOOLS.includes(t.function?.name)
-    ) || [];
+    ) || []);
 
     const lastUserMsg = recentMessages.filter(m => m.role === "user").pop()?.content || "";
     const mentionsChatBGP = /chat\s*bgp|@chat\s*bgp|@chat\b/i.test(lastUserMsg);
@@ -329,6 +333,9 @@ export async function registerRoutes(
 
   const { registerIntegrationsStatusRoutes } = await import("./integrations-status");
   registerIntegrationsStatusRoutes(app);
+
+  const { registerAutoDeployRoutes } = await import("./auto-deploy");
+  registerAutoDeployRoutes(app);
 
   const { registerOSDataRoutes } = await import("./os-data");
   registerOSDataRoutes(app);
@@ -929,9 +936,14 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/users", requireAuth, async (_req, res) => {
+  app.get("/api/users", requireAuth, async (req, res) => {
     try {
       const allUsers = await storage.getAllUsers();
+      // Client logins only need id+name (agent chips/colors on their boards) —
+      // not the staff directory with emails/teams. (Landsec audit.)
+      if (await (await import("./company-scope")).isClientRequestUser(req)) {
+        return res.json(allUsers.filter(u => u.isActive !== false).map(u => ({ id: u.id, name: u.name })));
+      }
       res.json(allUsers.map(u => ({ id: u.id, name: u.name, username: u.username, email: u.email, role: u.role, department: u.department, team: u.team, additionalTeams: u.additionalTeams || [], profilePicUrl: u.profilePicUrl || null, isActive: u.isActive !== false })));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch users" });
@@ -1080,7 +1092,7 @@ export async function registerRoutes(
 
   app.get("/uploads/profile-pics/:filename", requireAuth, async (req, res) => {
     try {
-      const filename = req.params.filename;
+      const filename = req.params.filename as string;
       if (filename.includes("..") || filename.includes("/")) return res.status(400).end();
       const file = await getFile(`profile-pics/${filename}`);
       if (!file) {
@@ -1509,6 +1521,39 @@ export async function registerRoutes(
       const q = (req.query.q as string || "").trim();
       if (q.length < 2) {
         return res.json({ results: [] });
+      }
+
+      // Client logins search only their own world: their properties, their
+      // contacts, and the client-safe brand slice — never the firm-wide CRM.
+      const searchScopeId = await resolveCompanyScope(req);
+      if (searchScopeId) {
+        const like = `%${q}%`;
+        const [propRows, contactRows, brandRows] = await Promise.all([
+          pool.query(
+            `SELECT id, name FROM crm_properties
+             WHERE name ILIKE $2 AND (landlord_id = $1 OR id IN
+               (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
+             LIMIT 8`, [searchScopeId, like]),
+          pool.query(
+            `SELECT id, name, role FROM crm_contacts WHERE company_id = $1 AND name ILIKE $2 LIMIT 8`,
+            [searchScopeId, like]),
+          pool.query(
+            `SELECT id, name, company_type FROM crm_companies
+             WHERE name ILIKE $1 AND company_type ILIKE 'Tenant -%'
+               AND (company_type ILIKE '%Restaurant%' OR company_type ILIKE '%Dining%' OR company_type ILIKE '%F&B%'
+                 OR company_type ILIKE '%QSR%' OR company_type ILIKE '%Food%' OR company_type ILIKE '%Caf%'
+                 OR company_type ILIKE '%Coffee%' OR company_type ILIKE '%Bar%' OR company_type ILIKE '%Leisure%'
+                 OR company_type ILIKE '%Cinema%' OR company_type ILIKE '%Entertainment%' OR company_type ILIKE '%Fitness%'
+                 OR company_type ILIKE '%Gym%' OR company_type ILIKE '%Yoga%' OR company_type ILIKE '%Hotel%' OR company_type ILIKE '%Hospitality%')
+             LIMIT 8`, [like]),
+        ]);
+        return res.json({
+          results: [
+            ...propRows.rows.map(r => ({ id: r.id, name: r.name, type: "property" })),
+            ...contactRows.rows.map(r => ({ id: r.id, name: r.name, type: "contact", subtitle: r.role || undefined })),
+            ...brandRows.rows.map(r => ({ id: r.id, name: r.name, type: "company", subtitle: (r.company_type || "").replace(/^Tenant - /, "") })),
+          ],
+        });
       }
 
       const crmResults = await storage.crmSearchAll(q);
@@ -1944,7 +1989,7 @@ export async function registerRoutes(
   app.put("/api/chat/threads/:threadId/messages/:messageId", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
-      const { threadId, messageId } = req.params;
+      const { threadId, messageId } = req.params as { threadId: string; messageId: string };
       const { content } = req.body;
       if (!content?.trim()) return res.status(400).json({ message: "Content required" });
       const msg = await storage.getChatMessage(messageId);
@@ -1963,7 +2008,7 @@ export async function registerRoutes(
   app.delete("/api/chat/threads/:threadId/messages/:messageId", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
-      const { threadId, messageId } = req.params;
+      const { threadId, messageId } = req.params as { threadId: string; messageId: string };
       const msg = await storage.getChatMessage(messageId);
       if (!msg) return res.status(404).json({ message: "Message not found" });
       if (msg.threadId !== threadId) return res.status(400).json({ message: "Message does not belong to this thread" });
@@ -2092,6 +2137,22 @@ export async function registerRoutes(
   // restored. mode:"investment_comps" removes the legacy bulk-loaded investment
   // comparables (status 'Investment Comp' / group 'Investment Comps'); ids:[...]
   // removes specific rows (the junk stubs). Dry-run unless confirm:true.
+  // Manual trigger for the client team-diary → events sync (Landsec).
+  app.post("/api/admin/sync-client-events", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { syncClientTeamEvents, syncAllClientTeamEvents } = await import("./client-team-events-sync");
+      const companyId = (req.body?.companyId || req.query.companyId) as string | undefined;
+      if (companyId) {
+        const stats = await syncClientTeamEvents(companyId);
+        return res.json({ ok: true, stats });
+      }
+      await syncAllClientTeamEvents();
+      res.json({ ok: true, message: "Synced all client teams" });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "sync failed" });
+    }
+  });
+
   app.post("/api/admin/cleanup-crm-properties", requireAuth, requireAdmin, async (req, res) => {
     try {
       const { mode, ids, confirm, reason } = req.body || {};
@@ -2207,7 +2268,7 @@ export async function registerRoutes(
   // pages with JS rendering on, extracts structured intel via Haiku.
   // Returns 202 + a job state — poll /status for results.
   app.post("/api/landlord/:companyId/scrape-portfolio", requireAuth, async (req, res) => {
-    const { companyId } = req.params;
+    const { companyId } = req.params as { companyId: string };
     try {
       const { scrapeLandlordWebsite, getLandlordScrapeProgress } = await import("./landlord-scraper");
       const current = getLandlordScrapeProgress(companyId);
@@ -2228,8 +2289,8 @@ export async function registerRoutes(
   app.get("/api/landlord/:companyId/scrape-portfolio/status", requireAuth, async (req, res) => {
     try {
       const { getLandlordScrapeProgress, getLandlordFindings } = await import("./landlord-scraper");
-      const progress = getLandlordScrapeProgress(req.params.companyId);
-      const findings = await getLandlordFindings(req.params.companyId);
+      const progress = getLandlordScrapeProgress(req.params.companyId as string);
+      const findings = await getLandlordFindings(req.params.companyId as string);
       res.json({ progress, findings });
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "status failed" });
@@ -2268,7 +2329,7 @@ export async function registerRoutes(
   app.get("/api/landlord/:companyId/link-diagnostic", requireAuth, async (req, res) => {
     try {
       const { getLandlordScrapeProgress } = await import("./landlord-scraper");
-      const progress = getLandlordScrapeProgress(req.params.companyId);
+      const progress = getLandlordScrapeProgress(req.params.companyId as string);
       const linkReport = (progress as any)?.result?.link_report || null;
       res.json({ progress: progress.state, linkReport });
     } catch (err: any) {
@@ -2338,7 +2399,7 @@ export async function registerRoutes(
   // jump to it.
   app.post("/api/landlord/:companyId/create-property", requireAuth, async (req, res) => {
     try {
-      const { companyId } = req.params;
+      const { companyId } = req.params as { companyId: string };
       const { name, address, postcode, sector } = req.body || {};
       if (!name || !String(name).trim()) return res.status(400).json({ error: "name is required" });
       const { createPropertyFromScraped } = await import("./landlord-scraper");
@@ -2655,7 +2716,7 @@ export async function registerRoutes(
   // POST /api/external-requirements/:id/reparse-vision
   app.post("/api/external-requirements/:id/reparse-vision", requireAuth, async (req, res) => {
     try {
-      const id = req.params.id;
+      const id = req.params.id as string;
       const { externalRequirements: extReq } = await import("@shared/schema");
       const { getFile } = await import("./file-storage");
       const { parseRequirementBrochure, mergeVisionIntoRecord } = await import("./requirement-vision-parser");
@@ -2740,7 +2801,7 @@ export async function registerRoutes(
     try {
       await db
         .delete(externalRequirements)
-        .where(eq(externalRequirements.id, req.params.id));
+        .where(eq(externalRequirements.id, req.params.id as string));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete requirement" });
@@ -2752,7 +2813,7 @@ export async function registerRoutes(
       const ext = await db
         .select()
         .from(externalRequirements)
-        .where(eq(externalRequirements.id, req.params.id))
+        .where(eq(externalRequirements.id, req.params.id as string))
         .limit(1);
       if (ext.length === 0) return res.status(404).json({ message: "Not found" });
       const item = ext[0];
@@ -2845,7 +2906,7 @@ export async function registerRoutes(
 
   app.patch("/api/change-requests/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const { id } = req.params as { id: string };
       const body = req.body;
       const allowedStatuses = ["pending", "reviewed", "approved", "rejected", "implemented"];
       const cleanUpdates: any = {};
@@ -2879,7 +2940,7 @@ export async function registerRoutes(
   app.patch("/api/app-feedback/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const { appFeedbackLog } = await import("@shared/schema");
-      if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ message: "Invalid id" });
+      if (!/^\d+$/.test(req.params.id as string)) return res.status(400).json({ message: "Invalid id" });
       const id = Number(req.params.id);
       const { status, adminNotes } = req.body;
       const updates: any = {};
@@ -3075,7 +3136,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.patch("/api/chatbgp-learnings/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const { chatbgpLearnings } = await import("@shared/schema");
-      if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ message: "Invalid id" });
+      if (!/^\d+$/.test(req.params.id as string)) return res.status(400).json({ message: "Invalid id" });
       const id = Number(req.params.id);
       const { active } = req.body;
       if (typeof active !== "boolean") {
@@ -3092,7 +3153,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/chatbgp-learnings/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const { chatbgpLearnings } = await import("@shared/schema");
-      if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ message: "Invalid id" });
+      if (!/^\d+$/.test(req.params.id as string)) return res.status(400).json({ message: "Invalid id" });
       const id = Number(req.params.id);
       await db.delete(chatbgpLearnings).where(eq(chatbgpLearnings.id, id));
       invalidateContextCache("businessLearnings");
@@ -3104,11 +3165,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units", requireAuth, async (req, res) => {
     try {
+      // Clients (e.g. Landsec) see the Letting Tracker for THEIR OWN
+      // properties only, with BGP fees/agents stripped. (Landsec audit.)
+      const auScope = await resolveCompanyScope(req);
       // Master physical attributes live on property_units; the listing's columns
       // are kept as a backwards-compat cache. We COALESCE master over listing so
       // every reader sees the source-of-truth values.
       const params: any[] = [];
       const filters: string[] = [];
+      if (auScope) {
+        params.push(auScope);
+        filters.push(`(p.landlord_id = $${params.length} OR au.property_id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${params.length}))`);
+      }
       if (req.query.propertyId) {
         params.push(req.query.propertyId);
         filters.push(`au.property_id = $${params.length}`);
@@ -3154,6 +3222,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         ${whereClause}
         ORDER BY au.created_at DESC
       `, params);
+      // Strip BGP fee + agent assignments for client logins.
+      if (auScope) {
+        return res.json(result.rows.map((r: any) => ({ ...r, fee: null, agentUserIds: null })));
+      }
       res.json(result.rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch available units" });
@@ -3537,7 +3609,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.patch("/api/available-units/:id", requireAuth, async (req, res) => {
     try {
-      const existing = await storage.getAvailableUnit(req.params.id);
+      const existing = await storage.getAvailableUnit(req.params.id as string);
       if (!existing) return res.status(404).json({ message: "Unit not found" });
       const { insertAvailableUnitSchema } = await import("@shared/schema");
       const partial = insertAvailableUnitSchema.partial().parse(req.body);
@@ -3574,7 +3646,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         }
       }
 
-      const unit = await storage.updateAvailableUnit(req.params.id, partial);
+      const unit = await storage.updateAvailableUnit(req.params.id as string, partial);
 
       // Mirror deal-bearing fields onto the backing crm_deal so the Deals
       // board + WIP report don't drift from inline tracker edits. Without
@@ -3603,7 +3675,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if ("marketingStatus" in partial) {
         try {
           const { mirrorFromAvailableUnit } = await import("./lease-status-mirror");
-          await mirrorFromAvailableUnit(req.params.id, (partial as any).marketingStatus, { pool, reason: "available_units.PATCH" });
+          await mirrorFromAvailableUnit(req.params.id as string, (partial as any).marketingStatus, { pool, reason: "available_units.PATCH" });
         } catch (e: any) {
           console.warn(`[available-units PATCH] status mirror failed for ${req.params.id}:`, e?.message);
           mirrorWarning = `Status saved, but syncing it to the Deals board / Leasing Schedule failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
@@ -4571,11 +4643,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const { dealId } = req.body;
       if (!dealId) return res.status(400).json({ message: "dealId is required" });
-      const existing = await storage.getAvailableUnit(req.params.id);
+      const existing = await storage.getAvailableUnit(req.params.id as string);
       if (!existing) return res.status(404).json({ message: "Unit not found" });
       const deal = await storage.getCrmDeal(dealId);
       if (!deal) return res.status(404).json({ message: "Deal not found" });
-      const unit = await storage.updateAvailableUnit(req.params.id, { dealId });
+      const unit = await storage.updateAvailableUnit(req.params.id as string, { dealId });
       res.json(unit);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to link deal" });
@@ -4584,7 +4656,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/available-units/:id/create-deal", requireAuth, async (req, res) => {
     try {
-      const unit = await storage.getAvailableUnit(req.params.id);
+      const unit = await storage.getAvailableUnit(req.params.id as string);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
       const property = await storage.getCrmProperty(unit.propertyId);
       const body = req.body || {};
@@ -4675,7 +4747,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         } as any);
       }
 
-      await storage.updateAvailableUnit(req.params.id, {
+      await storage.updateAvailableUnit(req.params.id as string, {
         dealId: deal?.id ?? unit.dealId,
         marketingStatus: "SOL",
       });
@@ -4733,10 +4805,6 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
             tenantId: (deal as any).tenantId,
             vendorId: (deal as any).vendorId,
             purchaserId: (deal as any).purchaserId,
-            landlordEntityId: (deal as any).landlordEntityId,
-            tenantEntityId: (deal as any).tenantEntityId,
-            vendorEntityId: (deal as any).vendorEntityId,
-            purchaserEntityId: (deal as any).purchaserEntityId,
           });
           const msg = formatAmlWarning(result);
           if (msg) {
@@ -4756,10 +4824,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/:id/files", requireAuth, async (req, res) => {
     try {
-      const unit = await storage.getAvailableUnit(req.params.id);
+      const unit = await storage.getAvailableUnit(req.params.id as string);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
       const { unitMarketingFiles } = await import("@shared/schema");
-      const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, req.params.id)).orderBy(unitMarketingFiles.createdAt);
+      const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, req.params.id as string)).orderBy(unitMarketingFiles.createdAt);
       res.json(files);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch files" });
@@ -4792,7 +4860,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/files/:fileId", requireAuth, async (req, res) => {
     try {
       const { unitMarketingFiles } = await import("@shared/schema");
-      const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId));
+      const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId as string));
       if (!file) return res.status(404).json({ message: "File not found" });
       const fileName = file.filePath.split("/").pop();
       if (fileName) {
@@ -4801,7 +4869,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       const fullPath = path.join(process.cwd(), file.filePath);
       if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
-      await db.delete(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId));
+      await db.delete(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId as string));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete file" });
@@ -4812,7 +4880,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.get("/api/available-units/:id/viewings", requireAuth, async (req, res) => {
     try {
       const { unitViewings } = await import("@shared/schema");
-      const rows = await db.select().from(unitViewings).where(eq(unitViewings.unitId, req.params.id)).orderBy(unitViewings.viewingDate);
+      const rows = await db.select().from(unitViewings).where(eq(unitViewings.unitId, req.params.id as string)).orderBy(unitViewings.viewingDate);
       res.json(rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch viewings" });
@@ -4834,7 +4902,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/viewings/:viewingId", requireAuth, async (req, res) => {
     try {
       const { unitViewings } = await import("@shared/schema");
-      await db.delete(unitViewings).where(eq(unitViewings.id, req.params.viewingId));
+      await db.delete(unitViewings).where(eq(unitViewings.id, req.params.viewingId as string));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete viewing" });
@@ -4845,7 +4913,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.get("/api/available-units/:id/offers", requireAuth, async (req, res) => {
     try {
       const { unitOffers } = await import("@shared/schema");
-      const rows = await db.select().from(unitOffers).where(eq(unitOffers.unitId, req.params.id)).orderBy(unitOffers.offerDate);
+      const rows = await db.select().from(unitOffers).where(eq(unitOffers.unitId, req.params.id as string)).orderBy(unitOffers.offerDate);
       res.json(rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch offers" });
@@ -4867,7 +4935,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/offers/:offerId", requireAuth, async (req, res) => {
     try {
       const { unitOffers } = await import("@shared/schema");
-      await db.delete(unitOffers).where(eq(unitOffers.id, req.params.offerId));
+      await db.delete(unitOffers).where(eq(unitOffers.id, req.params.offerId as string));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete offer" });
@@ -4876,7 +4944,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/uploads/marketing-files/:filename", requireAuth, async (req, res) => {
     try {
-      const sanitized = path.basename(req.params.filename);
+      const sanitized = path.basename(req.params.filename as string);
       const file = await getFile(`marketing-files/${sanitized}`);
       if (!file) {
         const diskPath = path.join(MARKETING_FILES_DIR, sanitized);
@@ -5013,7 +5081,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/investment-tracker/:trackerId/marketing-files", requireAuth, async (req, res) => {
     try {
-      const rows = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.trackerId, req.params.trackerId)).orderBy(desc(investmentMarketingFiles.createdAt));
+      const rows = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.trackerId, req.params.trackerId as string)).orderBy(desc(investmentMarketingFiles.createdAt));
       res.json(rows);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -5042,19 +5110,19 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/investment-marketing-files/:id", requireAuth, async (req, res) => {
     try {
-      const [file] = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id));
+      const [file] = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id as string));
       if (file?.filePath) {
         const { deleteFile } = await import("./file-storage");
         await deleteFile(file.filePath);
       }
-      await db.delete(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id));
+      await db.delete(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
   app.get("/api/investment-marketing-files/:id/download", requireAuth, async (req, res) => {
     try {
-      const [file] = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id));
+      const [file] = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id as string));
       if (!file) return res.status(404).json({ message: "Not found" });
       const stored = await getFile(file.filePath);
       if (!stored) {
@@ -5069,7 +5137,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/investment-tracker/:id", requireAuth, async (req, res) => {
     try {
-      const [row] = await db.select().from(investmentTracker).where(eq(investmentTracker.id, req.params.id));
+      const [row] = await db.select().from(investmentTracker).where(eq(investmentTracker.id, req.params.id as string));
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) {
@@ -5140,7 +5208,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
 
       const row = await db.transaction(async (tx) => {
-        const [updated] = await tx.update(investmentTracker).set(updates).where(eq(investmentTracker.id, req.params.id)).returning();
+        const [updated] = await tx.update(investmentTracker).set(updates).where(eq(investmentTracker.id, req.params.id as string)).returning();
         if (!updated) return null;
 
         if (updated.propertyId) {
@@ -5197,7 +5265,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/investment-tracker/:id", requireAuth, async (req, res) => {
     try {
-      await db.delete(investmentTracker).where(eq(investmentTracker.id, req.params.id));
+      await db.delete(investmentTracker).where(eq(investmentTracker.id, req.params.id as string));
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -5207,7 +5275,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.post("/api/investment-tracker/:id/link-deal", requireAuth, async (req, res) => {
     try {
       const { dealId } = req.body;
-      const [row] = await db.update(investmentTracker).set({ dealId, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id)).returning();
+      const [row] = await db.update(investmentTracker).set({ dealId, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) {
@@ -5217,7 +5285,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/investment-tracker/:id/unlink-deal", requireAuth, async (req, res) => {
     try {
-      const [row] = await db.update(investmentTracker).set({ dealId: null, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id)).returning();
+      const [row] = await db.update(investmentTracker).set({ dealId: null, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) {
@@ -5227,7 +5295,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/investment-tracker/:id/create-deal", requireAuth, async (req, res) => {
     try {
-      const [item] = await db.select().from(investmentTracker).where(eq(investmentTracker.id, req.params.id));
+      const [item] = await db.select().from(investmentTracker).where(eq(investmentTracker.id, req.params.id as string));
       if (!item) return res.status(404).json({ message: "Not found" });
       // Idempotent — if already linked, return the existing deal
       if (item.dealId) {
@@ -5251,7 +5319,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         fee: item.fee || undefined,
         comments: `Converted from investment tracker on ${new Date().toISOString().slice(0,10)}.`,
       } as any);
-      await db.update(investmentTracker).set({ dealId: deal.id, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id));
+      await db.update(investmentTracker).set({ dealId: deal.id, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id as string));
       res.json(deal);
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -5261,7 +5329,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // --- Investment Viewings ---
   app.get("/api/investment-tracker/:trackerId/viewings", requireAuth, async (req, res) => {
     try {
-      const rows = await db.select().from(investmentViewings).where(eq(investmentViewings.trackerId, req.params.trackerId)).orderBy(desc(investmentViewings.viewingDate));
+      const rows = await db.select().from(investmentViewings).where(eq(investmentViewings.trackerId, req.params.trackerId as string)).orderBy(desc(investmentViewings.viewingDate));
       res.json(rows);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -5275,14 +5343,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.patch("/api/investment-viewings/:id", requireAuth, async (req, res) => {
     try {
       const allowed = insertInvestmentViewingSchema.partial().omit({ trackerId: true }).parse(req.body);
-      const [row] = await db.update(investmentViewings).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentViewings.id, req.params.id)).returning();
+      const [row] = await db.update(investmentViewings).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentViewings.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) { res.status(400).json({ message: e.message }); }
   });
   app.delete("/api/investment-viewings/:id", requireAuth, async (req, res) => {
     try {
-      await db.delete(investmentViewings).where(eq(investmentViewings.id, req.params.id));
+      await db.delete(investmentViewings).where(eq(investmentViewings.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -5290,7 +5358,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // --- Investment Offers ---
   app.get("/api/investment-tracker/:trackerId/offers", requireAuth, async (req, res) => {
     try {
-      const rows = await db.select().from(investmentOffers).where(eq(investmentOffers.trackerId, req.params.trackerId)).orderBy(desc(investmentOffers.offerDate));
+      const rows = await db.select().from(investmentOffers).where(eq(investmentOffers.trackerId, req.params.trackerId as string)).orderBy(desc(investmentOffers.offerDate));
       res.json(rows);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -5304,14 +5372,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.patch("/api/investment-offers/:id", requireAuth, async (req, res) => {
     try {
       const allowed = insertInvestmentOfferSchema.partial().omit({ trackerId: true }).parse(req.body);
-      const [row] = await db.update(investmentOffers).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentOffers.id, req.params.id)).returning();
+      const [row] = await db.update(investmentOffers).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentOffers.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) { res.status(400).json({ message: e.message }); }
   });
   app.delete("/api/investment-offers/:id", requireAuth, async (req, res) => {
     try {
-      await db.delete(investmentOffers).where(eq(investmentOffers.id, req.params.id));
+      await db.delete(investmentOffers).where(eq(investmentOffers.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -5319,7 +5387,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // --- Investment Distributions (Sent To tracking) ---
   app.get("/api/investment-tracker/:trackerId/distributions", requireAuth, async (req, res) => {
     try {
-      const rows = await db.select().from(investmentDistributions).where(eq(investmentDistributions.trackerId, req.params.trackerId)).orderBy(desc(investmentDistributions.sentDate));
+      const rows = await db.select().from(investmentDistributions).where(eq(investmentDistributions.trackerId, req.params.trackerId as string)).orderBy(desc(investmentDistributions.sentDate));
       res.json(rows);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -5333,14 +5401,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.patch("/api/investment-distributions/:id", requireAuth, async (req, res) => {
     try {
       const allowed = insertInvestmentDistributionSchema.partial().omit({ trackerId: true }).parse(req.body);
-      const [row] = await db.update(investmentDistributions).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentDistributions.id, req.params.id)).returning();
+      const [row] = await db.update(investmentDistributions).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentDistributions.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) { res.status(400).json({ message: e.message }); }
   });
   app.delete("/api/investment-distributions/:id", requireAuth, async (req, res) => {
     try {
-      await db.delete(investmentDistributions).where(eq(investmentDistributions.id, req.params.id));
+      await db.delete(investmentDistributions).where(eq(investmentDistributions.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -5570,6 +5638,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       );
       const properties = propsResult.rows;
       const propertyIds = properties.map((p: any) => p.id);
+      // Client account name — lets synced team-diary events (tagged with the
+      // client's name, not a specific property) surface on the events card.
+      const cpCompanyName = (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId])).rows[0]?.name || null;
 
       let totalUnits = 0, vacantUnits = 0, totalPassingRent = 0;
       if (propertyIds.length > 0) {
@@ -5601,8 +5672,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (propertyIds.length > 0) {
         const eventsResult = await pool.query(
           `SELECT COUNT(*) as total FROM team_events
-           WHERE property_id = ANY($1) AND start_time >= NOW()`,
-          [propertyIds]
+           WHERE (property_id = ANY($1) OR company_name = $2) AND start_time >= NOW()`,
+          [propertyIds, cpCompanyName]
         );
         upcomingEvents = parseInt(eventsResult.rows[0]?.total || "0");
       }
@@ -5635,9 +5706,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         const eventsListResult = await pool.query(
           `SELECT id, title, start_time, end_time, event_type, location, property_id
            FROM team_events
-           WHERE property_id = ANY($1) AND start_time >= NOW()
+           WHERE (property_id = ANY($1) OR company_name = $2) AND start_time >= NOW()
            ORDER BY start_time LIMIT 20`,
-          [propertyIds]
+          [propertyIds, cpCompanyName]
         );
         upcomingEventsList = eventsListResult.rows;
 
@@ -5645,11 +5716,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           `SELECT te.id, te.title, te.start_time, te.end_time, te.event_type, te.location, te.property_id, p.name as property_name
            FROM team_events te
            LEFT JOIN crm_properties p ON te.property_id = p.id
-           WHERE te.property_id = ANY($1)
+           WHERE (te.property_id = ANY($1) OR te.company_name = $2)
              AND te.start_time >= NOW() - INTERVAL '7 days'
              AND te.start_time <= NOW() + INTERVAL '30 days'
            ORDER BY te.start_time`,
-          [propertyIds]
+          [propertyIds, cpCompanyName]
         );
         calendarEvents = calendarResult.rows;
       }
@@ -5791,7 +5862,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/team-folders/:folder/files", requireAuth, async (req, res) => {
     try {
-      const folderName = decodeURIComponent(req.params.folder);
+      const folderName = decodeURIComponent(req.params.folder as string);
       if (!TEAM_FOLDERS.includes(folderName)) return res.status(400).json({ error: "Invalid folder" });
 
       const dir = path.join(CHATBGP_BASE, folderName);
@@ -5812,7 +5883,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/team-folders/:folder/upload", requireAuth, teamFileUpload.single("file"), async (req, res) => {
     try {
-      const folderName = decodeURIComponent(req.params.folder);
+      const folderName = decodeURIComponent(req.params.folder as string);
       if (!TEAM_FOLDERS.includes(folderName)) return res.status(400).json({ error: "Invalid folder" });
 
       const userId = req.session?.userId || (req as any).tokenUserId;
@@ -5841,8 +5912,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/team-folders/:folder/download/:filename", requireAuth, async (req, res) => {
     try {
-      const folderName = decodeURIComponent(req.params.folder);
-      const filename = req.params.filename;
+      const folderName = decodeURIComponent(req.params.folder as string);
+      const filename = req.params.filename as string;
       if (!TEAM_FOLDERS.includes(folderName)) return res.status(400).json({ error: "Invalid folder" });
       if (filename.includes("..") || filename.includes("/") || filename.includes("\\")) return res.status(400).json({ error: "Invalid filename" });
 
@@ -5855,8 +5926,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/team-folders/:folder/:filename", requireAuth, async (req, res) => {
     try {
-      const folderName = decodeURIComponent(req.params.folder);
-      const filename = req.params.filename;
+      const folderName = decodeURIComponent(req.params.folder as string);
+      const filename = req.params.filename as string;
       if (!TEAM_FOLDERS.includes(folderName)) return res.status(400).json({ error: "Invalid folder" });
       if (filename.includes("..") || filename.includes("/") || filename.includes("\\")) return res.status(400).json({ error: "Invalid filename" });
 
@@ -5879,8 +5950,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.get("/api/activity-feed", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/activity-feed", requireAuth, async (req: Request, res: Response) => {
     try {
+    // External client logins get no org-wide feed — their world is the
+    // client-scoped briefing. (Landsec audit.)
+    if (await (await import("./company-scope")).isClientRequestUser(req)) return res.json([]);
+
       const tableCheck = await pool.query(
         `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'system_activity_log')`
       );
@@ -6244,10 +6319,20 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // (or the 6am cron pre-generates it). ?refresh=1 forces a regenerate —
       // wired to the card's manual refresh button.
       const force = req.query.refresh === "1" || req.query.refresh === "true";
+      // The briefing renders the user's PERSONAL calendar + inbox, so only
+      // use a Microsoft token that genuinely belongs to this user. Without
+      // this guard getValidMsToken's org-wide cache fallback would hand a
+      // client (e.g. a Landsec login with no MS account) another user's
+      // token — and their private diary with it.
       let msToken: string | null = null;
       try {
-        const { getValidMsToken } = await import("./microsoft");
-        msToken = await getValidMsToken(req);
+        const ownsMsIdentity = !!req.session.msTokens?.accessToken || (
+          await pool.query("SELECT 1 FROM msal_token_cache WHERE user_id = $1 LIMIT 1", [userId])
+        ).rows.length > 0;
+        if (ownsMsIdentity) {
+          const { getValidMsToken } = await import("./microsoft");
+          msToken = await getValidMsToken(req);
+        }
       } catch (e: any) { console.log("[ai-briefing] MS token fetch error:", e.message); }
 
       const { getOrCreateTodaysBriefing } = await import("./daily-briefing");
@@ -6259,8 +6344,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
-  app.get("/api/daily-digest", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/daily-digest", requireAuth, async (req: Request, res: Response) => {
     try {
+    // External client logins get no org-wide feed — their world is the
+    // client-scoped briefing. (Landsec audit.)
+    if (await (await import("./company-scope")).isClientRequestUser(req)) return res.json([]);
+
       const alerts: any[] = [];
 
       const stuckDeals = await pool.query(
@@ -6674,8 +6763,17 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   });
 
   // === Landsec Portfolio Analytics ===
-  app.get("/api/portfolio/landsec/analytics", requireAuth, async (_req, res) => {
+  app.get("/api/portfolio/landsec/analytics", requireAuth, async (req, res) => {
     try {
+      // BGP staff or Landsec-scoped users only — this payload contains
+      // Landsec fee totals + BGP per-agent splits, so other client teams
+      // must not read it. (Landsec audit.)
+      const scopeId = await resolveCompanyScope(req);
+      if (scopeId) {
+        const ls = await pool.query(
+          `SELECT 1 FROM crm_companies WHERE id = $1 AND LOWER(name) = 'landsec' LIMIT 1`, [scopeId]);
+        if (ls.rows.length === 0) return res.status(403).json({ error: "Not available for this account" });
+      }
       // All deals where groupName contains "Landsec" (case-insensitive)
       const dealsResult = await pool.query(
         `SELECT id, name, group_name, deal_type, status, fee, internal_agent, created_at, updated_at
@@ -6750,16 +6848,23 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       const totalFees = allDeals.reduce((s, d) => s + (parseFloat(d.fee) || 0), 0);
       const averageDealSize = totalDeals > 0 ? totalFees / totalDeals : 0;
 
+      // Client logins may see their own portfolio shape but not BGP's fee
+      // take or per-agent commission attribution. (Landsec audit.)
+      const analyticsClient = await (await import("./company-scope")).isClientRequestUser(req);
       res.json({
         totalDeals,
-        totalWIP,
-        totalInvoiced,
-        byDealType,
+        totalWIP: analyticsClient ? undefined : totalWIP,
+        totalInvoiced: analyticsClient ? undefined : totalInvoiced,
+        byDealType: analyticsClient
+          ? Object.fromEntries(Object.entries(byDealType).map(([k, v]: [string, any]) => [k, { count: v.count }]))
+          : byDealType,
         byStatus,
-        byAgent,
-        recentActivity,
-        pipelineValue,
-        averageDealSize,
+        byAgent: analyticsClient ? {} : byAgent,
+        recentActivity: analyticsClient
+          ? recentActivity.map(({ fee, agent, ...rest }) => rest)
+          : recentActivity,
+        pipelineValue: analyticsClient ? undefined : pipelineValue,
+        averageDealSize: analyticsClient ? undefined : averageDealSize,
       });
     } catch (err: any) {
       console.error("[landsec-analytics] Error:", err?.message);
@@ -6768,8 +6873,11 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   });
 
   // ===== Dashboard KPI Trends =====
-  app.get("/api/dashboard/kpi-trends", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/dashboard/kpi-trends", requireAuth, async (req: Request, res: Response) => {
     try {
+      // Firm-wide fee KPIs are BGP-internal. (Landsec audit.)
+      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+
       // Deals per month (last 6 months)
       const dealsPerMonthResult = await pool.query(`
         SELECT
@@ -6860,8 +6968,12 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   });
 
   // ===== Notifications Center =====
-  app.get("/api/notifications", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/notifications", requireAuth, async (req: Request, res: Response) => {
     try {
+    // External client logins get no org-wide feed — their world is the
+    // client-scoped briefing. (Landsec audit.)
+    if (await (await import("./company-scope")).isClientRequestUser(req)) return res.json([]);
+
       const notifications: any[] = [];
 
       // Deals stuck in same status > 30 days
@@ -7117,6 +7229,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   setupWhyBuyDesignRoutes(app);
   setupDocumentPreferencesRoutes(app);
   setupDeckRoutes(app);
+  setupDocumentRoutes(app);
 
   return httpServer;
 }

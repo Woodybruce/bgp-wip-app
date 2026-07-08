@@ -24,6 +24,7 @@ interface TeamContextType {
   isAllTeams: boolean;
   additionalTeams: TeamName[];
   setAdditionalTeams: (teams: TeamName[]) => void;
+  setTeamLocked: (locked: boolean) => void;
 }
 
 const TeamContext = createContext<TeamContextType>({
@@ -35,6 +36,7 @@ const TeamContext = createContext<TeamContextType>({
   isAllTeams: false,
   additionalTeams: [],
   setAdditionalTeams: () => {},
+  setTeamLocked: () => {},
 });
 
 export function TeamProvider({ children }: { children: ReactNode }) {
@@ -42,9 +44,13 @@ export function TeamProvider({ children }: { children: ReactNode }) {
   const [userTeam, setUserTeam] = useState<TeamName | null>(null);
   const [additionalTeams, setAdditionalTeams] = useState<TeamName[]>([]);
   const [activeTeam, setActiveTeamState] = useState<TeamName | "all" | null>(null);
+  // Client logins are pinned to their own team — switching would flip them
+  // into BGP-internal team views. (Landsec audit.)
+  const [teamLocked, setTeamLocked] = useState(false);
 
   useEffect(() => {
     if (!userId || !userTeam) return;
+    if (teamLocked) { setActiveTeamState(userTeam); return; }
 
     const key = `bgp_active_team_${userId}`;
     const migratedKey = `bgp_team_oc_migrated_${userId}`;
@@ -73,19 +79,20 @@ export function TeamProvider({ children }: { children: ReactNode }) {
       setActiveTeamState(initial);
       localStorage.setItem(key, initial);
     }
-  }, [userId, userTeam]);
+  }, [userId, userTeam, teamLocked]);
 
   const setActiveTeam = useCallback((team: TeamName | "all") => {
+    if (teamLocked) return;
     setActiveTeamState(team);
     if (userId) {
       localStorage.setItem(`bgp_active_team_${userId}`, team);
     }
-  }, [userId]);
+  }, [userId, teamLocked]);
 
   const isAllTeams = activeTeam === "all";
 
   return (
-    <TeamContext.Provider value={{ activeTeam, setActiveTeam, userTeam, setUserTeam, setUserId, isAllTeams, additionalTeams, setAdditionalTeams }}>
+    <TeamContext.Provider value={{ activeTeam, setActiveTeam, userTeam, setUserTeam, setUserId, isAllTeams, additionalTeams, setAdditionalTeams, setTeamLocked }}>
       {children}
     </TeamContext.Provider>
   );

@@ -58,7 +58,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Link, useLocation } from "wouter";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineLabelSelect, InlineNumber } from "@/components/inline-edit";
 import { buildUserColorMap } from "@/lib/agent-colors";
@@ -262,6 +262,10 @@ function ReferenceSection(props: {
 
 export function PropertyDetail({ id }: { id: string }) {
   const [, navigate] = useLocation();
+  // Client logins (e.g. Landsec) get a read-only view — no BGP staff tools
+  // (Image Studio, doc gen, folders, delete, KYC/risk/data-linkage panels).
+  const { data: pdViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = pdViewer?.role === "Client";
   const { data: property, isLoading } = useQuery<CrmProperty>({
     queryKey: ["/api/crm/properties", id],
     refetchInterval: (query) => {
@@ -519,6 +523,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 </div>
               )}
               <div className="flex items-center gap-2 ml-auto">
+                {!isClientViewer && (<>
                 <Link href={`/image-studio?property=${encodeURIComponent(property.name)}&address=${encodeURIComponent(formatAddress(property.address) || property.name)}&propertyId=${encodeURIComponent(property.id)}`}>
                   <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-image-studio">
                     <ImageIcon className="w-3.5 h-3.5" />
@@ -545,6 +550,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </Button>
+                </>)}
               </div>
             </div>
 
@@ -904,6 +910,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
               </ReferenceSection>
 
+              {!isClientViewer && (
               <ReferenceSection
                 title="Compliance & KYC"
                 icon={ShieldCheck}
@@ -915,6 +922,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   <PropertyComplianceBoardWrapper property={property} allCompanies={allCompanies} embedded />
                 </ErrorBoundary>
               </ReferenceSection>
+              )}
 
               <ReferenceSection
                 title="Recent activity"
@@ -929,6 +937,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 </ErrorBoundary>
               </ReferenceSection>
 
+              {!isClientViewer && (
               <ReferenceSection
                 title="Data linkage"
                 icon={Activity}
@@ -940,6 +949,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   <PropertyLinkageCard propertyId={property.id} />
                 </ErrorBoundary>
               </ReferenceSection>
+              )}
 
               <ReferenceSection
                 title="BGP Contacts"
@@ -1084,7 +1094,7 @@ function BrandPipelineImagesLink({ propertyId, propertyName }: { propertyId: str
   const { data } = useQuery<any[]>({
     queryKey: ["/api/image-studio/search", { propertyId }],
     queryFn: async () => {
-      const r = await fetch(`/api/image-studio/search?propertyId=${encodeURIComponent(propertyId)}`, { credentials: "include" });
+      const r = await fetch(`/api/image-studio/search?propertyId=${encodeURIComponent(propertyId)}`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) return [];
       return r.json();
     },

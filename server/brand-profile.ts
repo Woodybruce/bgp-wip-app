@@ -154,6 +154,13 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
   try {
     const { companyId } = req.params;
 
+    // Clients may only read their OWN company's profile here. (Landsec audit.)
+    const { resolveCompanyScope } = await import("./company-scope");
+    const bpScope = await resolveCompanyScope(req as any);
+    if (bpScope && bpScope !== companyId) {
+      return res.status(403).json({ error: "Not available for this account" });
+    }
+
     const companyQ = pool.query(
       `SELECT id, name, description, company_type, companies_house_number, companies_house_data,
               domain, domain_url, head_office_address,
@@ -1076,39 +1083,40 @@ router.delete("/api/brand/signals/:id", requireAuth, async (req: Request, res: R
   }
 });
 
-// ─── Red Flag credit check — stub until the API key is configured ──────
-// When RED_FLAG_API_KEY is set, this would call Red Flag's API, persist
-// the report to brand_credit_reports, and return it. Right now it returns
-// 503 + a friendly message so the UI button can show "not configured yet"
-// without breaking. GET returns the most-recent cached report (if any).
+// ─── Brand credit check — house covenant engine ─────────────────────────
+// Served by the covenant engine (Companies House + The Gazette + filed
+// accounts). Replaces the never-built Red Flag integration: GET returns the
+// cached report, POST forces a fresh check and adds the brand to the watch.
+async function brandCompanyNumber(companyId: string): Promise<string | null> {
+  const { rows } = await pool.query(`SELECT companies_house_number FROM crm_companies WHERE id = $1`, [companyId]);
+  return rows[0]?.companies_house_number || null;
+}
+
 router.get("/api/brand/:companyId/credit-check", requireAuth, async (req: Request, res: Response) => {
   try {
+    const num = await brandCompanyNumber(String(req.params.companyId));
+    if (!num) return res.json({ latest: null, configured: true, reason: "No Companies House number on this brand" });
     const { rows } = await pool.query(
-      `SELECT id, provider, score, band, risk_level, credit_limit_pence, raw_payload, fetched_at
-       FROM brand_credit_reports
-       WHERE company_id = $1
-       ORDER BY fetched_at DESC LIMIT 1`,
-      [req.params.companyId]
+      `SELECT report, computed_at FROM covenant_reports WHERE company_number = $1`,
+      [num.trim().toUpperCase().padStart(8, "0")]
     );
-    res.json({ latest: rows[0] || null, configured: !!process.env.RED_FLAG_API_KEY });
+    res.json({ latest: rows[0]?.report || null, computedAt: rows[0]?.computed_at || null, configured: true, provider: "house_covenant_engine" });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
 router.post("/api/brand/:companyId/credit-check", requireAuth, async (req: any, res: Response) => {
-  const apiKey = process.env.RED_FLAG_API_KEY;
-  if (!apiKey) {
-    return res.status(503).json({
-      error: "Red Flag not configured",
-      message: "Set RED_FLAG_API_KEY in the environment to enable credit checks. The brand_credit_reports table is ready when you do.",
-    });
+  try {
+    const num = await brandCompanyNumber(String(req.params.companyId));
+    if (!num) return res.status(400).json({ error: "No Companies House number on this brand — link one first" });
+    const { getCovenantReport, addToWatchlist } = await import("./covenant-engine");
+    const report = await getCovenantReport(num, { refresh: true });
+    await addToWatchlist(num, report.companyName).catch(() => {});
+    res.json({ report, provider: "house_covenant_engine" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
-  // TODO: when key is set, call Red Flag's API here and write the report.
-  // Shape will be:
-  //   const report = await fetch("https://api.redflagalert.com/...", { headers: { Authorization: `Bearer ${apiKey}` } });
-  //   await pool.query("INSERT INTO brand_credit_reports (...) VALUES (...)", [...]);
-  res.status(501).json({ error: "Red Flag integration not yet implemented — see TODO in brand-profile.ts" });
 });
 
 // ─── Stock snapshot + 3-month price history for a brand ─────────────────
@@ -1259,7 +1267,7 @@ export async function researchBrandStores(
   // single-word brands.
   const brandToken = company.name.toLowerCase().replace(/[^a-z0-9& ]+/g, "").trim();
   const brandFirstWord = brandToken.split(" ")[0] || brandToken;
-  const brandWords = brandToken.split(" ").filter((w) => w.length > 1);
+  const brandWords = brandToken.split(" ").filter((w: string) => w.length > 1);
   const NOISE = new Set([
     "pizza","tyres","tyre","cars","car","hire","cleaning","plumbing",
     "gym","fitness","kebab","chicken","fried","fish","chips","pharmacy",
@@ -1281,7 +1289,7 @@ export async function researchBrandStores(
     // in the place name. Catches "BrandName - Westfield London" and
     // "BrandName at Selfridges" without false-positives on single-token coincidence.
     if (brandWords.length > 1) {
-      return brandWords.every((w) => n.includes(w));
+      return brandWords.every((w: string) => n.includes(w));
     }
     // Single-word brand: brand must appear as a word, and no noise compound
     // immediately after (avoids "Supreme Pizza", "Coach Hire", etc.).

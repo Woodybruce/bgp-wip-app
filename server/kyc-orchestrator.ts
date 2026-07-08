@@ -339,6 +339,17 @@ export async function runAllAmlChecks(
         warnings.push(`Experian credit lookup failed: ${e?.message || "unknown"}`);
       }
 
+      // House covenant score (free data: CH + Gazette + accounts) — non-fatal.
+      // Every KYC'd counterparty is also added to the nightly covenant watch.
+      let covenantReport: any = null;
+      try {
+        const { getCovenantReport, addToWatchlist } = await import("./covenant-engine");
+        covenantReport = await getCovenantReport(company.companies_house_number);
+        await addToWatchlist(company.companies_house_number, companyData.profile?.company_name || company.name);
+      } catch (e: any) {
+        warnings.push(`Covenant check failed: ${e?.message || "unknown"}`);
+      }
+
       investigationResult = {
         subject: {
           name: companyData.profile?.company_name || company.name,
@@ -353,6 +364,7 @@ export async function runAllAmlChecks(
         insolvencyHistory: companyData.insolvency,
         sanctionsScreening: sanctionsResult,
         experian: experianReport,
+        covenant: covenantReport,
         riskScore: assessed.score,
         riskLevel: assessed.level,
         flags: assessed.flags,

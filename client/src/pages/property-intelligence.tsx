@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useLocation, useSearch } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Loader2, Map, ShieldCheck, Landmark, Receipt, Sparkles, ImageIcon, Globe } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -54,6 +55,11 @@ const TabLoader = () => (
 
 export default function PropertyIntelligence() {
   const [, navigate] = useLocation();
+  // Client logins (e.g. Landsec) don't get Pathway (BGP's internal pitch
+  // pipeline) or Imagery (firm-wide image studio picker). (Landsec audit.)
+  const { data: piUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const piIsClient = piUser?.role === "Client";
+  const visibleTabs = piIsClient ? TABS.filter(t => t.id !== "pathway" && t.id !== "imagery") : TABS;
   // wouter's search string updates on every query-string change (including the
   // 'Open in Map' links from the Pathway tab, which only change ?tab/?address).
   const search = useSearch();
@@ -83,6 +89,10 @@ export default function PropertyIntelligence() {
     const next = readSearchFromUrl();
     if (next) setPendingSearch(next);
   }, [search]);
+
+  useEffect(() => {
+    if (piIsClient && (tab === "pathway" || tab === "imagery")) setTab("map");
+  }, [piIsClient, tab]);
   // Canonical property identity for the whole page — once resolved, every tab
   // can read this and stop doing its own ad-hoc lookups. v1: state only;
   // v2 will pass propertyId into the lazy tab components as a prop.
@@ -118,7 +128,7 @@ export default function PropertyIntelligence() {
               full bar of vertical real estate above the tab strip. */}
           <div className="px-4 lg:px-6 pt-3">
             <TabsList className="bg-transparent p-0 h-auto gap-x-1 gap-y-0.5 flex flex-wrap lg:flex-nowrap lg:w-max">
-              {TABS.map((t) => {
+              {visibleTabs.map((t) => {
                 const Icon = t.icon;
                 return (
                   <TabsTrigger

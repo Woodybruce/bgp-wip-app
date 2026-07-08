@@ -90,7 +90,7 @@ function ProgressTickCell({
   onUpdate,
   testIdPrefix,
 }: {
-  item: { contacted: boolean; detailsSent: boolean; viewing: boolean; shortlisted: boolean; underOffer: boolean };
+  item: { contacted: boolean | null; detailsSent: boolean | null; viewing: boolean | null; shortlisted: boolean | null; underOffer: boolean | null };
   onUpdate: (data: Record<string, boolean>) => void;
   testIdPrefix: string;
 }) {
@@ -254,6 +254,10 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
   const [pipnetSyncing, setPipnetSyncing] = useState(false);
   const { toast } = useToast();
   const [, navigate] = useLocation();
+  // Client logins (e.g. Landsec) get a read-only market view — no sync /
+  // inspect / add controls (the writes are gated server-side anyway).
+  const { data: reqUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientView = reqUser?.role === "Client";
 
   const syncPipnet = async () => {
     setPipnetSyncing(true);
@@ -501,7 +505,7 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
   }, [deals]);
 
   const userMap = useMemo(() => {
-    const map = new Map<string, { id: string; name: string; email: string; role: string; department: string }>();
+    const map = new Map<string, BgpUser>();
     users.forEach((u) => map.set(u.id, u));
     return map;
   }, [users]);
@@ -750,8 +754,9 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
           </Button>
         )}
         {/* Admin/debug sync + inspect tools — hidden on mobile so the board is
-            a clean Search + Add + cards layout, uniform with the others. */}
-        {!isMobile && (<>
+            a clean Search + Add + cards layout, uniform with the others.
+            Hidden for clients too: sync/import are staff-only writes. */}
+        {!isMobile && !isClientView && (<>
         <Button
           variant="outline"
           size="sm"
@@ -815,10 +820,12 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
           Wipe & Resync TRL
         </Button>
         </>)}
+        {!isClientView && (
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-leasing">
           <Plus className="w-4 h-4 mr-1" />
           Add Requirement
         </Button>
+        )}
       </div>
 
       {isMobile ? (
@@ -3477,7 +3484,7 @@ function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
                           value={item.comments || ""}
                           onSave={(v) => inlineUpdate(item.id, { comments: v || null })}
                           placeholder="Add comments..."
-                          testId={`input-inv-comments-${item.id}`}
+                          data-testid={`input-inv-comments-${item.id}`}
                           multiline
                           maxLines={2}
                         />

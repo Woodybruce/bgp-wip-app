@@ -227,6 +227,19 @@ async function getHomeAccountId(userId: string): Promise<string | null> {
 }
 
 export async function getValidMsToken(req: Request): Promise<string | null> {
+  const userId = req.session.userId || (req as any).tokenUserId;
+  if (!userId) return null;
+
+  // Never hand a Microsoft token to an external client — not from the org
+  // fallback AND not from a session that happens to carry msTokens. This
+  // check runs BEFORE any token is returned so a client always gets null.
+  // (Root cause of the client-briefing + /mail/calendar leaks.) (Landsec audit.)
+  const roleRes = await pool.query("SELECT role, email FROM users WHERE id = $1", [userId]);
+  const roleRow = roleRes.rows[0];
+  const isClientPrincipal = roleRow?.role === "Client" ||
+    (roleRow?.email && !String(roleRow.email).toLowerCase().endsWith("@brucegillinghampollard.com"));
+  if (isClientPrincipal) return null;
+
   const expiresOn = req.session.msTokens?.expiresOn;
   const token = req.session.msTokens?.accessToken;
   const isExpired = !expiresOn || new Date(expiresOn) < new Date(Date.now() + 5 * 60 * 1000);
@@ -234,9 +247,6 @@ export async function getValidMsToken(req: Request): Promise<string | null> {
   if (token && !isExpired) {
     return token;
   }
-
-  const userId = req.session.userId || (req as any).tokenUserId;
-  if (!userId) return null;
 
   return withMsalCacheLock(async () => {
     try {

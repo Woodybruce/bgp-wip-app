@@ -10,6 +10,11 @@ const INTERNAL_TEAMS = new Set([
   "development", "lease advisory", "office / corporate"
 ]);
 
+// Sentinel scope for client users whose team can't be mapped to a company —
+// matches no rows anywhere, so an unresolvable client fails CLOSED (sees
+// nothing) instead of silently becoming an unscoped firm-wide user.
+export const NO_ACCESS_SCOPE = "00000000-0000-0000-0000-000000000000";
+
 export async function resolveCompanyScope(req: Request): Promise<string | null> {
   if ((req as any)._companyScopeResolved) {
     return (req as any)._companyScope || null;
@@ -23,7 +28,7 @@ export async function resolveCompanyScope(req: Request): Promise<string | null> 
   }
 
   const userResult = await pool.query(
-    `SELECT team, email, client_view_mode FROM users WHERE id = $1`,
+    `SELECT team, email, client_view_mode, role FROM users WHERE id = $1`,
     [userId]
   );
   if (!userResult.rows.length) {
@@ -32,16 +37,19 @@ export async function resolveCompanyScope(req: Request): Promise<string | null> 
     return null;
   }
 
-  const { team, email, client_view_mode } = userResult.rows[0];
+  const { team, email, client_view_mode, role } = userResult.rows[0];
+  const isBgpStaff = email && email.toLowerCase().endsWith(BGP_EMAIL_DOMAIN);
+  const isClientRole = role === "Client" || (!isBgpStaff && !!email);
+  (req as any)._isClientRole = isClientRole;
+
   if (!team) {
     (req as any)._companyScopeResolved = true;
-    (req as any)._companyScope = null;
-    return null;
+    // A client with no team maps to nothing — fail closed, not open.
+    (req as any)._companyScope = isClientRole ? NO_ACCESS_SCOPE : null;
+    return (req as any)._companyScope;
   }
 
-  const isBgpStaff = email && email.toLowerCase().endsWith(BGP_EMAIL_DOMAIN);
-
-  if (isBgpStaff && !client_view_mode) {
+  if (isBgpStaff && !client_view_mode && role !== "Client") {
     (req as any)._companyScopeResolved = true;
     (req as any)._companyScope = null;
     return null;
@@ -49,8 +57,17 @@ export async function resolveCompanyScope(req: Request): Promise<string | null> 
 
   const companyId = await getCompanyIdForClientTeam(team);
   (req as any)._companyScopeResolved = true;
-  (req as any)._companyScope = companyId;
-  return companyId;
+  // Same fail-closed rule when the team name doesn't match a company row.
+  (req as any)._companyScope = companyId || (isClientRole ? NO_ACCESS_SCOPE : null);
+  return (req as any)._companyScope;
+}
+
+// True when the requesting user is an external client (role='Client' or a
+// non-BGP email). Resolves + caches on the request object.
+export async function isClientRequestUser(req: Request): Promise<boolean> {
+  if ((req as any)._companyScopeResolved) return !!(req as any)._isClientRole;
+  await resolveCompanyScope(req);
+  return !!(req as any)._isClientRole;
 }
 
 export async function getClientTeamInfo(userId: string): Promise<{ team: string; companyId: string; companyName: string } | null> {
@@ -74,8 +91,19 @@ export async function getCompanyIdForClientTeam(teamName: string): Promise<strin
     return CLIENT_TEAM_COMPANY_CACHE.get(teamName)!;
   }
 
+  // A client's company name can appear more than once (e.g. a "Landsec"
+  // Landlord row and a stray "Landsec" Agent row). Pick deterministically:
+  // prefer the row that actually owns properties, then the Landlord type.
   const result = await pool.query(
-    `SELECT id FROM crm_companies WHERE LOWER(name) = LOWER($1) LIMIT 1`,
+    `SELECT c.id
+       FROM crm_companies c
+       LEFT JOIN (SELECT landlord_id, count(*) n FROM crm_properties GROUP BY landlord_id) p
+         ON p.landlord_id = c.id
+      WHERE LOWER(c.name) = LOWER($1)
+      ORDER BY COALESCE(p.n, 0) DESC,
+               (c.company_type = 'Landlord') DESC NULLS LAST,
+               c.created_at ASC
+      LIMIT 1`,
     [teamName]
   );
 

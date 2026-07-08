@@ -575,7 +575,16 @@ export async function autoAssignRevolutCards(): Promise<AutoAssignResult> {
     const existing = await pool.query<{ id: string }>(
       `SELECT id FROM stripe_cardholders WHERE revolut_card_id = $1 LIMIT 1`, [cardId],
     );
-    if (existing.rows[0]) { result.alreadyMapped++; continue; }
+    if (existing.rows[0]) {
+      // Already mapped — but still refresh the stripe_cards row so the
+      // My Card page has last4/expiry even if the original backfill
+      // failed (manual map with a stale token, schema change, etc.).
+      result.alreadyMapped++;
+      await upsertCardRow(existing.rows[0].id, card).catch((e) =>
+        console.warn(`[revolut] card-row refresh failed for ${cardLabel}:`, e?.message),
+      );
+      continue;
+    }
 
     // Resolve the holder's email: team lookup by holder_id, else any email
     // field on the card, else fuzzy match the card label to a user name.
@@ -617,31 +626,10 @@ export async function autoAssignRevolutCards(): Promise<AutoAssignResult> {
 
     // Also upsert a stripe_cards row so the existing /api/expenses/me +
     // mobile card panel pick up last4 + status + expiry + product from
-    // there. Revolut field names: `last_digits` (4 chars), `state`
-    // (active/blocked/inactive), `expiry` ("MM/YYYY"), `virtual` (bool),
-    // `product.code` ("BPD" virtual, "VWE" physical wave).
-    const lastDigits: string | null = typeof card.last_digits === "string" ? card.last_digits : null;
-    const state: string = card.state === "active" ? "active" : (card.state || "inactive");
-    const expiry: string | null = typeof card.expiry === "string" ? card.expiry : null;
-    const virtual: boolean | null = typeof card.virtual === "boolean" ? card.virtual : null;
-    const productCode: string | null = typeof card?.product?.code === "string" ? card.product.code : null;
-    const existingCard = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, cardholderId)).limit(1);
-    if (existingCard[0]) {
-      await pool.query(
-        `UPDATE stripe_cards SET last4 = $1, status = $2, expiry = $3, virtual = $4, product_code = $5 WHERE id = $6`,
-        [lastDigits, state, expiry, virtual, productCode, existingCard[0].id],
-      );
-    } else {
-      await db.insert(stripeCards).values({
-        cardholderId,
-        stripeCardId: cardId,
-        last4: lastDigits || "",
-        status: state,
-        expiry,
-        virtual,
-        productCode,
-      } as any);
-    }
+    // there.
+    await upsertCardRow(cardholderId, card).catch((e) =>
+      console.warn(`[revolut] card-row upsert failed for ${cardLabel}:`, e?.message),
+    );
 
     result.assigned++;
   }
@@ -702,6 +690,30 @@ export async function resolveRevolutCardIdForCardholder(cardholderId: string): P
     );
   }
   return cardId;
+}
+
+// Upsert a stripe_cards row from a Revolut card object already in hand.
+// Revolut field names: `last_digits` (4 chars), `state`
+// (active/blocked/inactive), `expiry` ("MM/YYYY"), `virtual` (bool),
+// `product.code` ("BPD" virtual, "VWE" physical wave).
+async function upsertCardRow(cardholderId: string, card: any): Promise<void> {
+  const lastDigits: string | null = typeof card?.last_digits === "string" ? card.last_digits : null;
+  const state: string = card?.state === "active" ? "active" : (card?.state || "inactive");
+  const expiry: string | null = typeof card?.expiry === "string" ? card.expiry : null;
+  const virtual: boolean | null = typeof card?.virtual === "boolean" ? card.virtual : null;
+  const productCode: string | null = typeof card?.product?.code === "string" ? card.product.code : null;
+  await pool.query(
+    `INSERT INTO stripe_cards (cardholder_id, stripe_card_id, last4, status, expiry, virtual, product_code)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (stripe_card_id) DO UPDATE SET
+       cardholder_id = EXCLUDED.cardholder_id,
+       last4 = EXCLUDED.last4,
+       status = EXCLUDED.status,
+       expiry = EXCLUDED.expiry,
+       virtual = EXCLUDED.virtual,
+       product_code = EXCLUDED.product_code`,
+    [cardholderId, card.id, lastDigits || "", state, expiry, virtual, productCode],
+  );
 }
 
 async function backfillStripeCardsRow(cardholderId: string, revolutCardId: string): Promise<void> {
@@ -1127,7 +1139,17 @@ export function setupRevolutRoutes(app: Express): void {
   app.get("/api/revolut/cards", requireAdmin, async (_req: Request, res: Response) => {
     try {
       const cards = await api<any[]>(`/cards`);
-      res.json(cards);
+      // Attach the mapped BGP user per card so the admin table can show
+      // who each card belongs to (and which cards are unassigned).
+      const mapped = await pool.query<{ revolut_card_id: string; user_name: string; user_id: string }>(
+        `SELECT revolut_card_id, user_name, user_id FROM stripe_cardholders WHERE revolut_card_id IS NOT NULL`,
+      );
+      const byCardId = new Map(mapped.rows.map(r => [r.revolut_card_id, r]));
+      const enriched = (Array.isArray(cards) ? cards : []).map((c: any) => {
+        const m = byCardId.get(c.id);
+        return { ...c, assignedUserName: m?.user_name || null, assignedUserId: m?.user_id || null };
+      });
+      res.json(enriched);
     } catch (e: any) {
       res.status(500).json({ error: e?.message });
     }

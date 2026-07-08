@@ -151,7 +151,7 @@ const START_HOUR = 6;
 const END_HOUR = 22;
 const TOTAL_HOURS = END_HOUR - START_HOUR;
 const TEAMS = ["All", ...CRM_OPTIONS.dealTeam];
-const INTERNAL_BGP_TEAMS = new Set(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
+const INTERNAL_BGP_TEAMS = new Set<string>(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
 
 function formatTime(dateStr: string) {
   return new Date(dateStr).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });

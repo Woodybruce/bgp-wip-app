@@ -17,11 +17,13 @@ import * as os from "os";
 import * as path from "path";
 
 const DEFAULT_SOURCES = [
-  // Green Street News via its WordPress RSS feed, authenticated by the
-  // subscriber cookie (GREENSTREET_AUTH_COOKIE / Paywall logins panel) — an
-  // alternative to the GREEN_STREET_API_TOKEN integration. Named "(RSS)" so it
-  // doesn't collide with the API-fed "Green Street News" source.
-  { name: "Green Street News (RSS)", url: "https://greenstreetnews.com", feedUrl: "https://greenstreetnews.com/feed/", type: "rss", category: "Property" },
+  // Green Street News — their native /feed/ returns an empty channel even for
+  // logged-in subscribers (verified Jul 2026), so headlines come from a Google
+  // News site-scope like Property Week below. The subscriber cookie
+  // (GREENSTREET_AUTH_COOKIE / News → Sources → Paywall logins) still applies
+  // when fetching the article pages themselves — anonymous requests get a
+  // ~600-word stub, authenticated ones get the full article.
+  { name: "Green Street News (RSS)", url: "https://greenstreetnews.com", feedUrl: "https://news.google.com/rss/search?q=site:greenstreetnews.com&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Property" },
   // Property Week — their /rss returns malformed XML ("Invalid character in
   // entity name", unescaped & in URLs) which crashes rss-parser. Same fix as
   // Sourcing Journal below: Google News site-scope, which is clean XML and
@@ -1229,7 +1231,7 @@ export function setupNewsFeedRoutes(app: Express) {
 
   app.delete("/api/news-feed/auth-cookies/:envVar", requireAuth, async (req: Request, res: Response) => {
     try {
-      await clearPaywallCookie(req.params.envVar);
+      await clearPaywallCookie(req.params.envVar as string);
       res.json({ status: authCookieStatus() });
     } catch (err: any) {
       res.status(400).json({ message: err?.message || "failed" });
@@ -1276,7 +1278,7 @@ export function setupNewsFeedRoutes(app: Express) {
       if (req.body?.active !== undefined) patch.active = !!req.body.active;
       if (req.body?.sortOrder !== undefined) patch.sortOrder = Number(req.body.sortOrder);
       if (Object.keys(patch).length === 0) return res.json({ ok: true });
-      const [updated] = await db.update(newsTags).set(patch).where(eq(newsTags.id, req.params.id)).returning();
+      const [updated] = await db.update(newsTags).set(patch).where(eq(newsTags.id, req.params.id as string)).returning();
       res.json(updated);
     } catch (e: any) {
       res.status(500).json({ error: e?.message || "failed" });
@@ -1285,7 +1287,7 @@ export function setupNewsFeedRoutes(app: Express) {
 
   app.delete("/api/news-feed/tags/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      await db.delete(newsTags).where(eq(newsTags.id, req.params.id));
+      await db.delete(newsTags).where(eq(newsTags.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || "failed" });
@@ -1359,7 +1361,7 @@ export function setupNewsFeedRoutes(app: Express) {
   // Toggle active flag on a source
   app.patch("/api/news-feed/sources/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const id = req.params.id as string;
       const { active, name, category } = req.body || {};
       const updates: any = {};
       if (typeof active === "boolean") updates.active = active;
@@ -1376,7 +1378,7 @@ export function setupNewsFeedRoutes(app: Express) {
   // Delete source — if it's an RSS.app-generated feed, also delete on RSS.app side.
   app.delete("/api/news-feed/sources/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const id = req.params.id as string;
       const [existing] = await db.select().from(newsSources).where(eq(newsSources.id, id)).limit(1);
       if (!existing) return res.status(404).json({ message: "Not found" });
       if (existing.type === "rssapp" && existing.feedUrl) {
@@ -1746,7 +1748,7 @@ export function setupNewsFeedRoutes(app: Express) {
 
   app.get("/api/properties/:id/news", requireAuth, async (req: Request, res: Response) => {
     try {
-      const propertyId = req.params.id;
+      const propertyId = req.params.id as string;
       const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId)).limit(1);
       if (!property) return res.status(404).json({ message: "Property not found" });
 

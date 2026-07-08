@@ -1289,7 +1289,7 @@ function SimplifiedCreateBody({
   nameAutoFilled: boolean;
   setNameAutoFilled: (v: boolean) => void;
   companies: CrmCompany[];
-  users: { id: string; name: string }[];
+  users: { id: number; name: string }[];
   toggleAgent: (name: string) => void;
   setForm: any;
 }) {
@@ -1591,7 +1591,7 @@ function SimplifiedCreateBody({
                   value={form.landlordEntityId || null}
                   cachedName={form.landlordEntityName}
                   onChange={(c) => {
-                    setForm(prev => ({
+                    setForm((prev: any) => ({
                       ...prev,
                       landlordEntityId: c?.ContactID || "",
                       landlordEntityName: c?.Name || "",
@@ -1622,7 +1622,7 @@ function SimplifiedCreateBody({
                   value={form.tenantEntityId || null}
                   cachedName={form.tenantEntityName}
                   onChange={(c) => {
-                    setForm(prev => ({
+                    setForm((prev: any) => ({
                       ...prev,
                       tenantEntityId: c?.ContactID || "",
                       tenantEntityName: c?.Name || "",
@@ -1657,7 +1657,7 @@ function SimplifiedCreateBody({
                   value={form.vendorEntityId || null}
                   cachedName={form.vendorEntityName}
                   onChange={(c) => {
-                    setForm(prev => ({
+                    setForm((prev: any) => ({
                       ...prev,
                       vendorEntityId: c?.ContactID || "",
                       vendorEntityName: c?.Name || "",
@@ -1688,7 +1688,7 @@ function SimplifiedCreateBody({
                   value={form.purchaserEntityId || null}
                   cachedName={form.purchaserEntityName}
                   onChange={(c) => {
-                    setForm(prev => ({
+                    setForm((prev: any) => ({
                       ...prev,
                       purchaserEntityId: c?.ContactID || "",
                       purchaserEntityName: c?.Name || "",
@@ -3031,9 +3031,9 @@ function HotsChecklistDialog({
     amlCheckCompleted: "",
     invoicingNotes: "",
     poNumber: "",
-    leaseLength: "",
+    leaseLength: "" as string | number,
     breakOption: "",
-    rentFree: "",
+    rentFree: "" as string | number,
     capitalContribution: 0,
     dealType: "",
     assetClass: "",
@@ -3264,7 +3264,7 @@ function HotsChecklistDialog({
     },
   });
 
-  const canSubmit = (form.xeroContactId || form.xeroContactName) && form.fee > 0;
+  const canSubmit = (form.xeroContactId || form.xeroContactName) && (form.fee ?? 0) > 0;
   const bgpAgents = users.map(u => u.name);
 
   return (
@@ -3407,7 +3407,7 @@ function HotsChecklistDialog({
                           onClick={() => { setForm(prev => ({ ...prev, propertyId: p.id })); setPropertySearch(""); }}
                           data-testid={`hots-property-option-${p.id}`}>
                           <span className="font-medium">{p.name}</span>
-                          {p.address && <span className="text-muted-foreground ml-1">— {p.address}</span>}
+                          {(() => { const a = typeof p.address === "string" ? p.address : (p.address as any)?.formatted || ""; return a ? <span className="text-muted-foreground ml-1">— {a}</span> : null; })()}
                         </div>
                       ))}
                       {filteredProperties.length === 0 && <div className="px-3 py-2 text-sm text-muted-foreground">No properties found</div>}
@@ -3507,7 +3507,7 @@ function HotsChecklistDialog({
                     <SelectContent>{bgpAgents.map(name => <SelectItem key={name} value={name}><span className="flex items-center gap-1.5"><span className={`w-2 h-2 rounded-full ${colorMap?.[name] || "bg-zinc-500"}`} />{name}</span></SelectItem>)}</SelectContent>
                   </Select>
                   <div className="flex items-center gap-1 w-24">
-                    <Input type="number" className="w-16" value={row.percentage || ""}
+                    <Input type="number" className="w-16" value={row.percentage || ""} step="any"
                       onChange={(e) => setFeeRows(prev => prev.map((r, i) => i === idx ? { ...r, percentage: parseFloat(e.target.value) || 0 } : r))} />
                     <span className="text-xs text-muted-foreground">%</span>
                   </div>
@@ -3524,7 +3524,7 @@ function HotsChecklistDialog({
               {feeRows.filter(r => r.agentName).length > 0 && (
                 <p className="text-xs text-muted-foreground">
                   Total: {feeRows.reduce((s, r) => s + (r.percentage || 0), 0).toFixed(1)}%
-                  {form.fee > 0 && ` — ${feeRows.filter(r => r.agentName).map(r => `${r.agentName}: £${((form.fee * r.percentage / 100)).toFixed(2)}`).join(", ")}`}
+                  {(form.fee ?? 0) > 0 && ` — ${feeRows.filter(r => r.agentName).map(r => `${r.agentName}: £${((form.fee! * r.percentage / 100)).toFixed(2)}`).join(", ")}`}
                 </p>
               )}
             </div>
@@ -4779,7 +4779,7 @@ function AiMatchDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
 // still in the DB (e.g. "Under Negotiation", "Billed") match correctly.
 const NEGOTIATION_STATUS_CODES: DealStatusCode[] = ["NEG"];
 const COMPLETED_STATUS_CODES: DealStatusCode[] = ["EXC", "COM", "INV"];
-const INTERNAL_BGP_TEAMS = new Set(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
+const INTERNAL_BGP_TEAMS = new Set<string>(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
 
 export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "negotiations" } = {}) {
   const isCompsMode = mode === "comps";
@@ -4817,17 +4817,23 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "table"
   );
 
+  // Client logins (e.g. Landsec) are already scoped to their company by the
+  // API, and their deals aren't tagged with a BGP team — so never apply the
+  // activeTeam column filter for them (it would hide everything).
+  const isClientDeals = (currentUserForViews as any)?.role === "Client";
+
   useEffect(() => {
     if (!teamFilterInitialised) {
-      const teamToSet = urlTeamParam || (activeTeam && activeTeam !== "all" ? activeTeam : null);
+      const teamToSet = isClientDeals ? null : (urlTeamParam || (activeTeam && activeTeam !== "all" ? activeTeam : null));
       if (teamToSet) {
         setColumnFilters(prev => ({ ...prev, team: [teamToSet] }));
       }
       setTeamFilterInitialised(true);
     }
-  }, [activeTeam, teamFilterInitialised, urlTeamParam]);
+  }, [activeTeam, teamFilterInitialised, urlTeamParam, isClientDeals]);
 
   useEffect(() => {
+    if (isClientDeals) return;
     if (teamFilterInitialised && activeTeam && !urlTeamParam) {
       if (activeTeam === "all") {
         setColumnFilters(prev => { const { team, ...rest } = prev; return rest; });
@@ -4835,7 +4841,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         setColumnFilters(prev => ({ ...prev, team: [activeTeam] }));
       }
     }
-  }, [activeTeam]);
+  }, [activeTeam, isClientDeals]);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
     unit: false,
     // 'landlord' (renders as 'Client') is folded into clientXero by default

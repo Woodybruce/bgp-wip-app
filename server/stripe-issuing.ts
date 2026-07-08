@@ -460,10 +460,20 @@ export function setupStripeIssuingRoutes(app: Express) {
             .leftJoin(crmContacts, eq(crmContacts.id, expenseAttendees.contactId))
             .where(inArray(expenseAttendees.expenseId, ids))
         : [];
+      // Resolve bgp: prefixed attendees (BGP staff) from the users table.
+      const bgpUserIds = [...new Set(attRows.filter(a => a.contactId?.startsWith("bgp:")).map(a => a.contactId!.slice(4)))];
+      const bgpStaffMap = new Map<string, string>();
+      if (bgpUserIds.length > 0) {
+        const staffRows = await db.select({ id: usersTable.id, name: usersTable.name }).from(usersTable).where(inArray(usersTable.id, bgpUserIds));
+        staffRows.forEach(u => bgpStaffMap.set(u.id, u.name));
+      }
       const byExpense = new Map<string, { id: string; name: string | null }[]>();
       for (const a of attRows) {
         if (!byExpense.has(a.expenseId)) byExpense.set(a.expenseId, []);
-        byExpense.get(a.expenseId)!.push({ id: a.contactId, name: a.name });
+        const name = a.contactId?.startsWith("bgp:")
+          ? bgpStaffMap.get(a.contactId.slice(4)) ?? a.name
+          : a.name;
+        byExpense.get(a.expenseId)!.push({ id: a.contactId, name });
       }
       const enriched = rows.map(r => ({ ...r, attendeeContacts: byExpense.get(r.id) || [] }));
       res.json(enriched);
@@ -510,7 +520,22 @@ export function setupStripeIssuingRoutes(app: Express) {
         .from(expenseAttendees)
         .leftJoin(crmContacts, eq(crmContacts.id, expenseAttendees.contactId))
         .where(eq(expenseAttendees.expenseId, id));
-      res.json(rows);
+      // Resolve bgp: prefixed IDs (BGP staff) from the users table.
+      const bgpIds = rows.filter(r => r.id?.startsWith("bgp:")).map(r => r.id!.slice(4));
+      let staffMap: Map<string, { name: string; email: string | null }> = new Map();
+      if (bgpIds.length > 0) {
+        const staffRows = await db.select({ id: usersTable.id, name: usersTable.name, email: usersTable.email })
+          .from(usersTable).where(inArray(usersTable.id, bgpIds));
+        staffRows.forEach(u => staffMap.set(u.id, { name: u.name, email: u.email ?? null }));
+      }
+      res.json(rows.map(r => {
+        if (r.id?.startsWith("bgp:")) {
+          const uid = r.id.slice(4);
+          const staff = staffMap.get(uid);
+          return { id: r.id, name: staff?.name ?? r.id, email: staff?.email ?? null, companyId: null };
+        }
+        return r;
+      }));
     } catch (e: any) {
       console.error("[expenses] attendees-get error:", e?.message);
       res.status(500).json({ error: e?.message });
@@ -1210,63 +1235,103 @@ export function setupStripeIssuingRoutes(app: Express) {
         filename: file.originalname,
       });
 
-      // Mark the receipt attached up-front — this must stick even if AI
-      // parsing fails below.
-      const baseUpdates: Record<string, any> = {
+      // Mark receipt attached immediately and respond — don't wait for AI
+      // parsing which can take 10-30s and causes 504s on Railway.
+      await db.update(expenses).set({
         receiptFilename: file.originalname,
         receiptUrl: storageKey,
         updatedAt: new Date(),
-      };
+      }).where(eq(expenses.id, expenseId));
 
-      // Best-effort parse to auto-fill merchant/category/amount. A parse
-      // failure must NOT stop the expense progressing — that was leaving
-      // receipts attached but stuck in "awaiting receipt".
-      let parsed: any = null;
-      try {
-        const { parseReceiptImage } = await import("./expense-receipt-parser");
-        parsed = await parseReceiptImage({ imageBytes: file.buffer, mimeType: file.mimetype });
-        if (parsed.merchant && !exp.merchant) baseUpdates.merchant = parsed.merchant;
-        if (parsed.category && !exp.category) {
-          baseUpdates.category = parsed.category;
-          const { getCategoryCode } = await import("./expense-categories");
-          const code = await getCategoryCode(parsed.category);
-          if (code) baseUpdates.xeroAccountCode = code;
+      // Respond before AI parsing so the client never times out.
+      res.json({ success: true, parsed: null, autoposted: false });
+
+      // Background: parse receipt, update fields, submit for approval.
+      // Runs after the response is sent — a 504 can't happen here.
+      setImmediate(async () => {
+        try {
+          const updates: Record<string, any> = {};
+          try {
+            const { parseReceiptImage } = await import("./expense-receipt-parser");
+            const parsed = await parseReceiptImage({ imageBytes: file.buffer, mimeType: file.mimetype });
+            if (parsed.merchant && !exp.merchant) updates.merchant = parsed.merchant;
+            if (parsed.category && !exp.category) {
+              updates.category = parsed.category;
+              const { getCategoryCode } = await import("./expense-categories");
+              const code = await getCategoryCode(parsed.category);
+              if (code) updates.xeroAccountCode = code;
+            }
+            if (parsed.totalPence && !exp.amountPence) updates.amountPence = parsed.totalPence;
+            if (parsed.vatPence != null && exp.vatPence == null) updates.vatPence = parsed.vatPence;
+            if (parsed.vatRate != null && exp.vatRate == null) updates.vatRate = parsed.vatRate;
+            if (parsed.netPence != null && exp.netPence == null) updates.netPence = parsed.netPence;
+          } catch (e: any) {
+            console.warn("[receipt-upload] parse failed (receipt still logged):", e?.message);
+          }
+          if (Object.keys(updates).length > 0) {
+            await db.update(expenses).set({ ...updates, updatedAt: new Date() }).where(eq(expenses.id, expenseId));
+          }
+          const { submitForApproval } = await import("./expense-approval");
+          const userIdForSubmit = (req as any).session?.userId || (req as any).tokenUserId || null;
+          await submitForApproval(expenseId, userIdForSubmit);
+        } catch (e: any) {
+          console.error("[receipt-upload] background processing failed:", e?.message);
         }
-        if (parsed.totalPence && !exp.amountPence) baseUpdates.amountPence = parsed.totalPence;
-        if (parsed.vatPence != null && exp.vatPence == null) baseUpdates.vatPence = parsed.vatPence;
-        if (parsed.vatRate != null && exp.vatRate == null) baseUpdates.vatRate = parsed.vatRate;
-        if (parsed.netPence != null && exp.netPence == null) baseUpdates.netPence = parsed.netPence;
-      } catch (e: any) {
-        console.warn("[receipt-upload] parse failed (receipt still logged):", e?.message);
-      }
-
-      await db.update(expenses).set(baseUpdates).where(eq(expenses.id, expenseId));
-
-      // ALWAYS submit for approval once a receipt is attached — whether or
-      // not parsing worked. Missing merchant/category just becomes a flag
-      // for the approver rather than leaving the row stuck.
-      try {
-        const { submitForApproval } = await import("./expense-approval");
-        const userIdForSubmit = (req as any).session?.userId || (req as any).tokenUserId || null;
-        await submitForApproval(expenseId, userIdForSubmit);
-      } catch (e: any) {
-        console.error("[receipt-upload] submitForApproval failed:", e?.message);
-      }
-
-      // No auto-post — the initial pass goes via Wendy first. The row is now
-      // pending_approval and posts to Xero only once it clears approval.
-
-      // Month-end freeze hook — this receipt may have cleared the user's
-      // last blocking expense. Fire-and-forget.
-      if (exp.cardholderId) {
-        import("./expense-freeze")
-          .then(m => m.unfreezeIfClear(exp.cardholderId!))
-          .catch(e => console.warn("[receipt-upload] unfreezeIfClear failed:", e?.message));
-      }
-
-      res.json({ success: true, parsed, autoposted: false });
+        // Month-end freeze hook.
+        if (exp.cardholderId) {
+          import("./expense-freeze")
+            .then(m => m.unfreezeIfClear(exp.cardholderId!))
+            .catch(e => console.warn("[receipt-upload] unfreezeIfClear failed:", e?.message));
+        }
+      });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Remove a receipt from an expense and reset it to pending_receipt so a new
+  // one can be uploaded. Blocked if the expense is already posted to Xero.
+  app.delete("/api/expenses/:id/receipt", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      const [exp] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
+      if (!exp) return res.status(404).json({ error: "Expense not found" });
+      if (exp.status === "posted_to_xero") {
+        return res.status(409).json({ error: "Cannot remove a receipt from an expense already posted to Xero." });
+      }
+      await db.update(expenses).set({
+        receiptFilename: null,
+        receiptUrl: null,
+        status: "pending_receipt",
+        updatedAt: new Date(),
+      }).where(eq(expenses.id, id));
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error("[expenses] delete-receipt error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Mark an expense as having no receipt and submit for approval. The expense
+  // will land in the flagged inbox (missing_receipt reason) so Wendy/Layla can
+  // review it rather than leaving it stuck in pending_receipt indefinitely.
+  app.post("/api/expenses/:id/no-receipt", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      const [exp] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
+      if (!exp) return res.status(404).json({ error: "Expense not found" });
+      if (exp.status !== "pending_receipt") {
+        return res.status(409).json({ error: "Expense is not awaiting a receipt" });
+      }
+      const userId = (req as any).session?.userId || (req as any).tokenUserId || null;
+      const { submitForApproval } = await import("./expense-approval");
+      await submitForApproval(id, userId);
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error("[expenses/no-receipt] error:", e?.message);
       res.status(500).json({ error: e?.message });
     }
   });

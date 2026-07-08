@@ -219,6 +219,21 @@ export async function assembleDeck(deckId: string): Promise<
     [deckId]
   ).catch(() => {});
 
+  // Index into the Document Studio library so every assembled deck shows in the
+  // hub (with a page preview). Best-effort — never fail assembly over indexing.
+  try {
+    const { getFile } = await import("./file-storage");
+    const storageKey = `chat-media/${designed.chatMediaFilename}`;
+    const file = await getFile(storageKey);
+    if (file) {
+      const { upsertDocumentForDeck } = await import("./documents");
+      await upsertDocumentForDeck({
+        deckId, title: deck.name, category: deck.template_key || "deck",
+        buffer: file.data, fileName: `${deck.name}.pdf`, storageKey, contentType: "application/pdf",
+      });
+    }
+  } catch (e: any) { console.warn("[deck-assembler] library index:", e?.message); }
+
   return {
     success: true,
     downloadUrl: designed.downloadUrl,

@@ -40,6 +40,7 @@ import { MobileBottomNav, BOTTOM_NAV_PATHS } from "@/components/mobile-bottom-na
 import type { User } from "@shared/schema";
 
 const NotFound = lazy(() => import("@/pages/not-found"));
+const CovenantWatch = lazy(() => import("@/pages/covenant-watch"));
 const Dashboard = lazy(() => import("@/pages/dashboard"));
 const PropertiesHub = lazy(() => import("@/pages/properties-hub"));
 const DealsHub = lazy(() => import("@/pages/deals-hub"));
@@ -106,6 +107,7 @@ const TenantRep = lazy(() => import("@/pages/tenant-rep"));
 const PlaMatters = lazy(() => import("@/pages/pla-matters"));
 const WestminsterRestaurants = lazy(() => import("@/pages/westminster-restaurants"));
 const DocumentBriefs = lazy(() => import("@/pages/document-briefs"));
+const DocumentStudioV2 = lazy(() => import("@/pages/document-studio"));
 const HRPage = lazy(() => import("@/pages/hr"));
 const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
 const FinancePage = lazy(() => import("@/pages/finance"));
@@ -189,10 +191,31 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Prefixes a client login (role='Client', e.g. Landsec) is allowed to open.
+// Everything else redirects home — nav hiding alone doesn't stop a pasted URL.
+const CLIENT_ALLOWED_ROUTES = [
+  "/", "/properties", "/property-intelligence", "/map", "/brands",
+  "/contacts", "/companies", "/comps", "/chatbgp", "/requirements",
+  "/deals", "/tasks", "/today", "/leasing-schedule", "/land-registry",
+  "/business-rates", "/m/images", "/cad-measure", "/settings/profile",
+  "/news",
+];
+function ClientRouteGuard() {
+  const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
+  const [location, navigate] = useLocation();
+  useEffect(() => {
+    if (user?.role !== "Client") return;
+    const ok = CLIENT_ALLOWED_ROUTES.some(p => p === "/" ? location === "/" : (location === p || location.startsWith(p + "/")));
+    if (!ok) navigate("/");
+  }, [user, location, navigate]);
+  return null;
+}
+
 function Router() {
   return (
     <ErrorBoundary>
     <Suspense fallback={<PageLoader />}>
+    <ClientRouteGuard />
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/instructions" component={Instructions} />
@@ -211,6 +234,7 @@ function Router() {
       <Route path="/pla/matters/:id" component={PlaMatters} />
       <Route path="/westminster-restaurants" component={WestminsterRestaurants} />
       <Route path="/document-briefs" component={DocumentBriefs} />
+      <Route path="/document-studio" component={DocumentStudioV2} />
       <Route path="/hunters/letting" component={HuntersLetting} />
       <Route path="/hunters/investment" component={HuntersInvestment} />
       <Route path="/today" component={TodayPage} />
@@ -259,6 +283,7 @@ function Router() {
       {/* AML / KYC hub — compliance-focused tabs (board, training, settings).
           The Investigator tool has moved to Property Intelligence. */}
       <Route path="/kyc-clouseau" component={KycHub} />
+      <Route path="/covenant-watch" component={CovenantWatch} />
       <Route path="/aml-compliance" component={KycHub} />
       <Route path="/compliance-board" component={KycHub} />
       <Route path="/aml-training" component={KycHub} />
@@ -345,9 +370,11 @@ function AuthenticatedApp() {
       subscribePush();
     }
   }, [currentUser, isPushSupported, isPushSubscribed, subscribePush]);
+  // Team Chat is BGP-internal — clients never poll it (and the button is hidden).
+  const isClientShell = (currentUser as any)?.role === "Client";
   const { data: chatNotifications } = useQuery<{ unseenCount: number }>({
     queryKey: ["/api/chat/notifications"],
-    enabled: !!currentUser,
+    enabled: !!currentUser && !isClientShell,
     refetchInterval: 15000,
   });
   const chatUnseenCount = chatNotifications?.unseenCount || 0;
@@ -546,6 +573,7 @@ function AuthenticatedApp() {
               <div className="flex items-center gap-2">
                 <ColorSchemeSelector />
                 <NotificationCenter />
+                {!isClientShell && (
                 <button
                   data-testid="button-chat-toggle"
                   onClick={() => { const n = !chatOpen; setChatPinned(n); setChatOpen(n); }}
@@ -559,6 +587,7 @@ function AuthenticatedApp() {
                     </span>
                   )}
                 </button>
+                )}
               </div>
             </header>
             <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
@@ -623,7 +652,7 @@ function AddinRouter() {
 }
 
 function AppContent() {
-  const { setUserTeam, setUserId, setAdditionalTeams } = useTeam();
+  const { setUserTeam, setUserId, setAdditionalTeams, setTeamLocked } = useTeam();
   const [location] = useLocation();
   // Also check window.location directly — wouter's location may not reflect
   // the initial pathname in iframe contexts (Office task panes).
@@ -644,6 +673,7 @@ function AppContent() {
   useEffect(() => {
     if (user?.id) {
       setUserId(user.id);
+      setTeamLocked((user as any)?.role === "Client");
     }
     if (user?.team) {
       setUserTeam(user.team as TeamName);

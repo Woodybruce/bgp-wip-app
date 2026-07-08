@@ -132,16 +132,19 @@ function alertHref(a: Alert): string {
 export default function MobileHome() {
   const [, navigate] = useLocation();
   const { data: user } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  // Client logins (e.g. Landsec): no Expenses tile, and skip the BGP
+  // commission/WIP queries entirely — they're staff-only and would 403.
+  const isClientHome = user?.role === "Client";
   const { data: alerts = [] } = useQuery<Alert[]>({ queryKey: ["/api/daily-digest"] });
   const { data: tasks = [] } = useQuery<Task[]>({ queryKey: ["/api/tasks"] });
   const { data: commission } = useQuery<Commission>({
     queryKey: [`/api/hr/staff/${user?.id}/commission`],
     queryFn: () => apiRequest("GET", `/api/hr/staff/${user?.id}/commission`).then(r => r.json()),
-    enabled: !!user?.id,
+    enabled: !!user?.id && !isClientHome,
   });
   // Team/firm total billing — the WIP roll-up (same figure the desktop WIP
   // card shows as "Total net fees"). amtWip/amtInvoice are in pounds.
-  const { data: wipResp } = useQuery<any>({ queryKey: ["/api/wip"], staleTime: 5 * 60 * 1000 });
+  const { data: wipResp } = useQuery<any>({ queryKey: ["/api/wip"], staleTime: 5 * 60 * 1000, enabled: !isClientHome });
   const wipEntries = Array.isArray(wipResp) ? wipResp : (wipResp?.entries || []);
   const totalBilling = wipEntries.reduce((s: number, e: any) => s + (e.amtWip || 0) + (e.amtInvoice || 0), 0);
 
@@ -274,7 +277,7 @@ export default function MobileHome() {
           Mine/Team toggle inside the Expenses page — keeps one entry
           point on the home grid for the daily flow. */}
       <div className="grid grid-cols-4 gap-2">
-        {QUICK_LINKS.map(q => (
+        {QUICK_LINKS.filter(q => !isClientHome || q.label !== "Expenses").map(q => (
           <Link key={q.to} href={q.to} className="flex flex-col items-center gap-1.5 py-3 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] active:bg-gray-50" data-testid={`mobile-home-link-${q.label.toLowerCase()}`}>
             <span className={`w-9 h-9 rounded-full flex items-center justify-center ${q.tint}`}><q.icon className="w-4 h-4" /></span>
             <span className="text-[11px] font-medium">{q.label}</span>

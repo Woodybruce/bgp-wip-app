@@ -1146,6 +1146,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
+  // Team chat is BGP-internal — client logins use ChatBGP (AI) only, so skip
+  // the team-thread/notification polling that would otherwise 403.
+  const chatIsClient = (currentUser as any)?.role === "Client";
 
   const { data: status } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/chatbgp/status"],
@@ -1155,18 +1158,20 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
   const { data: threads } = useQuery<ThreadData[]>({
     queryKey: ["/api/chat/threads"],
     queryFn: getQueryFn({ on401: "throw" }),
+    enabled: !chatIsClient,
   });
 
   const { data: notifications } = useQuery<{ unseenCount: number }>({
     queryKey: ["/api/chat/notifications"],
     queryFn: getQueryFn({ on401: "throw" }),
     refetchInterval: 15000,
+    enabled: !chatIsClient,
   });
 
   const { data: activeThread } = useQuery<ThreadData>({
     queryKey: ["/api/chat/threads", activeThreadId],
     queryFn: getQueryFn({ on401: "throw" }),
-    enabled: !!activeThreadId,
+    enabled: !!activeThreadId && !chatIsClient,
     refetchInterval: 8000,
   });
 

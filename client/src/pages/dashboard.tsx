@@ -79,6 +79,8 @@ import {
   WIDGET_REGISTRY,
   DEFAULT_WIDGETS,
   DEFAULT_BOARDS,
+  CLIENT_BOARD_REGISTRY,
+  CLIENT_SAFE_WIDGET_IDS,
   boardsToWidgets,
   widgetsToBoards,
   timeAgo,
@@ -535,9 +537,11 @@ export default function Dashboard() {
   });
   const { data: myCalEvents } = useQuery<CalendarEvent[]>({
     queryKey: ["/api/microsoft/calendar"],
+    enabled: user?.role !== "Client", // clients have no Microsoft 365 access
   });
   const { data: msStatus } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/user-mail/status"],
+    enabled: user?.role !== "Client",
   });
   const diaryDays = 7;
   const { data: teamCalSchedules } = useQuery<any[]>({
@@ -569,10 +573,12 @@ export default function Dashboard() {
     queryKey: ["/api/microsoft/calendar/insights"],
     staleTime: 5 * 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
+    enabled: user?.role !== "Client", // clients have no Microsoft 365 access
   });
   const calInsights = calInsightsData?.insights || [];
   const { data: invTrackerItems } = useQuery<InvTracker[]>({
     queryKey: ["/api/investment-tracker"],
+    enabled: user?.role !== "Client",
   });
   const { data: newsArticles } = useQuery<NewsArticle[]>({
     queryKey: ["/api/news-feed/articles", "dashboard", activeTeam],
@@ -590,7 +596,6 @@ export default function Dashboard() {
 
   const [dashboardEditing, setDashboardEditing] = useState(false);
 
-  const [closeDialogCb, setCloseDialogCb] = useState<(() => void) | null>(null);
   const saveMutation = useMutation({
     mutationFn: async (widgets: string[]) => {
       await apiRequest("PATCH", "/api/auth/me/dashboard-widgets", { widgets });
@@ -598,10 +603,6 @@ export default function Dashboard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
       toast({ title: "Widgets updated", duration: 1500 });
-      if (closeDialogCb) {
-        closeDialogCb();
-        setCloseDialogCb(null);
-      }
     },
     onError: () => {
       toast({ title: "Failed to update widgets", variant: "destructive" });
@@ -793,12 +794,21 @@ export default function Dashboard() {
     const i = WIDGET_ORDER.indexOf(id);
     return i === -1 ? WIDGET_ORDER.length : i;
   };
-  // Migrate one renamed legacy id, then ensure the three always-on widgets are present.
-  const requested = (user?.dashboardWidgets ?? DEFAULT_WIDGETS)
+  // Client logins (e.g. Landsec) get the portfolio section plus any widgets
+  // they've added from the vetted client-safe set. Every other standard
+  // widget is BGP-ops (inbox, WIP, SharePoint, KPI fees, org alerts) and is
+  // filtered out even if it somehow ends up saved.
+  const isClientUser = user?.role === "Client";
+  // Migrate one renamed legacy id, then ensure the three always-on widgets are
+  // present (staff only — clients fully control their own safe widget set).
+  const requested = (user?.dashboardWidgets ?? (isClientUser ? [] : DEFAULT_WIDGETS))
     .map((id: string) => id === "recent-properties" ? "key-instructions" : id);
-  const withDefaults = Array.from(new Set([...requested, "my-leads", "news-summary", "kpi-overview"]));
+  const withDefaults = isClientUser
+    ? requested
+    : Array.from(new Set([...requested, "my-leads", "news-summary", "kpi-overview"]));
   const activeWidgets = withDefaults
     .filter((id: string) => knownIds.includes(id)) // single filter: drop unknown ids
+    .filter((id: string) => !isClientUser || CLIENT_SAFE_WIDGET_IDS.includes(id)) // clients: safe set only
     .sort((a: string, b: string) => orderIndex(a) - orderIndex(b)); // single sort
 
   const widgetLabelMap = useMemo(() => {
@@ -881,12 +891,17 @@ export default function Dashboard() {
               <WidgetPickerDialog
                 activeWidgets={activeWidgets}
                 onSave={(widgets, onDone) => {
-                  setCloseDialogCb(() => onDone);
-                  saveMutation.mutate(widgets);
+                  // Close the dialog via the mutation's per-call onSuccess so
+                  // it fires with a fresh callback (routing it through state
+                  // left the dialog stuck open — widgets saved but nothing
+                  // appeared to happen).
+                  saveMutation.mutate(widgets, { onSuccess: () => onDone() });
                 }}
                 saving={saveMutation.isPending}
                 viewMode={dashboardViewMode}
                 onViewModeChange={handleViewModeChange}
+                boards={isClientUser ? CLIENT_BOARD_REGISTRY : undefined}
+                showViewMode={!isClientUser}
               />
             </>
           )}
@@ -960,7 +975,7 @@ export default function Dashboard() {
             defaultW: 6, defaultH: 12, minW: 4, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-4 flex-1 overflow-hidden">
+                <CardContent className="p-4 flex-1 overflow-hidden flex flex-col">
                   <div className="flex items-start gap-3 mb-3">
                     <div className="w-12 h-12 rounded-lg bg-teal-50 dark:bg-teal-900/30 border flex items-center justify-center flex-shrink-0">
                       <Landmark className="w-6 h-6 text-teal-600 dark:text-teal-400" />
@@ -1051,11 +1066,12 @@ export default function Dashboard() {
             defaultW: 6, defaultH: 12, minW: 3, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <CalendarDays className="w-3.5 h-3.5 text-teal-500" />
                     Upcoming Events ({portfolioData.events?.length || 0})
                   </h3>
+                  <p className="text-[10px] text-muted-foreground -mt-1">Portfolio meetings, viewings and calls from the BGP account team's diaries.</p>
                   {portfolioData.events?.length > 0 ? (
                     <ScrollArea className="flex-1">
                       <div className="space-y-0.5 pr-2">
@@ -1129,7 +1145,7 @@ export default function Dashboard() {
             defaultW: 12, defaultH: 11, minW: 6, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <Building2 className="w-3.5 h-3.5 text-teal-500" />
                     Linked Properties ({portfolioData.properties.length})
@@ -1166,7 +1182,7 @@ export default function Dashboard() {
             defaultW: 6, defaultH: 10, minW: 4, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-3 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-3 flex-1 overflow-hidden flex flex-col">
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold text-sm flex items-center gap-2">
                       <Building2 className="w-4 h-4" />Leasing Schedule
@@ -1182,6 +1198,7 @@ export default function Dashboard() {
                       </Link>
                     </div>
                   </div>
+                  <p className="text-[10px] text-muted-foreground -mt-2">Every unit across the portfolio — tenant, occupied/vacant, rent and lease expiry.</p>
                   <ScrollArea className="flex-1">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-2">
                       {Array.from(leasingByProperty.entries()).map(([propId, { name, units: propUnits }]) => {
@@ -1213,7 +1230,7 @@ export default function Dashboard() {
             defaultW: 6, defaultH: 10, minW: 3, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <Clock className="w-3.5 h-3.5 text-teal-500" />
                     Recent Activity
@@ -1249,7 +1266,7 @@ export default function Dashboard() {
             defaultW: 4, defaultH: 14, minW: 3, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <Users className="w-3.5 h-3.5 text-teal-500" />
                     Contacts ({portfolioData.contacts?.length || 0})
@@ -1289,11 +1306,12 @@ export default function Dashboard() {
             defaultW: 8, defaultH: 14, minW: 4, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-3 flex-1 overflow-hidden">
+                <CardContent className="p-3 space-y-3 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <BarChart3 className="w-3.5 h-3.5 text-teal-500" />
                     Properties & Deals ({portfolioData.deals?.length || 0} deal{(portfolioData.deals?.length || 0) !== 1 ? "s" : ""} across {dealsByProperty.size} propert{dealsByProperty.size !== 1 ? "ies" : "y"})
                   </h3>
+                  <p className="text-[10px] text-muted-foreground -mt-1">Each property with its live deals — status and type at a glance.</p>
                   <ScrollArea className="flex-1">
                     <div className="pr-2">
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -1434,6 +1452,7 @@ export default function Dashboard() {
                       Lease Expiry Timeline
                       <Badge variant="secondary" className="text-[10px]">{unitsWithExpiry.length} leases across {propertyNames.size} properties</Badge>
                     </h3>
+                    <p className="text-[10px] text-muted-foreground -mt-1 mb-1">When leases expire over time — the income-at-risk view by month.</p>
                     <div className="flex-1 min-h-0">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
@@ -1518,6 +1537,7 @@ export default function Dashboard() {
                       <TrendingUp className="w-3.5 h-3.5 text-teal-500" />
                       Vacancy Pipeline
                     </h3>
+                    <p className="text-[10px] text-muted-foreground -mt-1">Vacant units per property vs the active deals working to fill them.</p>
                     <ScrollArea className="flex-1">
                       <div className="space-y-2 pr-2">
                         {propStats.filter(p => p.vacantUnits > 0 || p.activeDeals > 0).map(({ propId, propName, vacantUnits, totalUnits, activeDeals }) => {
@@ -1715,8 +1735,22 @@ export default function Dashboard() {
           } : null,
         ].filter(Boolean) as any[];
 
-        const visiblePortfolioItems = portfolioGridItems.filter((item: any) => !hiddenPortfolioBoards.includes(item.id));
-        const hiddenPortfolioItems = portfolioGridItems.filter((item: any) => hiddenPortfolioBoards.includes(item.id));
+        // For client logins hide the BGP-internal cards: comps stay blank for
+        // now, and the deal-analytics quartet is fee/agent-centric (WIP,
+        // invoiced, agent performance) which is BGP's side of the ledger.
+        const clientHiddenBoards = new Set([
+          "portfolio-market-comps",
+          "portfolio-landsec-overview",
+          "portfolio-landsec-agents",
+          "portfolio-landsec-pipeline",
+          "portfolio-landsec-activity",
+        ]);
+        const clientScopedItems = isClientUser
+          ? portfolioGridItems.filter((item: any) => !clientHiddenBoards.has(item.id))
+          : portfolioGridItems;
+
+        const visiblePortfolioItems = clientScopedItems.filter((item: any) => !hiddenPortfolioBoards.includes(item.id));
+        const hiddenPortfolioItems = clientScopedItems.filter((item: any) => hiddenPortfolioBoards.includes(item.id));
 
         return (
           <div data-testid="portfolio-overview">

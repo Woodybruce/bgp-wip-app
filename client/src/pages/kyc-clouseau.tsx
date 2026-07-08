@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { usePropertyContext } from "@/lib/property-context";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { CovenantBadge } from "@/components/covenant-badge";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1689,6 +1690,9 @@ export default function KycClouseau() {
                   <div className="flex items-center gap-3 mt-1">
                     {investigation.companyProfile?.company_number && (
                       <span className="text-sm text-muted-foreground">#{investigation.companyProfile.company_number}</span>
+                    )}
+                    {investigation.companyProfile?.company_number && (
+                      <CovenantBadge companyNumber={investigation.companyProfile.company_number} />
                     )}
                     {investigation.companyProfile?.company_status && (
                       <Badge variant={investigation.companyProfile.company_status === "active" ? "outline" : "destructive"}>

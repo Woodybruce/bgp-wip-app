@@ -644,7 +644,7 @@ async function fetchPipnetDetail(href: string, cookie: string): Promise<{
   if (!requirementId && folderId) requirementId = folderId;
   // The brochure URL embeds requirement=<id> — last-resort source of the id.
   if (!requirementId && landlordPackUrl) {
-    requirementId = landlordPackUrl.match(/requirement=(\d+)/i)?.[1];
+    requirementId = landlordPackUrl.match(/requirement=(\d+)/i)?.[1] || requirementId;
   }
 
   return {

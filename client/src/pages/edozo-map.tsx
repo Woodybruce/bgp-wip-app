@@ -3691,7 +3691,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     L.control.zoom({ position: "bottomright" }).addTo(map);
     L.control.scale({ position: "bottomleft", imperial: false, maxWidth: 100 }).addTo(map);
 
-    buildingLayerRef.current = L.layerGroup({ pane: "buildingPane" }).addTo(map);
+    buildingLayerRef.current = L.layerGroup([], { pane: "buildingPane" }).addTo(map);
 
     // OS Data layer groups
     const osPane = map.createPane("osPane");
@@ -3700,15 +3700,15 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     osUprnPane.style.zIndex = "445";
     const osSitePane = map.createPane("osSitePane");
     osSitePane.style.zIndex = "443";
-    osBuildingLayerRef.current = L.layerGroup({ pane: "osPane" }).addTo(map);
-    osUprnLayerRef.current = L.layerGroup({ pane: "osUprnPane" }).addTo(map);
-    osSiteLayerRef.current = L.layerGroup({ pane: "osSitePane" }).addTo(map);
+    osBuildingLayerRef.current = L.layerGroup([], { pane: "osPane" }).addTo(map);
+    osUprnLayerRef.current = L.layerGroup([], { pane: "osUprnPane" }).addTo(map);
+    osSiteLayerRef.current = L.layerGroup([], { pane: "osSitePane" }).addTo(map);
 
     // Land Registry title boundaries — always-on red-line layer. Sits above
     // buildings so proprietor polygons are the most visible feature.
     const titlePane = map.createPane("titlePane");
     titlePane.style.zIndex = "455";
-    titleBoundaryLayerRef.current = L.layerGroup({ pane: "titlePane" }).addTo(map);
+    titleBoundaryLayerRef.current = L.layerGroup([], { pane: "titlePane" }).addTo(map);
     centreTenantLayerRef.current = L.layerGroup().addTo(map);
 
     // CRM data layer groups — clustered (Deals / Comps / Lease Events)
@@ -3750,8 +3750,56 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       loadCounterRef.current += 1;
       const thisLoad = loadCounterRef.current;
 
-      // Fetch buildings (OSM) and label overrides (CRM > Comps > Google) in parallel
       const bboxParam = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
+
+      // Prefer the occupier plan (Goad/Edozo) — names live on the polygons, so
+      // no OSM/NGD label-guessing is needed where we have coverage. Only at
+      // street zoom, matching the label-render gate.
+      if (map.getZoom() >= 17) {
+        try {
+          const opResp = await fetch(`/api/map/occupier-plan?bbox=${bboxParam}`, {
+            credentials: "include",
+            headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+          });
+          if (opResp.ok) {
+            const fc = await opResp.json();
+            if (loadCounterRef.current !== thisLoad) return;
+            const feats: any[] = fc?.features || [];
+            if (feats.length > 0) {
+              const geomToRings = (g: any): number[][][] => {
+                if (!g) return [];
+                if (g.type === "Polygon") return [g.coordinates[0]];
+                if (g.type === "MultiPolygon") return g.coordinates.map((p: number[][][]) => p[0]);
+                return [];
+              };
+              const occBuildings: any[] = [];
+              for (const f of feats) {
+                for (const ring of geomToRings(f.geometry)) {
+                  if (!Array.isArray(ring) || ring.length < 3) continue;
+                  const latLngs = ring.map((c: number[]) => [c[1], c[0]] as [number, number]);
+                  const p = f.properties || {};
+                  occBuildings.push({
+                    latLngs,
+                    label: p.name || "",
+                    houseNum: p.streetNum || "",
+                    isVacant: p.classification === "vacant",
+                    areaSqM: polygonAreaSqM(latLngs),
+                    isUnit: true,
+                    _source: "occupier",
+                    _category: p.category || null,
+                  });
+                }
+              }
+              renderBuildings(occBuildings);
+              return;
+            }
+          }
+        } catch {
+          // fall through to the OSM/NGD path below
+        }
+      }
+
+      // Fetch buildings (OSM) and label overrides (CRM > Comps > Google) in parallel
       const labelsPromise = fetch(`/api/map/labels?bbox=${bboxParam}`, {
         credentials: "include",
         headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
@@ -3931,7 +3979,16 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
 
     mapRef.current = map;
 
+    // Leaflet measures its container once at init. This page mounts inside a
+    // lazy tab and shares the row with collapsible chrome (sidebar, ChatBGP
+    // rail), so the container often settles at a different width after init —
+    // leaving tiles frozen at the stale size with dead space beside them.
+    // Re-measure on any container resize.
+    const resizeObserver = new ResizeObserver(() => map.invalidateSize());
+    resizeObserver.observe(mapContainerRef.current);
+
     return () => {
+      resizeObserver.disconnect();
       map.remove();
       mapRef.current = null;
     };
@@ -4440,39 +4497,55 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   // caches them in component state. The data is static — no pan-refetch
   // needed. The render effect below picks up changes to goadFeatures
   // (initial load) or excludedRetailCategories (band-filter changes).
+  // Loads the harvested occupier units (all 76 licensed areas, from goad_units)
+  // for the current viewport, and re-fetches on pan/zoom. Replaces the old
+  // static West-End-only /api/goad/{floor} files so the Retail Context layer
+  // covers everywhere. Fetches only at street zoom (units are tiny above that).
   useEffect(() => {
     if (!showRetailContext) {
       retailMarkersRef.current?.clearLayers();
       retailLabelLayerRef.current?.clearLayers();
       return;
     }
-    if (goadFeatures.length > 0) return; // already loaded
+    const map = mapRef.current;
+    if (!map) return;
     let cancelled = false;
-    (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let lastKey = "";
+
+    const fetchUnits = async () => {
+      if (map.getZoom() < 16) return; // too far out — units unreadable
+      const b = map.getBounds();
+      const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
+      const key = `${b.getSouth().toFixed(3)},${b.getWest().toFixed(3)},${b.getNorth().toFixed(3)},${b.getEast().toFixed(3)}`;
+      if (key === lastKey) return;
+      lastKey = key;
       setRetailFetching(true);
       try {
-        const layerIds = ["lg", "gf", "f1", "f2"];
-        const responses = await Promise.all(
-          layerIds.map((id) =>
-            fetch(`/api/goad/${id}`, { credentials: "include" }).then((r) =>
-              r.ok ? r.json() : null,
-            ),
-          ),
-        );
+        const r = await fetch(`/api/map/retail-units?bbox=${bbox}`, { credentials: "include" });
+        const gj = r.ok ? await r.json() : null;
         if (cancelled) return;
-        const all: any[] = [];
-        for (const gj of responses) {
-          if (gj?.features) all.push(...gj.features);
-        }
-        setGoadFeatures(all);
+        setGoadFeatures(gj?.features || []);
       } catch {
-        /* swallow — toggle still works, just no data */
+        /* swallow — toggle still works, just no data this pan */
       } finally {
         if (!cancelled) setRetailFetching(false);
       }
-    })();
-    return () => { cancelled = true; };
-  }, [showRetailContext, goadFeatures.length]);
+    };
+
+    const onMove = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(fetchUnits, 300);
+    };
+    map.on("moveend", onMove);
+    fetchUnits();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      map.off("moveend", onMove);
+    };
+  }, [showRetailContext]);
 
   // ── Persist last map centre to localStorage ───────────────────────────────
   // Lets sibling components (e.g. the MAP BGP "🌐 3D View" button) pick up
@@ -5022,7 +5095,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
 
     for (const feature of goadFeatures) {
       const props = feature.properties || {};
-      const category = classifyGoadCategory(props.Category || "", props.Activity || "");
+      const category = props._group || classifyGoadCategory(props.Category || "", props.Activity || "");
       if (excludedRetailCategories.has(category)) continue;
       const style = COLOURS[category] || COLOURS.other;
 

@@ -47,7 +47,7 @@ import {
 } from "@shared/schema";
 import { escapeLike } from "./utils/escape-like";
 import { db, pool } from "./db";
-import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray, isNull } from "drizzle-orm";
+import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray, isNull, arrayContains } from "drizzle-orm";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -848,7 +848,7 @@ export class DatabaseStorage implements IStorage {
       and(eq(crmCompanyProperties.companyId, companyId), eq(crmCompanyProperties.propertyId, propertyId))
     );
     if (existing.length === 0) {
-      await db.insert(crmCompanyProperties).values({ companyId, propertyId });
+      await db.insert(crmCompanyProperties).values({ companyId, propertyId }).onConflictDoNothing();
     }
   }
 
@@ -887,7 +887,7 @@ export class DatabaseStorage implements IStorage {
       and(eq(crmCompanyDeals.companyId, companyId), eq(crmCompanyDeals.dealId, dealId))
     );
     if (existing.length === 0) {
-      await db.insert(crmCompanyDeals).values({ companyId, dealId });
+      await db.insert(crmCompanyDeals).values({ companyId, dealId }).onConflictDoNothing();
     }
   }
 
@@ -1013,7 +1013,9 @@ export class DatabaseStorage implements IStorage {
     if (filters?.search) conditions.push(ilike(crmDeals.name, `%${escapeLike(filters.search)}%`));
     if (filters?.groupName) conditions.push(eq(crmDeals.groupName, filters.groupName));
     if (filters?.status) conditions.push(eq(crmDeals.status, filters.status));
-    if (filters?.team) conditions.push(eq(crmDeals.team, filters.team));
+    // team is a text[] column — `eq` would generate `team = $1` against a
+    // string and throw in Postgres. Match deals whose team array contains it.
+    if (filters?.team) conditions.push(arrayContains(crmDeals.team, [filters.team]));
     if (filters?.dealType) conditions.push(eq(crmDeals.dealType, filters.dealType));
     if (filters?.propertyId) conditions.push(eq(crmDeals.propertyId, filters.propertyId));
     if (filters?.excludeTrackerDeals) {

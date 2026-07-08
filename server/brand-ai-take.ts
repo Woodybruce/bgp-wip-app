@@ -63,7 +63,17 @@ async function loadUkSlice(companyId: string) {
   const r = rows[0];
   const ch = r.companies_house_data || {};
   const profile = ch.profile || {};
-  const exp = ch.experian || null;
+  // House covenant score (free-data replacement for Experian/Red Flag) — cached
+  // in covenant_reports by the covenant engine; read-only here, never computed inline.
+  let covenant: any = null;
+  if (r.companies_house_number) {
+    const cov = await pool.query(
+      `SELECT grade, score, report->'flags' AS flags, report->>'verdict' AS verdict, computed_at
+         FROM covenant_reports WHERE company_number = $1`,
+      [String(r.companies_house_number).trim().toUpperCase().padStart(8, "0")]
+    ).catch(() => ({ rows: [] as any[] }));
+    covenant = cov.rows[0] || null;
+  }
   // Latest two years of turnover for trend
   const turnoverRows = await pool.query(
     `SELECT period, turnover, source FROM turnover_data
@@ -82,16 +92,11 @@ async function loadUkSlice(companyId: string) {
     turnover_history: turnoverRows.rows,
     kyc_status: r.kyc_status,
     aml_risk: r.aml_risk_level,
-    experian: exp ? {
-      score: exp.creditScore,
-      limit: exp.creditLimit,
-      band: exp.creditBand,
-      risk: exp.riskIndicator,
-      ccj_count: exp.ccj,
-      ccj_value: exp.ccjTotalValue,
-      turnover: exp.turnover,
-      employees: exp.employees,
-      status: exp.status,
+    covenant: covenant ? {
+      grade: covenant.grade,
+      score: covenant.score,
+      flags: (covenant.flags || []).map((f: any) => f.label),
+      verdict: covenant.verdict,
     } : null,
   };
 }
@@ -194,7 +199,7 @@ ${JSON.stringify(d, null, 2)}
 
 Write a single 60-90 word paragraph covering:
 - The covenant verdict (strong / acceptable with conditions / weak)
-- Key financial signal driving that verdict (turnover trajectory, parent guarantee need, CCJs, etc.)
+- Key financial signal driving that verdict (the house covenant grade A-E and its flags if present, turnover trajectory, parent guarantee need, CCJs, etc.)
 - A practical recommendation for landlord pitches (e.g. "insist on parent guarantee", "rent cap at X% of turnover", "fine for prime rents")
 
 Tone: direct, broker-to-broker, decisive. Plain text, no bullets, no headers. Use £ for sterling.`;

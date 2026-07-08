@@ -26,6 +26,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import { OfficialCopyButton } from "@/components/official-copy-button";
 import {
   Popover,
   PopoverContent,
@@ -786,6 +787,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
         )}
 
         <div className="flex flex-wrap gap-1.5">
+          <OfficialCopyButton titleNumber={tn} className="text-xs h-7" />
           {["register", "plan", "both"].map(docType => {
             const key = tn + docType;
             const result = docResults[key];

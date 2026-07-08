@@ -16,7 +16,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import {
   CreditCard, Eye, EyeOff, Copy, Check, Upload, Receipt, AlertCircle,
   CheckCircle2, Loader2, RefreshCw, Sparkles, Camera, ImagePlus, Pencil,
-  Users as UsersIcon, Building2, Briefcase, X as XIcon, ChevronsUpDown, CalendarClock,
+  Users as UsersIcon, Building2, Briefcase, X as XIcon, ChevronsUpDown, CalendarClock, Trash2,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -47,6 +47,7 @@ interface Expense {
 }
 interface NominalCode { code: string; name: string; }
 interface CrmContact { id: string; name: string; email?: string | null; companyId?: string | null; }
+interface BgpUser { id: number; name: string; email?: string | null; }
 interface CrmProperty { id: string; name: string; postcode?: string | null; }
 interface CrmDeal { id: string; name: string; status?: string | null; }
 interface Cardholder {
@@ -174,6 +175,18 @@ export default function MyExpenses() {
     onError: (e: any) => toast({ title: "Resubmit failed", description: e?.message, variant: "destructive" }),
   });
 
+  const noReceiptMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await apiRequest("POST", `/api/expenses/${id}/no-receipt`, {});
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      toast({ title: "Submitted without receipt", description: "Sent to Wendy & Layla for review." });
+    },
+    onError: (e: any) => toast({ title: "Failed", description: e?.message, variant: "destructive" }),
+  });
+
   const handleFile = (id: string, file: File) => {
     setUploadingFor(id);
     uploadMutation.mutate({ id, file });
@@ -265,7 +278,7 @@ export default function MyExpenses() {
     : 0;
 
   return (
-    <div className="container mx-auto p-6 max-w-5xl space-y-6">
+    <div className="container mx-auto p-6 max-w-7xl space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">My Card & Expenses</h1>
@@ -471,8 +484,8 @@ export default function MyExpenses() {
                       <td className="px-4 py-2 text-right font-mono">{fmt(e.amountPence)}</td>
                       <td className="px-4 py-2 text-muted-foreground">{e.category || "—"}</td>
                       <td className="px-4 py-2"><StatusBadge status={e.status} isPersonal={e.isPersonal} /></td>
-                      <td className="px-4 py-2 text-right">
-                        <div className="flex justify-end gap-1">
+                      <td className="px-4 py-2 text-right whitespace-nowrap">
+                        <div className="flex justify-end gap-1 flex-nowrap">
                           {!e.receiptFilename && !e.isPersonal && e.status !== "posted_to_xero" && (
                             <Button
                               size="sm"
@@ -488,6 +501,21 @@ export default function MyExpenses() {
                             >
                               {uploadingFor === e.id ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Upload className="w-3 h-3 mr-1" />}
                               Receipt
+                            </Button>
+                          )}
+                          {e.status === "pending_receipt" && !e.isPersonal && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs text-muted-foreground"
+                              disabled={noReceiptMutation.isPending && noReceiptMutation.variables === e.id}
+                              onClick={() => noReceiptMutation.mutate(e.id)}
+                              data-testid={`button-no-receipt-${e.id}`}
+                            >
+                              {noReceiptMutation.isPending && noReceiptMutation.variables === e.id
+                                ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                : <XIcon className="w-3 h-3 mr-1" />}
+                              No receipt
                             </Button>
                           )}
                           {e.receiptFilename && (
@@ -604,6 +632,10 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
     queryKey: ["/api/crm/contacts"],
     enabled: open,
   });
+  const { data: bgpUsers = [] } = useQuery<BgpUser[]>({
+    queryKey: ["/api/users"],
+    enabled: open,
+  });
   const { data: properties = [] } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
     enabled: open,
@@ -652,6 +684,7 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
 
   const showEntertainmentFields = ENTERTAINMENT_CATEGORIES.has(category);
   const contactById = useMemo(() => new Map(contacts.map(c => [c.id, c])), [contacts]);
+  const bgpUserById = useMemo(() => new Map(bgpUsers.map(u => [`bgp:${u.id}`, u])), [bgpUsers]);
 
   const isCard = !!(expense?.revolutTransactionId || expense?.stripeTransactionId);
 
@@ -722,6 +755,42 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
     onError: (e: any) => toast({ title: "Re-read failed", description: e?.message, variant: "destructive" }),
   });
 
+  const removeReceiptMutation = useMutation({
+    mutationFn: async () => {
+      if (!expense) throw new Error("No expense");
+      const r = await fetch(`/api/expenses/${expense.id}/receipt`, { method: "DELETE", credentials: "include" });
+      if (!r.ok) throw new Error((await r.json()).error || "Failed to remove receipt");
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      toast({ title: "Receipt removed", description: "You can now upload a new one." });
+      onSaved();
+    },
+    onError: (e: any) => toast({ title: "Failed to remove receipt", description: e?.message, variant: "destructive" }),
+  });
+
+  const replaceReceiptMutation = useMutation({
+    mutationFn: async (file: File) => {
+      if (!expense) throw new Error("No expense");
+      const fd = new FormData();
+      fd.append("receipt", file);
+      const r = await fetch(`/api/expenses/${expense.id}/receipt`, { method: "POST", credentials: "include", body: fd });
+      if (!r.ok) throw new Error((await r.json()).error || "Upload failed");
+      return r.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      if (data.parsed) {
+        toast({ title: "New receipt uploaded", description: `${data.parsed.merchant || "Receipt"} — fields updated.` });
+      } else {
+        toast({ title: "New receipt uploaded", description: "Couldn't auto-parse — check the fields." });
+      }
+      onSaved();
+    },
+    onError: (e: any) => toast({ title: "Upload failed", description: e?.message, variant: "destructive" }),
+  });
+
   if (!expense) return null;
   const isPosted = !!expense.xeroExpenseId;
 
@@ -764,9 +833,49 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
               Saving teaches it (merchant→category memory + the note). */}
           {expense.receiptFilename && (
             <div className="rounded-lg border border-violet-200 dark:border-violet-900/40 bg-violet-50/50 dark:bg-violet-950/20 px-3 py-2.5 space-y-2">
-              <div className="flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-violet-500" />
-                <span className="text-xs font-medium">Receipt AI got something wrong?</span>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-violet-500" />
+                  <span className="text-xs font-medium">Receipt: {expense.receiptFilename}</span>
+                </div>
+                {!isPosted && (
+                  <div className="flex items-center gap-1">
+                    <label className="cursor-pointer">
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        className="sr-only"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) replaceReceiptMutation.mutate(f);
+                          e.target.value = "";
+                        }}
+                      />
+                      <span
+                        className="inline-flex items-center gap-1 h-7 px-2 rounded-md border border-border bg-background text-xs text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
+                        title="Upload a different receipt"
+                      >
+                        {replaceReceiptMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <ImagePlus className="w-3 h-3" />}
+                        Replace
+                      </span>
+                    </label>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+                      onClick={() => {
+                        if (confirm("Remove this receipt? The expense will go back to 'receipt needed' so you can upload a new one.")) {
+                          removeReceiptMutation.mutate();
+                        }
+                      }}
+                      disabled={removeReceiptMutation.isPending}
+                      title="Remove receipt"
+                    >
+                      {removeReceiptMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                    </Button>
+                  </div>
+                )}
               </div>
               <Textarea
                 value={aiNote}
@@ -881,13 +990,14 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
             <Label className="text-xs flex items-center gap-1.5"><UsersIcon className="w-3 h-3" /> Attendees</Label>
             <ContactMultiPicker
               contacts={contacts}
+              bgpUsers={bgpUsers}
               selected={attendeeIds}
               onChange={setAttendeeIds}
             />
             {attendeeIds.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-2">
                 {attendeeIds.map((id) => {
-                  const c = contactById.get(id);
+                  const c = contactById.get(id) ?? bgpUserById.get(id);
                   return (
                     <Badge key={id} variant="secondary" className="text-[10px] gap-1 pl-2 pr-1">
                       {c?.name || id.slice(0, 8)}
@@ -979,7 +1089,7 @@ function SearchableCombobox({
       <PopoverContent className="p-0 w-[--radix-popover-trigger-width]" align="start">
         <Command>
           <CommandInput placeholder="Search…" />
-          <CommandList>
+          <CommandList className="max-h-64 overflow-y-auto">
             <CommandEmpty>None found.</CommandEmpty>
             <CommandGroup>
               {value && (
@@ -1011,62 +1121,115 @@ function SearchableCombobox({
   );
 }
 
-// Multi-pick contact picker. Always-on inline command so adding several
-// attendees in sequence is cheap (no dropdown re-open per addition).
+// Inline attendee picker — avoids Radix Popover portal which gets
+// pointer-events:none from the parent Dialog's body lock.
 function ContactMultiPicker({
-  contacts: rawContacts, selected, onChange,
+  contacts: rawContacts, bgpUsers = [], selected, onChange,
 }: {
   contacts: CrmContact[];
+  bgpUsers?: BgpUser[];
   selected: string[];
   onChange: (next: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
-  // Defensive alphabetical sort. Filter applied after sort so the visible
-  // 200-row cap doesn't truncate late-alphabet names from the searchable set.
+  const [search, setSearch] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
   const contacts = useMemo(
     () => [...rawContacts].sort((a, b) => (a.name || "").localeCompare(b.name || "", "en-GB", { sensitivity: "base" })),
     [rawContacts],
   );
+  const staff = useMemo(
+    () => [...bgpUsers].sort((a, b) => (a.name || "").localeCompare(b.name || "", "en-GB", { sensitivity: "base" })),
+    [bgpUsers],
+  );
+
+  const q = search.toLowerCase();
+  const filteredStaff = staff.filter(u => !q || u.name.toLowerCase().includes(q) || (u.email || "").toLowerCase().includes(q));
+  const filteredContacts = contacts.filter(c => !q || (c.name || "").toLowerCase().includes(q) || (c.email || "").toLowerCase().includes(q)).slice(0, 200);
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button variant="outline" className="w-full justify-between font-normal" data-testid="button-add-attendee">
-          <span className="text-muted-foreground">
-            {selected.length === 0 ? "Add attendee from CRM…" : `${selected.length} added — click to add more`}
-          </span>
-          <ChevronsUpDown className="w-3.5 h-3.5 opacity-50 ml-2" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="p-0 w-[--radix-popover-trigger-width]" align="start">
-        <Command>
-          <CommandInput placeholder="Search contacts…" />
-          <CommandList>
-            <CommandEmpty>No contacts found.</CommandEmpty>
-            <CommandGroup>
-              {contacts.slice(0, 200).map((c) => {
-                const isSelected = selected.includes(c.id);
-                return (
-                  <CommandItem
-                    key={c.id}
-                    value={`${c.name} ${c.email || ""}`}
-                    onSelect={() => {
-                      onChange(isSelected ? selected.filter(x => x !== c.id) : [...selected, c.id]);
-                    }}
-                    data-testid={`option-attendee-${c.id}`}
-                  >
-                    <Check className={`w-3.5 h-3.5 mr-2 ${isSelected ? "opacity-100" : "opacity-0"}`} />
-                    <div className="flex flex-col">
-                      <span>{c.name}</span>
-                      {c.email && <span className="text-[10px] text-muted-foreground">{c.email}</span>}
-                    </div>
-                  </CommandItem>
-                );
-              })}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+    <div className="relative">
+      <Button
+        type="button"
+        variant="outline"
+        className="w-full justify-between font-normal"
+        data-testid="button-add-attendee"
+        onClick={() => {
+          setOpen((v) => !v);
+          setTimeout(() => inputRef.current?.focus(), 50);
+        }}
+      >
+        <span className="text-muted-foreground">
+          {selected.length === 0 ? "Add attendee…" : `${selected.length} added — click to add more`}
+        </span>
+        <ChevronsUpDown className="w-3.5 h-3.5 opacity-50 ml-2" />
+      </Button>
+
+      {open && (
+        <div className="mt-1 rounded-md border bg-popover shadow-md z-10 relative flex flex-col" style={{ maxHeight: "260px" }}>
+          <div className="border-b px-3 py-2 flex-shrink-0">
+            <input
+              ref={inputRef}
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search contacts…"
+              className="w-full text-sm bg-transparent outline-none placeholder:text-muted-foreground"
+            />
+          </div>
+          <div className="overflow-y-auto flex-1">
+            {filteredStaff.length === 0 && filteredContacts.length === 0 && (
+              <p className="py-6 text-center text-sm text-muted-foreground">No contacts found.</p>
+            )}
+            {filteredStaff.length > 0 && (
+              <div>
+                <div className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">BGP Team</div>
+                {filteredStaff.map((u) => {
+                  const id = `bgp:${u.id}`;
+                  const isSelected = selected.includes(id);
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-accent"
+                      onClick={() => onChange(isSelected ? selected.filter(x => x !== id) : [...selected, id])}
+                    >
+                      <span className={`text-emerald-600 w-3.5 ${isSelected ? "opacity-100" : "opacity-0"}`}>✓</span>
+                      <span>{u.name}</span>
+                      {u.email && <span className="text-xs text-muted-foreground">{u.email}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {filteredContacts.length > 0 && (
+              <div>
+                <div className="px-3 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">CRM Contacts</div>
+                {filteredContacts.map((c) => {
+                  const isSelected = selected.includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-accent"
+                      data-testid={`option-attendee-${c.id}`}
+                      onClick={() => onChange(isSelected ? selected.filter(x => x !== c.id) : [...selected, c.id])}
+                    >
+                      <Check className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? "opacity-100" : "opacity-0"}`} />
+                      <div className="flex flex-col">
+                        <span>{c.name}</span>
+                        {c.email && <span className="text-[10px] text-muted-foreground">{c.email}</span>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

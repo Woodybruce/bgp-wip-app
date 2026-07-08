@@ -210,7 +210,12 @@ function FeedTab() {
 
   const userTeam = currentUser?.team || "Investment";
   const isSavedTab = activeTeam === "Saved";
-  const effectiveTeam = activeTeam === "For You" ? userTeam : activeTeam;
+  // Client logins: articles are never relevance-scored against client teams
+  // (e.g. "Landsec"), so "For You" would filter the feed to nothing — give
+  // them the whole curated trade feed instead, and skip the BGP team tabs.
+  const isClientNews = currentUser?.role === "Client";
+  const visibleTeams = isClientNews ? ["For You", "Saved"] : TEAMS;
+  const effectiveTeam = activeTeam === "For You" ? (isClientNews ? "All" : userTeam) : activeTeam;
 
   const { data: articles, isLoading } = useQuery<NewsArticle[]>({
     queryKey: ["/api/news-feed/articles", effectiveTeam, search],
@@ -331,7 +336,7 @@ function FeedTab() {
       <div className="flex items-start justify-between gap-4">
         <p className="text-sm text-muted-foreground">
           AI-curated property intelligence from {activeSources} sources
-          {activeTeam !== "All" && (
+          {activeTeam !== "All" && effectiveTeam !== "All" && (
             <span>
               {" "}· Sorted for{" "}
               <span className="font-medium text-foreground">
@@ -356,6 +361,7 @@ function FeedTab() {
               <ChevronDown className="w-3 h-3 ml-1" />
             )}
           </Button>
+          {currentUser?.role !== "Client" && (
           <Button
             variant="outline"
             size="sm"
@@ -370,6 +376,7 @@ function FeedTab() {
             )}
             {fetchMutation.isPending ? "Fetching..." : "Refresh"}
           </Button>
+          )}
         </div>
       </div>
 
@@ -403,7 +410,7 @@ function FeedTab() {
           className="flex overflow-x-auto h-auto gap-1 bg-transparent p-0"
           data-testid="tabs-team-filter"
         >
-          {TEAMS.map((team) => (
+          {visibleTeams.map((team) => (
             <TabsTrigger
               key={team}
               value={team}
@@ -562,6 +569,7 @@ function FeedTab() {
                       Unsave
                     </Button>
                     <div className="flex-1" />
+                    {!isClientNews && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -581,6 +589,7 @@ function FeedTab() {
                       <Zap className="w-3 h-3 mr-1" />
                       Extract Leads
                     </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -736,6 +745,7 @@ function FeedTab() {
                       Less like this
                     </Button>
                     <div className="flex-1" />
+                    {!isClientNews && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -755,6 +765,7 @@ function FeedTab() {
                       <Zap className="w-3 h-3 mr-1" />
                       Extract Leads
                     </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -1254,16 +1265,37 @@ function MobileNewsFeed() {
 
 export default function News() {
   const isMobile = useIsMobile();
+  const { data: newsUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientNewsPage = newsUser?.role === "Client";
   const { data: intelStatus } = useQuery<{
     connected: boolean;
     emailAddress?: string;
   }>({
     queryKey: ["/api/news-intel/status"],
     queryFn: getQueryFn({ on401: "throw" }),
-    enabled: !isMobile,
+    enabled: !isMobile && !isClientNewsPage,
   });
 
   if (isMobile) return <MobileNewsFeed />;
+
+  // Client logins get the curated Feed only — Leads / Inbox / WhatsApp /
+  // Sources are BGP lead-intelligence tools and stay staff-only.
+  if (isClientNewsPage) {
+    return (
+      <div className="p-4 sm:p-6 space-y-5" data-testid="news-page">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+            <Newspaper className="w-5 h-5 text-primary" />
+          </div>
+          <div className="space-y-1">
+            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">News</h1>
+            <p className="text-sm text-muted-foreground">AI-curated property &amp; retail market news</p>
+          </div>
+        </div>
+        <FeedTab />
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 sm:p-6 space-y-5" data-testid="news-page">

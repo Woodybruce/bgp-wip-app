@@ -58,9 +58,10 @@ async function generateWithDallE3(prompt: string, size: string): Promise<Buffer 
       quality: "hd",
       response_format: "b64_json",
     });
-    if (!response.data[0]?.b64_json) return null;
+    const b64 = response.data?.[0]?.b64_json;
+    if (!b64) return null;
     logAiUsage({ provider: "openai", model: "dall-e-3", feature: "image-studio-generate", images: 1 });
-    return Buffer.from(response.data[0].b64_json, "base64");
+    return Buffer.from(b64, "base64");
   } catch (e: any) {
     console.warn("[image-studio] DALL-E 3 failed:", e.message);
     return null;
@@ -1219,16 +1220,27 @@ export function registerImageStudioRoutes(app: Express) {
   // is a shared firm-wide asset pool, and non-admins (e.g. Luke on mobile)
   // need to see thumbnails to use their own uploads + ChatBGP edits.
   // Destructive + bulk ops below still require admin.
-  app.get("/api/image-studio", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/image-studio", requireAuth, async (req: Request, res: Response) => {
     try {
       const images = await db.select(LIST_COLS).from(imageStudioImages).orderBy(desc(imageStudioImages.createdAt));
+      // Client logins only see imagery filed against their own properties or
+      // company — not the firm-wide asset pool. (Landsec audit.)
+      const { resolveCompanyScope } = await import("./company-scope");
+      const isScope = await resolveCompanyScope(req as any);
+      if (isScope) {
+        const own = await pool.query(
+          `SELECT id FROM crm_properties WHERE landlord_id = $1
+           UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`, [isScope]);
+        const ownIds = new Set(own.rows.map((r: any) => r.id || r.property_id));
+        return res.json(images.filter((i: any) => (i.propertyId && ownIds.has(i.propertyId)) || i.companyId === isScope));
+      }
       res.json(images);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
 
-  app.get("/api/image-studio/search", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.get("/api/image-studio/search", requireAuth, async (req: Request, res: Response) => {
     try {
       const q = (req.query.q as string || "").trim();
       const companyId = (req.query.companyId as string || "").trim();
@@ -1236,6 +1248,20 @@ export function registerImageStudioRoutes(app: Express) {
       // Need at least one of: free-text query, companyId, or propertyId.
       // Without any filter we'd return the whole table.
       if (!q && !companyId && !propertyId) return res.json([]);
+      // Entity-filtered lookups (propertyId/companyId) are open to any
+      // logged-in user — property pages need them and clients must see
+      // their own galleries. Free-text firm-wide search stays admin-only,
+      // and client scopes are enforced on the entity filters.
+      const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+      const searchScope = await resolveCompanyScope(req as any);
+      if (!companyId && !propertyId) {
+        const u = await pool.query(`SELECT is_admin FROM users WHERE id = $1`, [(req as any).session?.userId || (req as any).tokenUserId]);
+        if (!u.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+      }
+      if (searchScope) {
+        if (propertyId && !(await isPropertyInScope(searchScope, propertyId))) return res.json([]);
+        if (companyId && companyId !== searchScope) return res.json([]);
+      }
       const pattern = q ? `%${q}%` : null;
       const conditions: any[] = [];
       if (pattern) {
@@ -1308,6 +1334,9 @@ export function registerImageStudioRoutes(app: Express) {
   });
 
   app.post("/api/image-studio/upload", requireAuth, uploadImagesMw, async (req: Request, res: Response) => {
+    if (await (await import("./company-scope")).isClientRequestUser(req as any)) {
+      return res.status(403).json({ error: "Read-only access for client accounts" });
+    }
     const t0 = Date.now();
     try {
       const files = req.files as Express.Multer.File[];
@@ -1428,7 +1457,7 @@ export function registerImageStudioRoutes(app: Express) {
 
   app.get("/api/image-studio/:id/full", requireAuth, async (req: Request, res: Response) => {
     try {
-      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
+      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
       if (!image) return res.status(404).json({ error: "Not found" });
 
       const imgBuffer = await readPersistedImage(image.localPath);
@@ -1480,7 +1509,7 @@ export function registerImageStudioRoutes(app: Express) {
 
       const [updated] = await db.update(imageStudioImages)
         .set(updates)
-        .where(eq(imageStudioImages.id, req.params.id))
+        .where(eq(imageStudioImages.id, req.params.id as string))
         .returning();
 
       if (!updated) return res.status(404).json({ error: "Not found" });
@@ -1739,7 +1768,7 @@ export function registerImageStudioRoutes(app: Express) {
       if (row.local_path) {
         try {
           const f = await getFile(storageKeyForImage(row.local_path));
-          inFileStorage = f ? { size: f.data.length, mimeType: f.mimeType } : null;
+          inFileStorage = f ? { size: f.data.length, mimeType: f.contentType } : null;
         } catch (e: any) {
           inFileStorage = { error: e?.message };
         }
@@ -1839,24 +1868,30 @@ export function registerImageStudioRoutes(app: Express) {
   // it but the bytes survive long enough to undo. Hard delete is the
   // existing route below.
   app.post("/api/image-studio/:id/trash", requireAuth, async (req: Request, res: Response) => {
+    if (await (await import("./company-scope")).isClientRequestUser(req as any)) {
+      return res.status(403).json({ error: "Read-only access for client accounts" });
+    }
     try {
       const [image] = await db.select({ tags: imageStudioImages.tags })
-        .from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
+        .from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
       if (!image) return res.status(404).json({ error: "Not found" });
       const tags = [...new Set([...(image.tags || []), "trashed"])];
-      await db.update(imageStudioImages).set({ tags } as any).where(eq(imageStudioImages.id, req.params.id));
+      await db.update(imageStudioImages).set({ tags } as any).where(eq(imageStudioImages.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
   app.post("/api/image-studio/:id/restore", requireAuth, async (req: Request, res: Response) => {
+    if (await (await import("./company-scope")).isClientRequestUser(req as any)) {
+      return res.status(403).json({ error: "Read-only access for client accounts" });
+    }
     try {
       const [image] = await db.select({ tags: imageStudioImages.tags })
-        .from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
+        .from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
       if (!image) return res.status(404).json({ error: "Not found" });
       const tags = (image.tags || []).filter((t) => t !== "trashed");
-      await db.update(imageStudioImages).set({ tags } as any).where(eq(imageStudioImages.id, req.params.id));
+      await db.update(imageStudioImages).set({ tags } as any).where(eq(imageStudioImages.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1865,7 +1900,7 @@ export function registerImageStudioRoutes(app: Express) {
 
   app.delete("/api/image-studio/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
+      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
       if (!image) return res.status(404).json({ error: "Not found" });
 
       if (image.localPath && fs.existsSync(image.localPath)) {
@@ -1884,7 +1919,7 @@ export function registerImageStudioRoutes(app: Express) {
         "DELETE FROM image_studio_collection_images WHERE image_id = $1",
         [req.params.id]
       );
-      await db.delete(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
+      await db.delete(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -2125,7 +2160,7 @@ export function registerImageStudioRoutes(app: Express) {
   // was written so the client can show the right toast.
   app.post("/api/image-studio/:id/attach", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const id = req.params.id as string;
       const targetType = String(req.body?.targetType || "").toLowerCase();
       const targetId = String(req.body?.targetId || "").trim();
       const caption = req.body?.caption ? String(req.body.caption).slice(0, 500) : null;
@@ -2181,7 +2216,7 @@ export function registerImageStudioRoutes(app: Express) {
 
   app.post("/api/image-studio/:id/revert", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const id = req.params.id as string;
       // Pop the most-recent snapshot off the stack (newest is last). Fall back
       // to the legacy single-snapshot file for images edited before this change.
       const stack = undoStackPaths(id);

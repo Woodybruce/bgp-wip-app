@@ -318,7 +318,7 @@ export async function scrapeLandlordWebsite(companyId: string): Promise<{ ok: bo
       max_completion_tokens: 4000,
       messages: [{ role: "user", content: prompt }],
     });
-    const text = completion?.choices?.[0]?.message?.content || completion?.text || "";
+    const text = completion?.choices?.[0]?.message?.content || (completion as any)?.text || "";
     aiOut = safeParseJSON(text);
   } catch (err: any) {
     progress[companyId] = { state: "error", updatedAt: new Date().toISOString(), error: `AI extraction failed: ${err?.message}` };

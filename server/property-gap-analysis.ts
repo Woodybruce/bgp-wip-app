@@ -97,7 +97,7 @@ async function resolvePropertyLocation(propertyId: string): Promise<LocResolveRe
 // Returns three buckets: onScheme, wider, and gap (peer brands missing from area)
 router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { propertyId } = req.params;
+    const propertyId = req.params.propertyId as string;
     const onSchemeRadiusKm = Number(req.query.onSchemeKm) || 0.5;
     const widerRadiusKm = Number(req.query.widerKm) || 2.0;
     const limit = Number(req.query.limit) || 30;

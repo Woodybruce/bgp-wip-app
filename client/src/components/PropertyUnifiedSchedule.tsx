@@ -18,6 +18,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { useState, useEffect } from "react";
 import { PropertyTenancySchedule } from "@/components/PropertyTenancySchedule";
+import { useQuery } from "@tanstack/react-query";
 import { Briefcase, FileSpreadsheet } from "lucide-react";
 
 type Lens = "lettings" | "tenancy";
@@ -26,6 +27,10 @@ export function PropertyUnifiedSchedule({ propertyId }: { propertyId: string }) 
   // Remember the lens per property so jumping between properties
   // doesn't reset the user's preferred view.
   const lensKey = `unified-schedule-lens:${propertyId}`;
+  // Client logins get a fuller "what is this board" explainer instead of
+  // the staff column-picker hint.
+  const { data: schedUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientSched = schedUser?.role === "Client";
   const [lens, setLens] = useState<Lens>(() => {
     try {
       const stored = localStorage.getItem(lensKey);
@@ -42,13 +47,13 @@ export function PropertyUnifiedSchedule({ propertyId }: { propertyId: string }) 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-1 text-[11px] flex-wrap">
-        {/* Visible build marker — if the user sees this badge the unified
-            schedule deploy is live. If they don't, the build hasn't
-            landed yet (Railway in flight) or the service worker is
-            still serving an old bundle (hard-refresh fixes it). */}
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-700 text-[9px] font-semibold uppercase tracking-wider mr-2">
-          ✦ Unified Schedule
-        </span>
+        {/* Visible build marker — internal deploy check only, hidden from
+            client logins so it doesn't show in a client demo. */}
+        {!isClientSched && (
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-100 text-emerald-700 text-[9px] font-semibold uppercase tracking-wider mr-2">
+            ✦ Unified Schedule
+          </span>
+        )}
         <span className="text-muted-foreground mr-2">View:</span>
         <button
           type="button"
@@ -75,9 +80,13 @@ export function PropertyUnifiedSchedule({ propertyId }: { propertyId: string }) 
           <FileSpreadsheet className="w-3 h-3" /> Tenancy
         </button>
         <span className="text-[10px] text-muted-foreground ml-3">
-          {lens === "lettings"
-            ? "Voids + marketing focus. Toggle columns from the picker to surface more."
-            : "Full rent roll — every column. Toggle off what you don't need."}
+          {isClientSched
+            ? (lens === "lettings"
+              ? "Vacant units and marketing status at this property. Live deals are worked in the Letting Tracker; brand strategy sits on the Leasing Schedule."
+              : "The master rent roll — every unit with tenant, rent and lease dates. Changes here flow through to the Leasing Schedule and Letting Tracker.")
+            : (lens === "lettings"
+              ? "Voids + marketing focus. Toggle columns from the picker to surface more."
+              : "Full rent roll — every column. Toggle off what you don't need.")}
         </span>
       </div>
 

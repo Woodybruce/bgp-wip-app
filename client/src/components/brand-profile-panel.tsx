@@ -16,6 +16,7 @@ import { buildUserColorMap } from "@/lib/agent-colors";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { CovenantBadge } from "@/components/covenant-badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -1447,6 +1448,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   <Phone className="w-3 h-3" /> Email
                 </a>
               )}
+              {currentUser?.role !== "Client" && (
               <button
                 type="button"
                 onClick={() => runContactDiscovery()}
@@ -1456,6 +1458,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               >
                 <Sparkles className="w-3 h-3" /> {contactsFinding ? "Finding…" : "Refresh contacts"}
               </button>
+              )}
               {c.stock_ticker && (
                 <a
                   href={`https://finance.yahoo.com/quote/${encodeURIComponent(c.stock_ticker)}`}
@@ -1466,6 +1469,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   <TrendingUp className="w-3 h-3" /> {c.stock_ticker}
                 </a>
               )}
+              {currentUser?.role !== "Client" && (<>
               <button
                 type="button"
                 onClick={() => navigate("/deals")}
@@ -1482,11 +1486,12 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               >
                 <Building2 className="w-3 h-3" /> Pitch property
               </button>
+              </>)}
             </div>
 
             {/* Single BGP AI take + Ask ChatBGP question runner — sits above all zones */}
             <div className="mt-2 order-2 space-y-3">
-              <BgpTakeStrip companyId={companyId} tab="brand" />
+              {currentUser?.role !== "Client" && <BgpTakeStrip companyId={companyId} tab="brand" />}
               <AskChatBGPInline brandName={c.name} />
             </div>
 
@@ -3992,7 +3997,7 @@ export function BrandComplianceCard({
               { key: "psc", label: "Officers + PSCs", done: !!(company.companies_house_data as any)?.pscs?.length },
               { key: "accounts", label: "Latest accounts", done: !!company.last_accounts_storage_key },
               { key: "annual_report", label: "Annual report (PLC)", done: !!company.annual_report_storage_key },
-              { key: "redflag", label: "Red Flag credit score", done: !!(company.kyc_status === "verified") },
+              { key: "covenant", label: "Covenant grade (CH + Gazette)", done: company.kyc_status === "verified" },
               { key: "aml", label: "AML PEP / adverse media", done: !!company.aml_pep_status },
             ].map((row) => (
               <div key={row.key} className="flex items-center gap-1.5 text-[11px]">
@@ -4283,13 +4288,6 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       toast({ title: "Couldn't save BGP contacts", description: e?.message, variant: "destructive" });
     }
   };
-  const { data: credit } = useQuery<{ latest: { score: number | null; band: string | null; risk_level: string | null; fetched_at: string } | null; configured: boolean }>({
-    queryKey: ["/api/brand", companyId, "credit-check"],
-    queryFn: async () => {
-      const r = await fetch(`/api/brand/${companyId}/credit-check`, { credentials: "include" });
-      return r.ok ? r.json() : { latest: null, configured: false };
-    },
-  });
   const runCreditCheck = async () => {
     try {
       const r = await fetch(`/api/brand/${companyId}/credit-check`, { method: "POST", credentials: "include" });
@@ -4298,7 +4296,8 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         toast({ title: body.error || "Couldn't run", description: body.message || "", variant: "destructive" });
         return;
       }
-      toast({ title: "Credit check complete" });
+      toast({ title: "Covenant check complete" });
+      queryClient.invalidateQueries({ queryKey: ["covenant"] });
     } catch (e: any) {
       toast({ title: "Failed", description: e?.message, variant: "destructive" });
     }
@@ -4327,88 +4326,25 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           checks (CH details, PSC, accounts, Red Flag, AML PEP) stay parked. */}
       <BrandComplianceCard companyId={companyId} company={c} />
 
-      {/* Covenant snapshot — hidden May 2026 until Red Flag / Experian is
-          wired. The Compliance board above covers the same ground (CH
-          status, accounts) and the Covenant card was showing placeholder
-          state. Kept the JSX in place so we can flip it back on by
-          changing the false below to true once the data sources land. */}
-      {false && (
+      {/* Covenant — live house engine (Companies House + The Gazette + filed
+          accounts). Replaced the old Red Flag/Experian placeholder card. */}
+      {(c as any)?.companies_house_number && (
       <Card>
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-            <span className={`inline-block w-2 h-2 rounded-full ${ragColor}`} />
             Covenant
+            <CovenantBadge companyNumber={(c as any).companies_house_number} />
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-3 pt-0 text-sm space-y-1.5">
-          {cov ? (
-            <>
-              <div className="flex justify-between"><span className="text-muted-foreground">Status</span><span className="font-medium capitalize">{cov.companyStatus || "—"}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Accounts</span><span className={cov.accountsOverdue ? "text-rose-600 font-medium" : ""}>{cov.accountsOverdue ? "Overdue" : (cov.lastAccountsMadeUpTo || "—")}</span></div>
-              {cov.hasInsolvencyHistory && <div className="text-xs text-rose-600">⚠️ Has insolvency history</div>}
-              {cov.experian?.creditScore != null && (
-                <div className="flex justify-between pt-1 border-t"><span className="text-muted-foreground">Experian</span><span className="font-medium">{cov.experian.creditScore} ({cov.experian.creditBand || ""})</span></div>
-              )}
-              {(cov.registeredAddress || (cov as any).pscs?.length || (data.company as any).kyc_status) && (
-                <details className="pt-1 border-t mt-1 group/kyc">
-                  <summary className="text-[10px] uppercase tracking-wider text-muted-foreground cursor-pointer list-none flex items-center gap-1">
-                    <ChevronRight className="w-3 h-3 transition-transform group-open/kyc:rotate-90" />
-                    KYC &amp; ownership
-                  </summary>
-                  <div className="mt-1.5 space-y-1">
-                    {cov.registeredAddress && (
-                      <div className="text-[11px] text-muted-foreground leading-snug">
-                        <span className="block text-[10px] uppercase tracking-wide">UK registered office</span>
-                        <span className="text-foreground">{cov.registeredAddress}</span>
-                      </div>
-                    )}
-                    {(data.company as any).kyc_status && (
-                      <div className="text-[11px]">
-                        <span className="text-muted-foreground text-[10px] uppercase tracking-wide block">KYC</span>
-                        <span className="font-medium capitalize">{(data.company as any).kyc_status}</span>
-                      </div>
-                    )}
-                    {Array.isArray((cov as any).pscs) && (cov as any).pscs.length > 0 && (
-                      <div>
-                        <span className="text-muted-foreground text-[10px] uppercase tracking-wide block">Ownership (PSCs)</span>
-                        <div className="flex flex-wrap gap-1 mt-0.5">
-                          {(cov as any).pscs.filter((p: any) => !p.ceasedOn).map((p: any, i: number) => (
-                            <Badge key={i} variant="outline" className="text-[10px] font-normal">{p.name}</Badge>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </details>
-              )}
-            </>
-          ) : (
-            <p className="text-xs text-muted-foreground italic">No covenant data — run Companies House lookup via KYC.</p>
-          )}
-          {credit?.latest && (
-            <div className="pt-2 border-t mt-1">
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Red Flag</div>
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">Score</span>
-                <span className="font-medium">{credit.latest.score ?? "—"} {credit.latest.band ? `(${credit.latest.band})` : ""}</span>
-              </div>
-              {credit.latest.risk_level && (
-                <div className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">Risk</span>
-                  <span className="font-medium capitalize">{credit.latest.risk_level}</span>
-                </div>
-              )}
-              <div className="text-[10px] text-muted-foreground mt-0.5">{new Date(credit.latest.fetched_at).toLocaleDateString("en-GB")}</div>
-            </div>
-          )}
+        <CardContent className="p-3 pt-0">
           <Button
             size="sm"
             variant="outline"
-            className="w-full mt-2 h-7 text-xs"
+            className="w-full h-7 text-xs"
             onClick={runCreditCheck}
-            title={credit?.configured ? "Pull a fresh credit report from Red Flag" : "Red Flag API key not configured — clicking shows the message"}
+            title="Re-run the house covenant check (Companies House + The Gazette + filed accounts) and add this brand to the nightly watch"
           >
-            {credit?.latest ? "Refresh Red Flag" : "Run Red Flag" + (credit?.configured ? "" : " (not configured)")}
+            Refresh covenant check
           </Button>
         </CardContent>
       </Card>

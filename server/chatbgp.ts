@@ -14,12 +14,63 @@ import { parseSlashCommand, setThreadModel, resolveChatModel, ackMessage } from 
 import mammoth from "mammoth";
 import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
 import { getFile, saveFile, findChatMediaByOriginalName, searchChatMedia, getRecentUserUploads } from "./file-storage";
+import { rectifyRows, fixPptxSchemaViolations } from "./pptx-rectify";
+
+// Build a branded BGP deck PPTX (via the shared deck-engine card system) from
+// either the rich card model (fnArgs.cards) or the legacy {title, subtitle,
+// slides:[{title,bullets,table,notes}]} shape. Legacy slides are mapped to
+// content/table/board cards so even old-style calls get the on-brand engine.
+async function buildDeckPptxFromArgs(fnArgs: any): Promise<{ buffer: Buffer; safeName: string; slideCount: number }> {
+  const { assembleDeckPptx } = await import("./deck-engine");
+  const title = String(fnArgs?.title || "Presentation");
+  let cards: any[] = Array.isArray(fnArgs?.cards) ? fnArgs.cards : [];
+  if (!cards.length) {
+    cards.push({ type: "cover", title, subtitle: fnArgs?.subtitle || "", eyebrow: fnArgs?.eyebrow || "Bruce Gillingham Pollard" });
+    for (const sd of (Array.isArray(fnArgs?.slides) ? fnArgs.slides : [])) {
+      const hasT = sd?.table?.headers && sd?.table?.rows;
+      const hasB = Array.isArray(sd?.bullets) && sd.bullets.length > 0;
+      if (hasT && hasB) cards.push({ type: "board", title: sd.title, blocks: [
+        { kind: "text", col: 0, colSpan: 6, row: 0, rowSpan: 1, bullets: sd.bullets },
+        { kind: "table", col: 6, colSpan: 6, row: 0, rowSpan: 1, headers: sd.table.headers, rows: sd.table.rows },
+      ] });
+      else if (hasT) cards.push({ type: "table", title: sd.title, headers: sd.table.headers, rows: sd.table.rows });
+      else cards.push({ type: "content", title: sd.title, bullets: sd.bullets || [] });
+    }
+  }
+  const raw = await assembleDeckPptx({ cards });
+  const buffer = await fixPptxSchemaViolations(raw); // polish OOXML so PowerPoint won't demand a "repair"
+  const safeName = (title.replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_")) || "Presentation";
+  return { buffer, safeName, slideCount: cards.length };
+}
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
+import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
 
-const CHATBGP_MODEL = "claude-sonnet-4-6";      // Lightweight sub-tasks only — the main chat defaults to Opus 4.8 via chatbgp-model-router.
-const CHATBGP_OPUS_MODEL = "claude-opus-4-8";   // Heavy reasoning (also the chat default now).
+const CHATBGP_MODEL = "claude-sonnet-4-6";      // Lightweight sub-tasks only — the main chat defaults to Fable 5 via chatbgp-model-router.
+const CHATBGP_OPUS_MODEL = "claude-opus-4-8";   // Heavy reasoning fallback tier.
 const CHATBGP_HELPER_MODEL = "claude-haiku-4-5-20251001"; // Background tasks: Haiku for cost savings
+
+// Fable 5: safety classifiers can decline a request with stop_reason
+// "refusal". The server-side fallback re-serves declined requests on Opus
+// inside the same API call (requires the beta messages endpoint).
+function isFableModel(model: string): boolean {
+  return model.startsWith("claude-fable");
+}
+
+function applyFableParams(claudeParams: any): void {
+  claudeParams.betas = ["server-side-fallback-2026-06-01"];
+  claudeParams.fallbacks = [{ model: CHATBGP_OPUS_MODEL }];
+}
+
+const REFUSAL_REPLY = "I can't help with that particular request.";
+
+// PowerPoint/Excel reject XML-1.0-invalid control characters (common in text
+// extracted from PDFs) with a "repair this file?" prompt that strips content.
+// pptxgenjs/exceljs escape XML entities but pass control characters through,
+// so strip them before any Office file is built.
+function cleanOfficeText(v: any): string {
+  return String(v ?? "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\uFFFE\uFFFF]/g, "");
+}
 
 // Resolve a list of chat-media filenames into Graph fileAttachment payloads
 // (base64 + contentType + filename). Each filename is expected to already
@@ -139,6 +190,20 @@ function setCache<T>(key: string, data: T, ttlMs: number): void {
   contextCache.set(key, { data, expiresAt: Date.now() + ttlMs });
 }
 
+// Graph $search takes KQL. The model sometimes passes multi-term queries like
+// "Ottolenghi" OR "Kricket" — blindly wrapping those in another pair of quotes
+// produces invalid KQL ("" at the start) and Graph rejects the whole request.
+// Only wrap bare phrases; queries that already carry quotes or uppercase
+// KQL operators pass through as-is. Unbalanced quotes also 400, so strip
+// them when the count is odd.
+function toGraphSearchQuery(raw: string): string {
+  const q = String(raw || "").trim();
+  const quoteCount = (q.match(/"/g) || []).length;
+  const balanced = quoteCount % 2 === 0 ? q : q.replace(/"/g, "");
+  if (balanced.includes('"') || /\b(OR|AND|NOT)\b/.test(balanced)) return balanced;
+  return `"${balanced}"`;
+}
+
 // Shared implementation of the search_emails tool, used by two handler sites.
 // - Default (no mailbox arg): uses the current user's delegated token on /me/messages.
 // - mailbox === "all": fans out across the shared inbox + every active BGP user's mailbox
@@ -202,7 +267,7 @@ export async function runSearchEmailsTool(opts: { query: string; top: number; ma
       const errors: string[] = [];
       for (const mb of mailboxes) {
         try {
-          const url = `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(`"${query}"`)}&$top=${top}&$select=${encodeURIComponent(selectFields)}`;
+          const url = `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(toGraphSearchQuery(query))}&$top=${top}&$select=${encodeURIComponent(selectFields)}`;
           const data = await graphRequest(url);
           for (const msg of data?.value || []) {
             if (seen.has(msg.id)) continue;
@@ -229,7 +294,7 @@ export async function runSearchEmailsTool(opts: { query: string; top: number; ma
     const token = await getValidMsToken(req);
     if (!token) return { error: "Not connected to Microsoft 365. Please sign in first." };
     const url = "https://graph.microsoft.com/v1.0/me/messages?" + new URLSearchParams({
-      $search: `"${query}"`,
+      $search: toGraphSearchQuery(query),
       $top: String(top),
       $select: selectFields,
     });
@@ -446,6 +511,8 @@ function getToolProgressLabel(toolName: string): string {
     get_property_planning: "Pulling planning constraints + recent applications...",
     property_data_lookup: "Querying PropertyData...",
     deep_investigate: "Running deep investigation...",
+    rocketreach_person_lookup: "Looking up verified contact details...",
+    search_food_hygiene: "Checking the FSA hygiene register...",
     run_kyc_check: "Running KYC check...",
     create_deal: "Creating deal...",
     update_deal: "Updating deal...",
@@ -736,6 +803,8 @@ export async function callClaude(params: any): Promise<any> {
     claudeParams.tool_choice = { type: "auto" };
   }
 
+  if (isFableModel(model)) applyFableParams(claudeParams);
+
   const MAX_RETRIES = 3;
   const RETRY_DELAYS = [2000, 4000, 8000];
 
@@ -746,7 +815,9 @@ export async function callClaude(params: any): Promise<any> {
     try {
       const client = attempt === 0 ? anthropic : getAnthropicClient(false);
       if (attempt > 0) claudeParams.model = model;
-      response = await client.messages.create(claudeParams);
+      response = isFableModel(model)
+        ? await client.beta.messages.create(claudeParams)
+        : await client.messages.create(claudeParams);
       // Spend metering — exact token usage from the response, priced
       // server-side. Fire-and-forget; never blocks the call.
       try {
@@ -794,6 +865,11 @@ export async function callClaude(params: any): Promise<any> {
         function: { name: block.name, arguments: JSON.stringify(block.input) },
       });
     }
+  }
+
+  // Refusal on the final response means Fable AND the Opus fallback both declined
+  if (response.stop_reason === "refusal" && !textContent && toolCalls.length === 0) {
+    textContent = REFUSAL_REPLY;
   }
 
   return {
@@ -850,6 +926,8 @@ export async function callClaudeStreaming(
     claudeParams.tool_choice = { type: "auto" };
   }
 
+  if (isFableModel(model)) applyFableParams(claudeParams);
+
   const MAX_RETRIES = 2;
   const RETRY_DELAYS = [2000, 4000];
 
@@ -863,9 +941,13 @@ export async function callClaudeStreaming(
       let fullText = "";
       const toolCalls: any[] = [];
 
-      const stream = client.messages.stream(claudeParams);
+      // any: MessageStream and BetaMessageStream share the on/finalMessage
+      // surface but don't unify as a callable type
+      const stream: any = isFableModel(model)
+        ? client.beta.messages.stream(claudeParams)
+        : client.messages.stream(claudeParams);
 
-      stream.on("text", (text) => {
+      stream.on("text", (text: string) => {
         fullText += text;
         onDelta(text);
       });
@@ -887,6 +969,12 @@ export async function callClaudeStreaming(
             function: { name: block.name, arguments: JSON.stringify(block.input) },
           });
         }
+      }
+
+      // Refusal on the final response means Fable AND the Opus fallback both declined
+      if (finalMessage.stop_reason === "refusal" && !fullText && toolCalls.length === 0) {
+        fullText = REFUSAL_REPLY;
+        onDelta(fullText);
       }
 
       return {
@@ -1009,7 +1097,7 @@ You are an active operational agent with full CRM read/write access, internet se
 ## Key Tool Workflows
 - **CRM**: search_crm (fuzzy matching) → create/update entities. Search broadly with multiple variations before saying something doesn't exist.
 - **Property onboarding**: Read document → create_property with full address → auto Land Registry enrichment runs in background.
-- **KYC**: run_kyc_check for Companies House + sanctions + financial strength. deep_investigate for full D&B-style intelligence combining all sources.
+- **KYC**: run_kyc_check for Companies House + sanctions. check_covenant for covenant strength / financial health / credit risk (house A-E grade — the Red Flag/Experian replacement). deep_investigate for full intelligence combining all sources.
 - **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
 - **Auto-follow news URLs**: When the user pastes a URL from a news outlet, journalist blog, columnist page, research-house insights index, or industry publication (e.g. Sky News, FT, Bloomberg, Reuters, Property Week, Savills/CBRE/Knight Frank research, a Substack), call **follow_url** to register it as a persistent source. The news-feed cron then polls it automatically forever — no further action needed. Confirm in one short line ("Now tracking X — new posts will appear in your news feed"). Skip auto-follow for: internal app URLs, Companies House / planning portals, SharePoint/OneDrive links, social profiles, or one-off article reads (use ingest_url for those). If the user explicitly says "follow / track / watch / scrape this URL" — always call follow_url, regardless of source type. If both reading AND tracking are wanted, run ingest_url first, then follow_url.
 - **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
@@ -1578,10 +1666,10 @@ export async function getCrmContext(): Promise<string> {
   if (cached) return cached;
   try {
     const [properties, deals, companies, contacts] = await Promise.all([
-      withTimeout(storage.getCrmProperties(), 5000, []),
-      withTimeout(storage.getCrmDeals(), 5000, []),
-      withTimeout(storage.getCrmCompanies(), 5000, []),
-      withTimeout(storage.getCrmContacts(), 5000, []),
+      withTimeout(storage.getCrmProperties() as Promise<CrmProperty[]>, 5000, []),
+      withTimeout(storage.getCrmDeals() as Promise<CrmDeal[]>, 5000, []),
+      withTimeout(storage.getCrmCompanies() as Promise<CrmCompany[]>, 5000, []),
+      withTimeout(storage.getCrmContacts() as Promise<CrmContact[]>, 5000, []),
     ]);
 
     let requirementsCtx = "";
@@ -1589,18 +1677,18 @@ export async function getCrmContext(): Promise<string> {
     let investmentCtx = "";
     try {
       const [reqRows, invReqRows, unitRows, invRows, compRows] = await Promise.all([
-        withTimeout(pool.query(`SELECT r.name, r.use, r.size, r.requirement_locations, r.under_offer, c.name as company_name 
+        withTimeout<{ rows: any[] }>(pool.query(`SELECT r.name, r.use, r.size, r.requirement_locations, r.under_offer, c.name as company_name 
           FROM crm_requirements_leasing r LEFT JOIN crm_companies c ON r.company_id = c.id 
           WHERE r.deal_id IS NULL ORDER BY r.created_at DESC LIMIT 25`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
-        withTimeout(pool.query(`SELECT r.name, r.use_types as use, r.size_range as size, r.requirement_locations, r.requirement_types, c.name as company_name, r.status 
+        withTimeout<{ rows: any[] }>(pool.query(`SELECT r.name, r.use_types as use, r.size_range as size, r.requirement_locations, r.requirement_types, c.name as company_name, r.status 
           FROM crm_requirements_investment r LEFT JOIN crm_companies c ON r.company_id = c.id 
           WHERE r.deal_id IS NULL ORDER BY r.created_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
-        withTimeout(pool.query(`SELECT au.unit_name, au.use_class, au.sqft, au.asking_rent, au.marketing_status, au.location, p.name as property_name 
+        withTimeout<{ rows: any[] }>(pool.query(`SELECT au.unit_name, au.use_class, au.sqft, au.asking_rent, au.marketing_status, au.location, p.name as property_name 
           FROM available_units au LEFT JOIN crm_properties p ON au.property_id = p.id 
           WHERE au.marketing_status IN ('Available', 'Under Offer') ORDER BY au.created_at DESC LIMIT 20`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
-        withTimeout(pool.query(`SELECT asset_name as name, status, guide_price, address, asset_type, board_type FROM investment_tracker 
+        withTimeout<{ rows: any[] }>(pool.query(`SELECT asset_name as name, status, guide_price, address, asset_type, board_type FROM investment_tracker 
           WHERE status NOT IN ('Dead', 'Withdrawn') ORDER BY updated_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
-        withTimeout(pool.query(`SELECT tenant, name, area_location, headline_rent, rent_psf_nia, nia_sqft, use_class, transaction_type, lease_start 
+        withTimeout<{ rows: any[] }>(pool.query(`SELECT tenant, name, area_location, headline_rent, rent_psf_nia, nia_sqft, use_class, transaction_type, lease_start 
           FROM crm_comps WHERE verified = true ORDER BY created_at DESC LIMIT 15`), 3000, { rows: [] }).catch(() => ({ rows: [] })),
       ]);
       if (reqRows.rows.length > 0) {
@@ -1681,14 +1769,14 @@ export async function getCrmContext(): Promise<string> {
     if (contacts.length > 0) {
       ctx += "\n### Key Contacts (latest 30)\n";
       for (const c of contacts.slice(0, 30)) {
-        ctx += `- ${c.name}${c.company ? " @ " + c.company : ""}${c.email ? " (" + c.email + ")" : ""}${(c as any).title ? " — " + (c as any).title : ""}\n`;
+        ctx += `- ${c.name}${c.companyName ? " @ " + c.companyName : ""}${c.email ? " (" + c.email + ")" : ""}${(c as any).title ? " — " + (c as any).title : ""}\n`;
       }
     }
 
     if (companies.length > 0) {
       ctx += "\n### Companies (latest 30)\n";
       for (const co of companies.slice(0, 30)) {
-        ctx += `- ${co.name}${co.sector ? " [" + co.sector + "]" : ""}${(co as any).isClient ? " ★ Client" : ""}\n`;
+        ctx += `- ${co.name}${co.companyType ? " [" + co.companyType + "]" : ""}${(co as any).isClient ? " ★ Client" : ""}\n`;
       }
     }
 
@@ -1705,7 +1793,29 @@ export function invalidateCrmContextCache() {
   contextCache.delete("crmContext");
 }
 
-const SYSTEM_PROMPT_FALLBACK = "You are ChatBGP, an AI assistant for Bruce Gillingham Pollard (BGP). You are powered by Claude Opus. IMPORTANT: If deep_investigate returns report.property.ambiguous === true, present the options as a numbered list and ask the user to pick the correct property. Do NOT guess or proceed with unverified property data.";
+
+// ── Client-login guard ────────────────────────────────────────────────────
+// External client users (e.g. Landsec) must not reach ChatBGP's CRM/DB
+// tools — sql_query alone would hand them the firm's fee book. For client
+// requests we strip ALL tools and pin a hard constraint block into the
+// prompt. (Landsec audit.)
+const CLIENT_CHAT_CONSTRAINT = `\n\n## EXTERNAL CLIENT SESSION — HARD RULES\nYou are speaking with an EXTERNAL CLIENT of BGP (not BGP staff). You have NO tools in this session. Answer only from the conversation itself and general knowledge. NEVER discuss: BGP fees, commissions, WIP or billing; other BGP clients or their deals/properties; BGP staff personal information; any internal BGP operations. If asked for portfolio data beyond what the user provides, direct them to their portfolio dashboard or their BGP contact. Be warm and helpful within these limits.\n`;
+
+export async function clientChatGuard(req: any): Promise<{ isClient: boolean; constraint: string }> {
+  try {
+    const { isClientRequestUser } = await import("./company-scope");
+    if (await isClientRequestUser(req)) {
+      return { isClient: true, constraint: CLIENT_CHAT_CONSTRAINT };
+    }
+    return { isClient: false, constraint: "" };
+  } catch {
+    // Fail CLOSED: if we can't confirm the user is staff, treat as a client
+    // and strip tools rather than leaving the full toolset attached.
+    return { isClient: true, constraint: CLIENT_CHAT_CONSTRAINT };
+  }
+}
+
+const SYSTEM_PROMPT_FALLBACK = "You are ChatBGP, an AI assistant for Bruce Gillingham Pollard (BGP). You are powered by Claude Fable. IMPORTANT: If deep_investigate returns report.property.ambiguous === true, present the options as a numbered list and ask the user to pick the correct property. Do NOT guess or proceed with unverified property data.";
 
 export async function getAvailableTools(): Promise<{
   modelTemplates: any[];
@@ -2196,12 +2306,13 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "get_company_accounts",
-      description: "Download and read the latest filed Companies House annual accounts for a company — returns turnover, gross profit, operating profit, profit before tax, net assets, cash and employee numbers. Works for any company with a Companies House number in the CRM. Triggers the PDF download if it isn't already cached, then reads the figures off the filing with vision.",
+      description: "Download and read the latest filed Companies House annual accounts for a company — returns turnover, gross profit, operating profit, profit before tax, net assets, cash and employee numbers. Works for ANY UK company: pass companyNumber (from deep_investigate/run_kyc_check) for companies not yet in the CRM — a minimal CRM record is created automatically so the filing is banked. Triggers the PDF download if it isn't already cached, then reads the figures off the filing with vision.",
       parameters: {
         type: "object",
         properties: {
           companyName: { type: "string", description: "Company name, e.g. 'Goyard Limited'. Used to look up the CRM company if companyId isn't known." },
           companyId: { type: "string", description: "CRM company UUID, if already known." },
+          companyNumber: { type: "string", description: "Companies House number, e.g. '08506610'. Use this for companies not yet in the CRM — the record is created automatically." },
         },
       },
     },
@@ -2530,24 +2641,42 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "generate_pptx",
-      description: "Generate a native Microsoft PowerPoint (.pptx) presentation with professional formatting and BGP branding. Use when the user asks for a PowerPoint, presentation, slides, or deck.",
+      description: [
+        "Generate a native, editable Microsoft PowerPoint (.pptx) in BGP house style (green/gold, Georgia). Use for any PowerPoint / presentation / slides / deck / teaser / pitch.",
+        "PREFER the rich `cards` model over `slides` — it produces dense, professional, teaser-grade boards. Each card = { type, ...fields }. Card types:",
+        "• cover {title, subtitle?, eyebrow?, meta:[{label,value}]}  • section {number,title}  • statement {title, kick?, sub?} full-bleed emphasis",
+        "• content {title, kick?, bullets:[string] | body, image?/ref?}  • two_col {title, leftTitle?, left:[string], rightTitle?, right:[string]}",
+        "• highlights {title, items:[{title,body}] (2-6)} callout grid  • kpi {title, kpis:[{value,label}]}  • quote {quote, attribution?}",
+        "• table {title, headers:[string], rows:[[string,...]]}  • comparison {title, columns:[string], rows:[{label,cells:[...]}]} (✓/—)",
+        "• chart {title, chartType:'bar'|'line'|'pie'|'doughnut'|'area', labels:[string], values:[number] OR series:[{name,labels,values}]}",
+        "• board {title, blocks:[{kind:'text'|'stat'|'chart'|'image'|'table'|'quote', col:0-11, colSpan, row:0+, rowSpan, ...}]}  ← DENSE composite: text + chart + photo + stats on ONE slide",
+        "• timeline {title, milestones:[{date,title,body?}]}  • phasing {title, periods:[string], phases:[{label,start,span,note?}]} Gantt",
+        "• map {title, caption?, pins:[{x:0-1,y:0-1,label}], list:[{label,sub?}]}  • disclaimer {title, paragraphs:[string]}  • closing {heading, body, contacts?}",
+        "• covenant {title, companyName, grade:'A'-'E', score:0-100, status?, flags:[{level:'red'|'amber'|'info', label, detail?}], verdict?}  — tenant covenant slide; populate it from check_covenant results",
+        "Any card may add an image via `ref` (a chat-media/image reference) or `image` (data URI). Order logically (cover → highlights/board → detail → closing). Prefer dense boards over one-idea-per-slide.",
+      ].join("\n"),
       parameters: {
         type: "object",
         properties: {
-          title: { type: "string", description: "Presentation title for the filename and title slide" },
-          subtitle: { type: "string", description: "Optional subtitle for the title slide" },
+          title: { type: "string", description: "Presentation title for the filename and cover" },
+          subtitle: { type: "string", description: "Optional subtitle for the cover" },
+          cards: {
+            type: "array",
+            description: "PREFERRED. Array of typed card objects (see the card types in the tool description). Each item is { type, ...fields }.",
+            items: { type: "object", properties: { type: { type: "string", description: "Card type (cover, content, board, chart, table, highlights, two_col, statement, quote, timeline, phasing, map, kpi, comparison, disclaimer, closing, image, section)" } }, required: ["type"] },
+          },
           slides: {
             type: "array",
-            description: "Array of slides to include in the presentation",
+            description: "Legacy fallback (used only if `cards` is omitted). Simple slides.",
             items: {
               type: "object",
               properties: {
                 title: { type: "string", description: "Slide title" },
-                bullets: { type: "array", items: { type: "string" }, description: "Array of bullet point texts for the slide" },
-                notes: { type: "string", description: "Optional speaker notes for the slide" },
+                bullets: { type: "array", items: { type: "string" }, description: "Bullet point texts" },
+                notes: { type: "string", description: "Optional speaker notes" },
                 table: {
                   type: "object",
-                  description: "Optional table to display on the slide",
+                  description: "Optional table",
                   properties: {
                     headers: { type: "array", items: { type: "string" } },
                     rows: { type: "array", items: { type: "array", items: { type: "string" } } },
@@ -2558,7 +2687,51 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
             },
           },
         },
-        required: ["title", "slides"],
+        required: ["title"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "generate_org_chart",
+      description: "Generate an organisation chart as an editable PowerPoint (.pptx): the classic connected-boxes hierarchy tree (boxes joined by lines), one chart per slide. Use whenever the user asks for an org chart, organogram, team structure, reporting lines or role hierarchy — generate_pptx can only do tables, not the tree. Every box is a movable shape, so the user can reshuffle names in PowerPoint.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Chart title (e.g. 'BGP Business Organisation Chart')" },
+          tree: {
+            type: "object",
+            description: "The hierarchy as a nested tree. Each node: { name, role?, support?: string[], children?: node[] }. name = person or 'TBC'; role = function/title; support = additional team names shown under the lead in the same box. Keep total leaf nodes <= 12 for a readable single page.",
+            properties: {
+              name: { type: "string" },
+              role: { type: "string" },
+              support: { type: "array", items: { type: "string" } },
+              children: { type: "array", items: { type: "object" } },
+            },
+            required: ["name"],
+          },
+          notes: { type: "array", items: { type: "string" }, description: "Optional footnotes shown under the chart (e.g. 'names suggested based on skill sets')." },
+        },
+        required: ["title", "tree"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "check_covenant",
+      description: "Financial covenant / risk check on a UK company — the house replacement for Red Flag/Experian. Returns a 0-100 score, A-E grade, red/amber flags and a two-line verdict, built from Companies House (status, charges/debt, insolvency, overdue filings, officer churn, filed-accounts figures) and The Gazette (winding-up petitions and other corporate-insolvency notices). Use whenever the user asks about tenant covenant strength, financial health, credit risk, debt issues, or 'can they pay the rent' for any company. Provide the Companies House number if known, otherwise the exact company name (it will be resolved via CH search).",
+      parameters: {
+        type: "object",
+        properties: {
+          companyNumber: { type: "string", description: "Companies House number (preferred, e.g. '00365335')" },
+          companyName: { type: "string", description: "Exact company name if the number is unknown — resolved via Companies House search" },
+          refresh: { type: "boolean", description: "Force a fresh check instead of the ≤7-day cached report" },
+          watch: { type: "boolean", description: "Also add the company to the nightly covenant watchlist (alerts on deterioration)" },
+        },
       },
     },
   });
@@ -4011,7 +4184,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "deep_investigate",
-      description: "Run a deep intelligence investigation on a company, person, and/or property. Combines Companies House (full profile, officers, PSCs, corporate ownership chain, ultimate parent/brand identification), Apollo.io (contact details — emails, phone numbers, LinkedIn), UK Sanctions List screening, web search (recent news and activity), and CRM cross-referencing into a comprehensive intelligence report. Use when someone asks to 'investigate', 'dig into', 'research', 'find out about', 'who owns', 'who to contact', 'find the owner', 'known associates', 'deep dive', or wants to find key decision-makers and contact routes for a company, person, or property. This is the D&B-style corporate intelligence tool. When a property address is provided, it will trace ownership back through SPVs to the real owner, find all associated people and companies, and suggest who to speak to about acquiring or managing the property.",
+      description: "Run a deep intelligence investigation on a company, person, and/or property. Combines Companies House (full profile, officers, PSCs, corporate ownership chain, ultimate parent/brand identification), Apollo.io and RocketReach (contact details — emails, phone numbers, LinkedIn), UK Sanctions List screening, web search (recent news and activity), and CRM cross-referencing into a comprehensive intelligence report. Use when someone asks to 'investigate', 'dig into', 'research', 'find out about', 'who owns', 'who to contact', 'find the owner', 'known associates', 'deep dive', or wants to find key decision-makers and contact routes for a company, person, or property. This is the D&B-style corporate intelligence tool. When a property address is provided, it will trace ownership back through SPVs to the real owner, find all associated people and companies, and suggest who to speak to about acquiring or managing the property.",
       parameters: {
         type: "object",
         properties: {
@@ -4022,6 +4195,40 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           includeWebSearch: { type: "boolean", description: "Whether to include web search for recent news/activity about the subjects. Default true." },
         },
         required: [],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "search_food_hygiene",
+      description: "Search the UK Food Standards Agency hygiene-ratings register for every rated premises matching a business name. Free, authoritative, and instant — for any F&B or hospitality operator this returns their real trading footprint: each site's address, postcode, local authority, hygiene rating and inspection date. Use it to build an operator's site list, verify where a brand actually trades, or spot expansion (a recent rating date at a new address means a new site). Covers England, Wales and Northern Ireland with 0-5 ratings; Scottish premises return Pass/Improvement Required.",
+      parameters: {
+        type: "object",
+        properties: {
+          businessName: { type: "string", description: "Business/brand name as it appears on premises registrations, e.g. 'Dishoom' or 'A Wong'. Partial matches work." },
+          maxResults: { type: "number", description: "Max premises to return (1-200). Default 50." },
+        },
+        required: ["businessName"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "rocketreach_person_lookup",
+      description: "Look up a specific person's verified contact details (emails with SMTP validation, phones, LinkedIn) via RocketReach. Searches by person name — optionally narrowed by company name or website domain — then reveals the best-matching profile(s). Reveals cost RocketReach credits, so use this for specific named targets (e.g. directors/PSCs found via Companies House or deep_investigate), not broad discovery. Returns all candidates with employer + title so namesakes can be rejected: only trust a result whose employer matches the target brand, and only treat an email as verified (grade A material) when its smtpValid field is 'valid'.",
+      parameters: {
+        type: "object",
+        properties: {
+          personName: { type: "string", description: "The person's full name, e.g. 'Andrew Wong'." },
+          companyName: { type: "string", description: "Company or brand name to disambiguate namesakes, e.g. 'A. Wong'." },
+          domain: { type: "string", description: "The company's website domain, e.g. 'awong.co.uk'. The strongest disambiguator — prefer this over companyName when known." },
+          maxReveals: { type: "number", description: "How many top candidates to reveal full contact details for (1-3). Default 1. Each reveal costs credits." },
+        },
+        required: ["personName"],
       },
     },
   });
@@ -4351,8 +4558,8 @@ async function executeModelRun(args: { templateId: string; name: string; inputVa
   });
 
   try {
-    const { getMicrosoftToken } = await import("./microsoft");
-    const msToken = await getMicrosoftToken();
+    const { getAppGraphToken } = await import("./microsoft");
+    const msToken = await getAppGraphToken();
     if (msToken) {
       const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (siteRes.ok) {
@@ -4439,9 +4646,6 @@ async function getTeamMemberMapping(): Promise<Record<string, { name: string; em
   return mapping;
 }
 
-
-const SHAREPOINT_HOST = "brucegillinghampollardlimited.sharepoint.com";
-const SHAREPOINT_SITE_PATH = "/sites/BGP";
 
 async function resolveOneDriveShortLink(url: string): Promise<string> {
   if (url.includes("1drv.ms") || url.includes("onedrive.live.com")) {
@@ -5515,7 +5719,35 @@ export async function executeCrmToolRaw(
 
   if (fnName === "get_company_accounts") {
     const companyName = fnArgs.companyName as string | undefined;
+    const companyNumber = fnArgs.companyNumber ? String(fnArgs.companyNumber).trim().toUpperCase() : undefined;
     let cid = fnArgs.companyId as string | undefined;
+
+    // Companies House number path — works for companies not yet in the CRM.
+    // A minimal record is created (or the number attached to a name match)
+    // so the downloaded filing is banked against a real company row.
+    if (!cid && companyNumber) {
+      const { rows } = await pool.query<{ id: string }>(
+        `SELECT id FROM crm_companies WHERE UPPER(companies_house_number) = $1 LIMIT 1`,
+        [companyNumber]
+      );
+      cid = rows[0]?.id;
+      if (!cid && companyName) {
+        const { rows: byName } = await pool.query<{ id: string }>(
+          `UPDATE crm_companies SET companies_house_number = $1
+            WHERE id = (SELECT id FROM crm_companies WHERE LOWER(name) LIKE LOWER($2) AND companies_house_number IS NULL LIMIT 1)
+            RETURNING id`,
+          [companyNumber, `%${companyName}%`]
+        );
+        cid = byName[0]?.id;
+      }
+      if (!cid) {
+        const { rows: created } = await pool.query<{ id: string }>(
+          `INSERT INTO crm_companies (name, companies_house_number) VALUES ($1, $2) RETURNING id`,
+          [companyName || `Company ${companyNumber}`, companyNumber]
+        );
+        cid = created[0]?.id;
+      }
+    }
 
     // Resolve the CRM company id by name if not supplied.
     if (!cid && companyName) {
@@ -5528,7 +5760,7 @@ export async function executeCrmToolRaw(
       );
       cid = rows[0]?.id;
     }
-    if (!cid) return { data: { error: "Company not found in CRM, or it has no Companies House number." } };
+    if (!cid) return { data: { error: "Company not found in CRM. Pass companyNumber (the Companies House number, e.g. from deep_investigate) and the record will be created automatically." } };
 
     const { fetchLatestAccountsForCompany, extractAccountsFigures } = await import("./ch-accounts");
     let fetchStatus: string;
@@ -5597,8 +5829,21 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "create_investment_tracker") {
-    const { investmentTracker } = await import("@shared/schema");
+    const { investmentTracker, crmProperties } = await import("@shared/schema");
+    let propertyId: string;
+    const [existingProp] = await db.select().from(crmProperties).where(eq(crmProperties.name, fnArgs.assetName)).limit(1);
+    if (existingProp) {
+      propertyId = existingProp.id;
+    } else {
+      const [newProp] = await db.insert(crmProperties).values({
+        name: fnArgs.assetName,
+        address: fnArgs.address ? { street: fnArgs.address } : null,
+        tenure: fnArgs.tenure || null,
+      }).returning();
+      propertyId = newProp.id;
+    }
     const [created] = await db.insert(investmentTracker).values({
+      propertyId,
       assetName: fnArgs.assetName, address: fnArgs.address, status: fnArgs.status || "Reporting",
       boardType: fnArgs.boardType || "Purchases", client: fnArgs.client, clientContact: fnArgs.clientContact,
       vendor: fnArgs.vendor, vendorAgent: fnArgs.vendorAgent, guidePrice: fnArgs.guidePrice,
@@ -5902,7 +6147,7 @@ export async function executeCrmToolRaw(
       };
       const mapping = tableMap[linkType];
       if (!mapping) return { data: { success: false, error: `Unknown link type "${linkType}"` } };
-      await pool.query(`INSERT INTO ${mapping.table} (id, ${mapping.col1}, ${mapping.col2}) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [linkId, sourceId, targetId]);
+      await pool.query(`INSERT INTO ${mapping.table} (id, ${mapping.col1}, ${mapping.col2}) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM ${mapping.table} WHERE ${mapping.col1} = $2 AND ${mapping.col2} = $3)`, [linkId, sourceId, targetId]);
       return { data: { success: true, action: "linked", linkType, sourceId, targetId } };
     } catch (err: any) {
       return { data: { success: false, error: err.message } };
@@ -7112,7 +7357,6 @@ export async function executeCrmToolRaw(
         const buffer = await response.arrayBuffer();
         const { PDFParse } = await import("pdf-parse");
         const parser = new PDFParse(new Uint8Array(buffer));
-        await parser.load();
         const textResult = await parser.getText();
         extractedText = textResult.pages.map((p: any) => p.text || "").join("\n\n");
         const info = await parser.getInfo();
@@ -7528,62 +7772,16 @@ export async function executeCrmToolRaw(
 
   if (fnName === "generate_pptx") {
     try {
-      const PptxGenJS = (await import("pptxgenjs")).default;
       const crypto = (await import("crypto")).default;
       const { saveFile } = await import("./file-storage");
-
-      const pptx = new PptxGenJS();
-      pptx.layout = "LAYOUT_WIDE";
-      pptx.author = "Bruce Gillingham Pollard";
-      pptx.company = "Bruce Gillingham Pollard";
-      pptx.title = fnArgs.title as string;
-
-      const titleSlide = pptx.addSlide();
-      titleSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: "100%", fill: { color: "232323" } });
-      titleSlide.addText("BRUCE GILLINGHAM POLLARD", { x: 0.8, y: 0.5, w: 8, h: 0.5, fontSize: 14, color: "AAAAAA", fontFace: "Calibri", bold: true });
-      titleSlide.addText(fnArgs.title as string, { x: 0.8, y: 2.0, w: 10, h: 1.5, fontSize: 36, color: "FFFFFF", fontFace: "Calibri", bold: true });
-      if (fnArgs.subtitle) {
-        titleSlide.addText(fnArgs.subtitle as string, { x: 0.8, y: 3.5, w: 10, h: 0.8, fontSize: 18, color: "CCCCCC", fontFace: "Calibri" });
-      }
-
-      const slides = (fnArgs.slides as any[]) || [];
-      for (const slideData of slides) {
-        const slide = pptx.addSlide();
-        slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: 0.8, fill: { color: "232323" } });
-        slide.addText("BGP", { x: 0.3, y: 0.15, w: 1, h: 0.5, fontSize: 12, color: "FFFFFF", fontFace: "Calibri", bold: true });
-        slide.addText(slideData.title || "", { x: 0.5, y: 1.0, w: 11, h: 0.7, fontSize: 24, color: "232323", fontFace: "Calibri", bold: true });
-
-        let yPos = 1.9;
-        if (slideData.bullets && slideData.bullets.length > 0) {
-          const bulletText = slideData.bullets.map((b: string) => ({ text: b, options: { fontSize: 14, color: "444444", fontFace: "Calibri", bullet: true, breakType: "n" as const, paraSpaceAfter: 6 } }));
-          slide.addText(bulletText, { x: 0.8, y: yPos, w: 10.5, h: 4.0, valign: "top" });
-          yPos += Math.min(slideData.bullets.length * 0.45, 4.0) + 0.3;
-        }
-
-        if (slideData.table && slideData.table.headers && slideData.table.rows) {
-          const tableRows: any[][] = [];
-          tableRows.push(slideData.table.headers.map((h: string) => ({ text: h, options: { bold: true, fontSize: 11, color: "FFFFFF", fill: { color: "232323" }, fontFace: "Calibri" } })));
-          slideData.table.rows.forEach((row: string[], ri: number) => {
-            tableRows.push(row.map((cell: string) => ({ text: cell, options: { fontSize: 10, color: "333333", fill: { color: ri % 2 === 0 ? "F5F5F5" : "FFFFFF" }, fontFace: "Calibri" } })));
-          });
-          slide.addTable(tableRows, { x: 0.5, y: yPos, w: 11.5, fontSize: 10, border: { type: "solid", pt: 0.5, color: "DDDDDD" } });
-        }
-
-        if (slideData.notes) {
-          slide.addNotes(slideData.notes);
-        }
-      }
-
-      const pptxBuffer = await pptx.write({ outputType: "nodebuffer" }) as Buffer;
-      const safeName = (fnArgs.title as string).replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_");
+      const { buffer: pptxBuffer, safeName, slideCount } = await buildDeckPptxFromArgs(fnArgs);
       const uniqueId = crypto.randomBytes(8).toString("hex");
       const storageFilename = `${Date.now()}-${uniqueId}-${safeName}.pptx`;
-
       await saveFile(`chat-media/${storageFilename}`, pptxBuffer, "application/vnd.openxmlformats-officedocument.presentationml.presentation", `${safeName}.pptx`);
       const downloadUrl = `/api/chat-media/${storageFilename}`;
       return {
         data: {
-          success: true, downloadUrl, filename: `${safeName}.pptx`, slides: slides.length + 1, action: "pptx_generated",
+          success: true, downloadUrl, filename: `${safeName}.pptx`, slides: slideCount, action: "pptx_generated",
           downloadMarkdown: `[📊 Download ${safeName}.pptx](${downloadUrl})`,
           instruction: "IMPORTANT: Include the downloadMarkdown text EXACTLY as-is in your response so the user can download the file.",
         },
@@ -7592,6 +7790,66 @@ export async function executeCrmToolRaw(
     } catch (err: any) {
       console.error("[chatbgp] PowerPoint generation error:", err?.message);
       return { data: { error: `Failed to generate PowerPoint: ${err?.message || "Unknown error"}` } };
+    }
+  }
+
+  if (fnName === "generate_org_chart") {
+    try {
+      if (!fnArgs.tree || typeof fnArgs.tree !== "object" || !fnArgs.tree.name) {
+        return { data: { error: "tree is required — a nested { name, role?, support?, children? } hierarchy" } };
+      }
+      const { buildOrgChartPptx } = await import("./org-chart-pptx");
+      const crypto = (await import("crypto")).default;
+      const { saveFile } = await import("./file-storage");
+      const pptxBuffer = await buildOrgChartPptx({ title: String(fnArgs.title || "Organisation Chart"), tree: fnArgs.tree, notes: Array.isArray(fnArgs.notes) ? fnArgs.notes : undefined });
+      const safeName = String(fnArgs.title || "Organisation_Chart").replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_");
+      const storageFilename = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeName}.pptx`;
+      await saveFile(`chat-media/${storageFilename}`, pptxBuffer, "application/vnd.openxmlformats-officedocument.presentationml.presentation", `${safeName}.pptx`);
+      const downloadUrl = `/api/chat-media/${storageFilename}`;
+      return {
+        data: {
+          success: true, downloadUrl, filename: `${safeName}.pptx`, action: "pptx_generated",
+          downloadMarkdown: `[📊 Download ${safeName}.pptx](${downloadUrl})`,
+          instruction: "IMPORTANT: Include the downloadMarkdown text EXACTLY as-is in your response so the user can download the file.",
+        },
+        action: { type: "download", url: downloadUrl, filename: `${safeName}.pptx` },
+      };
+    } catch (err: any) {
+      console.error("[chatbgp] org chart generation error:", err?.message);
+      return { data: { error: `Failed to generate org chart: ${err?.message || "Unknown error"}` } };
+    }
+  }
+
+  if (fnName === "check_covenant") {
+    try {
+      const { getCovenantReport, addToWatchlist } = await import("./covenant-engine");
+      const { chFetch } = await import("./companies-house");
+      let num: string | null = fnArgs.companyNumber ? String(fnArgs.companyNumber).trim() : null;
+      let resolvedFrom: string | null = null;
+      if (!num && fnArgs.companyName) {
+        const search = await chFetch(`/search/companies?q=${encodeURIComponent(String(fnArgs.companyName))}&items_per_page=5`);
+        const hit = (search?.items || [])[0];
+        if (!hit) return { data: { error: `No Companies House match for "${fnArgs.companyName}"` } };
+        num = hit.company_number;
+        resolvedFrom = `${hit.title} (${hit.company_number}) — ${hit.company_status}`;
+      }
+      if (!num) return { data: { error: "Provide companyNumber or companyName" } };
+      const report = await getCovenantReport(num, { refresh: !!fnArgs.refresh });
+      if (fnArgs.watch) await addToWatchlist(num, report.companyName).catch(() => {});
+      return {
+        data: {
+          resolvedFrom,
+          company: `${report.companyName} (${report.companyNumber})`,
+          grade: report.grade, score: report.score, status: report.status,
+          verdict: report.verdict,
+          flags: report.flags,
+          signals: report.signals,
+          ccjNote: `CCJs have no free API — official register search ~£6-10: ${report.ccjCheckUrl}`,
+          watched: !!fnArgs.watch,
+        },
+      };
+    } catch (err: any) {
+      return { data: { error: `Covenant check failed: ${err?.message || "unknown"}` } };
     }
   }
 
@@ -7766,7 +8024,7 @@ export async function executeCrmToolRaw(
 
       if (action === "save_to_sharepoint" && fnArgs.folderPath) {
         const { uploadFileToSharePoint } = await import("./microsoft");
-        const uploadResult = await uploadFileToSharePoint(req, fnArgs.folderPath, name, buffer);
+        const uploadResult = await uploadFileToSharePoint(buffer, name, attachment.contentType || "application/octet-stream", fnArgs.folderPath);
         return { data: { success: true, action: "saved_to_sharepoint", fileName: name, path: fnArgs.folderPath, uploadResult } };
       }
 
@@ -7859,7 +8117,25 @@ export async function executeCrmToolRaw(
 
       const sheets = fnArgs.sheets as Array<{ name: string; headers: string[]; rows: string[][] }>;
 
+      // The model occasionally passes objects/arrays as cell values despite the
+      // string[][] schema — those stringify to "[object Object]" in the workbook.
+      // Coerce every cell to a clean primitive before it reaches ExcelJS.
+      const cellText = (val: any): string => {
+        if (val === null || val === undefined) return "";
+        if (typeof val === "string") return cleanOfficeText(val);
+        if (typeof val === "number" || typeof val === "boolean") return String(val);
+        if (Array.isArray(val)) return val.map(cellText).filter(Boolean).join(", ");
+        if (typeof val === "object") {
+          const inner = val.text ?? val.value ?? val.email ?? val.name ?? val.label;
+          if (inner !== undefined) return cellText(inner);
+          try { return JSON.stringify(val); } catch { return ""; }
+        }
+        return String(val);
+      };
+
       for (const sheet of sheets) {
+        sheet.headers = (sheet.headers || []).map(cellText);
+        sheet.rows = (sheet.rows || []).map((r) => (r || []).map(cellText));
         const safeSheetName = sheet.name.replace(/[\\/*?\[\]:]/g, "").substring(0, 31) || "Sheet1";
         const ws = wb.addWorksheet(safeSheetName);
 
@@ -9123,7 +9399,16 @@ Be thorough — include every unit row you can classify, across all properties i
         satisfiedCharges,
         lastAccountsFiled: lastAccountsFiling?.date || profile.lastAccountsMadeUpTo || "unknown",
         flags: financialFlags,
-        note: "This is an indicative assessment based on publicly available Companies House data. For definitive covenant checks, obtain and review the actual filed accounts or commission a credit report (D&B/Experian).",
+        houseCovenant: await (async () => {
+          // The canonical grade — same engine as check_covenant, so the two
+          // never diverge. Non-fatal: the heuristic words above remain if it fails.
+          try {
+            const { getCovenantReport } = await import("./covenant-engine");
+            const r = await getCovenantReport(chNumber!);
+            return { grade: r.grade, score: r.score, redFlags: r.flags.filter((fl) => fl.level === "red").map((fl) => fl.label) };
+          } catch { return null; }
+        })(),
+        note: "Indicative wording above; houseCovenant carries the canonical A-E grade (same engine as check_covenant, incl. Gazette insolvency signals).",
       };
 
       const riskAssessment = assessRisk(profile, activeOfficers, activePscs, sanctionsResults as any);
@@ -9270,7 +9555,7 @@ Be thorough — include every unit row you can classify, across all properties i
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 30000);
-        let downloadRes: Response;
+        let downloadRes: globalThis.Response;
         try {
           downloadRes = await fetch("https://content.dropboxapi.com/2/files/download", {
             method: "POST",
@@ -9696,6 +9981,103 @@ Be thorough — include every unit row you can classify, across all properties i
     }
   }
 
+  if (fnName === "search_food_hygiene") {
+    try {
+      const name = String(fnArgs.businessName || "").trim();
+      if (!name) return { data: { error: "businessName is required" } };
+      const top = Math.max(1, Math.min(200, Number(fnArgs.maxResults) || 50));
+      const url = `https://api.ratings.food.gov.uk/Establishments?name=${encodeURIComponent(name)}&pageSize=${top}&pageNumber=1`;
+      const res = await fetch(url, {
+        headers: { "x-api-version": "2", accept: "application/json" },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) return { data: { error: `FSA hygiene API returned ${res.status}` } };
+      const data = (await res.json()) as any;
+      const establishments = (data?.establishments || []).map((e: any) => ({
+        name: e.BusinessName,
+        type: e.BusinessType,
+        rating: e.RatingValue,
+        ratingDate: e.RatingDate ? String(e.RatingDate).slice(0, 10) : null,
+        address: [e.AddressLine1, e.AddressLine2, e.AddressLine3, e.AddressLine4].filter(Boolean).join(", "),
+        postcode: e.PostCode || null,
+        localAuthority: e.LocalAuthorityName || null,
+        newRatingPending: e.NewRatingPending === "True" || e.NewRatingPending === true || undefined,
+      }));
+      return { data: {
+        query: name,
+        count: establishments.length,
+        establishments,
+        note: "Authoritative FSA register of rated premises. Treat this as the operator's real trading footprint; a recent ratingDate at a new address is expansion evidence. Watch for unrelated businesses sharing the name — check the address/type fits the brand.",
+      } };
+    } catch (err: any) {
+      return { data: { error: `FSA hygiene lookup failed: ${err?.message || "unknown"}` } };
+    }
+  }
+
+  if (fnName === "rocketreach_person_lookup") {
+    try {
+      const { searchRocketReach, revealProfile, isRocketReachConfigured } = await import("./rocketreach-contacts");
+      if (!isRocketReachConfigured()) return { data: { error: "ROCKETREACH_API_KEY not configured" } };
+      const personName = String(fnArgs.personName || "").trim();
+      if (!personName) return { data: { error: "personName is required" } };
+      const companyName = fnArgs.companyName ? String(fnArgs.companyName).trim() : undefined;
+      const domain = fnArgs.domain ? String(fnArgs.domain).trim() : undefined;
+      const maxReveals = Math.max(1, Math.min(3, Number(fnArgs.maxReveals) || 1));
+
+      let profiles: any[] = await searchRocketReach({ personName, companyName, domain });
+      // Domain/company filters can be too tight for founders whose RocketReach
+      // profile predates the current venture — retry on name alone so the
+      // model can judge the candidates by employer itself.
+      let widened = false;
+      if (profiles.length === 0 && (companyName || domain)) {
+        profiles = await searchRocketReach({ personName });
+        widened = true;
+      }
+      if (profiles.length === 0) {
+        return { data: { personName, totalMatches: 0, note: "No RocketReach profile matched this name. This tier of independent operator is often unindexed — fall back to the company's own website or a warm route." } };
+      }
+
+      const candidates = profiles.slice(0, 10).map((p: any) => ({
+        id: p.id ?? null,
+        name: p.name || [p.first_name, p.last_name].filter(Boolean).join(" "),
+        title: p.current_title || null,
+        employer: p.current_employer || null,
+        location: typeof p.location === "string" ? p.location : (p.location?.city || null),
+        linkedin: p.linkedin_url || null,
+      }));
+
+      const revealed: any[] = [];
+      for (const c of candidates.slice(0, maxReveals)) {
+        if (c.id === null || c.id === undefined) continue;
+        const full: any = await revealProfile(c.id);
+        if (!full) continue;
+        const emails = (full.emails || []).map((e: any) => ({ email: e.email, type: e.type || null, smtpValid: e.smtp_valid || "unknown" }));
+        const phones = (full.phones || []).map((ph: any) => ({ number: ph.number, type: ph.type || null }));
+        revealed.push({
+          id: c.id,
+          name: full.name || c.name,
+          title: full.current_title || c.title,
+          employer: full.current_employer || c.employer,
+          linkedin: full.linkedin_url || c.linkedin,
+          emails,
+          phones,
+          recommendedEmail: full.recommended_professional_email || full.recommended_email || emails[0]?.email || null,
+        });
+      }
+
+      return { data: {
+        personName,
+        totalMatches: profiles.length,
+        widenedToNameOnly: widened || undefined,
+        revealed,
+        otherCandidates: candidates.slice(maxReveals),
+        note: "Only emails with smtpValid='valid' count as verified. Reject any candidate whose employer doesn't line up with the target brand — namesakes are common.",
+      } };
+    } catch (err: any) {
+      return { data: { error: `RocketReach lookup failed: ${err?.message || "unknown"}` } };
+    }
+  }
+
   if (fnName === "deep_investigate") {
     try {
       const { chFetch, discoverUltimateParent, identifyBrandParent } = await import("./companies-house");
@@ -10104,6 +10486,42 @@ Be thorough — include every unit row you can classify, across all properties i
             }
           } else if (!apolloApiKey) {
             report.sourcesStatus.apollo = "not_configured";
+          }
+
+          // RocketReach — runs when Apollo found nothing useful (not configured,
+          // no results, or results with zero emails). Searches by company name,
+          // returns C-suite / property decision-makers with best available email.
+          const apolloHasEmails = (report.company.contactIntelligence || []).some((c: any) => c.email);
+          const rrNoResults = !apolloApiKey || !apolloHasEmails;
+          if (rrNoResults) {
+            try {
+              const { searchRocketReach, isRocketReachConfigured } = await import("./rocketreach-contacts");
+              if (isRocketReachConfigured()) {
+                const domain = report.company.profile?.registeredOffice
+                  ? undefined
+                  : undefined; // domain not available here — fall back to name
+                const rrPeople = await searchRocketReach({
+                  companyName: report.company.profile?.companyName || targetCompanyName,
+                  scope: "tenant",
+                });
+                if (rrPeople.length > 0) {
+                  report.company.contactIntelligence = rrPeople.slice(0, 10).map((p: any) => ({
+                    name: p.name,
+                    title: p.current_title,
+                    linkedin: p.linkedin_url,
+                    email: p.emails?.[0]?.email || null,
+                    source: "rocketreach",
+                  }));
+                  report.sourcesStatus.rocketreach = `ok (${rrPeople.length} found)`;
+                } else {
+                  report.sourcesStatus.rocketreach = "no_matches";
+                }
+              } else {
+                report.sourcesStatus.rocketreach = "not_configured";
+              }
+            } catch (rrErr: any) {
+              report.sourcesStatus.rocketreach = `failed: ${rrErr.message}`;
+            }
           }
 
           try {
@@ -10615,8 +11033,21 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "create_investment_tracker") {
-    const { investmentTracker } = await import("@shared/schema");
+    const { investmentTracker, crmProperties } = await import("@shared/schema");
+    let propertyId: string;
+    const [existingProp] = await db.select().from(crmProperties).where(eq(crmProperties.name, fnArgs.assetName)).limit(1);
+    if (existingProp) {
+      propertyId = existingProp.id;
+    } else {
+      const [newProp] = await db.insert(crmProperties).values({
+        name: fnArgs.assetName,
+        address: fnArgs.address ? { street: fnArgs.address } : null,
+        tenure: fnArgs.tenure || null,
+      }).returning();
+      propertyId = newProp.id;
+    }
     const [created] = await db.insert(investmentTracker).values({
+      propertyId,
       assetName: fnArgs.assetName,
       address: fnArgs.address,
       status: fnArgs.status || "Reporting",
@@ -10926,15 +11357,15 @@ export async function handleCrmToolCall(
       if (linkType === "contact-deal") {
         const check = await pool.query(`SELECT id FROM crm_contacts WHERE id = $1`, [sourceId]);
         if (!check.rows.length) return { handled: true, response: { reply: `Contact with ID "${sourceId}" not found.` } };
-        await pool.query(`INSERT INTO crm_contact_deals (id, contact_id, deal_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_contact_deals (id, contact_id, deal_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_contact_deals WHERE contact_id = $2 AND deal_id = $3)`, [linkId, sourceId, targetId]);
       } else if (linkType === "contact-property") {
-        await pool.query(`INSERT INTO crm_contact_properties (id, contact_id, property_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_contact_properties (id, contact_id, property_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_contact_properties WHERE contact_id = $2 AND property_id = $3)`, [linkId, sourceId, targetId]);
       } else if (linkType === "contact-requirement") {
-        await pool.query(`INSERT INTO crm_contact_requirements (id, contact_id, requirement_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_contact_requirements (id, contact_id, requirement_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_contact_requirements WHERE contact_id = $2 AND requirement_id = $3)`, [linkId, sourceId, targetId]);
       } else if (linkType === "company-property") {
-        await pool.query(`INSERT INTO crm_company_properties (id, company_id, property_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_company_properties (id, company_id, property_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_company_properties WHERE company_id = $2 AND property_id = $3)`, [linkId, sourceId, targetId]);
       } else if (linkType === "company-deal") {
-        await pool.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [linkId, sourceId, targetId]);
+        await pool.query(`INSERT INTO crm_company_deals (id, company_id, deal_id) SELECT $1, $2, $3 WHERE NOT EXISTS (SELECT 1 FROM crm_company_deals WHERE company_id = $2 AND deal_id = $3)`, [linkId, sourceId, targetId]);
       } else {
         return { handled: true, response: { reply: `Unknown link type "${linkType}".` } };
       }
@@ -11015,7 +11446,6 @@ export async function handleCrmToolCall(
         const buffer = await response.arrayBuffer();
         const { PDFParse } = await import("pdf-parse");
         const parser = new PDFParse(new Uint8Array(buffer));
-        await parser.load();
         const textResult = await parser.getText();
         extractedText = textResult.pages.map((p: any) => p.text || "").join("\n\n");
         const info = await parser.getInfo();
@@ -11436,67 +11866,45 @@ export async function handleCrmToolCall(
 
   if (fnName === "generate_pptx") {
     try {
-      const PptxGenJS = (await import("pptxgenjs")).default;
       const crypto = (await import("crypto")).default;
       const { saveFile } = await import("./file-storage");
-
-      const pptx = new PptxGenJS();
-      pptx.layout = "LAYOUT_WIDE";
-      pptx.author = "Bruce Gillingham Pollard";
-      pptx.company = "Bruce Gillingham Pollard";
-      pptx.title = fnArgs.title as string;
-
-      const titleSlide = pptx.addSlide();
-      titleSlide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: "100%", fill: { color: "232323" } });
-      titleSlide.addText("BRUCE GILLINGHAM POLLARD", { x: 0.8, y: 0.5, w: 8, h: 0.5, fontSize: 14, color: "AAAAAA", fontFace: "Calibri", bold: true });
-      titleSlide.addText(fnArgs.title as string, { x: 0.8, y: 2.0, w: 10, h: 1.5, fontSize: 36, color: "FFFFFF", fontFace: "Calibri", bold: true });
-      if (fnArgs.subtitle) {
-        titleSlide.addText(fnArgs.subtitle as string, { x: 0.8, y: 3.5, w: 10, h: 0.8, fontSize: 18, color: "CCCCCC", fontFace: "Calibri" });
-      }
-
-      const slides = (fnArgs.slides as any[]) || [];
-      for (const slideData of slides) {
-        const slide = pptx.addSlide();
-        slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: "100%", h: 0.8, fill: { color: "232323" } });
-        slide.addText("BGP", { x: 0.3, y: 0.15, w: 1, h: 0.5, fontSize: 12, color: "FFFFFF", fontFace: "Calibri", bold: true });
-        slide.addText(slideData.title || "", { x: 0.5, y: 1.0, w: 11, h: 0.7, fontSize: 24, color: "232323", fontFace: "Calibri", bold: true });
-
-        let yPos = 1.9;
-        if (slideData.bullets && slideData.bullets.length > 0) {
-          const bulletText = slideData.bullets.map((b: string) => ({ text: b, options: { fontSize: 14, color: "444444", fontFace: "Calibri", bullet: true, breakType: "n" as const, paraSpaceAfter: 6 } }));
-          slide.addText(bulletText, { x: 0.8, y: yPos, w: 10.5, h: 4.0, valign: "top" });
-          yPos += Math.min(slideData.bullets.length * 0.45, 4.0) + 0.3;
-        }
-
-        if (slideData.table && slideData.table.headers && slideData.table.rows) {
-          const tableRows: any[][] = [];
-          tableRows.push(slideData.table.headers.map((h: string) => ({ text: h, options: { bold: true, fontSize: 11, color: "FFFFFF", fill: { color: "232323" }, fontFace: "Calibri" } })));
-          slideData.table.rows.forEach((row: string[], ri: number) => {
-            tableRows.push(row.map((cell: string) => ({ text: cell, options: { fontSize: 10, color: "333333", fill: { color: ri % 2 === 0 ? "F5F5F5" : "FFFFFF" }, fontFace: "Calibri" } })));
-          });
-          slide.addTable(tableRows, { x: 0.5, y: yPos, w: 11.5, fontSize: 10, border: { type: "solid", pt: 0.5, color: "DDDDDD" } });
-        }
-
-        if (slideData.notes) {
-          slide.addNotes(slideData.notes);
-        }
-      }
-
-      const pptxBuffer = await pptx.write({ outputType: "nodebuffer" }) as Buffer;
-      const safeName = (fnArgs.title as string).replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_");
+      const { buffer: pptxBuffer, safeName, slideCount } = await buildDeckPptxFromArgs(fnArgs);
       const uniqueId = crypto.randomBytes(8).toString("hex");
       const storageFilename = `${Date.now()}-${uniqueId}-${safeName}.pptx`;
-
       await saveFile(`chat-media/${storageFilename}`, pptxBuffer, "application/vnd.openxmlformats-officedocument.presentationml.presentation", `${safeName}.pptx`);
       const downloadUrl = `/api/chat-media/${storageFilename}`;
       const downloadLink = `[📊 Download ${safeName}.pptx](${downloadUrl})`;
-      let reply = await summaryHelper({ success: true, downloadUrl, filename: `${safeName}.pptx`, slides: slides.length + 1, action: "pptx_generated" });
-      if (!reply || !reply.includes("/api/chat-media/")) reply = `Your PowerPoint has been generated with ${slides.length + 1} slides.\n\n${downloadLink}`;
+      let reply = await summaryHelper({ success: true, downloadUrl, filename: `${safeName}.pptx`, slides: slideCount, action: "pptx_generated" });
+      if (!reply || !reply.includes("/api/chat-media/")) reply = `Your PowerPoint has been generated with ${slideCount} slides.\n\n${downloadLink}`;
       else if (!reply.includes(downloadUrl)) reply += `\n\n${downloadLink}`;
       return { handled: true, response: { reply, action: { type: "download", url: downloadUrl, filename: `${safeName}.pptx` } } };
     } catch (err: any) {
       console.error("[chatbgp] PowerPoint generation error:", err?.message);
       return { handled: true, response: { reply: `Failed to generate PowerPoint: ${err?.message || "Unknown error"}` } };
+    }
+  }
+
+  if (fnName === "generate_org_chart") {
+    try {
+      if (!fnArgs.tree || typeof fnArgs.tree !== "object" || !fnArgs.tree.name) {
+        return { handled: true, response: { reply: "I need the hierarchy as a tree to draw an org chart — tell me who reports to whom." } };
+      }
+      const { buildOrgChartPptx } = await import("./org-chart-pptx");
+      const crypto = (await import("crypto")).default;
+      const { saveFile } = await import("./file-storage");
+      const pptxBuffer = await buildOrgChartPptx({ title: String(fnArgs.title || "Organisation Chart"), tree: fnArgs.tree, notes: Array.isArray(fnArgs.notes) ? fnArgs.notes : undefined });
+      const safeName = String(fnArgs.title || "Organisation_Chart").replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_");
+      const storageFilename = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeName}.pptx`;
+      await saveFile(`chat-media/${storageFilename}`, pptxBuffer, "application/vnd.openxmlformats-officedocument.presentationml.presentation", `${safeName}.pptx`);
+      const downloadUrl = `/api/chat-media/${storageFilename}`;
+      const downloadLink = `[\u{1F4CA} Download ${safeName}.pptx](${downloadUrl})`;
+      let reply = await summaryHelper({ success: true, downloadUrl, filename: `${safeName}.pptx`, action: "org_chart_generated" });
+      if (!reply || !reply.includes("/api/chat-media/")) reply = `Your organisation chart is ready as an editable PowerPoint.\n\n${downloadLink}`;
+      else if (!reply.includes(downloadUrl)) reply += `\n\n${downloadLink}`;
+      return { handled: true, response: { reply, action: { type: "download", url: downloadUrl, filename: `${safeName}.pptx` } } };
+    } catch (err: any) {
+      console.error("[chatbgp] org chart generation error:", err?.message);
+      return { handled: true, response: { reply: `Failed to generate org chart: ${err?.message || "Unknown error"}` } };
     }
   }
 
@@ -11644,7 +12052,7 @@ export async function handleCrmToolCall(
 
       if (action === "save_to_sharepoint" && fnArgs.folderPath) {
         const { uploadFileToSharePoint } = await import("./microsoft");
-        const uploadResult = await uploadFileToSharePoint(req, fnArgs.folderPath, name, buffer);
+        const uploadResult = await uploadFileToSharePoint(buffer, name, attachment.contentType || "application/octet-stream", fnArgs.folderPath);
         const reply = await summaryHelper({ success: true, action: "saved_to_sharepoint", fileName: name, path: fnArgs.folderPath });
         return { handled: true, response: { reply: reply || `Saved ${name} to SharePoint at ${fnArgs.folderPath}.` } };
       }
@@ -11859,7 +12267,7 @@ export function setupChatBGPRoutes(app: Express) {
       // /opus or /sonnet at the start of the last user message — applies
       // for this single request (no thread persistence here).
       const fileThreadId = typeof req.body.threadId === "string" ? req.body.threadId : null;
-      let fileSlashOverride: "opus" | "sonnet" | null = null;
+      let fileSlashOverride: "fable" | "opus" | "sonnet" | null = null;
       {
         const lastIdx = messages.length - 1;
         const lastText = typeof messages[lastIdx]?.content === "string" ? messages[lastIdx].content : "";
@@ -11986,7 +12394,7 @@ export function setupChatBGPRoutes(app: Express) {
       }
 
       let tools: any[] = [];
-      try { ({ tools } = await getAvailableTools()); } catch (e: any) {
+      try { ({ tools } = await getAvailableTools()); if ((await clientChatGuard(req)).isClient) tools = []; } catch (e: any) {
         console.error("[ChatBGP file-chat] getAvailableTools failed:", e?.message);
       }
 
@@ -12947,7 +13355,7 @@ export function setupChatBGPRoutes(app: Express) {
     // thread's model_preference. If the user typed JUST the command,
     // short-circuit with an ack — no Claude call. Otherwise strip the
     // command from the message and continue with the new model.
-    let slashOverride: "opus" | "sonnet" | null = null;
+    let slashOverride: "fable" | "opus" | "sonnet" | null = null;
     {
       const allMessages = result.data.messages || [];
       const lastIdx = allMessages.length - 1;
@@ -12981,7 +13389,9 @@ export function setupChatBGPRoutes(app: Express) {
 
     let conversationMessages: any[] = [];
     try {
-      const { tools } = await getAvailableTools();
+      let { tools } = await getAvailableTools();
+      const chatGuard = await clientChatGuard(req);
+      if (chatGuard.isClient) tools = [];
       const userId = req.session.userId!;
       // Lean mode: the firm-wide context builders (memory, learnings, CRM
       // summary, knowledge bank, and a live email/calendar Graph fetch) used to
@@ -12997,6 +13407,7 @@ export function setupChatBGPRoutes(app: Express) {
           currentUserContext = `\n\n## Current User\nYou are speaking with **${currentUser.name}**${currentUser.department ? " (" + currentUser.department + " team)" : ""}${currentUser.role ? " — " + currentUser.role : ""}. Personalise your responses accordingly — use their name occasionally, and prioritise information relevant to their team.\n`;
         }
       } catch {}
+      if (chatGuard.isClient) currentUserContext += chatGuard.constraint;
 
       if (verifiedThreadId) {
         try {
@@ -13024,7 +13435,8 @@ export function setupChatBGPRoutes(app: Express) {
               if (dealRows.rows.length > 0) {
                 threadContext += `\n**Active deals on this property:**\n`;
                 for (const d of dealRows.rows) {
-                  threadContext += `- ${d.name} | ${d.deal_type || ""} | ${d.status} | Fee: ${d.fee ? "£" + Number(d.fee).toLocaleString() : "TBC"} | ${d.team || ""}\n`;
+                  const feeText = chatGuard.isClient ? "" : ` | Fee: ${d.fee ? "£" + Number(d.fee).toLocaleString() : "TBC"}`;
+                  threadContext += `- ${d.name} | ${d.deal_type || ""} | ${d.status}${feeText} | ${d.team || ""}\n`;
                 }
               }
               if (unitRows.rows.length > 0) {
@@ -13056,7 +13468,7 @@ export function setupChatBGPRoutes(app: Express) {
               if (deal.property_name) threadContext += `Property: ${deal.property_name}\n`;
               if (deal.tenant_name) threadContext += `Tenant: ${deal.tenant_name}\n`;
               if (deal.landlord_name) threadContext += `Landlord: ${deal.landlord_name}\n`;
-              if (deal.fee) threadContext += `Fee: £${Number(deal.fee).toLocaleString()}\n`;
+              if (deal.fee && !chatGuard.isClient) threadContext += `Fee: £${Number(deal.fee).toLocaleString()}\n`;
               if (deal.team) threadContext += `Team: ${deal.team}\n`;
               if (deal.internal_agent) threadContext += `Agent: ${Array.isArray(deal.internal_agent) ? deal.internal_agent.join(", ") : deal.internal_agent}\n`;
               threadContext += `All questions in this thread should be assumed to relate to this deal unless the user specifies otherwise.\n`;
@@ -13426,7 +13838,7 @@ export function setupChatBGPRoutes(app: Express) {
 
     // /opus or /sonnet slash-command interception (excel-chat).
     const excelThreadId = typeof req.body.threadId === "string" ? req.body.threadId : null;
-    let excelSlashOverride: "opus" | "sonnet" | null = null;
+    let excelSlashOverride: "fable" | "opus" | "sonnet" | null = null;
     {
       const lastIdx = messages.length - 1;
       const lastText = lastIdx >= 0 && typeof messages[lastIdx]?.content === "string" ? messages[lastIdx].content : "";
@@ -13578,7 +13990,8 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
       const systemContent = baseSystemPrompt + dynamicContext;
 
       // Load all the tools the main ChatBGP has
-      const { tools } = await getAvailableTools();
+      let { tools } = await getAvailableTools();
+      if ((await clientChatGuard(req)).isClient) tools = [];
       let msToken: string | null = null;
       try { msToken = await getValidMsToken(req); } catch {}
 
@@ -13742,7 +14155,7 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
 
     // /opus or /sonnet slash-command interception (powerpoint-chat).
     const pptThreadId = typeof req.body.threadId === "string" ? req.body.threadId : null;
-    let pptSlashOverride: "opus" | "sonnet" | null = null;
+    let pptSlashOverride: "fable" | "opus" | "sonnet" | null = null;
     {
       const lastIdx = messages.length - 1;
       const lastText = lastIdx >= 0 && typeof messages[lastIdx]?.content === "string" ? messages[lastIdx].content : "";
@@ -13872,7 +14285,8 @@ ${safePptContext ? `**Current slide / selection (read live from the open PowerPo
       const dynamicContext = pptSupplement;
       const systemContent = baseSystemPrompt + dynamicContext;
 
-      const { tools } = await getAvailableTools();
+      let { tools } = await getAvailableTools();
+      if ((await clientChatGuard(req)).isClient) tools = [];
       let msToken: string | null = null;
       try { msToken = await getValidMsToken(req); } catch {}
 

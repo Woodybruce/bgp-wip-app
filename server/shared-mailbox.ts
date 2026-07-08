@@ -413,7 +413,7 @@ export function setupSharedMailboxRoutes(app: Express) {
 
   app.get("/api/shared-mailbox/folders/:folderId/children", requireAuth, async (req: Request, res: Response) => {
     try {
-      const children = await getSharedMailboxFolderChildren(req.params.folderId);
+      const children = await getSharedMailboxFolderChildren(req.params.folderId as string);
       res.json(children);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch subfolders" });
@@ -435,7 +435,7 @@ export function setupSharedMailboxRoutes(app: Express) {
 
   app.get("/api/shared-mailbox/messages/:messageId", requireAuth, async (req: Request, res: Response) => {
     try {
-      const msg = await getMessageDetail(req.params.messageId);
+      const msg = await getMessageDetail(req.params.messageId as string);
       res.json(msg);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch message" });
@@ -445,7 +445,7 @@ export function setupSharedMailboxRoutes(app: Express) {
   app.patch("/api/shared-mailbox/messages/:messageId/read", requireAuth, async (req: Request, res: Response) => {
     try {
       const isRead = req.body.isRead !== undefined ? req.body.isRead : true;
-      await markMessageRead(req.params.messageId, isRead);
+      await markMessageRead(req.params.messageId as string, isRead);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to update message" });
@@ -501,7 +501,7 @@ export function setupSharedMailboxRoutes(app: Express) {
     try {
       const userEmail = await getCurrentUserEmail(req);
       if (!userEmail) return res.status(400).json({ message: "No email for current user" });
-      const children = await getUserMailFolderChildren(userEmail, req.params.folderId);
+      const children = await getUserMailFolderChildren(userEmail, req.params.folderId as string);
       res.json(children);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch subfolders" });
@@ -526,7 +526,7 @@ export function setupSharedMailboxRoutes(app: Express) {
     try {
       const userEmail = await getCurrentUserEmail(req);
       if (!userEmail) return res.status(400).json({ message: "No email for current user" });
-      const msg = await getUserMessageDetail(userEmail, req.params.messageId);
+      const msg = await getUserMessageDetail(userEmail, req.params.messageId as string);
       res.json(msg);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch message" });
@@ -538,7 +538,7 @@ export function setupSharedMailboxRoutes(app: Express) {
       const userEmail = await getCurrentUserEmail(req);
       if (!userEmail) return res.status(400).json({ message: "No email for current user" });
       const isRead = req.body.isRead !== undefined ? req.body.isRead : true;
-      await markUserMessageRead(userEmail, req.params.messageId, isRead);
+      await markUserMessageRead(userEmail, req.params.messageId as string, isRead);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to update message" });
@@ -576,7 +576,7 @@ export function setupSharedMailboxRoutes(app: Express) {
       if (!["accept", "decline", "tentativelyAccept"].includes(response)) {
         return res.status(400).json({ message: "Invalid response type" });
       }
-      await respondToCalendarEvent(userEmail, req.params.messageId, response, comment);
+      await respondToCalendarEvent(userEmail, req.params.messageId as string, response, comment);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to respond to calendar event" });
@@ -589,7 +589,7 @@ export function setupSharedMailboxRoutes(app: Express) {
       if (!["accept", "decline", "tentativelyAccept"].includes(response)) {
         return res.status(400).json({ message: "Invalid response type" });
       }
-      await respondToCalendarEvent(SHARED_MAILBOX, req.params.messageId, response, comment);
+      await respondToCalendarEvent(SHARED_MAILBOX, req.params.messageId as string, response, comment);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to respond to calendar event" });

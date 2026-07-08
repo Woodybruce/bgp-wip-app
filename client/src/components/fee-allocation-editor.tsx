@@ -222,7 +222,7 @@ export function FeeAllocationEditor({
                     onChange={(e) => updateRow(idx, { percentage: Number(e.target.value) })}
                     className="w-20 h-8 text-xs text-right"
                     placeholder="0"
-                    step="0.1"
+                    step="any"
                     disabled={row.isBgpHouse}
                     data-testid={`fee-editor-pct-${idx}`}
                   />
@@ -237,6 +237,7 @@ export function FeeAllocationEditor({
                     onChange={(e) => updateRow(idx, { fixedAmount: Number(e.target.value) })}
                     className="w-28 h-8 text-xs text-right"
                     placeholder="0"
+                    step="any"
                     disabled={row.isBgpHouse}
                     data-testid={`fee-editor-amount-${idx}`}
                   />

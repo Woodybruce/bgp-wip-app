@@ -639,7 +639,7 @@ async function generateImageForDocument(prompt: string): Promise<string | null> 
       quality: "hd",
       response_format: "b64_json",
     });
-    const b64 = resp.data[0]?.b64_json || null;
+    const b64 = resp.data?.[0]?.b64_json || null;
     if (b64) {
       console.log(`[doc-images] Image generated successfully (${Math.round(b64.length / 1024)}KB base64)`);
     }
@@ -661,7 +661,7 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 },
 });
 
-async function renderPdfPagesToImages(filePath: string, maxPages: number = 12, _scale: number = 1.5): Promise<string[]> {
+async function renderPdfPagesToImages(filePath: string, maxPages: number = 30, _scale: number = 1.5): Promise<string[]> {
   try {
     const { execSync } = await import("child_process");
     const tmpDir = path.join(os.tmpdir(), `pdf-render-${Date.now()}`);
@@ -670,7 +670,7 @@ async function renderPdfPagesToImages(filePath: string, maxPages: number = 12, _
     const prefix = path.join(tmpDir, "page");
     const cmd = `pdftoppm -png -r 150 -l ${maxPages} "${filePath}" "${prefix}"`;
     console.log(`[pdf-render] Running: ${cmd}`);
-    execSync(cmd, { timeout: 60000 });
+    execSync(cmd, { timeout: 180000 });
 
     const files = fs.readdirSync(tmpDir)
       .filter(f => f.endsWith(".png"))
@@ -1237,7 +1237,7 @@ export function setupDocumentTemplateRoutes(app: Express) {
       }
 
       console.log(`[doc-template] Re-rendering pages for template ${id} from ${filePath}`);
-      const images = await renderPdfPagesToImages(filePath, 12, 1.5);
+      const images = await renderPdfPagesToImages(filePath, 30, 1.5);
       console.log(`[doc-template] Re-rendered ${images.length} pages`);
 
       await storage.updateDocumentTemplate(id, {
@@ -1301,7 +1301,7 @@ export function setupDocumentTemplateRoutes(app: Express) {
           console.error("Auto-design failed, using defaults:", err.message);
           return null;
         }),
-        isPdf ? renderPdfPagesToImages(req.file.path, 12, 1.5) : Promise.resolve([]),
+        isPdf ? renderPdfPagesToImages(req.file.path, 30, 1.5) : Promise.resolve([]),
       ]);
 
       if (designResult.status === "fulfilled" && designResult.value) {
@@ -2476,7 +2476,7 @@ Be concise, professional, and use British English. All document advice should al
 
   app.get("/api/doc-runs/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const run = await storage.getDocumentRun(req.params.id);
+      const run = await storage.getDocumentRun(req.params.id as string);
       if (!run) return res.status(404).json({ message: "Document run not found" });
       res.json(run);
     } catch (err: any) {
@@ -3100,7 +3100,7 @@ Be concise, professional, and use British English. All document advice should al
         });
         titleSlide.addText(
           `PREPARED FOR CLIENT, ${new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase()}`,
-          { x: 0.6, y: 7.2, w: 7.5, h: 0.44, fontSize: 20, color: "FFFFFF", fontFace: brandFont, bold: false, letterSpacing: 2 }
+          { x: 0.6, y: 7.2, w: 7.5, h: 0.44, fontSize: 20, color: "FFFFFF", fontFace: brandFont, bold: false, charSpacing: 2 }
         );
         // Slide number not shown on cover
         titleSlide.addText(
@@ -3137,7 +3137,7 @@ Be concise, professional, and use British English. All document advice should al
               if (s.sectionLabel) {
                 slide.addText(String(s.sectionLabel).toUpperCase(), {
                   x: 0.5, y: 0.18, w: 12.0, h: 0.32,
-                  fontSize: 9, color: brandMid, fontFace: brandFont, bold: false, letterSpacing: 2,
+                  fontSize: 9, color: brandMid, fontFace: brandFont, bold: false, charSpacing: 2,
                 });
               }
               // Heading
@@ -3175,7 +3175,7 @@ Be concise, professional, and use British English. All document advice should al
               if (s.sectionLabel) {
                 slide.addText(String(s.sectionLabel).toUpperCase(), {
                   x: 0.5, y: 0.18, w: 12.0, h: 0.32,
-                  fontSize: 9, color: brandMid, fontFace: brandFont, bold: false, letterSpacing: 2,
+                  fontSize: 9, color: brandMid, fontFace: brandFont, bold: false, charSpacing: 2,
                 });
               }
               if (s.heading) {
@@ -3198,7 +3198,7 @@ Be concise, professional, and use British English. All document advice should al
                 });
                 slide.addText(String(stat.label || "").toUpperCase(), {
                   x, y: 4.3, w: boxW, h: 0.6,
-                  fontSize: 11, color: brandMid, fontFace: brandFont, bold: false, align: "center", letterSpacing: 1,
+                  fontSize: 11, color: brandMid, fontFace: brandFont, bold: false, align: "center", charSpacing: 1,
                 });
               });
 
@@ -3216,7 +3216,7 @@ Be concise, professional, and use British English. All document advice should al
                 quoteSlide.addShape(pptx.ShapeType.rect, { x: 1.0, y: 5.7, w: 1.5, h: 0.04, fill: { color: brandGreen } });
                 quoteSlide.addText(String(s.attribution).toUpperCase(), {
                   x: 1.0, y: 5.9, w: 11.0, h: 0.4,
-                  fontSize: 11, color: brandMid, fontFace: brandFont, bold: false, letterSpacing: 2,
+                  fontSize: 11, color: brandMid, fontFace: brandFont, bold: false, charSpacing: 2,
                 });
               }
             }
@@ -3274,7 +3274,7 @@ Be concise, professional, and use British English. All document advice should al
               if (batch.every(l => !l.trim())) continue;
               const slide = pptx.addSlide({ masterName: "BGP_CONTENT" });
               if (group.heading) {
-                slide.addText(group.heading.toUpperCase(), { x: 0.5, y: 0.18, w: 12.0, h: 0.32, fontSize: 9, color: brandMid, fontFace: brandFont, letterSpacing: 2 });
+                slide.addText(group.heading.toUpperCase(), { x: 0.5, y: 0.18, w: 12.0, h: 0.32, fontSize: 9, color: brandMid, fontFace: brandFont, charSpacing: 2 });
               }
               const textParts: any[] = [];
               for (const line of batch) {
@@ -3315,7 +3315,8 @@ Be concise, professional, and use British English. All document advice should al
           { x: 0.6, y: 6.2, w: 10.0, h: 1.5, fontSize: 32, color: "FFFFFF", fontFace: brandFont, bold: false }
         );
 
-        const pptxBuffer = await pptx.write({ outputType: "nodebuffer" }) as Buffer;
+        const { fixPptxSchemaViolations } = await import("./pptx-rectify");
+        const pptxBuffer = await fixPptxSchemaViolations(await pptx.write({ outputType: "nodebuffer" }) as Buffer);
         const filename = `${docTitle.replace(/[^a-zA-Z0-9\s-]/g, "").replace(/\s+/g, "_")}.pptx`;
         res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
         res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
@@ -3344,7 +3345,7 @@ Be concise, professional, and use British English. All document advice should al
       if (design !== undefined && typeof design !== "string") {
         return res.status(400).json({ message: "Invalid design" });
       }
-      const updated = await storage.updateDocumentRun(req.params.id, { name, content, status, design });
+      const updated = await storage.updateDocumentRun(req.params.id as string, { name, content, status, design });
       if (!updated) return res.status(404).json({ message: "Document run not found" });
       res.json(updated);
     } catch (err: any) {
@@ -3358,7 +3359,7 @@ Be concise, professional, and use British English. All document advice should al
       if (!message || typeof message !== "string" || message.length > 5000) {
         return res.status(400).json({ message: "A valid message is required (max 5,000 chars)" });
       }
-      const run = await storage.getDocumentRun(req.params.id);
+      const run = await storage.getDocumentRun(req.params.id as string);
       if (!run) return res.status(404).json({ message: "Document run not found" });
 
       const systemPrompt = `You are refining a BGP (Bruce Gillingham Pollard) professional property document.
@@ -3392,7 +3393,7 @@ RULES:
       const newContent = completion.choices[0]?.message?.content;
       if (!newContent) return res.status(500).json({ message: "No content returned from AI" });
 
-      await storage.updateDocumentRun(req.params.id, { content: newContent });
+      await storage.updateDocumentRun(req.params.id as string, { content: newContent });
       res.json({ content: newContent });
     } catch (err: any) {
       console.error("[doc-refine]", err?.message || err);
@@ -3402,7 +3403,7 @@ RULES:
 
   app.delete("/api/doc-runs/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      await storage.deleteDocumentRun(req.params.id);
+      await storage.deleteDocumentRun(req.params.id as string);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: "Failed to delete document run" });

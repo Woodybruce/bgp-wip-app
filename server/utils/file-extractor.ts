@@ -94,15 +94,32 @@ export async function extractTextFromFile(filePath: string, originalName: string
         const buffer = await fs.promises.readFile(filePath);
         const JSZip = (await import("jszip")).default;
         const zip = await JSZip.loadAsync(buffer);
-        let pptxText = "";
-        const slideFiles = Object.keys(zip.files).filter(f => f.match(/^ppt\/slides\/slide\d+\.xml$/)).sort();
-        for (const slideFile of slideFiles) {
-          const xml = await zip.files[slideFile].async("text");
-          const textMatches = xml.match(/<a:t[^>]*>([^<]*)<\/a:t>/g) || [];
-          const slideText = textMatches.map(m => m.replace(/<[^>]+>/g, "")).join(" ");
-          if (slideText.trim()) pptxText += slideText + "\n";
+        const slideFiles = Object.keys(zip.files)
+          .filter(f => f.match(/^ppt\/slides\/slide\d+\.xml$/))
+          .sort((a, b) => parseInt(a.match(/(\d+)/)![1], 10) - parseInt(b.match(/(\d+)/)![1], 10));
+        const runText = (frag: string) => (frag.match(/<a:t[^>]*>([^<]*)<\/a:t>/g) || []).map(m => m.replace(/<[^>]+>/g, "")).join(" ").trim();
+        const out: string[] = [];
+        for (let i = 0; i < slideFiles.length; i++) {
+          const xml = await zip.files[slideFiles[i]].async("text");
+          // Pull tables out first as markdown so their structure survives —
+          // flattening every run into one line loses the rows/columns.
+          const tableBlocks: string[] = [];
+          for (const tbl of xml.match(/<a:tbl>[\s\S]*?<\/a:tbl>/g) || []) {
+            const rows: string[] = [];
+            for (const tr of tbl.match(/<a:tr[\s\S]*?<\/a:tr>/g) || []) {
+              const cells = (tr.match(/<a:tc>[\s\S]*?<\/a:tc>/g) || []).map(runText);
+              if (cells.some(c => c)) rows.push("| " + cells.join(" | ") + " |");
+            }
+            if (rows.length) tableBlocks.push("[table]\n" + rows.join("\n"));
+          }
+          const slideText = runText(xml.replace(/<a:tbl>[\s\S]*?<\/a:tbl>/g, ""));
+          if (!slideText && !tableBlocks.length) continue;
+          const parts = [`--- Slide ${i + 1} ---`];
+          if (slideText) parts.push(slideText);
+          if (tableBlocks.length) parts.push(...tableBlocks);
+          out.push(parts.join("\n"));
         }
-        return pptxText;
+        return out.join("\n");
       }
 
       default:
