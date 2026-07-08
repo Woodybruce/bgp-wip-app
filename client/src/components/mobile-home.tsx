@@ -275,9 +275,14 @@ export default function MobileHome() {
 
       {/* Quick links. Admins reach firm-wide spend + approvals via the
           Mine/Team toggle inside the Expenses page — keeps one entry
-          point on the home grid for the daily flow. */}
+          point on the home grid for the daily flow. Client homes (Landsec)
+          swap the staff-only Expenses tile for the team calendar, which the
+          Calendar page already pins to the client's own team. */}
       <div className="grid grid-cols-4 gap-2">
-        {QUICK_LINKS.filter(q => !isClientHome || q.label !== "Expenses").map(q => (
+        {(isClientHome
+          ? [...QUICK_LINKS.filter(q => q.label !== "Expenses"), { label: "Calendar", icon: CalendarIcon, to: "/calendar", tint: "bg-amber-100 text-amber-700" }]
+          : QUICK_LINKS
+        ).map(q => (
           <Link key={q.to} href={q.to} className="flex flex-col items-center gap-1.5 py-3 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] active:bg-gray-50" data-testid={`mobile-home-link-${q.label.toLowerCase()}`}>
             <span className={`w-9 h-9 rounded-full flex items-center justify-center ${q.tint}`}><q.icon className="w-4 h-4" /></span>
             <span className="text-[11px] font-medium">{q.label}</span>
