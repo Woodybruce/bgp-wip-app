@@ -1323,22 +1323,8 @@ export function setupStripeIssuingRoutes(app: Express) {
       if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
       const [exp] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
       if (!exp) return res.status(404).json({ error: "Expense not found" });
-      // "No receipt" is allowed on a brand-new pending row and on a rejected
-      // one — expenses are often bounced *for* a missing receipt, and the
-      // owner needs to confirm there is none and send it back round.
-      // Approved / posted rows are locked.
-      if (exp.status !== "pending_receipt" && exp.status !== "rejected") {
+      if (exp.status !== "pending_receipt") {
         return res.status(409).json({ error: "Expense is not awaiting a receipt" });
-      }
-      // Clear the rejection first so the resubmitted row doesn't keep
-      // surfacing as rejected (mirrors the /resubmit path).
-      if (exp.status === "rejected") {
-        await db.update(expenses).set({
-          rejectedAt: null,
-          rejectedByUserId: null,
-          rejectedReason: null,
-          updatedAt: new Date(),
-        }).where(eq(expenses.id, id));
       }
       const userId = (req as any).session?.userId || (req as any).tokenUserId || null;
       const { submitForApproval } = await import("./expense-approval");

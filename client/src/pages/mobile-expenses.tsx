@@ -36,7 +36,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   Camera, Receipt, CheckCircle2, AlertCircle, Loader2, ChevronLeft,
   X, Search, Tag, Users, Building2, Briefcase, UserX, Save, Sparkles, Trash2, UserPlus,
-  CreditCard, Eye, EyeOff, Copy, Check,
+  CreditCard, Eye, EyeOff, Copy, Check, RefreshCw,
 } from "lucide-react";
 import { Link } from "wouter";
 import ReceiptViewer from "@/components/receipt-viewer";
@@ -1116,6 +1116,25 @@ export default function MobileExpenses() {
     },
   });
 
+  // Resubmit a rejected expense — the explicit "send it back for approval"
+  // action. Editing happens by tapping the row (opens the edit sheet); only
+  // this fires the submission, so nothing goes to approval until it's tapped.
+  const resubmitMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await fetch(`/api/expenses/${id}/resubmit`, { method: "POST", credentials: "include" });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body?.error || "Failed");
+      return body;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      toast({ title: "Resubmitted", description: "Sent to Wendy & Layla for review." });
+    },
+    onError: (e: any) => {
+      toast({ title: "Couldn't resubmit", description: e?.message, variant: "destructive" });
+    },
+  });
+
   const askDelete = (e: Expense) => {
     if (!window.confirm(`Delete this ${fmtPence(e.amountPence)} expense at ${e.merchant || "unknown merchant"}?`)) return;
     deleteMutation.mutate(e.id);
@@ -1480,22 +1499,24 @@ export default function MobileExpenses() {
                   </div>
                   <StatusBadge status={e.status} />
                 </button>
-                {/* "No receipt" isn't only for brand-new pending rows — a
-                    rejected expense sits in this "recent" list (the pending
-                    section above has its own button), so let the owner mark
-                    it here too (Woody couldn't find it on a rejected item). */}
-                {!e.receiptFilename && !e.isPersonal && e.status === "rejected" && (
+                {/* Rejected rows get an explicit Resubmit. Editing still
+                    happens by tapping the row (opens the edit sheet) — this
+                    only fires the resubmit, so nothing goes to approval until
+                    it's tapped. (Was an auto-submitting "No receipt" before.) */}
+                {e.status === "rejected" && (
                   <button
                     type="button"
-                    onClick={() => noReceiptMutation.mutate(e.id)}
-                    disabled={noReceiptMutation.isPending && noReceiptMutation.variables === e.id}
-                    className="shrink-0 px-2.5 py-1.5 text-[11px] rounded-full border border-border text-muted-foreground active:bg-muted/40 disabled:opacity-50 flex items-center gap-1"
-                    data-testid={`mobile-expense-no-receipt-${e.id}`}
+                    onClick={() => resubmitMutation.mutate(e.id)}
+                    disabled={resubmitMutation.isPending && resubmitMutation.variables === e.id}
+                    className="shrink-0 px-2.5 py-1.5 text-[11px] rounded-full border border-blue-200 text-blue-600 active:bg-blue-50 disabled:opacity-50 flex items-center gap-1"
+                    data-testid={`mobile-expense-resubmit-${e.id}`}
                   >
-                    {noReceiptMutation.isPending && noReceiptMutation.variables === e.id ? (
+                    {resubmitMutation.isPending && resubmitMutation.variables === e.id ? (
                       <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : null}
-                    No receipt
+                    ) : (
+                      <RefreshCw className="w-3 h-3" />
+                    )}
+                    Resubmit
                   </button>
                 )}
                 {/* Delete only for non-card expenses. Revolut (and legacy
