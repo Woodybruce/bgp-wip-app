@@ -5644,11 +5644,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       let totalUnits = 0, vacantUnits = 0, totalPassingRent = 0;
       if (propertyIds.length > 0) {
+        // Portfolio-overview stats come from the TENANCY schedule — the master
+        // rent roll (every unit). The leasing board is only strategy + live
+        // deals now, so it must NOT drive whole-portfolio counts.
         const tenancyResult = await pool.query(
           `SELECT COUNT(*) as total,
-                  COUNT(*) FILTER (WHERE status = 'Vacant' OR status = 'Available') as vacant,
-                  COALESCE(SUM(CASE WHEN rent_pa IS NOT NULL THEN rent_pa ELSE 0 END), 0) as passing_rent
-           FROM leasing_schedule_units WHERE property_id = ANY($1)`,
+                  COUNT(*) FILTER (WHERE status IN ('Vacant', 'Void', 'Available')) as vacant,
+                  COALESCE(SUM(CASE WHEN passing_rent_pa IS NOT NULL THEN passing_rent_pa ELSE 0 END), 0) as passing_rent
+           FROM tenancy_schedule_units WHERE property_id = ANY($1)`,
           [propertyIds]
         );
         totalUnits = parseInt(tenancyResult.rows[0]?.total || "0");
@@ -5687,11 +5690,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         [companyId]
       );
 
+      // The dashboard portfolio boards (Leasing Schedule overview, Lease Expiry
+      // Timeline, Vacancy Pipeline) show EVERY unit across the portfolio, so
+      // they read the tenancy schedule (master), not the trimmed leasing board.
       let leasingUnits: any[] = [];
       if (propertyIds.length > 0) {
         const leasingResult = await pool.query(
-          `SELECT u.id, u.property_id, u.unit_name as premises, u.sort_order as unit_number, u.status, u.tenant_name, u.rent_pa as passing_rent_pa, u.lease_expiry, p.name as property_name
-           FROM leasing_schedule_units u
+          `SELECT u.id, u.property_id, u.premises, u.unit_number, u.status, u.tenant_name, u.passing_rent_pa, u.lease_expiry, p.name as property_name
+           FROM tenancy_schedule_units u
            LEFT JOIN crm_properties p ON u.property_id = p.id
            WHERE u.property_id = ANY($1)
            ORDER BY p.name, u.sort_order`,
