@@ -9,7 +9,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { getAuthHeaders } from "@/lib/queryClient";
-import { ZoomIn, ZoomOut, Maximize2, ExternalLink, Loader2, X, FileText } from "lucide-react";
+import { ZoomIn, ZoomOut, Maximize2, ExternalLink, Loader2, X, FileText, Trash2 } from "lucide-react";
 
 interface ReceiptViewerProps {
   open: boolean;
@@ -17,17 +17,27 @@ interface ReceiptViewerProps {
   expenseId: string | null;
   title?: string;
   filename?: string | null;
+  /** Show delete + re-add controls. Owner views only — the server also
+   *  enforces ownership, so this is just to hide the controls elsewhere. */
+  editable?: boolean;
+  /** Fired after a delete or re-add so the caller can refresh its list. */
+  onChanged?: () => void;
 }
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 6;
 const STEP = 0.5;
 
-export default function ReceiptViewer({ open, onClose, expenseId, title, filename }: ReceiptViewerProps) {
+export default function ReceiptViewer({ open, onClose, expenseId, title, filename, editable = false, onChanged }: ReceiptViewerProps) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [kind, setKind] = useState<"image" | "pdf" | "other">("image");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Delete + re-add state (editable mode).
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [deleted, setDeleted] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   // Image zoom + pan. scale 1 === fit-to-screen (object-contain); above that
   // we translate to let the user pan around the zoomed image.
@@ -49,6 +59,7 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
     setLoading(true);
     setError(null);
     setBlobUrl(null);
+    setDeleted(false);
     resetView();
     (async () => {
       try {
@@ -74,7 +85,7 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
       cancelled = true;
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
-  }, [open, src, filename, resetView]);
+  }, [open, src, filename, resetView, reloadKey]);
 
   const zoomIn = () => setScale((s) => Math.min(MAX_SCALE, +(s + STEP).toFixed(2)));
   const zoomOut = () => setScale((s) => {
@@ -108,6 +119,35 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
     (e.target as Element).releasePointerCapture?.(e.pointerId);
   };
 
+  const handleDelete = async () => {
+    if (!expenseId) return;
+    if (!window.confirm("Delete this receipt? You can add a new one straight after.")) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await fetch(`/api/expenses/${expenseId}/receipt`, { method: "DELETE", credentials: "include", headers: { ...getAuthHeaders() } });
+      if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.error || `Couldn't delete (${r.status})`); }
+      setBlobUrl(null); setDeleted(true); onChanged?.();
+    } catch (e: any) {
+      setError(e?.message || "Couldn't delete receipt");
+    } finally { setBusy(false); }
+  };
+
+  const handleAdd = async (file: File | undefined) => {
+    if (!expenseId || !file) return;
+    setBusy(true); setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("receipt", file);
+      const r = await fetch(`/api/expenses/${expenseId}/receipt`, { method: "POST", credentials: "include", headers: { ...getAuthHeaders() }, body: fd });
+      if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.message || b.error || `Upload failed (${r.status})`); }
+      setDeleted(false);
+      setReloadKey((k) => k + 1);
+      onChanged?.();
+    } catch (e: any) {
+      setError(e?.message || "Couldn't add receipt");
+    } finally { setBusy(false); }
+  };
+
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <DialogContent className="max-w-full sm:max-w-4xl w-full h-[100dvh] sm:h-[88vh] rounded-none sm:rounded-lg flex flex-col p-0 gap-0">
@@ -137,6 +177,11 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
                 <Button variant="ghost" size="sm" data-testid="link-receipt-new-tab"><ExternalLink className="w-4 h-4" /></Button>
               </a>
             )}
+            {editable && expenseId && blobUrl && !deleted && (
+              <Button variant="ghost" size="sm" onClick={handleDelete} disabled={busy} title="Delete receipt" data-testid="button-receipt-delete" className="text-red-600 hover:text-red-700 hover:bg-red-50">
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            )}
             <Button variant="ghost" size="sm" onClick={onClose} title="Close"><X className="w-4 h-4" /></Button>
           </div>
         </div>
@@ -145,6 +190,15 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
           className="flex-1 overflow-hidden bg-muted/30 flex items-center justify-center select-none"
           onWheel={onWheel}
         >
+          {deleted && (
+            <div className="text-center px-6" data-testid="receipt-deleted-state">
+              <Trash2 className="w-10 h-10 mx-auto mb-2 opacity-40" />
+              <p className="text-sm text-muted-foreground mb-3">Receipt deleted</p>
+              <Button size="sm" onClick={() => fileRef.current?.click()} disabled={busy} data-testid="button-receipt-add">
+                {busy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null} Add a receipt
+              </Button>
+            </div>
+          )}
           {loading && (
             <div className="flex items-center gap-2 text-muted-foreground">
               <Loader2 className="w-5 h-5 animate-spin" /><span className="text-sm">Loading receipt…</span>
@@ -185,7 +239,15 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
           )}
         </div>
 
-        {filename && (
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*,application/pdf"
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; handleAdd(f); }}
+          data-testid="input-receipt-add"
+        />
+        {filename && !deleted && (
           <div className="px-4 py-2 border-t shrink-0 text-xs text-muted-foreground truncate">{filename}</div>
         )}
       </DialogContent>

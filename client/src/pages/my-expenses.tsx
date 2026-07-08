@@ -650,6 +650,8 @@ export default function MyExpenses() {
         expenseId={viewingReceipt?.id ?? null}
         title={viewingReceipt ? `${viewingReceipt.merchant || "Receipt"} · ${fmt(viewingReceipt.amountPence)}` : "Receipt"}
         filename={viewingReceipt?.receiptFilename}
+        editable
+        onChanged={() => queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] })}
       />
     </div>
   );

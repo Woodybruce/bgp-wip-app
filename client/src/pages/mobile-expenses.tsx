@@ -513,6 +513,8 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
             expenseId={expense.id}
             filename={expense.receiptFilename}
             title="Receipt"
+            editable
+            onChanged={() => queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] })}
           />
 
           {/* Personal toggle — first thing in the form so a mis-tap on
