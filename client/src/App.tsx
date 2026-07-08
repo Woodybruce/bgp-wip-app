@@ -329,6 +329,9 @@ function AuthenticatedApp() {
   // Chat peek: hover opens it, click pins it open (so it doesn't tuck away on
   // mouse-leave). Mirrors the old left-sidebar peek behaviour.
   const [chatPinned, setChatPinned] = useState(false);
+  // An unpinned peek must NOT tuck away while a draft sits in the composer —
+  // a mouse slip was closing the panel mid-message.
+  const [chatHasDraft, setChatHasDraft] = useState(false);
   const [location, navigate] = useLocation();
   const isChatBGP = location === "/chatbgp";
 
@@ -597,8 +600,8 @@ function AuthenticatedApp() {
           {/* ChatBGP: minimised to a right-edge rail; hover peeks it open,
               click pins it. Mouse-leaving the chat area tucks it back unless
               pinned. (Desktop; on mobile the header button opens it full-screen.) */}
-          <div className="flex" onMouseLeave={() => { if (!chatPinned) setChatOpen(false); }}>
-            <ChatPanel open={chatOpen} onClose={() => { setChatPinned(false); setChatOpen(false); }} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} />
+          <div className="flex" onMouseLeave={() => { if (!chatPinned && !chatHasDraft) setChatOpen(false); }}>
+            <ChatPanel open={chatOpen} onClose={() => { setChatPinned(false); setChatOpen(false); }} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} onDraftChange={setChatHasDraft} />
             <button
               type="button"
               data-testid="button-chatbgp-rail"

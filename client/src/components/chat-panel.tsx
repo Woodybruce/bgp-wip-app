@@ -1108,9 +1108,12 @@ interface ChatPanelProps {
   onClose: () => void;
   openAiChat?: boolean;
   onAiChatHandled?: () => void;
+  // Reports whether a draft (text or attached files) is in the composer, so
+  // the hover-peek shell can refuse to tuck the panel away mid-draft.
+  onDraftChange?: (hasDraft: boolean) => void;
 }
 
-export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPanelProps) {
+export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftChange }: ChatPanelProps) {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
@@ -1312,6 +1315,19 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
     setMentionQuery(null);
     setMentionStart(-1);
   }, [sendTyping]);
+
+  // Composer auto-grow + draft reporting. Effect (not the change handler) so
+  // every path that sets the input — typing, mention insert, checkbox click,
+  // voice transcript, send clearing it — resizes the box and updates the
+  // shell's draft flag.
+  useEffect(() => {
+    onDraftChange?.(!!input.trim() || attachedFiles.length > 0);
+    const ta = textareaRef.current;
+    if (ta) {
+      ta.style.height = "auto";
+      ta.style.height = `${Math.min(ta.scrollHeight, 220)}px`;
+    }
+  }, [input, attachedFiles, onDraftChange]);
 
   const messagesKey = useMemo(() => {
     if (!activeThread?.messages) return "";
@@ -2908,7 +2924,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
                           ? (attachedFiles.length > 0 ? "Add instructions for these files..." : "Ask ChatBGP...")
                           : "Message... (@ to mention, @ChatBGP for AI)"
                       }
-                      className="resize-none min-h-[40px] max-h-[100px] text-[13px] rounded-xl"
+                      className="resize-none min-h-[60px] max-h-[220px] text-[13px] rounded-xl"
                       rows={1}
                       spellCheck
                       autoCorrect="on"
