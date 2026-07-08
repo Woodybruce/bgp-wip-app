@@ -1481,11 +1481,10 @@ export default function MobileExpenses() {
                   <StatusBadge status={e.status} />
                 </button>
                 {/* "No receipt" isn't only for brand-new pending rows — a
-                    rejected expense sits in this "recent" list, so let the
-                    owner mark it here too (Woody couldn't find it on a
-                    rejected item). Shown whenever the row still lacks a
-                    receipt and isn't personal / already posted to Xero. */}
-                {!e.receiptFilename && !e.isPersonal && e.status !== "posted_to_xero" && (
+                    rejected expense sits in this "recent" list (the pending
+                    section above has its own button), so let the owner mark
+                    it here too (Woody couldn't find it on a rejected item). */}
+                {!e.receiptFilename && !e.isPersonal && e.status === "rejected" && (
                   <button
                     type="button"
                     onClick={() => noReceiptMutation.mutate(e.id)}

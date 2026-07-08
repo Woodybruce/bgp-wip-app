@@ -549,7 +549,7 @@ export default function MyExpenses() {
                               Receipt
                             </Button>
                           )}
-                          {!e.receiptFilename && !e.isPersonal && e.status !== "posted_to_xero" && (
+                          {!e.receiptFilename && !e.isPersonal && (e.status === "pending_receipt" || e.status === "rejected") && (
                             <Button
                               size="sm"
                               variant="ghost"
