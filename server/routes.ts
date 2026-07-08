@@ -5632,8 +5632,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         return res.status(403).json({ message: "Access denied" });
       }
 
+      // The client's portfolio = properties they own (landlord_id) PLUS any
+      // explicitly linked to the company via crm_company_properties. Each row
+      // appears once (OR-filter, no join), so no dedup needed.
       const propsResult = await pool.query(
-        `SELECT id, name, address, status, asset_class FROM crm_properties WHERE landlord_id = $1 ORDER BY name`,
+        `SELECT id, name, address, status, asset_class FROM crm_properties
+         WHERE landlord_id = $1
+            OR id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+         ORDER BY name`,
         [companyId]
       );
       const properties = propsResult.rows;
