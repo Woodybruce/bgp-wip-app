@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import type { CrmDeal } from "@shared/schema";
 import { legacyToCode } from "@shared/deal-status";
 import { computeDealAmlStatus, DealAmlBadge, type AmlCheckCompany } from "@/components/deal-aml-badge";
+import { teamLabel } from "@/lib/crm-options";
 
 // WIP-only kanban: NEG → INV. Pipeline (REP/SPEC/LIVE/AVA) belongs on the
 // Letting / Investment trackers; WIT is hidden from the WIP board entirely.
@@ -211,7 +212,7 @@ export function DealKanban({ deals, propertyMap, unitMap, tenantMap, amlCompanyM
                             variant="outline"
                             className={`text-[9px] px-1.5 py-0 h-4 border-0 ${TEAM_COLORS[t] || "bg-muted text-muted-foreground"}`}
                           >
-                            {t}
+                            {teamLabel(t)}
                           </Badge>
                         ))}
                       </div>

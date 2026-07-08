@@ -454,3 +454,14 @@ export function areaBasisFromAssetClass(assetClass: string | null | undefined): 
 export function isRetailAssetClass(assetClass: string | null | undefined): boolean {
   return /retail/i.test(assetClass || "");
 }
+
+// Display-only overrides for deal team names. The STORED value stays the
+// short canonical key (e.g. "Development") — it's the match key across the
+// app, the colour-map key, and users.team — but the UI can show a friendlier
+// label. Add a row here to relabel a team without a data migration.
+export const DEAL_TEAM_LABELS: Record<string, string> = {
+  "Development": "Development & Repurposing",
+};
+export function teamLabel(team: string): string {
+  return DEAL_TEAM_LABELS[team] ?? team;
+}

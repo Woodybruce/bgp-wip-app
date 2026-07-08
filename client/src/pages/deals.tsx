@@ -107,7 +107,7 @@ import type { CrmDeal, CrmProperty, CrmCompany, CrmContact, DealFeeAllocation, A
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
-import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
+import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass, teamLabel } from "@/lib/crm-options";
 import { toDateInputValue } from "@/lib/format";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -352,7 +352,7 @@ function InlineMultiSelect({
           ) : (
             current.map(v => (
               <Badge key={v} className={`text-[10px] px-1.5 py-0 text-white ${colorMap?.[v] || "bg-zinc-500"}`}>
-                {v}
+                {options.find(o => o.value === v)?.label ?? v}
               </Badge>
             ))
           )}
@@ -2300,7 +2300,7 @@ export function DealFormDialog({
                     ) : (
                       <div className="flex gap-1 flex-wrap">
                         {form.team.map(t => (
-                          <Badge key={t} className={`text-[10px] px-1.5 py-0 text-white ${DEAL_TEAM_COLORS[t] || "bg-zinc-500"}`}>{t}</Badge>
+                          <Badge key={t} className={`text-[10px] px-1.5 py-0 text-white ${DEAL_TEAM_COLORS[t] || "bg-zinc-500"}`}>{teamLabel(t)}</Badge>
                         ))}
                       </div>
                     )}
@@ -2316,7 +2316,7 @@ export function DealFormDialog({
                         {form.team.includes(t) && <span className="text-primary-foreground text-[8px]">✓</span>}
                       </div>
                       <div className={`w-2 h-2 rounded-full ${DEAL_TEAM_COLORS[t] || "bg-zinc-500"} mr-1`} />
-                      {t}
+                      {teamLabel(t)}
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuContent>
@@ -6055,7 +6055,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         <TableCell className="px-1.5 py-1">
                           <InlineMultiSelect
                             value={deal.team}
-                            options={CRM_OPTIONS.dealTeam.map(t => ({ label: t, value: t }))}
+                            options={CRM_OPTIONS.dealTeam.map(t => ({ label: teamLabel(t), value: t }))}
                             colorMap={DEAL_TEAM_COLORS}
                             placeholder="Set team"
                             onSave={(v) => handleInlineSave(deal.id, "team", v.length > 0 ? v : null)}
@@ -6592,7 +6592,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   data-testid={`bulk-assign-team-option-${team}`}
                 >
                   <div className={`w-2 h-2 rounded-full ${DEAL_TEAM_COLORS[team] || "bg-zinc-500"} mr-2`} />
-                  {team}
+                  {teamLabel(team)}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
