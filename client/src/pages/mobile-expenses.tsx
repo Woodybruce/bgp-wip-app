@@ -1480,6 +1480,25 @@ export default function MobileExpenses() {
                   </div>
                   <StatusBadge status={e.status} />
                 </button>
+                {/* "No receipt" isn't only for brand-new pending rows — a
+                    rejected expense sits in this "recent" list, so let the
+                    owner mark it here too (Woody couldn't find it on a
+                    rejected item). Shown whenever the row still lacks a
+                    receipt and isn't personal / already posted to Xero. */}
+                {!e.receiptFilename && !e.isPersonal && e.status !== "posted_to_xero" && (
+                  <button
+                    type="button"
+                    onClick={() => noReceiptMutation.mutate(e.id)}
+                    disabled={noReceiptMutation.isPending && noReceiptMutation.variables === e.id}
+                    className="shrink-0 px-2.5 py-1.5 text-[11px] rounded-full border border-border text-muted-foreground active:bg-muted/40 disabled:opacity-50 flex items-center gap-1"
+                    data-testid={`mobile-expense-no-receipt-${e.id}`}
+                  >
+                    {noReceiptMutation.isPending && noReceiptMutation.variables === e.id ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : null}
+                    No receipt
+                  </button>
+                )}
                 {/* Delete only for non-card expenses. Revolut (and legacy
                     Stripe) swipes are a financial record — money actually
                     moved, so the row stays on the ledger no matter what.
