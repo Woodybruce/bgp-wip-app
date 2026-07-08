@@ -993,6 +993,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
 
 export default function MobileExpenses() {
   const { toast } = useToast();
+  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [editing, setEditing] = useState<Expense | null>(null);
   const [showCardDetails, setShowCardDetails] = useState(false);
@@ -1119,8 +1120,20 @@ export default function MobileExpenses() {
   };
 
   const expenses = data?.expenses || [];
-  const pending = expenses.filter((e) => e.status === "pending_receipt");
-  const recent = expenses.filter((e) => e.status !== "pending_receipt").slice(0, 30);
+  // Status filter chips — counts from the full list; only statuses that
+  // occur are shown. Filtering narrows the source, so the pending/recent
+  // sections below reflect it automatically.
+  const statusChips = [
+    { key: "pending_receipt", label: "Receipt needed" },
+    { key: "receipt_uploaded", label: "Receipt added" },
+    { key: "pending_approval", label: "Pending" },
+    { key: "approved", label: "Approved" },
+    { key: "posted_to_xero", label: "In Xero" },
+    { key: "rejected", label: "Rejected" },
+  ].map((o) => ({ ...o, count: expenses.filter((e) => e.status === o.key).length })).filter((o) => o.count > 0);
+  const shown = statusFilter === "all" ? expenses : expenses.filter((e) => e.status === statusFilter);
+  const pending = shown.filter((e) => e.status === "pending_receipt");
+  const recent = shown.filter((e) => e.status !== "pending_receipt").slice(0, 30);
 
   // Hidden inputs already mounted below — clicking them directly from
   // the user-initiated tap reliably opens iOS / Android's native picker
@@ -1313,6 +1326,30 @@ export default function MobileExpenses() {
         </p>
       </div>
 
+      {/* Status filter — tap to see just one status (e.g. what still needs
+          completing). Chips only show for statuses that occur. */}
+      {statusChips.length > 0 && (
+        <div className="px-4 mb-3 flex gap-1.5 overflow-x-auto" data-testid="m-expenses-status-filter">
+          <button
+            onClick={() => setStatusFilter("all")}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${statusFilter === "all" ? "bg-[#1C1917] text-white border-[#1C1917]" : "bg-white dark:bg-card text-muted-foreground border-border active:bg-gray-50"}`}
+            data-testid="m-expenses-filter-all"
+          >
+            All {expenses.length}
+          </button>
+          {statusChips.map((s) => (
+            <button
+              key={s.key}
+              onClick={() => setStatusFilter(statusFilter === s.key ? "all" : s.key)}
+              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${statusFilter === s.key ? "bg-[#1C1917] text-white border-[#1C1917]" : "bg-white dark:bg-card text-muted-foreground border-border active:bg-gray-50"}`}
+              data-testid={`m-expenses-filter-${s.key}`}
+            >
+              {s.label} {s.count}
+            </button>
+          ))}
+        </div>
+      )}
+
       {pending.length > 0 && (
         <div className="mx-4 mb-3 rounded-2xl bg-amber-50 border border-amber-200 p-3 flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
@@ -1394,7 +1431,7 @@ export default function MobileExpenses() {
         {recent.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border p-6 text-center">
             <Receipt className="w-8 h-8 text-muted-foreground/50 mx-auto mb-2" />
-            <p className="text-xs text-muted-foreground">No expenses yet</p>
+            <p className="text-xs text-muted-foreground">{statusFilter === "all" ? "No expenses yet" : "Nothing else with that status"}</p>
           </div>
         ) : (
           <div className="space-y-1.5">
