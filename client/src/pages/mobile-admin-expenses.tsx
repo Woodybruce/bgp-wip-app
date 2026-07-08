@@ -26,6 +26,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Link } from "wouter";
+import ReceiptViewer from "@/components/receipt-viewer";
 import {
   ChevronLeft, Loader2, Inbox, CheckCircle2, AlertCircle, Receipt, X,
   TrendingUp, Users, Snowflake, Banknote,
@@ -389,6 +390,7 @@ function ApprovalRow({ r, busy, onApprove, onReject }: { r: PendingExpense; busy
   const attendees = (r.attendeeContacts && r.attendeeContacts.length > 0)
     ? r.attendeeContacts.map((c) => c.name).filter(Boolean).join(", ")
     : r.attendees || null;
+  const [showReceipt, setShowReceipt] = useState(false);
   return (
     <div className="p-3" data-testid={`m-admin-approval-${r.id}`}>
       <div className="flex items-start justify-between gap-2">
@@ -398,13 +400,14 @@ function ApprovalRow({ r, busy, onApprove, onReject }: { r: PendingExpense; busy
             {r.receiptFilename && (
               <button
                 type="button"
-                onClick={() => window.open(`/api/expenses/${r.id}/receipt`, "_blank")}
+                onClick={() => setShowReceipt(true)}
                 className="inline-flex items-center gap-0.5 text-[10px] text-emerald-600 shrink-0 active:opacity-70"
                 data-testid={`m-admin-view-receipt-${r.id}`}
               >
                 <Receipt className="w-3 h-3" /> View
               </button>
             )}
+            <ReceiptViewer open={showReceipt} onClose={() => setShowReceipt(false)} expenseId={r.id} filename={r.receiptFilename} title="Receipt" />
           </div>
           <div className="text-[11px] text-muted-foreground mt-0.5">
             {fmtDate(r.transactionDate)}{r.category ? ` · ${r.category}` : ""}

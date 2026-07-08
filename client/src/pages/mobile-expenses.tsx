@@ -39,6 +39,7 @@ import {
   CreditCard, Eye, EyeOff, Copy, Check,
 } from "lucide-react";
 import { Link } from "wouter";
+import ReceiptViewer from "@/components/receipt-viewer";
 
 interface Expense {
   id: string;
@@ -234,6 +235,7 @@ function MobileCardDetailsSheet({ open, onClose }: { open: boolean; onClose: () 
 function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClose: () => void }) {
   const open = !!expense;
   const { toast } = useToast();
+  const [showReceipt, setShowReceipt] = useState(false);
 
   // Lazy-load the picker data ONLY when the sheet opens. Saves payload
   // on first page render — most users won't open every expense.
@@ -495,13 +497,23 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
           {expense.receiptFilename && (
             <button
               type="button"
-              onClick={() => window.open(`/api/expenses/${expense.id}/receipt`, "_blank")}
+              onClick={() => setShowReceipt(true)}
               className="w-full flex items-center justify-center gap-2 h-11 rounded-xl border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-900 text-emerald-700 dark:text-emerald-400 text-sm font-medium active:opacity-80"
               data-testid="m-view-receipt"
             >
               <Receipt className="w-4 h-4" /> View receipt
             </button>
           )}
+          {/* In-app receipt viewer with its own close/back button, so the
+              user returns to the expense instead of getting stranded on the
+              raw file (the old window.open had no way back on mobile). */}
+          <ReceiptViewer
+            open={showReceipt}
+            onClose={() => setShowReceipt(false)}
+            expenseId={expense.id}
+            filename={expense.receiptFilename}
+            title="Receipt"
+          />
 
           {/* Personal toggle — first thing in the form so a mis-tap on
               the row is the first thing you can fix. When on, skips AI
