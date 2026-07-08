@@ -17,7 +17,7 @@ import type { Express, Request, Response } from "express";
 import { requireAuth, requireAdmin } from "./auth";
 import { db, pool } from "./db";
 import { stripeCardholders, stripeCards, expenses, expenseReceipts, expenseAttendees, expenseSplits, crmContacts, users as usersTable } from "@shared/schema";
-import { eq, desc, and, gte, sql, inArray } from "drizzle-orm";
+import { eq, desc, and, gte, sql, inArray, or } from "drizzle-orm";
 import crypto from "crypto";
 import multer from "multer";
 import { saveFile, getFile } from "./file-storage";
@@ -479,6 +479,94 @@ export function setupStripeIssuingRoutes(app: Express) {
       res.json(enriched);
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Read-only, team-scoped expense list for designated team overseers (see
+  // server/expense-access.ts) and admins. A non-admin overseer sees every
+  // expense belonging to a member of the team(s) they oversee — view only,
+  // no edit / approve. Declared BEFORE /:id so Express doesn't treat "team"
+  // as an expense id.
+  app.get("/api/expenses/team", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any)?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const [me] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+      if (!me) return res.status(401).json({ error: "Not authenticated" });
+      const { expenseOverseerTeams } = await import("./expense-access");
+      const teams = expenseOverseerTeams(me as any);
+      const isAdmin = !!(me as any).isAdmin;
+      if (!isAdmin && teams.length === 0) return res.status(403).json({ error: "Forbidden" });
+
+      // Members of the overseen team(s) — by primary team OR additional teams.
+      // Admins aren't restricted (they can see everything anyway).
+      let ownerIds: string[] | null = null; // null => no owner filter (admin)
+      if (!isAdmin) {
+        const memRes = await pool.query(
+          `SELECT id FROM users WHERE team = ANY($1::text[]) OR additional_teams && $1::text[]`,
+          [teams],
+        );
+        ownerIds = memRes.rows.map((r: any) => r.id as string);
+        if (ownerIds.length === 0) return res.json({ teams, expenses: [] });
+      }
+
+      // An expense's owner links via cardholder.userId (card spend) or
+      // createdBy (manual / receipt). Resolve the cardholders for the team
+      // then match expenses on either link.
+      let holderIds: string[] = [];
+      if (ownerIds) {
+        const holders = await db
+          .select({ id: stripeCardholders.id })
+          .from(stripeCardholders)
+          .where(inArray(stripeCardholders.userId, ownerIds));
+        holderIds = holders.map((h) => h.id);
+      }
+      const rows = ownerIds
+        ? await db
+            .select()
+            .from(expenses)
+            .where(or(
+              inArray(expenses.createdBy, ownerIds),
+              ...(holderIds.length > 0 ? [inArray(expenses.cardholderId, holderIds)] : []),
+            )!)
+            .orderBy(desc(expenses.transactionDate))
+            .limit(2000)
+        : await db
+            .select()
+            .from(expenses)
+            .orderBy(desc(expenses.transactionDate))
+            .limit(2000);
+
+      // Attach the owner's name so the list can show whose spend each row is.
+      const holderIdsAll = [...new Set(rows.map((r) => r.cardholderId).filter(Boolean) as string[])];
+      const holderToUser = new Map<string, string>();
+      if (holderIdsAll.length > 0) {
+        const chs = await db
+          .select({ id: stripeCardholders.id, userId: stripeCardholders.userId })
+          .from(stripeCardholders)
+          .where(inArray(stripeCardholders.id, holderIdsAll));
+        chs.forEach((c) => { if ((c as any).userId) holderToUser.set(c.id, (c as any).userId); });
+      }
+      const ownerIdSet = new Set<string>();
+      const ownerOf = (r: typeof rows[number]) =>
+        (r.cardholderId && holderToUser.get(r.cardholderId)) || r.createdBy || null;
+      rows.forEach((r) => { const oid = ownerOf(r); if (oid) ownerIdSet.add(oid); });
+      const nameMap = new Map<string, string>();
+      if (ownerIdSet.size > 0) {
+        const us = await db
+          .select({ id: usersTable.id, name: usersTable.name })
+          .from(usersTable)
+          .where(inArray(usersTable.id, [...ownerIdSet]));
+        us.forEach((u) => nameMap.set(u.id, u.name));
+      }
+      const enriched = rows.map((r) => {
+        const oid = ownerOf(r);
+        return { ...r, ownerName: (oid && nameMap.get(oid)) || null };
+      });
+      res.json({ teams, expenses: enriched });
+    } catch (e: any) {
+      console.error("[expenses/team] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });

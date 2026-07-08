@@ -376,6 +376,12 @@ export function setupAuth(app: Express) {
       user.isAdmin = true;
     }
     const { password: _, ...safeUser } = user;
+    // Team-expense oversight (read-only) — drives the "Team Expenses" nav +
+    // page for non-admin team leads like Victoria. Empty for everyone else.
+    try {
+      const { expenseOverseerTeams } = await import("./expense-access");
+      (safeUser as any).expenseOverseerTeams = expenseOverseerTeams(user as any);
+    } catch {}
     const scopeCompanyId = await resolveCompanyScope(req);
     if (scopeCompanyId) {
       (safeUser as any).companyScopeId = scopeCompanyId;

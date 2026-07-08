@@ -415,7 +415,32 @@ export async function canViewExpenseReceipt(userId: string, expenseId: string): 
     ...(await resolvePool(STAGE1_SLOTS)),
     ...(await resolvePool(STAGE2_SLOTS)),
   ]);
-  return approverPool.has(userId);
+  if (approverPool.has(userId)) return true;
+  // Read-only team overseers (e.g. a team lead) can view receipts for any
+  // expense belonging to a member of the team(s) they oversee. This path is
+  // used only for viewing — it never gates edits or approvals.
+  const { expenseOverseerTeams } = await import("./expense-access");
+  const teams = expenseOverseerTeams(u as any);
+  if (teams.length > 0) {
+    const ownerIds: string[] = [];
+    if (exp.createdBy) ownerIds.push(exp.createdBy);
+    if (exp.cardholderId) {
+      const { stripeCardholders } = await import("@shared/schema");
+      const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, exp.cardholderId)).limit(1);
+      if ((ch as any)?.userId) ownerIds.push((ch as any).userId);
+    }
+    if (ownerIds.length > 0) {
+      const owners = await db
+        .select({ team: users.team, additionalTeams: users.additionalTeams })
+        .from(users)
+        .where(inArray(users.id, ownerIds));
+      for (const o of owners) {
+        const ot = [o.team, ...((o.additionalTeams as string[] | null) || [])].filter(Boolean) as string[];
+        if (ot.some((t) => teams.includes(t))) return true;
+      }
+    }
+  }
+  return false;
 }
 
 /** List of expenses an approver can act on. Includes:

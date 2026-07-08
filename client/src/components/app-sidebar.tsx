@@ -327,13 +327,22 @@ export function AppSidebar() {
   const coreWithApprovals = approvalCount > 0
     ? [...coreNavFiltered, { title: "Approvals", url: "/expenses/approvals", icon: ClipboardCheck, badge: String(approvalCount) }]
     : coreNavFiltered;
+  // Read-only "Team Expenses" for designated team overseers — non-admin team
+  // leads (e.g. Victoria → National Leasing). Admins use the full Expenses
+  // console instead, so this is only for non-admins. The overseer flag rides
+  // on /api/auth/me (server: expenseOverseerTeams).
+  const isExpenseOverseer =
+    Array.isArray((user as any)?.expenseOverseerTeams) && (user as any).expenseOverseerTeams.length > 0;
+  const coreWithTeamExpenses = isExpenseOverseer && !user?.isAdmin
+    ? [...coreWithApprovals, { title: "Team Expenses", url: "/team-expenses", icon: Receipt }]
+    : coreWithApprovals;
   // Client logins (e.g. Landsec) get a trimmed nav: no People & HR, My Card,
   // Reporting or WIP — those are BGP-internal. Staff nav is unchanged.
   const isClientUser = user?.role === "Client";
   const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/reporting", "/wip-report"];
   const coreNav = isClientUser
-    ? coreWithApprovals.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
-    : coreWithApprovals;
+    ? coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
+    : coreWithTeamExpenses;
   const unfinishedNavCleaned = isClientUser
     ? unfinishedNav.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
     : unfinishedNav;
