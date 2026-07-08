@@ -11,7 +11,7 @@
 // Team names must match the values used in the team picker
 // (client/src/lib/team-context.tsx → TEAMS).
 const EXPENSE_TEAM_OVERSEERS: Record<string, string[]> = {
-  "victoria broadhead": ["National Leasing"],
+  "victoria@brucegillinghampollard.com": ["National Leasing"],
 };
 
 /** Teams whose expenses `user` may view read-only. Empty = no oversight. */
