@@ -6026,7 +6026,12 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const senior = await isWipSenior(req);
       const userId = req.session?.userId || (req as any).tokenUserId;
       const currentUser = userId ? await storage.getUser(userId) : null;
-      const isAdmin = !!currentUser?.isAdmin;
+      // Senior partners (Woody / Charlotte / Rupert / Jack) get the same
+      // team-viewing powers as a DB admin across the WIP surfaces (report,
+      // dashboard card, Excel export): the team switcher works for them —
+      // pick "All Teams" for the whole firm, or a single team to focus.
+      // (Write actions like delete/backfill still gate on isWipSenior.)
+      const isAdmin = !!currentUser?.isAdmin || senior;
       const userTeam = currentUser?.team || null;
 
 
@@ -7769,7 +7774,12 @@ Rules:
       const senior = await isWipSenior(req);
       const userId = req.session?.userId || (req as any).tokenUserId;
       const currentUser = userId ? await storage.getUser(userId) : null;
-      const isAdmin = !!currentUser?.isAdmin;
+      // Senior partners (Woody / Charlotte / Rupert / Jack) get the same
+      // team-viewing powers as a DB admin across the WIP surfaces (report,
+      // dashboard card, Excel export): the team switcher works for them —
+      // pick "All Teams" for the whole firm, or a single team to focus.
+      // (Write actions like delete/backfill still gate on isWipSenior.)
+      const isAdmin = !!currentUser?.isAdmin || senior;
       const userTeam = currentUser?.team || null;
 
 
