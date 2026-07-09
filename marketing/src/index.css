@@ -7,16 +7,33 @@
     scroll-behavior: smooth;
   }
   body {
-    @apply font-sans text-bgp-ink bg-bgp-paper antialiased;
+    @apply font-sans font-light text-bgp-ink bg-bgp-cream antialiased;
   }
 }
 
 @layer components {
+  /* Small uppercase labels — Inter bold, tracked out (v2c card/nav labels) */
   .label-caps {
-    @apply text-[11px] font-semibold uppercase tracking-widest2;
+    @apply text-[11px] font-bold uppercase tracking-widest2 font-sans;
   }
+  /* Red EXPLORE ↗ / READ MORE links */
+  .explore-link {
+    @apply label-caps text-bgp-red hover:text-bgp-wine transition-colors;
+  }
+  .explore-link::after {
+    content: " \2197";
+  }
+  /* CONTACT link with full-width red underline (leasing cards) */
   .rule-link {
-    @apply label-caps border-t border-bgp-ink pt-2 hover:text-bgp-burgundy transition-colors;
+    @apply label-caps text-bgp-red border-t-0 border-b border-bgp-red pb-1 hover:text-bgp-wine hover:border-bgp-wine transition-colors;
+  }
+  /* Display serif headings */
+  .display {
+    @apply font-display text-bgp-wine;
+  }
+  /* Typeset BGP wordmark */
+  .wordmark {
+    @apply font-display font-semibold tracking-tight leading-none;
   }
   .tabular {
     font-variant-numeric: tabular-nums;

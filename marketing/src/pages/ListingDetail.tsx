@@ -39,7 +39,7 @@ export default function ListingDetail() {
       <div className="mx-auto max-w-6xl px-4 py-32 text-center">
         <p className="label-caps text-bgp-burgundy">Listing not found</p>
         <p className="mt-4">
-          <Link href="/leasing" className="rule-link inline-block">Back to leasing</Link>
+          <Link href="/leasing" className="explore-link inline-block">Back to leasing</Link>
         </p>
       </div>
     );
@@ -79,7 +79,7 @@ export default function ListingDetail() {
                 ))}
               </div>
             )}
-            <h1 className="mt-8 text-3xl md:text-4xl">{listing.unitName}</h1>
+            <h1 className="mt-8 display text-3xl md:text-4xl">{listing.unitName}</h1>
             {listing.useClass && <p className="mt-1 text-sm text-bgp-ink/60">{listing.useClass} opportunity</p>}
             {listing.marketingStatus === "Under Offer" && (
               <p className="mt-3 inline-block bg-bgp-burgundy text-bgp-paper label-caps px-3 py-1.5">Under offer</p>
@@ -126,7 +126,7 @@ export default function ListingDetail() {
 
       {/* Location */}
       <section className="mx-auto max-w-6xl px-4 py-10">
-        <h2 className="text-lg font-semibold border-b border-bgp-ink pb-2 mb-6">Location</h2>
+        <h2 className="display text-2xl md:text-3xl mb-6">Location</h2>
         {hasCoords ? (
           <iframe
             title="Location map"
@@ -145,7 +145,7 @@ export default function ListingDetail() {
 
       {similar.length > 0 && (
         <section className="mx-auto max-w-6xl px-4 py-10">
-          <h2 className="text-lg font-semibold border-b border-bgp-ink pb-2 mb-8">Similar properties</h2>
+          <h2 className="display text-2xl md:text-3xl mb-8">Similar properties</h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
             {similar.map((l) => (
               <ListingCard key={l.id} listing={l} />

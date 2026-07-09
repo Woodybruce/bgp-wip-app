@@ -21,20 +21,20 @@ export default function LeaseAdvisory() {
         <Placeholder className="h-72 md:h-96 w-full" src="/images/lease-signing.jpg" alt="Signing a lease" />
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">
-            <p className="max-w-md text-xl md:text-2xl leading-snug bg-bgp-paper/85 p-4 -ml-4">{service.intro}</p>
+            <p className="max-w-md text-xl md:text-2xl leading-snug bg-bgp-cream/90 p-4 -ml-4 font-display text-bgp-wine">{service.intro}</p>
           </div>
         </div>
       </section>
 
       <section className="mx-auto max-w-6xl px-4 py-14">
-        <h2 className="label-caps border-b border-bgp-ink pb-2 mb-8">A snapshot of clients</h2>
+        <h2 className="display text-2xl md:text-3xl mb-8">A snapshot of clients</h2>
         <ClientRow clients={LEASE_ADVISORY_CLIENTS} />
       </section>
 
       <section className="mx-auto max-w-6xl px-4 py-6">
         <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-10">
           <div>
-            <h2 className="text-2xl font-semibold">What we offer</h2>
+            <h2 className="display text-2xl md:text-3xl">What we offer</h2>
             <ul className="mt-6 space-y-3">
               {LEASE_ADVISORY_SERVICES.map((s, i) => (
                 <li key={s.name}>

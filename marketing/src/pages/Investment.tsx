@@ -11,7 +11,7 @@ export default function Investment() {
         <Placeholder className="h-72 md:h-96 w-full" src="/images/skyline-night.jpg" alt="London skyline at night" />
         <div className="absolute inset-0 flex items-end">
           <div className="mx-auto max-w-6xl px-4 pb-10 w-full">
-            <p className="max-w-md text-xl md:text-2xl leading-snug bg-bgp-paper/85 p-4 -ml-4">{service.intro}</p>
+            <p className="max-w-md text-xl md:text-2xl leading-snug bg-bgp-cream/90 p-4 -ml-4 font-display text-bgp-wine">{service.intro}</p>
           </div>
         </div>
       </section>

@@ -6,35 +6,35 @@ export const SERVICES = [
   {
     slug: "leasing",
     name: "Leasing",
-    image: "/images/tower-bridge.jpg",
+    image: "/images/portman-estate.jpg",
     intro:
       "Creating neighbourhoods that people love. Retail, restaurant and leisure leasing across London's leading estates and the UK's landmark destinations — acting for landlords including The Portman Estate, Grosvenor, The Crown Estate and Landsec.",
   },
   {
     slug: "investment",
     name: "Investment",
-    image: "/images/skyline-night.jpg",
+    image: "/images/investment-main.jpg",
     intro:
       "Acquisition and disposal advice across retail, leisure and mixed-use investments — from single assets to portfolios, acting for private clients, property companies and institutions including Aviva Investors, Legal & General and LondonMetric.",
   },
   {
     slug: "brand-representation",
     name: "Brand Representation",
-    image: "/images/shop-menswear.jpg",
+    image: "/images/fred-perry-camden.jpg",
     intro:
       "Brand led retail estate advisory. Providing strategic support and market analysis for brand expansion across multi sector clients — acquiring space for brands to thrive in.",
   },
   {
     slug: "lease-advisory",
     name: "Lease Advisory",
-    image: "/images/lease-signing.jpg",
+    image: "/images/st-christophers-place.jpg",
     intro:
       "Rent reviews, lease renewals and restructuring — protecting and enhancing value through the life of the lease, with instructions spanning Canary Wharf (20+ years) and Chinatown London (since 1998).",
   },
   {
     slug: "consultancy",
     name: "Consultancy",
-    image: "/images/westminster.jpg",
+    image: "/images/55-bishopsgate.jpg",
     intro:
       "Placemaking is central to our business philosophy. As such, we've evolved from traditional leasing to offering clients bespoke reporting, long-term consultancy, and strategic asset management services.",
   },
@@ -72,6 +72,7 @@ export interface Person {
   title: string;
   phone: string;
   email: string;
+  photo?: string;
 }
 
 const OFFICE_PHONE = "+44 (0)20 3551 5260";
@@ -82,27 +83,28 @@ export const TEAM: Person[] = [
   { name: "Tracey Pollard", title: "Founding Director", phone: "+44 (0)7779 323 306", email: "tracey@brucegillinghampollard.com" },
   { name: "Charlotte Roberts", title: "Equity Director, Co-Head London Estates", phone: "+44 (0)7738 448 338", email: "charlotte@brucegillinghampollard.com" },
   { name: "Rupert Bentley-Smith", title: "Equity Director, Co-Head London Estates", phone: "+44 (0)7876 354 160", email: "rupert@brucegillinghampollard.com" },
-  { name: "Jack Barratt", title: "Equity Director, Head of Investment", phone: "+44 (0)7788 215 044", email: "jack@brucegillinghampollard.com" },
+  { photo: "/images/team/jack-barratt.jpg", name: "Jack Barratt", title: "Equity Director, Head of Investment", phone: "+44 (0)7788 215 044", email: "jack@brucegillinghampollard.com" },
   { name: "Victoria Broadhead", title: "Head of National", phone: "+44 (0)7793 158 133", email: "victoria@brucegillinghampollard.com" },
   { name: "Peter Wood", title: "Head of Lease Consultancy", phone: "+44 (0)7872 602 336", email: "peter@brucegillinghampollard.com" },
-  { name: "Nick Halley", title: "Director, Investment", phone: "+44 (0)7766 042 736", email: "nick@brucegillinghampollard.com" },
+  { photo: "/images/team/nick-halley.jpg", name: "Nick Halley", title: "Director, Investment", phone: "+44 (0)7766 042 736", email: "nick@brucegillinghampollard.com" },
   { name: "Lucy Gardiner", title: "Director, National Leasing", phone: "+44 (0)7741 877 452", email: "lucyg@brucegillinghampollard.com" },
   { name: "Lizzie Knights", title: "Director, London Leasing", phone: "+44 (0)7511 902 073", email: "lizzie@brucegillinghampollard.com" },
   { name: "Harry Elliott", title: "Director, Brand Representation", phone: "+44 (0)7568 367 777", email: "harrye@brucegillinghampollard.com" },
   { name: "Emily Dumbell", title: "Director, Brand Representation", phone: "+44 (0)7805 259 793", email: "emily@brucegillinghampollard.com" },
   { name: "Nick Goodman", title: "Consultant, Investment", phone: "+44 (0)7818 012 432", email: "nickgoodman@brucegillinghampollard.com" },
-  { name: "Ollie Wilkinson", title: "Associate Director, Investment", phone: "+44 (0)7736 869 317", email: "ollie@brucegillinghampollard.com" },
+  { photo: "/images/team/ollie-wilkinson.jpg", name: "Ollie Wilkinson", title: "Associate Director, Investment", phone: "+44 (0)7736 869 317", email: "ollie@brucegillinghampollard.com" },
   { name: "Tom Cater", title: "Associate Director, Lease Advisory", phone: "+44 (0)7947 484 902", email: "tom@brucegillinghampollard.com" },
   { name: "Lucy Cope", title: "Associate Director, London Leasing", phone: "+44 (0)7595 267 866", email: "lucy@brucegillinghampollard.com" },
   { name: "Evie North", title: "Associate Director, Brand Representation", phone: "+44 (0)7595 349 057", email: "evie@brucegillinghampollard.com" },
   { name: "Alex Todd", title: "Senior Surveyor, Development", phone: "+44 (0)7526 504 806", email: "alext@brucegillinghampollard.com" },
   { name: "Rob Barnes", title: "Surveyor, National Leasing", phone: "+44 (0)7494 751 653", email: "rob@brucegillinghampollard.com" },
   { name: "Millie Edwards", title: "Leasing", phone: OFFICE_PHONE, email: "TBC" },
+  { photo: "/images/team/danny-cardosi.jpg", name: "Danny Cardosi", title: "Title TBC", phone: OFFICE_PHONE, email: "TBC" },
   { name: "Emily Cann", title: "Graduate Surveyor, London Leasing", phone: "+44 (0)7516 660 791", email: "emilyc@brucegillinghampollard.com" },
   { name: "Will Penfold", title: "Graduate Surveyor, London Leasing", phone: "+44 (0)7760 881 270", email: "willp@brucegillinghampollard.com" },
   { name: "Luke Donohoe", title: "Graduate Surveyor, National Leasing", phone: "+44 (0)7983 855 926", email: "luke@brucegillinghampollard.com" },
   { name: "Libby Evans", title: "Graduate Surveyor, Development", phone: "+44 (0)7931 462 768", email: "libbye@brucegillinghampollard.com" },
-  { name: "Jonny Palmer", title: "Graduate, Investment", phone: "+44 (0)7506 439 429", email: "jonny@brucegillinghampollard.com" },
+  { photo: "/images/team/jonny-palmer.jpg", name: "Jonny Palmer", title: "Graduate, Investment", phone: "+44 (0)7506 439 429", email: "jonny@brucegillinghampollard.com" },
   { name: "Harriette Walker-Clark", title: "PA & Office Manager", phone: OFFICE_PHONE, email: "harriette@brucegillinghampollard.com" },
   { name: "Layla O'Driscoll", title: "PA & Office Manager", phone: OFFICE_PHONE, email: "layla@brucegillinghampollard.com" },
   { name: "Cara Milligan", title: "PA — National", phone: OFFICE_PHONE, email: "cara@brucegillinghampollard.com" },
@@ -120,9 +122,9 @@ export const LEASING_CONTACTS = byName(
 
 export const INVESTMENT_CONTACTS = byName(
   "Jack Barratt",
-  "Woody Bruce",
   "Nick Halley",
   "Ollie Wilkinson",
+  "Danny Cardosi",
   "Jonny Palmer",
 );
 
@@ -149,7 +151,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "20-hanover-square",
     title: "20 Hanover Square",
     service: "Leasing",
-    image: "/images/restaurant.jpg",
+    image: "/images/hanover-square.jpg",
     blurb:
       "A 10,000 sq ft Mayfair restaurant opportunity for Great Portland Estates — one of the West End's landmark restaurant lettings.",
     facts: [
@@ -207,7 +209,7 @@ export const CASE_STUDIES: CaseStudy[] = [
     slug: "heddon-street",
     title: "Heddon Street, The Crown Estate",
     service: "Consultancy",
-    image: "/images/bar.jpg",
+    image: "/images/heddon-street.jpg",
     blurb:
       "Long-term advice to The Crown Estate on one of the West End's best-loved restaurant and bar destinations, off Regent Street.",
     facts: [
@@ -418,6 +420,16 @@ export interface Article {
 // Real articles from the current journal (brucegillinghampollard.com/journal).
 export const ARTICLES: Article[] = [
   {
+    slug: "ardent-royal-exchange",
+    image: "/images/royal-exchange.jpg",
+    title: "Ardent UK Completes Royal Exchange Acquisition",
+    category: "Investment",
+    date: "2026",
+    author: "BGP",
+    standfirst: "Ardent UK has completed its acquisition of the Royal Exchange.",
+    body: null,
+  },
+  {
     slug: "adieu-2025",
     image: "/images/hero-london.jpg",
     title: "Adieu 2025…",
@@ -446,7 +458,7 @@ export const ARTICLES: Article[] = [
   },
   {
     slug: "enduring-appeal-portman-estate",
-    image: "/images/cafe.jpg",
+    image: "/images/anna-nina.jpg",
     title: "The Enduring Appeal of the Portman Estate",
     category: "Opinion",
     date: "05.11.25",
@@ -527,9 +539,9 @@ export const ARTICLES: Article[] = [
   },
   {
     slug: "behind-the-brand-yolk",
-    image: "/images/food-hall.jpg",
+    image: "/images/news-yolk.jpg",
     title: "Behind the Brand | YOLK",
-    category: "Breakthrough brands",
+    category: "Retail",
     date: "24.06.25",
     author: "BGP",
     standfirst:

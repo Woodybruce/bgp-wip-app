@@ -13,12 +13,12 @@ export default function BrandRepresentation() {
       </section>
 
       <section className="mx-auto max-w-6xl px-4 py-14">
-        <h2 className="label-caps border-b border-bgp-ink pb-2 mb-8">A snapshot of clients</h2>
+        <h2 className="display text-2xl md:text-3xl mb-8">A snapshot of clients</h2>
         <ClientRow clients={BRAND_REP_CLIENTS} />
       </section>
 
       <section className="mx-auto max-w-6xl px-4 py-6">
-        <h2 className="text-lg font-semibold border-b border-bgp-ink pb-2 mb-8">Case studies</h2>
+        <h2 className="display text-2xl md:text-3xl mb-8">Case studies</h2>
         <div className="space-y-10">
           {BRAND_REP_CASE_STUDIES.map((cs, i) => (
             <div key={cs.name} className={`p-6 md:p-8 ${i % 2 === 0 ? "bg-bgp-mist" : ""}`}>
@@ -28,7 +28,7 @@ export default function BrandRepresentation() {
                 <div className="[direction:ltr]">
                   <p className="text-sm text-bgp-ink/70 leading-relaxed max-w-sm">{cs.blurb}</p>
                   <p className="mt-4">
-                    <Link href={`/case-studies/${cs.slug}`} className="rule-link inline-block">
+                    <Link href={`/case-studies/${cs.slug}`} className="explore-link inline-block">
                       Read more
                     </Link>
                   </p>

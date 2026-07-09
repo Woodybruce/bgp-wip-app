@@ -14,7 +14,7 @@ export default function News() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-14">
-      <h1 className="text-lg font-semibold border-b border-bgp-ink pb-2">News and insights</h1>
+      <h1 className="display text-2xl md:text-3xl">News and insights</h1>
 
       <div className="flex flex-wrap items-center gap-x-8 gap-y-3 border-b border-bgp-ink py-3">
         <span className="label-caps text-bgp-ink/50">Filter by</span>
@@ -44,11 +44,11 @@ export default function News() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
             <Placeholder className="aspect-[4/3] w-full" src={featured.image} alt={featured.title} />
             <div>
-              <h2 className="text-2xl md:text-3xl leading-tight group-hover:text-bgp-burgundy transition-colors">
+              <h2 className="display text-2xl md:text-3xl leading-tight group-hover:text-bgp-burgundy transition-colors">
                 {featured.title}
               </h2>
               <p className="mt-4 text-sm text-bgp-ink/70 leading-relaxed max-w-sm">{featured.standfirst}</p>
-              <p className="mt-4"><span className="rule-link inline-block">Read more</span></p>
+              <p className="mt-4"><span className="explore-link inline-block">Read more</span></p>
             </div>
           </div>
         </Link>

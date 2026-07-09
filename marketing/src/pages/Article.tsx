@@ -16,7 +16,7 @@ export default function ArticlePage() {
       <div className="mx-auto max-w-6xl px-4 py-32 text-center">
         <p className="label-caps text-bgp-burgundy">Article not found</p>
         <p className="mt-4">
-          <Link href="/news" className="rule-link inline-block">Back to news &amp; insights</Link>
+          <Link href="/news" className="explore-link inline-block">Back to news &amp; insights</Link>
         </p>
       </div>
     );
