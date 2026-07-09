@@ -690,7 +690,10 @@ export default function WipReport() {
         const gn = (e.groupName || "").toLowerCase().replace(/\s+/g, "");
         return gn === "landsec" || gn === "landsecurities" || gn.includes("landsec");
       });
-    } else if (isWipAdmin && activeTeam && activeTeam !== "all") {
+    } else if (isWipAdmin && !canSeeAll && activeTeam && activeTeam !== "all") {
+      // Leadership (canSeeAll — senior partners + finance full-view) always
+      // see the whole firm, so the team switcher never narrows their WIP.
+      // This slice only applies to a plain DB admin (not a partner).
       const at = activeTeam.toLowerCase();
       filtered = filtered.filter((e) => {
         if (!e.team) return false;
@@ -699,7 +702,7 @@ export default function WipReport() {
       });
     }
     return filtered;
-  }, [rawEntries, isLandsecView, activeTeam, isWipAdmin, wipViewMode]);
+  }, [rawEntries, isLandsecView, activeTeam, isWipAdmin, wipViewMode, canSeeAll]);
 
   const INVOICED_STATUSES = useMemo(() => ["Invoiced", "Billed"], []);
   const [selectedTeams, setSelectedTeams] = useState<Set<string>>(new Set());
@@ -1169,9 +1172,15 @@ export default function WipReport() {
             >
               WIP Report
               {(() => {
-                const teamLabel = isWipAdmin
-                  ? (activeTeam === "all" ? "All Teams" : activeTeam)
-                  : wipUserTeam;
+                // Leadership always see the whole firm → "All Teams". A plain
+                // DB admin who has sliced to a team sees that team's name.
+                const teamLabel = isLandsecView
+                  ? "Landsec"
+                  : canSeeAll
+                    ? "All Teams"
+                    : isWipAdmin
+                      ? (activeTeam === "all" ? "All Teams" : activeTeam)
+                      : wipUserTeam;
                 return teamLabel ? (
                   <span className="text-base font-normal text-muted-foreground ml-2">— {teamLabel}</span>
                 ) : null;

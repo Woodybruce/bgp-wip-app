@@ -130,14 +130,18 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
   const wipEntries = Array.isArray(wipResponse) ? wipResponse : (wipResponse?.entries || []);
   const isWipAdmin = Array.isArray(wipResponse) ? false : (wipResponse?.isAdmin || false);
   const wipUserTeam = Array.isArray(wipResponse) ? null : (wipResponse?.userTeam || null);
+  // Leadership (senior partners + finance full-view like Layla) always see the
+  // whole firm — never scoped to their own team.
+  const canSeeAll = Array.isArray(wipResponse) ? false : !!(wipResponse as any)?.canSeeAll;
 
   const selectedTeam = isWipAdmin
     ? (activeTeam === "all" ? "all" : (activeTeam || user?.team || "Investment"))
     : (wipUserTeam || user?.team || "Investment");
-  const isAllTeams = isWipAdmin && activeTeam === "all";
+  const isAllTeams = canSeeAll || (isWipAdmin && activeTeam === "all");
 
   const teamEntries = useMemo(() => {
     if (wipEntries.length === 0) return [];
+    if (canSeeAll) return wipEntries;
     if (!isWipAdmin) return wipEntries;
     if (activeTeam === "all") return wipEntries;
     const at = (activeTeam || "").toLowerCase();
@@ -147,7 +151,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
       const teams = (e.team as string).split(",").map((t: string) => t.trim().toLowerCase());
       return teams.some(t => t === at);
     });
-  }, [wipEntries, activeTeam, isWipAdmin]);
+  }, [wipEntries, activeTeam, isWipAdmin, canSeeAll]);
 
   const allMonths = useMemo(() => {
     const set = new Set(teamEntries.map(e => e.month).filter(Boolean) as string[]);

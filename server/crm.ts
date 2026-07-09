@@ -6026,10 +6026,10 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const senior = await isWipSenior(req);
       const userId = req.session?.userId || (req as any).tokenUserId;
       const currentUser = userId ? await storage.getUser(userId) : null;
-      // Senior partners (Woody / Charlotte / Rupert / Jack) get the same
-      // team-viewing powers as a DB admin across the WIP surfaces (report,
-      // dashboard card, Excel export): the team switcher works for them —
-      // pick "All Teams" for the whole firm, or a single team to focus.
+      // Senior partners (Woody / Charlotte / Rupert / Jack) count as leadership
+      // for WIP alongside DB admins. Together with the canSeeAll flag below,
+      // the report, dashboard card and Excel export always show the whole firm
+      // for them — never scoped to their own team — matching Layla's view.
       // (Write actions like delete/backfill still gate on isWipSenior.)
       const isAdmin = !!currentUser?.isAdmin || senior;
       const userTeam = currentUser?.team || null;
@@ -7774,10 +7774,10 @@ Rules:
       const senior = await isWipSenior(req);
       const userId = req.session?.userId || (req as any).tokenUserId;
       const currentUser = userId ? await storage.getUser(userId) : null;
-      // Senior partners (Woody / Charlotte / Rupert / Jack) get the same
-      // team-viewing powers as a DB admin across the WIP surfaces (report,
-      // dashboard card, Excel export): the team switcher works for them —
-      // pick "All Teams" for the whole firm, or a single team to focus.
+      // Senior partners (Woody / Charlotte / Rupert / Jack) count as leadership
+      // for WIP alongside DB admins. Together with the canSeeAll flag below,
+      // the report, dashboard card and Excel export always show the whole firm
+      // for them — never scoped to their own team — matching Layla's view.
       // (Write actions like delete/backfill still gate on isWipSenior.)
       const isAdmin = !!currentUser?.isAdmin || senior;
       const userTeam = currentUser?.team || null;
@@ -7936,7 +7936,11 @@ Rules:
           return true;
         });
       }
-      if (!isAdmin) {
+      // Leadership (senior partners + finance full-view like Layla) export the
+      // whole firm, same as their on-screen WIP. Everyone else's export stays
+      // scoped to their own team.
+      const fullView = await hasWipFullView(req);
+      if (!isAdmin && !fullView) {
         if (!userTeam) {
           entries = [];
         } else {
