@@ -1,21 +1,36 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Client } from "../lib/content";
-import { logoKitEnabled, logoKitUrl } from "../lib/logokit";
+import { LOGOKIT_TOKEN, logoKitEnabled } from "../lib/logokit";
 
-// "A snapshot of clients" — LogoKit first (when a key is configured), then the
-// self-hosted PNGs in public/brand-logos/, then the client name.
+// "A snapshot of clients" — LogoKit (fallback=404 so misses fail honestly),
+// then self-hosted PNGs in public/brand-logos/, then the client name.
+// A load timeout skips any source that hangs (ad-blockers, firewalls).
+// Grayscale unifies mixed logo colours; hover restores each brand's own.
 function ClientCircle({ client }: { client: Client }) {
-  const [failed, setFailed] = useState(0);
+  const [step, setStep] = useState(0);
+  const loadedRef = useRef(false);
+
   const sources: string[] = [];
   if (client.domain) {
-    if (logoKitEnabled) sources.push(logoKitUrl(client.domain));
+    if (logoKitEnabled) {
+      sources.push(`https://img.logokit.com/${client.domain}?token=${LOGOKIT_TOKEN}&size=128&fallback=404`);
+    }
     sources.push(`/brand-logos/${client.domain}.png`);
   }
-  const src = sources[failed];
+  const src = sources[step];
+
+  useEffect(() => {
+    if (!src) return;
+    loadedRef.current = false;
+    const timer = setTimeout(() => {
+      if (!loadedRef.current) setStep((s) => s + 1);
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [src]);
 
   return (
     <div
-      className="aspect-square rounded-full border border-bgp-line bg-white flex items-center justify-center overflow-hidden p-5"
+      className="group aspect-square rounded-full border border-bgp-line bg-white flex items-center justify-center overflow-hidden hover:border-bgp-burgundy/40 transition-colors"
       title={client.name}
     >
       {src ? (
@@ -23,11 +38,12 @@ function ClientCircle({ client }: { client: Client }) {
           src={src}
           alt={`${client.name} logo`}
           loading="lazy"
-          className="max-h-full max-w-full object-contain"
-          onError={() => setFailed((f) => f + 1)}
+          className="h-3/5 w-3/5 object-contain grayscale opacity-70 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-200"
+          onLoad={() => { loadedRef.current = true; }}
+          onError={() => setStep((s) => s + 1)}
         />
       ) : (
-        <span className="text-center text-[10px] font-semibold uppercase tracking-widest text-bgp-ink/60">
+        <span className="px-3 text-center text-[10px] font-semibold uppercase tracking-widest text-bgp-ink/60">
           {client.name}
         </span>
       )}

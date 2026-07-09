@@ -357,7 +357,7 @@ export const CONSULTANCY_CLIENTS: Client[] = [
   { name: "The Crown Estate", domain: "thecrownestate.co.uk" },
   { name: "Berkeley Group", domain: "berkeleygroup.co.uk" },
   { name: "Nuveen", domain: "nuveen.com" },
-  { name: "Hermes", domain: "hermes-investment.com" },
+  { name: "Hermes", domain: "federatedhermes.com" },
   { name: "Almacantar", domain: "almacantar.com" },
   { name: "Consolidated Developments", domain: "consolidateddevelopments.com" },
   { name: "St George", domain: "stgeorgeplc.co.uk" },
