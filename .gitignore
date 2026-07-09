@@ -25,4 +25,6 @@ attached_assets/
 data/*
 !data/goad/
 .voa-cache/
-.claude/
+.claude/*
+!.claude/settings.json
+!.claude/hooks/

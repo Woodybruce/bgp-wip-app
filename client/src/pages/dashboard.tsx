@@ -952,8 +952,11 @@ export default function Dashboard() {
           }
         }
 
+        // Vacancy is defined explicitly (Vacant / Void / Available) so tenancy
+        // statuses like "Not Vacant" and "Occupied"/"Let" all count as occupied.
+        const isVacantStatus = (s: string) => s === "Vacant" || s === "Void" || s === "Available";
         const totalLeasingUnits = portfolioData.leasingUnits?.length || 0;
-        const occupiedUnits = (portfolioData.leasingUnits || []).filter((u: any) => u.status === "Occupied" || u.status === "Let").length;
+        const occupiedUnits = (portfolioData.leasingUnits || []).filter((u: any) => !isVacantStatus(u.status)).length;
         const expiringUnits = (portfolioData.leasingUnits || []).filter((u: any) => isExpiringSoon(u.lease_expiry)).length;
 
         const companyInfo = portfolioData.company;
@@ -1202,7 +1205,7 @@ export default function Dashboard() {
                   <ScrollArea className="flex-1">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-2">
                       {Array.from(leasingByProperty.entries()).map(([propId, { name, units: propUnits }]) => {
-                        const propOccupied = propUnits.filter((u: any) => u.status === "Occupied" || u.status === "Let").length;
+                        const propOccupied = propUnits.filter((u: any) => !isVacantStatus(u.status)).length;
                         const propExpiring = propUnits.filter((u: any) => isExpiringSoon(u.lease_expiry)).length;
                         return (
                           <div key={propId} className="border rounded-lg overflow-hidden">
@@ -1498,8 +1501,8 @@ export default function Dashboard() {
               if (!propMap.has(key)) propMap.set(key, { vacantUnits: 0, totalUnits: 0, activeDeals: 0, propName: u.property_name || "Unknown" });
               const entry = propMap.get(key)!;
               entry.totalUnits += 1;
-              const isOccupied = u.status === "Occupied" || u.status === "Let";
-              if (!isOccupied) entry.vacantUnits += 1;
+              const isVacant = u.status === "Vacant" || u.status === "Void" || u.status === "Available";
+              if (isVacant) entry.vacantUnits += 1;
             }
 
             // Count active deals per property (non-completed, non-withdrawn)
