@@ -25,7 +25,7 @@ export default function Home() {
         />
         <div className="absolute inset-0 bg-bgp-wine/30" />
         <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4">
-          <h1 className="wordmark text-white text-8xl md:text-[10rem]">BGP</h1>
+          <h1><img src="/brand/bgp-logo-white.svg" alt="bgp" className="h-28 md:h-44 w-auto mx-auto" /></h1>
           <p className="mt-6 max-w-2xl font-display italic text-white text-xl md:text-2xl leading-snug">
             {HERO_STATEMENT}
           </p>

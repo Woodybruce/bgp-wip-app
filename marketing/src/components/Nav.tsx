@@ -12,8 +12,8 @@ export default function Nav() {
       <div className="mx-auto max-w-6xl px-4 pt-6 flex flex-col items-center">
         {/* On the home page the hero carries the giant wordmark */}
         {!onHome && (
-          <Link href="/" aria-label="Bruce Gillingham Pollard home" className="wordmark text-bgp-wine text-4xl md:text-5xl">
-            BGP
+          <Link href="/" aria-label="Bruce Gillingham Pollard home">
+            <img src="/brand/bgp-logo-wine.svg" alt="bgp" className="h-11 md:h-14 w-auto" />
           </Link>
         )}
         <button
