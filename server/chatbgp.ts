@@ -13782,13 +13782,8 @@ export function setupChatBGPRoutes(app: Express) {
         errorMsg = "Anthropic's API returned a server error. Please try again in a moment.";
       }
 
-      const lastAssistantContent = conversationMessages?.filter((m: any) => m.role === "assistant" && m.content).pop()?.content;
-      if (lastAssistantContent && lastAssistantContent.length > 30) {
-        errorMsg = lastAssistantContent;
-      }
-
       clearInterval(heartbeat);
-      safeSseWrite(`data: ${JSON.stringify({ reply: errorMsg, error: !lastAssistantContent, errorStatus: err?.status || 500 })}\n\n`);
+      safeSseWrite(`data: ${JSON.stringify({ reply: errorMsg, error: true, errorStatus: err?.status || 500 })}\n\n`);
       try { if (!res.writableEnded) res.end(); } catch {}
     }
   });
