@@ -2,13 +2,16 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { pool } from "./db";
-import { requireAuth, getUserIdFromToken } from "./auth";
+import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
+import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
 import { resolveCompanyScope } from "./company-scope";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import crypto from "crypto";
-import { saveFile, getFile } from "./file-storage";
+import { saveFile, getFile, recordUserUpload } from "./file-storage";
+import { contentDispositionFor } from "./utils/http-headers";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { escapeLike } from "./utils/escape-like";
 import { emitNewMessage, emitMessageUpdated, emitMessageDeleted, emitThreadUpdated, emitMemberAdded, emitMemberRemoved, emitNotification, getIO } from "./websocket";
@@ -36,8 +39,24 @@ import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, inArray } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
+import { registerIngestRoutes } from "./ingest-routes";
+import { registerGenericCrmRoutes } from "./generic-crm-routes";
+import { setupStripeIssuingRoutes } from "./stripe-issuing";
+import { registerExpenseAutoClassifyRoutes } from "./expense-auto-classify";
+import { registerMapAnnotationsRoutes } from "./map-annotations";
+import { setupRevolutRoutes } from "./revolut";
+import { setupRefreshImageRoutes } from "./refresh-website-images";
+import { setupHrRoutes } from "./hr-routes";
+import { setupWhyBuyDesignRoutes } from "./why-buy-design";
+import { setupDocumentPreferencesRoutes } from "./document-preferences";
+import { setupDeckRoutes } from "./decks";
+import { setupDocumentRoutes } from "./documents";
 import { importTrlRequirement } from "./trl";
-import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements } from "./pipnet";
+import { resolveBuildingTitles } from "./land-registry";
+import { fetchPlanitPlanning } from "./planit-planning";
+import { lookupVoaByPostcode, voaSqliteAvailable } from "./voa-sqlite";
+import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements, importPipnetProperties, inspectPipnetPropertySearch } from "./pipnet";
+import { startJob, getJobStatus } from "./brand-jobs";
 import { executeSeedSql } from "./seed";
 import { gunzipSync } from "zlib";
 import { invalidateContextCache } from "./chatbgp";
@@ -84,19 +103,34 @@ const marketingUpload = multer({
 
 const chatMediaUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 },
+  limits: { fileSize: 100 * 1024 * 1024 },
 });
 
 const GROUP_CHAT_TOOLS = [
   "search_crm", "search_news", "query_wip", "create_deal", "update_deal",
   "create_contact", "update_contact", "create_company", "update_company",
-  "create_property", "create_available_unit", "update_available_unit",
+  "create_property", "upsert_tenancy_schedule", "add_property_imagery",
+  "create_available_unit", "update_available_unit",
   "update_investment_tracker", "create_investment_tracker",
   "log_viewing", "log_offer", "create_requirement", "create_diary_entry",
   "delete_record", "web_search", "ingest_url", "property_lookup", "property_data_lookup",
   "tfl_nearby", "search_green_street", "query_xero", "scan_duplicates",
   "navigate_to", "send_email",
 ];
+
+// available_units / investment_tracker store agent user IDs (text[] of
+// user.id), but crm_deals.internal_agent stores display NAMES (the
+// deal-detail chip render + the BGP-Contact dropdown both look up by
+// name). Without this resolver, deals auto-created off the trackers
+// surfaced raw UUIDs in the Edit Deal dialog and on the kanban chip.
+async function resolveAgentNames(userIds: string[] | null | undefined): Promise<string[]> {
+  if (!Array.isArray(userIds) || userIds.length === 0) return [];
+  const r = await pool.query<{ name: string }>(
+    `SELECT name FROM users WHERE id = ANY($1::varchar[])`,
+    [userIds],
+  );
+  return r.rows.map(row => row.name).filter((n): n is string => !!n);
+}
 
 async function triggerAiGroupResponse(threadId: string, senderUserId: string, req: Request) {
   const startTime = Date.now();
@@ -134,9 +168,12 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       chatbgp.getEmailAndCalendarContext(req).catch(() => ""),
     ]);
 
-    const groupTools = (allTools as any).tools?.filter((t: any) =>
+    // Client logins get NO tools in the group-AI path either — this loop is
+    // separate from the main chat handler's clientChatGuard. (Landsec audit.)
+    const groupIsClient = await (await import("./company-scope")).isClientRequestUser(req).catch(() => true);
+    const groupTools = groupIsClient ? [] : ((allTools as any).tools?.filter((t: any) =>
       GROUP_CHAT_TOOLS.includes(t.function?.name)
-    ) || [];
+    ) || []);
 
     const lastUserMsg = recentMessages.filter(m => m.role === "user").pop()?.content || "";
     const mentionsChatBGP = /chat\s*bgp|@chat\s*bgp|@chat\b/i.test(lastUserMsg);
@@ -285,8 +322,20 @@ export async function registerRoutes(
   const { registerLeaseEventRoutes } = await import("./lease-events");
   registerLeaseEventRoutes(app);
 
+  const { registerLandlordHunterRoutes } = await import("./landlord-hunter");
+  registerLandlordHunterRoutes(app);
+
+  const { registerLenderRoutes } = await import("./lender-routes");
+  registerLenderRoutes(app);
+
+  const { registerAdminRoutes } = await import("./admin-routes");
+  registerAdminRoutes(app);
+
   const { registerIntegrationsStatusRoutes } = await import("./integrations-status");
   registerIntegrationsStatusRoutes(app);
+
+  const { registerAutoDeployRoutes } = await import("./auto-deploy");
+  registerAutoDeployRoutes(app);
 
   const { registerOSDataRoutes } = await import("./os-data");
   registerOSDataRoutes(app);
@@ -330,7 +379,7 @@ export async function registerRoutes(
       return res.status(401).json({ message: "Not authenticated" });
     }
     try {
-      const filename = req.params.filename;
+      const filename = String(req.params.filename || "");
       if (filename.includes("..") || filename.includes("/")) return res.status(400).end();
       const file = await getFile(`chat-media/${filename}`);
       if (!file) {
@@ -349,28 +398,49 @@ export async function registerRoutes(
       ];
       if (downloadTypes.includes(file.contentType)) {
         const dlName = file.originalName || filename;
-        res.set("Content-Disposition", `attachment; filename="${dlName}"`);
+        res.set("Content-Disposition", contentDispositionFor(dlName));
       }
       res.send(file.data);
     } catch (err: any) { console.error("[routes] File download error:", err?.message); res.status(500).end(); }
   });
 
-  app.post("/api/chat/upload", requireAuth, chatMediaUpload.array("files", 10), async (req: Request, res) => {
+  // Wrap multer so its errors (esp. LIMIT_FILE_SIZE) return a clear JSON
+  // message the client can show, instead of falling through to the generic
+  // 500 handler. The old opaque failure is what made oversized brochures
+  // look like a mysterious "storage" problem.
+  const chatUploadMw = (req: any, res: any, next: any) => {
+    chatMediaUpload.array("files", 10)(req, res, (err: any) => {
+      if (err) {
+        const tooBig = err?.code === "LIMIT_FILE_SIZE";
+        return res.status(tooBig ? 413 : 400).json({
+          message: tooBig
+            ? "File too large — the limit is 100 MB per file. Compress or split the PDF and try again."
+            : (err?.message || "Upload failed"),
+        });
+      }
+      next();
+    });
+  };
+  app.post("/api/chat/upload", requireAuth, chatUploadMw, async (req: Request, res) => {
     try {
       const files = req.files as Express.Multer.File[];
       if (!files || files.length === 0) {
         return res.status(400).json({ message: "No files uploaded" });
       }
+      const userId = (req as any).userId || req.session?.userId || null;
       const uploaded = await Promise.all(files.map(async (f) => {
         const ext = path.extname(f.originalname).toLowerCase();
         const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
-        await saveFile(`chat-media/${uniqueName}`, f.buffer, f.mimetype, f.originalname);
-        return {
-          url: `/api/chat-media/${uniqueName}`,
-          name: f.originalname,
-          size: f.size,
-          type: f.mimetype,
-        };
+        const storageKey = `chat-media/${uniqueName}`;
+        await saveFile(storageKey, f.buffer, f.mimetype, f.originalname);
+        const url = `/api/chat-media/${uniqueName}`;
+        // Track per-user so ChatBGP can list "what has Woody uploaded
+        // recently" without needing the exact filename — fixes the "file
+        // vanished" complaint when the user comes back in a new session.
+        if (userId) {
+          recordUserUpload(userId, storageKey, f.originalname, f.mimetype, f.size, url).catch(() => {});
+        }
+        return { url, name: f.originalname, size: f.size, type: f.mimetype };
       }));
       res.json({ files: uploaded });
     } catch (err: any) {
@@ -450,9 +520,430 @@ export async function registerRoutes(
     res.json({ key: process.env.GOOGLE_API_KEY || "" });
   });
 
-  app.get("/api/users", requireAuth, async (_req, res) => {
+  const GOAD_DIR = path.join(process.cwd(), "data", "goad");
+  const GOAD_LAYERS: Record<string, string> = {
+    lg: "9033MM_LG_WGS84.geojson",
+    gf: "9033MM_GF_WGS84.geojson",
+    f1: "9033MM_F1_WGS84.geojson",
+    f2: "9033MM_F2_WGS84.geojson",
+  };
+  // Diagnostic — exposes which external data sources the live server can
+  // see. Lets us tell at a glance whether PROPERTYDATA_API_KEY /
+  // GOOGLE_API_KEY / Companies House key / VOA SQLite are actually
+  // wired up in the current environment. No secrets returned — booleans
+  // and counts only.
+  app.get("/api/admin/data-sources", requireAuth, (_req, res) => {
+    res.json({
+      propertyDataKey: !!process.env.PROPERTYDATA_API_KEY,
+      propertyDataKeyLength: process.env.PROPERTYDATA_API_KEY?.length || 0,
+      googleApiKey: !!process.env.GOOGLE_API_KEY,
+      companiesHouseKey: !!process.env.COMPANIES_HOUSE_API_KEY,
+      anthropicKey: !!(process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY),
+      voaSqliteAvailable: voaSqliteAvailable(),
+      voaSqlitePath: process.env.VOA_SQLITE_PATH || null,
+      goadFiles: Object.entries(GOAD_LAYERS).map(([id, file]) => ({
+        id,
+        exists: fs.existsSync(path.join(GOAD_DIR, file)),
+      })),
+      nodeEnv: process.env.NODE_ENV || null,
+    });
+  });
+
+  app.get("/api/goad/layers", requireAuth, (_req, res) => {
+    const layers = Object.entries(GOAD_LAYERS).map(([id, file]) => {
+      const p = path.join(GOAD_DIR, file);
+      const exists = fs.existsSync(p);
+      return { id, file, exists, sizeBytes: exists ? fs.statSync(p).size : 0 };
+    });
+    res.json({ centreCode: "9033MM", centreName: "London West End", layers });
+  });
+  app.get("/api/goad/:layer", requireAuth, (req, res, next) => {
+    const layerParam = String(req.params.layer || "").toLowerCase();
+    // Critical: don't shadow other /api/goad/<name> routes registered
+    // AFTER this one. Express evaluates in declaration order — a
+    // wildcard like :layer otherwise eats /api/goad/polygon-context
+    // and returns 404 because 'polygon-context' isn't in GOAD_LAYERS.
+    if (!(layerParam in GOAD_LAYERS)) return next();
+    const file = GOAD_LAYERS[layerParam];
+    if (!file) return res.status(404).json({ message: "Unknown Goad layer" });
+    const diskPath = path.join(GOAD_DIR, file);
+    if (!fs.existsSync(diskPath)) return res.status(404).json({ message: "Goad layer file not found" });
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.setHeader("Content-Type", "application/geo+json");
+    return res.sendFile(diskPath);
+  });
+
+  // Polygon context: when a user clicks a Goad polygon, hand the side
+  // panel everything BGP already knows about that unit — CRM property,
+  // recent deals, and (cheap) a parent-company hit by HoldingCo name.
+  // VOA / Companies House / Land Registry can be layered on later; this
+  // first cut is the join most useful day-to-day.
+  app.get("/api/goad/polygon-context", requireAuth, async (req: any, res) => {
+    let postcode = String(req.query.postcode || "").trim().toUpperCase();
+    const streetNum = String(req.query.streetNum || "").trim();
+    const street = String(req.query.street || "").trim().toUpperCase();
+    const holding = String(req.query.holding || "").trim();
+    const fascia = String(req.query.fascia || "").trim();
+    const lat = req.query.lat ? Number(req.query.lat) : undefined;
+    const lng = req.query.lng ? Number(req.query.lng) : undefined;
+    if (!postcode && !street && !(lat && lng)) {
+      return res.json({ crmProperties: [], deals: [], parentCompany: null, landRegistry: null, rates: [], planningApplications: [], pathwayRun: null, tenantCompany: null });
+    }
+
+    // Goad polygons don't always carry a Postcode attribute. When the click
+    // only gave us coords, reverse-geocode once via Google to recover the
+    // postcode — every downstream search (VOA, Planning, Land Registry,
+    // Pathway) is keyed on postcode, so without this they all return empty
+    // and only the fascia/holding company lookups survive.
+    let postcodeRecoveredFromGeocode = false;
+    if (!postcode && typeof lat === "number" && typeof lng === "number" && process.env.GOOGLE_API_KEY) {
+      try {
+        const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${process.env.GOOGLE_API_KEY}&result_type=premise|street_address|subpremise|establishment`;
+        const gResp = await fetch(gUrl, { signal: AbortSignal.timeout(5000) });
+        if (gResp.ok) {
+          const gData = await gResp.json() as any;
+          const pc = (gData.results?.[0]?.address_components || [])
+            .find((c: any) => c.types?.includes("postal_code"))?.long_name || "";
+          if (pc) {
+            postcode = pc.toUpperCase();
+            postcodeRecoveredFromGeocode = true;
+            console.log(`[polygon-context] postcode recovered from geocode: ${postcode} (lat=${lat}, lng=${lng})`);
+          }
+        }
+      } catch (e: any) {
+        console.warn(`[polygon-context] reverse-geocode for postcode failed:`, e?.message);
+      }
+    }
+
+    // Correct the postcode via OS Places before any lookup. Goad's postcode
+    // is sometimes wrong (e.g. "W1K 2AP" where the building is really
+    // "W1K 2TJ"), and HMLR-direct keys ownership on postcode + street number,
+    // so a wrong postcode misses the titles entirely and we fall to noise.
+    // Resolve the canonical OS DPA for this unit and adopt ITS postcode + UPRN
+    // — the OS Places product is live (confirmed via /api/property-data/health).
+    let osUprn: string | null = null;
+    let osResolved: any = null;
+    const numHead = String(streetNum).replace(/\s+/g, "").split(/[-–—,]/)[0];
+    try {
+      const { osPlacesNearest, osPlacesFind } = await import("./os-data");
+      let candidates: any[] = [];
+      // Prefer the Goad CENTROID via OS Places nearest — this doesn't rely on
+      // Goad's postcode (which can be wrong, e.g. 2AP vs the real 2TJ).
+      if (typeof lat === "number" && typeof lng === "number") {
+        for (const radius of [25, 50, 90]) {
+          candidates = await osPlacesNearest(lat, lng, radius);
+          if (candidates.length) break;
+        }
+      }
+      // Fall back to a number + street search WITHOUT Goad's (possibly wrong)
+      // postcode, if coords gave us nothing.
+      if (!candidates.length && street) {
+        candidates = await osPlacesFind([numHead, street, "London"].filter(Boolean).join(" "), 5);
+      }
+      // Prefer a candidate whose address carries the Goad street number.
+      const pick = (numHead
+        ? candidates.find((d: any) => new RegExp(`(^|[^0-9])${numHead}([^0-9]|$)`).test((d.address || "").toLowerCase()))
+        : null) || candidates[0];
+      if (pick?.postcode) postcode = String(pick.postcode).toUpperCase();
+      if (pick?.uprn) osUprn = String(pick.uprn);
+      osResolved = pick ? { uprn: pick.uprn || null, postcode: pick.postcode || null, address: pick.address || null } : null;
+      if (pick) console.log(`[polygon-context] OS resolved → ${postcode}${osUprn ? ` UPRN ${osUprn}` : ""} (${pick.address || ""})`);
+    } catch (e: any) { console.warn("[polygon-context] OS resolve failed:", e?.message); }
+
+    const addressPattern = streetNum && street ? `%${streetNum} ${street}%` : street ? `%${street}%` : "";
+    // Reconstruct the address line for the Land Registry resolver.
+    const lrAddress = [streetNum, street, postcode].filter(Boolean).join(" ");
+    // PropertyData wants postcodes WITHOUT a space ("W1J8NR", not "W1J 8NR")
+    // — most of its endpoints silently return zero results for the spaced
+    // form. That was the 'board only showing Goad stuff' bug.
+    const postcodeNoSpace = postcode.replace(/\s+/g, "");
+    const userId = req.session?.userId || req.tokenUserId || null;
+    const PD_KEY = process.env.PROPERTYDATA_API_KEY;
+
+    try {
+      const [crmRows, dealRows, parentRows, lrResult, planningResult, pathwayRow, tenantRows] = await Promise.all([
+        pool.query(
+          `SELECT p.id, p.name, p.status, p.asset_class, p.sqft, p.postcode, p.latitude, p.longitude,
+                  p.address, p.monday_item_id, p.group_name,
+                  p.landlord_id,
+                  lc.name AS landlord_name, lc.company_type AS landlord_type,
+                  lc.company_number AS landlord_company_number,
+                  fc.id AS freeholder_id, fc.name AS freeholder_name
+           FROM crm_properties p
+           LEFT JOIN crm_companies lc ON lc.id = p.landlord_id
+           LEFT JOIN crm_companies fc ON fc.id = p.freeholder_id
+           WHERE (p.postcode IS NOT NULL AND UPPER(REPLACE(p.postcode, ' ', '')) = REPLACE($1, ' ', ''))
+              OR ($2 <> '' AND (UPPER(p.name) LIKE $2 OR UPPER(p.address::text) LIKE $2))
+           LIMIT 8`,
+          [postcode, addressPattern],
+        ).catch(() => ({ rows: [] as any[] })),
+        pool.query(
+          `SELECT d.id, d.name, d.deal_type, d.status, d.team, d.fee, d.completed_at, d.created_at,
+                  p.name AS property_name, p.postcode AS property_postcode
+           FROM crm_deals d
+           LEFT JOIN crm_properties p ON p.id = d.property_id
+           WHERE (p.postcode IS NOT NULL AND UPPER(REPLACE(p.postcode, ' ', '')) = REPLACE($1, ' ', ''))
+              OR ($2 <> '' AND UPPER(p.name) LIKE $2)
+           ORDER BY d.created_at DESC NULLS LAST
+           LIMIT 10`,
+          [postcode, addressPattern],
+        ).catch(() => ({ rows: [] as any[] })),
+        holding && holding !== "NON MULTIPLE"
+          ? pool.query(
+              `SELECT id, name, company_number, company_type, status, website
+               FROM crm_companies
+               WHERE UPPER(name) = UPPER($1)
+                  OR UPPER(name) LIKE UPPER($2)
+               LIMIT 3`,
+              [holding, `%${holding}%`],
+            ).catch(() => ({ rows: [] as any[] }))
+          : Promise.resolve({ rows: [] as any[] }),
+        // Land Registry — hit the real API via the existing resolver. It
+        // returns matched freeholds/leaseholds for this exact building.
+        (postcode || (lat && lng))
+          ? resolveBuildingTitles({
+              address: lrAddress || undefined,
+              postcode: postcode || undefined,
+              lat,
+              lng,
+              uprn: osUprn,
+              source: "goad-polygon",
+              userId,
+              skipPersist: true,
+            }).catch((err: any) => ({ ok: false, status: 500, error: err?.message || "lr lookup failed" }))
+          : Promise.resolve({ ok: false, status: 0, error: "no address" }),
+        // Planning applications via PlanIt (planit.org.uk) — the same source
+        // the Pathway planning card uses. It scrapes every UK LPA portal
+        // (incl. Westminster, which TCP-blocks our egress IP) and needs no
+        // API key, so it gives better coverage than the PropertyData postcode
+        // endpoint. ~200m radius, last 10 yrs. Mapped to the snake_case shape
+        // the panel already renders.
+        postcode
+          ? fetchPlanitPlanning(postcode, lrAddress || street || "", { maxAgeYears: 10, radiusKm: 0.2 })
+              .then((apps) => apps.map((a) => ({
+                description: a.description,
+                decision: a.decision,
+                status: a.status,
+                decided_date: a.decidedAt || null,
+                received_date: a.receivedAt || null,
+                reference: a.reference,
+                address: a.address,
+                documentUrl: a.documentUrl,
+                lpa: a.lpa,
+              })))
+              .catch(() => [] as any[])
+          : Promise.resolve([] as any[]),
+        // Latest Pathway run for this address/postcode — so the panel can
+        // either link to it or surface a "Start Pathway" button.
+        postcode || street
+          ? pool.query(
+              `SELECT id, address, postcode, status, updated_at
+               FROM property_pathway_runs
+               WHERE ($1 <> '' AND REPLACE(UPPER(postcode), ' ', '') = $1)
+                  OR ($2 <> '' AND LOWER(address) LIKE $2)
+               ORDER BY updated_at DESC
+               LIMIT 1`,
+              [postcode.replace(/\s+/g, ""), addressPattern.toLowerCase()],
+            ).then((r) => r.rows[0] || null).catch(() => null)
+          : Promise.resolve(null),
+        // Tenant CRM match by fascia name. The fascia is the brand
+        // currently trading from the unit (e.g. "BUBALA"), distinct
+        // from HoldingCo (the legal parent). We look for a company
+        // whose name matches the fascia exactly, then loosely.
+        fascia
+          ? pool.query(
+              `SELECT id, name, company_number, company_type, status, website
+               FROM crm_companies
+               WHERE UPPER(name) = UPPER($1)
+                  OR UPPER(name) LIKE UPPER($2)
+               ORDER BY (CASE WHEN UPPER(name) = UPPER($1) THEN 0 ELSE 1 END)
+               LIMIT 3`,
+              [fascia, `%${fascia}%`],
+            ).catch(() => ({ rows: [] as any[] }))
+          : Promise.resolve({ rows: [] as any[] }),
+      ]);
+
+      let landRegistry: any = null;
+      if (lrResult && (lrResult as any).ok) {
+        const r: any = lrResult;
+        landRegistry = {
+          resolvedAddress: r.resolvedAddress,
+          buildingName: r.buildingName,
+          source: r.source, // "uprn" | "street_number" | "postcode_only"
+          exact: r.matched?.exact || false,
+          uprns: r.uprns || [],
+          matched: {
+            freeholds: (r.matched?.freeholds || []).slice(0, 8),
+            leaseholds: (r.matched?.leaseholds || []).slice(0, 8),
+          },
+          fallback: {
+            freeholds: (r.fallback?.freeholds || []).slice(0, 8),
+            leaseholds: (r.fallback?.leaseholds || []).slice(0, 8),
+            usedStreetNumberMatch: r.fallback?.usedStreetNumberMatch || false,
+          },
+          context: {
+            freeholds: (r.context?.freeholds || []).slice(0, 8),
+          },
+        };
+      }
+
+      // VOA rates from the SQLite snapshot — by postcode then narrowed by
+      // the Goad street number when present. Returns the actual unit-level
+      // rateable values, not a postcode-wide aggregate.
+      let rates: any[] = [];
+      if (postcode && voaSqliteAvailable()) {
+        const all = lookupVoaByPostcode(postcode, street || undefined, 60);
+        const numTrimmed = streetNum.replace(/\s+/g, "").toLowerCase();
+        if (numTrimmed) {
+          // Match if the VOA address starts with this number (e.g. "188-196 Regent Street" → starts with "188")
+          const head = numTrimmed.split(/[-–—,]/)[0];
+          rates = all.filter((r) => {
+            const addr = (r.address || "").toLowerCase().replace(/\s+/g, " ");
+            return head && (addr.startsWith(head + " ") || addr.startsWith(head + ",") || addr.startsWith(head + "-") || addr.includes(`/${head} `) || addr.startsWith(numTrimmed));
+          });
+          // Fall back to the whole postcode list if filtering nuked everything
+          if (rates.length === 0) rates = all.slice(0, 30);
+        } else {
+          rates = all.slice(0, 30);
+        }
+      }
+
+      // Planning applications: cap at 10 yrs (PD returns dates in d.decided_date / d.received_date)
+      const TEN_YEARS_MS = 10 * 365 * 24 * 60 * 60 * 1000;
+      const cutoff = Date.now() - TEN_YEARS_MS;
+      const planningApplications = (planningResult as any[])
+        .filter((a) => {
+          const d = a?.decided_date || a?.received_date || a?.date;
+          if (!d) return true; // keep undated
+          const t = new Date(d).getTime();
+          return Number.isFinite(t) ? t >= cutoff : true;
+        })
+        .slice(0, 20);
+
+      // Fuzzy CRM fallback — only runs when the strict (exact-postcode /
+      // name-LIKE) lookup found nothing, so it can never override a good
+      // match. Catches the cases the strict query misses: the address
+      // living in `address` not `name`, "St" vs "Street" abbreviations,
+      // and a slightly different postcode on the CRM record (e.g. the
+      // building spans W1K 2TJ and W1K 2AP). Anchored on the street number
+      // so it can't drag in unrelated properties on the same street.
+      let crmPropertiesOut = crmRows.rows;
+      if (crmPropertiesOut.length === 0 && street) {
+        const normAddr = (s: string) => (s || "").toUpperCase()
+          .replace(/\bSTREET\b/g, "ST").replace(/\bROAD\b/g, "RD")
+          .replace(/\bAVENUE\b/g, "AVE").replace(/\bSQUARE\b/g, "SQ")
+          .replace(/\bPLACE\b/g, "PL").replace(/[^A-Z0-9 ]/g, " ")
+          .replace(/\s+/g, " ").trim();
+        const streetCore = normAddr(street).replace(/\b(ST|RD|AVE|SQ|PL)\b/g, "").replace(/\s+/g, " ").trim();
+        const numHead = String(streetNum).replace(/\s+/g, "").split(/[-–—,]/)[0];
+        const outward = postcodeNoSpace.length > 3 ? postcodeNoSpace.slice(0, postcodeNoSpace.length - 3) : postcodeNoSpace;
+        if (streetCore) {
+          const cand = await pool.query(
+            `SELECT p.id, p.name, p.status, p.asset_class, p.sqft, p.postcode, p.latitude, p.longitude,
+                    p.address, p.monday_item_id, p.group_name, p.landlord_id,
+                    lc.name AS landlord_name, lc.company_type AS landlord_type,
+                    lc.company_number AS landlord_company_number,
+                    fc.id AS freeholder_id, fc.name AS freeholder_name
+             FROM crm_properties p
+             LEFT JOIN crm_companies lc ON lc.id = p.landlord_id
+             LEFT JOIN crm_companies fc ON fc.id = p.freeholder_id
+             WHERE (p.postcode IS NOT NULL AND UPPER(REPLACE(p.postcode, ' ', '')) LIKE $1)
+                OR UPPER(p.name) LIKE $2
+                OR UPPER(p.address::text) LIKE $2
+             LIMIT 40`,
+            [`${outward}%`, `%${streetCore}%`],
+          ).catch(() => ({ rows: [] as any[] }));
+          crmPropertiesOut = cand.rows.filter((p: any) => {
+            const hay = normAddr(`${p.name || ""} ${typeof p.address === "string" ? p.address : JSON.stringify(p.address || "")}`);
+            if (!hay.includes(streetCore)) return false;
+            if (numHead) return new RegExp(`(^|[^0-9])${numHead}([^0-9]|$)`).test(hay);
+            return true;
+          }).slice(0, 8);
+        }
+      }
+
+      // When there's no CRM match for the fascia, try to resolve the tenant
+      // via Google Places (name + website + phone) so the drawer can offer
+      // a "verify on Companies House" → "add to CRM" mini-flow without
+      // any name-only guessing. Only runs when fascia + coords are set
+      // AND the CRM lookup turned up nothing — cheap path otherwise.
+      let tenantPlace: any = null;
+      if (fascia && tenantRows.rows.length === 0 && typeof lat === "number" && typeof lng === "number") {
+        try {
+          const { findPlaceWebsiteAtCoord } = await import("./goad-tenant-resolver");
+          tenantPlace = await findPlaceWebsiteAtCoord(lat, lng, fascia);
+        } catch (e: any) {
+          console.warn("[polygon-context] tenant Places lookup failed:", e?.message);
+        }
+      }
+
+      // Freeholder + head-leaseholder chain. resolveBuildingTitles already
+      // returns the unit-level leaseholds (Mayfair Spirit Ltd at 43 Curzon
+      // Street). This widens the search to the whole postcode and ranks
+      // candidates by likely role: freeholder = block-level (multiple titles
+      // by same proprietor, estate-style name, long-held), head-leaseholder
+      // = older long-dated leasehold with multiple_address_indicator='Y'.
+      let chain: any = null;
+      if (postcode) {
+        try {
+          const { findFreeholderChain } = await import("./hmlr-direct");
+          // Exclude unit-level title numbers from the chain search so we
+          // don't surface the unit lease as its own "head-leaseholder".
+          const matchedTitleNums: string[] = [];
+          if (landRegistry) {
+            for (const t of (landRegistry.matched?.freeholds || [])) if (t.title_number || t.titleNumber) matchedTitleNums.push(t.title_number || t.titleNumber);
+            for (const t of (landRegistry.matched?.leaseholds || [])) if (t.title_number || t.titleNumber) matchedTitleNums.push(t.title_number || t.titleNumber);
+          }
+          // Use the unit lease's date as the reference for "significantly older"
+          // when scoring head-leasehold candidates.
+          const unitLeaseDate = landRegistry?.matched?.leaseholds?.[0]?.dateProprietorAdded
+                             || landRegistry?.matched?.leaseholds?.[0]?.date_proprietor_added
+                             || null;
+          chain = await findFreeholderChain(postcode, street || null, matchedTitleNums, unitLeaseDate);
+        } catch (e: any) {
+          console.warn("[polygon-context] freeholder chain lookup failed:", e?.message);
+        }
+      }
+      if (landRegistry && chain) landRegistry.chain = chain;
+
+      res.json({
+        crmProperties: crmPropertiesOut,
+        deals: dealRows.rows,
+        parentCompany: parentRows.rows[0] || null,
+        parentCompanyCandidates: parentRows.rows,
+        landRegistry,
+        rates,
+        planningApplications,
+        pathwayRun: pathwayRow || null,
+        tenantCompany: tenantRows.rows[0] || null,
+        tenantCompanyCandidates: tenantRows.rows,
+        tenantPlace,
+        // Diagnostics so the panel can show 'we ran X but found nothing'
+        // rather than silently hiding the section.
+        diagnostics: {
+          voaAvailable: voaSqliteAvailable(),
+          propertyDataKeyAvailable: !!PD_KEY,
+          landRegistryRan: lrResult && (lrResult as any).ok === true,
+          landRegistryError: (lrResult as any)?.ok === false ? (lrResult as any).error : null,
+          postcodeUsed: postcode || null,
+          postcodeRecoveredFromGeocode,
+          osResolved,
+          osUprnUsed: osUprn,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Failed to load polygon context" });
+    }
+  });
+
+  app.get("/api/users", requireAuth, async (req, res) => {
     try {
       const allUsers = await storage.getAllUsers();
+      // Client logins only need id+name (agent chips/colors on their boards) —
+      // not the staff directory with emails/teams. (Landsec audit.)
+      if (await (await import("./company-scope")).isClientRequestUser(req)) {
+        return res.json(allUsers.filter(u => u.isActive !== false).map(u => ({ id: u.id, name: u.name })));
+      }
       res.json(allUsers.map(u => ({ id: u.id, name: u.name, username: u.username, email: u.email, role: u.role, department: u.department, team: u.team, additionalTeams: u.additionalTeams || [], profilePicUrl: u.profilePicUrl || null, isActive: u.isActive !== false })));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch users" });
@@ -601,7 +1092,7 @@ export async function registerRoutes(
 
   app.get("/uploads/profile-pics/:filename", requireAuth, async (req, res) => {
     try {
-      const filename = req.params.filename;
+      const filename = req.params.filename as string;
       if (filename.includes("..") || filename.includes("/")) return res.status(400).end();
       const file = await getFile(`profile-pics/${filename}`);
       if (!file) {
@@ -707,14 +1198,18 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/team-members/:id/team", requireAuth, async (req, res) => {
+  app.patch("/api/team-members/:id/team", requireAuth, async (req: any, res) => {
     try {
+      const adminId = req.session.userId || req.tokenUserId;
+      const [admin] = await pool.query("SELECT is_admin FROM users WHERE id = $1", [adminId]).then(r => r.rows);
+      if (!admin?.is_admin) return res.status(403).json({ message: "Admin access required" });
+
       const { id } = req.params;
       const { team } = req.body;
       if (!team || typeof team !== "string") {
         return res.status(400).json({ message: "Team is required" });
       }
-      const validTeams = ["London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office / Corporate", "Landsec"];
+      const validTeams = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"];
       if (!validTeams.includes(team)) {
         return res.status(400).json({ message: "Invalid team" });
       }
@@ -722,6 +1217,192 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to update team" });
+    }
+  });
+
+  // ============================================================
+  // People & HR — org chart, profiles, birthdays
+  // ============================================================
+  // Public-tier fields visible to the whole team (everyone authenticated).
+  // Sensitive fields (address, dob, personal_email, employment_type, salary
+  // history, etc.) are restricted to the user themselves + admins.
+  const HR_PUBLIC_COLUMNS = `
+    id, username, name, email, phone, role, department, team, additional_teams,
+    profile_pic_url, manager_id, board_member, management_team, display_order,
+    wfh_days, bio, cv_url, is_active, is_admin
+  `;
+  const HR_PRIVATE_COLUMNS = `
+    dob, address, personal_email, employment_type, start_date
+  `;
+
+  app.get("/api/hr/team", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      const isAdmin = adminCheck.rows[0]?.is_admin === true;
+
+      // Admins get the full HR record for everyone; non-admins get the public
+      // tier for everyone plus the private tier for themselves only.
+      const sql = isAdmin
+        ? `SELECT ${HR_PUBLIC_COLUMNS}, ${HR_PRIVATE_COLUMNS} FROM users WHERE is_active = true ORDER BY display_order, name`
+        : `SELECT ${HR_PUBLIC_COLUMNS},
+              CASE WHEN id = $1 THEN dob ELSE NULL END AS dob,
+              CASE WHEN id = $1 THEN address ELSE NULL END AS address,
+              CASE WHEN id = $1 THEN personal_email ELSE NULL END AS personal_email,
+              CASE WHEN id = $1 THEN employment_type ELSE NULL END AS employment_type,
+              CASE WHEN id = $1 THEN start_date ELSE NULL END AS start_date
+            FROM users WHERE is_active = true ORDER BY display_order, name`;
+      const params = isAdmin ? [] : [userId];
+      const { rows } = await pool.query(sql, params);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch team" });
+    }
+  });
+
+  app.get("/api/hr/birthdays", requireAuth, async (req, res) => {
+    try {
+      const days = Math.max(1, Math.min(60, parseInt(String(req.query.days || "14"), 10) || 14));
+      // Birthdays are stored as ISO YYYY-MM-DD strings. Match on month/day so
+      // age is irrelevant; window crosses the year boundary if needed.
+      // DOB is owned by staff_profiles (the HR record); the old users.dob
+      // column is no longer written now that the Team page is retired.
+      const { rows } = await pool.query(
+        `SELECT u.id, u.name, u.role, u.team, u.profile_pic_url, sp.dob
+           FROM users u
+           LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+          WHERE u.is_active = true AND sp.dob IS NOT NULL`
+      );
+      const today = new Date();
+      const upcoming = rows
+        .map((r: any) => {
+          const dob = String(r.dob);
+          const m = dob.match(/-(\d{2})-(\d{2})$/);
+          if (!m) return null;
+          const month = parseInt(m[1], 10) - 1;
+          const day = parseInt(m[2], 10);
+          const next = new Date(today.getFullYear(), month, day);
+          if (next < new Date(today.getFullYear(), today.getMonth(), today.getDate())) {
+            next.setFullYear(today.getFullYear() + 1);
+          }
+          const diffDays = Math.round((next.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          return diffDays >= 0 && diffDays <= days
+            ? { id: r.id, name: r.name, role: r.role, team: r.team, profilePicUrl: r.profile_pic_url, date: next.toISOString().slice(0, 10), daysUntil: diffDays }
+            : null;
+        })
+        .filter(Boolean)
+        .sort((a: any, b: any) => a.daysUntil - b.daysUntil);
+      res.json(upcoming);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch birthdays" });
+    }
+  });
+
+  // Updates: admins can edit anyone's full record; non-admins can edit only
+  // their own personal-tier fields (no role, team, manager, admin flags).
+  app.patch("/api/hr/team/:id", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const targetId = req.params.id;
+      const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      const isAdmin = adminCheck.rows[0]?.is_admin === true;
+      const isSelf = String(userId) === String(targetId);
+      if (!isAdmin && !isSelf) return res.status(403).json({ message: "You can only edit your own profile" });
+
+      const allowed = isAdmin
+        ? new Set([
+            "name", "email", "phone", "role", "department", "team", "additionalTeams",
+            "managerId", "boardMember", "managementTeam", "displayOrder",
+            "dob", "address", "personalEmail", "wfhDays", "employmentType",
+            "startDate", "cvUrl", "bio", "isActive", "isAdmin",
+          ])
+        : new Set([
+            "phone", "dob", "address", "personalEmail", "wfhDays",
+            "cvUrl", "bio",
+          ]);
+
+      const camelToSnake = (s: string) => s.replace(/[A-Z]/g, c => "_" + c.toLowerCase());
+      // Booleans must go in as real booleans, not the string "true".
+      const boolFields = new Set(["isAdmin", "boardMember", "managementTeam", "isActive"]);
+      const sets: string[] = [];
+      const params: any[] = [];
+      let p = 1;
+      for (const [key, value] of Object.entries(req.body || {})) {
+        if (!allowed.has(key)) continue;
+        sets.push(`${camelToSnake(key)} = $${p++}`);
+        params.push(boolFields.has(key) ? value === true || value === "true" : value);
+      }
+      if (sets.length === 0) return res.status(400).json({ message: "No editable fields supplied" });
+      params.push(targetId);
+      await pool.query(`UPDATE users SET ${sets.join(", ")} WHERE id = $${p}`, params);
+
+      const { rows } = await pool.query(`SELECT ${HR_PUBLIC_COLUMNS}, ${HR_PRIVATE_COLUMNS} FROM users WHERE id = $1`, [targetId]);
+      res.json(rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to update profile" });
+    }
+  });
+
+  // Admin: create a new person on the org chart.
+  app.post("/api/hr/team", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      if (adminCheck.rows[0]?.is_admin !== true) return res.status(403).json({ message: "Admin access required" });
+
+      const { name, role, team, managerId, email, phone, additionalTeams, boardMember, managementTeam } = req.body || {};
+      if (!name || typeof name !== "string") return res.status(400).json({ message: "Name is required" });
+
+      const username = name.toLowerCase().replace(/['']/g, "").replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
+      const bcrypt = await import("bcrypt");
+      const placeholderHash = await bcrypt.default.hash(`bgp-placeholder-${Date.now()}`, 10);
+
+      const { rows } = await pool.query(
+        `INSERT INTO users (
+          username, password, name, role, team, additional_teams, manager_id,
+          board_member, management_team, email, phone, is_admin, is_active
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,false,true)
+         RETURNING ${HR_PUBLIC_COLUMNS}`,
+        [
+          username, placeholderHash, name.trim(), role || null, team || null,
+          additionalTeams || [], managerId || null,
+          boardMember === true, managementTeam === true, email || null, phone || null,
+        ]
+      );
+      res.json(rows[0]);
+    } catch (err: any) {
+      if (err?.code === "23505") return res.status(409).json({ message: "Username already exists — try a different name" });
+      res.status(500).json({ message: err?.message || "Failed to create person" });
+    }
+  });
+
+  // Admin: deactivate (soft-delete) a person from the org chart. Their direct
+  // reports become orphaned; the page surfaces these for re-assignment.
+  app.delete("/api/hr/team/:id", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      if (adminCheck.rows[0]?.is_admin !== true) return res.status(403).json({ message: "Admin access required" });
+      if (String(userId) === String(req.params.id)) return res.status(400).json({ message: "You cannot remove yourself" });
+      await pool.query(`UPDATE users SET is_active = false WHERE id = $1`, [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to remove person" });
+    }
+  });
+
+  // Admin: one-shot seed of the BGP org chart (idempotent — safe to re-run).
+  app.post("/api/admin/seed-team", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      if (adminCheck.rows[0]?.is_admin !== true) return res.status(403).json({ message: "Admin access required" });
+      const { seedBgpOrgChart } = await import("./seed-team");
+      const result = await seedBgpOrgChart();
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error("[seed-team]", err);
+      res.status(500).json({ message: err?.message || "Failed to seed team" });
     }
   });
 
@@ -840,6 +1521,39 @@ export async function registerRoutes(
       const q = (req.query.q as string || "").trim();
       if (q.length < 2) {
         return res.json({ results: [] });
+      }
+
+      // Client logins search only their own world: their properties, their
+      // contacts, and the client-safe brand slice — never the firm-wide CRM.
+      const searchScopeId = await resolveCompanyScope(req);
+      if (searchScopeId) {
+        const like = `%${q}%`;
+        const [propRows, contactRows, brandRows] = await Promise.all([
+          pool.query(
+            `SELECT id, name FROM crm_properties
+             WHERE name ILIKE $2 AND (landlord_id = $1 OR id IN
+               (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
+             LIMIT 8`, [searchScopeId, like]),
+          pool.query(
+            `SELECT id, name, role FROM crm_contacts WHERE company_id = $1 AND name ILIKE $2 LIMIT 8`,
+            [searchScopeId, like]),
+          pool.query(
+            `SELECT id, name, company_type FROM crm_companies
+             WHERE name ILIKE $1 AND company_type ILIKE 'Tenant -%'
+               AND (company_type ILIKE '%Restaurant%' OR company_type ILIKE '%Dining%' OR company_type ILIKE '%F&B%'
+                 OR company_type ILIKE '%QSR%' OR company_type ILIKE '%Food%' OR company_type ILIKE '%Caf%'
+                 OR company_type ILIKE '%Coffee%' OR company_type ILIKE '%Bar%' OR company_type ILIKE '%Leisure%'
+                 OR company_type ILIKE '%Cinema%' OR company_type ILIKE '%Entertainment%' OR company_type ILIKE '%Fitness%'
+                 OR company_type ILIKE '%Gym%' OR company_type ILIKE '%Yoga%' OR company_type ILIKE '%Hotel%' OR company_type ILIKE '%Hospitality%')
+             LIMIT 8`, [like]),
+        ]);
+        return res.json({
+          results: [
+            ...propRows.rows.map(r => ({ id: r.id, name: r.name, type: "property" })),
+            ...contactRows.rows.map(r => ({ id: r.id, name: r.name, type: "contact", subtitle: r.role || undefined })),
+            ...brandRows.rows.map(r => ({ id: r.id, name: r.name, type: "company", subtitle: (r.company_type || "").replace(/^Tenant - /, "") })),
+          ],
+        });
       }
 
       const crmResults = await storage.crmSearchAll(q);
@@ -1275,7 +1989,7 @@ export async function registerRoutes(
   app.put("/api/chat/threads/:threadId/messages/:messageId", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
-      const { threadId, messageId } = req.params;
+      const { threadId, messageId } = req.params as { threadId: string; messageId: string };
       const { content } = req.body;
       if (!content?.trim()) return res.status(400).json({ message: "Content required" });
       const msg = await storage.getChatMessage(messageId);
@@ -1294,7 +2008,7 @@ export async function registerRoutes(
   app.delete("/api/chat/threads/:threadId/messages/:messageId", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
-      const { threadId, messageId } = req.params;
+      const { threadId, messageId } = req.params as { threadId: string; messageId: string };
       const msg = await storage.getChatMessage(messageId);
       if (!msg) return res.status(404).json({ message: "Message not found" });
       if (msg.threadId !== threadId) return res.status(400).json({ message: "Message does not belong to this thread" });
@@ -1390,6 +2104,404 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/market-tone", requireAuth, async (req, res) => {
+    try {
+      const postcode = (req.query.postcode as string || "").trim();
+      if (!postcode) return res.status(400).json({ error: "postcode required" });
+      const { fetchPropertyDataMarketTone } = await import("./propertydata-market");
+      const tone = await fetchPropertyDataMarketTone(postcode);
+      if (!tone) return res.status(503).json({ error: "PropertyData not configured or no data for this postcode" });
+      res.json(tone);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── HM Land Registry CCOD / UCOD ingestion ─────────────────────────────
+  // Three operating modes:
+  //   POST { latest: true, source: "CCOD" }              fetch + ingest the
+  //                                                       most recent FULL
+  //                                                       monthly file via
+  //                                                       the HMLR API (uses
+  //                                                       HMLR_API_KEY).
+  //   POST { filename, source }                           same, but for a
+  //                                                       specific filename.
+  //   POST { url, source, filename? }                     ingest directly from
+  //                                                       a pre-resolved URL
+  //                                                       (e.g. a manually-
+  //                                                       downloaded mirror).
+  // Always runs in the background; poll /status. CCOD file is ~150MB so
+  // expect 10-30 min depending on instance size.
+  // Reversible cleanup of crm_properties clutter. Snapshots full rows into
+  // crm_properties_archive (JSONB) BEFORE deleting, so anything removed can be
+  // restored. mode:"investment_comps" removes the legacy bulk-loaded investment
+  // comparables (status 'Investment Comp' / group 'Investment Comps'); ids:[...]
+  // removes specific rows (the junk stubs). Dry-run unless confirm:true.
+  // Manual trigger for the client team-diary → events sync (Landsec).
+  app.post("/api/admin/sync-client-events", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { syncClientTeamEvents, syncAllClientTeamEvents } = await import("./client-team-events-sync");
+      const companyId = (req.body?.companyId || req.query.companyId) as string | undefined;
+      if (companyId) {
+        const stats = await syncClientTeamEvents(companyId);
+        return res.json({ ok: true, stats });
+      }
+      await syncAllClientTeamEvents();
+      res.json({ ok: true, message: "Synced all client teams" });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || "sync failed" });
+    }
+  });
+
+  app.post("/api/admin/cleanup-crm-properties", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { mode, ids, confirm, reason } = req.body || {};
+      await pool.query(`CREATE TABLE IF NOT EXISTS crm_properties_archive (
+        id TEXT, data JSONB, reason TEXT, archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
+      let where = "", params: any[] = [];
+      if (mode === "investment_comps") {
+        where = `status = 'Investment Comp' OR group_name = 'Investment Comps'`;
+      } else if (Array.isArray(ids) && ids.length) {
+        where = `id = ANY($1)`; params = [ids];
+      } else {
+        return res.status(400).json({ message: "Provide mode:'investment_comps' or ids:[...]" });
+      }
+      const preview = await pool.query(
+        `SELECT id, name, status, group_name AS "groupName" FROM crm_properties WHERE ${where} LIMIT 1000`, params);
+      if (!confirm) {
+        return res.json({ dryRun: true, matched: preview.rowCount, sample: preview.rows.slice(0, 20) });
+      }
+      // Snapshot then delete, in a transaction.
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          `INSERT INTO crm_properties_archive (id, data, reason)
+           SELECT id, to_jsonb(p), $${params.length + 1} FROM crm_properties p WHERE ${where}`,
+          [...params, reason || mode || "cleanup"]);
+        const del = await client.query(`DELETE FROM crm_properties WHERE ${where}`, params);
+        await client.query("COMMIT");
+        res.json({ archived: preview.rowCount, deleted: del.rowCount, restorableFrom: "crm_properties_archive" });
+      } catch (e: any) {
+        await client.query("ROLLBACK"); throw e;
+      } finally { client.release(); }
+    } catch (err: any) {
+      console.error("[cleanup-crm-properties] failed:", err?.message);
+      res.status(500).json({ message: err?.message || "cleanup failed" });
+    }
+  });
+
+  app.post("/api/admin/ingest-ccod", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { ingestCcodFromUrl, ingestLatestFor, resolveHmlrDownloadUrl, getIngestProgress } = await import("./land-registry-ccod");
+      const progress = getIngestProgress();
+      if (progress.state === "downloading" || progress.state === "parsing") {
+        return res.status(202).json({ accepted: true, alreadyRunning: true, progress });
+      }
+      const body = req.body || {};
+      const source = (String(body.source || "CCOD").toUpperCase() === "UCOD" ? "UCOD" : "CCOD") as "CCOD" | "UCOD";
+
+      // Kick off in the background; respond 202 immediately so Railway's
+      // edge proxy doesn't time out on the 10-30 min ingest.
+      if (body.latest) {
+        ingestLatestFor(source).catch(err => console.error("[ccod] ingestLatestFor failed:", err?.message));
+      } else if (body.filename) {
+        (async () => {
+          try {
+            const url = await resolveHmlrDownloadUrl(source, body.filename);
+            await ingestCcodFromUrl(url, source, body.filename);
+          } catch (err: any) { console.error("[ccod] filename ingest failed:", err?.message); }
+        })();
+      } else if (body.url) {
+        ingestCcodFromUrl(body.url, source, body.filename || "manual-upload.csv")
+          .catch(err => console.error("[ccod] url ingest failed:", err?.message));
+      } else {
+        return res.status(400).json({ error: "pass { latest: true } | { filename } | { url }" });
+      }
+      res.status(202).json({ accepted: true, message: `Started ${source} ingest. Poll /api/admin/ingest-ccod/status for progress.` });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "ingest failed" });
+    }
+  });
+
+  app.get("/api/admin/ingest-ccod/status", requireAuth, requireAdmin, async (_req, res) => {
+    const { getIngestProgress } = await import("./land-registry-ccod");
+    res.json(getIngestProgress());
+  });
+
+  app.get("/api/admin/ingest-ccod/files", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { listHmlrFiles } = await import("./land-registry-ccod");
+      const source = (String(req.query.source || "CCOD").toUpperCase() === "UCOD" ? "UCOD" : "CCOD") as "CCOD" | "UCOD";
+      const files = await listHmlrFiles(source);
+      res.json({ source, files });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "list failed" });
+    }
+  });
+
+  // Land Registry titles for a given company, matched by CH number.
+  // Used by the Ownership block on the landlord profile.
+  app.get("/api/landlord/:companyId/land-registry-titles", requireAuth, async (req, res) => {
+    try {
+      const { companyId } = req.params;
+      const { rows } = await pool.query(
+        `SELECT companies_house_number FROM crm_companies WHERE id = $1`,
+        [companyId]
+      );
+      const ch = rows[0]?.companies_house_number;
+      if (!ch) return res.json({ chNumber: null, count: 0, titles: [] });
+
+      const { getTitlesForCompany, countTitlesForCompany } = await import("./land-registry-ccod");
+      const [titles, count] = await Promise.all([
+        getTitlesForCompany(ch, 500),
+        countTitlesForCompany(ch),
+      ]);
+      res.json({ chNumber: ch, count, titles });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "lookup failed" });
+    }
+  });
+
+  // Scrape a landlord's website — drills portfolio / investor / board
+  // pages with JS rendering on, extracts structured intel via Haiku.
+  // Returns 202 + a job state — poll /status for results.
+  app.post("/api/landlord/:companyId/scrape-portfolio", requireAuth, async (req, res) => {
+    const { companyId } = req.params as { companyId: string };
+    try {
+      const { scrapeLandlordWebsite, getLandlordScrapeProgress } = await import("./landlord-scraper");
+      const current = getLandlordScrapeProgress(companyId);
+      if (current.state === "fetching" || current.state === "extracting") {
+        return res.status(202).json({ accepted: true, alreadyRunning: true, progress: current });
+      }
+      // Fire and forget; the scraper writes to landlord_website_findings
+      // when done. Avoids Railway edge timeout on the ~60s render fan-out.
+      scrapeLandlordWebsite(companyId).catch(err =>
+        console.error(`[landlord-scrape ${companyId}] failed:`, err?.message || err)
+      );
+      res.status(202).json({ accepted: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "kick-off failed" });
+    }
+  });
+
+  app.get("/api/landlord/:companyId/scrape-portfolio/status", requireAuth, async (req, res) => {
+    try {
+      const { getLandlordScrapeProgress, getLandlordFindings } = await import("./landlord-scraper");
+      const progress = getLandlordScrapeProgress(req.params.companyId as string);
+      const findings = await getLandlordFindings(req.params.companyId as string);
+      res.json({ progress, findings });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "status failed" });
+    }
+  });
+
+  // Stream the cached annual report PDF for a landlord. Same pattern
+  // as the CH accounts streaming endpoint — 404 if we haven't fetched
+  // one yet (the scraper does this automatically).
+  app.get("/api/landlord/:companyId/annual-report.pdf", requireAuth, async (req, res) => {
+    try {
+      const { rows } = await pool.query<{ annual_report_storage_key: string | null; name: string }>(
+        `SELECT annual_report_storage_key, name FROM crm_companies WHERE id = $1`,
+        [req.params.companyId]
+      );
+      const row = rows[0];
+      if (!row?.annual_report_storage_key) return res.status(404).json({ error: "no annual report on file" });
+      const { getFile } = await import("./file-storage");
+      const file = await getFile(row.annual_report_storage_key);
+      if (!file) return res.status(404).json({ error: "stored file missing" });
+      const safeName = (row.name || "landlord").replace(/[^A-Za-z0-9._-]/g, "_");
+      res.setHeader("Content-Type", file.contentType || "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="${safeName}-annual-report.pdf"`);
+      res.setHeader("Cache-Control", "private, max-age=86400");
+      res.end(file.data);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "stream failed" });
+    }
+  });
+
+  // Why-didn't-it-link diagnostic. Returns the most recent link report
+  // produced by autoLinkScrapedProperties so the user can see, per
+  // scraped property: did it match a CRM row? Was the row already
+  // owned by another landlord? Is it a totally new asset? Used by
+  // ChatBGP + the Ownership block to debug "Bluewater isn't showing".
+  app.get("/api/landlord/:companyId/link-diagnostic", requireAuth, async (req, res) => {
+    try {
+      const { getLandlordScrapeProgress } = await import("./landlord-scraper");
+      const progress = getLandlordScrapeProgress(req.params.companyId as string);
+      const linkReport = (progress as any)?.result?.link_report || null;
+      res.json({ progress: progress.state, linkReport });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "diagnostic failed" });
+    }
+  });
+
+  // Per-account BGP staff role. POST { userId, role } upserts a row
+  // in crm_company_bgp_roles so the coverer chip on the panel can show
+  // "Charlotte — Investment lead". Empty role string removes the row.
+  app.post("/api/brand/:companyId/bgp-role", requireAuth, async (req, res) => {
+    try {
+      const { companyId } = req.params;
+      const userId = String(req.body?.userId || "").trim();
+      const role = String(req.body?.role || "").trim();
+      if (!userId) return res.status(400).json({ error: "userId required" });
+      if (!role) {
+        await pool.query(`DELETE FROM crm_company_bgp_roles WHERE company_id = $1 AND user_id = $2`, [companyId, userId]);
+        return res.json({ ok: true, cleared: true });
+      }
+      await pool.query(
+        `INSERT INTO crm_company_bgp_roles (company_id, user_id, role)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (company_id, user_id) DO UPDATE SET role = $3, updated_at = NOW()`,
+        [companyId, userId, role]
+      );
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "save failed" });
+    }
+  });
+
+  // Promote a pending email-sender suggestion into a CRM contact.
+  // Body: { email, name? } — name parsed from the email local part
+  // if not supplied. Returns the new contact id.
+  app.post("/api/brand/:companyId/promote-sender", requireAuth, async (req, res) => {
+    try {
+      const { companyId } = req.params;
+      const email = String(req.body?.email || "").trim().toLowerCase();
+      if (!email || !email.includes("@")) return res.status(400).json({ error: "valid email required" });
+      // Derive a name from the local part if the caller didn't pass one
+      // ("sara.ciullaserino@hm.com" → "Sara Ciullaserino"). Cheap, and
+      // the user can fix it inline via the existing role-edit flow.
+      const localPart = email.split("@")[0];
+      const derived = localPart
+        .replace(/[._-]+/g, " ")
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+        .join(" ");
+      const name = (req.body?.name && String(req.body.name).trim()) || derived || email;
+      const { rows } = await pool.query<{ id: string }>(
+        `INSERT INTO crm_contacts (name, email, company_id, enrichment_source)
+         VALUES ($1, $2, $3, 'promoted-from-email')
+         RETURNING id`,
+        [name, email, companyId]
+      );
+      res.json({ id: rows[0].id, name, email });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "create failed" });
+    }
+  });
+
+  // Create a crm_properties row from a scraped item and link it to this
+  // landlord. Used by the per-row "Create CRM property" button in the
+  // Ownership block. Returns the new property id so the client can
+  // jump to it.
+  app.post("/api/landlord/:companyId/create-property", requireAuth, async (req, res) => {
+    try {
+      const { companyId } = req.params as { companyId: string };
+      const { name, address, postcode, sector } = req.body || {};
+      if (!name || !String(name).trim()) return res.status(400).json({ error: "name is required" });
+      const { createPropertyFromScraped } = await import("./landlord-scraper");
+      const out = await createPropertyFromScraped(companyId, { name: String(name).trim(), address, postcode, sector });
+      res.json(out);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "create failed" });
+    }
+  });
+
+  // Dismiss a discovered (not-yet-in-CRM) portfolio row from the
+  // Properties board — wrong matches or dupes already in the CRM under
+  // a different name. Body: { key } using the board's stable discovery
+  // key ("scraped:<name>" / "lr:<title_number>"). The dismissal is
+  // remembered so the weekly re-scrape won't re-surface it. POST again
+  // with { restore: true } to bring it back.
+  app.post("/api/landlord/:companyId/dismiss-discovery", requireAuth, async (req, res) => {
+    try {
+      const companyId = String(req.params.companyId);
+      const key = String(req.body?.key || "").trim();
+      if (!key) return res.status(400).json({ error: "key is required" });
+      const { dismissDiscovery, restoreDiscovery } = await import("./landlord-scraper");
+      if (req.body?.restore) {
+        await restoreDiscovery(companyId, key);
+        return res.json({ ok: true, restored: true });
+      }
+      await dismissDiscovery(companyId, key);
+      res.json({ ok: true, dismissed: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "dismiss failed" });
+    }
+  });
+
+  // Detach a CRM property from THIS landlord without deleting it.
+  // Clears landlord_id only if it currently points at this company (so
+  // we never steal a property owned by a different landlord that's
+  // merely link-attached here), and removes any explicit company↔property
+  // link. The property and its deals/units survive untouched.
+  app.post("/api/landlord/:companyId/unlink-property", requireAuth, async (req, res) => {
+    try {
+      const companyId = String(req.params.companyId);
+      const propertyId = String(req.body?.propertyId || "").trim();
+      if (!propertyId) return res.status(400).json({ error: "propertyId is required" });
+      await pool.query(
+        `UPDATE crm_properties SET landlord_id = NULL WHERE id = $1 AND landlord_id = $2`,
+        [propertyId, companyId]
+      );
+      await pool.query(
+        `DELETE FROM crm_company_properties WHERE company_id = $1 AND property_id = $2`,
+        [companyId, propertyId]
+      );
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "unlink failed" });
+    }
+  });
+
+  app.get("/api/admin/integrations/pipnet", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const status = await getPipnetCredsStatus();
+      res.json(status);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to read PIPnet credentials" });
+    }
+  });
+
+  app.post("/api/admin/integrations/pipnet", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { username, email, password } = req.body || {};
+      if (!username || !email || !password) {
+        return res.status(400).json({ message: "username, email and password are all required" });
+      }
+      await setPipnetCreds({ username, email, password });
+      const { resetSession } = await import("./pipnet");
+      resetSession();
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to save PIPnet credentials" });
+    }
+  });
+
+  app.post("/api/admin/integrations/pipnet/test", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { testPipnetLogin } = await import("./pipnet");
+      const result = await testPipnetLogin();
+      res.status(result.ok ? 200 : 400).json(result);
+    } catch (err: any) {
+      res.status(500).json({ ok: false, message: err?.message || "PIPnet test failed" });
+    }
+  });
+
+  app.delete("/api/admin/integrations/pipnet", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      await clearPipnetCreds();
+      const { resetSession } = await import("./pipnet");
+      resetSession();
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to clear PIPnet credentials" });
+    }
+  });
+
   app.post("/api/external-requirements/search-pipnet", requireAuth, async (req, res) => {
     try {
       const { type, location, minSize, maxSize, client } = req.body;
@@ -1407,11 +2519,281 @@ export async function registerRoutes(
 
   app.post("/api/external-requirements/import-pipnet", requireAuth, async (req, res) => {
     try {
-      const { location, minSize, maxSize, client, documentDate, allPages } = req.body;
-      const result = await importPipnetRequirements({ location, minSize, maxSize, client, documentDate, allPages });
+      const { location, minSize, maxSize, client, documentDate, allPages, monthsBack, autoPromote } = req.body;
+      const result = await importPipnetRequirements({ location, minSize, maxSize, client, documentDate, allPages, monthsBack, autoPromote });
+      if (!res.headersSent) res.json(result);
+    } catch (err: any) {
+      console.error("[import-pipnet] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet import failed" });
+    }
+  });
+
+  // Import PIPnet AVAILABLE retail properties — the mirror of import-pipnet but
+  // for space on the market. Each listing is geocoded and upserted into
+  // crm_properties (status "Market Listing", group "PIPnet") so it appears on
+  // the Property Map; its brochure is stored under landlord-packs.
+  app.post("/api/external-requirements/import-pipnet-properties", requireAuth, async (req, res) => {
+    try {
+      const { location, minSize, maxSize, type, allPages } = req.body;
+      const result = await importPipnetProperties({ location, minSize, maxSize, type, allPages });
+      if (!res.headersSent) res.json(result);
+    } catch (err: any) {
+      console.error("[import-pipnet-properties] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet property import failed" });
+    }
+  });
+
+  // ─── Background-job versions ────────────────────────────────────────────
+  // A full import does a detail fetch + brochure download + Claude vision per
+  // row, which blows past Railway's ~60s/300s request limits. These kick the
+  // work off, return 202 immediately, and the client polls *-status until done.
+  app.post("/api/external-requirements/import-pipnet-async", requireAuth, async (req, res) => {
+    const { location, minSize, maxSize, client, documentDate, allPages, monthsBack, autoPromote } = req.body || {};
+    const { alreadyRunning } = startJob("pipnet-req-import", () =>
+      importPipnetRequirements({ location, minSize, maxSize, client, documentDate, allPages: allPages ?? true, monthsBack, autoPromote }));
+    res.status(202).json({ started: !alreadyRunning, alreadyRunning, statusUrl: "/api/external-requirements/import-pipnet-status" });
+  });
+  app.get("/api/external-requirements/import-pipnet-status", requireAuth, (_req, res) => {
+    res.json(getJobStatus("pipnet-req-import") || { state: "idle" });
+  });
+  app.post("/api/external-requirements/import-pipnet-properties-async", requireAuth, async (req, res) => {
+    const { location, minSize, maxSize, type, allPages } = req.body || {};
+    const { alreadyRunning } = startJob("pipnet-prop-import", () =>
+      importPipnetProperties({ location, minSize, maxSize, type, allPages: allPages ?? true }));
+    res.status(202).json({ started: !alreadyRunning, alreadyRunning, statusUrl: "/api/external-requirements/import-pipnet-properties-status" });
+  });
+  app.get("/api/external-requirements/import-pipnet-properties-status", requireAuth, (_req, res) => {
+    res.json(getJobStatus("pipnet-prop-import") || { state: "idle" });
+  });
+
+  // External (scraped) available properties — a STANDALONE dataset, separate
+  // from the CRM (crm_properties), so PIPnet market listings never clutter the
+  // CRM. Feeds its own toggleable map layer.
+  app.get("/api/external-properties", requireAuth, async (_req, res) => {
+    try {
+      const { listExternalProperties } = await import("./external-properties");
+      res.json(await listExternalProperties());
+    } catch (err: any) {
+      console.error("[external-properties] failed:", err?.message);
+      res.status(500).json({ message: err?.message || "Failed to load external properties" });
+    }
+  });
+
+  // Ingest an available-property flyer/email into external_properties. Shared
+  // entry point for ChatBGP, forwarded emails and WhatsApp. Accepts a PDF
+  // (multipart "file") and/or text body; Claude extracts, we geocode + dedup.
+  app.post("/api/external-properties/ingest", requireAuth, marketingUpload.single("file"), async (req: any, res) => {
+    try {
+      const { ingestAvailableProperty } = await import("./property-ingest");
+      const source = (req.body?.source || "Upload").toString();
+      const text = req.body?.text ? String(req.body.text) : undefined;
+      const pdfBuffer = req.file?.buffer;
+      if (!pdfBuffer && !text) return res.status(400).json({ message: "Provide a PDF file and/or text" });
+      const result = await ingestAvailableProperty({ source, pdfBuffer, text, originalName: req.file?.originalname });
+      if (!result.ok) return res.status(422).json(result);
       res.json(result);
     } catch (err: any) {
-      res.status(500).json({ message: err?.message || "PIPnet import failed" });
+      console.error("[external-properties/ingest] failed:", err?.message);
+      res.status(500).json({ message: err?.message || "Property ingest failed" });
+    }
+  });
+
+  // Diagnostic: dump PIPnet's property search form inputs + current detailsfetch
+  // result, so we can fix the property scrape's params (they differ from reqs).
+  app.get("/api/external-requirements/pipnet-inspect-property-search", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const result = await inspectPipnetPropertySearch();
+      if (!res.headersSent) res.json(result);
+    } catch (err: any) {
+      console.error("[pipnet-inspect-property-search] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet property search inspect failed" });
+    }
+  });
+
+  // Debug: fetch one requirement's detail page from PIPnet and dump every
+  // label/value pair we can find. Lets us see exactly what extra fields are
+  // available behind the click-through.
+  app.get("/api/external-requirements/pipnet-inspect-detail", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { inspectPipnetDetail } = await import("./pipnet");
+      const result = await inspectPipnetDetail();
+      if (!res.headersSent) res.json(result);
+    } catch (err: any) {
+      console.error("[pipnet-inspect-detail] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet detail inspect failed" });
+    }
+  });
+
+  // Debug: return the actual column headers PIPnet is using on already-imported
+  // rows, plus a small sample of values per column. Lets us see field names
+  // without re-scraping.
+  app.get("/api/external-requirements/pipnet-headers", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { externalRequirements: extReq } = await import("@shared/schema");
+      const rows = await db
+        .select({ rawData: extReq.rawData })
+        .from(extReq)
+        .where(eq(extReq.source, "PIPnet"))
+        .limit(20);
+      const headerCounts: Record<string, number> = {};
+      const samples: Record<string, string[]> = {};
+      for (const r of rows) {
+        const raw = (r.rawData ?? {}) as Record<string, any>;
+        for (const [k, v] of Object.entries(raw)) {
+          if (k.startsWith("_")) continue;
+          headerCounts[k] = (headerCounts[k] ?? 0) + 1;
+          const val = String(v ?? "").trim();
+          if (val && (samples[k]?.length ?? 0) < 3) {
+            (samples[k] ??= []).push(val.length > 80 ? val.slice(0, 80) + "…" : val);
+          }
+        }
+      }
+      const headers = Object.entries(headerCounts)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, count]) => ({ name, presentIn: count, samples: samples[name] ?? [] }));
+      if (!res.headersSent) res.json({ rowsInspected: rows.length, headers });
+    } catch (err: any) {
+      console.error("[pipnet-headers] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "Failed to read PIPnet headers" });
+    }
+  });
+
+  // Admin: wipe the leasing requirements that previously came from PIPnet
+  // (using the wrong contact mapping) and re-run the sync with the corrected
+  // promote logic. Only removes rows whose name matches a PIPnet-sourced
+  // external_requirements row. CRM companies/contacts are left in place
+  // (re-sync will reuse or update them).
+  app.post("/api/external-requirements/resync-pipnet", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { externalRequirements: extReq, crmRequirementsLeasing: crmReqL } = await import("@shared/schema");
+      const { inArray, sql: drizzleSql } = await import("drizzle-orm");
+      const pipnetRows = await db
+        .select({ id: extReq.id, companyName: extReq.companyName })
+        .from(extReq)
+        .where(eq(extReq.source, "PIPnet"));
+      const clientNames = Array.from(new Set(pipnetRows.map(r => r.companyName).filter((n): n is string => !!n)));
+      let deletedReqs = 0;
+      if (clientNames.length > 0) {
+        const deleted = await db
+          .delete(crmReqL)
+          .where(inArray(crmReqL.name, clientNames))
+          .returning({ id: crmReqL.id });
+        deletedReqs = deleted.length;
+      }
+      // Reset status so promoteToCrmRequirement re-runs for every PIPnet row.
+      await db.update(extReq).set({ status: drizzleSql`'active'` }).where(eq(extReq.source, "PIPnet"));
+
+      const result = await importPipnetRequirements({ allPages: true, monthsBack: 3, autoPromote: true });
+      if (!res.headersSent) res.json({ deletedReqs, clientNames: clientNames.length, ...result });
+    } catch (err: any) {
+      console.error("[resync-pipnet] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet resync failed" });
+    }
+  });
+
+  // ComplyAdvantage diagnostic — probes several candidate search-endpoint
+  // URLs and reports which return non-405 responses. The current `/v2/searches`
+  // path 405s every time at nginx level; this helps pinpoint the new path
+  // without guessing.
+  app.get("/api/comply-advantage/probe", requireAuth, async (req, res) => {
+    try {
+      const { probeComplyAdvantage } = await import("./comply-advantage");
+      const testName = String(req.query.name || "John Smith");
+      const results = await probeComplyAdvantage(testName);
+      res.json({ probed: results.length, results });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Re-run Claude vision over an already-imported external requirement's
+  // brochure and merge the extracted fields back into the row. Useful when:
+  // - the requirement was imported BEFORE the vision parser was wired (older
+  //   PIPnet rows have only the noisy tabular metadata)
+  // - the prompt has been tuned and we want to re-extract
+  // - the original parse was low-confidence
+  //
+  // POST /api/external-requirements/:id/reparse-vision
+  app.post("/api/external-requirements/:id/reparse-vision", requireAuth, async (req, res) => {
+    try {
+      const id = req.params.id as string;
+      const { externalRequirements: extReq } = await import("@shared/schema");
+      const { getFile } = await import("./file-storage");
+      const { parseRequirementBrochure, mergeVisionIntoRecord } = await import("./requirement-vision-parser");
+      const [row] = await db.select().from(extReq).where(eq(extReq.id, id)).limit(1);
+      if (!row) return res.status(404).json({ message: "Requirement not found" });
+      const brochure = (row.rawData as any)?._brochurePack;
+      if (!brochure?.url) {
+        return res.status(400).json({ message: "No brochure pack on this row — vision needs a PDF" });
+      }
+      // The URL is /api/crm/landlord-packs/<filename>. Reconstruct the storage key.
+      const filename = String(brochure.url).split("/").pop();
+      if (!filename) return res.status(400).json({ message: "Couldn't parse brochure URL" });
+      const file = await getFile(`landlord-packs/${filename}`);
+      if (!file) return res.status(404).json({ message: "Brochure file missing from storage" });
+      const vision = await parseRequirementBrochure({ pdfBuffer: file.data });
+      if (!vision) return res.status(502).json({ message: "Vision parse failed or returned nothing" });
+      const updated: any = {
+        sizeRange: row.sizeRange,
+        useClass: row.useClass,
+        locations: row.locations,
+        tenure: row.tenure,
+        description: row.description,
+        contactName: row.contactName,
+        contactEmail: row.contactEmail,
+        contactPhone: row.contactPhone,
+      };
+      mergeVisionIntoRecord(updated, vision);
+      await db.update(extReq)
+        .set({ ...updated, rawData: { ...(row.rawData as any || {}), _visionParse: vision }, updatedAt: new Date() })
+        .where(eq(extReq.id, id));
+      res.json({ ok: true, confidence: vision.confidence, fields: updated, vision });
+    } catch (err: any) {
+      console.error("[reparse-vision] failed:", err?.message);
+      res.status(500).json({ message: err?.message || "Vision reparse failed" });
+    }
+  });
+
+  // TRL: full sync — discovers every requirement URL via TRL's search and
+  // imports + auto-promotes each into crm_requirements_leasing.
+  app.post("/api/external-requirements/sync-trl", requireAuth, async (_req, res) => {
+    try {
+      const { syncAllTrlRequirements } = await import("./trl");
+      const result = await syncAllTrlRequirements();
+      if (!res.headersSent) res.json(result);
+    } catch (err: any) {
+      console.error("[sync-trl] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "TRL sync failed" });
+    }
+  });
+
+  // TRL: wipe every TRL-sourced leasing requirement and re-sync. Mirror of
+  // resync-pipnet — only removes crm rows whose name matches a TRL-sourced
+  // external_requirements row, leaving manual entries untouched.
+  app.post("/api/external-requirements/resync-trl", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { externalRequirements: extReq, crmRequirementsLeasing: crmReqL } = await import("@shared/schema");
+      const { inArray, sql: drizzleSql } = await import("drizzle-orm");
+      const { syncAllTrlRequirements } = await import("./trl");
+      const trlRows = await db
+        .select({ id: extReq.id, companyName: extReq.companyName })
+        .from(extReq)
+        .where(eq(extReq.source, "TRL"));
+      const clientNames = Array.from(new Set(trlRows.map(r => r.companyName).filter((n): n is string => !!n)));
+      let deletedReqs = 0;
+      if (clientNames.length > 0) {
+        const deleted = await db
+          .delete(crmReqL)
+          .where(inArray(crmReqL.name, clientNames))
+          .returning({ id: crmReqL.id });
+        deletedReqs = deleted.length;
+      }
+      await db.update(extReq).set({ status: drizzleSql`'active'` }).where(eq(extReq.source, "TRL"));
+      const result = await syncAllTrlRequirements();
+      if (!res.headersSent) res.json({ deletedReqs, clientNames: clientNames.length, ...result });
+    } catch (err: any) {
+      console.error("[resync-trl] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "TRL resync failed" });
     }
   });
 
@@ -1419,7 +2801,7 @@ export async function registerRoutes(
     try {
       await db
         .delete(externalRequirements)
-        .where(eq(externalRequirements.id, req.params.id));
+        .where(eq(externalRequirements.id, req.params.id as string));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete requirement" });
@@ -1431,7 +2813,7 @@ export async function registerRoutes(
       const ext = await db
         .select()
         .from(externalRequirements)
-        .where(eq(externalRequirements.id, req.params.id))
+        .where(eq(externalRequirements.id, req.params.id as string))
         .limit(1);
       if (ext.length === 0) return res.status(404).json({ message: "Not found" });
       const item = ext[0];
@@ -1524,7 +2906,7 @@ export async function registerRoutes(
 
   app.patch("/api/change-requests/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { id } = req.params;
+      const { id } = req.params as { id: string };
       const body = req.body;
       const allowedStatuses = ["pending", "reviewed", "approved", "rejected", "implemented"];
       const cleanUpdates: any = {};
@@ -1558,7 +2940,7 @@ export async function registerRoutes(
   app.patch("/api/app-feedback/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const { appFeedbackLog } = await import("@shared/schema");
-      if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ message: "Invalid id" });
+      if (!/^\d+$/.test(req.params.id as string)) return res.status(400).json({ message: "Invalid id" });
       const id = Number(req.params.id);
       const { status, adminNotes } = req.body;
       const updates: any = {};
@@ -1754,7 +3136,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.patch("/api/chatbgp-learnings/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const { chatbgpLearnings } = await import("@shared/schema");
-      if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ message: "Invalid id" });
+      if (!/^\d+$/.test(req.params.id as string)) return res.status(400).json({ message: "Invalid id" });
       const id = Number(req.params.id);
       const { active } = req.body;
       if (typeof active !== "boolean") {
@@ -1771,7 +3153,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/chatbgp-learnings/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const { chatbgpLearnings } = await import("@shared/schema");
-      if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ message: "Invalid id" });
+      if (!/^\d+$/.test(req.params.id as string)) return res.status(400).json({ message: "Invalid id" });
       const id = Number(req.params.id);
       await db.delete(chatbgpLearnings).where(eq(chatbgpLearnings.id, id));
       invalidateContextCache("businessLearnings");
@@ -1915,44 +3297,68 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units", requireAuth, async (req, res) => {
     try {
-      const { availableUnits, crmProperties } = await import("@shared/schema");
-      const conditions: any[] = [];
-      if (req.query.propertyId) conditions.push(eq(availableUnits.propertyId, req.query.propertyId as string));
-      if (req.query.marketingStatus) conditions.push(eq(availableUnits.marketingStatus, req.query.marketingStatus as string));
-      const where = conditions.length > 0 ? and(...conditions) : undefined;
-      const rows = await db
-        .select({
-          id: availableUnits.id,
-          propertyId: availableUnits.propertyId,
-          unitName: availableUnits.unitName,
-          floor: availableUnits.floor,
-          sqft: availableUnits.sqft,
-          askingRent: availableUnits.askingRent,
-          ratesPa: availableUnits.ratesPa,
-          serviceChargePa: availableUnits.serviceChargePa,
-          useClass: availableUnits.useClass,
-          condition: availableUnits.condition,
-          availableDate: availableUnits.availableDate,
-          marketingStatus: availableUnits.marketingStatus,
-          epcRating: availableUnits.epcRating,
-          notes: availableUnits.notes,
-          restrictions: availableUnits.restrictions,
-          fee: availableUnits.fee,
-          dealId: availableUnits.dealId,
-          agentUserIds: availableUnits.agentUserIds,
-          viewingsCount: availableUnits.viewingsCount,
-          lastViewingDate: availableUnits.lastViewingDate,
-          marketingStartDate: availableUnits.marketingStartDate,
-          createdAt: availableUnits.createdAt,
-          updatedAt: availableUnits.updatedAt,
-          propertyName: crmProperties.name,
-          propertyAddress: crmProperties.address,
-        })
-        .from(availableUnits)
-        .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
-        .where(where)
-        .orderBy(desc(availableUnits.createdAt));
-      res.json(rows);
+      // Clients (e.g. Landsec) see the Letting Tracker for THEIR OWN
+      // properties only, with BGP fees/agents stripped. (Landsec audit.)
+      const auScope = await resolveCompanyScope(req);
+      // Master physical attributes live on property_units; the listing's columns
+      // are kept as a backwards-compat cache. We COALESCE master over listing so
+      // every reader sees the source-of-truth values.
+      const params: any[] = [];
+      const filters: string[] = [];
+      if (auScope) {
+        params.push(auScope);
+        filters.push(`(p.landlord_id = $${params.length} OR au.property_id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${params.length}))`);
+      }
+      if (req.query.propertyId) {
+        params.push(req.query.propertyId);
+        filters.push(`au.property_id = $${params.length}`);
+      }
+      if (req.query.marketingStatus) {
+        params.push(req.query.marketingStatus);
+        filters.push(`au.marketing_status = $${params.length}`);
+      }
+      const whereClause = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+      const result = await pool.query(`
+        SELECT
+          au.id,
+          au.property_id AS "propertyId",
+          au.unit_id AS "unitId",
+          COALESCE(pu.unit_name, au.unit_name) AS "unitName",
+          COALESCE(pu.floor, au.floor) AS "floor",
+          COALESCE(pu.sqft, au.sqft) AS "sqft",
+          au.asking_rent AS "askingRent",
+          au.rates_pa AS "ratesPa",
+          au.service_charge_pa AS "serviceChargePa",
+          COALESCE(pu.use_class, au.use_class) AS "useClass",
+          COALESCE(pu.condition, au.condition) AS "condition",
+          au.available_date AS "availableDate",
+          au.marketing_status AS "marketingStatus",
+          COALESCE(pu.epc_rating, au.epc_rating) AS "epcRating",
+          au.notes,
+          au.restrictions,
+          au.fee,
+          au.deal_id AS "dealId",
+          d.deal_ref AS "dealRef",
+          au.agent_user_ids AS "agentUserIds",
+          au.viewings_count AS "viewingsCount",
+          au.last_viewing_date AS "lastViewingDate",
+          au.marketing_start_date AS "marketingStartDate",
+          au.created_at AS "createdAt",
+          au.updated_at AS "updatedAt",
+          p.name AS "propertyName",
+          p.address AS "propertyAddress"
+        FROM available_units au
+        LEFT JOIN crm_properties p ON p.id = au.property_id
+        LEFT JOIN property_units pu ON pu.id = au.unit_id
+        LEFT JOIN crm_deals d ON d.id = au.deal_id
+        ${whereClause}
+        ORDER BY au.created_at DESC
+      `, params);
+      // Strip BGP fee + agent assignments for client logins.
+      if (auScope) {
+        return res.json(result.rows.map((r: any) => ({ ...r, fee: null, agentUserIds: null })));
+      }
+      res.json(result.rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch available units" });
     }
@@ -1960,24 +3366,25 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/all-files", requireAuth, async (req, res) => {
     try {
-      const { unitMarketingFiles, availableUnits } = await import("@shared/schema");
-      const rows = await db
-        .select({
-          id: unitMarketingFiles.id,
-          unitId: unitMarketingFiles.unitId,
-          fileName: unitMarketingFiles.fileName,
-          filePath: unitMarketingFiles.filePath,
-          fileType: unitMarketingFiles.fileType,
-          fileSize: unitMarketingFiles.fileSize,
-          mimeType: unitMarketingFiles.mimeType,
-          createdAt: unitMarketingFiles.createdAt,
-          unitName: availableUnits.unitName,
-          propertyId: availableUnits.propertyId,
-        })
-        .from(unitMarketingFiles)
-        .leftJoin(availableUnits, eq(unitMarketingFiles.unitId, availableUnits.id))
-        .orderBy(unitMarketingFiles.createdAt);
-      res.json(rows);
+      // unitName comes from property_units master with listing fallback
+      const result = await pool.query(`
+        SELECT
+          umf.id,
+          umf.unit_id AS "unitId",
+          umf.file_name AS "fileName",
+          umf.file_path AS "filePath",
+          umf.file_type AS "fileType",
+          umf.file_size AS "fileSize",
+          umf.mime_type AS "mimeType",
+          umf.created_at AS "createdAt",
+          COALESCE(pu.unit_name, au.unit_name) AS "unitName",
+          au.property_id AS "propertyId"
+        FROM unit_marketing_files umf
+        LEFT JOIN available_units au ON au.id = umf.unit_id
+        LEFT JOIN property_units pu ON pu.id = au.unit_id
+        ORDER BY umf.created_at
+      `);
+      res.json(result.rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch all files" });
     }
@@ -2027,11 +3434,148 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/:id", requireAuth, async (req, res) => {
     try {
-      const unit = await storage.getAvailableUnit(req.params.id);
-      if (!unit) return res.status(404).json({ message: "Unit not found" });
-      res.json(unit);
+      // Master overrides cache for unitName/floor/sqft/useClass/condition/epcRating
+      const result = await pool.query(`
+        SELECT
+          au.*,
+          au.property_id AS "propertyId",
+          au.unit_id AS "unitId",
+          COALESCE(pu.unit_name, au.unit_name) AS "unitName",
+          COALESCE(pu.floor, au.floor) AS "floor",
+          COALESCE(pu.sqft, au.sqft) AS "sqft",
+          COALESCE(pu.use_class, au.use_class) AS "useClass",
+          COALESCE(pu.condition, au.condition) AS "condition",
+          COALESCE(pu.epc_rating, au.epc_rating) AS "epcRating",
+          au.asking_rent AS "askingRent",
+          au.rates_pa AS "ratesPa",
+          au.service_charge_pa AS "serviceChargePa",
+          au.available_date AS "availableDate",
+          au.marketing_status AS "marketingStatus",
+          au.deal_id AS "dealId",
+          au.agent_user_ids AS "agentUserIds",
+          au.viewings_count AS "viewingsCount",
+          au.last_viewing_date AS "lastViewingDate",
+          au.marketing_start_date AS "marketingStartDate",
+          au.created_at AS "createdAt",
+          au.updated_at AS "updatedAt"
+        FROM available_units au
+        LEFT JOIN property_units pu ON pu.id = au.unit_id
+        WHERE au.id = $1
+        LIMIT 1
+      `, [req.params.id]);
+      if (result.rows.length === 0) return res.status(404).json({ message: "Unit not found" });
+      res.json(result.rows[0]);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch unit" });
+    }
+  });
+
+  // ── Property Units (master record for the physical space) ──────────────
+  app.get("/api/property-units", requireAuth, async (req, res) => {
+    try {
+      const propertyId = (req.query.propertyId as string | undefined) || undefined;
+      const where = propertyId ? `WHERE property_id = $1` : "";
+      const params = propertyId ? [propertyId] : [];
+      const result = await pool.query(
+        `SELECT id, property_id, unit_name, floor, sqft, use_class, condition,
+                epc_rating, frontage, notes, created_at, updated_at
+         FROM property_units ${where}
+         ORDER BY unit_name`,
+        params
+      );
+      res.json(result.rows.map(r => ({
+        id: r.id,
+        propertyId: r.property_id,
+        unitName: r.unit_name,
+        floor: r.floor,
+        sqft: r.sqft,
+        useClass: r.use_class,
+        condition: r.condition,
+        epcRating: r.epc_rating,
+        frontage: r.frontage,
+        notes: r.notes,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      })));
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to list units" });
+    }
+  });
+
+  app.post("/api/property-units", requireAuth, async (req, res) => {
+    try {
+      const { insertPropertyUnitSchema } = await import("@shared/schema");
+      const parsed = insertPropertyUnitSchema.parse(req.body);
+      if (!parsed.propertyId || !parsed.unitName?.trim()) {
+        return res.status(400).json({ message: "propertyId and unitName are required" });
+      }
+      const result = await pool.query(
+        `INSERT INTO property_units (property_id, unit_name, floor, sqft, use_class, condition, epc_rating, frontage, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id`,
+        [parsed.propertyId, parsed.unitName.trim(), parsed.floor || null, parsed.sqft ?? null,
+         parsed.useClass || null, parsed.condition || null, parsed.epcRating || null,
+         parsed.frontage || null, parsed.notes || null]
+      );
+      res.json({ id: result.rows[0].id, ...parsed });
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        return res.status(409).json({ message: "A unit with that name already exists on this property" });
+      }
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to create unit" });
+    }
+  });
+
+  app.patch("/api/property-units/:id", requireAuth, async (req, res) => {
+    try {
+      const allowed = ["unitName", "floor", "sqft", "useClass", "condition", "epcRating", "frontage", "notes",
+        "unitAddress", "unitPostcode", "unitUprn", "unitAddressFreeText"];
+      const cols: Record<string, string> = {
+        unitName: "unit_name", floor: "floor", sqft: "sqft", useClass: "use_class",
+        condition: "condition", epcRating: "epc_rating", frontage: "frontage", notes: "notes",
+        unitAddress: "unit_address", unitPostcode: "unit_postcode",
+        unitUprn: "unit_uprn", unitAddressFreeText: "unit_address_free_text",
+      };
+      const sets: string[] = [];
+      const values: any[] = [];
+      let i = 1;
+      for (const k of allowed) {
+        if (k in req.body) {
+          sets.push(`${cols[k]} = $${i++}`);
+          values.push((req.body as any)[k]);
+        }
+      }
+      if (sets.length === 0) return res.json({ success: true });
+      sets.push(`updated_at = NOW()`);
+      values.push(req.params.id);
+      await pool.query(
+        `UPDATE property_units SET ${sets.join(", ")} WHERE id = $${i}`,
+        values
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        return res.status(409).json({ message: "A unit with that name already exists on this property" });
+      }
+      res.status(500).json({ message: err?.message || "Failed to update unit" });
+    }
+  });
+
+  app.delete("/api/property-units/:id", requireAuth, async (req, res) => {
+    try {
+      const inUse = await pool.query(
+        `SELECT 1 FROM available_units WHERE unit_id = $1
+         UNION ALL SELECT 1 FROM crm_deals WHERE unit_id = $1 LIMIT 1`,
+        [req.params.id]
+      );
+      if (inUse.rows.length > 0) {
+        return res.status(409).json({ message: "Unit is referenced by listings or deals" });
+      }
+      await pool.query(`DELETE FROM property_units WHERE id = $1`, [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to delete unit" });
     }
   });
 
@@ -2039,7 +3583,155 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const { insertAvailableUnitSchema } = await import("@shared/schema");
       const parsed = insertAvailableUnitSchema.parse(req.body);
-      const unit = await storage.createAvailableUnit(parsed);
+
+      // Ensure a property_units master row exists for this (property, unit name).
+      // Create one if missing, then set unit_id on the listing.
+      let unitMasterId: string | null = (parsed as any).unitId || null;
+      if (!unitMasterId && parsed.propertyId && parsed.unitName?.trim()) {
+        const existing = await pool.query(
+          `SELECT id FROM property_units
+           WHERE property_id = $1 AND lower(trim(unit_name)) = lower(trim($2))`,
+          [parsed.propertyId, parsed.unitName]
+        );
+        if (existing.rows.length > 0) {
+          unitMasterId = existing.rows[0].id;
+        } else {
+          const created = await pool.query(
+            `INSERT INTO property_units (property_id, unit_name, floor, sqft, use_class, condition, epc_rating)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id`,
+            [parsed.propertyId, parsed.unitName.trim(), parsed.floor || null, parsed.sqft ?? null,
+             parsed.useClass || null, parsed.condition || null, parsed.epcRating || null]
+          );
+          unitMasterId = created.rows[0].id;
+        }
+      }
+
+      const unit = await storage.createAvailableUnit({ ...parsed, unitId: unitMasterId || undefined } as any);
+
+      // Also create a leasing_schedule_units row on the same property so the
+      // unit shows up on the property's Leasing Schedule view automatically.
+      // Pre-SOL units belong on the leasing schedule but NOT on the deal CRM
+      // — the deal row gets created later by the SOL promotion flow.
+      try {
+        const existingLs = await pool.query(
+          `SELECT id FROM leasing_schedule_units
+           WHERE property_id = $1 AND lower(trim(coalesce(unit_name, ''))) = lower(trim($2))
+           LIMIT 1`,
+          [parsed.propertyId, parsed.unitName || ""]
+        );
+        if (existingLs.rows.length === 0) {
+          await pool.query(
+            `INSERT INTO leasing_schedule_units
+               (property_id, unit_name, sqft, rent_pa, status)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [parsed.propertyId, parsed.unitName || null, parsed.sqft ?? null,
+             parsed.askingRent ?? null, parsed.marketingStatus || "AVA"]
+          );
+        }
+      } catch (e: any) {
+        console.warn("[available-units POST] leasing-schedule sync failed:", e.message);
+      }
+
+      // Mirror onto the tenancy spine (the source of truth): create-or-link a
+      // standard, editable tenancy row, deduped by normalised unit name. Means
+      // a unit/deal created here shows as a normal row, not a read-only orphan.
+      try {
+        const { ensureTenancyRowForAvailableUnit } = await import("./unit-mirror");
+        await ensureTenancyRowForAvailableUnit(pool, (unit as any).id);
+      } catch (e: any) {
+        console.warn("[available-units POST] tenancy-spine sync failed:", e.message);
+      }
+
+      // Auto-create a backing CRM deal so every tracker row has a source of
+      // truth. Deal CRM kanban filters this back out for pre-SOL statuses so
+      // the kanban stays clean — see filteredDeals in client/src/pages/deals.tsx.
+      //
+      // STAGE 3a (unit spine cleanup): when UNIFIED_ADD_UNIT=1, skip this
+      // entirely. Deals are then born only at Solicitors promotion (the
+      // existing WIP flow at /api/available-units/:id/create-deal, which
+      // already handles a missing prior deal via its else-branch).
+      // Leaves all the other side-effects above (property_units master,
+      // available_units row, leasing_schedule_units row, tenancy spine
+      // mirror) untouched — only the silent pre-SOL deal goes away.
+      const UNIFIED_ADD_UNIT = process.env.UNIFIED_ADD_UNIT === "1";
+      if (!UNIFIED_ADD_UNIT && !unit.dealId) {
+        try {
+          const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+          // Landlord linkage: prefer the value the user picked on the
+          // form (it may differ from property.landlord_id if they
+          // overrode), then fall back to property.landlord_id. Stamps
+          // the deal at AVA so AML on the landlord side fires the
+          // moment the deal flips to SOL.
+          const landlordId = (req.body as any).landlordId
+            || (property as any)?.landlordId
+            || null;
+          // Also backfill property.landlord_id if the user picked one
+          // and the property was missing one — so the next deal on
+          // this property doesn't repeat the same prompt.
+          if ((req.body as any).landlordId && property && !(property as any).landlordId) {
+            try {
+              await pool.query(
+                `UPDATE crm_properties SET landlord_id = $1 WHERE id = $2 AND landlord_id IS NULL`,
+                [(req.body as any).landlordId, property.id]
+              );
+            } catch (e: any) {
+              console.warn("[available-units POST] property landlord backfill failed:", e.message);
+            }
+          }
+          // feePercentage: comes only from the Add-Unit form body (the
+          // available_units table doesn't carry it). Without this the
+          // auto-created deal loses the % the user typed and reopens blank.
+          const feePctRaw = (req.body as any).feePercentage;
+          const feePct = feePctRaw != null && feePctRaw !== ""
+            ? parseFloat(String(feePctRaw))
+            : null;
+          // available_units stores agent user IDs (text[] of user.id),
+          // but crm_deals.internal_agent stores display names (the
+          // deal-detail chip render + add-agent dropdown both look up
+          // by name). Resolve IDs → names here so the auto-created deal
+          // matches the shape the rest of the UI expects.
+          const agentNames = await resolveAgentNames(unit.agentUserIds);
+          const deal = await storage.createCrmDeal({
+            name: property
+              ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
+              : unit.unitName,
+            propertyId: unit.propertyId || undefined,
+            unitId: unitMasterId || undefined,
+            status: unit.marketingStatus || "AVA",
+            dealType: (req.body as any).dealType || "New Letting",
+            internalAgent: agentNames,
+            fee: unit.fee ?? undefined,
+            feePercentage: feePct != null && !Number.isNaN(feePct) ? feePct : undefined,
+            rentPa: unit.askingRent ?? undefined,
+            totalAreaSqft: unit.sqft ?? undefined,
+            landlordId: landlordId || undefined,
+          } as any);
+          await storage.updateAvailableUnit(unit.id, { dealId: deal.id });
+          (unit as any).dealId = deal.id;
+          (unit as any).dealRef = deal.dealRef;
+        } catch (e: any) {
+          console.warn("[available-units POST] auto-create deal failed:", e.message);
+        }
+      }
+
+      // Canonical unit FK: stamp tenancy_unit_id when the new vacant
+      // unit's name matches a tenancy_schedule row on the property.
+      try {
+        await pool.query(
+          `UPDATE available_units au
+              SET tenancy_unit_id = (
+                SELECT ts.id FROM tenancy_schedule_units ts
+                 WHERE ts.property_id = au.property_id
+                   AND lower(trim(ts.unit_number)) = lower(trim(coalesce(au.unit_name, '')))
+                   AND coalesce(trim(ts.unit_number), '') <> ''
+                 LIMIT 1
+              )
+            WHERE au.id = $1 AND au.tenancy_unit_id IS NULL`,
+          [unit.id]
+        );
+      } catch (e: any) { console.warn("[available-units] tenancy_unit_id stamp failed:", e?.message); }
+
       res.json(unit);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
@@ -2049,12 +3741,100 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.patch("/api/available-units/:id", requireAuth, async (req, res) => {
     try {
-      const existing = await storage.getAvailableUnit(req.params.id);
+      const existing = await storage.getAvailableUnit(req.params.id as string);
       if (!existing) return res.status(404).json({ message: "Unit not found" });
       const { insertAvailableUnitSchema } = await import("@shared/schema");
       const partial = insertAvailableUnitSchema.partial().parse(req.body);
-      const unit = await storage.updateAvailableUnit(req.params.id, partial);
-      res.json(unit);
+
+      // Master-managed fields: write to property_units (the source of truth).
+      // We still write the same value to the listing cache so direct DB queries
+      // outside our GET endpoints stay coherent until the columns are dropped.
+      const MASTER_FIELDS = ["unitName", "floor", "sqft", "useClass", "condition", "epcRating"] as const;
+      const masterPatch: Record<string, any> = {};
+      for (const f of MASTER_FIELDS) {
+        if (f in partial) masterPatch[f] = (partial as any)[f];
+      }
+      if (existing.unitId && Object.keys(masterPatch).length > 0) {
+        const cols: Record<string, string> = {
+          unitName: "unit_name", floor: "floor", sqft: "sqft", useClass: "use_class",
+          condition: "condition", epcRating: "epc_rating",
+        };
+        const sets: string[] = [];
+        const values: any[] = [];
+        let i = 1;
+        for (const [k, v] of Object.entries(masterPatch)) {
+          sets.push(`${cols[k]} = $${i++}`);
+          values.push(v);
+        }
+        sets.push(`updated_at = NOW()`);
+        values.push(existing.unitId);
+        try {
+          await pool.query(`UPDATE property_units SET ${sets.join(", ")} WHERE id = $${i}`, values);
+        } catch (e: any) {
+          if (e?.code === "23505") {
+            return res.status(409).json({ message: "A unit with that name already exists on this property" });
+          }
+          throw e;
+        }
+      }
+
+      const unit = await storage.updateAvailableUnit(req.params.id as string, partial);
+
+      // Mirror deal-bearing fields onto the backing crm_deal so the Deals
+      // board + WIP report don't drift from inline tracker edits. Without
+      // this, editing agent/fee/rent here updated only the unit row while
+      // the deal kept the value captured at create/promote time.
+      if (existing.dealId) {
+        const dealPatch: Record<string, any> = {};
+        if ("agentUserIds" in partial) {
+          dealPatch.internalAgent = await resolveAgentNames((partial as any).agentUserIds);
+        }
+        if ("fee" in partial) dealPatch.fee = (partial as any).fee;
+        if ("askingRent" in partial) dealPatch.rentPa = (partial as any).askingRent;
+        if (Object.keys(dealPatch).length > 0) {
+          try {
+            await storage.updateCrmDeal(existing.dealId, dealPatch as any);
+          } catch (e: any) {
+            console.warn(`[available-units PATCH] deal sync failed for ${existing.dealId}:`, e?.message);
+          }
+        }
+      }
+
+      // Three-way status mirror: when the marketing status changes on the
+      // Letting Tracker, propagate to the linked crm_deal and to the
+      // leasing-schedule row that shares this unit's tenancy_unit_id.
+      let mirrorWarning: string | null = null;
+      if ("marketingStatus" in partial) {
+        try {
+          const { mirrorFromAvailableUnit } = await import("./lease-status-mirror");
+          await mirrorFromAvailableUnit(req.params.id as string, (partial as any).marketingStatus, { pool, reason: "available_units.PATCH" });
+        } catch (e: any) {
+          console.warn(`[available-units PATCH] status mirror failed for ${req.params.id}:`, e?.message);
+          mirrorWarning = `Status saved, but syncing it to the Deals board / Leasing Schedule failed (${e?.message || "unknown error"}). The other boards may briefly disagree.`;
+        }
+      }
+
+      // Re-stamp tenancy_unit_id when the unit name changes — only when
+      // the new name resolves to a real tenancy row. COALESCE preserves
+      // the existing link otherwise; without the guard, a rename to a
+      // value that no longer matches would silently wipe the FK and
+      // drop the row off the 4-way mirror.
+      if ("unitName" in partial) {
+        await pool.query(
+          `UPDATE available_units au
+              SET tenancy_unit_id = COALESCE((
+                SELECT ts.id FROM tenancy_schedule_units ts
+                 WHERE ts.property_id = au.property_id
+                   AND lower(trim(ts.unit_number)) = lower(trim(coalesce(au.unit_name, '')))
+                   AND coalesce(trim(ts.unit_number), '') <> ''
+                 LIMIT 1
+              ), au.tenancy_unit_id)
+            WHERE au.id = $1`,
+          [req.params.id]
+        ).catch((e: any) => console.warn("[available-units] tenancy_unit_id re-stamp failed:", e?.message));
+      }
+
+      res.json(mirrorWarning ? { ...(unit as any), mirrorWarning } : unit);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to update unit" });
@@ -2063,17 +3843,478 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/available-units/:id", requireAuth, async (req, res) => {
     try {
-      await storage.deleteAvailableUnit(req.params.id);
+      // Add Unit auto-creates a stub deal at AVA alongside the unit row.
+      // If that deal is still at AVA when the unit is deleted, remove it
+      // too — otherwise it lingers on the boards with no unit behind it.
+      // Deals that progressed past AVA are kept (real pipeline history)
+      // and just lose their unit link via deleteAvailableUnit.
+      const unitId = String(req.params.id);
+      const unitRow = await storage.getAvailableUnit(unitId);
+      await storage.deleteAvailableUnit(unitId);
+      if (unitRow?.dealId) {
+        try {
+          const linkedDeal = await storage.getCrmDeal(unitRow.dealId);
+          const { legacyToCode } = await import("@shared/deal-status");
+          if (linkedDeal && legacyToCode(linkedDeal.status) === "AVA") {
+            await storage.deleteCrmDeal(unitRow.dealId);
+          }
+        } catch (e: any) {
+          console.warn(`[available-units DELETE] stub deal cleanup failed for ${unitRow.dealId}:`, e?.message);
+        }
+      }
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete unit" });
     }
   });
 
+  // HMLR direct upload — fallback for when the gov.uk API is being
+  // stale about our licence (returning example.csv even after licence
+  // signing). User downloads the CCOD/OCOD .csv from the gov.uk
+  // dashboard and posts it here as multipart form-data. Same downstream
+  // ingest as the API-driven sync, just with a local file path instead
+  // of an HMLR download URL.
+  //
+  // 2 GB disk-streamed multer — CCOD's full file is 1.56 GB. Memory
+  // storage would OOM Railway; use disk and stream-parse from there.
+  const hmlrUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, os.tmpdir()),
+      filename: (_req, file, cb) => cb(null, `hmlr-upload-${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_")}`),
+    }),
+    limits: { fileSize: 2 * 1024 * 1024 * 1024 }, // 2 GB
+  });
+  app.post("/api/admin/hmlr/upload", requireAuth, hmlrUpload.single("file"), async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+
+      if (!req.file) return res.status(400).json({ error: "no file uploaded (use multipart field 'file')" });
+
+      const localPath = req.file.path;
+      const filename = req.file.originalname;
+
+      // Auto-detect dataset from the filename so a caller can't
+      // accidentally mislabel — CCOD_FULL_*.zip is always CCOD, OCOD_FULL_*.zip
+      // always OCOD. Caller can still override via dataset form field
+      // if they really want, but if filename and override disagree we
+      // trust the filename and reject the call so we don't half-ingest
+      // junk under the wrong label.
+      const explicitDataset = (req.body?.dataset || req.query?.dataset) as "ccod" | "ocod" | undefined;
+      let detectedDataset: "ccod" | "ocod" | null = null;
+      if (/(^|[^a-z])ccod(_|\.|$)/i.test(filename)) detectedDataset = "ccod";
+      else if (/(^|[^a-z])ocod(_|\.|$)/i.test(filename)) detectedDataset = "ocod";
+      if (detectedDataset && explicitDataset && detectedDataset !== explicitDataset) {
+        try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+        return res.status(400).json({
+          error: `Filename suggests ${detectedDataset.toUpperCase()} but caller said ${explicitDataset.toUpperCase()}. Either rename the file or pass the correct dataset.`,
+        });
+      }
+      const dataset = detectedDataset || explicitDataset;
+      if (dataset !== "ccod" && dataset !== "ocod") {
+        try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+        return res.status(400).json({ error: "Cannot detect dataset from filename. Pass dataset='ccod' or 'ocod' explicitly." });
+      }
+      console.log(`[hmlr-upload] received ${filename} (${(req.file.size / 1024 / 1024).toFixed(1)} MB) → ${localPath}`);
+
+      // Background ingest — same pattern as the API sync, returns 202
+      // immediately and writes progress to hmlr_ingest_runs.
+      setImmediate(() => {
+        (async () => {
+          try {
+            const { ingestUploadedCsv } = await import("./hmlr-fetch");
+            await ingestUploadedCsv(localPath, dataset, filename);
+            try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+          } catch (err: any) {
+            console.error(`[hmlr-upload] ingest failed for ${filename}:`, err?.message);
+          }
+        })();
+      });
+      res.status(202).json({ ok: true, message: `${dataset.toUpperCase()} ingest started — poll /api/admin/hmlr/runs for progress`, dataset, sizeBytes: req.file.size });
+    } catch (e: any) {
+      console.error("[hmlr-upload] failed to start:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Fetch CCOD / OCOD from a SharePoint share link and ingest server-
+  // side. Way better than browser upload for the 1.5 GB CCOD case
+  // because nothing crosses through Railway's edge proxy — server
+  // streams from Microsoft Graph straight to local /tmp, then runs
+  // the existing ingest path. Folder share links are walked
+  // automatically; the matcher picks up files named CCOD_FULL_*.zip
+  // / OCOD_FULL_*.zip / *.csv variants.
+  app.post("/api/admin/hmlr/fetch-from-sharepoint", requireAuth, async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+      const shareUrl: string = req.body?.shareUrl;
+      if (!shareUrl) return res.status(400).json({ error: "shareUrl required in body" });
+
+      const { resolveSharePointShareLinkMetadata, streamUrlToFile } = await import("./sharepoint-resolver");
+      const { ingestUploadedCsv } = await import("./hmlr-fetch");
+
+      const meta = await resolveSharePointShareLinkMetadata(shareUrl);
+      // Figure out the list of {filename, downloadUrl, size} to ingest.
+      // Folder share → all matching children. File share → just that file.
+      const candidates: { filename: string; downloadUrl: string; size: number }[] = meta.isFolder
+        ? (meta.children || [])
+        : meta.downloadUrl
+          ? [{ filename: meta.name, downloadUrl: meta.downloadUrl, size: meta.size || 0 }]
+          : [];
+      const hmlrFiles = candidates.filter((c) => /^(ccod|ocod)/i.test(c.filename) && /\.(zip|csv)$/i.test(c.filename));
+      if (hmlrFiles.length === 0) {
+        return res.status(400).json({
+          error: `No CCOD/OCOD files found at share link. Filtered children: ${candidates.map((c) => c.filename).join(", ") || "(empty)"}. Raw folder contents: ${meta.rawChildSummary ? `${meta.rawChildSummary.total} items, sample: ${meta.rawChildSummary.sample.join(", ")}` : "(no folder)"}. Expected names like CCOD_FULL_2026_05.zip or OCOD_FULL_2026_05.csv.`,
+          rawChildSummary: meta.rawChildSummary,
+          candidates: candidates.map((c) => c.filename),
+        });
+      }
+
+      // Fire-and-forget: stream each file to /tmp then ingest. Returns
+      // 202 immediately. Each file gets its own hmlr_ingest_runs row so
+      // /api/admin/hmlr/runs shows progress per dataset.
+      setImmediate(() => {
+        (async () => {
+          for (const f of hmlrFiles) {
+            const localPath = path.join(os.tmpdir(), `hmlr-sp-${Date.now()}-${f.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`);
+            try {
+              console.log(`[hmlr-sp] streaming ${f.filename} (${(f.size / 1024 / 1024).toFixed(1)} MB) to ${localPath}`);
+              await streamUrlToFile(f.downloadUrl, localPath);
+              // ingestUploadedCsv autodetects the dataset from filename
+              const detected = /^ccod/i.test(f.filename) ? "ccod" : "ocod";
+              await ingestUploadedCsv(localPath, detected, f.filename);
+            } catch (err: any) {
+              console.error(`[hmlr-sp] failed for ${f.filename}:`, err?.message);
+            } finally {
+              try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+            }
+          }
+        })();
+      });
+
+      res.status(202).json({
+        ok: true,
+        message: `Started ingest for ${hmlrFiles.length} file(s) — poll /api/admin/hmlr/runs for progress`,
+        files: hmlrFiles.map((f) => ({ filename: f.filename, sizeMB: Math.round(f.size / 1024 / 1024) })),
+      });
+    } catch (e: any) {
+      console.error("[hmlr-sp] failed to start:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Fetch INSPIRE Index Polygons from a SharePoint share link and ingest
+  // them into hmlr_title_polygons (map boundary shading). Mirrors the
+  // CCOD/OCOD fetch above but routes to the polygon ingest, which handles
+  // .zip/.gml/.geojson/.ndjson and lets PostGIS reproject 27700 → 4326.
+  app.post("/api/admin/hmlr/fetch-polygons-from-sharepoint", requireAuth, async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+      const shareUrl: string = req.body?.shareUrl;
+      if (!shareUrl) return res.status(400).json({ error: "shareUrl required in body" });
+      const region: string | null = req.body?.region ? String(req.body.region).trim() : null;
+
+      // Councils mode: pull only the named local authorities straight out of
+      // the national zip via HTTP range requests — no whole-file download,
+      // web-dyno-safe for a handful of councils. (NOT a way to load all 348 —
+      // 24M parcels still needs the offline CLI.)
+      const councils: string[] = Array.isArray(req.body?.councils)
+        ? req.body.councils.map((c: any) => String(c)).filter(Boolean)
+        : [];
+      if (councils.length) {
+        const { ingestInspireCouncilsFromShareLink } = await import("./hmlr-polygons-fetch");
+        const rr = await pool.query<{ id: string }>(
+          `INSERT INTO hmlr_ingest_runs (dataset, source_filename, status) VALUES ('inspire', $1, 'running') RETURNING id`,
+          [`councils: ${councils.join(",")}`],
+        );
+        const runId = rr.rows[0].id;
+        setImmediate(() => {
+          (async () => {
+            try { await ingestInspireCouncilsFromShareLink(shareUrl, { councils, region, runId }); }
+            catch (err: any) { console.error("[inspire-councils] failed:", err?.message); }
+          })();
+        });
+        return res.status(202).json({ ok: true, mode: "councils", councils, message: `Started council ingest for ${councils.join(", ")} — poll /api/admin/hmlr/runs` });
+      }
+
+      const { resolveSharePointShareLinkMetadata, streamUrlToFile } = await import("./sharepoint-resolver");
+      const { ingestInspirePolygonsFile } = await import("./hmlr-polygons-fetch");
+
+      const meta = await resolveSharePointShareLinkMetadata(shareUrl);
+      const candidates: { filename: string; downloadUrl: string; size: number }[] = meta.isFolder
+        ? (meta.children || [])
+        : meta.downloadUrl
+          ? [{ filename: meta.name, downloadUrl: meta.downloadUrl, size: meta.size || 0 }]
+          : [];
+      const polygonFiles = candidates.filter((c) => /\.(zip|gml|geojson|ndjson)$/i.test(c.filename));
+      if (polygonFiles.length === 0) {
+        return res.status(400).json({
+          error: `No INSPIRE polygon files (.zip/.gml/.geojson/.ndjson) found at share link. Filtered children: ${candidates.map((c) => c.filename).join(", ") || "(empty)"}. Raw folder contents: ${meta.rawChildSummary ? `${meta.rawChildSummary.total} items, sample: ${meta.rawChildSummary.sample.join(", ")}` : "(no folder)"}.`,
+          rawChildSummary: meta.rawChildSummary,
+          candidates: candidates.map((c) => c.filename),
+        });
+      }
+
+      // Fire-and-forget: reserve a run row up-front (so the attempt + any
+      // download/size failure is visible in /api/admin/hmlr/runs, not just
+      // server logs), then stream each file to /tmp and ingest. 202 now.
+      // 8GB cap: the unzip is now streamed (unzipper), so the national bulk
+      // (~5GB) is fine — the file just has to fit on disk to download.
+      const MAX_INSPIRE_BYTES = 8 * 1024 * 1024 * 1024;
+      setImmediate(() => {
+        (async () => {
+          for (const f of polygonFiles) {
+            const rr = await pool.query<{ id: string }>(
+              `INSERT INTO hmlr_ingest_runs (dataset, source_filename, status) VALUES ('inspire', $1, 'running') RETURNING id`,
+              [f.filename],
+            );
+            const runId = rr.rows[0].id;
+            if (f.size > MAX_INSPIRE_BYTES) {
+              await pool.query(
+                `UPDATE hmlr_ingest_runs SET status='error', error=$1, finished_at=now() WHERE id=$2`,
+                [`File is ${Math.round(f.size / 1024 / 1024)}MB — over the 8GB ceiling for in-app ingest (it must download to the container disk first). Split it, or load via the scripts/ingest-hmlr-polygons.ts CLI.`, runId],
+              );
+              console.warn(`[inspire-sp] ${f.filename} too large (${Math.round(f.size / 1024 / 1024)}MB) — skipped`);
+              continue;
+            }
+            const localPath = path.join(os.tmpdir(), `inspire-sp-${Date.now()}-${f.filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`);
+            try {
+              console.log(`[inspire-sp] streaming ${f.filename} (${(f.size / 1024 / 1024).toFixed(1)} MB) to ${localPath}`);
+              await streamUrlToFile(f.downloadUrl, localPath);
+              await ingestInspirePolygonsFile(localPath, { region, sourceFilename: f.filename, runId });
+            } catch (err: any) {
+              await pool.query(`UPDATE hmlr_ingest_runs SET status='error', error=$1, finished_at=now() WHERE id=$2`, [String(err?.message || err).slice(0, 500), runId]).catch(() => {});
+              console.error(`[inspire-sp] failed for ${f.filename}:`, err?.message);
+            } finally {
+              try { fs.unlinkSync(localPath); } catch { /* ignore */ }
+            }
+          }
+        })();
+      });
+
+      res.status(202).json({
+        ok: true,
+        message: `Started INSPIRE polygon ingest for ${polygonFiles.length} file(s) — poll /api/admin/hmlr/runs for progress`,
+        files: polygonFiles.map((f) => ({ filename: f.filename, sizeMB: Math.round(f.size / 1024 / 1024) })),
+      });
+    } catch (e: any) {
+      console.error("[inspire-sp] failed to start:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Clear HMLR ingest data — useful when a mislabelled upload has put
+  // bad data into the table and you want to start fresh. Caller passes
+  // dataset='ccod' | 'ocod' | 'all' to scope the delete.
+  app.post("/api/admin/hmlr/reset", requireAuth, async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+
+      const scope = (req.body?.dataset || "all") as "ccod" | "ocod" | "all";
+      if (scope !== "ccod" && scope !== "ocod" && scope !== "all") {
+        return res.status(400).json({ error: "dataset must be 'ccod', 'ocod', or 'all'" });
+      }
+      // TRUNCATE for the "all" path — DELETE on 4M+ rows can hit
+      // Railway's statement-timeout and 500. TRUNCATE is constant-
+      // time and bypasses MVCC scan. Doesn't give a rowCount back
+      // so we return null in that case.
+      let deletedProprietorRows: number | null;
+      let deletedRunRows: number | null;
+      if (scope === "all") {
+        await pool.query(`TRUNCATE TABLE hmlr_proprietors`);
+        await pool.query(`TRUNCATE TABLE hmlr_ingest_runs`);
+        deletedProprietorRows = null;
+        deletedRunRows = null;
+      } else {
+        const propsRes = await pool.query(`DELETE FROM hmlr_proprietors WHERE dataset = $1`, [scope]);
+        const runsRes = await pool.query(`DELETE FROM hmlr_ingest_runs WHERE dataset = $1`, [scope]);
+        deletedProprietorRows = propsRes.rowCount;
+        deletedRunRows = runsRes.rowCount;
+      }
+      res.json({
+        ok: true,
+        deletedProprietorRows,
+        deletedRunRows,
+        scope,
+        note: scope === "all" ? "TRUNCATE used; row counts not reported" : undefined,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // HMLR bulk sync — pulls the latest CCOD or OCOD monthly snapshot
+  // from gov.uk's "Use land and property data" service and ingests it
+  // into hmlr_proprietors. Long-running (1.5GB CCOD takes ~10-15 min);
+  // returns 202 immediately and runs in the background. Poll
+  // /api/admin/hmlr/runs to see progress.
+  app.post("/api/admin/hmlr/sync", requireAuth, async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+
+      const dataset = (req.body?.dataset || "ccod") as "ccod" | "ocod";
+      if (dataset !== "ccod" && dataset !== "ocod") {
+        return res.status(400).json({ error: "dataset must be 'ccod' or 'ocod'" });
+      }
+      if (!process.env.HMLR_API_KEY) {
+        return res.status(400).json({ error: "HMLR_API_KEY not set in environment" });
+      }
+
+      // Fire and forget — the sync writes its own status to
+      // hmlr_ingest_runs, so the client polls that to follow along.
+      const { syncHmlrDataset } = await import("./hmlr-fetch");
+      setImmediate(() => {
+        syncHmlrDataset(dataset).catch((err) => {
+          console.error(`[hmlr-sync] ${dataset} background sync failed:`, err?.message);
+        });
+      });
+      res.status(202).json({ ok: true, message: `${dataset.toUpperCase()} sync started — poll /api/admin/hmlr/runs for progress`, dataset });
+    } catch (e: any) {
+      console.error("[hmlr-sync] failed to start:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Recent HMLR sync runs, newest first. Used by the admin UI to poll
+  // sync progress (rows_processed updates every 10k rows mid-flight).
+  app.get("/api/admin/hmlr/runs", requireAuth, async (req: any, res) => {
+    try {
+      const userRes = await pool.query<{ is_admin: boolean }>(
+        "SELECT is_admin FROM users WHERE id = $1",
+        [req.session?.userId],
+      );
+      if (!userRes.rows[0]?.is_admin) return res.status(403).json({ error: "Admin only" });
+
+      const runs = await pool.query(
+        `SELECT id, dataset, status, source_filename, rows_processed, rows_inserted, rows_updated, rows_skipped, error, started_at, finished_at
+           FROM hmlr_ingest_runs
+          ORDER BY started_at DESC
+          LIMIT 20`,
+      );
+      const counts = await pool.query<{ dataset: string; count: string }>(
+        `SELECT dataset, COUNT(*)::text AS count FROM hmlr_proprietors GROUP BY dataset`,
+      );
+      res.json({
+        runs: runs.rows,
+        counts: Object.fromEntries(counts.rows.map((r) => [r.dataset, Number(r.count)])),
+        apiKeySet: !!process.env.HMLR_API_KEY,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Backfill: create CRM deals for any tracker rows that are still missing dealId.
+  // Safe to run multiple times — skips rows that already have a dealId.
+  app.post("/api/admin/backfill-tracker-deals", requireAuth, async (req, res) => {
+    try {
+      const { availableUnits, investmentTracker: invTracker } = await import("@shared/schema");
+      let created = 0;
+      const skipped = 0;
+
+      // --- Letting Tracker ---
+      const unlinkedUnits = await db.select().from(availableUnits).where(sql`deal_id IS NULL`);
+      for (const unit of unlinkedUnits) {
+        try {
+          const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+          const deal = await storage.createCrmDeal({
+            name: property
+              ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
+              : unit.unitName,
+            propertyId: unit.propertyId || undefined,
+            unitId: unit.unitId || undefined,
+            status: unit.marketingStatus || "AVA",
+            dealType: "Leasing",
+            internalAgent: await resolveAgentNames(unit.agentUserIds),
+            fee: unit.fee ?? undefined,
+            rentPa: unit.askingRent ?? undefined,
+            totalAreaSqft: unit.sqft ?? undefined,
+          } as any);
+          await db.update(availableUnits).set({ dealId: deal.id }).where(eq(availableUnits.id, unit.id));
+          created++;
+        } catch (e: any) {
+          console.warn(`[backfill] unit ${unit.id} failed:`, e.message);
+        }
+      }
+
+      // --- Investment Tracker ---
+      const unlinkedInv = await db.select().from(invTracker).where(sql`deal_id IS NULL`);
+      for (const row of unlinkedInv) {
+        try {
+          const dealType = row.boardType === "Sales" ? "Sale" : "Purchase";
+          const deal = await storage.createCrmDeal({
+            name: row.assetName,
+            propertyId: row.propertyId,
+            status: "REP",
+            dealType,
+            internalAgent: await resolveAgentNames(row.agentUserIds),
+            fee: row.fee ?? undefined,
+          });
+          await db.update(invTracker).set({ dealId: deal.id }).where(eq(invTracker.id, row.id));
+          created++;
+        } catch (e: any) {
+          console.warn(`[backfill] inv-tracker ${row.id} failed:`, e.message);
+        }
+      }
+
+      res.json({ created, skipped, message: `Created ${created} deals for previously unlinked tracker rows` });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Backfill failed" });
+    }
+  });
+
+  // Rename legacy long team names in crm_deals.team array
+  app.post("/api/admin/rename-teams", requireAuth, async (req, res) => {
+    try {
+      const renames: Record<string, string> = {
+        "London Leasing Hospitality": "London F&B",
+        "London Leasing Retail": "London Retail",
+      };
+      let updated = 0;
+      for (const [oldName, newName] of Object.entries(renames)) {
+        const result = await pool.query(
+          `UPDATE crm_deals
+           SET team = array_replace(team, $1, $2)
+           WHERE $1 = ANY(team)`,
+          [oldName, newName]
+        );
+        updated += result.rowCount ?? 0;
+      }
+      res.json({ updated, message: `Renamed team values in ${updated} deal(s)` });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Rename failed" });
+    }
+  });
+
+  // /api/admin/restore-wrongly-archived-deals and /api/admin/wipe-deals
+  // removed. Both were tied to the Sage WIP import lifecycle (recovery
+  // for orphan-archive false-positives after a Sage reload, and a wipe-
+  // before-reimport admin tool). Sage imports are retired.
+
   app.post("/api/available-units/migrate-letting-deals", requireAuth, async (req, res) => {
     try {
       const { crmDeals, availableUnits } = await import("@shared/schema");
-      const NEGOTIATION_STATUSES = ["Under Negotiation", "HOTs", "NEG"];
+      // Match both canonical and legacy strings — migration may not yet have run
+      const NEGOTIATION_STATUSES = ["NEG", "Under Negotiation", "HOTs"];
       const negDeals = await db.select().from(crmDeals)
         .where(inArray(crmDeals.status, NEGOTIATION_STATUSES));
 
@@ -2133,15 +4374,412 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // One-off backfill: create a leasing_schedule_units row for every existing
+  // available_units that doesn't already have one on the same property. Safe
+  // to re-run — only creates rows where none exists (matched by
+  // property_id + unit_name). Returns the count created.
+  // Compliance audit — recorded when someone overrides the AML / fee-agreement
+  // gate when promoting a deal to SOL. PLA side calls this directly; Letting
+  // Tracker side writes inline from the promote endpoint above.
+  app.post("/api/deal-compliance-audit", requireAuth, async (req: any, res) => {
+    const { dealId, missingFields, targetStatus } = req.body || {};
+    if (!dealId || !Array.isArray(missingFields)) {
+      return res.status(400).json({ error: "dealId and missingFields[] required" });
+    }
+    try {
+      const userId = req.user?.id ?? null;
+      await pool.query(
+        `INSERT INTO deal_compliance_audit (deal_id, user_id, missing_fields, target_status)
+         VALUES ($1, $2, $3, $4)`,
+        [dealId, userId, missingFields, targetStatus || null]
+      );
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Debug / test-data tool: rename every property's units to "Unit 1", "Unit 2"...
+  // sequentially. Useful for verifying the unit name shows up consistently across
+  // tracker / deal / property views. Cascades to available_units +
+  // leasing_schedule_units which carry their own copy of the name.
+  // Entity images — one set of endpoints serving property / unit / deal. Bytes
+  // live in file_blobs; metadata in uploaded_files (kind='entity_image') so the
+  // existing file-serving route can stream them via /api/hr/files/:id/file.
+  const entityImageUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 15 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      if (/^image\/(png|jpeg|jpg|webp|gif)$/i.test(file.mimetype)) cb(null, true);
+      else cb(new Error("PNG, JPEG, WebP or GIF only"));
+    },
+  });
+
+  app.get("/api/entity-images", requireAuth, async (req: any, res) => {
+    const { entityType, entityId } = req.query;
+    if (!entityType || !entityId) return res.status(400).json({ error: "entityType and entityId required" });
+    try {
+      const { rows } = await pool.query(
+        `SELECT ei.id, ei.entity_type, ei.entity_id, ei.file_id, ei.image_studio_id, ei.kind, ei.title, ei.notes,
+                ei.created_at, ei.created_by_user_id, u.name AS created_by_name,
+                f.mime_type
+         FROM entity_images ei
+         LEFT JOIN users u ON u.id = ei.created_by_user_id
+         LEFT JOIN uploaded_files f ON f.id = ei.file_id
+         WHERE ei.entity_type = $1 AND ei.entity_id = $2
+         ORDER BY ei.created_at DESC`,
+        [entityType, entityId]
+      );
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  app.post("/api/entity-images", requireAuth, entityImageUpload.single("file"), async (req: any, res) => {
+    const { entityType, entityId, kind, title, notes } = req.body;
+    if (!entityType || !entityId) return res.status(400).json({ error: "entityType and entityId required" });
+    if (!req.file) return res.status(400).json({ error: "file required (multipart 'file')" });
+    try {
+      const userId = req.user?.id ?? null;
+      const fileMeta = await pool.query(
+        `INSERT INTO uploaded_files (owner_user_id, uploaded_by_user_id, kind, name, mime_type, size_bytes, visibility)
+         VALUES ($1, $1, 'entity_image', $2, $3, $4, 'team') RETURNING id`,
+        [userId, req.file.originalname, req.file.mimetype, req.file.size]
+      );
+      const fileId = fileMeta.rows[0].id;
+      await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [fileId, req.file.buffer]);
+
+      // When the image is attached to a property, also store it in Image
+      // Studio's library + property_imagery_assets so it appears in Image
+      // Studio search, the Property Pathway imagery picker, and the
+      // Property Intelligence imagery tab — not just the sidebar.
+      let imageStudioId: string | null = null;
+      if (entityType === "property") {
+        try {
+          const { storeImageFromBuffer } = await import("./image-studio");
+          const stored = await storeImageFromBuffer({
+            buffer: req.file.buffer,
+            fileName: req.file.originalname,
+            category: "Property",
+            tags: ["uploaded", "property"],
+            description: title || `Uploaded for property`,
+            source: "uploaded",
+            propertyId: entityId,
+            mimeType: req.file.mimetype,
+          });
+          imageStudioId = stored.id;
+          await pool.query(
+            `INSERT INTO property_imagery_assets (property_id, kind, source, image_studio_id, caption, generated_by)
+             VALUES ($1, 'secondary_external', 'uploaded', $2, $3, $4)`,
+            [entityId, stored.id, title || null, userId]
+          ).catch(() => {});
+        } catch (syncErr: any) {
+          console.warn("[entity-images POST] Image Studio sync failed:", syncErr?.message);
+        }
+      }
+
+      const ins = await pool.query(
+        `INSERT INTO entity_images (entity_type, entity_id, file_id, image_studio_id, kind, title, notes, created_by_user_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        [entityType, entityId, fileId, imageStudioId, kind || null, title || null, notes || null, userId]
+      );
+      res.json({ id: ins.rows[0].id, fileId, imageStudioId });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Public-ish read for entity images — any signed-in BGP user. Mirrors the
+  // /api/hr/photo route's reasoning (these aren't sensitive personal data).
+  app.get("/api/entity-images/:id/file", requireAuth, async (req, res) => {
+    try {
+      const meta = await pool.query(
+        `SELECT f.id, f.mime_type FROM entity_images ei
+         JOIN uploaded_files f ON f.id = ei.file_id
+         WHERE ei.id = $1`,
+        [req.params.id]
+      );
+      if (!meta.rows[0]) return res.status(404).end();
+      const blob = await pool.query("SELECT data FROM file_blobs WHERE file_id = $1", [meta.rows[0].id]);
+      if (!blob.rows[0]) return res.status(404).end();
+      res.setHeader("Content-Type", meta.rows[0].mime_type || "image/png");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      res.send(blob.rows[0].data);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  app.delete("/api/entity-images/:id", requireAuth, async (req: any, res) => {
+    try {
+      const meta = await pool.query("SELECT file_id FROM entity_images WHERE id = $1", [req.params.id]);
+      if (!meta.rows[0]) return res.status(404).end();
+      await pool.query("DELETE FROM entity_images WHERE id = $1", [req.params.id]);
+      await pool.query("DELETE FROM file_blobs WHERE file_id = $1", [meta.rows[0].file_id]);
+      await pool.query("DELETE FROM uploaded_files WHERE id = $1", [meta.rows[0].file_id]);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Revert an entity image's last AI edit. Calls Image Studio's revert to
+  // restore the undo snapshot, then resyncs the file_blob bytes so the
+  // sidebar thumbnail reflects the reverted image.
+  app.post("/api/entity-images/:id/revert", requireAuth, async (req: any, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT image_studio_id, file_id FROM entity_images WHERE id = $1`,
+        [req.params.id]
+      );
+      const row = rows[0];
+      if (!row) return res.status(404).json({ error: "Image not found" });
+      if (!row.image_studio_id) return res.status(400).json({ error: "Revert only available for AI-edited images." });
+
+      const revertRes = await fetch(`${req.protocol}://${req.get("host")}/api/image-studio/${row.image_studio_id}/revert`, {
+        method: "POST",
+        headers: { cookie: req.headers.cookie || "" },
+      });
+      if (!revertRes.ok) {
+        const err = await revertRes.json().catch(() => ({}));
+        return res.status(revertRes.status).json(err);
+      }
+      const fullRes = await fetch(`${req.protocol}://${req.get("host")}/api/image-studio/${row.image_studio_id}/full`, {
+        headers: { cookie: req.headers.cookie || "" },
+      });
+      if (fullRes.ok) {
+        const buf = Buffer.from(await fullRes.arrayBuffer());
+        await pool.query("UPDATE file_blobs SET data = $1 WHERE file_id = $2", [buf, row.file_id]);
+        await pool.query(
+          `UPDATE uploaded_files SET mime_type = 'image/png', size_bytes = $1 WHERE id = $2`,
+          [buf.length, row.file_id]
+        );
+      }
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Revert failed" });
+    }
+  });
+
+  // Also loosen the Image Studio revert gate (was admin-only)
+  // see server/image-studio.ts
+
+  // AI-edit an entity image. Routes through Image Studio's ai-edit (in-place
+  // on the imageStudio image) and then refreshes the file_blob bytes so the
+  // entity image thumbnails pick up the new version automatically.
+  app.post("/api/entity-images/:id/ai-edit", requireAuth, async (req: any, res) => {
+    const { editPrompt } = req.body || {};
+    if (!editPrompt?.trim()) return res.status(400).json({ error: "editPrompt required" });
+    try {
+      const { rows } = await pool.query(
+        `SELECT ei.id, ei.image_studio_id, ei.file_id FROM entity_images ei WHERE ei.id = $1`,
+        [req.params.id]
+      );
+      const row = rows[0];
+      if (!row) return res.status(404).json({ error: "Image not found" });
+      if (!row.image_studio_id) return res.status(400).json({ error: "AI edit only available for images captured via Street View / Image Studio. Drag-and-drop uploads don't carry the source link yet." });
+
+      // Forward to ai-edit — it'll fetch the source bytes from localPath, run
+      // Gemini, write the result back to the same imageStudio image record.
+      const editRes = await fetch(`${req.protocol}://${req.get("host")}/api/image-studio/ai-edit`, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: req.headers.cookie || "" },
+        body: JSON.stringify({ imageId: row.image_studio_id, editPrompt }),
+      });
+      if (!editRes.ok) {
+        const err = await editRes.json().catch(() => ({}));
+        return res.status(editRes.status).json(err);
+      }
+
+      // Pull the now-edited bytes from /api/image-studio/:id/full and refresh
+      // the file_blob so the sidebar thumbnail re-renders with the new view.
+      const fullRes = await fetch(`${req.protocol}://${req.get("host")}/api/image-studio/${row.image_studio_id}/full`, {
+        headers: { cookie: req.headers.cookie || "" },
+      });
+      if (fullRes.ok) {
+        const buf = Buffer.from(await fullRes.arrayBuffer());
+        await pool.query("UPDATE file_blobs SET data = $1 WHERE file_id = $2", [buf, row.file_id]);
+        await pool.query(
+          `UPDATE uploaded_files SET mime_type = 'image/png', size_bytes = $1 WHERE id = $2`,
+          [buf.length, row.file_id]
+        );
+      }
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "AI edit failed" });
+    }
+  });
+
+  // List users by team — used by the "Split London Leasing" admin tool.
+  app.get("/api/admin/users-by-team", requireAuth, requireAdmin, async (req: any, res) => {
+    const team = (req.query.team as string) || "";
+    try {
+      const { rows } = await pool.query(
+        `SELECT u.id, u.name, u.email, u.team, u.profile_pic_url, sp.title
+         FROM users u LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+         WHERE u.is_active = true AND (
+           CASE WHEN $1 = '' OR $1 = '__unassigned__' THEN (u.team IS NULL OR u.team = '')
+                ELSE u.team = $1 END
+         )
+         ORDER BY u.name`,
+        [team]
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Bulk reassign — body: { assignments: [{ userId, team }] }
+  app.post("/api/admin/users-bulk-reassign-team", requireAuth, requireAdmin, async (req: any, res) => {
+    const { assignments } = req.body || {};
+    if (!Array.isArray(assignments)) return res.status(400).json({ error: "assignments[] required" });
+    try {
+      let updated = 0;
+      for (const a of assignments) {
+        if (!a?.userId) continue;
+        await pool.query("UPDATE users SET team = $1 WHERE id = $2", [a.team || null, a.userId]);
+        updated++;
+      }
+      res.json({ ok: true, updated });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // One-shot tidy applied via a Settings button — May 2026 team reorg.
+  // Splits London Leasing into London Retail + London F&B, parks the 4
+  // unassigned users on Office / Corporate, renames the Accounts mailbox
+  // user to its actual person (Wendy), and marks Daisy + Emily Mitchell as
+  // Contract type so HR views skip them. Safe to re-run — uses name lookups
+  // so it does nothing on rows that already match.
+  app.post("/api/admin/apply-may-2026-team-tidy", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const remap: Array<{ names: string[]; team: string }> = [
+        { team: "London Retail",      names: ["Charlotte Roberts", "Lizzie Knights", "Lucy Cope", "Emily Cann"] },
+        { team: "London F&B",         names: ["Rupert Bentley-Smith", "Will Penfold", "Evie North"] },
+        { team: "Office / Corporate", names: ["Wendy McKenzie", "Accounts", "Johnny", "Daisy Driscoll", "Emily Mitchell"] },
+      ];
+      let teamUpdates = 0;
+      for (const r of remap) {
+        const result = await pool.query(
+          "UPDATE users SET team = $1 WHERE is_active = true AND name = ANY($2)",
+          [r.team, r.names]
+        );
+        teamUpdates += result.rowCount ?? 0;
+      }
+
+      // Rename the shared mailbox alias to its actual person name.
+      await pool.query(
+        "UPDATE users SET name = 'Wendy McKenzie' WHERE is_active = true AND name = 'Accounts'"
+      );
+
+      // Mark consultants — HR sections (salary, holiday, pension) hide for
+      // anyone tagged Contract type via the client-side gate.
+      const consultants = ["Daisy Driscoll", "Emily Mitchell"];
+      const contractResult = await pool.query(
+        `UPDATE staff_profiles SET employment_type = 'Contract'
+         WHERE user_id IN (SELECT id FROM users WHERE name = ANY($1))`,
+        [consultants]
+      );
+
+      res.json({
+        ok: true,
+        teamUpdates,
+        contractUpdates: contractResult.rowCount ?? 0,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Move everyone currently on fromTeam → toTeam in one go. Empty/null fromTeam
+  // means "currently unassigned". Used for tidy-ups like splitting / merging
+  // teams without per-user clicking.
+  app.post("/api/admin/team-bulk-remap", requireAuth, requireAdmin, async (req: any, res) => {
+    const { fromTeam, toTeam } = req.body || {};
+    if (toTeam === undefined) return res.status(400).json({ error: "toTeam required" });
+    try {
+      let result;
+      if (!fromTeam || fromTeam === "__unassigned__") {
+        result = await pool.query(
+          "UPDATE users SET team = $1 WHERE is_active = true AND (team IS NULL OR team = '')",
+          [toTeam || null]
+        );
+      } else {
+        result = await pool.query(
+          "UPDATE users SET team = $1 WHERE is_active = true AND team = $2",
+          [toTeam || null, fromTeam]
+        );
+      }
+      res.json({ ok: true, updated: result.rowCount ?? 0 });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/admin/number-test-units", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const props = await pool.query(`SELECT DISTINCT property_id FROM property_units WHERE property_id IS NOT NULL`);
+      let renamed = 0;
+      for (const p of props.rows) {
+        const units = await pool.query(
+          `SELECT id, unit_name FROM property_units WHERE property_id = $1 ORDER BY created_at ASC, id ASC`,
+          [p.property_id]
+        );
+        for (let i = 0; i < units.rows.length; i++) {
+          const newName = `Unit ${i + 1}`;
+          const oldName = units.rows[i].unit_name;
+          const unitId = units.rows[i].id;
+          if (oldName === newName) continue;
+          await pool.query(`UPDATE property_units SET unit_name = $1 WHERE id = $2`, [newName, unitId]);
+          await pool.query(`UPDATE available_units SET unit_name = $1 WHERE unit_id = $2`, [newName, unitId]);
+          await pool.query(
+            `UPDATE leasing_schedule_units SET unit_name = $1
+             WHERE property_id = $2 AND lower(trim(coalesce(unit_name, ''))) = lower(trim(coalesce($3, '')))`,
+            [newName, p.property_id, oldName]
+          );
+          renamed++;
+        }
+      }
+      res.json({ renamed });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Rename failed" });
+    }
+  });
+
+  app.post("/api/available-units/backfill-leasing-schedule", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `WITH inserted AS (
+           INSERT INTO leasing_schedule_units (property_id, unit_name, sqft, rent_pa, status)
+           SELECT au.property_id, au.unit_name, au.sqft, au.asking_rent, COALESCE(au.marketing_status, 'AVA')
+           FROM available_units au
+           WHERE NOT EXISTS (
+             SELECT 1 FROM leasing_schedule_units ls
+             WHERE ls.property_id = au.property_id
+               AND lower(trim(coalesce(ls.unit_name, ''))) = lower(trim(coalesce(au.unit_name, '')))
+           )
+           RETURNING id
+         )
+         SELECT COUNT(*)::int AS created FROM inserted`
+      );
+      res.json({ created: rows[0]?.created ?? 0 });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Backfill failed" });
+    }
+  });
+
   app.post("/api/available-units/:id/link-deal", requireAuth, async (req, res) => {
     try {
       const { dealId } = req.body;
       if (!dealId) return res.status(400).json({ message: "dealId is required" });
-      const existing = await storage.getAvailableUnit(req.params.id);
+      const existing = await storage.getAvailableUnit(req.params.id as string);
       if (!existing) return res.status(404).json({ message: "Unit not found" });
       const deal = await storage.getCrmDeal(dealId);
       if (!deal) return res.status(404).json({ message: "Deal not found" });
-      const unit = await storage.updateAvailableUnit(req.params.id, { dealId });
+      const unit = await storage.updateAvailableUnit(req.params.id as string, { dealId });
       res.json(unit);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to link deal" });
@@ -2150,48 +4788,178 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/available-units/:id/create-deal", requireAuth, async (req, res) => {
     try {
-      const unit = await storage.getAvailableUnit(req.params.id);
+      const unit = await storage.getAvailableUnit(req.params.id as string);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
       const property = await storage.getCrmProperty(unit.propertyId);
       const body = req.body || {};
-      const deal = await storage.createCrmDeal({
-        name: `${property?.name || "Property"} - ${unit.unitName}`,
+
+      // Build the field set from the form. Used to either UPDATE an existing
+      // linked deal (the common case now that Add Unit auto-creates a deal)
+      // or CREATE a new one (only when the unit was somehow orphaned).
+      //
+      // Contracting entities: tenantId comes from the WIP form's
+      // EntityCombobox; landlordId is auto-resolved from the property
+      // (crm_properties.landlord_id) since the landlord is implicit at
+      // SOL on a letting deal. Xero billing entities (tenant + landlord)
+      // are also captured for the invoicing chain.
+      // Promote merges into the existing deal — don't clobber multi-agent
+      // / multi-team rosters with whatever the dialog's single-picker
+      // shows. Layla picks a "lead agent" on the dialog; if the deal
+      // already had Charlotte on it too, Charlotte stays. Same for team.
+      const existingDeal = unit.dealId ? await storage.getCrmDeal(unit.dealId) : null;
+      const existingAgents: string[] = Array.isArray((existingDeal as any)?.internalAgent)
+        ? ((existingDeal as any).internalAgent as string[])
+        : ((existingDeal as any)?.internalAgent ? [(existingDeal as any).internalAgent as string] : []);
+      const mergedAgents = body.agent && !existingAgents.includes(body.agent)
+        ? [body.agent, ...existingAgents]
+        : (body.agent ? existingAgents : existingAgents);
+      const bodyTeams: string[] = Array.isArray(body.team) ? body.team : (body.team ? [body.team] : []);
+      const existingTeams: string[] = Array.isArray((existingDeal as any)?.team)
+        ? ((existingDeal as any).team as string[])
+        : ((existingDeal as any)?.team ? [(existingDeal as any).team as string] : []);
+      const mergedTeams = bodyTeams.length === 0
+        ? existingTeams
+        : Array.from(new Set([...bodyTeams, ...existingTeams]));
+
+      // Resolve the landlord defensively: prefer an explicit body value
+      // ONLY if it points at a real company; otherwise fall back to the
+      // property's current landlord. Stops a stale/orphaned landlord_id
+      // (a deleted or merged company) being stamped onto the deal, which
+      // would make it show as "Unknown" client on the WIP roll-up.
+      let resolvedLandlordId: string | undefined = (property as any)?.landlordId || undefined;
+      if (body.landlordId) {
+        const lc = await pool.query(`SELECT 1 FROM crm_companies WHERE id = $1 LIMIT 1`, [body.landlordId]);
+        if ((lc.rowCount ?? 0) > 0) resolvedLandlordId = body.landlordId;
+      }
+
+      const dealFields: Record<string, any> = {
         propertyId: unit.propertyId,
-        status: "Under Offer",
-        dealType: body.dealType || "Letting",
-        groupName: "Leasing - Active",
-        team: body.team || [],
-        internalAgent: body.agent ? [body.agent] : [],
+        unitId: unit.unitId || undefined,
+        status: "SOL",
+        dealType: body.dealType || "New Letting",
+        team: mergedTeams,
+        internalAgent: mergedAgents,
         fee: body.fee ? parseFloat(body.fee) : (unit.fee || undefined),
+        feePercentage: body.feePercentage != null && body.feePercentage !== ""
+          ? parseFloat(String(body.feePercentage))
+          : undefined,
         feeAgreement: body.feeAgreement || undefined,
         rentPa: body.askingRent ? parseFloat(body.askingRent) : (unit.askingRent || undefined),
         totalAreaSqft: body.totalAreaSqft ? parseFloat(body.totalAreaSqft) : (unit.sqft || undefined),
         leaseLength: body.leaseLength ? parseFloat(body.leaseLength) : undefined,
         rentFree: body.rentFree ? parseFloat(body.rentFree) : undefined,
+        // targetDate is mandatory on the dialog now — persist so the
+        // WIP report can bucket the freshly-flipped deal by month.
+        targetDate: body.targetDate || undefined,
         comments: body.comments || undefined,
-      });
-      if (body.tenantName) {
-        try {
-          const { crmContacts } = await import("@shared/schema");
-          const existing = await db.select().from(crmContacts).where(sql`LOWER(name) = LOWER(${body.tenantName})`).limit(1);
-          if (existing.length > 0) {
-            await storage.updateCrmDeal(deal.id, { tenantId: existing[0].id });
-          }
-        } catch (_) {}
+        amlCheckCompleted: body.amlChecked || undefined,
+        tenantId: body.tenantId || undefined,
+        tenantEntityId: body.tenantEntityId || undefined,
+        tenantEntityName: body.tenantEntityName || undefined,
+        // Landlord auto-resolved + validated above (resolvedLandlordId):
+        // explicit body value wins only if it resolves to a real company,
+        // else the property's current landlord.
+        landlordId: resolvedLandlordId,
+        landlordEntityId: body.landlordEntityId || undefined,
+        landlordEntityName: body.landlordEntityName || undefined,
+      };
+
+      let deal;
+      if (unit.dealId) {
+        // Promote: existing deal gets the SOL-handover fields applied and
+        // status flipped. Don't change the deal name (it might have been
+        // edited).
+        deal = await storage.updateCrmDeal(unit.dealId, dealFields as any);
+      } else {
+        // Orphan unit (no auto-create ran) — fresh deal.
+        deal = await storage.createCrmDeal({
+          name: `${property?.name || "Property"} - ${unit.unitName}`,
+          groupName: "Leasing - Active",
+          ...dealFields,
+        } as any);
       }
-      await storage.updateAvailableUnit(req.params.id, { dealId: deal.id, marketingStatus: "Under Offer" });
-      res.json({ deal, unit: { ...unit, dealId: deal.id, marketingStatus: "Under Offer" } });
+
+      await storage.updateAvailableUnit(req.params.id as string, {
+        dealId: deal?.id ?? unit.dealId,
+        marketingStatus: "SOL",
+      });
+
+      // Fire AML on every counterparty now that the deal carries real
+      // company links rather than a tenant-name string. Auto-launched
+      // chain mirrors the deal-stages SOL transition path so an
+      // AVA→SOL via Letting Tracker behaves the same as a direct
+      // kanban drag-to-SOL.
+      if (deal?.id) {
+        try {
+          const { autoLaunchAmlForDeal } = await import("./deal-stages");
+          await autoLaunchAmlForDeal(
+            deal.id,
+            (req as any).user?.id || null,
+            (req as any).user?.name || null,
+          );
+        } catch (e: any) {
+          console.warn("[promote-unit] AML auto-launch failed:", e?.message);
+        }
+      }
+
+      // If user ticked "Promote anyway" to bypass missing AML / fee-agreement,
+      // log it so a future compliance report can chase the gaps before exchange.
+      if (deal && body.overrideCompliance) {
+        const missing: string[] = [];
+        if (body.feeAgreement !== "YES") missing.push("fee_agreement_signed");
+        if (body.amlChecked !== "YES" && body.amlChecked !== "N-A") missing.push("aml_kyc_checked");
+        if (missing.length > 0) {
+          try {
+            const userId = (req as any).user?.id ?? null;
+            await pool.query(
+              `INSERT INTO deal_compliance_audit (deal_id, user_id, missing_fields, target_status)
+               VALUES ($1, $2, $3, $4)`,
+              [deal.id, userId, missing, "SOL"]
+            );
+          } catch (e: any) {
+            console.warn("[promote] compliance audit log failed:", e.message);
+          }
+        }
+      }
+
+      // AML warn-but-allow: run the same KYC counterparty check that
+      // PUT /api/crm/deals/:id enforces as a hard block. We don't reject
+      // here because the promotion is the moment of capture (Layla has
+      // just filled in the tenant + landlord on the WIP modal) — but we
+      // do attach the warning to the response so the UI can flag any
+      // counterparty that's still missing KYC, and log it server-side.
+      let amlWarning: { hasCounterparties: boolean; notReady: any[]; message: string | null } | null = null;
+      if (deal) {
+        try {
+          const { checkCounterpartyAml, formatAmlWarning } = await import("./deal-gates");
+          const result = await checkCounterpartyAml({
+            landlordId: (deal as any).landlordId,
+            tenantId: (deal as any).tenantId,
+            vendorId: (deal as any).vendorId,
+            purchaserId: (deal as any).purchaserId,
+          });
+          const msg = formatAmlWarning(result);
+          if (msg) {
+            amlWarning = { hasCounterparties: result.hasCounterparties, notReady: result.notReady, message: msg };
+            console.warn(`[promote-unit] AML warning for deal ${deal.id}: ${msg}`);
+          }
+        } catch (e: any) {
+          console.warn(`[promote-unit] AML pre-check failed:`, e?.message);
+        }
+      }
+
+      res.json({ deal, unit: { ...unit, dealId: deal?.id ?? unit.dealId, marketingStatus: "SOL" }, amlWarning });
     } catch (err: any) {
-      res.status(500).json({ message: err?.message || "Failed to create deal" });
+      res.status(500).json({ message: err?.message || "Failed to promote unit" });
     }
   });
 
   app.get("/api/available-units/:id/files", requireAuth, async (req, res) => {
     try {
-      const unit = await storage.getAvailableUnit(req.params.id);
+      const unit = await storage.getAvailableUnit(req.params.id as string);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
       const { unitMarketingFiles } = await import("@shared/schema");
-      const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, req.params.id)).orderBy(unitMarketingFiles.createdAt);
+      const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, req.params.id as string)).orderBy(unitMarketingFiles.createdAt);
       res.json(files);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch files" });
@@ -2224,7 +4992,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/files/:fileId", requireAuth, async (req, res) => {
     try {
       const { unitMarketingFiles } = await import("@shared/schema");
-      const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId));
+      const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId as string));
       if (!file) return res.status(404).json({ message: "File not found" });
       const fileName = file.filePath.split("/").pop();
       if (fileName) {
@@ -2233,7 +5001,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       const fullPath = path.join(process.cwd(), file.filePath);
       if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
-      await db.delete(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId));
+      await db.delete(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId as string));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete file" });
@@ -2244,7 +5012,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.get("/api/available-units/:id/viewings", requireAuth, async (req, res) => {
     try {
       const { unitViewings } = await import("@shared/schema");
-      const rows = await db.select().from(unitViewings).where(eq(unitViewings.unitId, req.params.id)).orderBy(unitViewings.viewingDate);
+      const rows = await db.select().from(unitViewings).where(eq(unitViewings.unitId, req.params.id as string)).orderBy(unitViewings.viewingDate);
       res.json(rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch viewings" });
@@ -2266,7 +5034,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/viewings/:viewingId", requireAuth, async (req, res) => {
     try {
       const { unitViewings } = await import("@shared/schema");
-      await db.delete(unitViewings).where(eq(unitViewings.id, req.params.viewingId));
+      await db.delete(unitViewings).where(eq(unitViewings.id, req.params.viewingId as string));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete viewing" });
@@ -2277,7 +5045,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.get("/api/available-units/:id/offers", requireAuth, async (req, res) => {
     try {
       const { unitOffers } = await import("@shared/schema");
-      const rows = await db.select().from(unitOffers).where(eq(unitOffers.unitId, req.params.id)).orderBy(unitOffers.offerDate);
+      const rows = await db.select().from(unitOffers).where(eq(unitOffers.unitId, req.params.id as string)).orderBy(unitOffers.offerDate);
       res.json(rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch offers" });
@@ -2299,7 +5067,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/offers/:offerId", requireAuth, async (req, res) => {
     try {
       const { unitOffers } = await import("@shared/schema");
-      await db.delete(unitOffers).where(eq(unitOffers.id, req.params.offerId));
+      await db.delete(unitOffers).where(eq(unitOffers.id, req.params.offerId as string));
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete offer" });
@@ -2308,7 +5076,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/uploads/marketing-files/:filename", requireAuth, async (req, res) => {
     try {
-      const sanitized = path.basename(req.params.filename);
+      const sanitized = path.basename(req.params.filename as string);
       const file = await getFile(`marketing-files/${sanitized}`);
       if (!file) {
         const diskPath = path.join(MARKETING_FILES_DIR, sanitized);
@@ -2317,10 +5085,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       const ext = path.extname(sanitized).toLowerCase();
       const viewable = [".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp"];
+      const dlName = file.originalName || sanitized;
       if (req.query.view === "1" && viewable.includes(ext)) {
-        res.setHeader("Content-Disposition", `inline; filename="${file.originalName || sanitized}"`);
+        res.setHeader("Content-Disposition", contentDispositionFor(dlName, "inline"));
       } else {
-        res.setHeader("Content-Disposition", `attachment; filename="${file.originalName || sanitized}"`);
+        res.setHeader("Content-Disposition", contentDispositionFor(dlName));
       }
       res.set("Content-Type", file.contentType);
       res.send(file.data);
@@ -2370,6 +5139,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         board_type AS "boardType", status, client, client_contact AS "clientContact",
         vendor, vendor_agent AS "vendorAgent", buyer, address, notes,
         deal_id AS "dealId", agent_user_ids AS "agentUserIds",
+        client_id AS "clientId", client_contact_id AS "clientContactId",
+        vendor_id AS "vendorId", vendor_agent_id AS "vendorAgentId",
+        completion_date AS "completionDate",
         fee, fee_type AS "feeType", marketing_date AS "marketingDate", bid_deadline AS "bidDeadline",
         created_at AS "createdAt", updated_at AS "updatedAt"
         FROM investment_tracker`;
@@ -2441,7 +5213,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/investment-tracker/:trackerId/marketing-files", requireAuth, async (req, res) => {
     try {
-      const rows = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.trackerId, req.params.trackerId)).orderBy(desc(investmentMarketingFiles.createdAt));
+      const rows = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.trackerId, req.params.trackerId as string)).orderBy(desc(investmentMarketingFiles.createdAt));
       res.json(rows);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -2470,19 +5242,19 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/investment-marketing-files/:id", requireAuth, async (req, res) => {
     try {
-      const [file] = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id));
+      const [file] = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id as string));
       if (file?.filePath) {
         const { deleteFile } = await import("./file-storage");
         await deleteFile(file.filePath);
       }
-      await db.delete(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id));
+      await db.delete(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
   app.get("/api/investment-marketing-files/:id/download", requireAuth, async (req, res) => {
     try {
-      const [file] = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id));
+      const [file] = await db.select().from(investmentMarketingFiles).where(eq(investmentMarketingFiles.id, req.params.id as string));
       if (!file) return res.status(404).json({ message: "Not found" });
       const stored = await getFile(file.filePath);
       if (!stored) {
@@ -2490,14 +5262,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         return res.status(404).json({ message: "File not found" });
       }
       res.set("Content-Type", stored.contentType);
-      res.set("Content-Disposition", `attachment; filename="${file.fileName}"`);
+      res.set("Content-Disposition", contentDispositionFor(file.fileName));
       res.send(stored.data);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
   app.get("/api/investment-tracker/:id", requireAuth, async (req, res) => {
     try {
-      const [row] = await db.select().from(investmentTracker).where(eq(investmentTracker.id, req.params.id));
+      const [row] = await db.select().from(investmentTracker).where(eq(investmentTracker.id, req.params.id as string));
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) {
@@ -2524,6 +5296,27 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       const parsed = insertInvestmentTrackerSchema.parse(body);
       const [row] = await db.insert(investmentTracker).values(parsed).returning();
+
+      // Auto-create a backing CRM deal
+      if (!row.dealId) {
+        try {
+          const dealType = row.boardType === "Sales" ? "Sale" : "Purchase";
+          const deal = await storage.createCrmDeal({
+            name: row.assetName,
+            propertyId: row.propertyId,
+            status: "REP",
+            dealType,
+            internalAgent: await resolveAgentNames(row.agentUserIds),
+            fee: row.fee ?? undefined,
+          });
+          await db.update(investmentTracker).set({ dealId: deal.id }).where(eq(investmentTracker.id, row.id));
+          (row as any).dealId = deal.id;
+          (row as any).dealRef = deal.dealRef;
+        } catch (e: any) {
+          console.warn("[investment-tracker POST] auto-create deal failed:", e.message);
+        }
+      }
+
       res.json(row);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
@@ -2536,7 +5329,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         "propertyId", "assetName", "assetType", "tenure", "guidePrice", "niy", "eqy", "sqft",
         "waultBreak", "waultExpiry", "currentRent", "ervPa", "occupancy", "capexRequired",
         "boardType", "status", "client", "clientContact", "vendor", "vendorAgent", "buyer",
-        "address", "notes", "dealId", "agentUserIds", "fee", "feeType", "marketingDate", "bidDeadline",
+        "address", "notes", "dealId", "agentUserIds", "fee", "feeType", "marketingDate", "bidDeadline", "completionDate",
+        // Link FKs — without these the inline Client/Vendor/Agent pickers
+        // silently dropped every selection (PATCH ignored unknown keys).
+        "clientId", "clientContactId", "vendorId", "vendorAgentId",
       ]);
       const updates: Record<string, any> = { updatedAt: new Date() };
       for (const [key, value] of Object.entries(req.body)) {
@@ -2544,7 +5340,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
 
       const row = await db.transaction(async (tx) => {
-        const [updated] = await tx.update(investmentTracker).set(updates).where(eq(investmentTracker.id, req.params.id)).returning();
+        const [updated] = await tx.update(investmentTracker).set(updates).where(eq(investmentTracker.id, req.params.id as string)).returning();
         if (!updated) return null;
 
         if (updated.propertyId) {
@@ -2562,6 +5358,37 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       });
 
       if (!row) return res.status(404).json({ message: "Not found" });
+
+      // Mirror status/fee/agent/parties onto the backing crm_deal so the
+      // Deals board + WIP stay in step with inline investment-tracker edits.
+      if (row.dealId) {
+        const dealPatch: Record<string, any> = {};
+        if ("status" in updates) dealPatch.status = updates.status;
+        if ("fee" in updates) dealPatch.fee = updates.fee;
+        if ("agentUserIds" in updates) dealPatch.internalAgent = await resolveAgentNames(updates.agentUserIds);
+        if ("clientId" in updates) dealPatch.landlordId = updates.clientId || null;
+        if ("vendorId" in updates) dealPatch.vendorId = updates.vendorId || null;
+        if (Object.keys(dealPatch).length > 0) {
+          try {
+            await storage.updateCrmDeal(row.dealId, dealPatch as any);
+          } catch (e: any) {
+            console.warn(`[investment-tracker PATCH] deal sync failed for ${row.dealId}:`, e?.message);
+          }
+        }
+        // We bypass /api/crm/deals/:id (calling storage directly), so the
+        // route's mirrorFromDeal fan-out never fires. Trigger it manually
+        // when status changed so available_units + leasing_schedule +
+        // tenancy stay in lockstep with investment-tracker edits.
+        if ("status" in updates) {
+          try {
+            const { mirrorFromDeal } = await import("./lease-status-mirror");
+            await mirrorFromDeal(row.dealId, updates.status as string, { pool, reason: "investment-tracker.PATCH" });
+          } catch (e: any) {
+            console.warn(`[investment-tracker PATCH] mirror fan-out failed for ${row.dealId}:`, e?.message);
+          }
+        }
+      }
+
       res.json(row);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
@@ -2570,7 +5397,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/investment-tracker/:id", requireAuth, async (req, res) => {
     try {
-      await db.delete(investmentTracker).where(eq(investmentTracker.id, req.params.id));
+      await db.delete(investmentTracker).where(eq(investmentTracker.id, req.params.id as string));
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -2580,7 +5407,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.post("/api/investment-tracker/:id/link-deal", requireAuth, async (req, res) => {
     try {
       const { dealId } = req.body;
-      const [row] = await db.update(investmentTracker).set({ dealId, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id)).returning();
+      const [row] = await db.update(investmentTracker).set({ dealId, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) {
@@ -2590,7 +5417,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/investment-tracker/:id/unlink-deal", requireAuth, async (req, res) => {
     try {
-      const [row] = await db.update(investmentTracker).set({ dealId: null, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id)).returning();
+      const [row] = await db.update(investmentTracker).set({ dealId: null, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) {
@@ -2600,19 +5427,31 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/investment-tracker/:id/create-deal", requireAuth, async (req, res) => {
     try {
-      const [item] = await db.select().from(investmentTracker).where(eq(investmentTracker.id, req.params.id));
+      const [item] = await db.select().from(investmentTracker).where(eq(investmentTracker.id, req.params.id as string));
       if (!item) return res.status(404).json({ message: "Not found" });
+      // Idempotent — if already linked, return the existing deal
+      if (item.dealId) {
+        const existing = await storage.getCrmDeal(item.dealId);
+        if (existing) return res.json({ ...existing, alreadyLinked: true });
+      }
       const property = item.propertyId ? await storage.getCrmProperty(item.propertyId) : null;
+      // Sales board: client = landlord; Purchases board: vendor = the seller side
+      const landlordCompanyId = item.boardType === "Sales" ? item.clientId : null;
+      const vendorCompanyId   = item.boardType === "Sales" ? null          : item.vendorId;
       const deal = await storage.createCrmDeal({
         name: item.assetName || property?.name || "Investment Deal",
         propertyId: item.propertyId || undefined,
-        status: "Under Offer",
-        dealType: (item.boardType === "Sales") ? "Sale" : "Acquisition",
+        status: item.status && ["REP","SPEC","LIVE","AVA","NEG","SOL","EXC","COM","WIT","INV"].includes(item.status) ? item.status : "REP",
+        dealType: (item.boardType === "Sales") ? "Sale" : "Purchase",
         groupName: "Investment - Active",
         team: ["Investment"],
+        landlordId: landlordCompanyId || undefined,
+        vendorId:   vendorCompanyId   || undefined,
+        internalAgent: await resolveAgentNames(item.agentUserIds),
         fee: item.fee || undefined,
-      });
-      await db.update(investmentTracker).set({ dealId: deal.id, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id));
+        comments: `Converted from investment tracker on ${new Date().toISOString().slice(0,10)}.`,
+      } as any);
+      await db.update(investmentTracker).set({ dealId: deal.id, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id as string));
       res.json(deal);
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -2622,7 +5461,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // --- Investment Viewings ---
   app.get("/api/investment-tracker/:trackerId/viewings", requireAuth, async (req, res) => {
     try {
-      const rows = await db.select().from(investmentViewings).where(eq(investmentViewings.trackerId, req.params.trackerId)).orderBy(desc(investmentViewings.viewingDate));
+      const rows = await db.select().from(investmentViewings).where(eq(investmentViewings.trackerId, req.params.trackerId as string)).orderBy(desc(investmentViewings.viewingDate));
       res.json(rows);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -2636,14 +5475,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.patch("/api/investment-viewings/:id", requireAuth, async (req, res) => {
     try {
       const allowed = insertInvestmentViewingSchema.partial().omit({ trackerId: true }).parse(req.body);
-      const [row] = await db.update(investmentViewings).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentViewings.id, req.params.id)).returning();
+      const [row] = await db.update(investmentViewings).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentViewings.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) { res.status(400).json({ message: e.message }); }
   });
   app.delete("/api/investment-viewings/:id", requireAuth, async (req, res) => {
     try {
-      await db.delete(investmentViewings).where(eq(investmentViewings.id, req.params.id));
+      await db.delete(investmentViewings).where(eq(investmentViewings.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -2651,7 +5490,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // --- Investment Offers ---
   app.get("/api/investment-tracker/:trackerId/offers", requireAuth, async (req, res) => {
     try {
-      const rows = await db.select().from(investmentOffers).where(eq(investmentOffers.trackerId, req.params.trackerId)).orderBy(desc(investmentOffers.offerDate));
+      const rows = await db.select().from(investmentOffers).where(eq(investmentOffers.trackerId, req.params.trackerId as string)).orderBy(desc(investmentOffers.offerDate));
       res.json(rows);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -2665,14 +5504,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.patch("/api/investment-offers/:id", requireAuth, async (req, res) => {
     try {
       const allowed = insertInvestmentOfferSchema.partial().omit({ trackerId: true }).parse(req.body);
-      const [row] = await db.update(investmentOffers).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentOffers.id, req.params.id)).returning();
+      const [row] = await db.update(investmentOffers).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentOffers.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) { res.status(400).json({ message: e.message }); }
   });
   app.delete("/api/investment-offers/:id", requireAuth, async (req, res) => {
     try {
-      await db.delete(investmentOffers).where(eq(investmentOffers.id, req.params.id));
+      await db.delete(investmentOffers).where(eq(investmentOffers.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -2680,7 +5519,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // --- Investment Distributions (Sent To tracking) ---
   app.get("/api/investment-tracker/:trackerId/distributions", requireAuth, async (req, res) => {
     try {
-      const rows = await db.select().from(investmentDistributions).where(eq(investmentDistributions.trackerId, req.params.trackerId)).orderBy(desc(investmentDistributions.sentDate));
+      const rows = await db.select().from(investmentDistributions).where(eq(investmentDistributions.trackerId, req.params.trackerId as string)).orderBy(desc(investmentDistributions.sentDate));
       res.json(rows);
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -2694,14 +5533,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.patch("/api/investment-distributions/:id", requireAuth, async (req, res) => {
     try {
       const allowed = insertInvestmentDistributionSchema.partial().omit({ trackerId: true }).parse(req.body);
-      const [row] = await db.update(investmentDistributions).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentDistributions.id, req.params.id)).returning();
+      const [row] = await db.update(investmentDistributions).set({ ...allowed, updatedAt: new Date() }).where(eq(investmentDistributions.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (e: any) { res.status(400).json({ message: e.message }); }
   });
   app.delete("/api/investment-distributions/:id", requireAuth, async (req, res) => {
     try {
-      await db.delete(investmentDistributions).where(eq(investmentDistributions.id, req.params.id));
+      await db.delete(investmentDistributions).where(eq(investmentDistributions.id, req.params.id as string));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
@@ -2742,7 +5581,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   (async () => {
     try {
       const { crmDeals, availableUnits } = await import("@shared/schema");
-      const NEGOTIATION_STATUSES = ["Under Negotiation", "HOTs", "NEG"];
+      // Match both canonical and legacy strings — migration may not yet have run
+      const NEGOTIATION_STATUSES = ["NEG", "Under Negotiation", "HOTs"];
       const negDeals = await db.select().from(crmDeals)
         .where(inArray(crmDeals.status, NEGOTIATION_STATUSES));
 
@@ -2793,504 +5633,33 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   })();
 
-  app.post("/api/apollo/enrich-contact", requireAuth, async (req, res) => {
-    try {
-      const { contactId, force = false } = req.body;
-      if (!contactId) return res.status(400).json({ error: "contactId required" });
 
-      const apiKey = process.env.APOLLO_API_KEY;
-      if (!apiKey) return res.status(500).json({ error: "Apollo API key not configured" });
-
-      const [contact] = await pool.query(`SELECT * FROM crm_contacts WHERE id = $1`, [contactId]).then(r => r.rows);
-      if (!contact) return res.status(404).json({ error: "Contact not found" });
-
-      const nameParts = (contact.name || "").trim().split(/\s+/);
-      const firstName = nameParts[0] || "";
-      const lastName = nameParts.slice(1).join(" ") || "";
-
-      let companyDomain: string | undefined;
-      let companyName: string | undefined;
-      if (contact.company_id) {
-        const [company] = await pool.query(`SELECT name, domain FROM crm_companies WHERE id = $1`, [contact.company_id]).then(r => r.rows);
-        if (company) {
-          companyName = company.name;
-          companyDomain = company.domain || undefined;
-        }
-      }
-      if (!companyDomain && contact.company_name) {
-        companyName = contact.company_name;
-      }
-
-      // Build mixed_people/api_search body (replaces deprecated people/match)
-      const body: Record<string, any> = {
-        page: 1,
-        per_page: 1,
-      };
-      if (contact.email) body.person_emails = [contact.email];
-      if (companyDomain) body.q_organization_domains_list = [companyDomain];
-      else if (companyName) body.organization_names = [companyName];
-      if (firstName || lastName) body.q_keywords = `${firstName} ${lastName}`.trim();
-
-      const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-cache",
-          "X-Api-Key": apiKey,
-        },
-        body: JSON.stringify(body),
-      });
-
-      if (!apolloRes.ok) {
-        const errText = await apolloRes.text();
-        console.error("[apollo] API error:", apolloRes.status, errText);
-        return res.status(apolloRes.status).json({ error: `Apollo API error: ${apolloRes.status}` });
-      }
-
-      const data = await apolloRes.json() as any;
-      const person = (data.people || data.contacts || [])[0];
-
-      if (!person) {
-        return res.json({ success: false, message: "No match found in Apollo" });
-      }
-
-      const updates: Record<string, any> = {};
-      const updatedFields: string[] = [];
-
-      if (person.title && (force || !contact.role)) {
-        updates.role = person.title;
-        updatedFields.push("role");
-      }
-
-      if (person.linkedin_url && (force || !contact.linkedin_url)) {
-        updates.linkedin_url = person.linkedin_url;
-        updatedFields.push("linkedinUrl");
-      }
-
-      const phoneNumber = person.phone_numbers?.[0]?.sanitized_number ||
-        person.phone_numbers?.[0]?.raw_number ||
-        person.organization?.phone;
-      if (phoneNumber && (force || !contact.phone)) {
-        updates.phone = phoneNumber;
-        updatedFields.push("phone");
-      }
-
-      if (person.email && (force || !contact.email)) {
-        updates.email = person.email;
-        updatedFields.push("email");
-      }
-
-      if (person.photo_url && (force || !contact.avatar_url)) {
-        updates.avatar_url = person.photo_url;
-        updatedFields.push("avatarUrl");
-      }
-
-      updates.last_enriched_at = new Date();
-      updates.enrichment_source = "apollo";
-
-      if (Object.keys(updates).length > 0) {
-        const setClauses = Object.keys(updates).map((k, i) => `${k} = $${i + 2}`);
-        setClauses.push(`updated_at = NOW()`);
-        const vals = Object.values(updates);
-        await pool.query(
-          `UPDATE crm_contacts SET ${setClauses.join(", ")} WHERE id = $1`,
-          [contactId, ...vals]
-        );
-      }
-
-      res.json({
-        success: true,
-        updatedFields,
-        apolloData: {
-          name: person.name,
-          title: person.title,
-          email: person.email,
-          phone: phoneNumber || null,
-          linkedinUrl: person.linkedin_url,
-          photoUrl: person.photo_url,
-          city: person.city,
-          country: person.country,
-          organization: person.organization?.name,
-          organizationWebsite: person.organization?.website_url,
-          headline: person.headline,
-        },
-      });
-    } catch (err: any) {
-      console.error("[apollo] Enrich error:", err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/apollo/enrich-company", requireAuth, async (req, res) => {
-    try {
-      const { companyId } = req.body;
-      if (!companyId) return res.status(400).json({ error: "companyId required" });
-
-      const apiKey = process.env.APOLLO_API_KEY;
-      if (!apiKey) return res.status(500).json({ error: "Apollo API key not configured" });
-
-      const [company] = await pool.query(`SELECT * FROM crm_companies WHERE id = $1`, [companyId]).then(r => r.rows);
-      if (!company) return res.status(404).json({ error: "Company not found" });
-
-      let domain = company.domain || "";
-      if (!domain && company.domain_url) {
-        try {
-          const url = company.domain_url.startsWith("http") ? company.domain_url : `https://${company.domain_url}`;
-          domain = new URL(url).hostname.replace(/^www\./, "");
-        } catch {}
-      }
-
-      // Apollo's /organizations/enrich requires a domain — passing `name` alone
-      // returns 422. If we don't have a domain, try to discover one via the
-      // mixed_companies/api_search endpoint first, then enrich.
-      if (!domain) {
-        try {
-          const searchRes = await fetch(`https://api.apollo.io/api/v1/mixed_companies/api_search`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Cache-Control": "no-cache",
-              "X-Api-Key": apiKey,
-            },
-            body: JSON.stringify({ q_organization_name: company.name, per_page: 1 }),
-          });
-          if (searchRes.ok) {
-            const searchData: any = await searchRes.json();
-            const first = searchData?.organizations?.[0] || searchData?.accounts?.[0];
-            if (first?.primary_domain) domain = first.primary_domain;
-            else if (first?.website_url) {
-              try { domain = new URL(first.website_url).hostname.replace(/^www\./, ""); } catch {}
-            }
-          }
-        } catch (err: any) {
-          console.warn("[apollo] Pre-enrich search failed:", err?.message);
-        }
-      }
-
-      if (!domain) {
-        return res.status(400).json({
-          error: `No domain available for "${company.name}". Apollo's enrich API requires a company website/domain. Add a domain to the company record and try again.`,
-        });
-      }
-
-      const params = new URLSearchParams({ domain });
-      const apolloRes = await fetch(`https://api.apollo.io/api/v1/organizations/enrich?${params.toString()}`, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-cache",
-          "X-Api-Key": apiKey,
-        },
-      });
-
-      if (!apolloRes.ok) {
-        const errText = await apolloRes.text();
-        console.error("[apollo] Company API error:", apolloRes.status, errText);
-        // Surface Apollo's own error message so the user understands what's wrong
-        let apolloMsg = "";
-        try { apolloMsg = JSON.parse(errText)?.error || JSON.parse(errText)?.errors?.[0] || ""; } catch {}
-        return res.status(apolloRes.status).json({
-          error: `Apollo ${apolloRes.status}: ${apolloMsg || errText.slice(0, 200) || "No details"}. Domain tried: ${domain}`,
-        });
-      }
-
-      const data = await apolloRes.json() as any;
-      const org = data.organization;
-
-      if (!org) {
-        return res.json({ success: false, message: "No match found in Apollo" });
-      }
-
-      const updates: Record<string, any> = {};
-      const updatedFields: string[] = [];
-
-      if (org.linkedin_url && !company.linkedin_url) {
-        updates.linkedin_url = org.linkedin_url;
-        updatedFields.push("linkedinUrl");
-      }
-      if (org.phone && !company.phone) {
-        updates.phone = org.phone;
-        updatedFields.push("phone");
-      }
-      if (org.industry && !company.industry) {
-        updates.industry = org.industry;
-        updatedFields.push("industry");
-      }
-      if (org.estimated_num_employees && !company.employee_count) {
-        updates.employee_count = String(org.estimated_num_employees);
-        updatedFields.push("employeeCount");
-      }
-      if (org.annual_revenue && !company.annual_revenue) {
-        updates.annual_revenue = String(org.annual_revenue);
-        updatedFields.push("annualRevenue");
-      }
-      if (org.founded_year && !company.founded_year) {
-        updates.founded_year = String(org.founded_year);
-        updatedFields.push("foundedYear");
-      }
-      if (org.website_url && !company.domain_url) {
-        updates.domain_url = org.website_url;
-        updatedFields.push("domainUrl");
-      }
-      if (org.short_description && !company.description) {
-        updates.description = org.short_description;
-        updatedFields.push("description");
-      }
-      let orgDomain = org.primary_domain || null;
-      if (!orgDomain && org.website_url) {
-        try {
-          const u = org.website_url.startsWith("http") ? org.website_url : `https://${org.website_url}`;
-          orgDomain = new URL(u).hostname.replace(/^www\./, "");
-        } catch {}
-      }
-      if (orgDomain && !company.domain) {
-        updates.domain = orgDomain;
-        updatedFields.push("domain");
-      }
-
-      updates.last_enriched_at = new Date();
-      updates.enrichment_source = "apollo";
-
-      if (Object.keys(updates).length > 0) {
-        const setClauses = Object.keys(updates).map((k, i) => `${k} = $${i + 2}`);
-        setClauses.push(`updated_at = NOW()`);
-        const vals = Object.values(updates);
-        await pool.query(
-          `UPDATE crm_companies SET ${setClauses.join(", ")} WHERE id = $1`,
-          [companyId, ...vals]
-        );
-      }
-
-      res.json({
-        success: true,
-        updatedFields,
-        apolloData: {
-          name: org.name,
-          domain: org.primary_domain,
-          website: org.website_url,
-          linkedinUrl: org.linkedin_url,
-          phone: org.phone,
-          industry: org.industry,
-          employeeCount: org.estimated_num_employees,
-          annualRevenue: org.annual_revenue,
-          foundedYear: org.founded_year,
-          description: org.short_description,
-          city: org.city,
-          country: org.country,
-          logoUrl: org.logo_url,
-        },
-      });
-    } catch (err: any) {
-      console.error("[apollo] Company enrich error:", err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post("/api/apollo/search-person", requireAuth, async (req, res) => {
-    try {
-      const { firstName, lastName, email, companyName, domain } = req.body;
-      const apiKey = process.env.APOLLO_API_KEY;
-      if (!apiKey) return res.status(500).json({ error: "Apollo API key not configured" });
-
-      // Build mixed_people/api_search body (replaces deprecated people/match)
-      const body: Record<string, any> = {
-        page: 1,
-        per_page: 1,
-      };
-      if (email) body.person_emails = [email];
-      if (domain) body.q_organization_domains_list = [domain];
-      else if (companyName) body.organization_names = [companyName];
-      if (firstName || lastName) body.q_keywords = `${firstName || ""} ${lastName || ""}`.trim();
-
-      const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-cache",
-          "X-Api-Key": apiKey,
-        },
-        body: JSON.stringify(body),
-      });
-
-      if (!apolloRes.ok) {
-        return res.status(apolloRes.status).json({ error: `Apollo API error: ${apolloRes.status}` });
-      }
-
-      const data = await apolloRes.json() as any;
-      res.json({ person: (data.people || data.contacts || [])[0] || null });
-    } catch (err: any) {
-      console.error("[apollo] Search error:", err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Bulk Apollo enrichment — processes all contacts with an email, with rate limiting
-  app.post("/api/apollo/bulk-enrich", requireAuth, async (req, res) => {
-    try {
-      const { force = false, staleOnly = false, batchSize = 25, offset = 0 } = req.body || {};
-      const apiKey = process.env.APOLLO_API_KEY;
-      if (!apiKey) return res.status(500).json({ error: "Apollo API key not configured" });
-
-      const limit = Math.min(Math.max(1, Number(batchSize) || 25), 50);
-      const safeOffset = Math.max(0, Math.floor(Number(offset) || 0));
-
-      let whereClause = `c.email IS NOT NULL AND c.email != ''`;
-      if (staleOnly) {
-        whereClause += ` AND (c.last_enriched_at IS NULL OR c.last_enriched_at < NOW() - INTERVAL '6 months')`;
-      }
-
-      const totalResult = await pool.query(`SELECT COUNT(*) as cnt FROM crm_contacts c WHERE ${whereClause}`);
-      const totalEligible = parseInt(totalResult.rows[0].cnt);
-
-      const contacts = await pool.query(`
-        SELECT c.id, c.name, c.email, c.phone, c.role, c.linkedin_url, c.avatar_url, c.company_id, c.company_name
-        FROM crm_contacts c
-        WHERE ${whereClause}
-        ORDER BY c.last_enriched_at ASC NULLS FIRST, c.name ASC
-        LIMIT $1 OFFSET $2
-      `, [limit, safeOffset]).then(r => r.rows);
-
-      const total = contacts.length;
-      const results = {
-        total,
-        enriched: 0,
-        noMatch: 0,
-        errors: 0,
-        skipped: 0,
-        noMatchContacts: [] as { id: string; name: string; email: string }[],
-        enrichedContacts: [] as { id: string; name: string; fields: string[] }[],
-      };
-
-      for (const contact of contacts) {
-        try {
-          // Look up company domain for better matching
-          let companyDomain: string | undefined;
-          let companyName: string | undefined;
-          if (contact.company_id) {
-            const [company] = await pool.query(
-              `SELECT name, domain FROM crm_companies WHERE id = $1`,
-              [contact.company_id]
-            ).then(r => r.rows);
-            if (company) {
-              companyName = company.name;
-              companyDomain = company.domain || undefined;
-            }
-          }
-          if (!companyDomain && contact.company_name) {
-            companyName = contact.company_name;
-          }
-
-          const nameParts = (contact.name || "").trim().split(/\s+/);
-          const firstName = nameParts[0] || "";
-          const lastName = nameParts.slice(1).join(" ") || "";
-
-          // Build mixed_people/api_search body (replaces deprecated people/match)
-          const body: Record<string, any> = {
-            page: 1,
-            per_page: 1,
-          };
-          if (contact.email) body.person_emails = [contact.email];
-          if (companyDomain) body.q_organization_domains_list = [companyDomain];
-          else if (companyName) body.organization_names = [companyName];
-          if (firstName || lastName) body.q_keywords = `${firstName} ${lastName}`.trim();
-
-          const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Cache-Control": "no-cache",
-              "X-Api-Key": apiKey,
-            },
-            body: JSON.stringify(body),
-          });
-
-          if (!apolloRes.ok) {
-            results.errors++;
-            // Rate limit hit — pause and retry once
-            if (apolloRes.status === 429) {
-              await new Promise(resolve => setTimeout(resolve, 2000));
-            }
-            await new Promise(resolve => setTimeout(resolve, 300));
-            continue;
-          }
-
-          const data = await apolloRes.json() as any;
-          const person = (data.people || data.contacts || [])[0];
-
-          if (!person) {
-            results.noMatch++;
-            results.noMatchContacts.push({ id: contact.id, name: contact.name, email: contact.email });
-            await new Promise(resolve => setTimeout(resolve, 250));
-            continue;
-          }
-
-          const ALLOWED_CONTACT_COLUMNS = new Set(["role", "linkedin_url", "phone", "avatar_url"]);
-          const updates: Record<string, any> = {};
-          const updatedFields: string[] = [];
-
-          if (person.title && (force || !contact.role)) {
-            updates.role = person.title;
-            updatedFields.push("role");
-          }
-          if (person.linkedin_url && (force || !contact.linkedin_url)) {
-            updates.linkedin_url = person.linkedin_url;
-            updatedFields.push("linkedIn");
-          }
-          const phoneNumber = person.phone_numbers?.[0]?.sanitized_number ||
-            person.phone_numbers?.[0]?.raw_number ||
-            person.organization?.phone;
-          if (phoneNumber && (force || !contact.phone)) {
-            updates.phone = phoneNumber;
-            updatedFields.push("phone");
-          }
-          if (person.photo_url && (force || !contact.avatar_url)) {
-            updates.avatar_url = person.photo_url;
-            updatedFields.push("photo");
-          }
-
-          const ALLOWED_ENRICHMENT_COLUMNS = new Set(["role", "linkedin_url", "phone", "avatar_url", "last_enriched_at", "enrichment_source"]);
-          updates.last_enriched_at = new Date();
-          updates.enrichment_source = "apollo";
-          const safeUpdates = Object.fromEntries(
-            Object.entries(updates).filter(([k]) => ALLOWED_ENRICHMENT_COLUMNS.has(k))
-          );
-
-          if (Object.keys(safeUpdates).length > 0) {
-            const setClauses = Object.keys(safeUpdates).map((k, i) => `${k} = $${i + 2}`);
-            setClauses.push(`updated_at = NOW()`);
-            await pool.query(
-              `UPDATE crm_contacts SET ${setClauses.join(", ")} WHERE id = $1`,
-              [contact.id, ...Object.values(safeUpdates)]
-            );
-            results.enriched++;
-            results.enrichedContacts.push({ id: contact.id, name: contact.name, fields: updatedFields });
-          } else {
-            results.skipped++;
-          }
-
-          // Rate limit: ~250ms between calls = ~4 calls/sec, well within Apollo limits
-          await new Promise(resolve => setTimeout(resolve, 250));
-
-        } catch (err: any) {
-          results.errors++;
-          console.error(`[apollo] Bulk enrich error for ${contact.name}:`, err.message);
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
-      }
-
-      const nextOffset = offset + limit;
-      const hasMore = nextOffset < totalEligible;
-      console.log(`[apollo] Batch enrichment complete (offset ${offset}, batch ${limit}): ${results.enriched} enriched, ${results.noMatch} no match, ${results.errors} errors, ${results.skipped} already complete`);
-      res.json({ success: true, ...results, totalEligible, offset, hasMore, nextOffset });
-
-    } catch (err: any) {
-      console.error("[apollo] Bulk enrich fatal error:", err.message);
-      res.status(500).json({ error: err.message });
-    }
-  });
+  // Lazy-init the table on first hit. Same pattern as
+  // brand_score_history in brand-triggers.ts — keeps deploys self-healing
+  // when the table never made it into the migrations folder.
+  let clientTemplatesTableEnsured = false;
+  async function ensureClientTemplatesTable() {
+    if (clientTemplatesTableEnsured) return;
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS client_templates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        company_id VARCHAR NOT NULL,
+        company_name TEXT NOT NULL,
+        label TEXT NOT NULL,
+        description TEXT,
+        category TEXT DEFAULT 'document',
+        preview_data JSONB,
+        created_by TEXT,
+        created_at TIMESTAMP DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_client_templates_company_id ON client_templates(company_id);
+    `);
+    clientTemplatesTableEnsured = true;
+  }
 
   app.get("/api/client-templates", requireAuth, async (req, res) => {
     try {
+      await ensureClientTemplatesTable();
       const { resolveCompanyScope } = await import("./company-scope");
       const scopeCompanyId = await resolveCompanyScope(req);
 
@@ -3311,6 +5680,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/client-templates", requireAuth, async (req, res) => {
     try {
+      await ensureClientTemplatesTable();
       const userId = req.session.userId!;
       const userResult = await pool.query(`SELECT email FROM users WHERE id = $1`, [userId]);
       const email = userResult.rows[0]?.email?.toLowerCase() || "";
@@ -3336,6 +5706,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/client-templates/:id", requireAuth, async (req, res) => {
     try {
+      await ensureClientTemplatesTable();
       const userId = req.session.userId!;
       const userResult = await pool.query(`SELECT email FROM users WHERE id = $1`, [userId]);
       const email = userResult.rows[0]?.email?.toLowerCase() || "";
@@ -3393,20 +5764,32 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         return res.status(403).json({ message: "Access denied" });
       }
 
+      // The client's portfolio = properties they own (landlord_id) PLUS any
+      // explicitly linked to the company via crm_company_properties. Each row
+      // appears once (OR-filter, no join), so no dedup needed.
       const propsResult = await pool.query(
-        `SELECT id, name, address, status, asset_class FROM crm_properties WHERE landlord_id = $1 ORDER BY name`,
+        `SELECT id, name, address, status, asset_class FROM crm_properties
+         WHERE landlord_id = $1
+            OR id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+         ORDER BY name`,
         [companyId]
       );
       const properties = propsResult.rows;
       const propertyIds = properties.map((p: any) => p.id);
+      // Client account name — lets synced team-diary events (tagged with the
+      // client's name, not a specific property) surface on the events card.
+      const cpCompanyName = (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId])).rows[0]?.name || null;
 
       let totalUnits = 0, vacantUnits = 0, totalPassingRent = 0;
       if (propertyIds.length > 0) {
+        // Portfolio-overview stats come from the TENANCY schedule — the master
+        // rent roll (every unit). The leasing board is only strategy + live
+        // deals now, so it must NOT drive whole-portfolio counts.
         const tenancyResult = await pool.query(
           `SELECT COUNT(*) as total,
-                  COUNT(*) FILTER (WHERE status = 'Vacant' OR status = 'Available') as vacant,
-                  COALESCE(SUM(CASE WHEN rent_pa IS NOT NULL THEN rent_pa ELSE 0 END), 0) as passing_rent
-           FROM leasing_schedule_units WHERE property_id = ANY($1)`,
+                  COUNT(*) FILTER (WHERE status IN ('Vacant', 'Void', 'Available')) as vacant,
+                  COALESCE(SUM(CASE WHEN passing_rent_pa IS NOT NULL THEN passing_rent_pa ELSE 0 END), 0) as passing_rent
+           FROM tenancy_schedule_units WHERE property_id = ANY($1)`,
           [propertyIds]
         );
         totalUnits = parseInt(tenancyResult.rows[0]?.total || "0");
@@ -3416,7 +5799,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const dealsResult = await pool.query(
         `SELECT COUNT(*) as total,
-                COUNT(*) FILTER (WHERE status NOT IN ('Dead', 'Completed', 'Lost')) as active
+                COUNT(*) FILTER (WHERE status NOT IN ('WIT', 'COM', 'INV')) as active
          FROM crm_deals WHERE landlord_id = $1`,
         [companyId]
       );
@@ -3430,8 +5813,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (propertyIds.length > 0) {
         const eventsResult = await pool.query(
           `SELECT COUNT(*) as total FROM team_events
-           WHERE property_id = ANY($1) AND start_time >= NOW()`,
-          [propertyIds]
+           WHERE (property_id = ANY($1) OR company_name = $2) AND start_time >= NOW()`,
+          [propertyIds, cpCompanyName]
         );
         upcomingEvents = parseInt(eventsResult.rows[0]?.total || "0");
       }
@@ -3440,16 +5823,19 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         `SELECT d.id, d.name, d.status, d.property_id, d.deal_type as "dealType", p.name as property_name
          FROM crm_deals d
          LEFT JOIN crm_properties p ON d.property_id = p.id
-         WHERE d.landlord_id = $1 AND d.status NOT IN ('Dead', 'Completed', 'Lost')
+         WHERE d.landlord_id = $1 AND d.status NOT IN ('WIT', 'COM', 'INV')
          ORDER BY p.name, d.created_at DESC`,
         [companyId]
       );
 
+      // The dashboard portfolio boards (Leasing Schedule overview, Lease Expiry
+      // Timeline, Vacancy Pipeline) show EVERY unit across the portfolio, so
+      // they read the tenancy schedule (master), not the trimmed leasing board.
       let leasingUnits: any[] = [];
       if (propertyIds.length > 0) {
         const leasingResult = await pool.query(
-          `SELECT u.id, u.property_id, u.unit_name as premises, u.sort_order as unit_number, u.status, u.tenant_name, u.rent_pa as passing_rent_pa, u.lease_expiry, p.name as property_name
-           FROM leasing_schedule_units u
+          `SELECT u.id, u.property_id, u.premises, u.unit_number, u.status, u.tenant_name, u.passing_rent_pa, u.lease_expiry, p.name as property_name
+           FROM tenancy_schedule_units u
            LEFT JOIN crm_properties p ON u.property_id = p.id
            WHERE u.property_id = ANY($1)
            ORDER BY p.name, u.sort_order`,
@@ -3464,9 +5850,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         const eventsListResult = await pool.query(
           `SELECT id, title, start_time, end_time, event_type, location, property_id
            FROM team_events
-           WHERE property_id = ANY($1) AND start_time >= NOW()
+           WHERE (property_id = ANY($1) OR company_name = $2) AND start_time >= NOW()
            ORDER BY start_time LIMIT 20`,
-          [propertyIds]
+          [propertyIds, cpCompanyName]
         );
         upcomingEventsList = eventsListResult.rows;
 
@@ -3474,11 +5860,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           `SELECT te.id, te.title, te.start_time, te.end_time, te.event_type, te.location, te.property_id, p.name as property_name
            FROM team_events te
            LEFT JOIN crm_properties p ON te.property_id = p.id
-           WHERE te.property_id = ANY($1)
+           WHERE (te.property_id = ANY($1) OR te.company_name = $2)
              AND te.start_time >= NOW() - INTERVAL '7 days'
              AND te.start_time <= NOW() + INTERVAL '30 days'
            ORDER BY te.start_time`,
-          [propertyIds]
+          [propertyIds, cpCompanyName]
         );
         calendarEvents = calendarResult.rows;
       }
@@ -3584,7 +5970,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   });
 
   const TEAM_FOLDERS = [
-    "London Leasing", "National Leasing", "Investment",
+    "London F&B", "London Retail", "National Leasing", "Investment",
     "Tenant Rep", "Development", "Lease Advisory", "Office Corporate", "Admin"
   ];
   const CHATBGP_BASE = path.join(process.cwd(), "ChatBGP");
@@ -3620,7 +6006,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/team-folders/:folder/files", requireAuth, async (req, res) => {
     try {
-      const folderName = decodeURIComponent(req.params.folder);
+      const folderName = decodeURIComponent(req.params.folder as string);
       if (!TEAM_FOLDERS.includes(folderName)) return res.status(400).json({ error: "Invalid folder" });
 
       const dir = path.join(CHATBGP_BASE, folderName);
@@ -3641,7 +6027,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/team-folders/:folder/upload", requireAuth, teamFileUpload.single("file"), async (req, res) => {
     try {
-      const folderName = decodeURIComponent(req.params.folder);
+      const folderName = decodeURIComponent(req.params.folder as string);
       if (!TEAM_FOLDERS.includes(folderName)) return res.status(400).json({ error: "Invalid folder" });
 
       const userId = req.session?.userId || (req as any).tokenUserId;
@@ -3670,8 +6056,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/team-folders/:folder/download/:filename", requireAuth, async (req, res) => {
     try {
-      const folderName = decodeURIComponent(req.params.folder);
-      const filename = req.params.filename;
+      const folderName = decodeURIComponent(req.params.folder as string);
+      const filename = req.params.filename as string;
       if (!TEAM_FOLDERS.includes(folderName)) return res.status(400).json({ error: "Invalid folder" });
       if (filename.includes("..") || filename.includes("/") || filename.includes("\\")) return res.status(400).json({ error: "Invalid filename" });
 
@@ -3684,8 +6070,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/team-folders/:folder/:filename", requireAuth, async (req, res) => {
     try {
-      const folderName = decodeURIComponent(req.params.folder);
-      const filename = req.params.filename;
+      const folderName = decodeURIComponent(req.params.folder as string);
+      const filename = req.params.filename as string;
       if (!TEAM_FOLDERS.includes(folderName)) return res.status(400).json({ error: "Invalid folder" });
       if (filename.includes("..") || filename.includes("/") || filename.includes("\\")) return res.status(400).json({ error: "Invalid filename" });
 
@@ -3708,8 +6094,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.get("/api/activity-feed", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/activity-feed", requireAuth, async (req: Request, res: Response) => {
     try {
+    // External client logins get no org-wide feed — their world is the
+    // client-scoped briefing. (Landsec audit.)
+    if (await (await import("./company-scope")).isClientRequestUser(req)) return res.json([]);
+
       const tableCheck = await pool.query(
         `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'system_activity_log')`
       );
@@ -3818,17 +6208,23 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         timeline.push({ type: "deal_created", date: deal.created_at, detail: `Deal "${deal.name}" created`, icon: "plus" });
       }
 
-      if (deal.hots_completed_at) {
-        timeline.push({ type: "hots_completed", date: deal.hots_completed_at, detail: "Heads of Terms completed", icon: "file-text" });
+      if (deal.instructed_at) {
+        timeline.push({ type: "instructed", date: deal.instructed_at, detail: "Instructed", icon: "briefcase" });
+      }
+      if (deal.target_date) {
+        timeline.push({ type: "target", date: deal.target_date, detail: "Target date", icon: "target" });
       }
       if (deal.kyc_approved && (deal.kyc_approved_at || deal.updated_at)) {
         timeline.push({ type: "kyc_approved", date: deal.kyc_approved_at || deal.updated_at, detail: `KYC approved by ${deal.kyc_approved_by || "system"}`, icon: "shield-check" });
       }
-      if (deal.completion_date) {
-        const compDate = new Date(deal.completion_date);
-        if (!isNaN(compDate.getTime())) {
-          timeline.push({ type: "completion", date: deal.completion_date, detail: "Deal completed", icon: "check-circle" });
-        }
+      if (deal.exchanged_at) {
+        timeline.push({ type: "exchanged", date: deal.exchanged_at, detail: "Exchanged", icon: "handshake" });
+      }
+      if (deal.completed_at) {
+        timeline.push({ type: "completion", date: deal.completed_at, detail: "Completed", icon: "check-circle" });
+      }
+      if (deal.invoiced_at) {
+        timeline.push({ type: "invoiced", date: deal.invoiced_at, detail: "Invoiced", icon: "receipt" });
       }
 
       const reqRows = await pool.query(
@@ -3911,7 +6307,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const [compsResult, dealsResult, newsResult, reqResult] = await Promise.all([
         pool.query(`SELECT id, name, tenant, headline_rent, area_sqft, completion_date, use_class FROM crm_comps WHERE property_id = $1 ORDER BY created_at DESC LIMIT 10`, [propertyId]),
-        pool.query(`SELECT id, name, deal_type, status, rent_pa, fee, completion_date FROM crm_deals WHERE property_id = $1 ORDER BY created_at DESC LIMIT 10`, [propertyId]),
+        pool.query(`SELECT id, name, deal_type, status, rent_pa, fee, target_date, exchanged_at, completed_at FROM crm_deals WHERE property_id = $1 ORDER BY created_at DESC LIMIT 10`, [propertyId]),
         newsQuery,
         pool.query(`
           SELECT r.id, r.name, r.use, r.size, r.requirement_locations, c.name as company_name
@@ -4062,165 +6458,47 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const userRow = await pool.query("SELECT name, team, email FROM users WHERE id = $1", [userId]);
-      const userName = userRow.rows[0]?.name || "Team member";
-      const userTeam = userRow.rows[0]?.team || "";
-      const userEmail = userRow.rows[0]?.email || "";
 
-      const tasks = await pool.query(
-        `SELECT * FROM user_tasks WHERE user_id = $1 AND status != 'done' 
-         ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, due_date ASC NULLS LAST`,
-        [userId]
-      );
-      const overdueTasks = tasks.rows.filter((t: any) => t.due_date && new Date(t.due_date) < new Date());
-      const todayTasks = tasks.rows.filter((t: any) => {
-        if (!t.due_date) return false;
-        const d = new Date(t.due_date);
-        const now = new Date();
-        return d.toDateString() === now.toDateString();
-      });
-
-      const recentDone = await pool.query(
-        `SELECT * FROM user_tasks WHERE user_id = $1 AND status = 'done' AND completed_at > NOW() - INTERVAL '24 hours'`,
-        [userId]
-      );
-
-      const teamDeals = await pool.query(
-        `SELECT d.id, d.name, d.status, p.name as property_name, tc.name as tenant_name, d.updated_at 
-         FROM crm_deals d
-         LEFT JOIN crm_properties p ON d.property_id = p.id
-         LEFT JOIN crm_companies tc ON d.tenant_id = tc.id
-         WHERE d.team @> ARRAY[$1]::text[] AND d.status NOT IN ('Dead', 'Withdrawn')
-         ORDER BY d.updated_at DESC LIMIT 15`,
-        [userTeam]
-      );
-
-      let calendarContext = "";
-      let emailContext = "";
+      // Read-through per-day cache: only the first open of the day generates
+      // (or the 6am cron pre-generates it). ?refresh=1 forces a regenerate —
+      // wired to the card's manual refresh button.
+      const force = req.query.refresh === "1" || req.query.refresh === "true";
+      // The briefing renders the user's PERSONAL calendar + inbox, so only
+      // use a Microsoft token that genuinely belongs to this user. Without
+      // this guard getValidMsToken's org-wide cache fallback would hand a
+      // client (e.g. a Landsec login with no MS account) another user's
+      // token — and their private diary with it.
+      let msToken: string | null = null;
       try {
-        const { getValidMsToken } = await import("./microsoft");
-        const msToken = await getValidMsToken(req);
-        if (msToken) {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const tomorrow = new Date(today);
-          tomorrow.setDate(tomorrow.getDate() + 2);
-
-          try {
-            const calRes = await fetch(
-              `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${today.toISOString()}&endDateTime=${tomorrow.toISOString()}&$top=20&$orderby=start/dateTime&$select=subject,start,end,location,organizer,attendees`,
-              { headers: { Authorization: `Bearer ${msToken}` } }
-            );
-            if (calRes.ok) {
-              const calData = await calRes.json();
-              const events = (calData.value || []).map((e: any) => ({
-                subject: e.subject,
-                start: e.start?.dateTime,
-                end: e.end?.dateTime,
-                location: e.location?.displayName || "",
-                organizer: e.organizer?.emailAddress?.name || "",
-              }));
-              if (events.length > 0) calendarContext = `Today's calendar (${events.length} events):\n${events.map((e: any) => `- ${new Date(e.start).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} ${e.subject}${e.location ? ` (${e.location})` : ""}`).join("\n")}`;
-            }
-          } catch (e: any) { console.log("[ai-briefing] Calendar fetch error:", e.message); }
-
-          try {
-            const emailRes = await fetch(
-              `https://graph.microsoft.com/v1.0/me/messages?$top=10&$orderby=receivedDateTime desc&$select=subject,from,receivedDateTime,isRead,importance,bodyPreview`,
-              { headers: { Authorization: `Bearer ${msToken}` } }
-            );
-            if (emailRes.ok) {
-              const emailData = await emailRes.json();
-              const emails = (emailData.value || []).filter((e: any) => !e.isRead).slice(0, 8);
-              if (emails.length > 0) emailContext = `Unread emails (${emails.length}):\n${emails.map((e: any) => `- ${e.from?.emailAddress?.name || "Unknown"}: "${e.subject}" — ${(e.bodyPreview || "").slice(0, 80)}`).join("\n")}`;
-            }
-          } catch (e: any) { console.log("[ai-briefing] Email fetch error:", e.message); }
+        const ownsMsIdentity = !!req.session.msTokens?.accessToken || (
+          await pool.query("SELECT 1 FROM msal_token_cache WHERE user_id = $1 LIMIT 1", [userId])
+        ).rows.length > 0;
+        if (ownsMsIdentity) {
+          const { getValidMsToken } = await import("./microsoft");
+          msToken = await getValidMsToken(req);
         }
       } catch (e: any) { console.log("[ai-briefing] MS token fetch error:", e.message); }
 
-      const digestRes = await pool.query(
-        `SELECT id, name, status, updated_at FROM crm_deals 
-         WHERE status NOT IN ('Completed', 'Invoiced', 'Dead', 'Withdrawn')
-         AND updated_at < NOW() - INTERVAL '14 days'
-         AND team @> ARRAY[$1]::text[]
-         ORDER BY updated_at ASC LIMIT 5`,
-        [userTeam]
-      );
-      const stuckDeals = digestRes.rows;
-
-      const today = new Date();
-      const todayStr = today.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-
-      const prompt = `You are the AI briefing assistant for ${userName} at Bruce Gillingham Pollard (BGP), a London commercial property agency. Today is ${todayStr}.
-
-Generate a personalised daily briefing. Be concise, actionable, and warm. Structure it as:
-
-1. **Good morning greeting** — Brief, warm, personalised. Reference the day/weather metaphorically if relevant.
-
-2. **Today at a glance** — Quick bullet summary of what's ahead (meetings count, tasks count, urgent items).
-
-3. **Priority actions** — What needs attention RIGHT NOW. Be specific and actionable. Include deadlines.
-
-4. **Deal momentum** — Brief commentary on active deals, highlight any that need attention. Keep it punchy.
-
-5. **Inbox intelligence** — If there are notable unread emails, flag the important ones with suggested actions.
-
-6. **Looking ahead** — Any upcoming deadlines or things to prepare for.
-
-Keep the entire briefing under 400 words. Use a professional but personable tone — like a brilliant PA who knows the business inside out.
-
-Here is ${userName}'s context:
-
-TASKS (${tasks.rows.length} open):
-${overdueTasks.length > 0 ? `OVERDUE (${overdueTasks.length}): ${overdueTasks.map((t: any) => `"${t.title}" (due ${new Date(t.due_date).toLocaleDateString("en-GB")})`).join(", ")}` : "No overdue tasks."}
-${todayTasks.length > 0 ? `DUE TODAY (${todayTasks.length}): ${todayTasks.map((t: any) => `"${t.title}"`).join(", ")}` : ""}
-${tasks.rows.filter((t: any) => t.priority === "urgent" || t.priority === "high").map((t: any) => `[${t.priority.toUpperCase()}] "${t.title}"${t.due_date ? ` (due ${new Date(t.due_date).toLocaleDateString("en-GB")})` : ""}`).join("\n") || "No high-priority tasks."}
-
-COMPLETED YESTERDAY: ${recentDone.rows.length > 0 ? recentDone.rows.map((t: any) => `"${t.title}"`).join(", ") : "None"}
-
-${calendarContext || "No calendar data available."}
-
-${emailContext || "No email data available."}
-
-ACTIVE DEALS (${teamDeals.rows.length} for ${userTeam} team):
-${teamDeals.rows.slice(0, 10).map((d: any) => `- ${d.name} — ${d.status}${d.property_name ? ` @ ${d.property_name}` : ""}${d.tenant_name ? ` (tenant: ${d.tenant_name})` : ""}`).join("\n") || "No active deals."}
-
-${stuckDeals.length > 0 ? `DEALS NEEDING ATTENTION (no update 14+ days):\n${stuckDeals.map((d: any) => `- ${d.name} (${d.status}, last updated ${new Date(d.updated_at).toLocaleDateString("en-GB")})`).join("\n")}` : ""}`;
-
-      const { callClaude } = await import("./utils/anthropic-client");
-      const briefingResult = await callClaude({
-        messages: [{ role: "user", content: prompt }],
-        max_completion_tokens: 1200,
-        temperature: 0.7,
-      });
-      const briefingText = briefingResult?.choices?.[0]?.message?.content || "Unable to generate briefing at this time.";
-
-      res.json({
-        briefing: briefingText,
-        generatedAt: new Date().toISOString(),
-        stats: {
-          openTasks: tasks.rows.length,
-          overdueTasks: overdueTasks.length,
-          todayTasks: todayTasks.length,
-          completedYesterday: recentDone.rows.length,
-          activeDeals: teamDeals.rows.length,
-          stuckDeals: stuckDeals.length,
-          unreadEmails: emailContext ? parseInt(emailContext.match(/\d+/)?.[0] || "0") : 0,
-        }
-      });
+      const { getOrCreateTodaysBriefing } = await import("./daily-briefing");
+      const result = await getOrCreateTodaysBriefing(userId, msToken, { force });
+      res.json(result);
     } catch (e: any) {
       console.error("[ai-briefing] Error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });
 
-  app.get("/api/daily-digest", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/daily-digest", requireAuth, async (req: Request, res: Response) => {
     try {
+    // External client logins get no org-wide feed — their world is the
+    // client-scoped briefing. (Landsec audit.)
+    if (await (await import("./company-scope")).isClientRequestUser(req)) return res.json([]);
+
       const alerts: any[] = [];
 
       const stuckDeals = await pool.query(
         `SELECT id, name, status, updated_at FROM crm_deals 
-         WHERE status NOT IN ('Completed', 'Invoiced', 'Dead', 'Withdrawn')
+         WHERE status NOT IN ('COM', 'INV', 'WIT')
          AND updated_at < NOW() - INTERVAL '30 days'
          ORDER BY updated_at ASC LIMIT 10`
       );
@@ -4629,8 +6907,17 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   });
 
   // === Landsec Portfolio Analytics ===
-  app.get("/api/portfolio/landsec/analytics", requireAuth, async (_req, res) => {
+  app.get("/api/portfolio/landsec/analytics", requireAuth, async (req, res) => {
     try {
+      // BGP staff or Landsec-scoped users only — this payload contains
+      // Landsec fee totals + BGP per-agent splits, so other client teams
+      // must not read it. (Landsec audit.)
+      const scopeId = await resolveCompanyScope(req);
+      if (scopeId) {
+        const ls = await pool.query(
+          `SELECT 1 FROM crm_companies WHERE id = $1 AND LOWER(name) = 'landsec' LIMIT 1`, [scopeId]);
+        if (ls.rows.length === 0) return res.status(403).json({ error: "Not available for this account" });
+      }
       // All deals where groupName contains "Landsec" (case-insensitive)
       const dealsResult = await pool.query(
         `SELECT id, name, group_name, deal_type, status, fee, internal_agent, created_at, updated_at
@@ -4642,10 +6929,9 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
 
       const totalDeals = allDeals.length;
 
-      // Pipeline statuses (not completed/invoiced/dead)
-      const INVOICED_STATUSES = ["Invoiced"];
-      const DEAD_STATUSES = ["Dead"];
-      const PIPELINE_STAGE_ORDER = ["Targeting", "Available", "Marketing", "NEG", "HOTs", "SOLs", "Exchanged", "Completed", "Live", "Invoiced"];
+      // Stage detection now uses canonical 10-code helper (legacy strings still mapped)
+      const { legacyToCode } = await import("@shared/deal-status");
+      const PIPELINE_STAGE_ORDER = ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "INV"];
 
       let totalWIP = 0;
       let totalInvoiced = 0;
@@ -4657,17 +6943,18 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       for (const deal of allDeals) {
         const fee = parseFloat(deal.fee) || 0;
         const status = (deal.status || "").trim();
+        const code = legacyToCode(status);
         const dealType = deal.deal_type || "Other";
 
         // WIP vs Invoiced
-        if (INVOICED_STATUSES.includes(status)) {
+        if (code === "INV") {
           totalInvoiced += fee;
-        } else if (!DEAD_STATUSES.includes(status)) {
+        } else if (code !== "WIT") {
           totalWIP += fee;
         }
 
-        // Pipeline value: statuses before Completed/Invoiced
-        const isPreCompletion = !["Completed", "Invoiced", "Dead", "Leasing Comps", "Investment Comps"].includes(status);
+        // Pipeline value: anything still in lifecycle (not COM/INV/WIT)
+        const isPreCompletion = code !== null && !["COM", "INV", "WIT"].includes(code);
         if (isPreCompletion) {
           pipelineValue += fee;
         }
@@ -4705,16 +6992,23 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       const totalFees = allDeals.reduce((s, d) => s + (parseFloat(d.fee) || 0), 0);
       const averageDealSize = totalDeals > 0 ? totalFees / totalDeals : 0;
 
+      // Client logins may see their own portfolio shape but not BGP's fee
+      // take or per-agent commission attribution. (Landsec audit.)
+      const analyticsClient = await (await import("./company-scope")).isClientRequestUser(req);
       res.json({
         totalDeals,
-        totalWIP,
-        totalInvoiced,
-        byDealType,
+        totalWIP: analyticsClient ? undefined : totalWIP,
+        totalInvoiced: analyticsClient ? undefined : totalInvoiced,
+        byDealType: analyticsClient
+          ? Object.fromEntries(Object.entries(byDealType).map(([k, v]: [string, any]) => [k, { count: v.count }]))
+          : byDealType,
         byStatus,
-        byAgent,
-        recentActivity,
-        pipelineValue,
-        averageDealSize,
+        byAgent: analyticsClient ? {} : byAgent,
+        recentActivity: analyticsClient
+          ? recentActivity.map(({ fee, agent, ...rest }) => rest)
+          : recentActivity,
+        pipelineValue: analyticsClient ? undefined : pipelineValue,
+        averageDealSize: analyticsClient ? undefined : averageDealSize,
       });
     } catch (err: any) {
       console.error("[landsec-analytics] Error:", err?.message);
@@ -4723,8 +7017,11 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   });
 
   // ===== Dashboard KPI Trends =====
-  app.get("/api/dashboard/kpi-trends", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/dashboard/kpi-trends", requireAuth, async (req: Request, res: Response) => {
     try {
+      // Firm-wide fee KPIs are BGP-internal. (Landsec audit.)
+      if (await (await import("./company-scope")).isClientRequestUser(req)) return res.status(403).json({ error: "Not available for client accounts" });
+
       // Deals per month (last 6 months)
       const dealsPerMonthResult = await pool.query(`
         SELECT
@@ -4815,14 +7112,18 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   });
 
   // ===== Notifications Center =====
-  app.get("/api/notifications", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/notifications", requireAuth, async (req: Request, res: Response) => {
     try {
+    // External client logins get no org-wide feed — their world is the
+    // client-scoped briefing. (Landsec audit.)
+    if (await (await import("./company-scope")).isClientRequestUser(req)) return res.json([]);
+
       const notifications: any[] = [];
 
       // Deals stuck in same status > 30 days
       const stuckDeals = await pool.query(`
         SELECT id, name, status, updated_at FROM crm_deals
-        WHERE status NOT IN ('Completed', 'Invoiced', 'Dead', 'Withdrawn', 'Leasing Comps', 'Investment Comps')
+        WHERE status NOT IN ('COM', 'INV', 'WIT')
         AND updated_at < NOW() - INTERVAL '30 days'
         ORDER BY updated_at ASC LIMIT 20
       `);
@@ -4844,7 +7145,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       const noFeeResult = await pool.query(`
         SELECT COUNT(*)::int as count FROM crm_deals
         WHERE (fee IS NULL OR fee = 0)
-        AND status NOT IN ('Dead', 'Withdrawn', 'Completed', 'Invoiced', 'Leasing Comps', 'Investment Comps')
+        AND status NOT IN ('WIT', 'COM', 'INV')
       `);
       const noFeeCount = noFeeResult.rows[0]?.count || 0;
       if (noFeeCount > 0) {
@@ -4862,7 +7163,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       const kycGaps = await pool.query(`
         SELECT id, name, status FROM crm_deals
         WHERE kyc_approved = false
-        AND status IN ('SOLs', 'Exchanged', 'Completing', 'HOTs')
+        AND status IN ('SOL', 'EXC', 'COM', 'NEG')
         LIMIT 10
       `);
       for (const d of kycGaps.rows) {
@@ -4877,23 +7178,26 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
         });
       }
 
-      // Deals with stale completion dates (overdue)
+      // Deals with stale target dates (overdue)
       const overdueDeals = await pool.query(`
-        SELECT id, name, completion_date, status FROM crm_deals
-        WHERE completion_date IS NOT NULL
-        AND completion_date::date < CURRENT_DATE
-        AND status NOT IN ('Completed', 'Invoiced', 'Dead', 'Withdrawn', 'Leasing Comps', 'Investment Comps')
-        ORDER BY completion_date ASC
+        SELECT id, name, target_date, status FROM crm_deals
+        WHERE target_date IS NOT NULL
+        AND target_date < CURRENT_DATE
+        AND status NOT IN ('COM', 'INV', 'WIT')
+        AND exchanged_at IS NULL
+        AND completed_at IS NULL
+        ORDER BY target_date ASC
         LIMIT 10
       `);
       for (const d of overdueDeals.rows) {
+        const targetStr = d.target_date ? new Date(d.target_date).toLocaleDateString("en-GB") : "";
         notifications.push({
           id: `overdue-${d.id}`,
           type: "overdue_completion",
-          title: `Overdue completion: ${d.name}`,
-          description: `Expected completion ${d.completion_date} has passed`,
+          title: `Overdue target: ${d.name}`,
+          description: `Target date ${targetStr} has passed`,
           severity: "warning",
-          createdAt: d.completion_date,
+          createdAt: d.target_date,
           dealId: d.id,
         });
       }
@@ -4908,6 +7212,168 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       res.status(500).json({ error: e.message });
     }
   });
+
+  // ─── Tenant Rep Status Board ─────────────────────────────────────────────
+  app.get("/api/tenant-rep/searches", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const result = await pool.query(`
+        SELECT
+          s.*,
+          c.name AS company_name,
+          c.domain AS company_domain,
+          c.rollout_status,
+          c.store_count,
+          co.name AS contact_name,
+          co.email AS contact_email,
+          co.phone AS contact_phone,
+          co.role AS contact_role,
+          d.name AS deal_name
+        FROM tenant_rep_searches s
+        LEFT JOIN crm_companies c ON c.id = s.company_id
+        LEFT JOIN crm_contacts co ON co.id = s.contact_id
+        LEFT JOIN crm_deals d ON d.id = s.deal_id
+        ORDER BY s.created_at DESC
+      `);
+      res.json(result.rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/tenant-rep/searches", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const {
+        clientName, companyId, contactId, dealId, status,
+        targetUse, sizeMin, sizeMax, targetLocations,
+        budgetMin, budgetMax, nextAction, nextActionDate, notes, assignedTo,
+      } = req.body;
+      const result = await pool.query(
+        `INSERT INTO tenant_rep_searches
+          (client_name, company_id, contact_id, deal_id, status,
+           target_use, size_min, size_max, target_locations,
+           budget_min, budget_max, next_action, next_action_date, notes, assigned_to)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         RETURNING *`,
+        [
+          clientName, companyId || null, contactId || null, dealId || null,
+          status || "Brief Received",
+          targetUse || null, sizeMin || null, sizeMax || null,
+          targetLocations || null, budgetMin || null, budgetMax || null,
+          nextAction || null, nextActionDate || null, notes || null, assignedTo || null,
+        ]
+      );
+      res.json(result.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/tenant-rep/searches/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const keyMap: Record<string, string> = {
+        clientName: "client_name", companyId: "company_id", contactId: "contact_id",
+        dealId: "deal_id", status: "status", notes: "notes",
+        targetUse: "target_use", sizeMin: "size_min", sizeMax: "size_max",
+        targetLocations: "target_locations", budgetMin: "budget_min", budgetMax: "budget_max",
+        nextAction: "next_action", nextActionDate: "next_action_date", assignedTo: "assigned_to",
+      };
+      const updates: string[] = [];
+      const values: any[] = [];
+      let idx = 1;
+      for (const [camel, col] of Object.entries(keyMap)) {
+        if (camel in req.body) { updates.push(`${col} = $${idx++}`); values.push(req.body[camel]); }
+      }
+      if (!updates.length) return res.json({ ok: true });
+      updates.push(`updated_at = now()`);
+      values.push(id);
+      const result = await pool.query(
+        `UPDATE tenant_rep_searches SET ${updates.join(", ")} WHERE id = $${idx} RETURNING *`,
+        values
+      );
+      res.json(result.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/tenant-rep/searches/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await pool.query("DELETE FROM tenant_rep_searches WHERE id = $1", [req.params.id]);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── ONS Inflation data (RPI + CPI annual averages) ───────────────────────
+  // Fetches from ONS public API and caches for 12 hours so the RPI/CPI
+  // calculator in comps always shows the latest published annual rates.
+  // Falls back to hardcoded data if ONS API is unreachable.
+  const INFLATION_FALLBACK = [
+    { year: 2015, rpi: 1.0, cpi: 0.0 }, { year: 2016, rpi: 1.8, cpi: 0.7 },
+    { year: 2017, rpi: 3.6, cpi: 2.7 }, { year: 2018, rpi: 3.3, cpi: 2.5 },
+    { year: 2019, rpi: 2.6, cpi: 1.8 }, { year: 2020, rpi: 1.5, cpi: 0.9 },
+    { year: 2021, rpi: 4.1, cpi: 2.6 }, { year: 2022, rpi: 11.6, cpi: 9.1 },
+    { year: 2023, rpi: 9.7, cpi: 7.3 }, { year: 2024, rpi: 3.6, cpi: 2.5 },
+    { year: 2025, rpi: 4.0, cpi: 2.6 },
+  ];
+  let inflationCache: { data: typeof INFLATION_FALLBACK; fetchedAt: number } | null = null;
+
+  async function fetchOnsAnnualRates(): Promise<typeof INFLATION_FALLBACK> {
+    // ONS mm23 dataset: D7BT = RPI 12-month rate, D7G7 = CPI 12-month rate
+    const [rpiRes, cpiRes] = await Promise.all([
+      fetch("https://api.ons.gov.uk/v1/datasets/mm23/timeseries/chaw/data"),
+      fetch("https://api.ons.gov.uk/v1/datasets/mm23/timeseries/d7g7/data"),
+    ]);
+    if (!rpiRes.ok || !cpiRes.ok) throw new Error("ONS API unavailable");
+    const [rpiJson, cpiJson]: any[] = await Promise.all([rpiRes.json(), cpiRes.json()]);
+
+    // ONS returns annual data as array of { year, value }
+    const rpiByYear = new Map<number, number>();
+    for (const row of rpiJson.years || []) {
+      const yr = parseInt(row.year); const val = parseFloat(row.value);
+      if (!isNaN(yr) && !isNaN(val)) rpiByYear.set(yr, val);
+    }
+    const result: typeof INFLATION_FALLBACK = [];
+    for (const row of cpiJson.years || []) {
+      const yr = parseInt(row.year); const cpi = parseFloat(row.value);
+      if (!isNaN(yr) && !isNaN(cpi) && yr >= 2015) {
+        result.push({ year: yr, rpi: rpiByYear.get(yr) ?? cpi + 1.2, cpi });
+      }
+    }
+    return result.sort((a, b) => a.year - b.year);
+  }
+
+  app.get("/api/inflation-data", requireAuth, async (_req, res) => {
+    try {
+      const now = Date.now();
+      if (!inflationCache || now - inflationCache.fetchedAt > 12 * 3600 * 1000) {
+        try {
+          const fresh = await fetchOnsAnnualRates();
+          if (fresh.length > 0) inflationCache = { data: fresh, fetchedAt: now };
+        } catch {
+          // ONS unreachable — use or keep cached/fallback data
+        }
+      }
+      res.json({ data: inflationCache?.data ?? INFLATION_FALLBACK, source: inflationCache ? "ons" : "fallback" });
+    } catch (e: any) {
+      res.json({ data: INFLATION_FALLBACK, source: "fallback" });
+    }
+  });
+
+  registerIngestRoutes(app);
+  registerGenericCrmRoutes(app);
+  setupStripeIssuingRoutes(app);
+  registerExpenseAutoClassifyRoutes(app);
+  registerMapAnnotationsRoutes(app);
+  setupRevolutRoutes(app);
+  setupRefreshImageRoutes(app);
+  setupHrRoutes(app);
+  setupWhyBuyDesignRoutes(app);
+  setupDocumentPreferencesRoutes(app);
+  setupDeckRoutes(app);
+  setupDocumentRoutes(app);
 
   return httpServer;
 }

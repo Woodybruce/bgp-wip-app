@@ -1,4 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { AIActivityCard } from "@/components/ai-activity-card";
+import { InteractionsBoard } from "@/components/interactions-board";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -6,6 +8,12 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -29,12 +37,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, Users, AlertCircle, X, Plus, ArrowLeft, Loader2, Pencil, Trash2, Mail, Send, CheckCircle2, Building, UserCircle, Phone, AtSign, Calendar, ArrowUpRight, ArrowDownLeft, Clock, RefreshCw, Video, MessageSquare, Handshake, ClipboardList, Globe, MapPin, Sparkles, UserPlus, Archive, ChevronLeft, ChevronRight, Crown, Linkedin, Zap, Briefcase, TrendingUp } from "lucide-react";
+import { Search, Users, AlertCircle, X, Plus, ArrowLeft, Loader2, Pencil, Trash2, Mail, Send, CheckCircle2, Building, UserCircle, Phone, AtSign, Calendar, ArrowUpRight, ArrowDownLeft, Clock, RefreshCw, Video, MessageSquare, Handshake, ClipboardList, Globe, MapPin, Sparkles, UserPlus, Archive, ChevronLeft, ChevronRight, Crown, Linkedin, Zap, Briefcase, TrendingUp, MoreHorizontal } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { MobileCardView } from "@/components/mobile-card-view";
 import { useRoute, Link } from "wouter";
 import { apiRequest, queryClient, getQueryFn, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -237,7 +247,7 @@ function ContactFormDialog({
 }) {
   const { toast } = useToast();
   const isEdit = !!contact;
-  const [formData, setFormData] = useState({
+  const buildInitial = () => ({
     name: contact?.name || "",
     groupName: contact?.groupName || "",
     role: contact?.role || "",
@@ -251,6 +261,8 @@ function ContactFormDialog({
     nextMeetingDate: contact?.nextMeetingDate || "",
     notes: contact?.notes || "",
   });
+  const [formData, setFormData] = useState(buildInitial);
+  useEffect(() => { if (open) setFormData(buildInitial()); }, [open, contact?.id]);
 
   const mutation = useMutation({
     mutationFn: async (data: typeof formData) => {
@@ -565,13 +577,6 @@ function RequirementPicker({
   );
 }
 
-interface InteractionData {
-  interactions: CrmInteraction[];
-  nextMeeting: CrmInteraction | null;
-  lastInteraction: CrmInteraction | null;
-  total: number;
-}
-
 function formatInteractionDate(dateStr: string) {
   const d = new Date(dateStr);
   const now = new Date();
@@ -587,223 +592,6 @@ function formatInteractionDate(dateStr: string) {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined });
 }
 
-function InteractionTimeline({ contactId }: { contactId: string }) {
-  const [typeFilter, setTypeFilter] = useState<string>("all");
-
-  const { data, isLoading } = useQuery<InteractionData>({
-    queryKey: ["/api/interactions/contact", contactId],
-  });
-
-  const syncMutation = useMutation({
-    mutationFn: async () => {
-      await apiRequest("POST", "/api/interactions/sync?daysBack=90&daysForward=60");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/interactions/contact", contactId] });
-    },
-  });
-
-  const filtered = useMemo(() => {
-    if (!data?.interactions) return [];
-    if (typeFilter === "all") return data.interactions;
-    return data.interactions.filter((i) => i.type === typeFilter);
-  }, [data?.interactions, typeFilter]);
-
-  const now = new Date();
-  const upcoming = filtered.filter((i) => new Date(i.interactionDate) > now);
-  const past = filtered.filter((i) => new Date(i.interactionDate) <= now);
-
-  return (
-    <Card>
-      <CardContent className="p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-sm flex items-center gap-2">
-            <Clock className="w-4 h-4" />
-            Interactions
-            {data?.total ? <Badge variant="secondary" className="text-xs">{data.total}</Badge> : null}
-          </h3>
-          <div className="flex items-center gap-2">
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="h-7 text-xs w-[100px]" data-testid="select-interaction-type">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All</SelectItem>
-                <SelectItem value="email">Emails</SelectItem>
-                <SelectItem value="meeting">Meetings</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => syncMutation.mutate()}
-              disabled={syncMutation.isPending}
-              data-testid="button-sync-interactions"
-            >
-              <RefreshCw className={`w-3 h-3 mr-1 ${syncMutation.isPending ? "animate-spin" : ""}`} />
-              Sync
-            </Button>
-          </div>
-        </div>
-
-        {data?.nextMeeting && (
-          <div className="bg-blue-50 dark:bg-blue-950/30 rounded-md p-3 border border-blue-200 dark:border-blue-800">
-            <div className="flex items-center gap-2 text-xs text-blue-600 dark:text-blue-400 font-medium mb-1">
-              <Calendar className="w-3 h-3" />
-              Next Meeting — {formatInteractionDate(data.nextMeeting.interactionDate as unknown as string)}
-            </div>
-            <p className="text-sm font-medium">{data.nextMeeting.subject}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {new Date(data.nextMeeting.interactionDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
-            </p>
-          </div>
-        )}
-
-        {data?.lastInteraction && !data?.nextMeeting && (
-          <div className="bg-muted/50 rounded-md p-3 border">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium mb-1">
-              <Clock className="w-3 h-3" />
-              Last Interaction — {formatInteractionDate(data.lastInteraction.interactionDate as unknown as string)}
-            </div>
-            <p className="text-sm">{data.lastInteraction.subject}</p>
-          </div>
-        )}
-
-        {isLoading ? (
-          <div className="space-y-2">
-            <Skeleton className="h-12" />
-            <Skeleton className="h-12" />
-            <Skeleton className="h-12" />
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="text-center py-6">
-            <MessageSquare className="w-8 h-8 mx-auto text-muted-foreground/40 mb-2" />
-            <p className="text-sm text-muted-foreground">No interactions found</p>
-            <p className="text-xs text-muted-foreground mt-1">Click Sync to scan emails & calendar</p>
-          </div>
-        ) : (
-          <div className="max-h-[calc(100vh-320px)] overflow-y-auto pr-1">
-            {upcoming.length > 0 && (
-              <div className="mb-3">
-                <p className="text-xs font-medium text-blue-600 dark:text-blue-400 mb-2 uppercase tracking-wider">Upcoming</p>
-                <div className="space-y-1">
-                  {upcoming.map((interaction) => (
-                    <InteractionRow key={interaction.id} interaction={interaction} />
-                  ))}
-                </div>
-              </div>
-            )}
-            {past.length > 0 && (
-              <div>
-                {upcoming.length > 0 && <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">Past</p>}
-                <div className="space-y-1">
-                  {past.map((interaction) => (
-                    <InteractionRow key={interaction.id} interaction={interaction} />
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function InteractionRow({ interaction }: { interaction: CrmInteraction }) {
-  const [expanded, setExpanded] = useState(false);
-  const isEmail = interaction.type === "email";
-  const isInbound = interaction.direction === "inbound";
-  const isUpcoming = interaction.direction === "upcoming";
-
-  const participants = Array.isArray(interaction.participants) ? interaction.participants as string[] : [];
-  const bgpParticipants = participants.filter(p => p.endsWith("@brucegillinghampollard.com"));
-  const externalParticipants = participants.filter(p => !p.endsWith("@brucegillinghampollard.com"));
-
-  return (
-    <div
-      className="rounded-md hover:bg-muted/50 cursor-pointer transition-colors"
-      onClick={() => setExpanded(!expanded)}
-      data-testid={`row-interaction-${interaction.id}`}
-    >
-      <div className="flex items-start gap-2 p-2 text-sm">
-        <div className={`mt-0.5 p-1 rounded ${isEmail ? "bg-amber-100 dark:bg-amber-900/30 text-amber-600" : "bg-blue-100 dark:bg-blue-900/30 text-blue-600"}`}>
-          {isEmail ? <Mail className="w-3 h-3" /> : <Video className="w-3 h-3" />}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
-            {isEmail && (isInbound ? <ArrowDownLeft className="w-3 h-3 text-green-500 shrink-0" /> : <ArrowUpRight className="w-3 h-3 text-blue-500 shrink-0" />)}
-            {!isEmail && isUpcoming && <Clock className="w-3 h-3 text-blue-500 shrink-0" />}
-            <p className="font-medium text-xs truncate">{interaction.subject}</p>
-          </div>
-          {externalParticipants.length > 0 && !expanded && (
-            <p className="text-[10px] text-muted-foreground truncate mt-0.5">
-              {externalParticipants.slice(0, 2).join(", ")}{externalParticipants.length > 2 ? ` +${externalParticipants.length - 2}` : ""}
-            </p>
-          )}
-          {!expanded && interaction.preview && (
-            <p className="text-xs text-muted-foreground truncate mt-0.5">{interaction.preview}</p>
-          )}
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-[10px] text-muted-foreground">
-              {formatInteractionDate(interaction.interactionDate as unknown as string)}
-            </span>
-            {interaction.bgpUser && (
-              <span className="text-[10px] text-muted-foreground">
-                via {interaction.bgpUser.split("@")[0]}
-              </span>
-            )}
-            {interaction.matchMethod && interaction.matchMethod !== "email" && (
-              <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5">
-                {interaction.matchMethod === "keyword_company" ? "keyword" : "name match"}
-              </Badge>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {expanded && (
-        <div className="px-9 pb-3 space-y-2 text-xs border-t mx-2 pt-2" data-testid={`detail-interaction-${interaction.id}`}>
-          <div className="flex items-center gap-1 text-muted-foreground">
-            <Calendar className="w-3 h-3 shrink-0" />
-            <span>{new Date(interaction.interactionDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
-          </div>
-
-          {externalParticipants.length > 0 && (
-            <div>
-              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">External</p>
-              <div className="flex flex-wrap gap-1">
-                {externalParticipants.map((p, i) => (
-                  <Badge key={i} variant="secondary" className="text-[10px] font-normal">{p}</Badge>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {bgpParticipants.length > 0 && (
-            <div>
-              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">BGP</p>
-              <div className="flex flex-wrap gap-1">
-                {bgpParticipants.map((p, i) => (
-                  <Badge key={i} variant="outline" className="text-[10px] font-normal">{p.split("@")[0]}</Badge>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {interaction.preview && (
-            <div>
-              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Preview</p>
-              <p className="text-xs text-muted-foreground whitespace-pre-wrap">{interaction.preview}</p>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ContactDetail({ id }: { id: string }) {
   const { toast } = useToast();
   const [editOpen, setEditOpen] = useState(false);
@@ -812,7 +600,7 @@ function ContactDetail({ id }: { id: string }) {
     queryKey: ["/api/crm/contacts", id],
   });
 
-  const { data: companies } = useQuery<CrmCompany[]>({
+  const { data: companies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
   });
 
@@ -1244,7 +1032,12 @@ function ContactDetail({ id }: { id: string }) {
             );
           })()}
 
-          <InteractionTimeline contactId={id} />
+          {/* AI-curated activity — emails + calendar invites involving this
+              contact, filtered by ChatBGP across all 31 mailboxes. Same
+              engine as the deal page, brand profile, and hunter rows. */}
+          <AIActivityCard subjectType="contact" subjectId={id} title="Contact Activity (AI curated)" />
+
+          <InteractionsBoard scope="contact" contextId={id} />
         </div>
 
         <div className="space-y-6">
@@ -1348,7 +1141,7 @@ export default function Contacts() {
   return <ContactList teamFilter={teamParam} />;
 }
 
-const INTERNAL_BGP_TEAMS = new Set(["London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office / Corporate"]);
+const INTERNAL_BGP_TEAMS = new Set<string>(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
 
 function ContactList({ teamFilter }: { teamFilter?: string | null }) {
   const [search, setSearch] = useState("");
@@ -1382,7 +1175,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
     queryKey: ["/api/crm/contacts"],
   });
 
-  const { data: companies } = useQuery<CrmCompany[]>({
+  const { data: companies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
   });
 
@@ -1466,11 +1259,26 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
 
   const syncInteractions = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/interactions/sync?daysBack=90&daysForward=60");
-      return res.json();
+      // Sync now runs in the background (POST returns 202 — it used to 504
+      // after 3 min). Kick it, then poll /sync-status until it finishes so
+      // the toast can report the real counts.
+      await apiRequest("POST", "/api/interactions/sync?daysBack=90&daysForward=60");
+      const deadline = Date.now() + 5 * 60_000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 4000));
+        const sr = await fetch("/api/interactions/sync-status", { credentials: "include" });
+        if (!sr.ok) break;
+        const status = await sr.json();
+        if (!status.running) {
+          if (status.error) throw new Error(status.error);
+          return status.lastResult || {};
+        }
+      }
+      return {};
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/interactions/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
       toast({
         title: "Interactions synced",
         description: `Found ${data?.synced?.emails || 0} emails and ${data?.synced?.calendar || 0} calendar events`,
@@ -1539,6 +1347,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
     },
     onSuccess: (email: string) => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
       setAddedEmails((prev) => new Set([...prev, email]));
       toast({ title: "Contact added to CRM" });
     },
@@ -1633,18 +1442,24 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
     return Array.from(allocs).sort();
   }, [contacts]);
 
+  const isMobile = useIsMobile();
   const filteredContacts = useMemo(() => {
     if (!contacts) return [];
+    const hasSearch = !!search.trim();
     return contacts.filter((c) => {
-      if (activeGroup !== "all" && (c.groupName || "Uncategorized") !== activeGroup) return false;
-      if (allocationFilter !== "all" && !parseAlloc(c.bgpAllocation).includes(allocationFilter)) return false;
-      if (bgpClientFilter && !c.bgpClient) return false;
-      if ((columnFilters.status?.length || 0) > 0 && !columnFilters.status.includes(c.groupName || "")) return false;
-      if ((columnFilters.type?.length || 0) > 0) {
-        const derivedType = getContactType(c);
-        if (!derivedType || !columnFilters.type.includes(derivedType)) return false;
+      // When a search term is active, search is global — group / allocation /
+      // BGP-client filters are ignored so users always find anyone they type.
+      if (!hasSearch) {
+        if (activeGroup !== "all" && (c.groupName || "Uncategorized") !== activeGroup) return false;
+        if (allocationFilter !== "all" && !parseAlloc(c.bgpAllocation).includes(allocationFilter)) return false;
+        if (bgpClientFilter && !c.bgpClient) return false;
+        if ((columnFilters.status?.length || 0) > 0 && !columnFilters.status.includes(c.groupName || "")) return false;
+        if ((columnFilters.type?.length || 0) > 0) {
+          const derivedType = getContactType(c);
+          if (!derivedType || !columnFilters.type.includes(derivedType)) return false;
+        }
       }
-      if (search) {
+      if (hasSearch) {
         const s = search.toLowerCase();
         return (
           c.name.toLowerCase().includes(s) ||
@@ -1657,7 +1472,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
       }
       return true;
     });
-  }, [contacts, activeGroup, allocationFilter, bgpClientFilter, search, columnFilters]);
+  }, [contacts, activeGroup, allocationFilter, bgpClientFilter, search, columnFilters, companyTypeMap]);
 
   const selectedContacts = filteredContacts.filter(c => selectedIds.has(c.id));
   const mailRecipients: MailRecipient[] = selectedContacts
@@ -1702,8 +1517,8 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
       <div className="p-4 sm:p-6">
         <div className="flex items-center justify-between gap-4 mb-6">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">People Hub</h1>
-            <p className="text-sm text-muted-foreground">CRM Contacts</p>
+            <h1 className="text-2xl font-bold tracking-tight">CRM</h1>
+            <p className="text-sm text-muted-foreground">Contacts</p>
           </div>
         </div>
         <Card>
@@ -1800,7 +1615,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
             <Users className="w-5 h-5 text-primary" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">People Hub</h1>
+            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">CRM</h1>
             <p className="text-sm text-muted-foreground">
               {contacts?.length || 0} contacts in CRM{teamFilter ? ` · Filtered by ${teamFilter} team` : ""}
             </p>
@@ -1966,6 +1781,23 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
                 </p>
               </CardContent>
             </Card>
+          ) : isMobile ? (
+            <MobileCardView
+              emptyMessage="No contacts found"
+              items={filteredContacts.map((c: any) => ({
+                id: c.id,
+                title: c.name || c.email || "Unknown",
+                subtitle: c.companyName || undefined,
+                status: c.contactType || undefined,
+                href: `/contacts/${c.id}`,
+                fields: [
+                  { label: "Role", value: c.role || c.jobTitle },
+                  { label: "Email", value: c.email },
+                  { label: "Phone", value: c.phone || c.phoneMobile },
+                  { label: "Specialty", value: c.agentSpecialty },
+                ],
+              }))}
+            />
           ) : (
             <Card>
               <ScrollableTable minWidth={2200}>
@@ -2221,24 +2053,37 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-destructive hover:text-destructive"
-                              onClick={async () => {
-                                if (!confirm("Delete this contact?")) return;
-                                try {
-                                  await apiRequest("DELETE", `/api/crm/contacts/${contact.id}`);
-                                  queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
-                                  toast({ title: "Contact deleted" });
-                                } catch {
-                                  toast({ title: "Failed to delete", variant: "destructive" });
-                                }
-                              }}
-                              data-testid={`button-delete-contact-${contact.id}`}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  data-testid={`button-more-contact-${contact.id}`}
+                                >
+                                  <MoreHorizontal className="h-3.5 w-3.5" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={async () => {
+                                    if (!confirm("Delete this contact?")) return;
+                                    try {
+                                      await apiRequest("DELETE", `/api/crm/contacts/${contact.id}`);
+                                      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+                                      toast({ title: "Contact deleted" });
+                                    } catch {
+                                      toast({ title: "Failed to delete", variant: "destructive" });
+                                    }
+                                  }}
+                                  data-testid={`button-delete-contact-${contact.id}`}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 mr-2" />
+                                  Delete contact
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -2434,7 +2279,7 @@ function InteractionArchive() {
   const { data, isLoading } = useQuery<{ interactions: ArchiveInteraction[]; total: number }>({
     queryKey: ["/api/interactions/archive", queryParams],
     queryFn: async () => {
-      const res = await fetch(`/api/interactions/archive?${queryParams}`, { credentials: "include" });
+      const res = await fetch(`/api/interactions/archive?${queryParams}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load archive");
       return res.json();
     },

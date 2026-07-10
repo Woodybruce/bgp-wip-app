@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
 import { logoKitEnabled, logoKitUrl } from "@/lib/logokit";
-import { useRoute, Link } from "wouter";
+import { useRoute, useLocation, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -16,12 +16,12 @@ import {
   Building2, Users, Crown, Search, Globe, MapPin,
   ChevronRight, ChevronDown, Building, Briefcase,
   Phone, Mail, X, TrendingUp, Trash2,
-  Handshake, ClipboardList,
+  Handshake, ClipboardList, Landmark,
 } from "lucide-react";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CRM_OPTIONS } from "@/lib/crm-options";
-import { guessDomain, extractDomain } from "@/lib/company-logos";
+import { guessDomain, extractDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty, CrmRequirementsLeasing, CrmRequirementsInvestment, InvestmentTracker } from "@shared/schema";
 
 const CompanyDetailPage = lazy(() => import("@/pages/companies"));
@@ -47,12 +47,15 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
   const textSize = size === "sm" ? "text-xs" : size === "lg" ? "text-lg" : "text-sm";
   const px = size === "sm" ? 32 : size === "lg" ? 56 : 40;
 
-  const domain = company.domainUrl || company.logoUrl || company.domain;
+  const domain = company.domainUrl || (company as any).logoUrl || company.domain;
   const d = extractDomain(domain || null);
   const guessed = guessDomain(company.name);
 
-  // Build ordered list of logo URLs to try
+  // Only source: /api/brand-logo/... — server redirects to logo.dev when no
+  // local image exists. Clearbit's DNS is dead (HubSpot killed it Mar 2025).
   const logoSources: string[] = [];
+  const local = localBrandLogoUrl(company.name, domain ?? guessed ?? null);
+  if (local) logoSources.push(local);
   if (d) {
     if (logoKitEnabled) logoSources.push(logoKitUrl(d, Math.min(px * 3, 512)));
     logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${d}&size=128`);
@@ -75,6 +78,8 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
     <img
       src={logoSources[failCount]}
       alt={company.name}
+      loading="lazy"
+      decoding="async"
       className={`${sizeClass} rounded-lg object-contain bg-white border shrink-0`}
       onError={() => setFailCount(c => c + 1)}
     />
@@ -112,6 +117,7 @@ function LandlordsTab({
   onDeleteCompany?: (id: string, name: string) => void;
   viewMode?: "table" | "card" | "board";
 }) {
+  const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [landlordFilter, setLandlordFilter] = useState<"all" | "clients" | "non-clients">("all");
 
@@ -229,7 +235,7 @@ function LandlordsTab({
                   const compDeals = dealsByLandlord[company.id] || [];
                   const isClient = clientLandlords.some((cl) => cl.id === company.id);
                   return (
-                    <TableRow key={company.id} className="cursor-pointer hover:bg-muted/50 group" onClick={() => window.location.href = `/companies/${company.id}`}>
+                    <TableRow key={company.id} className="cursor-pointer hover:bg-muted/50 group" onClick={() => navigate(`/companies/${company.id}`)}>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <CompanyLogo company={company} size="sm" />
@@ -348,6 +354,7 @@ function AgentsTab({
   defaultTenantRep?: boolean;
   onDeleteCompany?: (id: string, name: string) => void;
 }) {
+  const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [specialtyFilter, setSpecialtyFilter] = useState<string | null>(defaultTenantRep ? "Tenant Rep" : null);
   const [locationFilter, setLocationFilter] = useState<string | null>(null);
@@ -423,12 +430,6 @@ function AgentsTab({
     }
     return map;
   }, [investmentItems]);
-
-  const companyMap = useMemo(() => {
-    const m: Record<string, CrmCompany> = {};
-    for (const c of companies) m[c.id] = c;
-    return m;
-  }, [companies]);
 
   const agentCompanies = useMemo(() => {
     return companies.filter((c) => (c.companyType || "").toLowerCase() === "agent");
@@ -770,11 +771,232 @@ function AgentsTab({
   );
 }
 
-type PeopleTab = "landlords" | "agents";
+const LENDER_TYPES = [
+  "lender", "clearing bank", "investment bank", "insurance lender",
+  "pension fund", "debt fund", "private credit", "mezzanine",
+  "bridging", "development finance", "building society",
+];
+
+function isLenderCompany(companyType: string | null | undefined): boolean {
+  const t = (companyType || "").toLowerCase().trim();
+  return LENDER_TYPES.some((lt) => t.includes(lt.replace(/ /g, " ")));
+}
+
+function lenderSubType(companyType: string | null | undefined): "Banks" | "Debt Funds" | "Insurance/Pension" | "Private/Bridge" | "Other" {
+  const t = (companyType || "").toLowerCase().trim();
+  if (t.includes("clearing bank") || t.includes("investment bank") || t.includes("building society")) return "Banks";
+  if (t.includes("debt fund")) return "Debt Funds";
+  if (t.includes("insurance") || t.includes("pension")) return "Insurance/Pension";
+  if (t.includes("private credit") || t.includes("mezzanine") || t.includes("bridging") || t.includes("development finance")) return "Private/Bridge";
+  return "Other";
+}
+
+type LenderSubFilter = "all" | "Banks" | "Debt Funds" | "Insurance/Pension" | "Private/Bridge";
+
+function LendersTab({
+  companies,
+  contacts,
+  properties,
+  onAddCompany,
+}: {
+  companies: CrmCompany[];
+  contacts: CrmContact[];
+  properties: CrmProperty[];
+  onAddCompany?: () => void;
+}) {
+  const [, navigate] = useLocation();
+  const [search, setSearch] = useState("");
+  const [subFilter, setSubFilter] = useState<LenderSubFilter>("all");
+
+  const lenders = useMemo(() => companies.filter((c) => isLenderCompany(c.companyType)), [companies]);
+
+  const activeCount = useMemo(() => lenders.filter((c) => (c as any).lendingActive === true).length, [lenders]);
+
+  const typeCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    lenders.forEach((c) => {
+      const t = (c.companyType || "Other");
+      map[t] = (map[t] || 0) + 1;
+    });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  }, [lenders]);
+
+  const contactsByCompany = useMemo(() => {
+    const map: Record<string, CrmContact[]> = {};
+    contacts.forEach((c) => {
+      if (c.companyId) {
+        if (!map[c.companyId]) map[c.companyId] = [];
+        map[c.companyId].push(c);
+      }
+    });
+    return map;
+  }, [contacts]);
+
+  const propertiesByLender = useMemo(() => {
+    const map: Record<string, number> = {};
+    properties.forEach((p) => {
+      const sid = (p as any).seniorLenderId;
+      const jid = (p as any).juniorLenderId;
+      if (sid) map[sid] = (map[sid] || 0) + 1;
+      if (jid && jid !== sid) map[jid] = (map[jid] || 0) + 1;
+    });
+    return map;
+  }, [properties]);
+
+  const filtered = useMemo(() => {
+    let list = lenders;
+    if (subFilter !== "all") {
+      list = list.filter((c) => lenderSubType(c.companyType) === subFilter);
+    }
+    if (search.trim()) {
+      const s = search.toLowerCase();
+      list = list.filter((c) =>
+        c.name.toLowerCase().includes(s) ||
+        (c.companyType || "").toLowerCase().includes(s) ||
+        (c.description || "").toLowerCase().includes(s)
+      );
+    }
+    return list;
+  }, [lenders, subFilter, search]);
+
+  const subFilterOptions: { key: LenderSubFilter; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "Banks", label: "Banks" },
+    { key: "Debt Funds", label: "Debt Funds" },
+    { key: "Insurance/Pension", label: "Insurance/Pension" },
+    { key: "Private/Bridge", label: "Private/Bridge" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard label="Total Lenders" value={lenders.length} icon={Landmark} color="bg-blue-700" />
+        <StatCard label="Currently Active" value={activeCount} icon={TrendingUp} color="bg-emerald-600" />
+        {typeCounts.map(([type, count]) => (
+          <StatCard key={type} label={type} value={count} icon={Building} color="bg-slate-600" />
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="inline-flex rounded-lg border bg-muted p-0.5">
+          {subFilterOptions.map((opt) => (
+            <button
+              key={opt.key}
+              onClick={() => setSubFilter(opt.key)}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                subFilter === opt.key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Search lenders..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 h-9"
+          />
+          {search && (
+            <button className="absolute right-3 top-1/2 -translate-y-1/2" onClick={() => setSearch("")}>
+              <X className="w-3.5 h-3.5 text-muted-foreground" />
+            </button>
+          )}
+        </div>
+        <p className="text-sm text-muted-foreground">{filtered.length} results</p>
+        {onAddCompany && (
+          <Button size="sm" onClick={onAddCompany} className="ml-auto">
+            <Landmark className="w-4 h-4 mr-1.5" />
+            Add Lender
+          </Button>
+        )}
+      </div>
+
+      <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Sub-type</TableHead>
+                <TableHead>Typical LTV</TableHead>
+                <TableHead>Loan Range</TableHead>
+                <TableHead>Appetite</TableHead>
+                <TableHead className="text-center">Properties</TableHead>
+                <TableHead className="text-center">Contacts</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((company) => {
+                const compContacts = contactsByCompany[company.id] || [];
+                const propCount = propertiesByLender[company.id] || 0;
+                const lendingActive = (company as any).lendingActive;
+                const typicalLtvMax = (company as any).typicalLtvMax;
+                const loanMin = (company as any).typicalLoanSizeMinM;
+                const loanMax = (company as any).typicalLoanSizeMaxM;
+                const loanRange = loanMin != null && loanMax != null
+                  ? `£${loanMin}m – £${loanMax}m`
+                  : loanMin != null
+                  ? `£${loanMin}m+`
+                  : loanMax != null
+                  ? `up to £${loanMax}m`
+                  : "—";
+                return (
+                  <TableRow
+                    key={company.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => navigate(`/companies/${company.id}`)}
+                  >
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <CompanyLogo company={company} size="sm" />
+                        <div className="min-w-0">
+                          <span className="font-medium text-sm truncate block">{company.name}</span>
+                          {company.description && (
+                            <span className="text-xs text-muted-foreground truncate block max-w-[200px]">{company.description}</span>
+                          )}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{company.companyType || "—"}</TableCell>
+                    <TableCell className="text-sm">{typicalLtvMax != null ? `${typicalLtvMax}%` : "—"}</TableCell>
+                    <TableCell className="text-sm">{loanRange}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={lendingActive ? "default" : "secondary"}
+                        className={lendingActive ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : ""}
+                      >
+                        {lendingActive ? "Active" : "Paused"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-center text-sm">{propCount}</TableCell>
+                    <TableCell className="text-center text-sm">{compContacts.length}</TableCell>
+                  </TableRow>
+                );
+              })}
+              {filtered.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                    No lenders found
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+type PeopleTab = "landlords" | "agents" | "lenders";
 
 const ALL_TABS: { key: PeopleTab; label: string; icon: any }[] = [
   { key: "landlords", label: "Landlords", icon: Building2 },
   { key: "agents", label: "Agents", icon: Briefcase },
+  { key: "lenders", label: "Lenders", icon: Landmark },
 ];
 
 const SCOPED_TABS: { key: PeopleTab; label: string; icon: any }[] = [
@@ -788,6 +1010,7 @@ const LANDSEC_TABS: { key: PeopleTab; label: string; icon: any }[] = [
 export default function PeoplePage() {
   const [, companyParams] = useRoute("/companies/:id");
   const [, contactParams] = useRoute("/contacts/:id");
+  const { data: user, isLoading: userLoading } = useQuery<User>({ queryKey: ["/api/auth/me"] });
 
   if (companyParams?.id) {
     return (
@@ -805,7 +1028,177 @@ export default function PeoplePage() {
     );
   }
 
+  // Client logins (e.g. Landsec) get a purpose-built CRM: their own
+  // contacts plus a brand-contact directory limited to the hospitality /
+  // food / café / fitness slice. The staff hub (landlords, agents,
+  // lenders) is BGP-internal.
+  if (userLoading) return <PageLoader />;
+  if (user?.role === "Client") return <ClientCrmHub />;
+
   return <PeopleHub />;
+}
+
+// ── Client CRM hub — brand-contact lookup + own contacts ─────────────────
+const CLIENT_BRAND_CATS: { key: string; label: string; re: RegExp | null }[] = [
+  { key: "all", label: "All", re: null },
+  { key: "food", label: "Food & Dining", re: /(restaurant|dining|f&b|qsr|fast|food|bakery|patisserie)/i },
+  { key: "cafe", label: "Cafés & Coffee", re: /(caf|coffee)/i },
+  { key: "bars", label: "Bars", re: /bar/i },
+  { key: "leisure", label: "Leisure", re: /(leisure|cinema|entertainment|hospitality|hotel)/i },
+  { key: "fitness", label: "Fitness", re: /(fitness|gym|yoga)/i },
+];
+
+interface DirectoryBrand {
+  id: string;
+  name: string;
+  companyType: string | null;
+  domain: string | null;
+  contacts: { id: string; name: string; role: string | null; email: string | null; phone: string | null }[];
+}
+
+function ClientCrmHub() {
+  const [tab, setTab] = useState<"brands" | "contacts">("brands");
+  const [search, setSearch] = useState("");
+  const [cat, setCat] = useState("all");
+
+  const { data: brands = [], isLoading: brandsLoading } = useQuery<DirectoryBrand[]>({
+    queryKey: ["/api/client/brand-directory"],
+  });
+  const { data: myContacts = [] } = useQuery<CrmContact[]>({ queryKey: ["/api/crm/contacts"] });
+
+  const filteredBrands = useMemo(() => {
+    const catRe = CLIENT_BRAND_CATS.find(c => c.key === cat)?.re || null;
+    const q = search.trim().toLowerCase();
+    return brands.filter(b => {
+      if (catRe && !catRe.test(b.companyType || "")) return false;
+      if (!q) return true;
+      if (b.name.toLowerCase().includes(q)) return true;
+      return b.contacts.some(c => c.name?.toLowerCase().includes(q));
+    });
+  }, [brands, cat, search]);
+
+  const typeLabel = (t: string | null) => (t || "").replace(/^Tenant - /, "");
+
+  return (
+    <div className="p-4 md:p-6 space-y-4" data-testid="client-crm-hub">
+      <div>
+        <h1 className="text-2xl font-bold">CRM</h1>
+        <p className="text-sm text-muted-foreground">
+          {brands.length.toLocaleString()} brands · {myContacts.length.toLocaleString()} of your contacts
+        </p>
+      </div>
+
+      <div className="flex gap-1 border-b">
+        {([["brands", "Brand Directory"], ["contacts", "My Contacts"]] as const).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              tab === key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+            data-testid={`client-crm-tab-${key}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "brands" ? (
+        <>
+          <div className="flex items-center gap-3 flex-wrap">
+            <Input
+              placeholder="Search brands or people…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="max-w-xs"
+              data-testid="client-brand-search"
+            />
+            <div className="flex gap-1.5 flex-wrap">
+              {CLIENT_BRAND_CATS.map(c => (
+                <button
+                  key={c.key}
+                  onClick={() => setCat(c.key)}
+                  className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                    cat === c.key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"
+                  }`}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-muted-foreground ml-auto">{filteredBrands.length} brands</span>
+          </div>
+
+          {brandsLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {[1, 2, 3, 4, 5, 6].map(i => <Skeleton key={i} className="h-28" />)}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {filteredBrands.map(b => (
+                <Card key={b.id} className="overflow-hidden" data-testid={`client-brand-${b.id}`}>
+                  <CardContent className="p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <CompanyLogo company={{ id: b.id, name: b.name, domain: b.domain } as CrmCompany} size="sm" />
+                      <div className="min-w-0 flex-1">
+                        <Link href={`/companies/${b.id}`}>
+                          <p className="text-sm font-semibold truncate hover:underline cursor-pointer">{b.name}</p>
+                        </Link>
+                        {b.companyType && <Badge variant="secondary" className="text-[9px]">{typeLabel(b.companyType)}</Badge>}
+                      </div>
+                    </div>
+                    {b.contacts.length > 0 ? (
+                      <div className="space-y-1 pt-1 border-t">
+                        {b.contacts.slice(0, 3).map(c => (
+                          <div key={c.id} className="text-xs flex items-baseline gap-2 min-w-0">
+                            <Link href={`/contacts/${c.id}`}>
+                              <span className="font-medium hover:underline cursor-pointer whitespace-nowrap">{c.name}</span>
+                            </Link>
+                            {c.role && <span className="text-muted-foreground truncate">{c.role}</span>}
+                            {c.email && (
+                              <a href={`mailto:${c.email}`} className="text-blue-600 dark:text-blue-400 hover:underline ml-auto shrink-0">email</a>
+                            )}
+                          </div>
+                        ))}
+                        {b.contacts.length > 3 && (
+                          <p className="text-[10px] text-muted-foreground">+{b.contacts.length - 3} more</p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground pt-1 border-t">No contacts on file — ask your BGP team.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+              {filteredBrands.length === 0 && (
+                <p className="text-sm text-muted-foreground col-span-full py-8 text-center">No brands match.</p>
+              )}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {myContacts.map((c: any) => (
+            <Card key={c.id} data-testid={`client-contact-${c.id}`}>
+              <CardContent className="p-3">
+                <Link href={`/contacts/${c.id}`}>
+                  <p className="text-sm font-semibold hover:underline cursor-pointer">{c.name}</p>
+                </Link>
+                {c.role && <p className="text-xs text-muted-foreground">{c.role}</p>}
+                <div className="flex gap-3 mt-1 text-xs">
+                  {c.email && <a href={`mailto:${c.email}`} className="text-blue-600 dark:text-blue-400 hover:underline">{c.email}</a>}
+                  {(c.phoneMobile || c.phone) && <span className="text-muted-foreground">{c.phoneMobile || c.phone}</span>}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+          {myContacts.length === 0 && (
+            <p className="text-sm text-muted-foreground col-span-full py-8 text-center">No contacts yet.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function PeopleHub() {
@@ -836,7 +1229,6 @@ function PeopleHub() {
   });
 
   const onDeleteCompany = (id: string, name: string) => setDeleteTarget({ type: "company", id, name });
-  const onDeleteContact = (id: string, name: string) => setDeleteTarget({ type: "contact", id, name });
   const landsecAppliedRef = useRef(false);
   useEffect(() => {
     if (isLandsec && !landsecAppliedRef.current && tab === "landlords") {
@@ -870,6 +1262,24 @@ function PeopleHub() {
     });
   }, [companies]);
 
+  const agentCompaniesCount = useMemo(() => {
+    return companies.filter((c) => (c.companyType || "").toLowerCase().trim() === "agent").length;
+  }, [companies]);
+
+  const lendersCompanies = useMemo(() => {
+    return companies.filter((c) => isLenderCompany(c.companyType));
+  }, [companies]);
+
+  // Contacts visible in this hub = those tied to a landlord or agent company.
+  // Excludes brand/tenant contacts (which live in Brands Hub).
+  const hubContactCount = useMemo(() => {
+    const hubCompanyIds = new Set<string>([
+      ...landlordCompanies.map((c) => c.id),
+      ...companies.filter((c) => (c.companyType || "").toLowerCase().trim() === "agent").map((c) => c.id),
+    ]);
+    return contacts.filter((c) => c.companyId && hubCompanyIds.has(c.companyId)).length;
+  }, [contacts, companies, landlordCompanies]);
+
   const scopedLandlordCompany = scopedLandlord ? companies.find(c => c.id === scopedLandlord) : null;
   const tabs = scopedLandlord ? SCOPED_TABS : isLandsec ? LANDSEC_TABS : ALL_TABS;
 
@@ -884,16 +1294,16 @@ function PeopleHub() {
   };
 
   return (
-    <div className="p-4 sm:p-6 space-y-4">
+    <div className="p-4 md:p-6 space-y-6 max-w-[1600px] mx-auto">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
-            {scopedLandlordCompany ? `${scopedLandlordCompany.name} — People Hub` : "People Hub"}
+            {scopedLandlordCompany ? `${scopedLandlordCompany.name} — CRM` : "CRM"}
           </h1>
           <p className="text-sm text-muted-foreground">
             {scopedLandlordCompany
               ? "Agents & tenants relevant to this landlord"
-              : `${companies.length.toLocaleString()} companies · ${contacts.length.toLocaleString()} contacts`}
+              : `${landlordCompanies.length.toLocaleString()} landlords · ${agentCompaniesCount.toLocaleString()} agents · ${hubContactCount.toLocaleString()} contacts`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -946,6 +1356,9 @@ function PeopleHub() {
           )}
           {tab === "agents" && (
             <AgentsTab companies={companies} contacts={contacts} defaultTenantRep={isLandsec} onDeleteCompany={onDeleteCompany} />
+          )}
+          {tab === "lenders" && (
+            <LendersTab companies={lendersCompanies} contacts={contacts} properties={properties} />
           )}
         </>
       )}

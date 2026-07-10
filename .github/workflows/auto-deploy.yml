@@ -1,0 +1,38 @@
+# Push-to-deploy for the working branch. Calls the app's own deploy endpoint
+# (server/auto-deploy.ts), which syncs the server checkout with GitHub,
+# rebuilds and restarts. Requires two repo secrets:
+#   DEPLOY_URL             e.g. https://app.yourdomain.com  (no trailing slash)
+#   DEPLOY_WEBHOOK_SECRET  same value as the Railway env var of that name
+name: Auto deploy
+
+on:
+  push:
+    branches:
+      - claude/terminal-coding-interface-JOGQK
+
+concurrency:
+  group: auto-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger in-app deploy
+        env:
+          DEPLOY_URL: ${{ secrets.DEPLOY_URL }}
+          DEPLOY_SECRET: ${{ secrets.DEPLOY_WEBHOOK_SECRET }}
+        run: |
+          if [ -z "$DEPLOY_URL" ] || [ -z "$DEPLOY_SECRET" ]; then
+            echo "DEPLOY_URL / DEPLOY_WEBHOOK_SECRET repo secrets not set — skipping."
+            exit 0
+          fi
+          code=$(curl -sS -o response.json -w "%{http_code}" --max-time 120 \
+            -X POST "$DEPLOY_URL/api/admin/deploy" \
+            -H "x-deploy-secret: $DEPLOY_SECRET")
+          echo "HTTP $code"
+          cat response.json || true
+          # 200 = deploying/up-to-date, 409 = a deploy is already running
+          # (this push will be picked up by that deploy's git sync) — both fine.
+          if [ "$code" = "200" ] || [ "$code" = "409" ]; then exit 0; fi
+          exit 1

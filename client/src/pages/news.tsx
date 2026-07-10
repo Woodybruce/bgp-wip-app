@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NewsSourcesTab } from "@/components/news-sources-tab";
+import { NewsTagFilterChips } from "@/components/news-tags-manager";
 import {
   Select,
   SelectContent,
@@ -45,13 +46,15 @@ import {
 import { useState, useMemo } from "react";
 import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useIsMobile } from "@/hooks/use-mobile";
 import type { NewsArticle, EmailIngest, NewsLead } from "@shared/schema";
 
 const TEAMS = [
   "For You",
   "All",
+  "London F&B",
+  "London Retail",
   "Investment",
-  "London Leasing",
   "Lease Advisory",
   "National Leasing",
   "Tenant Rep",
@@ -195,6 +198,7 @@ function FeedTab() {
   const [activeTeam, setActiveTeam] = useState("For You");
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("All");
+  const [tagFilter, setTagFilter] = useState<Set<string>>(new Set());
   const [showStats, setShowStats] = useState(false);
   const [savedArticles, setSavedArticles] = useState<Set<string>>(new Set());
   const [dismissedArticles, setDismissedArticles] = useState<Set<string>>(new Set());
@@ -206,7 +210,12 @@ function FeedTab() {
 
   const userTeam = currentUser?.team || "Investment";
   const isSavedTab = activeTeam === "Saved";
-  const effectiveTeam = activeTeam === "For You" ? userTeam : activeTeam;
+  // Client logins: articles are never relevance-scored against client teams
+  // (e.g. "Landsec"), so "For You" would filter the feed to nothing — give
+  // them the whole curated trade feed instead, and skip the BGP team tabs.
+  const isClientNews = currentUser?.role === "Client";
+  const visibleTeams = isClientNews ? ["For You", "Saved"] : TEAMS;
+  const effectiveTeam = activeTeam === "For You" ? (isClientNews ? "All" : userTeam) : activeTeam;
 
   const { data: articles, isLoading } = useQuery<NewsArticle[]>({
     queryKey: ["/api/news-feed/articles", effectiveTeam, search],
@@ -306,9 +315,17 @@ function FeedTab() {
         const articleCat = (a.category || "").toLowerCase();
         if (!articleCat.includes(categoryFilter.toLowerCase())) return false;
       }
+      if (tagFilter.size > 0) {
+        const articleTags = new Set((a.aiTags || []).map(t => t.toLowerCase()));
+        let matched = false;
+        for (const wanted of tagFilter) {
+          if (articleTags.has(wanted)) { matched = true; break; }
+        }
+        if (!matched) return false;
+      }
       return true;
     });
-  }, [articles, categoryFilter, dismissedArticles]);
+  }, [articles, categoryFilter, tagFilter, dismissedArticles]);
 
   const totalArticles = articles?.length || 0;
   const scoredArticles = articles?.filter((a) => a.processed)?.length || 0;
@@ -319,7 +336,7 @@ function FeedTab() {
       <div className="flex items-start justify-between gap-4">
         <p className="text-sm text-muted-foreground">
           AI-curated property intelligence from {activeSources} sources
-          {activeTeam !== "All" && (
+          {activeTeam !== "All" && effectiveTeam !== "All" && (
             <span>
               {" "}· Sorted for{" "}
               <span className="font-medium text-foreground">
@@ -344,6 +361,7 @@ function FeedTab() {
               <ChevronDown className="w-3 h-3 ml-1" />
             )}
           </Button>
+          {currentUser?.role !== "Client" && (
           <Button
             variant="outline"
             size="sm"
@@ -358,6 +376,7 @@ function FeedTab() {
             )}
             {fetchMutation.isPending ? "Fetching..." : "Refresh"}
           </Button>
+          )}
         </div>
       </div>
 
@@ -391,7 +410,7 @@ function FeedTab() {
           className="flex overflow-x-auto h-auto gap-1 bg-transparent p-0"
           data-testid="tabs-team-filter"
         >
-          {TEAMS.map((team) => (
+          {visibleTeams.map((team) => (
             <TabsTrigger
               key={team}
               value={team}
@@ -432,6 +451,8 @@ function FeedTab() {
         </Select>
       </div>
 
+      <NewsTagFilterChips selected={tagFilter} onChange={setTagFilter} />
+
       {isSavedTab ? (
         isSavedLoading ? (
           <div className="space-y-3">
@@ -460,6 +481,15 @@ function FeedTab() {
               >
                 <CardContent className="p-4 space-y-2">
                   <div className="flex items-start justify-between gap-3">
+                    {article.imageUrl && (
+                      <img
+                        src={article.imageUrl}
+                        alt=""
+                        loading="lazy"
+                        className="w-20 h-20 rounded object-cover border border-border/40 shrink-0"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                      />
+                    )}
                     <div className="flex-1 min-w-0 space-y-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         {article.sourceName && (
@@ -539,6 +569,7 @@ function FeedTab() {
                       Unsave
                     </Button>
                     <div className="flex-1" />
+                    {!isClientNews && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -558,6 +589,7 @@ function FeedTab() {
                       <Zap className="w-3 h-3 mr-1" />
                       Extract Leads
                     </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -605,6 +637,15 @@ function FeedTab() {
               >
                 <CardContent className="p-4 space-y-2">
                   <div className="flex items-start justify-between gap-3">
+                    {article.imageUrl && (
+                      <img
+                        src={article.imageUrl}
+                        alt=""
+                        loading="lazy"
+                        className="w-20 h-20 rounded object-cover border border-border/40 shrink-0"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                      />
+                    )}
                     <div className="flex-1 min-w-0 space-y-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         {article.sourceName && (
@@ -704,6 +745,7 @@ function FeedTab() {
                       Less like this
                     </Button>
                     <div className="flex-1" />
+                    {!isClientNews && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -723,6 +765,7 @@ function FeedTab() {
                       <Zap className="w-3 h-3 mr-1" />
                       Extract Leads
                     </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -1149,14 +1192,110 @@ function WhatsAppTab() {
   );
 }
 
+// Mobile: just the feed. No team tabs, search, category filters, or the
+// Leads/Inbox/WhatsApp/Sources chrome — those stay desktop-only.
+function MobileNewsFeed() {
+  const { data: articles, isLoading } = useQuery<NewsArticle[]>({
+    queryKey: ["/api/news-feed/articles"],
+  });
+
+  return (
+    <div
+      className="bg-[#FAF9F7] dark:bg-background min-h-full px-4 pt-3 pb-4 space-y-3"
+      data-testid="news-page"
+    >
+      {isLoading && (
+        <div className="flex items-center justify-center py-16">
+          <div className="w-8 h-8 border-2 border-gray-300 border-t-black rounded-full animate-spin" />
+        </div>
+      )}
+
+      {!isLoading && (!articles || articles.length === 0) && (
+        <div className="flex flex-col items-center justify-center py-16 gap-3">
+          <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
+            <Newspaper className="w-8 h-8 text-gray-300" />
+          </div>
+          <p className="text-[15px] text-gray-400">No news articles yet</p>
+        </div>
+      )}
+
+      {!isLoading && articles && articles.length > 0 && articles.map(article => (
+        <a
+          key={article.id}
+          href={article.url || "#"}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block bg-white dark:bg-card rounded-2xl overflow-hidden border border-gray-100 dark:border-border shadow-sm active:bg-gray-50"
+          data-testid={`news-card-${article.id}`}
+        >
+          {article.imageUrl && (
+            <div className="aspect-[16/9] w-full overflow-hidden bg-gray-50">
+              <img
+                src={article.imageUrl}
+                alt=""
+                referrerPolicy="no-referrer"
+                className="w-full h-full object-cover"
+                onError={(e) => { const img = e.currentTarget as HTMLImageElement; if (img.parentElement) img.parentElement.style.display = "none"; }}
+              />
+            </div>
+          )}
+          <div className="p-4">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              {article.sourceName && <span className="text-[11px] font-medium text-gray-500">{article.sourceName}</span>}
+              {article.publishedAt && (
+                <>
+                  <span className="text-gray-300">·</span>
+                  <span className="text-[11px] text-gray-400">{timeAgo(article.publishedAt)}</span>
+                </>
+              )}
+              {article.category && article.category !== "general" && (
+                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">{article.category}</span>
+              )}
+            </div>
+            <div className="text-[16px] font-semibold text-gray-900 dark:text-white leading-snug mb-1.5 tracking-tight">{article.title}</div>
+            {(article.aiSummary || article.summary) && (
+              <div className="text-[13px] text-gray-500 leading-relaxed line-clamp-3">{article.aiSummary || article.summary}</div>
+            )}
+          </div>
+        </a>
+      ))}
+    </div>
+  );
+}
+
 export default function News() {
+  const isMobile = useIsMobile();
+  const { data: newsUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientNewsPage = newsUser?.role === "Client";
   const { data: intelStatus } = useQuery<{
     connected: boolean;
     emailAddress?: string;
   }>({
     queryKey: ["/api/news-intel/status"],
     queryFn: getQueryFn({ on401: "throw" }),
+    enabled: !isMobile && !isClientNewsPage,
   });
+
+  if (isMobile) return <MobileNewsFeed />;
+
+  // Client logins get the curated Feed only — Leads / Inbox / WhatsApp /
+  // Sources are BGP lead-intelligence tools and stay staff-only.
+  if (isClientNewsPage) {
+    return (
+      <div className="p-4 sm:p-6 space-y-5" data-testid="news-page">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+            <Newspaper className="w-5 h-5 text-primary" />
+          </div>
+          <div className="space-y-1">
+            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">News</h1>
+            <p className="text-sm text-muted-foreground">AI-curated property &amp; retail market news</p>
+          </div>
+        </div>
+        <FeedTab />
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 sm:p-6 space-y-5" data-testid="news-page">

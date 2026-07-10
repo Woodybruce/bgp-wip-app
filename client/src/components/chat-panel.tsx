@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { useTypingIndicator } from "@/hooks/use-socket";
 import { emitMarkSeen } from "@/lib/socket";
-import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
+import { ChatBGPMarkdown, AuthDownloadLink } from "@/components/chatbgp-markdown";
 import {
   Sparkles,
   Send,
@@ -312,17 +312,11 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
         >{match[3]}</a>
       );
     } else if (match[5] && match[6]) {
-      // Add auth token to download URL so mobile browsers can download natively
-      const dlToken = localStorage.getItem("bgp_auth_token") || "";
-      const dlSep = match[6].includes("?") ? "&" : "?";
-      const dlUrl = dlToken ? `${match[6]}${dlSep}token=${dlToken}` : match[6];
-      const dlName = match[6].split("/").pop()?.split("?")[0] || "download";
-      result.push(
-        <a key={key++} href={dlUrl} download={dlName} target="_blank" rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 px-3 py-2.5 my-1 rounded-lg bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 active:bg-green-200 transition-colors text-sm font-medium no-underline min-h-[44px]"
-          data-testid="link-download-file"
-        >{match[5]}</a>
-      );
+      // Delegate to the shared AuthDownloadLink (fetch → blob → click)
+      // so the download path is identical across desktop, /chatbgp page
+      // and the mobile PWA. Inline <a href download> previously caused
+      // iOS PWA white-screens on authenticated binary responses.
+      result.push(<AuthDownloadLink key={key++} href={match[6]}>{match[5]}</AuthDownloadLink>);
     } else if (match[7]) {
       result.push(<strong key={key++}>{match[7]}</strong>);
     } else if (match[8]) {
@@ -556,6 +550,9 @@ function AddMemberPopover({ threadId, existingMemberIds, creatorId }: { threadId
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
     },
+    onError: (err: any) => {
+      toast({ variant: "destructive", title: "Failed to add member", description: err?.message });
+    },
   });
 
   const availableUsers = useMemo(() => {
@@ -620,6 +617,9 @@ function PropertyPicker({ threadId, currentPropertyName }: { threadId: string; c
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
     },
+    onError: (err: any) => {
+      toast({ variant: "destructive", title: "Failed to link property", description: err?.message });
+    },
   });
 
   const unlinkMutation = useMutation({
@@ -631,6 +631,9 @@ function PropertyPicker({ threadId, currentPropertyName }: { threadId: string; c
       toast({ title: "Property unlinked" });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+    },
+    onError: (err: any) => {
+      toast({ variant: "destructive", title: "Failed to unlink property", description: err?.message });
     },
   });
 
@@ -1105,9 +1108,12 @@ interface ChatPanelProps {
   onClose: () => void;
   openAiChat?: boolean;
   onAiChatHandled?: () => void;
+  // Reports whether a draft (text or attached files) is in the composer, so
+  // the hover-peek shell can refuse to tuck the panel away mid-draft.
+  onDraftChange?: (hasDraft: boolean) => void;
 }
 
-export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPanelProps) {
+export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftChange }: ChatPanelProps) {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
@@ -1143,6 +1149,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
+  // Team chat is BGP-internal — client logins use ChatBGP (AI) only, so skip
+  // the team-thread/notification polling that would otherwise 403.
+  const chatIsClient = (currentUser as any)?.role === "Client";
 
   const { data: status } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/chatbgp/status"],
@@ -1152,18 +1161,20 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
   const { data: threads } = useQuery<ThreadData[]>({
     queryKey: ["/api/chat/threads"],
     queryFn: getQueryFn({ on401: "throw" }),
+    enabled: !chatIsClient,
   });
 
   const { data: notifications } = useQuery<{ unseenCount: number }>({
     queryKey: ["/api/chat/notifications"],
     queryFn: getQueryFn({ on401: "throw" }),
     refetchInterval: 15000,
+    enabled: !chatIsClient,
   });
 
   const { data: activeThread } = useQuery<ThreadData>({
     queryKey: ["/api/chat/threads", activeThreadId],
     queryFn: getQueryFn({ on401: "throw" }),
-    enabled: !!activeThreadId,
+    enabled: !!activeThreadId && !chatIsClient,
     refetchInterval: 8000,
   });
 
@@ -1200,7 +1211,12 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      if (detail?.prompt && open) {
+      // Removed the `&& open` gate — when the panel is closed, App.tsx's
+      // listener opens it via setChatOpen(true) but our handler used to bail
+      // here because the panel wasn't open yet, losing the prompt entirely.
+      // Now we accept the prompt regardless; once the panel renders open it
+      // already has the queued question.
+      if (detail?.prompt) {
         setActiveThreadId(null);
         setMessages([]);
         setAttachedFiles([]);
@@ -1211,7 +1227,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
     };
     window.addEventListener("open-ai-chat-with-prompt", handler);
     return () => window.removeEventListener("open-ai-chat-with-prompt", handler);
-  }, [open]);
+  }, []);
 
   useEffect(() => {
     if (activeThreadId && view === "chat") {
@@ -1242,6 +1258,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
       toast({ title: `${user?.name || "Team member"} added to chat` });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", activeThreadId] });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+    },
+    onError: (err: any) => {
+      toast({ variant: "destructive", title: "Failed to add member", description: err?.message });
     },
   });
 
@@ -1297,6 +1316,19 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
     setMentionStart(-1);
   }, [sendTyping]);
 
+  // Composer auto-grow + draft reporting. Effect (not the change handler) so
+  // every path that sets the input — typing, mention insert, checkbox click,
+  // voice transcript, send clearing it — resizes the box and updates the
+  // shell's draft flag.
+  useEffect(() => {
+    onDraftChange?.(!!input.trim() || attachedFiles.length > 0);
+    const ta = textareaRef.current;
+    if (ta) {
+      ta.style.height = "auto";
+      ta.style.height = `${Math.min(ta.scrollHeight, 220)}px`;
+    }
+  }, [input, attachedFiles, onDraftChange]);
+
   const messagesKey = useMemo(() => {
     if (!activeThread?.messages) return "";
     return activeThread.messages.map(m => `${m.id}:${m.content?.length}`).join("|");
@@ -1340,6 +1372,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
       setView("chat");
       setMessages([]);
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+    },
+    onError: (err: any) => {
+      toast({ variant: "destructive", title: "Failed to create chat", description: err?.message });
     },
   });
 
@@ -1681,7 +1716,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
       const hdrs: Record<string, string> = { "Content-Type": "application/json" };
       if (token) hdrs["Authorization"] = `Bearer ${token}`;
       const mentionCtrl = new AbortController();
-      const mentionTmo = setTimeout(() => mentionCtrl.abort(), 300000);
+      const mentionTmo = setTimeout(() => mentionCtrl.abort(), 600000);
       const res = await fetch("/api/chatbgp/chat", {
         method: "POST",
         headers: hdrs,
@@ -1925,6 +1960,19 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
     const clipData = e.clipboardData;
     if (!clipData) return;
 
+    // Prefer text. Many apps (macOS Word/Pages, Google Docs, styled web
+    // pages) put BOTH text/plain AND an image preview in the clipboard
+    // when you copy formatted text. Without this guard, pasting text
+    // from those apps lands as an image attachment instead of text in
+    // the input. If meaningful plain text is present, let the default
+    // paste happen and skip image extraction entirely.
+    const plainText = clipData.getData("text/plain");
+    if (plainText && plainText.trim().length > 0) {
+      // Don't preventDefault — the browser will insert the text into
+      // the textarea naturally.
+      return;
+    }
+
     const imageFiles = extractImagesFromClipboard(clipData);
 
     if (imageFiles.length > 0) {
@@ -2013,6 +2061,13 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
       if (pasteHandledRef.current) return;
       const clipData = e.clipboardData;
       if (!clipData) return;
+
+      // Same text-preference rule as the onPaste handler — the
+      // document-level listener also has to bail out when text is
+      // present, or pasting from Word/Docs outside the textarea still
+      // gets hijacked into an image attachment.
+      const plainText = clipData.getData("text/plain");
+      if (plainText && plainText.trim().length > 0) return;
 
       const imageFiles = extractImagesFromClipboard(clipData);
       if (imageFiles.length > 0) {
@@ -2419,7 +2474,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
   // focus / drag events.
   return (
     <div
-      className={`h-full w-full fixed inset-0 z-50 md:static md:w-[340px] md:z-auto shrink-0 border-l bg-background flex flex-col ${open ? "" : "hidden"}`}
+      className={`h-full w-full fixed inset-0 z-50 md:static md:w-[340px] md:ml-6 md:z-auto shrink-0 border-l bg-background flex flex-col ${open ? "" : "hidden"}`}
       data-testid="chat-panel"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
@@ -2547,7 +2602,12 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
               variant="ghost"
               size="icon"
               className="h-7 w-7"
-              onClick={() => navigate("/chatbgp")}
+              // Carry the open thread into the full-page view so the
+              // conversation follows you instead of opening blank. Without
+              // the ?thread= param the page only had activeThreadId in
+              // context but never loaded its messages — the "it clears when
+              // I expand / move screen" complaint.
+              onClick={() => navigate(activeThreadId ? `/chatbgp?thread=${activeThreadId}` : "/chatbgp")}
               data-testid="button-panel-expand"
               title="Open full screen"
             >
@@ -2777,23 +2837,23 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
                 <>
                   <input
                     ref={fileInputRef}
+                    id="chat-panel-file-upload"
                     type="file"
-                    className="hidden"
+                    className="sr-only"
                     accept=".docx,.pdf,.doc,.txt,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.heic,.mp3,.mp4,.m4a,.wav,.webm,.ogg,.aac,.mov,.avi,.mkv,.flac,image/*,audio/*,video/*"
                     multiple
+                    tabIndex={-1}
                     onChange={handleFileSelect}
                     data-testid="input-chat-file-upload"
                   />
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="shrink-0 h-10 w-10"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isSending}
+                  <label
+                    htmlFor="chat-panel-file-upload"
+                    className={`shrink-0 h-10 w-10 inline-flex items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer${isSending ? " pointer-events-none opacity-50" : ""}`}
                     data-testid="button-chat-attach-file"
+                    title="Attach files"
                   >
                     <Paperclip className="w-4 h-4" />
-                  </Button>
+                  </label>
                 </>
               )}
               {isRecording ? (
@@ -2864,8 +2924,12 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
                           ? (attachedFiles.length > 0 ? "Add instructions for these files..." : "Ask ChatBGP...")
                           : "Message... (@ to mention, @ChatBGP for AI)"
                       }
-                      className="resize-none min-h-[40px] max-h-[100px] text-[13px] rounded-xl"
+                      className="resize-none min-h-[60px] max-h-[220px] text-[13px] rounded-xl"
                       rows={1}
+                      spellCheck
+                      autoCorrect="on"
+                      autoCapitalize="sentences"
+                      lang="en-GB"
                       data-testid="input-panel-chat-message"
                     />
                   </div>

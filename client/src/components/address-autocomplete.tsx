@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { MapPin, X, Loader2, ExternalLink } from "lucide-react";
 import { loadGoogleMaps } from "@/lib/google-maps-loader";
+import { getAuthHeaders } from "@/lib/queryClient";
 
 interface AddressResult {
   formatted: string;
@@ -13,6 +14,12 @@ interface AddressResult {
   region?: string;
   postcode?: string;
   country?: string;
+  // The establishment / building name when distinct from the street
+  // address — e.g. "Grand Central", "St Christopher's Place". Empty
+  // for bare street addresses. Lets callers use this as the property
+  // display name and keep `formatted` (which prefixes it) for full
+  // address rendering.
+  placeName?: string;
 }
 
 interface AddressAutocompleteProps {
@@ -20,6 +27,21 @@ interface AddressAutocompleteProps {
   onChange: (address: AddressResult | null) => void;
   placeholder?: string;
   className?: string;
+  /**
+   * When true, picking a Google Place fires the canonical Property Resolver
+   * (Google place_id → OS Places nearest → UPRN → find-or-create
+   * crm_property → background HMLR + Companies House enrichment cascade).
+   * Use on "add property" / "search property" / "add comp" inputs — anywhere
+   * we want the canonical UPRN and the enrichment chain to fire automatically.
+   * Off by default for legacy callers (just storing an address string).
+   */
+  resolveProperty?: boolean;
+  /**
+   * Optional callback fired after resolveProperty resolves — gives the
+   * caller the canonical CRM property id + name + postcode for further
+   * use (e.g. linking forms to existing records, navigating to detail).
+   */
+  onResolve?: (propertyId: string, prop: { id: string; name: string; postcode: string | null }) => void;
 }
 
 function useServerAddressSearch() {
@@ -33,7 +55,7 @@ function useServerAddressSearch() {
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/address-search?q=${encodeURIComponent(query)}`, { credentials: "include" });
+        const res = await fetch(`/api/address-search?q=${encodeURIComponent(query)}`, { credentials: "include", headers: getAuthHeaders() });
         if (res.ok) {
           const data = await res.json();
           setResults(data.results || []);
@@ -51,7 +73,37 @@ export function AddressAutocomplete({
   onChange,
   placeholder = "Search address...",
   className = "",
+  resolveProperty = false,
+  onResolve,
 }: AddressAutocompleteProps) {
+  // Fire the canonical Property Resolver when a place is picked. Best-effort,
+  // background — doesn't block the onChange callback (which fires immediately
+  // with the address string). Resolver gives us the UPRN, finds-or-creates the
+  // crm_property, and kicks off HMLR + Companies House enrichment async.
+  const triggerResolver = async (placeId: string | undefined) => {
+    if (!resolveProperty || !placeId) return;
+    try {
+      const resp = await fetch("/api/property-resolver/resolve", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ kind: "googlePlace", placeId }),
+      });
+      if (!resp.ok) return;
+      const result = await resp.json();
+      if (result?.kind === "resolved" && result.property?.id) {
+        if (onResolve) onResolve(result.property.id, {
+          id: result.property.id,
+          name: result.property.name,
+          postcode: result.property.postcode,
+        });
+      }
+    } catch (err) {
+      // Best-effort — never break the address-pick UX
+      console.warn("[address-autocomplete] resolver trigger failed:", err);
+    }
+  };
+
   const [query, setQuery] = useState(value?.formatted || "");
   const [showDropdown, setShowDropdown] = useState(false);
   const [useGoogle, setUseGoogle] = useState(false);
@@ -141,15 +193,36 @@ export function AddressAutocomplete({
   const selectGooglePlace = (prediction: google.maps.places.AutocompletePrediction) => {
     if (!placesService.current) return;
     placesService.current.getDetails(
-      { placeId: prediction.place_id, fields: ["formatted_address", "geometry", "place_id", "address_components"] },
+      { placeId: prediction.place_id, fields: ["formatted_address", "geometry", "place_id", "address_components", "name", "types"] },
       (place, status) => {
         if (status === google.maps.places.PlacesServiceStatus.OK && place) {
           const comp = (type: string) => place.address_components?.find((c: any) => c.types.includes(type))?.long_name;
           const streetNumber = comp("street_number") || "";
           const route = comp("route") || "";
           const street = [streetNumber, route].filter(Boolean).join(" ");
+          // If this place has an establishment name (e.g. "Grand Central",
+          // "BGP Office") that isn't already inside the formatted address,
+          // prepend it. Without this, picking "Grand Central, Birmingham"
+          // collapses to "68a Ellis Mews, Birmingham…" — the building
+          // identity is lost and every property ends up labelled by its
+          // street. Skip when the name is just the street_number or a
+          // bare postcode (Google sometimes returns those as `name` for
+          // generic addresses).
+          const placeName = (place as any).name as string | undefined;
+          const placeTypes = ((place as any).types || []) as string[];
+          const isBareAddress = placeTypes.includes("street_address") || placeTypes.includes("premise") || placeTypes.includes("postal_code");
+          const formattedAddr = place.formatted_address || prediction.description;
+          const shouldUseName = placeName
+            && !isBareAddress
+            && !formattedAddr.toLowerCase().startsWith(placeName.toLowerCase())
+            && placeName.toLowerCase() !== street.toLowerCase()
+            && !/^\d+[a-z]?$/i.test(placeName.trim());
+          const formatted = shouldUseName
+            ? `${placeName}, ${formattedAddr}`
+            : formattedAddr;
           const result: AddressResult = {
-            formatted: place.formatted_address || prediction.description,
+            formatted,
+            placeName: shouldUseName ? placeName : undefined,
             placeId: place.place_id || prediction.place_id,
             lat: place.geometry?.location?.lat(),
             lng: place.geometry?.location?.lng(),
@@ -163,6 +236,8 @@ export function AddressAutocomplete({
           setGooglePredictions([]);
           setShowDropdown(false);
           onChange(result);
+          // Fire the resolver chain when opted in
+          triggerResolver(result.placeId);
         }
       }
     );

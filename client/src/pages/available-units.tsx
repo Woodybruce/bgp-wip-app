@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,7 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown,
+  ChevronDown, ExternalLink, AlertTriangle, FileBadge,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -31,19 +32,28 @@ import {
 import { useState, useMemo, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
+import { UnifiedAddUnitDialog, UNIFIED_ADD_UNIT_ENABLED } from "@/components/unified-add-unit-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiSelect } from "@/components/inline-edit";
-import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer } from "@shared/schema";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
+import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer, PropertyUnit } from "@shared/schema";
 import { useTeam } from "@/lib/team-context";
+import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
+import { DEAL_TYPE_COLORS, DEAL_TEAM_COLORS } from "@/pages/deals";
 import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from "@/components/ui/command";
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
+import { PropertyCombobox } from "@/components/property-combobox";
+import { EntityCombobox } from "@/components/entity-combobox";
+import { XeroContactPicker } from "@/components/xero-contact-picker";
+import { FeeAllocationEditor, type FeeAllocationRow } from "@/components/fee-allocation-editor";
 
-const MARKETING_STATUSES = ["Reporting", "Available", "Negotiating", "Under Offer", "Let", "Withdrawn"];
+import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
+const MARKETING_STATUSES = LETTING_STATUSES;
 const USE_CLASSES = ["E", "E(a)", "E(b)", "E(c)", "E(d)", "E(e)", "A1", "A2", "A3", "A4", "A5", "B1", "B2", "B8", "C1", "C3", "D1", "D2", "F1", "F2", "Sui Generis"];
 const FLOORS = ["Basement", "Lower Ground", "Ground", "Mezzanine", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "Upper"];
 const CONDITIONS = ["Shell & Core", "Cat A", "Cat A+", "Cat B", "Fitted", "Turn Key", "As Is"];
@@ -57,23 +67,10 @@ const LOCATION_COLORS: Record<string, string> = {
   "Wales": "bg-red-600",
 };
 
-const STATUS_COLORS: Record<string, string> = {
-  "Reporting": "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
-  "Available": "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
-  "Negotiating": "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-  "Under Offer": "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-  "Let": "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-  "Withdrawn": "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300",
-};
-
-const STATUS_LABEL_COLORS: Record<string, string> = {
-  "Reporting": "bg-violet-500",
-  "Available": "bg-emerald-500",
-  "Negotiating": "bg-blue-500",
-  "Under Offer": "bg-amber-500",
-  "Let": "bg-green-500",
-  "Withdrawn": "bg-gray-500",
-};
+// Status colours come from the shared module so the tracker, Deals board
+// and property summary all paint the same code the same hue (these used
+// to be three diverging local palettes).
+import { DEAL_STATUS_BADGE_COLORS as STATUS_COLORS, DEAL_STATUS_DOT_COLORS as STATUS_LABEL_COLORS } from "@/lib/deal-status-colors";
 
 const ASSET_CLASS_COLORS: Record<string, string> = {
   "E": "bg-blue-500",
@@ -159,6 +156,7 @@ function CrmPicker({ items, value, valueName, onSelect, placeholder, testId }: {
 interface UnitFormState {
   unitName: string;
   propertyId: string;
+  dealType: string;
   floor: string;
   sqft: string;
   askingRent: string;
@@ -173,13 +171,21 @@ interface UnitFormState {
   notes: string;
   restrictions: string;
   fee: string;
+  feePercentage: string;
   marketingStartDate: string;
   agentUserIds: string[];
+  // Landlord brand (client). Auto-pre-filled from
+  // crm_properties.landlord_id when the user picks a property, but
+  // overrideable. No Xero billing entity at this stage — that's a
+  // SOL-handover concern.
+  landlordId: string;
+  landlordName: string;
 }
 
 const emptyForm: UnitFormState = {
   unitName: "",
   propertyId: "",
+  dealType: "New Letting",
   floor: "",
   sqft: "",
   askingRent: "",
@@ -188,20 +194,24 @@ const emptyForm: UnitFormState = {
   useClass: "",
   condition: "",
   availableDate: "",
-  marketingStatus: "Available",
+  marketingStatus: "AVA",
   epcRating: "",
   location: "",
   notes: "",
   restrictions: "",
   fee: "",
+  feePercentage: "",
   marketingStartDate: "",
   agentUserIds: [],
+  landlordId: "",
+  landlordName: "",
 };
 
 function formToPayload(f: UnitFormState) {
   return {
     unitName: f.unitName,
     propertyId: f.propertyId,
+    dealType: f.dealType || "New Letting",
     floor: f.floor || null,
     sqft: f.sqft ? parseFloat(f.sqft) : null,
     askingRent: f.askingRent ? parseFloat(f.askingRent) : null,
@@ -210,21 +220,24 @@ function formToPayload(f: UnitFormState) {
     useClass: f.useClass || null,
     condition: f.condition || null,
     availableDate: f.availableDate || null,
-    marketingStatus: f.marketingStatus || "Available",
+    marketingStatus: legacyToCode(f.marketingStatus) || "AVA",
     epcRating: f.epcRating || null,
     location: f.location || null,
     notes: f.notes || null,
     restrictions: f.restrictions || null,
     fee: f.fee ? parseFloat(f.fee) : null,
+    feePercentage: f.feePercentage ? parseFloat(f.feePercentage) : null,
     marketingStartDate: f.marketingStartDate || null,
     agentUserIds: f.agentUserIds.length > 0 ? f.agentUserIds : null,
+    landlordId: f.landlordId || null,
   };
 }
 
-function unitToForm(u: AvailableUnit): UnitFormState {
+function unitToForm(u: AvailableUnit, dealType?: string | null): UnitFormState {
   return {
     unitName: u.unitName || "",
     propertyId: u.propertyId || "",
+    dealType: dealType || "New Letting",
     floor: u.floor || "",
     sqft: u.sqft?.toString() || "",
     askingRent: u.askingRent?.toString() || "",
@@ -233,14 +246,17 @@ function unitToForm(u: AvailableUnit): UnitFormState {
     useClass: u.useClass || "",
     condition: u.condition || "",
     availableDate: u.availableDate || "",
-    marketingStatus: u.marketingStatus || "Available",
+    marketingStatus: legacyToCode(u.marketingStatus) || "AVA",
     epcRating: u.epcRating || "",
     location: u.location || "",
     notes: u.notes || "",
     restrictions: u.restrictions || "",
     fee: u.fee?.toString() || "",
+    feePercentage: "",
     marketingStartDate: u.marketingStartDate || "",
     agentUserIds: Array.isArray(u.agentUserIds) ? u.agentUserIds : [],
+    landlordId: (u as any).landlordId || "",
+    landlordName: "",
   };
 }
 
@@ -274,13 +290,11 @@ function CurrencyInput({ value, onChange, placeholder, prefix, testId }: { value
   );
 }
 
-const INTERNAL_BGP_TEAMS = new Set([
-  "London Leasing", "National Leasing", "Investment", "Tenant Rep",
-  "Development", "Lease Advisory", "Office / Corporate",
-]);
+const INTERNAL_BGP_TEAMS = new Set(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
 
 export default function AvailableUnitsPage() {
   const { activeTeam } = useTeam();
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -289,12 +303,21 @@ export default function AvailableUnitsPage() {
   const [assetClassFilter, setAssetClassFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [unifiedAddOpen, setUnifiedAddOpen] = useState(false);
   const [editItem, setEditItem] = useState<AvailableUnit | null>(null);
   const [deleteItem, setDeleteItem] = useState<AvailableUnit | null>(null);
   const [matchItem, setMatchItem] = useState<AvailableUnit | null>(null);
   const [linkDealOpen, setLinkDealOpen] = useState<AvailableUnit | null>(null);
   const [linkDealId, setLinkDealId] = useState("");
   const [form, setForm] = useState<UnitFormState>(emptyForm);
+  // Fee split for the auto-created deal — same shape as Add Deal so a
+  // unit lands with BGP House + agent rows pre-baked rather than empty.
+  const [unitFeeRows, setUnitFeeRows] = useState<FeeAllocationRow[]>([]);
+  const [unitFeeAllocType, setUnitFeeAllocType] = useState<"percentage" | "fixed">("percentage");
+  // Mirror Add Deal's "Show all fields" toggle — minor fields (Rates,
+  // Service Charge, Use Class, Condition, EPC, Location, Marketing
+  // Start Date, Restrictions) collapse behind it.
+  const [showAllUnitFields, setShowAllUnitFields] = useState(false);
   const [filesUnit, setFilesUnit] = useState<AvailableUnit | null>(null);
   const [viewingsUnit, setViewingsUnit] = useState<AvailableUnit | null>(null);
   const [offersUnit, setOffersUnit] = useState<AvailableUnit | null>(null);
@@ -306,26 +329,53 @@ export default function AvailableUnitsPage() {
   const [contactSearchOpen, setContactSearchOpen] = useState<"viewing" | "offer" | null>(null);
   const [wipUnit, setWipUnit] = useState<AvailableUnit | null>(null);
   const [wipForm, setWipForm] = useState({
-    dealType: "Letting",
+    dealType: "New Letting",
     team: [] as string[],
     agent: "",
+    // Tenant brand (crm_companies.id) + cached display name. Replaces the
+    // old free-text tenantName so AML can fire on a real company link
+    // rather than a string lookup. Tenant Xero entity is the billing /
+    // legal entity for invoicing.
+    tenantId: "",
     tenantName: "",
+    tenantEntityId: "",
+    tenantEntityName: "",
+    // Landlord Xero entity — landlord brand is derived from the
+    // property (crm_properties.landlord_id) and shown read-only.
+    landlordEntityId: "",
+    landlordEntityName: "",
     fee: "",
     feeAgreement: "",
     askingRent: "",
     totalAreaSqft: "",
     leaseLength: "",
     rentFree: "",
+    targetDate: "", // expected completion — mandatory so WIP report buckets correctly
     comments: "",
+    amlChecked: "",      // YES | NO | N-A — soft-required at SOL
+    overrideCompliance: false, // user-acknowledged shipping despite incomplete AML/fee agreement
   });
+  // Fee split is the same shape the deal form collects — BGP House 15% +
+  // agents on the remaining 85%. FeeAllocationEditor auto-injects BGP
+  // House if missing, so starting empty is safe.
+  const [wipFeeRows, setWipFeeRows] = useState<FeeAllocationRow[]>([]);
+  const [wipFeeAllocType, setWipFeeAllocType] = useState<"percentage" | "fixed">("percentage");
   const { toast } = useToast();
 
   const { data: units = [], isLoading } = useQuery<AvailableUnit[]>({
     queryKey: ["/api/available-units"],
   });
 
+  // Client logins get a one-line explainer of what the tracker is for.
+  const { data: auUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientTracker = auUser?.role === "Client";
+
   const { data: properties = [] } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
+  });
+
+  const { data: propertyUnits = [] } = useQuery<PropertyUnit[]>({
+    queryKey: ["/api/property-units"],
   });
 
   const { data: deals = [] } = useQuery<CrmDeal[]>({
@@ -378,6 +428,14 @@ export default function AvailableUnitsPage() {
     queryKey: ["/api/available-units/all-offers-counts"],
   });
 
+  // Existing fee-split allocations keyed by dealId. Used by the WIP-flip
+  // dialog to pre-populate the FeeAllocationEditor when a deal already
+  // has a split — otherwise the user gets the default 85/15 split on
+  // every reopen and re-types what was already saved.
+  const { data: allAllocations = {} } = useQuery<Record<string, Array<{ agentName: string; percentage: number | null; fixedAmount: number | null; allocationType: string; isBgpHouse: boolean }>>>({
+    queryKey: ["/api/crm/fee-allocations"],
+  });
+
   const { data: viewingsForUnit = [] } = useQuery<UnitViewing[]>({
     queryKey: ["/api/available-units", viewingsUnit?.id, "viewings"],
     queryFn: () => viewingsUnit ? fetch(`/api/available-units/${viewingsUnit.id}/viewings`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()) : Promise.resolve([]),
@@ -411,6 +469,7 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-viewings"] });
       toast({ title: "Viewing removed" });
     },
+    onError: (e: any) => toast({ title: "Couldn't remove viewing", description: e.message, variant: "destructive" }),
   });
 
   const addOfferMutation = useMutation({
@@ -434,6 +493,7 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers"] });
       toast({ title: "Offer removed" });
     },
+    onError: (e: any) => toast({ title: "Couldn't remove offer", description: e.message, variant: "destructive" }),
   });
 
   const { data: filesForUnit = [] } = useQuery<UnitMarketingFile[]>({
@@ -477,30 +537,99 @@ export default function AvailableUnitsPage() {
     return m;
   }, [deals]);
 
+  const unitsByProperty = useMemo(() => {
+    const m: Record<string, PropertyUnit[]> = {};
+    for (const pu of propertyUnits) {
+      (m[pu.propertyId] = m[pu.propertyId] || []).push(pu);
+    }
+    return m;
+  }, [propertyUnits]);
+
+  const unitMasterById = useMemo(() => {
+    const m: Record<string, PropertyUnit> = {};
+    for (const pu of propertyUnits) m[pu.id] = pu;
+    return m;
+  }, [propertyUnits]);
+
   const userMap = useMemo(() => {
     const m: Record<string, string> = {};
     for (const u of bgpUsers) m[u.id] = u.name;
     return m;
   }, [bgpUsers]);
 
+  const companyMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const c of crmCompanies) m[c.id] = c.name;
+    return m;
+  }, [crmCompanies]);
+
   const createMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", "/api/available-units", data),
+    mutationFn: async ({ data, feeRows, feeAllocType }: { data: any; feeRows: FeeAllocationRow[]; feeAllocType: "percentage" | "fixed" }) => {
+      const res = await apiRequest("POST", "/api/available-units", data);
+      const unit = await res.json();
+      // The server auto-creates a backing deal and stamps its id on the
+      // unit. Fold the user's fee split onto that deal so it lands with
+      // BGP House + agents pre-baked instead of empty (which used to
+      // require re-opening the deal to lock in).
+      const dealId = unit?.dealId;
+      if (dealId && feeRows.length > 0) {
+        const allocations = feeRows
+          .filter(r => (r.isBgpHouse || r.agentName))
+          .map(r => ({
+            agentName: r.isBgpHouse ? (r.agentName || "BGP House") : r.agentName,
+            allocationType: feeAllocType,
+            percentage: feeAllocType === "percentage" ? r.percentage : null,
+            fixedAmount: feeAllocType === "fixed" ? r.fixedAmount : null,
+            isBgpHouse: !!r.isBgpHouse,
+          }));
+        if (allocations.length > 0) {
+          try {
+            await apiRequest("PUT", `/api/crm/deals/${dealId}/fee-allocations`, { allocations });
+          } catch (e: any) {
+            toast({
+              title: "Unit added, fee split failed to save",
+              description: e?.message || "Open the deal to set the split there.",
+              variant: "destructive",
+            });
+          }
+        }
+      }
+      return unit;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      invalidateDealCaches();
       setCreateOpen(false);
       setForm(emptyForm);
+      setUnitFeeRows([]);
+      setUnitFeeAllocType("percentage");
+      setShowAllUnitFields(false);
       toast({ title: "Unit added" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) =>
-      apiRequest("PATCH", `/api/available-units/${id}`, data),
-    onSuccess: () => {
+    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      const res = await apiRequest("PATCH", `/api/available-units/${id}`, data);
+      return res.json();
+    },
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      // Master fields (floor/sqft/useClass/condition/epcRating/unitName) flow to
+      // property_units server-side, so refresh that cache too.
+      queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
+      // Three-way status mirror: marketing-status edits propagate to the
+      // linked crm_deal + leasing_schedule_unit server-side. Invalidate
+      // those caches too so the other boards reflect the change live.
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property"] });
       setEditItem(null);
-      toast({ title: "Unit updated" });
+      if (data?.mirrorWarning) {
+        toast({ title: "Cross-board sync warning", description: data.mirrorWarning, variant: "destructive" });
+      } else {
+        toast({ title: "Unit updated" });
+      }
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -521,6 +650,10 @@ export default function AvailableUnitsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      // Bulk delete cascades to crm_deals + leasing schedule via the
+      // server-side cleanup. Refresh sibling boards so they don't show
+      // ghost rows.
+      invalidateDealCaches();
       const count = selectedIds.size;
       setSelectedIds(new Set());
       setBulkDeleteOpen(false);
@@ -531,15 +664,97 @@ export default function AvailableUnitsPage() {
 
   const bulkStatusMutation = useMutation({
     mutationFn: async ({ ids, status }: { ids: string[]; status: string }) => {
-      await Promise.all(ids.map(id => apiRequest("PATCH", `/api/available-units/${id}`, { marketingStatus: status })));
+      const results = await Promise.all(ids.map(async id => {
+        const res = await apiRequest("PATCH", `/api/available-units/${id}`, { marketingStatus: status });
+        return res.json();
+      }));
+      return results;
     },
-    onSuccess: () => {
+    onSuccess: (results: any[]) => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      // Status PATCH triggers the 4-way mirror server-side — refresh the
+      // sibling boards so Deals + Leasing Schedule + Tenancy reflect.
+      invalidateDealCaches();
       setSelectedIds(new Set());
-      toast({ title: "Status updated" });
+      const warned = results.find(r => r?.mirrorWarning);
+      if (warned) {
+        toast({ title: "Cross-board sync warning", description: warned.mirrorWarning, variant: "destructive" });
+      } else {
+        toast({ title: "Status updated" });
+      }
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
+
+  const dealInlineUpdate = useMutation({
+    mutationFn: async ({ id, field, value }: { id: string; field: string; value: unknown }) => {
+      const res = await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      invalidateDealCaches();
+      if (data?.mirrorWarning) {
+        toast({ title: "Cross-board sync warning", description: data.mirrorWarning, variant: "destructive" });
+      }
+    },
+    onError: (e: any) => toast({ title: "Error saving", description: e.message, variant: "destructive" }),
+  });
+
+  const createPropertyUnitMutation = useMutation({
+    mutationFn: async (data: { propertyId: string; unitName: string; floor?: string | null; sqft?: number | null }) => {
+      const res = await apiRequest("POST", "/api/property-units", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
+    },
+    onError: (e: any) => toast({ title: "Error creating unit", description: e.message, variant: "destructive" }),
+  });
+
+  // Pick an existing master unit (by id) for a listing, or create one and link.
+  // Keeps listing.unitId, listing.unitName, deal.unitId, and deal.name in sync.
+  const pickOrCreateUnit = async (
+    listing: AvailableUnit,
+    selection: { unitId: string } | { newName: string }
+  ) => {
+    let unitId: string | null = null;
+    let unitName: string;
+
+    if ("unitId" in selection) {
+      const pu = unitMasterById[selection.unitId];
+      if (!pu) return;
+      unitId = pu.id;
+      unitName = pu.unitName;
+    } else {
+      const trimmed = selection.newName.trim();
+      if (!trimmed) return;
+      // Reuse if a unit with this name already exists on the property
+      const existing = (unitsByProperty[listing.propertyId] || []).find(
+        u => u.unitName.trim().toLowerCase() === trimmed.toLowerCase()
+      );
+      if (existing) {
+        unitId = existing.id;
+        unitName = existing.unitName;
+      } else {
+        const created = await createPropertyUnitMutation.mutateAsync({
+          propertyId: listing.propertyId,
+          unitName: trimmed,
+          floor: listing.floor || null,
+          sqft: listing.sqft ?? null,
+        });
+        unitId = created.id;
+        unitName = trimmed;
+      }
+    }
+
+    updateMutation.mutate({ id: listing.id, data: { unitId, unitName } });
+    if (listing.dealId) {
+      const prop = propertyMap[listing.propertyId];
+      const dealName = prop ? `${prop.name} – ${unitName}` : unitName;
+      dealInlineUpdate.mutate({ id: listing.dealId, field: "unitId", value: unitId });
+      dealInlineUpdate.mutate({ id: listing.dealId, field: "name", value: dealName });
+    }
+  };
 
   const linkDealMutation = useMutation({
     mutationFn: ({ id, dealId }: { id: string; dealId: string }) =>
@@ -557,54 +772,159 @@ export default function AvailableUnitsPage() {
     mutationFn: (id: string) => apiRequest("POST", `/api/available-units/${id}/create-deal`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       toast({ title: "Deal created and linked" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const wipDealMutation = useMutation({
-    mutationFn: async ({ unitId, data }: { unitId: string; data: any }) => {
+    mutationFn: async ({ unitId, data, feeRows, feeAllocType }: { unitId: string; data: any; feeRows: FeeAllocationRow[]; feeAllocType: "percentage" | "fixed" }) => {
       const res = await apiRequest("POST", `/api/available-units/${unitId}/create-deal`, data);
-      return res;
+      const json = await res.json();
+      const dealId = json?.deal?.id;
+      // Persist fee allocations alongside the promote, same shape the
+      // deal-form mutation uses. Empty list = no split set yet (fall
+      // back to whatever was on the deal previously).
+      if (dealId && feeRows.length > 0) {
+        const allocations = feeRows
+          .filter(r => (r.isBgpHouse || r.agentName))
+          .map(r => ({
+            agentName: r.isBgpHouse ? (r.agentName || "BGP House") : r.agentName,
+            allocationType: feeAllocType,
+            percentage: feeAllocType === "percentage" ? r.percentage : null,
+            fixedAmount: feeAllocType === "fixed" ? r.fixedAmount : null,
+            isBgpHouse: !!r.isBgpHouse,
+          }));
+        if (allocations.length > 0) {
+          try {
+            await apiRequest("PUT", `/api/crm/deals/${dealId}/fee-allocations`, { allocations });
+          } catch (e: any) {
+            toast({
+              title: "Promoted, but fee split failed to save",
+              description: e?.message || "Open the deal to set the split there.",
+              variant: "destructive",
+            });
+          }
+        }
+      }
+      return json;
     },
-    onSuccess: () => {
+    onSuccess: (json: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       setWipUnit(null);
-      toast({ title: "Under Offer — WIP deal created" });
+      // Surface the server's AML warn-but-allow result. Promotion went
+      // through, but some counterparties are still missing KYC — flag it
+      // so Layla can chase before the deal reaches exchange.
+      if (json?.amlWarning?.message) {
+        toast({
+          title: "Promoted — AML follow-up needed",
+          description: json.amlWarning.message,
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "Promoted to Solicitors" });
+      }
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const openWipDialog = (unit: AvailableUnit) => {
     const prop = propertyMap[unit.propertyId];
+    // Pre-fill from the linked deal if there is one — that's the common path
+    // now that Add Unit auto-creates a deal at AVA. User just updates the
+    // fields that matter at the SOL handover.
+    const existingDeal = unit.dealId ? dealMap[unit.dealId] : null;
     setWipForm({
-      dealType: "Letting",
-      team: [],
-      agent: unit.agent || "",
-      tenantName: "",
-      fee: unit.fee?.toString() || "",
-      feeAgreement: "",
-      askingRent: unit.askingRent?.toString() || "",
-      totalAreaSqft: unit.sqft?.toString() || "",
-      leaseLength: "",
-      rentFree: "",
-      comments: `${prop?.name || "Property"} — ${unit.unitName}${unit.floor ? ` (${unit.floor})` : ""}`,
+      // Map legacy "Letting" (pre-fix) → canonical "New Letting" so the
+      // dropdown shows a real value for older flipped deals.
+      dealType: (existingDeal?.dealType === "Letting" ? "New Letting" : existingDeal?.dealType) || "New Letting",
+      team: Array.isArray(existingDeal?.team) ? existingDeal.team : (existingDeal?.team ? [existingDeal.team] : []),
+      agent: (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || "",
+      tenantId: existingDeal?.tenantId || "",
+      tenantName: crmCompanies.find(c => c.id === existingDeal?.tenantId)?.name || "",
+      tenantEntityId: (existingDeal as any)?.tenantEntityId || "",
+      tenantEntityName: (existingDeal as any)?.tenantEntityName || "",
+      landlordEntityId: (existingDeal as any)?.landlordEntityId || "",
+      landlordEntityName: (existingDeal as any)?.landlordEntityName || "",
+      fee: (existingDeal?.fee ?? unit.fee)?.toString() || "",
+      feeAgreement: existingDeal?.feeAgreement || "",
+      askingRent: (existingDeal?.rentPa ?? unit.askingRent)?.toString() || "",
+      totalAreaSqft: (existingDeal?.totalAreaSqft ?? unit.sqft)?.toString() || "",
+      leaseLength: existingDeal?.leaseLength?.toString() || "",
+      rentFree: existingDeal?.rentFree?.toString() || "",
+      targetDate: existingDeal?.targetDate
+        ? new Date(existingDeal.targetDate).toISOString().slice(0, 10)
+        : "",
+      comments: existingDeal?.comments || `${prop?.name || "Property"} — ${unit.unitName}${unit.floor ? ` (${unit.floor})` : ""}`,
+      amlChecked: existingDeal?.amlCheckCompleted || "",
+      overrideCompliance: false,
     });
+    // Pre-populate the fee-split editor from the deal's existing
+    // allocations when present — otherwise the user gets the default
+    // 85% agent / 15% BGP House split on every reopen and has to
+    // re-type what they already saved. BGP House rows are dropped from
+    // the seed since the editor auto-injects that row itself.
+    const existingAllocs = existingDeal?.id ? allAllocations[existingDeal.id] : null;
+    if (existingAllocs && existingAllocs.length > 0) {
+      const agentRows = existingAllocs
+        .filter(a => !a.isBgpHouse)
+        .map(a => ({
+          agentName: a.agentName,
+          allocationType: (a.allocationType === "fixed" ? "fixed" : "percentage") as "fixed" | "percentage",
+          percentage: a.percentage || 0,
+          fixedAmount: a.fixedAmount || 0,
+        }));
+      setWipFeeRows(agentRows);
+      setWipFeeAllocType((existingAllocs.find(a => !a.isBgpHouse)?.allocationType === "fixed" ? "fixed" : "percentage"));
+    } else {
+      // No existing split — fall back to picked agent at 85%; FeeAllocationEditor
+      // auto-injects BGP House at 15% to make a complete 100%.
+      const initialAgent = (Array.isArray(existingDeal?.internalAgent) && existingDeal.internalAgent[0]) || "";
+      setWipFeeRows(initialAgent ? [{
+        agentName: initialAgent,
+        allocationType: "percentage",
+        percentage: 85,
+        fixedAmount: 0,
+      }] : []);
+      setWipFeeAllocType("percentage");
+    }
     setWipUnit(unit);
   };
 
   const inlineUpdate = (id: string, field: string, value: any) => {
     if (typeof value === "number" && isNaN(value)) value = null;
-    if (field === "marketingStatus" && value === "Under Offer") {
+    // Status → SOL always fires the promotion modal so the user captures the
+    // SOL-handover fields (fee, fee agreement, tenant, lease length, rent free).
+    // Pre-fill comes from the linked deal if it already exists.
+    if (field === "marketingStatus" && legacyToCode(value) === "SOL") {
       const unit = units.find(u => u.id === id);
-      if (unit && !unit.dealId) {
+      if (unit) {
         openWipDialog(unit);
         return;
       }
     }
+    // Server PATCH handler routes master-managed fields (unitName, floor, sqft,
+    // useClass, condition, epcRating) to property_units when unit_id is set.
     updateMutation.mutate({ id, data: { [field]: value } });
+  };
+
+  // Inline "search and set up" — create the CRM record when the typed name
+  // matches nothing, then return it so the cell can link it.
+  const createProperty = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/properties", { name: name.trim() });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+    toast({ title: "Property created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
+  };
+  const createCompany = async (name: string) => {
+    const r = await apiRequest("POST", "/api/crm/companies", { name: name.trim() });
+    const created = await r.json();
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+    toast({ title: "Company created", description: `${created.name} added to CRM.` });
+    return { id: String(created.id), name: created.name };
   };
 
   const uniqueProperties = useMemo(() => {
@@ -614,7 +934,19 @@ export default function AvailableUnitsPage() {
 
   const filtered = useMemo(() => {
     let result = teamUnits;
-    if (statusFilter !== "all") result = result.filter(u => u.marketingStatus === statusFilter);
+    // The Letting Tracker is the marketing pipeline (REP / AVA / NEG). Once a
+    // unit moves to Solicitors it lives on the Deals board; we hide SOL+ from
+    // the default view here so the tracker stays focused. Users can still
+    // click an SOL/EXC/COM pill to drill back in.
+    const PRE_SOL_CODES = new Set(["REP", "SPEC", "LIVE", "AVA", "NEG"]);
+    if (statusFilter !== "all") {
+      result = result.filter(u => legacyToCode(u.marketingStatus) === statusFilter);
+    } else {
+      result = result.filter(u => {
+        const code = legacyToCode(u.marketingStatus) || "AVA";
+        return PRE_SOL_CODES.has(code);
+      });
+    }
     if (propertyFilter !== "all") result = result.filter(u => u.propertyId === propertyFilter);
     if (assetClassFilter !== "all") result = result.filter(u => u.useClass === assetClassFilter);
     if (locationFilter !== "all") result = result.filter(u => u.location === locationFilter);
@@ -622,16 +954,29 @@ export default function AvailableUnitsPage() {
       const q = search.toLowerCase();
       result = result.filter(u => {
         const propName = propertyMap[u.propertyId]?.name || "";
-        return u.unitName.toLowerCase().includes(q) || propName.toLowerCase().includes(q) || (u.floor || "").toLowerCase().includes(q);
+        // Tenant name lives on the linked deal — resolve from dealMap →
+        // crmCompanies. Without this, typing a tenant on the letting
+        // tracker returns nothing.
+        const linkedDeal = u.dealId ? dealMap[u.dealId] : null;
+        const tenantName = linkedDeal?.tenantId
+          ? (crmCompanies.find(c => c.id === linkedDeal.tenantId)?.name || "")
+          : "";
+        return u.unitName.toLowerCase().includes(q)
+          || propName.toLowerCase().includes(q)
+          || (u.floor || "").toLowerCase().includes(q)
+          || tenantName.toLowerCase().includes(q);
       });
     }
     return result;
-  }, [teamUnits, statusFilter, propertyFilter, assetClassFilter, locationFilter, search, propertyMap]);
+  }, [teamUnits, statusFilter, propertyFilter, assetClassFilter, locationFilter, search, propertyMap, dealMap, crmCompanies]);
 
   const stats = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const s of MARKETING_STATUSES) counts[s] = 0;
-    for (const u of teamUnits) counts[u.marketingStatus || "Available"] = (counts[u.marketingStatus || "Available"] || 0) + 1;
+    for (const u of teamUnits) {
+      const code = legacyToCode(u.marketingStatus) || "AVA";
+      counts[code] = (counts[code] || 0) + 1;
+    }
     return counts;
   }, [teamUnits]);
 
@@ -694,95 +1039,84 @@ export default function AvailableUnitsPage() {
 
   return (
     <div className="p-4 md:p-6 space-y-4" data-testid="available-units-page">
-      <div className="flex items-center justify-between">
+      <div className="sticky top-0 z-10 bg-background -mx-4 md:-mx-6 px-4 md:px-6 -mt-4 md:-mt-6 pt-4 md:pt-6 pb-3 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Letting Tracker</h1>
-          <p className="text-sm text-muted-foreground">Shops and spaces to let across leasing instructions</p>
+          <p className="text-sm text-muted-foreground">
+            {teamUnits.length} unit{teamUnits.length !== 1 ? "s" : ""}
+            {isClientTracker && (
+              <span> — live deals in progress: units being marketed, under offer and completing. Updates flow to the Leasing Schedule and back to the Tenancy Schedule.</span>
+            )}
+          </p>
         </div>
-        <Button onClick={() => { setForm(emptyForm); setCreateOpen(true); }} data-testid="button-add-unit">
+        {!isClientTracker && (
+        <Button
+          onClick={() => {
+            // Stage 3b feature flag — when on, the new unified dialog opens
+            // instead of the legacy UnitFormDialog. Old dialog stays code-
+            // present for fallback / Stage 4 cleanup.
+            if (UNIFIED_ADD_UNIT_ENABLED) {
+              setUnifiedAddOpen(true);
+            } else {
+              setForm(emptyForm);
+              setCreateOpen(true);
+            }
+          }}
+          data-testid="button-add-unit"
+        >
           <Plus className="h-4 w-4 mr-1" /> Add Unit
         </Button>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <CalendarDays className="h-4 w-4 text-blue-500" />
-                <span className="text-sm font-semibold">Viewings</span>
-              </div>
-              <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
-            </div>
-            <div className="flex items-end gap-1 h-16">
-              {viewingsMonthly.map((count, i) => {
-                const max = Math.max(...viewingsMonthly, 1);
-                const h = Math.max((count / max) * 100, 4);
-                const now = new Date();
-                const currentMonthIdx = FY_MONTH_NUMS.indexOf(now.getMonth() + 1);
-                return (
-                  <div key={i} className="flex-1 flex flex-col items-center gap-0.5" title={`${FY_MONTHS[i]}: ${count} viewing${count !== 1 ? "s" : ""}`}>
+      {/* Single thin FY activity strip — was two full cards stacked
+          (~240px) with bar charts that were 16px tall and rarely
+          scanned beyond the headline number. Now one row carrying the
+          two totals + tiny sparkline of monthly counts. */}
+      {!isMobile && (
+      <Card>
+        <CardContent className="px-4 py-2.5 flex items-center gap-6 flex-wrap">
+          <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
+          {([
+            { label: "Viewings", icon: CalendarDays, data: viewingsMonthly, colour: "bg-blue-500", dim: "bg-blue-200 dark:bg-blue-800" },
+            { label: "Offers",   icon: HandCoins,    data: offersMonthly,   colour: "bg-amber-500", dim: "bg-amber-200 dark:bg-amber-800" },
+          ] as const).map(({ label, icon: Icon, data, colour, dim }) => {
+            const total = data.reduce((a, b) => a + b, 0);
+            const max = Math.max(...data, 1);
+            const currentMonthIdx = FY_MONTH_NUMS.indexOf(new Date().getMonth() + 1);
+            return (
+              <div key={label} className="flex items-center gap-2.5">
+                <Icon className={`h-3.5 w-3.5 ${label === "Viewings" ? "text-blue-500" : "text-amber-500"}`} />
+                <span className="text-xs font-semibold">{label}</span>
+                <span className="text-sm font-bold tabular-nums">{total}</span>
+                <div className="flex items-end gap-[2px] h-5" title={data.map((c, i) => `${FY_MONTHS[i]}: ${c}`).join(" · ")}>
+                  {data.map((count, i) => (
                     <div
-                      className={`w-full rounded-t transition-all ${i === currentMonthIdx ? "bg-blue-500" : count > 0 ? "bg-blue-300 dark:bg-blue-700" : "bg-muted"}`}
-                      style={{ height: `${h}%` }}
+                      key={i}
+                      className={`w-[6px] rounded-sm ${count > 0 ? (i === currentMonthIdx ? colour : dim) : "bg-muted"}`}
+                      style={{ height: `${Math.max((count / max) * 100, 8)}%` }}
                     />
-                    <span className="text-[9px] text-muted-foreground leading-none">{FY_MONTHS[i]}</span>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex items-center justify-between mt-2 pt-2 border-t">
-              <span className="text-xs text-muted-foreground">Total this FY</span>
-              <span className="text-sm font-bold">{viewingsMonthly.reduce((a, b) => a + b, 0)}</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <HandCoins className="h-4 w-4 text-amber-500" />
-                <span className="text-sm font-semibold">Offers</span>
+                  ))}
+                </div>
               </div>
-              <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
-            </div>
-            <div className="flex items-end gap-1 h-16">
-              {offersMonthly.map((count, i) => {
-                const max = Math.max(...offersMonthly, 1);
-                const h = Math.max((count / max) * 100, 4);
-                const now = new Date();
-                const currentMonthIdx = FY_MONTH_NUMS.indexOf(now.getMonth() + 1);
-                return (
-                  <div key={i} className="flex-1 flex flex-col items-center gap-0.5" title={`${FY_MONTHS[i]}: ${count} offer${count !== 1 ? "s" : ""}`}>
-                    <div
-                      className={`w-full rounded-t transition-all ${i === currentMonthIdx ? "bg-amber-500" : count > 0 ? "bg-amber-300 dark:bg-amber-700" : "bg-muted"}`}
-                      style={{ height: `${h}%` }}
-                    />
-                    <span className="text-[9px] text-muted-foreground leading-none">{FY_MONTHS[i]}</span>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex items-center justify-between mt-2 pt-2 border-t">
-              <span className="text-xs text-muted-foreground">Total this FY</span>
-              <span className="text-sm font-bold">{offersMonthly.reduce((a, b) => a + b, 0)}</span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+      )}
 
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search units..."
+            placeholder="Search units, property or tenant..."
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="pl-9"
             data-testid="input-search-units"
           />
         </div>
+        {!isMobile && (<>
         <Select value={propertyFilter} onValueChange={setPropertyFilter}>
           <SelectTrigger className="w-[220px]" data-testid="select-property-filter">
             <SelectValue placeholder="All Properties" />
@@ -810,21 +1144,10 @@ export default function AvailableUnitsPage() {
             ))}
           </SelectContent>
         </Select>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {MARKETING_STATUSES.map(s => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
-              className={`${STATUS_LABEL_COLORS[s]} text-white text-[11px] font-medium px-2.5 py-1 rounded-full transition-all whitespace-nowrap ${
-                statusFilter === s ? "ring-2 ring-primary ring-offset-1 scale-105" : statusFilter !== "all" ? "opacity-40" : "hover:opacity-90"
-              }`}
-              data-testid={`filter-status-${s.toLowerCase().replace(/\s/g, "-")}`}
-            >
-              {s}
-              {statusFilter === s && <X className="inline h-3 w-3 ml-1 -mr-0.5" />}
-            </button>
-          ))}
-        </div>
+        {/* Pill row removed — the status cards directly underneath
+            already act as filter buttons (same setStatusFilter call)
+            and carry counts too, so this row was duplicated UI. The
+            cards now own status filtering on this page. */}
         {activeAssetClasses.length > 0 && (
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-xs text-muted-foreground mr-0.5">Class:</span>
@@ -843,26 +1166,46 @@ export default function AvailableUnitsPage() {
             ))}
           </div>
         )}
+        </>)}
       </div>
 
       {/* KPI stat cards — matching Investment Tracker style */}
+      {isMobile ? (
+        <div className="flex flex-wrap gap-1.5">
+          {MARKETING_STATUSES.map(s => {
+            const count = teamUnits.filter(u => legacyToCode(u.marketingStatus) === s).length;
+            return (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${statusFilter === s ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
+                data-testid={`stat-chip-${s.toLowerCase()}`}
+              >
+                <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
+                {DEAL_STATUS_LABELS[s]}
+                <span className="font-bold tabular-nums">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
       <ScrollArea className="w-full">
         <div className="flex items-center gap-3 pb-1">
           {MARKETING_STATUSES.map(s => {
-            const count = teamUnits.filter(u => u.marketingStatus === s).length;
+            const count = teamUnits.filter(u => legacyToCode(u.marketingStatus) === s).length;
             return (
               <Card
                 key={s}
                 className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${statusFilter === s ? "border-primary" : ""}`}
                 onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
-                data-testid={`stat-card-${s.toLowerCase().replace(/\s/g, "-")}`}
+                data-testid={`stat-card-${s.toLowerCase()}`}
               >
                 <CardContent className="p-3">
                   <div className="flex items-center gap-2">
                     <div className={`w-2.5 h-2.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
                     <div>
                       <p className="text-lg font-bold">{count}</p>
-                      <p className="text-xs text-muted-foreground">{s}</p>
+                      <p className="text-xs text-muted-foreground">{DEAL_STATUS_LABELS[s]}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -871,6 +1214,7 @@ export default function AvailableUnitsPage() {
           })}
         </div>
       </ScrollArea>
+      )}
 
       {selectedIds.size > 0 && (
         <div className="flex items-center gap-3 rounded-md border bg-background px-4 py-2 shadow-sm">
@@ -886,14 +1230,19 @@ export default function AvailableUnitsPage() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
-              {MARKETING_STATUSES.map(s => (
+              {/* SOL is excluded from bulk — flipping to Solicitors needs
+                  the WIP-capture modal (tenant, landlord, fee split,
+                  AML check) that the inline per-row path runs. Bulk
+                  flipping skipped all of that and let deals land in
+                  SOL with no counterparties. */}
+              {MARKETING_STATUSES.filter(s => s !== "SOL").map(s => (
                 <DropdownMenuItem
                   key={s}
                   onClick={() => bulkStatusMutation.mutate({ ids: Array.from(selectedIds), status: s })}
-                  data-testid={`bulk-status-${s.toLowerCase().replace(/\s/g, "-")}`}
+                  data-testid={`bulk-status-${s.toLowerCase()}`}
                 >
                   <span className={`w-2 h-2 rounded-full mr-2 ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
-                  {s}
+                  {DEAL_STATUS_LABELS[s]}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
@@ -904,8 +1253,78 @@ export default function AvailableUnitsPage() {
         </div>
       )}
 
+      {isMobile && (
+        filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 gap-2 text-muted-foreground">
+            <Store className="h-8 w-8 opacity-40" />
+            <p className="text-sm">{teamUnits.length === 0 ? "No available units yet" : "No units match filters"}</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 pb-2">
+            {filtered.map(u => {
+              const prop = propertyMap[u.propertyId];
+              const deal = u.dealId ? dealMap[u.dealId] : null;
+              const code = legacyToCode(u.marketingStatus) || "AVA";
+              const tenant = deal?.tenantId ? companyMap[deal.tenantId] : null;
+              const rent = deal?.rentPa ?? (u as any).askingRent;
+              const size = deal?.totalAreaSqft ?? u.sqft;
+              const vCount = viewingsCounts[u.id] || 0;
+              const oCount = offersCounts[u.id] || 0;
+              const rows = [
+                { label: "Area", value: size ? `${Number(size).toLocaleString()} sq ft` : null },
+                { label: "Tenant", value: tenant },
+                { label: "Rent p.a.", value: rent ? `£${Number(rent).toLocaleString()}` : null },
+              ].filter(r => r.value);
+              return (
+                <div key={u.id} className="rounded-xl border bg-card p-4 space-y-3 shadow-sm" data-testid={`mobile-unit-${u.id}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <span className="text-sm font-semibold leading-tight block truncate">{prop?.name || u.unitName || "Unit"}</span>
+                      {(u.unitName || u.floor) && (
+                        <p className="text-xs text-muted-foreground truncate mt-0.5">{[u.unitName, u.floor].filter(Boolean).join(" · ")}</p>
+                      )}
+                    </div>
+                    <Badge variant="secondary" className="shrink-0 text-[10px] px-2 py-0.5 gap-1.5">
+                      <span className={`inline-block w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[code] || "bg-gray-400"}`} />
+                      {DEAL_STATUS_LABELS[code] || code}
+                    </Badge>
+                  </div>
+                  {rows.length > 0 && (
+                    <div className="space-y-1.5">
+                      {rows.map((r, i) => (
+                        <div key={i} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-muted-foreground shrink-0">{r.label}</span>
+                          <span className="font-medium truncate text-right">{String(r.value)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Tenant-demand actions: View (brochure/details), log a
+                      viewing, register an interested tenant + comment, edit. */}
+                  <div className="flex items-center flex-wrap gap-1 pt-2 border-t">
+                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => setFilesUnit(u)} data-testid={`unit-view-${u.id}`}>
+                      <Eye className="w-3.5 h-3.5" /> Brochure
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setViewingsUnit(u); setAddViewingOpen(true); }} data-testid={`unit-viewing-${u.id}`}>
+                      <CalendarDays className="w-3.5 h-3.5" /> Viewing{vCount ? ` (${vCount})` : ""}
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setOffersUnit(u); setAddOfferOpen(true); }} data-testid={`unit-interest-${u.id}`}>
+                      <HandCoins className="w-3.5 h-3.5" /> Interest{oCount ? ` (${oCount})` : ""}
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null)); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
+                      <Pencil className="w-3.5 h-3.5" /> Edit
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )
+      )}
+
+      {!isMobile && (
       <Card>
-        <ScrollableTable minWidth={1800}>
+        <ScrollableTable minWidth={2600}>
           <Table>
             <TableHeader>
               <TableRow>
@@ -920,32 +1339,26 @@ export default function AvailableUnitsPage() {
                     data-testid="checkbox-select-all-units"
                   />
                 </TableHead>
-                <TableHead className="w-10 px-1"><Star className="w-3.5 h-3.5 text-muted-foreground" /></TableHead>
-                <TableHead className="w-[180px]">Property</TableHead>
-                <TableHead className="w-[140px]">Unit</TableHead>
-                <TableHead>Floor</TableHead>
-                <TableHead className="text-right">Sq Ft</TableHead>
-                <TableHead className="text-right">Asking Rent</TableHead>
-                <TableHead className="text-right">Rates p.a.</TableHead>
-                <TableHead className="text-right">SC p.a.</TableHead>
-                <TableHead>Asset Class</TableHead>
-                <TableHead>Location</TableHead>
-                <TableHead>Condition</TableHead>
-                <TableHead>EPC</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-center">Viewings</TableHead>
-                <TableHead className="text-center">Offers</TableHead>
-                <TableHead className="text-right">Fee</TableHead>
-                <TableHead>Agent</TableHead>
-                <TableHead>WIP Deal</TableHead>
-                <TableHead>Marketing</TableHead>
-                <TableHead className="w-[100px]">Actions</TableHead>
+                <TableHead className="w-[50px]">Ref</TableHead>
+                <TableHead className="min-w-[200px]">Property / Unit</TableHead>
+                <TableHead className="w-[120px]">Deal Type</TableHead>
+                <TableHead className="w-[140px]">Client</TableHead>
+                <TableHead className="w-[140px]">Tenant</TableHead>
+                <TableHead className="w-[160px]">Team / BGP</TableHead>
+                <TableHead className="min-w-[140px]">Floor Areas</TableHead>
+                <TableHead className="min-w-[120px] text-right">Costs</TableHead>
+                <TableHead className="min-w-[110px]">Class / Cond</TableHead>
+                <TableHead>Deal Status</TableHead>
+                <TableHead className="text-center min-w-[100px]">Activity</TableHead>
+                <TableHead className="min-w-[120px]">Fee &amp; FA</TableHead>
+                <TableHead>Files</TableHead>
+                <TableHead className="w-[100px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={20} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={15} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -970,182 +1383,318 @@ export default function AvailableUnitsPage() {
                           data-testid={`checkbox-unit-${u.id}`}
                         />
                       </TableCell>
-                      <TableCell className="px-1">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); toggleFavoriteMutation.mutate(u.propertyId); }}
-                          className="p-1 hover:bg-muted rounded transition-colors"
-                          data-testid={`star-unit-${u.id}`}
-                          title={favoriteIds.includes(u.propertyId) ? "Remove from dashboard" : "Pin to dashboard"}
-                        >
-                          <Star className={`w-4 h-4 ${favoriteIds.includes(u.propertyId) ? "text-amber-500 fill-amber-500" : "text-muted-foreground/40 hover:text-amber-400"}`} />
-                        </button>
+                      <TableCell className="text-xs font-mono text-muted-foreground">
+                        {deal?.dealRef ? (
+                          <div className="flex items-center gap-1.5">
+                            <a
+                              href={`/deals/${deal.id}`}
+                              className="text-blue-600 hover:underline"
+                              title={`Open deal ${deal.dealRef}`}
+                              data-testid={`link-deal-ref-${u.id}`}
+                            >
+                              #{deal.dealRef}
+                            </a>
+                            {(() => {
+                              const amlOk = deal.amlCheckCompleted === "YES" || deal.amlCheckCompleted === "N-A";
+                              const feeOk = deal.feeAgreement === "YES";
+                              const code = legacyToCode(deal.status);
+                              // Only flag for deals on/past SOL — pre-SOL the fields don't matter yet.
+                              const promoted = code === "SOL" || code === "EXC" || code === "COM" || code === "INV";
+                              if (!promoted) return null;
+                              if (amlOk && feeOk) return null;
+                              return (
+                                <span
+                                  className="inline-block w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0"
+                                  title={`Compliance gap: ${[!amlOk && "AML", !feeOk && "Fee agreement"].filter(Boolean).join(" + ")}`}
+                                  data-testid={`compliance-flag-${u.id}`}
+                                />
+                              );
+                            })()}
+                          </div>
+                        ) : "—"}
                       </TableCell>
-                      <TableCell className="font-medium max-w-[180px] truncate" title={prop?.name}>
-                        <a href={`/properties/${u.propertyId}`} className="text-blue-600 hover:underline dark:text-blue-400" data-testid={`link-property-${u.id}`}>
-                          {prop?.name || u.propertyId}
-                        </a>
+                      <TableCell className="px-1.5 py-1 max-w-[220px]">
+                        <div className="flex flex-col gap-0.5">
+                          <div className="text-sm font-medium truncate">
+                            <InlineLinkSelect
+                              value={u.propertyId}
+                              options={properties.map(p => ({ id: p.id, name: p.name }))}
+                              href={`/properties/${u.propertyId}`}
+                              onSave={(v) => inlineUpdate(u.id, "propertyId", v || null)}
+                              onCreate={async (name) => { const c = await createProperty(name); inlineUpdate(u.id, "propertyId", c.id); }}
+                              placeholder="Link property"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <InlineText
+                              value={u.unitName}
+                              onSave={(v) => inlineUpdate(u.id, "unitName", v)}
+                              placeholder="Unit name"
+                              className="text-xs"
+                            />
+                            <span className="text-[9px] opacity-60">·</span>
+                            <InlineSelect
+                              value={u.floor || ""}
+                              options={FLOORS}
+                              onSave={v => inlineUpdate(u.id, "floor", v)}
+                            />
+                          </div>
+                        </div>
                       </TableCell>
-                      <TableCell>
-                        <InlineText
-                          value={u.unitName}
-                          onSave={v => inlineUpdate(u.id, "unitName", v)}
-                          data-testid={`inline-unit-name-${u.id}`}
-                        />
+                      <TableCell className="px-1.5">
+                        {deal ? (
+                          <InlineLabelSelect
+                            value={deal.dealType}
+                            options={CRM_OPTIONS.dealType}
+                            colorMap={DEAL_TYPE_COLORS}
+                            onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "dealType", value: v || null })}
+                          />
+                        ) : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell>
-                        <InlineSelect
-                          value={u.floor || ""}
-                          options={FLOORS}
-                          onSave={v => inlineUpdate(u.id, "floor", v)}
-                        />
+                      <TableCell className="px-1.5 max-w-[140px]">
+                        {deal ? (() => {
+                          const isTenantRep = (deal.dealType || "").toLowerCase().includes("tenant rep");
+                          const field = isTenantRep ? "tenantId" : "landlordId";
+                          const value = isTenantRep ? deal.tenantId : deal.landlordId;
+                          return (
+                            <InlineLinkSelect
+                              value={value}
+                              options={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                              href={value ? `/companies/${value}` : undefined}
+                              onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field, value: v || null })}
+                              onCreate={async (name) => { const c = await createCompany(name); dealInlineUpdate.mutate({ id: deal.id, field, value: c.id }); }}
+                              placeholder="Link client"
+                            />
+                          );
+                        })() : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell className="text-right">
-                        <InlineNumber
-                          value={u.sqft}
-                          onSave={v => inlineUpdate(u.id, "sqft", v)}
-                          placeholder="—"
-                          className="text-right"
-                        />
+                      <TableCell className="px-1.5 max-w-[140px]">
+                        {deal ? (
+                          <InlineLinkSelect
+                            value={deal.tenantId}
+                            options={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                            href={deal.tenantId ? `/companies/${deal.tenantId}` : undefined}
+                            onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "tenantId", value: v || null })}
+                            onCreate={async (name) => { const c = await createCompany(name); dealInlineUpdate.mutate({ id: deal.id, field: "tenantId", value: c.id }); }}
+                            placeholder="Link tenant"
+                          />
+                        ) : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell className="text-right">
-                        <InlineNumber
-                          value={u.askingRent}
-                          onSave={v => inlineUpdate(u.id, "askingRent", v)}
-                          placeholder="—"
-                          className="text-right"
-                          prefix="£"
-                        />
+                      <TableCell className="px-1.5 max-w-[180px]">
+                        <div className="space-y-1">
+                          {deal ? (
+                            <InlineMultiSelect
+                              value={deal.team || []}
+                              options={CRM_OPTIONS.dealTeam.map(t => ({ label: t, value: t }))}
+                              colorMap={DEAL_TEAM_COLORS}
+                              placeholder="Set team"
+                              onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "team", value: v.length > 0 ? v : null })}
+                            />
+                          ) : <span className="text-xs text-muted-foreground italic">No team</span>}
+                          <InlineMultiSelect
+                            value={Array.isArray(u.agentUserIds) ? u.agentUserIds : []}
+                            options={agentOptions}
+                            onSave={v => inlineUpdate(u.id, "agentUserIds", v)}
+                            placeholder="Set agent"
+                            testId={`inline-agent-${u.id}`}
+                          />
+                        </div>
                       </TableCell>
-                      <TableCell className="text-right">
-                        <InlineNumber
-                          value={u.ratesPa}
-                          onSave={v => inlineUpdate(u.id, "ratesPa", v)}
-                          placeholder="—"
-                          className="text-right"
-                          prefix="£"
-                        />
+                      <TableCell className="px-1.5 py-1">
+                        <div className="space-y-0.5">
+                          {deal ? (
+                            [
+                              { label: "GF", value: deal.gfAreaSqft, field: "gfAreaSqft", show: true },
+                              { label: "FF", value: deal.ffAreaSqft, field: "ffAreaSqft", show: true },
+                              { label: "Bsmt", value: deal.basementAreaSqft, field: "basementAreaSqft", show: true },
+                              { label: "ITZA", value: deal.itzaAreaSqft, field: "itzaAreaSqft", show: isRetailAssetClass(deal.assetClass) },
+                              { label: deal.areaBasis || areaBasisFromAssetClass(deal.assetClass), value: deal.totalAreaSqft, field: "totalAreaSqft", show: true },
+                            ].filter(r => r.show).map(({ label, value, field }) => (
+                              <div key={field} className="flex items-center gap-1.5">
+                                <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-7 shrink-0">{label}</span>
+                                <InlineNumber
+                                  value={value}
+                                  onSave={v => {
+                                    dealInlineUpdate.mutate({ id: deal.id, field, value: v });
+                                    // Auto-sum GF+FF+Bsmt into Total (mirrors Deals board logic)
+                                    if (field === "gfAreaSqft" || field === "ffAreaSqft" || field === "basementAreaSqft") {
+                                      const gf = field === "gfAreaSqft" ? (v || 0) : (deal.gfAreaSqft || 0);
+                                      const ff = field === "ffAreaSqft" ? (v || 0) : (deal.ffAreaSqft || 0);
+                                      const bsmt = field === "basementAreaSqft" ? (v || 0) : (deal.basementAreaSqft || 0);
+                                      const total = gf + ff + bsmt || null;
+                                      dealInlineUpdate.mutate({ id: deal.id, field: "totalAreaSqft", value: total });
+                                      inlineUpdate(u.id, "sqft", total);
+                                    }
+                                    if (field === "totalAreaSqft") inlineUpdate(u.id, "sqft", v);
+                                  }}
+                                  suffix=" sf"
+                                  className="text-xs"
+                                />
+                              </div>
+                            ))
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-7 shrink-0">Total</span>
+                              <InlineNumber
+                                value={u.sqft}
+                                onSave={v => inlineUpdate(u.id, "sqft", v)}
+                                suffix=" sf"
+                                className="text-xs"
+                              />
+                            </div>
+                          )}
+                        </div>
                       </TableCell>
-                      <TableCell className="text-right">
-                        <InlineNumber
-                          value={u.serviceChargePa}
-                          onSave={v => inlineUpdate(u.id, "serviceChargePa", v)}
-                          placeholder="—"
-                          className="text-right"
-                          prefix="£"
-                        />
+                      <TableCell className="px-1.5 py-1 text-right">
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <button
+                              type="button"
+                              className="w-full text-right flex flex-col gap-0.5 px-1 py-0.5 hover:bg-accent rounded text-xs"
+                              data-testid={`costs-cell-${u.id}`}
+                            >
+                              {[
+                                { label: "Rent", value: u.askingRent },
+                                { label: "Rates", value: u.ratesPa },
+                                { label: "SC",    value: u.serviceChargePa },
+                              ].filter(r => r.value != null).length === 0 ? (
+                                <span className="text-muted-foreground text-[11px] flex items-center gap-1 justify-end">
+                                  <Plus className="w-3 h-3" /> Add costs
+                                </span>
+                              ) : (
+                                [
+                                  { label: "Rent",  value: u.askingRent },
+                                  { label: "Rates", value: u.ratesPa },
+                                  { label: "SC",    value: u.serviceChargePa },
+                                ].filter(r => r.value != null).map(r => (
+                                  <div key={r.label} className="flex items-center gap-1 justify-end">
+                                    <span className="text-[9px] uppercase text-muted-foreground tracking-wide shrink-0">{r.label}</span>
+                                    <span className="font-mono text-[11px]">£{Number(r.value).toLocaleString("en-GB")}</span>
+                                  </div>
+                                ))
+                              )}
+                            </button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[280px] p-3 space-y-2.5" align="end">
+                            <p className="text-xs font-semibold">Costs</p>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Quoting Rent</Label>
+                              <InlineNumber value={u.askingRent} onSave={v => inlineUpdate(u.id, "askingRent", v)} prefix="£" />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Rates p.a.</Label>
+                              <InlineNumber value={u.ratesPa} onSave={v => inlineUpdate(u.id, "ratesPa", v)} prefix="£" />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">SC p.a.</Label>
+                              <InlineNumber value={u.serviceChargePa} onSave={v => inlineUpdate(u.id, "serviceChargePa", v)} prefix="£" />
+                            </div>
+                          </PopoverContent>
+                        </Popover>
+                      </TableCell>
+                      <TableCell className="px-1.5 py-1 max-w-[140px]">
+                        <div className="space-y-1">
+                          <InlineLabelSelect
+                            value={u.useClass || ""}
+                            options={USE_CLASSES}
+                            colorMap={ASSET_CLASS_COLORS}
+                            onSave={v => inlineUpdate(u.id, "useClass", v)}
+                            placeholder="Set class"
+                          />
+                          <InlineSelect
+                            value={u.condition || ""}
+                            options={CONDITIONS}
+                            onSave={v => inlineUpdate(u.id, "condition", v)}
+                          />
+                        </div>
                       </TableCell>
                       <TableCell>
                         <InlineLabelSelect
-                          value={u.useClass || ""}
-                          options={USE_CLASSES}
-                          colorMap={ASSET_CLASS_COLORS}
-                          onSave={v => inlineUpdate(u.id, "useClass", v)}
-                          placeholder="Set class"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <InlineLabelSelect
-                          value={u.location || ""}
-                          options={LOCATIONS}
-                          colorMap={LOCATION_COLORS}
-                          onSave={v => inlineUpdate(u.id, "location", v)}
-                          placeholder="Set location"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <InlineSelect
-                          value={u.condition || ""}
-                          options={CONDITIONS}
-                          onSave={v => inlineUpdate(u.id, "condition", v)}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <InlineSelect
-                          value={u.epcRating || ""}
-                          options={EPC_RATINGS}
-                          onSave={v => inlineUpdate(u.id, "epcRating", v)}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <InlineLabelSelect
-                          value={u.marketingStatus || "Available"}
+                          value={legacyToCode(u.marketingStatus) || "AVA"}
                           options={MARKETING_STATUSES}
                           colorMap={STATUS_LABEL_COLORS}
-                          onSave={v => inlineUpdate(u.id, "marketingStatus", v || "Available")}
+                          labelMap={DEAL_STATUS_LABELS}
+                          onSave={v => inlineUpdate(u.id, "marketingStatus", v || "AVA")}
                           allowClear={false}
                         />
                       </TableCell>
                       <TableCell className="text-center">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs gap-1"
-                          onClick={() => setViewingsUnit(u)}
-                          data-testid={`button-viewings-${u.id}`}
-                        >
-                          <CalendarDays className="h-3.5 w-3.5" />
-                          {viewingsCounts[u.id] || 0}
-                        </Button>
+                        <div className="flex items-center justify-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs gap-1"
+                            onClick={() => setViewingsUnit(u)}
+                            title="Viewings"
+                            data-testid={`button-viewings-${u.id}`}
+                          >
+                            <CalendarDays className="h-3.5 w-3.5" />
+                            {viewingsCounts[u.id] || 0}
+                          </Button>
+                          <span className="text-[9px] text-muted-foreground/60">·</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs gap-1"
+                            onClick={() => setOffersUnit(u)}
+                            title="Offers"
+                            data-testid={`button-offers-${u.id}`}
+                          >
+                            <HandCoins className="h-3.5 w-3.5" />
+                            {offersCounts[u.id] || 0}
+                          </Button>
+                        </div>
                       </TableCell>
-                      <TableCell className="text-center">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs gap-1"
-                          onClick={() => setOffersUnit(u)}
-                          data-testid={`button-offers-${u.id}`}
-                        >
-                          <HandCoins className="h-3.5 w-3.5" />
-                          {offersCounts[u.id] || 0}
-                        </Button>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <InlineNumber
-                          value={u.fee}
-                          onSave={v => inlineUpdate(u.id, "fee", v)}
-                          placeholder="—"
-                          className="text-right"
-                          prefix="£"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <InlineMultiSelect
-                          value={Array.isArray(u.agentUserIds) ? u.agentUserIds : []}
-                          options={agentOptions}
-                          onSave={v => inlineUpdate(u.id, "agentUserIds", v)}
-                          placeholder="Set agent"
-                          testId={`inline-agent-${u.id}`}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        {deal ? (
-                          <a href={`/deals/${deal.id}`} className="text-xs text-blue-600 hover:underline" data-testid={`link-deal-${u.id}`}>
-                            {deal.name || "View Deal"}
-                          </a>
-                        ) : (
-                          <div className="flex gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 px-1 text-xs"
-                              onClick={() => { setLinkDealOpen(u); setLinkDealId(""); }}
-                              title="Link existing deal"
-                              data-testid={`button-link-deal-${u.id}`}
-                            >
-                              <Link2 className="h-3 w-3" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 px-1 text-xs"
-                              onClick={() => createDealMutation.mutate(u.id)}
-                              title="Auto-create deal"
-                              data-testid={`button-create-deal-${u.id}`}
-                            >
-                              <ArrowRightLeft className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        )}
+                      <TableCell className="px-1.5 py-1 max-w-[150px]">
+                        <div className="space-y-0.5">
+                          <InlineNumber
+                            value={u.fee}
+                            onSave={v => inlineUpdate(u.id, "fee", v)}
+                            placeholder="—"
+                            prefix="£"
+                          />
+                          {deal ? (
+                            deal.feeAgreementUrl ? (
+                              <div className="flex items-center gap-1">
+                                <a
+                                  href={deal.feeAgreementUrl.startsWith("http") ? deal.feeAgreementUrl : `https://${deal.feeAgreementUrl}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-[11px] text-green-700 hover:underline"
+                                  title="Open fee agreement"
+                                >
+                                  <FileBadge className="h-3 w-3" />
+                                  FA signed
+                                </a>
+                                <button
+                                  className="text-[10px] text-muted-foreground hover:text-foreground"
+                                  title="Change URL"
+                                  onClick={() => {
+                                    const url = window.prompt("Fee agreement URL:", deal.feeAgreementUrl || "");
+                                    if (url !== null) dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreementUrl", value: url || null });
+                                  }}
+                                >✎</button>
+                              </div>
+                            ) : (
+                              <button
+                                className="inline-flex items-center gap-1 text-[11px] text-red-600 hover:text-red-800"
+                                title="No fee agreement on file — click to add link"
+                                onClick={() => {
+                                  const url = window.prompt("Paste fee agreement URL (SharePoint / OneDrive link):");
+                                  if (url) {
+                                    dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreementUrl", value: url });
+                                    dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreement", value: "YES" });
+                                  }
+                                }}
+                              >
+                                <AlertTriangle className="h-3 w-3" />
+                                FA missing
+                              </button>
+                            )
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground italic">FA n/a</span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <Button
@@ -1159,7 +1708,7 @@ export default function AvailableUnitsPage() {
                           Files
                         </Button>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className={`sticky right-0 z-10 border-l ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
                         <div className="flex gap-1">
                           <Button
                             variant="ghost"
@@ -1175,7 +1724,7 @@ export default function AvailableUnitsPage() {
                             variant="ghost"
                             size="sm"
                             className="h-7 w-7 p-0"
-                            onClick={() => { setForm(unitToForm(u)); setEditItem(u); }}
+                            onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null)); setEditItem(u); }}
                             data-testid={`button-edit-${u.id}`}
                           >
                             <Pencil className="h-3.5 w-3.5" />
@@ -1199,29 +1748,58 @@ export default function AvailableUnitsPage() {
           </Table>
         </ScrollableTable>
       </Card>
+      )}
+
+      {/* Stage 3b — unified Add-Unit dialog (behind VITE_UNIFIED_ADD_UNIT). */}
+      <UnifiedAddUnitDialog
+        open={unifiedAddOpen}
+        onOpenChange={setUnifiedAddOpen}
+        mode="tracker"
+      />
 
       <UnitFormDialog
         open={createOpen}
-        onOpenChange={setCreateOpen}
+        onOpenChange={(v) => {
+          setCreateOpen(v);
+          if (!v) { setForm(emptyForm); setUnitFeeRows([]); setUnitFeeAllocType("percentage"); setShowAllUnitFields(false); }
+        }}
         title="Add Available Unit"
         form={form}
         setForm={setForm}
         properties={properties}
+        propertyUnits={propertyUnits}
         bgpUsers={bgpUsers}
-        onSubmit={() => createMutation.mutate(formToPayload(form))}
+        feeRows={unitFeeRows}
+        setFeeRows={setUnitFeeRows}
+        feeAllocType={unitFeeAllocType}
+        setFeeAllocType={setUnitFeeAllocType}
+        crmCompanies={crmCompanies}
+        showAllFields={showAllUnitFields}
+        setShowAllFields={setShowAllUnitFields}
+        onSubmit={() => createMutation.mutate({ data: formToPayload(form), feeRows: unitFeeRows, feeAllocType: unitFeeAllocType })}
         isPending={createMutation.isPending}
+        isEdit={false}
       />
 
       <UnitFormDialog
         open={!!editItem}
-        onOpenChange={v => { if (!v) setEditItem(null); }}
+        onOpenChange={v => { if (!v) { setEditItem(null); setForm(emptyForm); } }}
         title="Edit Unit"
         form={form}
         setForm={setForm}
         properties={properties}
+        propertyUnits={propertyUnits}
         bgpUsers={bgpUsers}
+        feeRows={unitFeeRows}
+        setFeeRows={setUnitFeeRows}
+        feeAllocType={unitFeeAllocType}
+        setFeeAllocType={setUnitFeeAllocType}
+        crmCompanies={crmCompanies}
+        showAllFields={true}
+        setShowAllFields={setShowAllUnitFields}
         onSubmit={() => editItem && updateMutation.mutate({ id: editItem.id, data: formToPayload(form) })}
         isPending={updateMutation.isPending}
+        isEdit={true}
       />
 
       <Dialog open={!!deleteItem} onOpenChange={v => { if (!v) setDeleteItem(null); }}>
@@ -1295,12 +1873,17 @@ export default function AvailableUnitsPage() {
       <Dialog open={!!wipUnit} onOpenChange={v => { if (!v) setWipUnit(null); }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Create WIP Deal — Under Offer</DialogTitle>
+            <DialogTitle>Promote to Solicitors</DialogTitle>
             <DialogDescription>
               {wipUnit ? `${propertyMap[wipUnit.propertyId]?.name || "Property"} — ${wipUnit.unitName}` : ""}
               . Fill in the deal details below.
             </DialogDescription>
           </DialogHeader>
+          {wipUnit && (
+            <div className="pb-2">
+              <PropertyPlanningCard propertyId={wipUnit.propertyId} compact />
+            </div>
+          )}
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -1308,7 +1891,7 @@ export default function AvailableUnitsPage() {
                 <Select value={wipForm.dealType} onValueChange={v => setWipForm(f => ({ ...f, dealType: v }))}>
                   <SelectTrigger data-testid="wip-deal-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {["Letting", "Acquisition", "Sale", "Lease Renewal", "Rent Review"].map(t => (
+                    {["New Letting", "Temp Lease", "Lease Acquisition", "Sale", "Lease Renewal", "Rent Review"].map(t => (
                       <SelectItem key={t} value={t}>{t}</SelectItem>
                     ))}
                   </SelectContent>
@@ -1319,38 +1902,138 @@ export default function AvailableUnitsPage() {
                 <Select value={wipForm.team[0] || ""} onValueChange={v => setWipForm(f => ({ ...f, team: v ? [v] : [] }))}>
                   <SelectTrigger data-testid="wip-team"><SelectValue placeholder="Select team" /></SelectTrigger>
                   <SelectContent>
-                    {["London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office / Corporate", "Landsec"].map(t => (
+                    {CRM_OPTIONS.dealTeam.map(t => (
                       <SelectItem key={t} value={t}>{t}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs mb-1">Agent</Label>
-                <Select value={wipForm.agent} onValueChange={v => setWipForm(f => ({ ...f, agent: v }))}>
-                  <SelectTrigger data-testid="wip-agent"><SelectValue placeholder="Select agent" /></SelectTrigger>
-                  <SelectContent>
-                    {bgpUsers.map(u => (
-                      <SelectItem key={u.id} value={u.name}>{u.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs mb-1">Tenant / Applicant</Label>
-                <Input
-                  value={wipForm.tenantName}
-                  onChange={e => setWipForm(f => ({ ...f, tenantName: e.target.value }))}
-                  placeholder="Tenant name"
-                  data-testid="wip-tenant"
-                />
-              </div>
+            <div>
+              <Label className="text-xs mb-1">Agent *</Label>
+              <Select
+                value={wipForm.agent}
+                onValueChange={v => setWipForm(f => {
+                  // Auto-grab the agent's team so the user doesn't have
+                  // to set both fields. Only fills when the team is
+                  // currently empty — keep an existing override intact.
+                  const picked = bgpUsers.find(u => u.name === v);
+                  const teamFromUser = picked?.team;
+                  return {
+                    ...f,
+                    agent: v,
+                    team: (f.team.length > 0 || !teamFromUser) ? f.team : [teamFromUser],
+                  };
+                })}
+              >
+                <SelectTrigger data-testid="wip-agent"><SelectValue placeholder="Select agent" /></SelectTrigger>
+                <SelectContent>
+                  {bgpUsers.map(u => (
+                    <SelectItem key={u.id} value={u.name}>{u.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
+
+            {/* Contracting entities — required at SOL so AML fires on
+                a real company link, not a name string. Landlord is
+                derived from the property (read-only); tenant is the
+                applicant the agent is contracting with. Both sides
+                also need a Xero billing entity for invoicing. */}
+            {wipUnit && (() => {
+              const prop = propertyMap[wipUnit.propertyId];
+              const landlordBrand = prop?.landlordId ? crmCompanies.find(c => c.id === prop.landlordId) : null;
+              const tenantOptions = crmCompanies.filter(c =>
+                (c.companyType?.startsWith("Tenant") || false) || c.id === wipForm.tenantId
+              );
+              const tenantItems = tenantOptions.map(c => ({
+                id: c.id,
+                label: c.name,
+                subLabel: (c as any).ukEntityName || c.companyType || undefined,
+                keywords: [c.companyType || "", c.domainUrl || ""].filter(Boolean),
+              }));
+              const createTenant = async (name: string) => {
+                const r = await apiRequest("POST", "/api/crm/companies", {
+                  name: name.trim(),
+                  companyType: "Tenant",
+                  isTrackedBrand: true,
+                });
+                const created = await r.json();
+                queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+                toast({ title: "Tenant created", description: `${created.name} added to CRM.` });
+                return { id: String(created.id), label: created.name, subLabel: created.companyType };
+              };
+              return (
+                <div className="border rounded-md p-3 bg-muted/30 space-y-3">
+                  <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+                    Contracting entities (required for AML)
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Landlord brand</Label>
+                      {landlordBrand ? (
+                        <div className="text-sm border rounded-md px-2.5 py-1.5 bg-background">
+                          {landlordBrand.name}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-amber-700 border border-amber-300 rounded-md px-2.5 py-1.5 bg-amber-50">
+                          No landlord linked on {prop?.name || "property"}. Add one on the property page before promoting.
+                        </div>
+                      )}
+                      <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                      <XeroContactPicker
+                        testIdPrefix="wip-landlord-entity"
+                        value={wipForm.landlordEntityId || null}
+                        cachedName={wipForm.landlordEntityName}
+                        onChange={(c) => setWipForm(f => ({
+                          ...f,
+                          landlordEntityId: c?.ContactID || "",
+                          landlordEntityName: c?.Name || "",
+                        }))}
+                        compact
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Tenant brand *</Label>
+                      <EntityCombobox
+                        testId="wip-tenant"
+                        placeholder="Link tenant"
+                        searchPlaceholder="Search tenants…"
+                        value={wipForm.tenantId}
+                        items={tenantItems}
+                        onChange={(v) => {
+                          const picked = crmCompanies.find(c => c.id === v);
+                          setWipForm(f => ({
+                            ...f,
+                            tenantId: v,
+                            tenantName: picked?.name || "",
+                            tenantEntityId: "",
+                            tenantEntityName: "",
+                          }));
+                        }}
+                        onCreate={createTenant}
+                        createLabel="tenant"
+                      />
+                      <Label className="text-[10px] text-muted-foreground">Billing / legal entity (Xero)</Label>
+                      <XeroContactPicker
+                        testIdPrefix="wip-tenant-entity"
+                        value={wipForm.tenantEntityId || null}
+                        cachedName={wipForm.tenantEntityName}
+                        onChange={(c) => setWipForm(f => ({
+                          ...f,
+                          tenantEntityId: c?.ContactID || "",
+                          tenantEntityName: c?.Name || "",
+                        }))}
+                        compact
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs mb-1">Fee (£)</Label>
+                <Label className="text-xs mb-1">Fee (£) *</Label>
                 <CurrencyInput
                   value={wipForm.fee}
                   onChange={v => setWipForm(f => ({ ...f, fee: v }))}
@@ -1360,18 +2043,53 @@ export default function AvailableUnitsPage() {
                 />
               </div>
               <div>
-                <Label className="text-xs mb-1">Fee Agreement</Label>
-                <Input
-                  value={wipForm.feeAgreement}
-                  onChange={e => setWipForm(f => ({ ...f, feeAgreement: e.target.value }))}
-                  placeholder="e.g. 10% of rent"
-                  data-testid="wip-fee-agreement"
+                <Label className="text-xs mb-1">Fee Agreement signed</Label>
+                <Select value={wipForm.feeAgreement} onValueChange={v => setWipForm(f => ({ ...f, feeAgreement: v }))}>
+                  <SelectTrigger data-testid="wip-fee-agreement"><SelectValue placeholder="Select..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="YES">YES</SelectItem>
+                    <SelectItem value="NO">NO</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Fee split — same shape as the deal form (BGP House 15%
+                locked + agents on the remaining 85%). The auto-created
+                AVA deal lands here with no split set, so this is where
+                Layla locks it in for SOL handover. PUT'd to
+                /api/crm/deals/:id/fee-allocations after the promote
+                mutation succeeds. */}
+            <div>
+              <Label className="text-xs mb-1">BGP fee split</Label>
+              <div className="border rounded-md p-2.5 bg-muted/30">
+                <FeeAllocationEditor
+                  rows={wipFeeRows}
+                  onChange={setWipFeeRows}
+                  allocType={wipFeeAllocType}
+                  onAllocTypeChange={setWipFeeAllocType}
+                  dealFee={parseFloat(wipForm.fee) || null}
+                  bgpAgents={bgpUsers.map(u => ({ id: String(u.id), name: u.name }))}
                 />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs mb-1">Rent p.a. (£)</Label>
+                <Label className="text-xs mb-1">AML / KYC checked</Label>
+                <Select value={wipForm.amlChecked} onValueChange={v => setWipForm(f => ({ ...f, amlChecked: v }))}>
+                  <SelectTrigger data-testid="wip-aml"><SelectValue placeholder="Select..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="YES">YES</SelectItem>
+                    <SelectItem value="NO">NO</SelectItem>
+                    <SelectItem value="N-A">N/A</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs mb-1">Headline Rent (£ p.a.)</Label>
                 <CurrencyInput
                   value={wipForm.askingRent}
                   onChange={v => setWipForm(f => ({ ...f, askingRent: v }))}
@@ -1395,6 +2113,7 @@ export default function AvailableUnitsPage() {
                 <Label className="text-xs mb-1">Lease Length (years)</Label>
                 <Input
                   type="number"
+                  min="0"
                   value={wipForm.leaseLength}
                   onChange={e => setWipForm(f => ({ ...f, leaseLength: e.target.value }))}
                   placeholder="0"
@@ -1405,6 +2124,7 @@ export default function AvailableUnitsPage() {
                 <Label className="text-xs mb-1">Rent Free (months)</Label>
                 <Input
                   type="number"
+                  min="0"
                   value={wipForm.rentFree}
                   onChange={e => setWipForm(f => ({ ...f, rentFree: e.target.value }))}
                   placeholder="0"
@@ -1412,6 +2132,43 @@ export default function AvailableUnitsPage() {
                 />
               </div>
             </div>
+
+            <div>
+              <Label className="text-xs mb-1">
+                Target Completion Date <span className="text-rose-600">*</span>
+              </Label>
+              <Input
+                type="date"
+                value={wipForm.targetDate}
+                onChange={e => setWipForm(f => ({ ...f, targetDate: e.target.value }))}
+                required
+                className={!wipForm.targetDate ? "border-rose-300" : ""}
+                data-testid="wip-target-date"
+              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                Drives the WIP report's month / fiscal-year bucket.
+              </p>
+            </div>
+
+            {/* Net Effective = Headline × (term − rent_free) / term.
+                Derived live — no extra DB column. Hidden when the
+                inputs aren't enough to make the number meaningful. */}
+            {(() => {
+              const headline = parseFloat(wipForm.askingRent) || 0;
+              const termYears = parseFloat(wipForm.leaseLength) || 0;
+              const freeMonths = parseFloat(wipForm.rentFree) || 0;
+              if (!headline || !termYears) return null;
+              const termMonths = termYears * 12;
+              if (freeMonths >= termMonths) return null;
+              const net = Math.round(headline * (termMonths - freeMonths) / termMonths);
+              return (
+                <div className="text-xs text-muted-foreground border rounded-md px-3 py-2 bg-muted/30 flex items-center justify-between">
+                  <span>Net Effective Rent (derived from headline, term, rent free)</span>
+                  <span className="font-medium text-foreground">£{net.toLocaleString()} p.a.</span>
+                </div>
+              );
+            })()}
+
             <div>
               <Label className="text-xs mb-1">Notes</Label>
               <Textarea
@@ -1422,16 +2179,52 @@ export default function AvailableUnitsPage() {
               />
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setWipUnit(null)}>Cancel</Button>
-            <Button
-              onClick={() => wipUnit && wipDealMutation.mutate({ unitId: wipUnit.id, data: wipForm })}
-              disabled={wipDealMutation.isPending}
-              data-testid="wip-submit"
-            >
-              {wipDealMutation.isPending ? "Creating..." : "Create WIP Deal"}
-            </Button>
-          </DialogFooter>
+          {(() => {
+            const hardMissing: string[] = [];
+            if (!wipForm.tenantId) hardMissing.push("Tenant brand");
+            if (!wipForm.fee.trim()) hardMissing.push("Fee");
+            if (!wipForm.agent.trim()) hardMissing.push("Agent");
+            if (!wipForm.targetDate) hardMissing.push("Target date");
+            const softMissing: string[] = [];
+            if (wipForm.feeAgreement !== "YES") softMissing.push("Fee agreement signed");
+            if (wipForm.amlChecked !== "YES" && wipForm.amlChecked !== "N-A") softMissing.push("AML / KYC checked");
+            const canSubmit = hardMissing.length === 0 && (softMissing.length === 0 || wipForm.overrideCompliance);
+            return (
+              <>
+                {(hardMissing.length > 0 || softMissing.length > 0) && (
+                  <div className="rounded-md border p-2 bg-amber-50 dark:bg-amber-900/10 mt-2 space-y-1.5">
+                    {hardMissing.length > 0 && (
+                      <p className="text-xs text-rose-700 dark:text-rose-400">Required before saving: {hardMissing.join(", ")}</p>
+                    )}
+                    {hardMissing.length === 0 && softMissing.length > 0 && (
+                      <>
+                        <p className="text-xs text-amber-700 dark:text-amber-400">Missing compliance: {softMissing.join(", ")}</p>
+                        <label className="flex items-center gap-2 text-xs cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={wipForm.overrideCompliance}
+                            onChange={e => setWipForm(f => ({ ...f, overrideCompliance: e.target.checked }))}
+                            data-testid="wip-override"
+                          />
+                          <span>Promote anyway — I'll complete these before exchange</span>
+                        </label>
+                      </>
+                    )}
+                  </div>
+                )}
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setWipUnit(null)}>Cancel</Button>
+                  <Button
+                    onClick={() => wipUnit && wipDealMutation.mutate({ unitId: wipUnit.id, data: wipForm, feeRows: wipFeeRows, feeAllocType: wipFeeAllocType })}
+                    disabled={wipDealMutation.isPending || !canSubmit}
+                    data-testid="wip-submit"
+                  >
+                    {wipDealMutation.isPending ? "Saving..." : "Promote to Solicitors"}
+                  </Button>
+                </DialogFooter>
+              </>
+            );
+          })()}
         </DialogContent>
       </Dialog>
 
@@ -1627,14 +2420,14 @@ export default function AvailableUnitsPage() {
                   <CurrencyInput value={offerForm.rentPa} onChange={v => setOfferForm(f => ({ ...f, rentPa: v }))} placeholder="0" prefix="£" testId="offer-rent" />
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                 <div>
                   <Label className="text-xs">Rent Free (months)</Label>
-                  <Input type="number" value={offerForm.rentFreeMonths} onChange={e => setOfferForm(f => ({ ...f, rentFreeMonths: e.target.value }))} placeholder="0" data-testid="offer-rent-free" />
+                  <Input type="number" min="0" value={offerForm.rentFreeMonths} onChange={e => setOfferForm(f => ({ ...f, rentFreeMonths: e.target.value }))} placeholder="0" data-testid="offer-rent-free" />
                 </div>
                 <div>
                   <Label className="text-xs">Term (years)</Label>
-                  <Input type="number" value={offerForm.termYears} onChange={e => setOfferForm(f => ({ ...f, termYears: e.target.value }))} placeholder="0" data-testid="offer-term" />
+                  <Input type="number" min="0" value={offerForm.termYears} onChange={e => setOfferForm(f => ({ ...f, termYears: e.target.value }))} placeholder="0" data-testid="offer-term" />
                 </div>
                 <div>
                   <Label className="text-xs">Break Option</Label>
@@ -1921,7 +2714,10 @@ function MarketingFilesDialog({
 }
 
 function UnitFormDialog({
-  open, onOpenChange, title, form, setForm, properties, bgpUsers, onSubmit, isPending,
+  open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers, crmCompanies = [],
+  feeRows, setFeeRows, feeAllocType, setFeeAllocType,
+  showAllFields, setShowAllFields, isEdit,
+  onSubmit, isPending,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -1929,35 +2725,277 @@ function UnitFormDialog({
   form: UnitFormState;
   setForm: (f: UnitFormState) => void;
   properties: CrmProperty[];
+  propertyUnits?: PropertyUnit[];
   bgpUsers: { id: string; name: string }[];
+  crmCompanies?: CrmCompany[];
+  feeRows: FeeAllocationRow[];
+  setFeeRows: (r: FeeAllocationRow[]) => void;
+  feeAllocType: "percentage" | "fixed";
+  setFeeAllocType: (t: "percentage" | "fixed") => void;
+  showAllFields: boolean;
+  setShowAllFields: (v: boolean) => void;
+  isEdit: boolean;
   onSubmit: () => void;
   isPending: boolean;
 }) {
   const upd = (field: keyof UnitFormState, value: string) => setForm({ ...form, [field]: value });
+  const [unitPickerOpen, setUnitPickerOpen] = useState(false);
+
+  // Tenancy schedule is the canonical unit source. When a property
+  // is picked, we fetch its tenancy rows and let the user pick from
+  // there — picking pre-fills sqft/use from the tenancy row, and the
+  // server stamps tenancy_unit_id on the new available_units row.
+  // Falls back to property_units for legacy properties without a
+  // tenancy schedule yet.
+  const { data: tenancyUnits = [] } = useQuery<Array<{
+    id: string | number; unit_number: string; premises: string | null;
+    permitted_use: string | null; nia_sqft: number | null; gia_sqft: number | null;
+    floor_level: string | null; status: string | null; tenant_name: string | null;
+    marketing_rent_pa: number | null; rates_payable: number | null;
+    service_charge: number | null; epc_rating: string | null;
+  }>>({
+    queryKey: ["/api/tenancy-schedule/property", form.propertyId],
+    queryFn: async () => {
+      if (!form.propertyId) return [];
+      const r = await fetch(`/api/tenancy-schedule/property/${form.propertyId}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!form.propertyId && open,
+    staleTime: 60_000,
+  });
+
+  // Merge tenancy + property_units into one canonical list, tenancy
+  // first. De-dupe by lowercased unit name so a property_units row
+  // that already appears in tenancy doesn't double up.
+  const pickerOptions = (() => {
+    const seen = new Set<string>();
+    const out: Array<{
+      id: string; name: string; floor: string | null; sqft: number | null;
+      useClass: string | null; askingRent: number | null; ratesPa: number | null;
+      serviceChargePa: number | null; epcRating: string | null;
+      source: "tenancy" | "property"; vacant?: boolean;
+    }> = [];
+    for (const t of tenancyUnits) {
+      const key = (t.unit_number || "").trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const isVacant = (t.status || "").toLowerCase() === "vacant" || (t.tenant_name || "").toLowerCase() === "vacant";
+      out.push({
+        id: String(t.id),
+        name: t.unit_number,
+        floor: t.floor_level || t.premises,
+        sqft: t.nia_sqft || t.gia_sqft,
+        useClass: t.permitted_use,
+        askingRent: t.marketing_rent_pa,
+        ratesPa: t.rates_payable,
+        serviceChargePa: t.service_charge,
+        epcRating: t.epc_rating,
+        source: "tenancy",
+        vacant: isVacant,
+      });
+    }
+    const legacyUnits = form.propertyId ? propertyUnits.filter(pu => pu.propertyId === form.propertyId) : [];
+    for (const pu of legacyUnits) {
+      const key = (pu.unitName || "").trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        id: pu.id,
+        name: pu.unitName,
+        floor: pu.floor || null,
+        sqft: pu.sqft ?? null,
+        useClass: pu.useClass || null,
+        askingRent: null,
+        ratesPa: null,
+        serviceChargePa: null,
+        epcRating: null,
+        source: "property",
+      });
+    }
+    return out;
+  })();
+  const matchedExistingUnit = pickerOptions.find(
+    pu => pu.name.trim().toLowerCase() === (form.unitName || "").trim().toLowerCase()
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-[700px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>
+            Saving will auto-create a linked Leasing deal on the <a href="/deals" className="underline">deals board</a>.
+          </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
-            <Label>Property (Instruction)</Label>
-            <Select value={form.propertyId} onValueChange={v => upd("propertyId", v)}>
-              <SelectTrigger data-testid="select-property">
-                <SelectValue placeholder="Select property..." />
-              </SelectTrigger>
+            <Label>Property *</Label>
+            <PropertyCombobox
+              testId="select-property"
+              placeholder="Select property or paste an address"
+              value={form.propertyId}
+              items={properties.map(p => ({
+                id: p.id,
+                label: p.name,
+                subLabel: p.postcode || undefined,
+                keywords: [p.postcode || "", p.address ? JSON.stringify(p.address) : ""],
+              }))}
+              onChange={(val) => {
+                // Auto-fill the Landlord picker from the picked
+                // property's landlord_id. User can override below. Only
+                // overrides when the user hasn't already touched the
+                // landlord field, so previously-picked landlords on a
+                // re-pick survive.
+                const prop = properties.find(p => p.id === val);
+                const propLandlordId = (prop as any)?.landlordId || "";
+                const landlordBrand = propLandlordId
+                  ? crmCompanies.find(c => c.id === propLandlordId)
+                  : null;
+                setForm({
+                  ...form,
+                  propertyId: val || "",
+                  landlordId: form.landlordId || propLandlordId,
+                  landlordName: form.landlordName || landlordBrand?.name || "",
+                });
+              }}
+              onCreated={() => {
+                // Newly-created property won't be in `properties` yet —
+                // PropertyCombobox holds the row internally so the
+                // trigger label stays correct until the cache refetch
+                // catches up.
+                queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+              }}
+            />
+          </div>
+          {/* Landlord (the client for a Letting deal). Auto-pre-filled
+              from the picked property's landlord_id; user can swap to a
+              different brand or create one inline. No Xero billing
+              entity at this stage — that's a SOL-handover concern, not
+              an AVA one. */}
+          <div className="col-span-2">
+            <Label>Landlord (client)</Label>
+            <EntityCombobox
+              testId="select-unit-landlord"
+              placeholder="Link landlord"
+              searchPlaceholder="Search landlords…"
+              value={form.landlordId}
+              items={crmCompanies
+                .filter(c =>
+                  c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client"
+                  || c.id === form.landlordId
+                )
+                .map(c => ({
+                  id: c.id,
+                  label: c.name,
+                  subLabel: (c as any).ukEntityName || c.companyType || undefined,
+                  keywords: [c.companyType || "", c.domainUrl || ""].filter(Boolean),
+                }))}
+              onChange={(v) => {
+                const picked = crmCompanies.find(c => c.id === v);
+                setForm({
+                  ...form,
+                  landlordId: v,
+                  landlordName: picked?.name || "",
+                });
+              }}
+              onCreate={async (name) => {
+                const r = await apiRequest("POST", "/api/crm/companies", {
+                  name: name.trim(),
+                  companyType: "Landlord",
+                });
+                const created = await r.json();
+                queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+                return { id: String(created.id), label: created.name, subLabel: created.companyType };
+              }}
+              createLabel="landlord"
+            />
+            {!form.landlordId && form.propertyId && (
+              <p className="text-[10px] text-amber-700 mt-0.5">
+                No landlord linked to this property — picking one here will also stamp it on the property going forward.
+              </p>
+            )}
+          </div>
+          <div>
+            <Label>Deal Type *</Label>
+            <Select value={form.dealType} onValueChange={v => upd("dealType", v)}>
+              <SelectTrigger data-testid="select-deal-type"><SelectValue placeholder="Select..." /></SelectTrigger>
               <SelectContent>
-                {properties.map(p => (
-                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                ))}
+                {CRM_OPTIONS.dealType.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
           <div>
-            <Label>Unit Name / Number</Label>
-            <Input value={form.unitName} onChange={e => upd("unitName", e.target.value)} placeholder="e.g. Unit 3, Ground Floor" data-testid="input-unit-name" />
+            <Label>Unit Name / Number *</Label>
+            <Popover open={unitPickerOpen} onOpenChange={setUnitPickerOpen}>
+              <PopoverTrigger asChild>
+                <div>
+                  <Input
+                    value={form.unitName}
+                    onChange={e => upd("unitName", e.target.value)}
+                    onFocus={() => pickerOptions.length > 0 && setUnitPickerOpen(true)}
+                    placeholder={form.propertyId ? "Pick from tenancy schedule or type a new name" : "Select a property first"}
+                    disabled={!form.propertyId}
+                    data-testid="input-unit-name"
+                  />
+                  {form.unitName && !matchedExistingUnit && pickerOptions.length > 0 && (
+                    <p className="text-[10px] text-emerald-600 mt-0.5">New unit — will be created. Add to the tenancy schedule next so it lives on the spine.</p>
+                  )}
+                  {matchedExistingUnit?.source === "tenancy" && (
+                    <p className="text-[10px] text-purple-700 mt-0.5">Tenancy schedule unit — canonical link will be stamped.</p>
+                  )}
+                  {matchedExistingUnit?.source === "property" && (
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Legacy property_units row — add to the tenancy schedule to make it canonical.</p>
+                  )}
+                </div>
+              </PopoverTrigger>
+              {pickerOptions.length > 0 && (
+                <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0">
+                  <Command>
+                    <CommandInput placeholder="Search units..." />
+                    <CommandList>
+                      <CommandEmpty>No matches. Keep typing to create a new unit.</CommandEmpty>
+                      <CommandGroup heading={`Tenancy schedule (${pickerOptions.filter(o => o.source === "tenancy").length}) · Legacy (${pickerOptions.filter(o => o.source === "property").length})`}>
+                        {pickerOptions.map(pu => (
+                          <CommandItem
+                            key={`${pu.source}-${pu.id}`}
+                            value={pu.name}
+                            onSelect={() => {
+                              // Pre-fill every field the tenancy spine already knows so
+                              // Layla doesn't re-type values that exist canonically. Only
+                              // fills empty fields — anything the user already typed
+                              // wins.
+                              setForm({
+                                ...form,
+                                unitName: pu.name,
+                                floor: form.floor || pu.floor || "",
+                                sqft: form.sqft || (pu.sqft != null ? String(pu.sqft) : ""),
+                                useClass: form.useClass || pu.useClass || "",
+                                askingRent: form.askingRent || (pu.askingRent != null ? String(pu.askingRent) : ""),
+                                ratesPa: form.ratesPa || (pu.ratesPa != null ? String(pu.ratesPa) : ""),
+                                serviceChargePa: form.serviceChargePa || (pu.serviceChargePa != null ? String(pu.serviceChargePa) : ""),
+                                epcRating: form.epcRating || pu.epcRating || "",
+                              });
+                              setUnitPickerOpen(false);
+                            }}
+                          >
+                            <span className="text-sm">{pu.name}</span>
+                            {pu.source === "tenancy" && (
+                              <Badge variant="outline" className="ml-1.5 text-[9px] border-purple-300 text-purple-700">tenancy</Badge>
+                            )}
+                            {pu.vacant && (
+                              <Badge variant="outline" className="ml-1 text-[9px] border-amber-300 text-amber-700">vacant</Badge>
+                            )}
+                            {pu.floor && <span className="text-xs text-muted-foreground ml-2">{pu.floor}</span>}
+                            {pu.sqft != null && <span className="text-xs text-muted-foreground ml-2">{pu.sqft.toLocaleString()} sq ft</span>}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              )}
+            </Popover>
           </div>
           <div>
             <Label>Floor</Label>
@@ -1973,70 +3011,11 @@ function UnitFormDialog({
             <CurrencyInput value={form.sqft} onChange={v => upd("sqft", v)} placeholder="e.g. 1,500" />
           </div>
           <div>
-            <Label>Asking Rent (£ p.a.)</Label>
-            <CurrencyInput value={form.askingRent} onChange={v => upd("askingRent", v)} placeholder="e.g. 85,000" prefix="£" />
-          </div>
-          <div>
-            <Label>Fee (£)</Label>
-            <CurrencyInput value={form.fee} onChange={v => upd("fee", v)} placeholder="e.g. 12,500" prefix="£" />
-          </div>
-          <div>
-            <Label>Rates (£ p.a.)</Label>
-            <CurrencyInput value={form.ratesPa} onChange={v => upd("ratesPa", v)} placeholder="e.g. 25,000" prefix="£" />
-          </div>
-          <div>
-            <Label>Service Charge (£ p.a.)</Label>
-            <CurrencyInput value={form.serviceChargePa} onChange={v => upd("serviceChargePa", v)} placeholder="e.g. 15,000" prefix="£" />
-          </div>
-          <div>
-            <Label>Asset Class</Label>
-            <Select value={form.useClass} onValueChange={v => upd("useClass", v)}>
-              <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
-              <SelectContent>
-                {USE_CLASSES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>Location</Label>
-            <Select value={form.location} onValueChange={v => upd("location", v)}>
-              <SelectTrigger data-testid="select-location"><SelectValue placeholder="Select location..." /></SelectTrigger>
-              <SelectContent>
-                {LOCATIONS.map(l => (
-                  <SelectItem key={l} value={l}>
-                    <span className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${LOCATION_COLORS[l] || "bg-gray-400"}`} />
-                      {l}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>Condition</Label>
-            <Select value={form.condition} onValueChange={v => upd("condition", v)}>
-              <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
-              <SelectContent>
-                {CONDITIONS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>EPC Rating</Label>
-            <Select value={form.epcRating} onValueChange={v => upd("epcRating", v)}>
-              <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
-              <SelectContent>
-                {EPC_RATINGS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
             <Label>Marketing Status</Label>
-            <Select value={form.marketingStatus} onValueChange={v => upd("marketingStatus", v)}>
+            <Select value={legacyToCode(form.marketingStatus) || "AVA"} onValueChange={v => upd("marketingStatus", v)}>
               <SelectTrigger><SelectValue placeholder="Status..." /></SelectTrigger>
               <SelectContent>
-                {MARKETING_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                {MARKETING_STATUSES.map(s => <SelectItem key={s} value={s}>{DEAL_STATUS_LABELS[s]}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -2044,46 +3023,197 @@ function UnitFormDialog({
             <Label>Available Date</Label>
             <Input type="date" value={form.availableDate} onChange={e => upd("availableDate", e.target.value)} />
           </div>
-          <div>
-            <Label>Marketing Start Date</Label>
-            <Input type="date" value={form.marketingStartDate} onChange={e => upd("marketingStartDate", e.target.value)} />
-          </div>
           <div className="col-span-2">
-            <Label>Agents</Label>
-            <div className="flex flex-wrap gap-1.5 p-2 border rounded-md min-h-[38px]">
-              {bgpUsers.map(u => {
-                const selected = form.agentUserIds.includes(u.id);
-                return (
-                  <Badge
-                    key={u.id}
-                    variant={selected ? "default" : "outline"}
-                    className={`cursor-pointer text-xs transition-colors ${selected ? "" : "opacity-50 hover:opacity-80"}`}
-                    onClick={() => {
-                      const next = selected
-                        ? form.agentUserIds.filter(id => id !== u.id)
-                        : [...form.agentUserIds, u.id];
-                      setForm({ ...form, agentUserIds: next });
-                    }}
-                    data-testid={`badge-agent-${u.id}`}
-                  >
-                    {u.name}
-                  </Badge>
-                );
-              })}
+            <Label>BGP Contact *</Label>
+            {/* Same DropdownMenu pattern as the New Deal dialog so the
+                two forms feel like one. Stores agentUserIds (user IDs)
+                rather than names, since the server keyed off IDs. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="w-full justify-start font-normal h-auto min-h-[36px] py-1.5" data-testid="input-unit-agent">
+                  {form.agentUserIds.length === 0 ? (
+                    <span className="text-muted-foreground">Select BGP contacts…</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1">
+                      {form.agentUserIds.map(id => {
+                        const u = bgpUsers.find(bu => bu.id === id);
+                        return (
+                          <Badge key={id} variant="secondary" className="text-xs">{u?.name || id}</Badge>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-56 max-h-[300px] overflow-y-auto">
+                {[...bgpUsers].sort((a, b) => (a.name || "").localeCompare(b.name || "")).map(u => {
+                  const selected = form.agentUserIds.includes(u.id);
+                  return (
+                    <DropdownMenuItem
+                      key={u.id}
+                      onClick={() => {
+                        const next = selected
+                          ? form.agentUserIds.filter(id => id !== u.id)
+                          : [...form.agentUserIds, u.id];
+                        setForm({ ...form, agentUserIds: next });
+                      }}
+                      data-testid={`agent-option-${u.id}`}
+                    >
+                      <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${selected ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
+                        {selected && <span className="text-primary-foreground text-[8px]">✓</span>}
+                      </div>
+                      <span className="truncate">{u.name}</span>
+                    </DropdownMenuItem>
+                  );
+                })}
+                {form.agentUserIds.length > 0 && (
+                  <DropdownMenuItem onClick={() => setForm({ ...form, agentUserIds: [] })} data-testid="agent-clear-all">
+                    <X className="w-3 h-3 mr-2 text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">Clear all</span>
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          {/* Financials & timing — same shape as the New Deal form so
+              fee structure is captured up-front instead of relying on
+              the agent to re-open the auto-created deal later. % drives
+              Total fee from Quoting Rent × % (only overrides empty
+              Total so manual numbers survive). FeeAllocationEditor
+              flows to the linked deal's allocations on submit. */}
+          <div className="col-span-2 border-t pt-3 space-y-3">
+            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Financials & fee split</div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <Label className="text-xs">Quoting Rent (£ p.a.)</Label>
+                <CurrencyInput value={form.askingRent} onChange={v => upd("askingRent", v)} placeholder="e.g. 85,000" prefix="£" />
+              </div>
+              <div>
+                <Label className="text-xs">% Agency fee</Label>
+                <Input type="number" step="0.01" value={form.feePercentage}
+                  onChange={(e) => {
+                    const pct = e.target.value;
+                    const rent = parseFloat(form.askingRent);
+                    const pctNum = parseFloat(pct);
+                    const next = { ...form, feePercentage: pct } as UnitFormState;
+                    if (!isNaN(rent) && !isNaN(pctNum) && pctNum > 0) {
+                      next.fee = String(Math.round((rent * pctNum) / 100));
+                    }
+                    setForm(next);
+                  }}
+                  placeholder="e.g. 10" />
+              </div>
+              <div>
+                <Label className="text-xs">Total fee (£)</Label>
+                <CurrencyInput value={form.fee} onChange={v => upd("fee", v)} placeholder="auto from rent × %" prefix="£" />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">BGP fee split</Label>
+              <div className="border rounded-md p-2.5 bg-muted/30">
+                <FeeAllocationEditor
+                  rows={feeRows}
+                  onChange={setFeeRows}
+                  allocType={feeAllocType}
+                  onAllocTypeChange={setFeeAllocType}
+                  dealFee={parseFloat(form.fee) || null}
+                  bgpAgents={bgpUsers.map(u => ({ id: String(u.id), name: u.name }))}
+                />
+              </div>
             </div>
           </div>
-          <div className="col-span-2">
-            <Label>Restrictions</Label>
-            <Textarea value={form.restrictions} onChange={e => upd("restrictions", e.target.value)} placeholder="Any use or tenant restrictions..." rows={2} />
-          </div>
+
           <div className="col-span-2">
             <Label>Notes</Label>
             <Textarea value={form.notes} onChange={e => upd("notes", e.target.value)} placeholder="Additional notes..." rows={3} />
           </div>
+
+          {/* Less-frequently-set fields collapse behind a toggle, same
+              shape Add Deal uses. Always-expanded on edit so an existing
+              row isn't pretending it has no values. */}
+          {!isEdit && (
+            <div className="col-span-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-xs text-muted-foreground"
+                onClick={() => setShowAllFields(!showAllFields)}
+                data-testid="toggle-show-all-fields"
+              >
+                <ChevronDown className={`h-3 w-3 mr-1 transition-transform ${showAllFields ? "rotate-180" : ""}`} />
+                {showAllFields ? "Hide extra fields" : "Show all fields (rates, service charge, use class, condition, EPC, location, restrictions)"}
+              </Button>
+            </div>
+          )}
+
+          {showAllFields && (
+            <>
+              <div>
+                <Label>Rates (£ p.a.)</Label>
+                <CurrencyInput value={form.ratesPa} onChange={v => upd("ratesPa", v)} placeholder="e.g. 25,000" prefix="£" />
+              </div>
+              <div>
+                <Label>Service Charge (£ p.a.)</Label>
+                <CurrencyInput value={form.serviceChargePa} onChange={v => upd("serviceChargePa", v)} placeholder="e.g. 15,000" prefix="£" />
+              </div>
+              <div>
+                <Label>Use Class</Label>
+                <Select value={form.useClass} onValueChange={v => upd("useClass", v)}>
+                  <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
+                  <SelectContent>
+                    {USE_CLASSES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Condition</Label>
+                <Select value={form.condition} onValueChange={v => upd("condition", v)}>
+                  <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
+                  <SelectContent>
+                    {CONDITIONS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>EPC Rating</Label>
+                <Select value={form.epcRating} onValueChange={v => upd("epcRating", v)}>
+                  <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
+                  <SelectContent>
+                    {EPC_RATINGS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Location</Label>
+                <Select value={form.location} onValueChange={v => upd("location", v)}>
+                  <SelectTrigger data-testid="select-location"><SelectValue placeholder="Select location..." /></SelectTrigger>
+                  <SelectContent>
+                    {LOCATIONS.map(l => (
+                      <SelectItem key={l} value={l}>
+                        <span className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${LOCATION_COLORS[l] || "bg-gray-400"}`} />
+                          {l}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Marketing Start Date</Label>
+                <Input type="date" value={form.marketingStartDate} onChange={e => upd("marketingStartDate", e.target.value)} />
+              </div>
+              <div className="col-span-2">
+                <Label>Restrictions</Label>
+                <Textarea value={form.restrictions} onChange={e => upd("restrictions", e.target.value)} placeholder="Any use or tenant restrictions..." rows={2} />
+              </div>
+            </>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={onSubmit} disabled={isPending || !form.unitName || !form.propertyId}>
+          <Button onClick={onSubmit} disabled={isPending || !form.unitName || !form.propertyId || !form.dealType || form.agentUserIds.length === 0} title={!form.dealType ? "Pick a deal type" : form.agentUserIds.length === 0 ? "Pick at least one BGP agent" : ""}>
             {isPending ? "Saving..." : "Save"}
           </Button>
         </DialogFooter>

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -26,9 +26,13 @@ import {
   Ruler,
   Trash2,
   Crosshair,
+  Layers,
 } from "lucide-react";
 import { Link } from "wouter";
 import type { CrmProperty } from "@shared/schema";
+import { loadGoogleMaps, isGoogleMapsLoaded } from "@/lib/google-maps-loader";
+import { getAuthHeaders, apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 const STATUS_COLORS: Record<string, string> = {
   "BGP Active": "bg-emerald-500",
@@ -36,6 +40,7 @@ const STATUS_COLORS: Record<string, string> = {
   "Leasing Instruction": "bg-blue-500",
   "Lease Advisory Instruction": "bg-violet-500",
   "Sales Instruction": "bg-emerald-600",
+  "Market Listing": "bg-cyan-500",
   "Archive": "bg-zinc-400",
 };
 
@@ -45,11 +50,46 @@ const MARKER_COLORS: Record<string, string> = {
   "Leasing Instruction": "#3b82f6",
   "Lease Advisory Instruction": "#8b5cf6",
   "Sales Instruction": "#059669",
+  "Market Listing": "#06b6d4",
   "Archive": "#a1a1aa",
 };
 
 const DEFAULT_CENTER = { lat: 51.4995, lng: -0.1527 };
 const DEFAULT_ZOOM = 14;
+
+const GOAD_LAYER_IDS = ["lg", "gf", "f1", "f2"] as const;
+type GoadLayerId = typeof GOAD_LAYER_IDS[number];
+
+// Goad polygon colour palette by Category attribute (matches the Experian "Goad code" groupings).
+function goadCategoryColor(category: string | null | undefined): string {
+  if (!category) return "#9ca3af";
+  const c = category.toUpperCase();
+  if (c.startsWith("VACANT")) return "#ef4444"; // red — vacant
+  if (c === "OFFICES") return "#3b82f6"; // blue
+  if (c === "ENTRANCE & STORES") return "#cbd5e1"; // light slate — back of house
+  if (
+    c === "RESTAURANTS" || c === "CAFES" || c === "PUBLIC HOUSES" ||
+    c === "BARS & WINE BARS" || c === "FAST FOOD & TAKE AWAY" ||
+    c === "BAKERS & CONFECTIONERS"
+  ) return "#f59e0b"; // amber — F&B
+  if (c === "HEALTH & BEAUTY" || c === "TOILETRIES, COSMETICS & BEAUTY PRODUCTS") return "#ec4899"; // pink
+  if (
+    c === "LADIES & MENS WEAR & ACC." || c === "FOOTWEAR" ||
+    c === "JEWELLERY, WATCHES & SILVER" || c === "ART & ART DEALERS"
+  ) return "#8b5cf6"; // violet — fashion / luxury
+  if (c === "HOTELS & GUEST HOUSES") return "#0ea5e9"; // sky
+  return "#10b981"; // emerald — everything else
+}
+
+const GOAD_LEGEND: Array<{ label: string; color: string }> = [
+  { label: "Vacant", color: "#ef4444" },
+  { label: "F&B", color: "#f59e0b" },
+  { label: "Fashion/Luxury", color: "#8b5cf6" },
+  { label: "Health & Beauty", color: "#ec4899" },
+  { label: "Offices", color: "#3b82f6" },
+  { label: "Hotels", color: "#0ea5e9" },
+  { label: "Other retail", color: "#10b981" },
+];
 
 const RADIUS_OPTIONS = [
   { label: "50m", value: 50 },
@@ -81,44 +121,6 @@ interface DistanceLine {
   label: google.maps.InfoWindow;
 }
 
-let googleScriptLoaded = false;
-let googleScriptLoading = false;
-let loadCallbacks: (() => void)[] = [];
-
-function loadGoogleMapsScript(): Promise<void> {
-  return new Promise((resolve) => {
-    if (googleScriptLoaded) {
-      resolve();
-      return;
-    }
-    loadCallbacks.push(resolve);
-    if (googleScriptLoading) return;
-    googleScriptLoading = true;
-
-    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-    if (!apiKey) {
-      googleScriptLoading = false;
-      loadCallbacks.forEach((cb) => cb());
-      loadCallbacks = [];
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,geometry`;
-    script.async = true;
-    script.onload = () => {
-      googleScriptLoaded = true;
-      loadCallbacks.forEach((cb) => cb());
-      loadCallbacks = [];
-    };
-    script.onerror = () => {
-      googleScriptLoading = false;
-      loadCallbacks.forEach((cb) => cb());
-      loadCallbacks = [];
-    };
-    document.head.appendChild(script);
-  });
-}
 
 function formatDistance(metres: number): string {
   if (metres < 1000) return `${Math.round(metres)}m`;
@@ -167,11 +169,14 @@ export default function PropertyMap() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [selectedProperty, setSelectedProperty] = useState<string | null>(null);
-  const [scriptReady, setScriptReady] = useState(googleScriptLoaded);
+  const [scriptReady, setScriptReady] = useState(isGoogleMapsLoaded());
   const [viewMode, setViewMode] = useState<"map" | "split">("split");
   const mapRef = useRef<HTMLDivElement>(null);
   const googleMapRef = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
+  const pipnetMarkersRef = useRef<google.maps.Marker[]>([]);
+  const pipnetInfoRef = useRef<google.maps.InfoWindow | null>(null);
+  const [showPipnet, setShowPipnet] = useState(true);
   const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
   const mapSearchInputRef = useRef<HTMLInputElement>(null);
   const searchBoxRef = useRef<google.maps.places.Autocomplete | null>(null);
@@ -190,12 +195,64 @@ export default function PropertyMap() {
   const radiusClickListenerRef = useRef<google.maps.MapsEventListener | null>(null);
   const distanceClickListenerRef = useRef<google.maps.MapsEventListener | null>(null);
 
+  const [goadEnabled, setGoadEnabled] = useState(false);
+  const [goadLoading, setGoadLoading] = useState(false);
+  const [goadError, setGoadError] = useState<string | null>(null);
+  const [goadFeatureCount, setGoadFeatureCount] = useState(0);
+  // google.maps.Data class+namespace merging trips up TS in the installed
+  // @types version — these layer/event refs are typed as any. Runtime is fine.
+  const goadLayersRef = useRef<any[]>([]);
+  const goadCacheRef = useRef<Map<GoadLayerId, any>>(new Map());
+  const goadInfoWindowRef = useRef<google.maps.InfoWindow | null>(null);
+
   const { data: properties = [], isLoading } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
   });
 
+  // External (scraped) PIPnet listings — a SEPARATE dataset, not part of the
+  // CRM. Drawn as its own toggleable layer.
+  const { data: externalProps = [] } = useQuery<any[]>({
+    queryKey: ["/api/external-properties"],
+  });
+
+  // BGP's OWN available units — shown on the same "Available Properties" layer
+  // in a distinct colour, so the map shows market stock + our stock together.
+  const { data: bgpAvailable = [] } = useQuery<any[]>({
+    queryKey: ["/api/available-units"],
+  });
+
+  const { toast } = useToast();
+  const importPipnet = useMutation({
+    // Background job — geocoding + brochure download per listing exceeds the
+    // request timeout, so kick it off and poll for completion.
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/external-requirements/import-pipnet-properties-async", { allPages: true });
+      await res.json();
+      toast({ title: "PIPnet import started", description: "Scraping listings in the background — this can take a few minutes." });
+      const started = Date.now();
+      while (Date.now() - started < 15 * 60_000) {
+        await new Promise((r) => setTimeout(r, 5000));
+        const sres = await fetch("/api/external-requirements/import-pipnet-properties-status", {
+          credentials: "include", headers: { ...getAuthHeaders() },
+        });
+        const s = await sres.json();
+        if (s.state === "done") return s.result || {};
+        if (s.state === "error") throw new Error(s.error || "Import failed");
+      }
+      throw new Error("Import still running — check back shortly");
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/external-properties"] });
+      toast({
+        title: "PIPnet listings imported",
+        description: `${data.imported ?? 0} listings · ${data.geocoded ?? 0} mapped · ${data.withBrochure ?? 0} with brochure (of ${data.total ?? 0} found).`,
+      });
+    },
+    onError: (e: any) => toast({ title: "Import failed", description: e.message, variant: "destructive" }),
+  });
+
   useEffect(() => {
-    loadGoogleMapsScript().then(() => setScriptReady(true));
+    loadGoogleMaps().then((ok) => { if (ok) setScriptReady(true); });
   }, []);
 
   const propertiesWithCoords = useMemo(() => {
@@ -433,6 +490,89 @@ export default function PropertyMap() {
     }
   }, [filteredWithCoords, scriptReady]);
 
+  // PIPnet external-listing layer — separate markers, separate info window,
+  // toggleable, never touches the CRM property markers above.
+  useEffect(() => {
+    if (!googleMapRef.current || !scriptReady) return;
+    pipnetMarkersRef.current.forEach((m) => m.setMap(null));
+    pipnetMarkersRef.current = [];
+    if (!showPipnet) return;
+    if (!pipnetInfoRef.current) pipnetInfoRef.current = new google.maps.InfoWindow();
+    const showMarkers = mapZoom >= MARKER_ZOOM_THRESHOLD;
+
+    for (const p of externalProps) {
+      const lat = parseFloat(p.latitude);
+      const lng = parseFloat(p.longitude);
+      if (isNaN(lat) || isNaN(lng)) continue;
+
+      const marker = new google.maps.Marker({
+        position: { lat, lng },
+        map: showMarkers ? googleMapRef.current! : null,
+        title: p.address || "PIPnet listing",
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 9, fillColor: "#06b6d4", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2 },
+      });
+      marker.addListener("click", () => {
+        const fmtMoney = (v: any) => { const n = parseFloat(String(v || "").replace(/[^\d.]/g, "")); return isNaN(n) ? null : `£${n.toLocaleString()}`; };
+        let pack: any = null; try { pack = p.landlord_pack ? JSON.parse(p.landlord_pack) : null; } catch {}
+        const rows = [
+          p.rent ? `Rent: ${fmtMoney(p.rent) || p.rent} pa` : null,
+          p.service_charge ? `Service charge: ${fmtMoney(p.service_charge) || p.service_charge}` : null,
+          p.rateable_value ? `Rateable value: ${fmtMoney(p.rateable_value) || p.rateable_value}` : null,
+          p.area_sqft ? `${Number(p.area_sqft).toLocaleString()} sq ft` : null,
+          p.tenure ? `Tenure: ${p.tenure}` : null,
+          p.availability ? `Availability: ${p.availability}` : null,
+          p.agent ? `Agent: ${p.agent}` : null,
+        ].filter(Boolean).map((t) => `<p style="font-size:11px;color:#555;margin:2px 0;">${t}</p>`).join("");
+        const content = `
+          <div style="padding:8px;max-width:260px;">
+            <p style="font-weight:600;font-size:14px;margin:0 0 2px;">${p.address || "PIPnet listing"}</p>
+            <span style="display:inline-block;background:#06b6d4;color:white;font-size:10px;padding:1px 6px;border-radius:4px;margin-bottom:4px;">Available</span>
+            ${rows}
+            ${pack?.url ? `<a href="${pack.url}" target="_blank" rel="noopener" style="font-size:11px;color:#3b82f6;display:block;margin-top:6px;">📄 ${pack.name || "Landlord pack"} →</a>` : ""}
+          </div>`;
+        pipnetInfoRef.current!.setContent(content);
+        pipnetInfoRef.current!.open(googleMapRef.current!, marker);
+      });
+      pipnetMarkersRef.current.push(marker);
+    }
+
+    // BGP's own available units (emerald) — coords come from the linked
+    // crm_property's address json.
+    for (const u of bgpAvailable) {
+      let addr: any = u.propertyAddress;
+      if (typeof addr === "string") { try { addr = JSON.parse(addr); } catch { addr = null; } }
+      const lat = parseFloat(addr?.lat);
+      const lng = parseFloat(addr?.lng);
+      if (isNaN(lat) || isNaN(lng)) continue;
+      const marker = new google.maps.Marker({
+        position: { lat, lng },
+        map: showMarkers ? googleMapRef.current! : null,
+        title: `${u.propertyName || ""} ${u.unitName || ""}`.trim(),
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 9, fillColor: "#10b981", fillOpacity: 1, strokeColor: "#ffffff", strokeWeight: 2 },
+      });
+      marker.addListener("click", () => {
+        const money = (v: any) => (v == null ? null : `£${Number(v).toLocaleString()}`);
+        const rows = [
+          u.sqft ? `${Number(u.sqft).toLocaleString()} sq ft` : null,
+          u.askingRent ? `Rent: ${money(u.askingRent)} pa` : null,
+          u.serviceChargePa ? `Service charge: ${money(u.serviceChargePa)} pa` : null,
+          u.useClass ? `Use: ${u.useClass}` : null,
+          u.marketingStatus ? `Status: ${u.marketingStatus}` : null,
+        ].filter(Boolean).map((t) => `<p style="font-size:11px;color:#555;margin:2px 0;">${t}</p>`).join("");
+        const content = `
+          <div style="padding:8px;max-width:260px;">
+            <p style="font-weight:600;font-size:14px;margin:0 0 2px;">${u.propertyName || "Property"}${u.unitName ? " — " + u.unitName : ""}</p>
+            <span style="display:inline-block;background:#10b981;color:white;font-size:10px;padding:1px 6px;border-radius:4px;margin-bottom:4px;">BGP available</span>
+            ${rows}
+            <a href="/properties/${u.propertyId}" style="font-size:11px;color:#3b82f6;display:block;margin-top:6px;">View property →</a>
+          </div>`;
+        pipnetInfoRef.current!.setContent(content);
+        pipnetInfoRef.current!.open(googleMapRef.current!, marker);
+      });
+      pipnetMarkersRef.current.push(marker);
+    }
+  }, [externalProps, bgpAvailable, showPipnet, scriptReady, mapZoom]);
+
   // Toggle marker visibility based on zoom level to prevent overlap at low zoom
   useEffect(() => {
     if (!googleMapRef.current) return;
@@ -663,6 +803,107 @@ export default function PropertyMap() {
     }
   }, []);
 
+  useEffect(() => {
+    const map = googleMapRef.current;
+    if (!map || !scriptReady) return;
+
+    if (!goadEnabled) {
+      goadLayersRef.current.forEach((d) => d.setMap(null));
+      goadLayersRef.current = [];
+      goadInfoWindowRef.current?.close();
+      setGoadFeatureCount(0);
+      setGoadError(null);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      setGoadLoading(true);
+      setGoadError(null);
+      try {
+        const layers: any[] = [];
+        let total = 0;
+        for (const id of GOAD_LAYER_IDS) {
+          let geo = goadCacheRef.current.get(id);
+          if (!geo) {
+            const resp = await fetch(`/api/goad/${id}`, { headers: getAuthHeaders() });
+            if (!resp.ok) {
+              if (resp.status === 404) continue;
+              throw new Error(`Failed to load ${id} layer (${resp.status})`);
+            }
+            geo = await resp.json();
+            goadCacheRef.current.set(id, geo);
+          }
+          if (cancelled) return;
+          const dataLayer = new (google.maps as any).Data({ map });
+          dataLayer.addGeoJson(geo);
+          dataLayer.setStyle((feature: any) => ({
+            fillColor: goadCategoryColor(feature.getProperty("Category") as string),
+            fillOpacity: 0.55,
+            strokeColor: "#1f2937",
+            strokeWeight: 0.5,
+            clickable: true,
+          }));
+          dataLayer.addListener("click", (event: any) => {
+            const f = event.feature;
+            const fascia = (f.getProperty("FasciaMas") || f.getProperty("Fascia") || "").toString();
+            const activity = (f.getProperty("PrimaryAc") || f.getProperty("Activity") || "").toString();
+            const category = (f.getProperty("Category") || "").toString();
+            const useClass = (f.getProperty("UseClass") || "").toString();
+            const num = (f.getProperty("StreetNum") || "").toString();
+            const street = (f.getProperty("StreetName") || "").toString();
+            const postcode = (f.getProperty("Postcode") || "").toString();
+            const holding = (f.getProperty("HoldingCo") || "").toString();
+            const areaFt2 = f.getProperty("Area_ft2");
+            const subclass = (f.getProperty("Subclass") || "").toString();
+            const floorLabel =
+              subclass === "Retailgf" ? "Ground" :
+              subclass === "Retaillg" ? "Lower Ground" :
+              subclass === "Retailf1" ? "First Floor" :
+              subclass === "Retailf2" ? "Second Floor" : "";
+            const tenant = fascia || activity || "(no fascia)";
+            const isVacant = (activity || "").toUpperCase() === "VACANT" || category.toUpperCase().startsWith("VACANT");
+            const html = `
+              <div style="padding:8px;max-width:280px;font-family:system-ui,sans-serif;">
+                <p style="font-weight:600;font-size:14px;margin:0 0 4px;">
+                  ${isVacant ? "<span style='color:#ef4444;'>VACANT — </span>" : ""}${tenant}
+                </p>
+                ${activity && activity !== tenant ? `<p style='font-size:12px;color:#444;margin:0 0 4px;'>${activity}</p>` : ""}
+                ${[num, street].filter(Boolean).join(" ")}${postcode ? `, ${postcode}` : ""}
+                <p style="font-size:11px;color:#666;margin:6px 0 0;">
+                  ${category}${useClass ? ` · Use Class ${useClass}` : ""}
+                </p>
+                ${floorLabel ? `<p style='font-size:11px;color:#666;margin:2px 0 0;'>${floorLabel}${areaFt2 ? ` · ${Number(areaFt2).toLocaleString()} sqft` : ""}</p>` : ""}
+                ${holding && holding !== "NON MULTIPLE" ? `<p style='font-size:11px;color:#888;margin:4px 0 0;'>Parent: ${holding}</p>` : ""}
+              </div>
+            `;
+            if (!goadInfoWindowRef.current) goadInfoWindowRef.current = new google.maps.InfoWindow();
+            const iw = goadInfoWindowRef.current as any;
+            iw.setContent(html);
+            iw.setPosition(event.latLng);
+            iw.open(map);
+          });
+          layers.push(dataLayer);
+          total += (geo?.features?.length || 0);
+        }
+        if (cancelled) {
+          layers.forEach((d) => d.setMap(null));
+          return;
+        }
+        goadLayersRef.current = layers;
+        setGoadFeatureCount(total);
+      } catch (err: any) {
+        setGoadError(err?.message || "Failed to load Goad data");
+      } finally {
+        if (!cancelled) setGoadLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [goadEnabled, scriptReady]);
+
   const statuses = useMemo(() => {
     const s = new Set<string>();
     properties.forEach((p) => p.status && s.add(p.status));
@@ -741,6 +982,29 @@ export default function PropertyMap() {
           >
             <MapIcon className="w-3.5 h-3.5 mr-1" /> Full Map
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => importPipnet.mutate()}
+            disabled={importPipnet.isPending}
+            title="Scrape PIPnet available retail properties onto the map"
+            data-testid="button-import-pipnet-properties"
+          >
+            {importPipnet.isPending
+              ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+              : <Building2 className="w-3.5 h-3.5 mr-1" />}
+            {importPipnet.isPending ? "Importing…" : "Import PIPnet"}
+          </Button>
+          <Button
+            variant={showPipnet ? "default" : "outline"}
+            size="sm"
+            onClick={() => setShowPipnet((v) => !v)}
+            title="Toggle PIPnet available-listing pins"
+            data-testid="button-toggle-pipnet-layer"
+          >
+            <span className="w-2.5 h-2.5 rounded-full mr-1.5" style={{ background: "#06b6d4" }} />
+            Available Properties ({externalProps.length + bgpAvailable.length})
+          </Button>
         </div>
       </div>
 
@@ -787,6 +1051,19 @@ export default function PropertyMap() {
           data-testid="button-tool-distance"
         >
           <Ruler className="w-3.5 h-3.5 mr-1" /> Distance
+        </Button>
+
+        <div className="h-5 w-px bg-border mx-1" />
+
+        <Button
+          variant={goadEnabled ? "default" : "outline"}
+          size="sm"
+          onClick={() => setGoadEnabled((v) => !v)}
+          className={goadEnabled ? "bg-violet-600 hover:bg-violet-700 text-white" : ""}
+          data-testid="button-toggle-goad"
+        >
+          {goadLoading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Layers className="w-3.5 h-3.5 mr-1" />}
+          Goad {goadEnabled && goadFeatureCount > 0 ? `(${goadFeatureCount.toLocaleString()})` : ""}
         </Button>
 
         {activeTool === "radius" && (
@@ -852,7 +1129,7 @@ export default function PropertyMap() {
             <span>
               Click anywhere on the map to draw a <strong>{formatDistance(getEffectiveRadius())}</strong> radius circle.
               {radiusCircles.length > 0 && (
-                <Button variant="link" size="sm" className="h-auto p-0 ml-2 text-xs" onClick={removeLastCircle}>Undo last</Button>
+                <Button variant="ghost" size="sm" className="h-auto p-0 ml-2 text-xs" onClick={removeLastCircle}>Undo last</Button>
               )}
             </span>
           )}
@@ -860,9 +1137,9 @@ export default function PropertyMap() {
             <span>
               {distanceClickCount === 0
                 ? "Click a start point on the map to begin measuring."
-                : <>Now click an end point to see the distance. <Button variant="link" size="sm" className="h-auto p-0 ml-1 text-xs" onClick={cancelDistancePoint}>Cancel</Button></>}
+                : <>Now click an end point to see the distance. <Button variant="ghost" size="sm" className="h-auto p-0 ml-1 text-xs" onClick={cancelDistancePoint}>Cancel</Button></>}
               {distanceLines.length > 0 && (
-                <Button variant="link" size="sm" className="h-auto p-0 ml-2 text-xs" onClick={removeLastLine}>Undo last</Button>
+                <Button variant="ghost" size="sm" className="h-auto p-0 ml-2 text-xs" onClick={removeLastLine}>Undo last</Button>
               )}
             </span>
           )}
@@ -872,14 +1149,32 @@ export default function PropertyMap() {
         </div>
       )}
 
-      <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
+      <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0 flex-wrap">
         {Object.entries(STATUS_COLORS).map(([status, bg]) => (
           <div key={status} className="flex items-center gap-1">
             <div className={`w-2.5 h-2.5 rounded-full ${bg}`} />
             <span>{status}</span>
           </div>
         ))}
+        {goadEnabled && (
+          <>
+            <div className="h-3 w-px bg-border" />
+            <span className="text-[10px] uppercase tracking-wide text-muted-foreground/80">Goad:</span>
+            {GOAD_LEGEND.map((g) => (
+              <div key={g.label} className="flex items-center gap-1">
+                <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: g.color }} />
+                <span>{g.label}</span>
+              </div>
+            ))}
+          </>
+        )}
       </div>
+
+      {goadError && (
+        <div className="px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/30 text-xs text-destructive">
+          Goad layer error: {goadError}
+        </div>
+      )}
 
       <div className={`flex gap-4 flex-1 min-h-0 ${viewMode === "map" ? "" : "flex-col lg:flex-row"}`}>
         {viewMode === "split" && (

@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { usePropertyContext } from "@/lib/property-context";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { CovenantBadge } from "@/components/covenant-badge";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -846,8 +848,18 @@ export default function KycClouseau() {
     pricePaid: landRegPrice,
   } : null);
 
-  const [searchMode, setSearchMode] = useState<"company" | "individual" | "property">("company");
-  const [searchQuery, setSearchQuery] = useState(landRegName);
+  const ctxProperty = usePropertyContext();
+  const [searchMode, setSearchMode] = useState<"company" | "individual" | "property">(ctxProperty?.name ? "property" : "company");
+  const [searchQuery, setSearchQuery] = useState(landRegName || ctxProperty?.name || "");
+  // When the parent Property Intelligence resolves a different property,
+  // switch to property mode and prefill — but don't override an in-progress
+  // company / individual search.
+  useEffect(() => {
+    if (ctxProperty?.name && (!searchQuery || searchQuery === landRegName)) {
+      setSearchMode("property");
+      setSearchQuery(ctxProperty.name);
+    }
+  }, [ctxProperty?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [investigation, setInvestigation] = useState<InvestigationResult | null>(null);
   const [individualResult, setIndividualResult] = useState<IndividualResult | null>(null);
@@ -1149,9 +1161,11 @@ export default function KycClouseau() {
         </div>
       )}
 
-      <div className="flex-1 overflow-hidden flex">
-        {/* Left sidebar — search */}
-        <div className="w-80 border-r flex flex-col flex-shrink-0">
+      <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
+        {/* Left sidebar — search. On mobile it stacks on top with a bounded
+            height so its internal history scroll still works; main column
+            takes the rest. */}
+        <div className="w-full h-[45vh] lg:h-auto lg:w-80 border-b lg:border-b-0 lg:border-r flex flex-col flex-shrink-0">
           <div className="p-4 border-b space-y-3">
             {/* Search mode tabs */}
             <div className="flex gap-1 p-0.5 bg-muted rounded-lg">
@@ -1254,6 +1268,7 @@ export default function KycClouseau() {
                     }
                   }}
                   placeholder="Start typing an address (e.g. 18-22 Haymarket)..."
+                  resolveProperty
                 />
                 <Input
                   data-testid="input-property-postcode"
@@ -1676,6 +1691,9 @@ export default function KycClouseau() {
                     {investigation.companyProfile?.company_number && (
                       <span className="text-sm text-muted-foreground">#{investigation.companyProfile.company_number}</span>
                     )}
+                    {investigation.companyProfile?.company_number && (
+                      <CovenantBadge companyNumber={investigation.companyProfile.company_number} />
+                    )}
                     {investigation.companyProfile?.company_status && (
                       <Badge variant={investigation.companyProfile.company_status === "active" ? "outline" : "destructive"}>
                         {investigation.companyProfile.company_status}
@@ -1894,7 +1912,8 @@ export default function KycClouseau() {
                   <Card>
                     <CardContent className="pt-6">
                       {(() => {
-                        const invId = (investigation as any).investigationId || (investigation as any)._investigationId;
+                        const rawInvId = (investigation as any).investigationId ?? (investigation as any)._investigationId;
+                        const invId = Number.isFinite(Number(rawInvId)) ? Number(rawInvId) : null;
                         const narrative = investigation.aiAnalysis || "";
                         const timedOut = /AI analysis (unavailable|timed out)/i.test(narrative);
                         const isPending = (investigation as any).aiStatus === "pending" || aiPollingId;
@@ -1913,11 +1932,11 @@ export default function KycClouseau() {
                           <div className="space-y-3">
                             {narrative && <MarkdownContent content={narrative} />}
                             {!narrative && <p className="text-sm text-muted-foreground">No AI analysis available.</p>}
-                            {invId && (
+                            {invId !== null && (
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => regenerateAiMutation.mutate(Number(invId))}
+                                onClick={() => regenerateAiMutation.mutate(invId)}
                                 disabled={regenerateAiMutation.isPending}
                                 data-testid="btn-regenerate-ai"
                               >

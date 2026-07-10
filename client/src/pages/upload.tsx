@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { getQueryFn, apiRequest, queryClient } from "@/lib/queryClient";
+import { getQueryFn, apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
@@ -92,7 +92,7 @@ export default function UploadPage() {
       const params = new URLSearchParams();
       if (currentDriveId) params.set("driveId", currentDriveId);
       if (currentFolderId) params.set("folderId", currentFolderId);
-      const res = await fetch(`/api/microsoft/files?${params}`, { credentials: "include" });
+      const res = await fetch(`/api/microsoft/files?${params}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load folders");
       return res.json();
     },

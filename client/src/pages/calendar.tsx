@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { CRM_OPTIONS } from "@/lib/crm-options";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -42,6 +43,7 @@ import {
 } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Link } from "wouter";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface CalendarEvent {
   id: string;
@@ -149,8 +151,8 @@ const HOUR_HEIGHT = 56;
 const START_HOUR = 6;
 const END_HOUR = 22;
 const TOTAL_HOURS = END_HOUR - START_HOUR;
-const TEAMS = ["All", "Investment", "London Leasing", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate", "Landsec"];
-const INTERNAL_BGP_TEAMS = new Set(["London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office / Corporate"]);
+const TEAMS = ["All", ...CRM_OPTIONS.dealTeam];
+const INTERNAL_BGP_TEAMS = new Set<string>(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
 
 function formatTime(dateStr: string) {
   return new Date(dateStr).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -1301,9 +1303,11 @@ export default function Calendar() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
+  const isMobile = useIsMobile();
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("workWeek");
+  // A 5-column week grid is unreadable on a phone — mobile starts in Day view.
+  const [viewMode, setViewMode] = useState<ViewMode>(isMobile ? "day" : "workWeek");
   const [showCrmEvents, setShowCrmEvents] = useState(true);
   const [showOutlookEvents, setShowOutlookEvents] = useState(true);
   const [showTeam, setShowTeam] = useState(true);
@@ -1338,7 +1342,7 @@ export default function Calendar() {
       const params = new URLSearchParams();
       if (effectiveTeamFilter !== "All") params.set("team", effectiveTeamFilter);
       params.set("days", "14");
-      const res = await fetch(`/api/microsoft/team-calendar?${params}`, { credentials: "include" });
+      const res = await fetch(`/api/microsoft/team-calendar?${params}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to fetch team calendar");
       return res.json();
     },

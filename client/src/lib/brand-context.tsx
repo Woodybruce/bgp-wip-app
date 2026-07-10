@@ -49,12 +49,17 @@ function resolveBrand(teamName: string | null | undefined): BrandConfig {
 }
 
 export function BrandProvider({ children }: { children: ReactNode }) {
-  const { activeTeam } = useTeam();
+  const { activeTeam, userTeam } = useTeam();
 
   const value = useMemo<BrandContextType>(() => {
-    const brand = resolveBrand(activeTeam);
+    // Brand follows the active team, but falls back to the user's OWN team
+    // when no team is actively selected (e.g. a client login whose team
+    // switcher is locked). Without this fallback a Landsec client briefly
+    // — or permanently — sees the BGP brand instead of their own.
+    const effective = activeTeam && activeTeam !== "all" ? activeTeam : userTeam;
+    const brand = resolveBrand(effective);
     return { brand, isLandsec: brand.id === "landsec" };
-  }, [activeTeam]);
+  }, [activeTeam, userTeam]);
 
   return (
     <BrandContext.Provider value={value}>

@@ -162,6 +162,7 @@ export default function CadMeasurePage() {
   const [mouseWorldPos, setMouseWorldPos] = useState<{ x: number; y: number } | null>(null);
   const [entityCount, setEntityCount] = useState(0);
   const [shiftHeld, setShiftHeld] = useState(false);
+  const [snapPoint, setSnapPoint] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => { if (e.key === "Shift") setShiftHeld(true); };
@@ -352,6 +353,15 @@ export default function CadMeasurePage() {
       }
     }
 
+    if (snapPoint && activeTool !== "pan") {
+      const sp = toScreen(snapPoint.x, snapPoint.y);
+      ctx.strokeStyle = "#22c55e";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([]);
+      const sz = 10;
+      ctx.strokeRect(sp.sx - sz / 2, sp.sy - sz / 2, sz, sz);
+    }
+
     ctx.fillStyle = isDark ? "#64748b" : "#94a3b8";
     ctx.font = "11px Inter, sans-serif";
     ctx.fillText(`Scale: ${scale.toFixed(1)}x | ${isPdfMode ? `${pdfNumPages} page${pdfNumPages === 1 ? "" : "s"}` : `${entities.length} entities`}`, 10, canvas.height - 10);
@@ -361,7 +371,7 @@ export default function CadMeasurePage() {
         10, canvas.height - 26
       );
     }
-  }, [dxfData, pdfImage, pdfNumPages, isPdfMode, scale, offset, measurements, currentPoints, mouseWorldPos, activeTool, effectiveUnitScale, effectiveUnitLabel, shiftHeld, orthoSnap]);
+  }, [dxfData, pdfImage, pdfNumPages, isPdfMode, scale, offset, measurements, currentPoints, mouseWorldPos, activeTool, effectiveUnitScale, effectiveUnitLabel, shiftHeld, orthoSnap, snapPoint]);
 
   useEffect(() => { drawCanvas(); }, [drawCanvas]);
 
@@ -494,7 +504,8 @@ export default function CadMeasurePage() {
     if (!dxfData || activeTool === "pan") return;
     const raw = screenToWorld(e.clientX, e.clientY);
     const prev = currentPoints[currentPoints.length - 1];
-    const world = e.shiftKey && prev ? orthoSnap(prev, raw) : raw;
+    const ortho = e.shiftKey && prev ? orthoSnap(prev, raw) : raw;
+    const world = snapPoint ?? ortho;
 
     if (activeTool === "measure") {
       if (currentPoints.length === 0) {
@@ -561,7 +572,46 @@ export default function CadMeasurePage() {
       setOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
     }
     if (dxfData) {
-      setMouseWorldPos(screenToWorld(e.clientX, e.clientY));
+      const rawPos = screenToWorld(e.clientX, e.clientY);
+
+      let snapped: { x: number; y: number } | null = null;
+      if (activeTool !== "pan" && dxfData.entities.length > 0) {
+        const canvas = canvasRef.current;
+        if (canvas) {
+          const rect = canvas.getBoundingClientRect();
+          const cursorSx = e.clientX - rect.left;
+          const cursorSy = e.clientY - rect.top;
+          const { bounds } = dxfData;
+          const drawW = bounds.maxX - bounds.minX;
+          const drawH = bounds.maxY - bounds.minY;
+          const padding = 40;
+          const scaleX = (canvas.width - 2 * padding) / drawW;
+          const scaleY = (canvas.height - 2 * padding) / drawH;
+          const s = Math.min(scaleX, scaleY) * scale;
+          const ox = padding + (canvas.width - 2 * padding - drawW * s) / 2 + offset.x;
+          const oy = padding + (canvas.height - 2 * padding - drawH * s) / 2 + offset.y;
+          const SNAP_PX = 16;
+          let bestDist = SNAP_PX;
+          for (const entity of dxfData.entities) {
+            const candidates: { x: number; y: number }[] = [];
+            if (entity.type === "LINE") {
+              if (entity.startPoint) candidates.push(entity.startPoint);
+              if (entity.endPoint) candidates.push(entity.endPoint);
+            } else if ((entity.type === "LWPOLYLINE" || entity.type === "POLYLINE") && entity.vertices) {
+              for (const v of entity.vertices) candidates.push(v);
+            }
+            for (const pt of candidates) {
+              const sx = (pt.x - bounds.minX) * s + ox;
+              const sy = (bounds.maxY - pt.y) * s + oy;
+              const dist = Math.sqrt((sx - cursorSx) ** 2 + (sy - cursorSy) ** 2);
+              if (dist < bestDist) { bestDist = dist; snapped = pt; }
+            }
+          }
+        }
+      }
+
+      setSnapPoint(snapped);
+      setMouseWorldPos(snapped ?? rawPos);
     }
   };
 

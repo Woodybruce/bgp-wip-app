@@ -73,11 +73,13 @@ export function registerMapLayerRoutes(app: Express) {
       // Known-centre directory URLs we can scrape directly — much more
       // reliable than asking an LLM to find them. Add more as they're
       // verified. Format is { name → [urls to try in order] }.
+      // Note: Cardinal Place + Nova Victoria share the Landsec-run
+      // atvictorialondon.com directory — same URL for both.
       const CENTRE_URLS: Record<string, string[]> = {
-        "Cardinal Place, London": ["https://cardinalplace.co.uk/stores"],
-        "Nova Victoria, London": ["https://atvictorialondon.com/en/plan-your-visit/centre-map"],
-        "Westfield London, Shepherds Bush": ["https://uk.westfield.com/london/info/centre-map", "https://uk.westfield.com/london"],
-        "Westfield Stratford City": ["https://uk.westfield.com/stratfordcity/info/centre-map", "https://uk.westfield.com/stratfordcity"],
+        "Cardinal Place, London": ["https://www.atvictorialondon.com/en/plan-your-visit/centre-map", "https://www.atvictorialondon.com/en/stores"],
+        "Nova Victoria, London": ["https://www.atvictorialondon.com/en/plan-your-visit/centre-map", "https://www.atvictorialondon.com/en/stores"],
+        "Westfield London, Shepherds Bush": ["https://uk.westfield.com/london/info/centre-map", "https://uk.westfield.com/london/stores"],
+        "Westfield Stratford City": ["https://uk.westfield.com/stratfordcity/info/centre-map", "https://uk.westfield.com/stratfordcity/stores"],
         "Brent Cross Shopping Centre": ["https://www.brentcross.co.uk/stores"],
         "Canary Wharf Shopping": ["https://canarywharf.com/shops-restaurants/"],
         "One New Change, London": ["https://www.onenewchange.com/stores"],
@@ -336,7 +338,60 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
       }
       backgroundGeocode(leaseNeedGeocode.slice(0, 50));
 
-      res.json({ deals, comps, leaseEvents });
+      // ── 4. Pathway runs ────────────────────────────────────────────────────
+      // Active investigations — pin every pathway run that has a linked
+      // property (or a known address via cached geocode). Lets the user
+      // see all in-flight work on the map.
+      // r.tenant was removed when property_pathway_runs lost its tenant
+      // column — pulling it back was throwing "column r.tenant does not
+      // exist" and 500'ing the whole map. Tenant info is no longer
+      // surfaced on pathway pins; if it needs to come back, source it
+      // via crm_properties.tenant_name or the linked tenancy spine.
+      const pathwayRes = await pool.query(`
+        SELECT
+          r.id, r.address, r.postcode, r.property_id,
+          r.updated_at,
+          r.stage_results,
+          p.latitude  AS p_lat,
+          p.longitude AS p_lng
+        FROM property_pathway_runs r
+        LEFT JOIN crm_properties p ON p.id = r.property_id
+        ORDER BY r.updated_at DESC
+        LIMIT 500
+      `);
+
+      const pathway: any[] = [];
+      const pathwayNeedGeocode: string[] = [];
+      for (const r of pathwayRes.rows) {
+        let lat: number | null = null;
+        let lng: number | null = null;
+        if (r.p_lat && r.p_lng) {
+          lat = parseFloat(r.p_lat); lng = parseFloat(r.p_lng);
+        } else if (r.address) {
+          const geo = await getCachedGeocode(`${r.address} ${r.postcode || ""}, UK`);
+          if (geo) { lat = geo.lat; lng = geo.lng; }
+          else pathwayNeedGeocode.push(`${r.address} ${r.postcode || ""}, UK`);
+        }
+        if (lat !== null && lng !== null && isFinite(lat) && isFinite(lng)) {
+          // Highest-numbered stage with a result is "current stage"
+          let currentStage = 0;
+          const sr = r.stage_results || {};
+          for (let i = 1; i <= 9; i++) if (sr[`stage${i}`]) currentStage = i;
+          pathway.push({
+            id: r.id,
+            type: "pathway",
+            lat, lng,
+            label: r.address,
+            postcode: r.postcode,
+            currentStage,
+            propertyId: r.property_id,
+            updatedAt: r.updated_at,
+          });
+        }
+      }
+      backgroundGeocode(pathwayNeedGeocode.slice(0, 50));
+
+      res.json({ deals, comps, leaseEvents, pathway });
     } catch (err: any) {
       console.error("[map-layers] error:", err?.message);
       res.status(500).json({ error: err?.message || "Failed to load map pins" });
@@ -598,21 +653,17 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
 
       if (!postcode) return res.json({ freeholds: [], leaseholds: [], postcode: null });
 
-      // Fetch freeholds + leaseholds for this postcode — cached 30 days
-      const [freeholds, leaseholds] = await Promise.all([
-        cached(`pd-fh:${postcode}`, async () => {
-          const url = `https://api.propertydata.co.uk/freeholds?key=${PD_KEY}&postcode=${encodeURIComponent(postcode)}`;
-          const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
-          if (!r.ok) return null;
-          return await r.json();
-        }, 24 * 30),
-        cached(`pd-lh:${postcode}`, async () => {
-          const url = `https://api.propertydata.co.uk/leaseholds?key=${PD_KEY}&postcode=${encodeURIComponent(postcode)}`;
-          const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
-          if (!r.ok) return null;
-          return await r.json();
-        }, 24 * 30),
-      ]);
+      // Fetch freeholds for this postcode — cached 30 days. PropertyData has
+      // no /leaseholds?postcode endpoint (returns X01 "Invalid API endpoint"),
+      // and per-UPRN lookups across a whole bbox would be far too expensive
+      // for a map view. Map shows freehold polygons only.
+      const freeholds = await cached(`pd-fh:${postcode}`, async () => {
+        const url = `https://api.propertydata.co.uk/freeholds?key=${PD_KEY}&postcode=${encodeURIComponent(postcode)}`;
+        const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        if (!r.ok) return null;
+        return await r.json();
+      }, 24 * 30);
+      const leaseholds = null;
 
       const extract = (payload: any): any[] => {
         const rows = payload?.data || payload?.freeholds?.data || payload?.leaseholds?.data || [];
@@ -636,6 +687,183 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
       });
     } catch (err: any) {
       console.error("[map-layers/title-boundaries] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ─── Occupier plan — Goad/Edozo unit polygons with names ─────────────────
+  // Serves goad_units (from Edozo or an Experian import) as GeoJSON for the
+  // viewport. Names live on the polygons, so this replaces the OSM/NGD name-
+  // guessing entirely for any area we have coverage for. If the viewport is
+  // uncovered and Edozo is configured, we pull it live, cache to goad_units,
+  // then serve — so coverage warms as users pan.
+  app.get("/api/map/occupier-plan", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const bbox = String(req.query.bbox || "").trim();
+      if (!bbox) return res.status(400).json({ error: "bbox required" });
+      const [s, w, n, e] = bbox.split(",").map(parseFloat);
+      if (![s, w, n, e].every(Number.isFinite)) return res.status(400).json({ error: "invalid bbox" });
+      const box = { south: s, west: w, north: n, east: e };
+
+      const { queryGoadUnitsByBbox, countGoadUnitsInBbox, upsertGoadUnits } = await import("./goad-units");
+      const { fetchEdozoOccupiers, isEdozoConfigured } = await import("./edozo-occupiers");
+
+      let count = await countGoadUnitsInBbox(box);
+      let source = "cache";
+      // Refresh from Edozo when the viewport looks uncovered. Guard on a small
+      // area so we never fan a huge bbox out to the WFS.
+      const areaOk = n - s < 0.02 && e - w < 0.03;
+      if (count < 5 && areaOk && isEdozoConfigured()) {
+        const { units, total } = await fetchEdozoOccupiers(box);
+        if (units.length) {
+          await upsertGoadUnits(units);
+          count = await countGoadUnitsInBbox(box);
+          source = `edozo:${total}`;
+        }
+      }
+
+      const units = await queryGoadUnitsByBbox(box);
+      const features = units.map((u) => ({
+        type: "Feature" as const,
+        geometry: u.geometry,
+        properties: {
+          toid: u.toid,
+          name: u.occupierName,
+          classification: u.classification,
+          category: u.categoryGroup,
+          streetNum: u.streetNum,
+          labelRotation: u.labelRotation,
+          source: u.source,
+        },
+      }));
+      res.json({ type: "FeatureCollection", features, meta: { count, source } });
+    } catch (err: any) {
+      console.error("[map-layers/occupier-plan] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ─── Retail units for the map's Retail Context layer, from goad_units ─────
+  // Serves the harvested/imported occupier units (all licensed areas) in the
+  // exact GeoJSON shape the client's Retail Context renderer expects, so the
+  // one good layer covers everywhere instead of the old static West-End file.
+  // MultiPolygons are flattened to their largest outer ring (the renderer and
+  // its label code assume geometry.coordinates[0] is a single ring).
+  app.get("/api/map/retail-units", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const bbox = String(req.query.bbox || "").trim();
+      if (!bbox) return res.status(400).json({ type: "FeatureCollection", features: [] });
+      const [s, w, n, e] = bbox.split(",").map(parseFloat);
+      if (![s, w, n, e].every(Number.isFinite)) return res.status(400).json({ error: "invalid bbox" });
+
+      const { queryGoadUnitsByBbox } = await import("./goad-units");
+      const units = await queryGoadUnitsByBbox({ south: s, west: w, north: n, east: e });
+
+      const ringArea = (ring: number[][]): number => {
+        // Shoelace in m² using an equirectangular approximation at the ring's latitude.
+        if (!ring || ring.length < 3) return 0;
+        const latAvg = ring.reduce((a, c) => a + c[1], 0) / ring.length;
+        const mPerLng = 111320 * Math.cos((latAvg * Math.PI) / 180);
+        const mPerLat = 111320;
+        let area = 0;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+          area += (ring[j][0] * mPerLng) * (ring[i][1] * mPerLat) - (ring[i][0] * mPerLng) * (ring[j][1] * mPerLat);
+        }
+        return Math.abs(area / 2);
+      };
+      const largestOuterRing = (geom: any): number[][] | null => {
+        if (!geom) return null;
+        if (geom.type === "Polygon") return geom.coordinates?.[0] || null;
+        if (geom.type === "MultiPolygon") {
+          let best: number[][] | null = null, bestA = -1;
+          for (const poly of geom.coordinates || []) {
+            const r = poly?.[0];
+            if (!r) continue;
+            const a = ringArea(r);
+            if (a > bestA) { bestA = a; best = r; }
+          }
+          return best;
+        }
+        return null;
+      };
+
+      const features: any[] = [];
+      for (const u of units) {
+        const ring = largestOuterRing(u.geometry);
+        if (!ring || ring.length < 3) continue;
+        let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+        for (const [lng, lat] of ring) {
+          if (lng < minLng) minLng = lng; if (lng > maxLng) maxLng = lng;
+          if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat;
+        }
+        const name = u.occupierName || "";
+        features.push({
+          type: "Feature",
+          geometry: { type: "Polygon", coordinates: [ring] },
+          properties: {
+            Fascia: name,
+            FasciaMas: name,
+            Activity: name,
+            PrimaryAc: name,
+            Category: u.categoryGroup || "other",
+            _group: u.categoryGroup || "other",
+            StreetNum: u.streetNum || "",
+            Area_ft2: Math.round(ringArea(ring) * 10.7639),
+            Subclass: "Retailgf",
+            Centroid_X: (minLng + maxLng) / 2,
+            Centroid_Y: (minLat + maxLat) / 2,
+            GoadNumber: u.toid || "",
+            _classification: u.classification || "",
+            _source: u.source,
+          },
+        });
+      }
+      res.setHeader("Cache-Control", "private, max-age=300");
+      res.json({ type: "FeatureCollection", features });
+    } catch (err: any) {
+      console.error("[map-layers/retail-units] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ─── Admin: bulk-load occupier units into goad_units ─────────────────────
+  // One-off ingest for a harvested/imported occupier snapshot. Gated by a
+  // shared secret (ADMIN_LOAD_SECRET) rather than a user session so it can be
+  // driven server-to-server. Accepts raw harvest records and maps them to the
+  // normalised goad_units shape. Idempotent (upsert on external_key).
+  app.post("/api/admin/load-goad-units", async (req: Request, res: Response) => {
+    try {
+      const secret = process.env.ADMIN_LOAD_SECRET;
+      if (!secret || req.get("x-admin-secret") !== secret) return res.status(403).json({ error: "forbidden" });
+      const records: any[] = Array.isArray(req.body?.units) ? req.body.units : [];
+      if (records.length === 0) return res.json({ upserted: 0 });
+
+      const { upsertGoadUnits, normaliseCategory, bboxOfGeometry } = await import("./goad-units");
+      const units = records
+        .filter((r) => r?.geometry)
+        .map((r) => {
+          const bb = bboxOfGeometry(r.geometry);
+          const key = r.toid
+            ? `edozo:GF:${r.toid}`
+            : `edozo:GF:${bb ? `${bb.centroidLat.toFixed(6)},${bb.centroidLng.toFixed(6)}` : Math.random()}`;
+          return {
+            externalKey: key,
+            source: "edozo" as const,
+            toid: r.toid ?? null,
+            floorLevel: "GF",
+            occupierName: r.occupierName ?? null,
+            classification: r.classification ?? null,
+            category: r.category ?? null,
+            categoryGroup: normaliseCategory({ occupierName: r.occupierName, rawCategory: r.category, classification: r.classification }),
+            geometry: r.geometry,
+            labelRotation: typeof r.labelRotation === "number" ? r.labelRotation : null,
+            rawProps: r.uprn ? { uprn: r.uprn, geofence: r.geofence } : (r.geofence ? { geofence: r.geofence } : null),
+          };
+        });
+      const upserted = await upsertGoadUnits(units);
+      res.json({ upserted, received: records.length });
+    } catch (err: any) {
+      console.error("[map-layers/load-goad-units] error:", err?.message);
       res.status(500).json({ error: err?.message });
     }
   });

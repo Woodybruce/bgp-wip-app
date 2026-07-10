@@ -1,15 +1,16 @@
-import { useState, useMemo, lazy, Suspense } from "react";
+import { useState, useMemo, useEffect, lazy, Suspense } from "react";
 import { logoKitEnabled, logoKitUrl } from "@/lib/logokit";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useSearch } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { extractDomain, guessDomain } from "@/lib/company-logos";
+import { extractDomain, guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import {
   Store, TrendingUp, Flame, Star, Search, ChevronRight,
   MapPin, Maximize2, Zap, BarChart3, RefreshCw, Building2,
@@ -19,10 +20,11 @@ import {
   UtensilsCrossed, Soup, Diamond, Car, Wifi, BookOpen, Smartphone,
   Flower2, Clapperboard, Tv, Gamepad2, Baby, Palette, PartyPopper,
   HeartPulse, Bath, Dumbbell, Tag, Wrench, Watch, Gem, Footprints,
-  ShoppingCart,
+  ShoppingCart, Crosshair, TrendingDown, Eye, Lightbulb,
 } from "lucide-react";
 
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
+const BrandHunterBoard = lazy(() => import("@/components/brand-hunter-board"));
 
 interface HubData {
   stats: {
@@ -72,11 +74,10 @@ interface ActiveReq {
   company_name: string;
   company_type: string | null;
   domain: string | null;
-  size_min: number | null;
-  size_max: number | null;
-  locations: string[] | null;
-  use: string | null;
-  notes: string | null;
+  size: string[] | null;
+  use: string[] | null;
+  requirement_locations: string[] | null;
+  comments: string | null;
   created_at: string;
   contact_count: string;
 }
@@ -88,11 +89,9 @@ function formatTurnover(val: number): string {
   return `£${val.toFixed(0)}`;
 }
 
-function formatSize(min: number | null, max: number | null): string {
-  if (!min && !max) return "—";
-  if (min && max) return `${min.toLocaleString()}–${max.toLocaleString()} sq ft`;
-  if (min) return `${min.toLocaleString()}+ sq ft`;
-  return `up to ${max!.toLocaleString()} sq ft`;
+function formatSize(sizes: string[] | null): string {
+  if (!sizes?.length) return "—";
+  return sizes.join(", ");
 }
 
 function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string | null; size?: number }) {
@@ -101,7 +100,12 @@ function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string 
   const d = extractDomain(domain ?? null);
   const guessed = guessDomain(name);
 
+  // Only source: /api/brand-logo/...  — the server redirects to logo.dev
+  // (or Google favicons) when there's no local image. Clearbit was killed by
+  // HubSpot March 2025 and the domain literally doesn't resolve any more.
   const sources: string[] = [];
+  const local = localBrandLogoUrl(name, domain ?? guessed ?? null);
+  if (local) sources.push(local);
   if (d) {
     if (logoKitEnabled) sources.push(logoKitUrl(d, Math.min(size * 3, 512)));
     sources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${d}&size=128`);
@@ -116,6 +120,8 @@ function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string 
       <img
         src={sources[failCount]}
         alt={name}
+        loading="lazy"
+        decoding="async"
         className="rounded object-contain bg-white"
         style={{ width: size, height: size }}
         onError={() => setFailCount(c => c + 1)}
@@ -139,16 +145,44 @@ function confidenceColour(c: string) {
   return "bg-slate-400";
 }
 
-type HubTab = "overview" | "explorer" | "turnover";
+type HubTab = "overview" | "explorer" | "turnover" | "hunter";
 
 export default function BrandsHub() {
   const { toast } = useToast();
   const searchParams = useSearch();
   const rawTab = new URLSearchParams(searchParams).get("tab");
-  const initialTab: HubTab = rawTab && ["overview", "explorer", "turnover"].includes(rawTab) ? rawTab as HubTab : "overview";
+  const isMobile = useIsMobile();
+  // Mobile goes straight to Brand Explorer; desktop keeps the Overview landing.
+  const initialTab: HubTab = rawTab && ["overview", "explorer", "turnover", "hunter"].includes(rawTab)
+    ? rawTab as HubTab
+    : (typeof window !== "undefined" && window.innerWidth < 768 ? "explorer" : "overview");
   const [activeTab, setActiveTab] = useState<HubTab>(initialTab);
+  // Client logins (e.g. Landsec) get ONLY Brand Explorer — the curated
+  // hospitality/F&B/fitness directory. Overview (turnover leaders + the
+  // "Research Turnover" admin panel), Turnover Board and Brand Hunter are all
+  // BGP intel and stay staff-only.
+  const { data: hubUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientHub = hubUser?.role === "Client";
+  // The other boards (Overview/Turnover/Hunter) are still being built, so on
+  // mobile we show only Brand Explorer. Desktop keeps the full tab bar.
+  const VISIBLE_HUB_TABS = ([
+    { key: "overview", label: "Overview", icon: BarChart3 },
+    { key: "explorer", label: "Brand Explorer", icon: LayoutGrid },
+    { key: "turnover", label: "Turnover Board", icon: TrendingUp },
+    { key: "hunter",  label: "Brand Hunter",   icon: Crosshair },
+  ] as { key: HubTab; label: string; icon: any }[])
+    .filter(t => !isMobile || t.key === "explorer")
+    .filter(t => !isClientHub || t.key === "explorer");
   const [search, setSearch] = useState("");
   const [researchingId, setResearchingId] = useState<string | null>(null);
+
+  // Clients only have the explorer — force it and bounce any deep-link to a
+  // staff board (overview/turnover/hunter).
+  useEffect(() => {
+    if (isClientHub && activeTab !== "explorer") {
+      setActiveTab("explorer");
+    }
+  }, [isClientHub, activeTab]);
 
   const { data, isLoading } = useQuery<HubData>({
     queryKey: ["/api/brands/hub"],
@@ -222,12 +256,12 @@ export default function BrandsHub() {
       </div>
 
       {/* ── Tabs ───────────────────────────────────────────────────── */}
+      {/* Mobile shows only Brand Explorer (the other boards are still being
+          built); desktop keeps the full tab bar. Hidden tabs stay reachable
+          via ?tab= for development. */}
+      {VISIBLE_HUB_TABS.length > 1 && (
       <div className="flex gap-1 border-b">
-        {([
-          { key: "overview", label: "Overview", icon: BarChart3 },
-          { key: "explorer", label: "Brand Explorer", icon: LayoutGrid },
-          { key: "turnover", label: "Turnover Board", icon: TrendingUp },
-        ] as { key: HubTab; label: string; icon: any }[]).map(t => (
+        {(VISIBLE_HUB_TABS as { key: HubTab; label: string; icon: any }[]).map(t => (
           <button
             key={t.key}
             onClick={() => setActiveTab(t.key)}
@@ -242,6 +276,7 @@ export default function BrandsHub() {
           </button>
         ))}
       </div>
+      )}
 
       {activeTab === "overview" && (<>
 
@@ -265,57 +300,58 @@ export default function BrandsHub() {
         ))}
       </div>
 
-      {/* ── Turnover Leaderboard ────────────────────────────────────── */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
-          <div className="flex items-center gap-2">
-            <Trophy className="w-4 h-4 text-yellow-500" />
-            <CardTitle className="text-sm font-semibold">Turnover Leaders</CardTitle>
-            <Badge variant="secondary" className="text-[10px]">{data?.topTurnover?.length || 0} tracked</Badge>
-          </div>
-          <Link href="/turnover">
-            <Button variant="ghost" size="sm" className="text-xs h-7">
-              Full board <ChevronRight className="w-3 h-3 ml-0.5" />
-            </Button>
-          </Link>
-        </CardHeader>
-        <CardContent className="px-5 pb-4">
-          {!data?.topTurnover?.length ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <BarChart3 className="w-10 h-10 mx-auto mb-2 opacity-20" />
-              <p className="text-sm">No turnover data yet</p>
-              <p className="text-xs mt-1">Click "Research" on any brand to start building your leaderboard</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {data.topTurnover.map((t, i) => (
-                <div key={t.id} className="flex items-center gap-3 py-2 border-b last:border-0">
-                  <span className={`text-xs font-bold w-5 shrink-0 ${i < 3 ? "text-yellow-500" : "text-muted-foreground"}`}>
-                    {i + 1}
-                  </span>
-                  <BrandLogo name={t.company_name} domain={t.domain} size={28} />
-                  <div className="flex-1 min-w-0">
-                    <Link href={`/companies/${t.company_id}`}>
-                      <p className="text-sm font-medium hover:underline truncate">{t.company_name}</p>
-                    </Link>
-                    <p className="text-[10px] text-muted-foreground">{(t.company_type || "").replace("Tenant - ", "")} · {t.period}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-sm font-bold text-emerald-600">{formatTurnover(t.turnover)}</p>
-                    {t.turnover_per_sqft && (
-                      <p className="text-[10px] text-muted-foreground">£{t.turnover_per_sqft.toFixed(0)}/sq ft</p>
-                    )}
-                  </div>
-                  <Badge className={`text-[9px] px-1.5 shrink-0 ${confidenceColour(t.confidence)}`}>{t.confidence}</Badge>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* ── Top row: Turnover Leaders + Who's Hot + Super Brands ─────
+           Three-column 'at a glance' strip. Layout collapses to 1-col
+           on mobile / 2-col on tablet / 3-col on lg+ so the three
+           snapshots stay legible without becoming postage stamps. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
 
-      {/* ── Who's Hot + Super Brands side by side ──────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Turnover Leaderboard */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
+            <div className="flex items-center gap-2">
+              <Trophy className="w-4 h-4 text-yellow-500" />
+              <CardTitle className="text-sm font-semibold">Turnover Leaders</CardTitle>
+              <Badge variant="secondary" className="text-[10px]">{data?.topTurnover?.length || 0}</Badge>
+            </div>
+            <Link href="/brands?tab=turnover">
+              <Button variant="ghost" size="sm" className="text-xs h-7">
+                Full <ChevronRight className="w-3 h-3 ml-0.5" />
+              </Button>
+            </Link>
+          </CardHeader>
+          <CardContent className="px-5 pb-4">
+            {!data?.topTurnover?.length ? (
+              <div className="text-center py-6 text-muted-foreground">
+                <BarChart3 className="w-8 h-8 mx-auto mb-2 opacity-20" />
+                <p className="text-xs">No turnover data yet</p>
+              </div>
+            ) : (
+              <div className="space-y-1.5 max-h-[460px] overflow-y-auto pr-1">
+                {data.topTurnover.slice(0, 10).map((t, i) => (
+                  <div key={t.id} className="flex items-center gap-2 py-1.5 border-b last:border-0">
+                    <span className={`text-xs font-bold w-4 shrink-0 ${i < 3 ? "text-yellow-500" : "text-muted-foreground"}`}>
+                      {i + 1}
+                    </span>
+                    <BrandLogo name={t.company_name} domain={t.domain} size={22} />
+                    <div className="flex-1 min-w-0">
+                      <Link href={`/companies/${t.company_id}`}>
+                        <p className="text-xs font-medium hover:underline truncate">{t.company_name}</p>
+                      </Link>
+                      <p className="text-[9px] text-muted-foreground truncate">{(t.company_type || "").replace("Tenant - ", "")} · {t.period}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-xs font-bold text-emerald-600">{formatTurnover(t.turnover)}</p>
+                      {t.turnover_per_sqft && (
+                        <p className="text-[9px] text-muted-foreground">£{t.turnover_per_sqft.toFixed(0)}/sqft</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Who's Hot */}
         <Card>
@@ -323,31 +359,31 @@ export default function BrandsHub() {
             <div className="flex items-center gap-2">
               <Flame className="w-4 h-4 text-orange-500" />
               <CardTitle className="text-sm font-semibold">Who's Hot</CardTitle>
-              <span className="text-[10px] text-muted-foreground">brands active in the last 90 days</span>
+              <Badge variant="secondary" className="text-[10px]">{filteredHot.length}</Badge>
             </div>
+            <span className="text-[10px] text-muted-foreground">last 90 days</span>
           </CardHeader>
           <CardContent className="px-5 pb-4">
             {!filteredHot.length ? (
               <p className="text-sm text-muted-foreground text-center py-6">No recent brand activity</p>
             ) : (
-              <div className="space-y-1.5">
-                {filteredHot.slice(0, 12).map(b => {
-                  const activity = parseInt(b.deal_count) + parseInt(b.req_count) + parseInt(b.contact_count);
+              <div className="space-y-1 max-h-[460px] overflow-y-auto pr-1">
+                {filteredHot.slice(0, 10).map(b => {
                   const daysAgo = Math.floor((Date.now() - new Date(b.last_activity).getTime()) / 86400000);
                   return (
                     <Link key={b.id} href={`/companies/${b.id}`}>
-                      <div className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors cursor-pointer">
-                        <BrandLogo name={b.name} domain={b.domain} size={32} />
+                      <div className="flex items-center gap-2 py-1.5 border-b last:border-0 hover:bg-muted/50 rounded -mx-1 px-1 transition-colors cursor-pointer">
+                        <BrandLogo name={b.name} domain={b.domain} size={22} />
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{b.name}</p>
-                          <p className="text-[10px] text-muted-foreground">{(b.company_type || "").replace("Tenant - ", "")}</p>
+                          <p className="text-xs font-medium truncate">{b.name}</p>
+                          <p className="text-[9px] text-muted-foreground truncate">{(b.company_type || "").replace("Tenant - ", "")}</p>
                         </div>
                         <div className="text-right shrink-0">
                           <div className="flex items-center gap-1 justify-end">
-                            {parseInt(b.deal_count) > 0 && <Badge variant="secondary" className="text-[9px] px-1">{b.deal_count} deal{parseInt(b.deal_count) !== 1 ? "s" : ""}</Badge>}
-                            {parseInt(b.req_count) > 0 && <Badge className="text-[9px] px-1 bg-blue-500">{b.req_count} req</Badge>}
+                            {(parseInt(b.deal_count) || 0) > 0 && <Badge variant="secondary" className="text-[9px] px-1">{b.deal_count}d</Badge>}
+                            {(parseInt(b.req_count) || 0) > 0 && <Badge className="text-[9px] px-1 bg-pink-500">{b.req_count}r</Badge>}
                           </div>
-                          <p className="text-[10px] text-muted-foreground mt-0.5">{daysAgo === 0 ? "today" : `${daysAgo}d ago`}</p>
+                          <p className="text-[9px] text-muted-foreground mt-0.5">{daysAgo === 0 ? "today" : `${daysAgo}d`}</p>
                         </div>
                       </div>
                     </Link>
@@ -368,17 +404,17 @@ export default function BrandsHub() {
             </div>
             <Link href="/companies?tab=tenants&cat=luxury">
               <Button variant="ghost" size="sm" className="text-xs h-7">
-                View all <ChevronRight className="w-3 h-3 ml-0.5" />
+                All <ChevronRight className="w-3 h-3 ml-0.5" />
               </Button>
             </Link>
           </CardHeader>
           <CardContent className="px-5 pb-4">
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5 max-h-[460px] overflow-y-auto pr-1">
               {(data?.superBrands || []).map(b => (
                 <Link key={b.id} href={`/companies/${b.id}`}>
-                  <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border bg-card hover:bg-muted/60 transition-colors cursor-pointer" title={b.name}>
-                    <BrandLogo name={b.name} domain={b.domain} size={18} />
-                    <span className="text-xs font-medium">{b.name}</span>
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded-md border bg-card hover:bg-muted/60 transition-colors cursor-pointer" title={b.name}>
+                    <BrandLogo name={b.name} domain={b.domain} size={16} />
+                    <span className="text-[11px] font-medium">{b.name}</span>
                   </div>
                 </Link>
               ))}
@@ -396,7 +432,7 @@ export default function BrandsHub() {
           <div className="flex items-center gap-2">
             <Maximize2 className="w-4 h-4 text-blue-500" />
             <CardTitle className="text-sm font-semibold">Active Requirements Radar</CardTitle>
-            <Badge className="text-[10px] bg-blue-500">{data?.activeRequirements?.length || 0} brands searching</Badge>
+            <Badge className="text-[10px] bg-pink-500">{data?.activeRequirements?.length || 0} brands searching</Badge>
           </div>
         </CardHeader>
         <CardContent className="px-5 pb-4">
@@ -405,28 +441,28 @@ export default function BrandsHub() {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
               {data.activeRequirements.map(r => (
-                <Link key={r.id} href={`/companies/${r.company_id}`}>
+                <Link key={r.id} href={`/companies/${r.company_id}?tab=requirements`}>
                   <div className="flex items-start gap-2.5 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors cursor-pointer">
                     <BrandLogo name={r.company_name} domain={r.domain} size={28} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{r.company_name}</p>
                       <p className="text-[10px] text-muted-foreground truncate">{(r.company_type || "").replace("Tenant - ", "")}</p>
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {r.size_min || r.size_max ? (
+                        {r.size?.length ? (
                           <Badge variant="outline" className="text-[9px] px-1.5 py-0">
                             <Maximize2 className="w-2.5 h-2.5 mr-0.5" />
-                            {formatSize(r.size_min, r.size_max)}
+                            {formatSize(r.size)}
                           </Badge>
                         ) : null}
-                        {r.locations && r.locations.length > 0 && (
+                        {r.requirement_locations && r.requirement_locations.length > 0 && (
                           <Badge variant="outline" className="text-[9px] px-1.5 py-0">
                             <MapPin className="w-2.5 h-2.5 mr-0.5" />
-                            {r.locations.slice(0, 2).join(", ")}
+                            {r.requirement_locations.slice(0, 2).join(", ")}
                           </Badge>
                         )}
-                        {r.use && (
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0">{r.use}</Badge>
-                        )}
+                        {r.use?.length ? (
+                          <Badge variant="outline" className="text-[9px] px-1.5 py-0">{r.use.join(", ")}</Badge>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -462,6 +498,12 @@ export default function BrandsHub() {
       {activeTab === "turnover" && (
         <Suspense fallback={<Skeleton className="h-64 w-full" />}>
           <TurnoverBoard embedded={true} />
+        </Suspense>
+      )}
+
+      {activeTab === "hunter" && (
+        <Suspense fallback={<Skeleton className="h-64 w-full" />}>
+          <BrandHunterBoard />
         </Suspense>
       )}
 
@@ -560,6 +602,11 @@ function subMatch(companyType: string, sub: SubCat): boolean {
 }
 
 function BrandExplorer() {
+  // Clients only receive the curated hospitality/F&B/leisure/fitness slice,
+  // so hide the category cards that can never have brands for them (Luxury,
+  // Fashion & Retail, …) rather than showing a row of zeros.
+  const { data: exUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientExplorer = exUser?.role === "Client";
   const [activeCat, setActiveCat] = useState<string | null>(() => {
     try { return localStorage.getItem("brand-explorer-cat") || null; } catch { return null; }
   });
@@ -656,7 +703,7 @@ function BrandExplorer() {
           <div className="text-2xl font-bold">{companies.length}</div>
           <div className="text-xs font-medium opacity-90 mt-0.5">All Brands</div>
         </div>
-        {BRAND_CATEGORIES.map(cat => {
+        {BRAND_CATEGORIES.filter(cat => !isClientExplorer || (catCounts[cat.key] || 0) > 0).map(cat => {
           const isActive = activeCat === cat.key;
           const Icon = cat.icon;
           return (
@@ -688,7 +735,7 @@ function BrandExplorer() {
           >
             All {activeCatObj.label} <span className="text-xs opacity-75">({catCounts[activeCatObj.key] || 0})</span>
           </button>
-          {activeCatObj.subs.map(sub => {
+          {activeCatObj.subs.filter(sub => !isClientExplorer || (catCounts[sub.key] || 0) > 0).map(sub => {
             const count = catCounts[sub.key] || 0;
             const isActive = activeSub === sub.key;
             const Icon = sub.icon;
@@ -710,6 +757,36 @@ function BrandExplorer() {
         </div>
       )}
 
+      {/* Market commentary — sub takes precedence over top */}
+      {activeCatObj && (() => {
+        const activeSubObj = activeSub ? activeCatObj.subs.find(s => s.key === activeSub) : null;
+        if (activeSubObj) {
+          return (
+            <MarketCommentaryBoard
+              scopeKey={activeSubObj.key}
+              scopeLabel={activeSubObj.label}
+              scopeType="sub"
+              parentKey={activeCatObj.key}
+              parentLabel={activeCatObj.label}
+              matches={activeSubObj.match}
+              gradient={activeCatObj.gradient}
+              accent={activeCatObj.color}
+            />
+          );
+        }
+        const allMatches = activeCatObj.subs.flatMap(s => s.match);
+        return (
+          <MarketCommentaryBoard
+            scopeKey={activeCatObj.key}
+            scopeLabel={activeCatObj.label}
+            scopeType="top"
+            matches={allMatches}
+            gradient={activeCatObj.gradient}
+            accent={activeCatObj.color}
+          />
+        );
+      })()}
+
       {/* Search + count */}
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-sm">
@@ -725,7 +802,7 @@ function BrandExplorer() {
       </div>
 
       {/* Brand cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8 gap-2">
         {filtered.map((c: any) => {
           const parent = c.parentCompanyId ? companyById.get(c.parentCompanyId) : null;
           return (
@@ -803,6 +880,224 @@ function BrandExplorer() {
         </div>
       )}
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Market Commentary Board — AI-generated sector view above the brand grid
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface CommentaryEntry { name: string; reason: string }
+interface CommentaryContent {
+  headline: string;
+  summary: string;
+  trends: string[];
+  winners: CommentaryEntry[];
+  losers: CommentaryEntry[];
+  watch: CommentaryEntry[];
+  outlook: string;
+}
+interface MarketCommentary {
+  scopeKey: string;
+  scopeLabel: string;
+  scopeType: "top" | "sub";
+  parentKey: string | null;
+  parentLabel: string | null;
+  content: CommentaryContent;
+  brandCount: number;
+  newsCount: number;
+  generatedAt: string;
+  cached?: boolean;
+  stale?: boolean;
+}
+
+function MarketCommentaryBoard({
+  scopeKey, scopeLabel, scopeType, parentKey, parentLabel, matches, gradient, accent,
+}: {
+  scopeKey: string;
+  scopeLabel: string;
+  scopeType: "top" | "sub";
+  parentKey?: string;
+  parentLabel?: string;
+  matches: string[];
+  gradient: string;
+  accent: string;
+}) {
+  const { toast } = useToast();
+  const params = new URLSearchParams({
+    scope: scopeKey,
+    label: scopeLabel,
+    type: scopeType,
+    matches: JSON.stringify(matches),
+  });
+  if (parentKey) params.set("parentKey", parentKey);
+  if (parentLabel) params.set("parentLabel", parentLabel);
+  const url = `/api/brands/market-commentary?${params.toString()}`;
+
+  const { data, isLoading, refetch, isFetching } = useQuery<MarketCommentary>({
+    queryKey: ["/api/brands/market-commentary", scopeKey],
+    queryFn: async () => {
+      const res = await apiRequest("GET", url);
+      return res.json();
+    },
+    staleTime: 60 * 60 * 1000, // 1h — server has 24h TTL, this just stops refetch on tab switch
+  });
+
+  const regenMut = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/brands/market-commentary/regenerate", {
+        scope: scopeKey,
+        label: scopeLabel,
+        type: scopeType,
+        parentKey: parentKey || null,
+        parentLabel: parentLabel || null,
+        matches,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Commentary refreshed" });
+      refetch();
+    },
+    onError: (err: any) => {
+      toast({ title: "Refresh failed", description: err?.message, variant: "destructive" });
+    },
+  });
+
+  if (isLoading) {
+    return <Skeleton className="h-48 w-full rounded-xl" />;
+  }
+  if (!data) return null;
+
+  const c = data.content;
+  const generatedAgo = (() => {
+    const ms = Date.now() - new Date(data.generatedAt).getTime();
+    const mins = Math.floor(ms / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.floor(hours / 24)}d ago`;
+  })();
+
+  const refreshing = regenMut.isPending || isFetching;
+  const hasWinners = c.winners?.length > 0;
+  const hasLosers = c.losers?.length > 0;
+  const hasWatch = c.watch?.length > 0;
+
+  return (
+    <Card className="overflow-hidden border">
+      <div className={`bg-gradient-to-br ${gradient} text-white px-5 py-4`}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-2 min-w-0">
+            <Sparkles className="w-4 h-4 mt-0.5 shrink-0 opacity-90" />
+            <div className="min-w-0">
+              <div className="text-[10px] uppercase tracking-wide opacity-80 font-medium">
+                Market View {parentLabel ? `· ${parentLabel}` : ""}
+              </div>
+              <div className="text-lg font-bold leading-snug">
+                {c.headline || scopeLabel}
+              </div>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-[11px] text-white hover:bg-white/20 hover:text-white shrink-0"
+            onClick={() => regenMut.mutate()}
+            disabled={refreshing}
+            title="Regenerate commentary"
+          >
+            <RefreshCw className={`w-3 h-3 mr-1 ${refreshing ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      <CardContent className="p-5 space-y-4">
+        {c.summary && (
+          <p className="text-sm leading-relaxed">{c.summary}</p>
+        )}
+
+        {(hasWinners || hasLosers || hasWatch) && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {hasWinners && (
+              <div className="rounded-lg border bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200/60 dark:border-emerald-900/40 p-3">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400 mb-2">
+                  <TrendingUp className="w-3.5 h-3.5" /> Winners
+                </div>
+                <ul className="space-y-2">
+                  {c.winners.map((w, i) => (
+                    <li key={i}>
+                      <div className="text-sm font-medium leading-tight">{w.name}</div>
+                      <div className="text-[11px] text-muted-foreground leading-snug">{w.reason}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {hasLosers && (
+              <div className="rounded-lg border bg-rose-50/60 dark:bg-rose-950/20 border-rose-200/60 dark:border-rose-900/40 p-3">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-rose-700 dark:text-rose-400 mb-2">
+                  <TrendingDown className="w-3.5 h-3.5" /> Losers
+                </div>
+                <ul className="space-y-2">
+                  {c.losers.map((w, i) => (
+                    <li key={i}>
+                      <div className="text-sm font-medium leading-tight">{w.name}</div>
+                      <div className="text-[11px] text-muted-foreground leading-snug">{w.reason}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {hasWatch && (
+              <div className="rounded-lg border bg-amber-50/60 dark:bg-amber-950/20 border-amber-200/60 dark:border-amber-900/40 p-3">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-700 dark:text-amber-400 mb-2">
+                  <Eye className="w-3.5 h-3.5" /> Watch
+                </div>
+                <ul className="space-y-2">
+                  {c.watch.map((w, i) => (
+                    <li key={i}>
+                      <div className="text-sm font-medium leading-tight">{w.name}</div>
+                      <div className="text-[11px] text-muted-foreground leading-snug">{w.reason}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {c.trends?.length > 0 && (
+          <div>
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground mb-1.5">
+              <Lightbulb className="w-3.5 h-3.5" /> Trends
+            </div>
+            <ul className="space-y-1">
+              {c.trends.map((t, i) => (
+                <li key={i} className="text-sm flex gap-2">
+                  <span className={`mt-1.5 w-1 h-1 rounded-full ${accent} shrink-0`} />
+                  <span>{t}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {c.outlook && (
+          <div className="pt-2 border-t">
+            <span className="text-xs font-semibold text-muted-foreground">Outlook · </span>
+            <span className="text-sm italic">{c.outlook}</span>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1">
+          <span>Generated by ChatBGP from {data.brandCount} brands · {data.newsCount} recent articles</span>
+          <span>Updated {generatedAgo}{data.stale ? " · stale" : ""}</span>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

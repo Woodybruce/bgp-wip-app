@@ -31,6 +31,7 @@ const LPA_REGISTRY: Array<{ prefixes: string[]; name: string; host: string }> = 
   { prefixes: ["SE1", "SE11", "SW2", "SW4", "SW8", "SW9"], name: "Lambeth", host: "planning.lambeth.gov.uk" },
   { prefixes: ["W6", "SW6", "W12"], name: "Hammersmith & Fulham", host: "public-access.lbhf.gov.uk" },
   { prefixes: ["E5", "E8", "E9", "N16"], name: "Hackney", host: "developmentandhousing.hackney.gov.uk" },
+  { prefixes: ["CV1", "CV2", "CV3", "CV4", "CV5", "CV6"], name: "Coventry", host: "eplanning.coventry.gov.uk" },
 ];
 
 export interface IdoxPlanningApp {
@@ -52,9 +53,18 @@ function resolveLpa(postcode: string): { name: string; host: string } | null {
   const m = pc.match(/^([A-Z]{1,2}\d{1,2}[A-Z]?)/);
   if (!m) return null;
   const outward = m[1];
+  // A registry prefix matches the outward only on a clean district boundary:
+  // exact, or the prefix is followed by a LETTER (e.g. "SW1" → "SW1A"), never a
+  // DIGIT — so "CV2" must not swallow "CV21" (Rugby) and "CV1" must not swallow
+  // "CV10" (Nuneaton). Longest prefix still wins for genuine overlaps.
+  const matches = (prefix: string) => {
+    if (outward === prefix) return true;
+    if (!outward.startsWith(prefix)) return false;
+    return !/\d/.test(outward.charAt(prefix.length));
+  };
   const hit = LPA_REGISTRY
     .flatMap((lpa) => lpa.prefixes.map((p) => ({ ...lpa, prefix: p })))
-    .filter((e) => outward.startsWith(e.prefix))
+    .filter((e) => matches(e.prefix))
     .sort((a, b) => b.prefix.length - a.prefix.length)[0];
   return hit ? { name: hit.name, host: hit.host } : null;
 }
@@ -230,15 +240,50 @@ async function fetchIdoxResultsTiered(host: string, searchTerm: string): Promise
 const cache = new Map<string, { at: number; data: IdoxPlanningApp[] }>();
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 
+// When a postcode isn't in the static LPA_REGISTRY, derive its Idox portal host
+// dynamically from PlanIt (national coverage): PlanIt returns each application's
+// council portal URL, and an Idox portal URL's hostname IS the host we need to
+// run the search against. Cached per outward area so we never hand-add a
+// council again — this retires the manual registry for any Idox council.
+const hostCache = new Map<string, { at: number; lpa: { name: string; host: string } | null }>();
+async function deriveIdoxHostFromPlanit(postcode: string): Promise<{ name: string; host: string } | null> {
+  const key = postcode.toUpperCase().replace(/\s+/g, "").slice(0, 4);
+  const cached = hostCache.get(key);
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.lpa;
+  let result: { name: string; host: string } | null = null;
+  try {
+    const { fetchPlanitPlanning } = await import("./planit-planning");
+    const apps = await fetchPlanitPlanning(postcode, "", { maxAgeYears: 25, radiusKm: 1 });
+    for (const a of apps) {
+      const u = a.documentUrl || "";
+      // Only treat it as Idox if the URL carries the Idox signature — otherwise
+      // the direct search would fail. (Non-Idox councils still come through via
+      // PlanIt's own results in Stage 4.)
+      if (u && /\/online-applications\/|applicationDetails\.do|public-?access/i.test(u)) {
+        try { result = { name: a.lpa || "LPA", host: new URL(u).hostname }; break; } catch { /* not a URL */ }
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[idox] PlanIt host-derive failed for ${postcode}: ${err?.message}`);
+  }
+  hostCache.set(key, { at: Date.now(), lpa: result });
+  return result;
+}
+
 export async function fetchIdoxPlanning(
   postcode: string,
   address?: string,
   opts?: { maxAgeYears?: number },
 ): Promise<IdoxPlanningApp[]> {
-  const lpa = resolveLpa(postcode);
+  let lpa = resolveLpa(postcode);
   if (!lpa) {
-    console.log(`[idox] No LPA mapping for ${postcode} — skipping scrape`);
-    return [];
+    lpa = await deriveIdoxHostFromPlanit(postcode);
+    if (lpa) {
+      console.log(`[idox] Resolved ${postcode} → ${lpa.host} via PlanIt (no static mapping)`);
+    } else {
+      console.log(`[idox] No Idox host for ${postcode} (not in registry, none derivable from PlanIt) — skipping`);
+      return [];
+    }
   }
 
   // Try postcode first (widest net at the right building level), then address if nothing comes back.

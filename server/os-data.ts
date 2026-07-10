@@ -146,10 +146,93 @@ export async function osPlacesByPostcode(postcode: string, maxresults = 100): Pr
 }
 
 /**
- * Lat/lng → closest DPA address(es). OS accepts a point as "lng,lat" in EPSG:4326
- * and returns ranked matches within a radius. Perfect for resolving a map click
- * to an authoritative UPRN without faffing with Google reverse-geocoded business
- * names.
+ * WGS84 lat/lng → British National Grid eastings/northings.
+ *
+ * OS Places API does NOT honour `srs` for input coordinates — the
+ * `point` parameter is always parsed as BNG, no matter what srs we
+ * send. Tried "WGS84" and "EPSG:4326"; both rejected with "Area of
+ * data coverage is in BNG and is a minimum of 0,0 to maximum of
+ * 700000,1300000". So we convert client-side.
+ *
+ * Pipeline: WGS84 lat/lng → Cartesian ECEF → Helmert 7-parameter shift
+ * → OSGB36 lat/lng → transverse Mercator projection → BNG E/N. The
+ * parameter values come from OS technical paper "A Guide to
+ * Coordinate Systems in Great Britain". Accurate to ~5m across the
+ * UK, well inside our 25m address-radius needs.
+ */
+function wgs84ToBng(lat: number, lng: number): { easting: number; northing: number } {
+  // Step 1: WGS84 lat/lng → ECEF Cartesian on WGS84 ellipsoid
+  const aW = 6378137.0;
+  const bW = 6356752.314245;
+  const e2W = 1 - (bW * bW) / (aW * aW);
+  const phiW = (lat * Math.PI) / 180;
+  const lamW = (lng * Math.PI) / 180;
+  const nuW = aW / Math.sqrt(1 - e2W * Math.sin(phiW) ** 2);
+  const xW = nuW * Math.cos(phiW) * Math.cos(lamW);
+  const yW = nuW * Math.cos(phiW) * Math.sin(lamW);
+  const zW = ((1 - e2W) * nuW) * Math.sin(phiW);
+
+  // Step 2: Helmert 7-parameter shift WGS84 → OSGB36
+  const tx = -446.448, ty = 125.157, tz = -542.060;
+  const s = 20.4894e-6;
+  const rx = (-0.1502 / 3600) * (Math.PI / 180);
+  const ry = (-0.2470 / 3600) * (Math.PI / 180);
+  const rz = (-0.8421 / 3600) * (Math.PI / 180);
+  const xO = tx + (1 + s) * xW + -rz * yW + ry * zW;
+  const yO = ty + rz * xW + (1 + s) * yW + -rx * zW;
+  const zO = tz + -ry * xW + rx * yW + (1 + s) * zW;
+
+  // Step 3: ECEF → OSGB36 lat/lng (Airy 1830 ellipsoid)
+  const aA = 6377563.396;
+  const bA = 6356256.909;
+  const e2A = 1 - (bA * bA) / (aA * aA);
+  const p = Math.sqrt(xO * xO + yO * yO);
+  let phiA = Math.atan2(zO, p * (1 - e2A));
+  for (let i = 0; i < 8; i++) {
+    const nuA = aA / Math.sqrt(1 - e2A * Math.sin(phiA) ** 2);
+    phiA = Math.atan2(zO + e2A * nuA * Math.sin(phiA), p);
+  }
+  const lamA = Math.atan2(yO, xO);
+
+  // Step 4: OSGB36 lat/lng → BNG eastings/northings (transverse Mercator)
+  const F0 = 0.9996012717;
+  const phi0 = (49 * Math.PI) / 180;
+  const lam0 = (-2 * Math.PI) / 180;
+  const N0 = -100000;
+  const E0 = 400000;
+  const n = (aA - bA) / (aA + bA);
+  const sinPhi = Math.sin(phiA);
+  const cosPhi = Math.cos(phiA);
+  const nu = (aA * F0) / Math.sqrt(1 - e2A * sinPhi * sinPhi);
+  const rho = (aA * F0 * (1 - e2A)) / Math.pow(1 - e2A * sinPhi * sinPhi, 1.5);
+  const eta2 = nu / rho - 1;
+  const Ma = (1 + n + (5 / 4) * n * n + (5 / 4) * n * n * n) * (phiA - phi0);
+  const Mb = (3 * n + 3 * n * n + (21 / 8) * n * n * n) * Math.sin(phiA - phi0) * Math.cos(phiA + phi0);
+  const Mc = ((15 / 8) * n * n + (15 / 8) * n * n * n) * Math.sin(2 * (phiA - phi0)) * Math.cos(2 * (phiA + phi0));
+  const Md = (35 / 24) * n * n * n * Math.sin(3 * (phiA - phi0)) * Math.cos(3 * (phiA + phi0));
+  const M = bA * F0 * (Ma - Mb + Mc - Md);
+  const tanPhi = Math.tan(phiA);
+  const tan2 = tanPhi * tanPhi;
+  const tan4 = tan2 * tan2;
+  const I = M + N0;
+  const II = (nu / 2) * sinPhi * cosPhi;
+  const III = (nu / 24) * sinPhi * Math.pow(cosPhi, 3) * (5 - tan2 + 9 * eta2);
+  const IIIA = (nu / 720) * sinPhi * Math.pow(cosPhi, 5) * (61 - 58 * tan2 + tan4);
+  const IV = nu * cosPhi;
+  const V = (nu / 6) * Math.pow(cosPhi, 3) * (nu / rho - tan2);
+  const VI = (nu / 120) * Math.pow(cosPhi, 5) * (5 - 18 * tan2 + tan4 + 14 * eta2 - 58 * eta2 * tan2);
+  const dLam = lamA - lam0;
+  const N = I + II * dLam * dLam + III * Math.pow(dLam, 4) + IIIA * Math.pow(dLam, 6);
+  const E = E0 + IV * dLam + V * Math.pow(dLam, 3) + VI * Math.pow(dLam, 5);
+  return { easting: Math.round(E), northing: Math.round(N) };
+}
+
+/**
+ * Lat/lng → closest DPA address(es). Uses OS Places `/radius` with the
+ * input coordinates converted to BNG eastings/northings client-side —
+ * OS Hub's API ignores the `srs` parameter for input and always parses
+ * `point` as BNG. Results are sorted by haversine distance from the
+ * input WGS84 point so the first row is still the true nearest.
  */
 export async function osPlacesNearest(lat: number, lng: number, radiusMeters = 25): Promise<OsPlacesResult[]> {
   if (!isOsConfigured()) return [];
@@ -157,14 +240,14 @@ export async function osPlacesNearest(lat: number, lng: number, radiusMeters = 2
   // Round to ~11m precision to maximise cache hits for nearby clicks
   const key = `os-nearest:${lat.toFixed(4)},${lng.toFixed(4)},${radiusMeters}`;
   return cached(key, async () => {
+    const bng = wgs84ToBng(lat, lng);
     const params = new URLSearchParams({
-      point: `${lng},${lat}`,
+      point: `${bng.easting},${bng.northing}`,
       key: getOsKey(),
       radius: String(radiusMeters),
-      srs: "WGS84",
       dataset: "DPA",
     });
-    const url = `${PLACES_BASE}/nearest?${params.toString()}`;
+    const url = `${PLACES_BASE}/radius?${params.toString()}`;
     const resp = await fetch(url, { headers: { Accept: "application/json" } });
     if (resp.status === 401 || resp.status === 404) return [] as OsPlacesResult[];
     if (!resp.ok) {
@@ -172,7 +255,26 @@ export async function osPlacesNearest(lat: number, lng: number, radiusMeters = 2
       throw new Error(`OS Places nearest error ${resp.status}: ${text.slice(0, 200)}`);
     }
     const data = await resp.json();
-    return (data?.results || []).map(normaliseDpa) as OsPlacesResult[];
+    const results = (data?.results || []).map(normaliseDpa) as OsPlacesResult[];
+    // /radius returns results unordered relative to the input point.
+    // Sort by haversine distance so the first item is the true nearest,
+    // matching the old /nearest contract callers expect.
+    const toRad = (v: number) => (v * Math.PI) / 180;
+    const hav = (aLat: number, aLng: number, bLat: number, bLng: number): number => {
+      const dLat = toRad(bLat - aLat);
+      const dLng = toRad(bLng - aLng);
+      const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+      return 2 * 6371000 * Math.asin(Math.sqrt(a));
+    };
+    results.sort((a: OsPlacesResult, b: OsPlacesResult) => {
+      const aLat = Number(a.latitude); const aLng = Number(a.longitude);
+      const bLat = Number(b.latitude); const bLng = Number(b.longitude);
+      if (!isFinite(aLat) || !isFinite(aLng)) return 1;
+      if (!isFinite(bLat) || !isFinite(bLng)) return -1;
+      return hav(lat, lng, aLat, aLng) - hav(lat, lng, bLat, bLng);
+    });
+    return results;
   }, 24 * 30);
 }
 
@@ -205,6 +307,64 @@ export async function resolveToUprn(freeText: string): Promise<OsPlacesResult | 
 }
 
 export function registerOSDataRoutes(app: Express): void {
+  // ─── NGD status check ────────────────────────────────────────────
+  // One-click verification that the current OS_PLACES_API_KEY tier
+  // supports NGD building polygons. Hits Trafalgar Square (known to have
+  // building polygons) and reports status. Use this to know whether the
+  // key needs upgrading to Premium / Partner.
+  app.get("/api/os/ngd-status", requireAuth, async (_req: Request, res: Response) => {
+    const key = getOsKey();
+    if (!key) {
+      return res.json({
+        configured: false,
+        recommendation: "Set OS_PLACES_API_KEY in env. Get a free Startup-tier key from os.uk/business-government/products/os-data-hub.",
+      });
+    }
+    const bbox = "-0.130,51.506,-0.124,51.510"; // Trafalgar Square
+    const ngdCrs = "filter-crs=http://www.opengis.net/def/crs/EPSG/0/4326";
+    const ngdUrl = `${NGD_BASE}/collections/bld-fts-buildingpart-1/items?${ngdCrs}&bbox=${bbox}&limit=10&key=${encodeURIComponent(key)}`;
+    try {
+      const resp = await fetch(ngdUrl, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(8000) });
+      if (resp.ok) {
+        const data = await resp.json();
+        const count = data?.features?.length ?? 0;
+        return res.json({
+          configured: true,
+          ngd: "ok",
+          featureCount: count,
+          message: count > 0
+            ? `NGD building polygons working — ${count} features at the Trafalgar Square test bbox.`
+            : "NGD endpoint accessible but returned no features at the test bbox (unexpected).",
+        });
+      }
+      const body = await resp.text().catch(() => "");
+      const wfsUrl = `${WFS_BASE}?service=WFS&version=2.0.0&request=GetFeature&typeNames=Topography_TopographicArea&outputFormat=GeoJSON&srsName=urn:ogc:def:crs:EPSG::4326&bbox=${bbox},urn:ogc:def:crs:EPSG::4326&count=10&key=${encodeURIComponent(key)}`;
+      let wfsStatus: string | undefined;
+      try {
+        const wfsResp = await fetch(wfsUrl, { signal: AbortSignal.timeout(8000) });
+        wfsStatus = wfsResp.ok ? "ok" : `${wfsResp.status}`;
+      } catch {
+        wfsStatus = "error";
+      }
+      return res.json({
+        configured: true,
+        ngd: "denied",
+        ngdStatus: resp.status,
+        ngdBody: body.slice(0, 200),
+        wfsStatus,
+        recommendation: resp.status === 401 || resp.status === 403
+          ? "Current OS API key tier doesn't include NGD building polygons. Upgrade to Premium or Partner access at os.uk/business-government/products/os-data-hub. Legacy WFS Topography_TopographicArea " + (wfsStatus === "ok" ? "still works as a fallback." : "isn't available either.")
+          : "Unexpected response from NGD. Check OS Data Hub status page.",
+      });
+    } catch (err: any) {
+      return res.json({
+        configured: true,
+        ngd: "error",
+        error: err?.message || "request failed",
+      });
+    }
+  });
+
   // ─── Building footprints ───────────────────────────────────────
   app.get("/api/os/buildings", requireAuth, async (req: Request, res: Response) => {
     try {

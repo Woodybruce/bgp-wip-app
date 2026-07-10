@@ -42,6 +42,7 @@ The application is built with a modern web stack: React, Vite, TypeScript, Tailw
 - **Microsoft 365 SSO Login**: Provides authentication and synchronization with SharePoint, Calendar, and Mail, including interaction tracking and email processing.
 - **CRM Enrichment & Enrichment Hub**: Includes Apollo.io integration for contact and company data enrichment, Clearbit for logos, AI for title matching and auto-fill, and Companies House for parent company discovery. The Enrichment Hub (`/enrichment`) provides a read-only dashboard showing data freshness across all CRM entities (contacts, companies), with per-entity staleness breakdowns (fresh/stale/never-enriched) and missing-field counts. All manual enrichment buttons have been removed — enrichment is fully automated via a background scheduler running every 6 hours in small batches (5 per entity type per cycle) using Apollo for contacts and AI for company info and contact roles. Auto-enrichment starts automatically on server boot. Users can ask ChatBGP to enrich specific records on demand.
 - **Land Registry & Property Intelligence Tool**: Enhanced Land Registry page (`client/src/pages/land-registry.tsx`, `server/land-registry.ts`) with 3 tabs: **Property Search** (Google Places address autocomplete → parallel data fetch from 14 PropertyData endpoints in one batch → AI property summary with investment angle and title purchase recommendations). **AI Property Summary** (`POST /api/property-summary`): Takes all gathered data (freeholds, leaseholds, market intelligence) and generates a professional property analysis via Claude including: property summary (what the building is, ownership structure), investment angle, warning flags (conservation, listed, flood), and prioritised title purchase recommendations with reasons. **Free intelligence** (14 PropertyData endpoints fetched in parallel): Market Overview, Commercial Rents, Yields, Capital Growth, Demand, Flood Risk, Conservation Area, Listed Buildings, Planning Applications, Demographics, Sold Prices, EPC/Energy Efficiency, Floor Areas, plus both Freeholds AND Leaseholds. **Tabbed data view**: Market Data (intelligence cards), Titles (recommended titles shown first with AI reasoning, expandable to all), Sales (recent transactions). **Paid data**: Title Register & Plan documents (£7.50+VAT each) with proprietor data extraction. **Price Paid** tab (HM Land Registry open data), **House Price Index** tab (UKHPI by London borough). **KYC Clouseau integration**: Proprietor names link to KYC Clouseau for investigation. **Race condition protection**: Request ID tracking prevents stale responses overwriting current data. PropertyData proxy: `GET /api/propertydata/:endpoint` with 25+ allowed endpoints (includes `leaseholds`).
+- **HMLR INSPIRE polygon layer (map boundary shading)**: `hmlr_title_polygons` + `GET /api/hmlr-polygons-in-bbox` (`server/map-annotations.ts`) + `edozo-map.tsx` render free INSPIRE Index Polygons as parcel-boundary shading on the property-intelligence map. **PostGIS-free** — this database has no PostGIS (not in `pg_available_extensions`, can't be added on this plan), so boundaries are stored as GeoJSON in a `jsonb` column (EPSG:4326) + numeric `min/max lng/lat` bbox columns for viewport queries; the bbox endpoint does a rectangle-overlap on those. Table is auto-created on boot in `server/index.ts` (plain SQL, no extension) and also self-created by the ingest. INSPIRE carries NO title numbers, so `title_number` is NULL — location-based parcel shading, not title-linked official plans (the paid £20k/yr National Polygon Service is the title-linked version). **To load — in-app (preferred):** admin POSTs a SharePoint share link to the HMLR "Use Land and Property Data" INSPIRE download to `POST /api/admin/hmlr/fetch-polygons-from-sharepoint` (`{shareUrl, region}`); `server/hmlr-polygons-fetch.ts` resolves it with the BGP Graph token, streams the `.zip`/`.gml`/`.geojson`/`.ndjson`, reprojects GML (EPSG:27700 → 4326) in JS via **proj4**, computes the bbox, and upserts on `inspire_id`. Returns 202; progress + skip reasons in `hmlr_ingest_runs` (dataset='inspire'). **Manual CLI alt:** `ogr2ogr -f GeoJSONSeq -t_srs EPSG:4326 parcels.ndjson …gml` then `npx tsx scripts/ingest-hmlr-polygons.ts parcels.ndjson --region "Coventry"`. Load only the local authorities you need.
 - **KYC Clouseau** (`/kyc-clouseau`): AI-powered KYC/AML investigation tool in the sidebar under Tools. Server: `server/kyc-clouseau.ts`. Client: `client/src/pages/kyc-clouseau.tsx`. Features: Companies House company/officer/PSC lookup, corporate ownership chain tracing (via `discoverUltimateParent`), UK sanctions list screening (14,600+ entries), charges/mortgages data, automated risk scoring (low/medium/high/critical), AI-powered analysis via Claude (executive summary, controlling individuals, associate network, financial health, jurisdiction analysis, red flags, compliance recommendation). **Property acquisition mode**: When arriving from Land Registry with query params (`name`, `address`, `mortgage`, `price`), shows a "Property Acquisition Investigation" banner and the AI analysis includes additional sections: Acquisition Contact Strategy (who to call about buying the building, ranked by disposal authority), Tenant & Occupier Intelligence, and Debt & Charges Analysis. Endpoints: `POST /api/kyc-clouseau/investigate` (accepts optional `propertyContext`), `GET /api/kyc-clouseau/search`, `POST /api/kyc-clouseau/officer-deep-dive`.
 - **Leasing & Tenancy Schedule Boards**: Unit-level leasing and property-level tenancy schedules with inline editing, filters, search, and Excel import/export.
 - **Leasing Comps Board**: Dedicated purpose-built leasing comps page (`client/src/pages/comps.tsx`) — no longer a wrapper around the deals page. Features: London area tabs (Mayfair, City, Covent Garden, etc.), Use Class and Transaction Type filters, inline editing for all fields, verified toggle, bulk delete, CSV export, and a built-in Net Effective Rent Calculator (RICS-compliant straight-line amortisation with headline rent, rent free months, fitout contribution, ITZA Zone A rates, NIA psf). **PDF Export**: Individual comps or multi-select batch export to a branded A4 PDF (BGP header, concise 4-column layout per comp, auto page-breaking). If comps have attached files, a confirmation dialog asks whether to include the file list in the PDF; if no files exist, exports directly. **File Attachments**: `comp_files` table stores files per comp (upload/download/delete via `/api/crm/comps/:compId/files` and `/api/comp-files/:fileId/download`). Files section in comp detail dialog with upload button, file list with download links, and hover-to-delete. Schema: `crm_comps` table has 20+ additional columns including `useClass`, `transactionType`, `ltActStatus`, `niaSqft`, `giaSqft`, `ipmsSqft`, `itzaSqft`, `netEffectiveRent`, `passingRent`, `fitoutContribution`, `frontageFt`, `depthFt`, `measurementStandard`, `verified`, `sourceEvidence`, `leaseStart`, `leaseExpiry`, `rentReviewPattern`, `areaLocation`, `postcode`, `breakClause`, `rentPsfNia`, `rentPsfGia`. ChatBGP's `create_comp` tool updated with all new fields in both handler locations. **AI Comp Extraction** from three sources: (1) News Feed articles (scored for leasing relevance), (2) Team Emails (scans last 7 days of all BGP team mailboxes via Microsoft Graph app-level token for property transaction keywords), (3) SharePoint Files (scans Comps/Comparables folders for recently modified Excel/PDF/Word files). All three run on startup, every 4 hours, and via the "Scan All" button. Source badges on comp rows: News (amber), Email (purple), File (cyan), BGP (green), Deal (blue). Shared `COMP_EXTRACTION_PROMPT` and `saveExtractedComps()` helper with deduplication by name+tenant+postcode and numeric field sanitisation.
@@ -169,3 +170,88 @@ The application is built with a modern web stack: React, Vite, TypeScript, Tailw
 
 - **Datasite VDR integration**: Investment team regularly trawls seller-side data rooms when bidding. Two possible routes: (a) manual export → drop into SharePoint → archivist auto-indexes (cheap, works today with OCR); (b) Datasite API integration to auto-sync a deal's doc pack into BGP knowledge base so ChatBGP can answer "what's the WAULT on Project Moonstone?" (bigger lift, enterprise API tier).
 - **Cann CAD feedback (April 2026)**: Feedback received from agent user — wanted: (1) snap-to-point on lines/corners (currently requires pixel-perfect clicks); (2) vertical/lateral (ortho) lock to prevent accidental diagonal measurements; (3) text box annotations for zones/ancil/WCs; (4) simple line draw to mark zone boundaries; (5) **PDF import with scale calibration** — user marks a known dimension on a scaled PDF and locks scale from there. The PDF import is the biggest unlock: most high-street clients don't have DWGs, only scaled PDFs, so this would make Cann CAD the only tool agents need.
+## Company Finance Dashboard + Commission Engine (June 2026)
+
+`/finance` (admin-only, Admin nav) — the firm's live financial position: Xero
+Reports (P&L FY-to-date, Balance Sheet, cash by bank account, aged debtors)
+joined to the WIP pipeline (stage-weighted forecast, completed-but-uninvoiced
+reconciliation list) and per-agent commission statements. Server:
+`server/xero-financials.ts` (15-min cache; needs the granular Xero report
+scopes in `XERO_BASE_SCOPES` (server/xero.ts) — Xero apps created on/after
+2 Mar 2026 cannot use the old broad `accounting.transactions` /
+`accounting.reports.read` scopes, so the consent URL requests per-resource
+scopes instead; connections predating them get a "Reconnect Xero" callout)
+and `server/commission-engine.ts`.
+
+**Commission scheme — confirmed by Woody, 10 June 2026.** Do not change the
+rules without his sign-off:
+
+1. 15% of every deal fee goes to BGP House first; the agent's BILLING is
+   their fee-allocation share of the remainder (deals with no explicit
+   split: 85% across the deal's agents, equally). Joint deals: each agent's
+   slice counts toward their own threshold only — NOT the gross deal fee.
+2. Commission FY runs 1 May → 30 April. A deal sits in the FY of its
+   fee-due date = the earlier of exchange / completion.
+3. Tiers per agent per FY, on salary multiples, filled in fee-due order:
+   0% to 2× salary, 30% from 2×–3×, 40% from 3×–4×, 50% beyond (uncapped).
+   Deals straddling a threshold are split across bands.
+4. Commission is EARNED at fee-due but only PAYABLE (month-end payroll)
+   once ALL the deal's Xero invoices are fully paid — part-payment does
+   not release pro-rata commission.
+5. Mid-year salary changes pro-rata: thresholds use the time-weighted
+   salary across the FY from `salary_history`. Agents map to HR records by
+   exact name match on `users.name`.
+
+Next phases discussed: cost forecasting (payroll forward-curve + P&L expense
+run-rate vs income projection) and agent profitability (commissions − salary
+− pensions via the already-granted Xero payroll scopes) to replace Wendy's
+Power BI workflow.
+
+## Receipt-AI correction + learning (June 2026)
+
+The expense receipt parser (`server/expense-receipt-parser.ts`) learns from
+its own mistakes. On the expense screen's edit dialog, a "Receipt AI got
+something wrong?" panel lets the user (a) fix the fields by hand — including
+the amount on receipt/cash rows (card-feed amounts stay locked to the real
+charge), or (b) type the correction and hit Re-read (`POST /api/expenses/:id/
+reparse`, hint passed to vision as ground truth). Saving records the change
+via `POST /api/expenses/:id/receipt-correction`.
+
+Learning lives in `server/expense-ai-memory.ts` (runtime-ensured table
+`expense_receipt_corrections` — NOT in shared/schema.ts or migrations, same
+pattern as `api_usage_log`). Two mechanisms: a deterministic merchant→category
+memory (overrides the model after every parse, prefix-tolerant merchant match)
+and a free-text lesson list prepended to the parse prompt (the house-style
+pattern). `GET /api/expenses/ai-memory` shows what it's learned.
+
+**Diary-match scope (June 2026):** a calendar event is only auto-attached to a
+card swipe when it's an eating/drinking spend — gated at import by hospitality
+MCC (`isHospitalityMcc`, server/expense-calendar-context.ts) and at receipt
+time by category (`isCalendarRelevantCategory`). Stops train fares / SaaS
+charges inheriting an overlapping meeting + its attendees. `clearMeetingNoise()`
+runs once at boot to scrub the legacy noise off non-hospitality Revolut rows.
+
+**Recurring subscriptions:** SaaS card spend (`isSaaSExpense`, server/revolut.ts
+— software MCCs + a tight merchant allowlist) imports pre-categorised as
+"Software (subscriptions)" and never nags for a receipt; the email sweep still
+files the supplier invoice if it lands. Set `EXPENSE_RECEIPTS_MAILBOXES`
+(comma-separated) so the hunter also searches shared finance/billing mailboxes,
+not just each cardholder's own — that's where SaaS invoices go.
+
+## Railway management as code (June 2026)
+
+Manage the Railway service's env vars + redeploys from the repo instead of the
+dashboard, via `script/railway.ts`: `npm run railway -- <cmd>`.
+
+    npm run railway -- list [--values]      # variable names (values hidden by default)
+    npm run railway -- get NAME
+    npm run railway -- set NAME VALUE        # upsert + redeploy (--no-deploy to stage)
+    npm run railway -- unset NAME
+    npm run railway -- redeploy
+    npm run railway -- info
+
+Auth = a Railway **project token** in env `RAILWAY_TOKEN` (the only secret;
+never commit it — set it in the Claude Code environment so future sessions can
+use it). Project/environment/service IDs live in `script/railway.config.json`
+(not secret — useless without the token). Talks to the Railway GraphQL API
+(`backboard.railway.app/graphql/v2`) via the `Project-Access-Token` header.

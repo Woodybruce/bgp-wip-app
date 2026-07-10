@@ -34,7 +34,7 @@ const addins = [
   {
     name: "PowerPoint",
     icon: Presentation,
-    description: "Search CRM data, comps, and available units to insert into your presentations.",
+    description: "ChatBGP inside PowerPoint — ask the AI to pull CRM, deal and comp data and draft slide content you can insert with one click. Plus the CRM data browser.",
     manifest: "/manifests/powerpoint-addin.xml",
     preview: "/addin/powerpoint",
     adminSteps: "Microsoft 365 Admin Centre → Settings → Integrated Apps → Upload custom apps",

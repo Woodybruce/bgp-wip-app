@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { Search, Building2, BarChart3, Users, Briefcase, Newspaper, Scale, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { getAuthHeaders } from "@/lib/queryClient";
 import {
   CommandDialog,
   CommandEmpty,
@@ -52,28 +53,29 @@ export function GlobalSearch() {
     return () => document.removeEventListener("keydown", down);
   }, []);
 
-  const doSearch = useCallback(async (q: string) => {
+  const doSearch = useCallback(async (q: string, signal: AbortSignal) => {
     if (q.length < 2) {
       setResults([]);
       return;
     }
     setLoading(true);
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { credentials: "include" });
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { credentials: "include", headers: getAuthHeaders(), signal });
       if (res.ok) {
         const data: SearchResponse = await res.json();
-        setResults(data.results);
+        if (!signal.aborted) setResults(data.results);
       }
-    } catch {
-      setResults([]);
+    } catch (err: any) {
+      if (err?.name !== "AbortError") setResults([]);
     } finally {
-      setLoading(false);
+      if (!signal.aborted) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const timer = setTimeout(() => doSearch(query), 300);
-    return () => clearTimeout(timer);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => doSearch(query, ctrl.signal), 300);
+    return () => { clearTimeout(timer); ctrl.abort(); };
   }, [query, doSearch]);
 
   const handleSelect = (result: SearchResult) => {

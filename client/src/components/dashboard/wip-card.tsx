@@ -130,14 +130,18 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
   const wipEntries = Array.isArray(wipResponse) ? wipResponse : (wipResponse?.entries || []);
   const isWipAdmin = Array.isArray(wipResponse) ? false : (wipResponse?.isAdmin || false);
   const wipUserTeam = Array.isArray(wipResponse) ? null : (wipResponse?.userTeam || null);
+  // Leadership (senior partners + finance full-view like Layla) always see the
+  // whole firm — never scoped to their own team.
+  const canSeeAll = Array.isArray(wipResponse) ? false : !!(wipResponse as any)?.canSeeAll;
 
   const selectedTeam = isWipAdmin
     ? (activeTeam === "all" ? "all" : (activeTeam || user?.team || "Investment"))
     : (wipUserTeam || user?.team || "Investment");
-  const isAllTeams = isWipAdmin && activeTeam === "all";
+  const isAllTeams = canSeeAll || (isWipAdmin && activeTeam === "all");
 
   const teamEntries = useMemo(() => {
     if (wipEntries.length === 0) return [];
+    if (canSeeAll) return wipEntries;
     if (!isWipAdmin) return wipEntries;
     if (activeTeam === "all") return wipEntries;
     const at = (activeTeam || "").toLowerCase();
@@ -147,7 +151,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
       const teams = (e.team as string).split(",").map((t: string) => t.trim().toLowerCase());
       return teams.some(t => t === at);
     });
-  }, [wipEntries, activeTeam, isWipAdmin]);
+  }, [wipEntries, activeTeam, isWipAdmin, canSeeAll]);
 
   const allMonths = useMemo(() => {
     const set = new Set(teamEntries.map(e => e.month).filter(Boolean) as string[]);
@@ -213,9 +217,17 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
       }
       if (clickFilterField && clickFilterValue) {
         if (clickFilterField === "agent") {
-          if (!e.agent) return false;
-          const agentParts = (e.agent as string).split(",").map((a: string) => a.trim()).filter(Boolean);
-          if (!agentParts.some((a: string) => a === clickFilterValue)) return false;
+          const agentParts = e.agent
+            ? (e.agent as string).split(",").map((a: string) => a.trim()).filter(Boolean)
+            : [];
+          // Agent summary buckets null agents under "Other" — clicking
+          // that bucket has to match entries with no agent, not look up
+          // a literal "Other" agent.
+          if (clickFilterValue === "Other") {
+            if (agentParts.length > 0) return false;
+          } else if (!agentParts.some((a: string) => a === clickFilterValue)) {
+            return false;
+          }
         } else {
           const fieldMap: Record<string, string> = {
             groupName: e.groupName || "Other",

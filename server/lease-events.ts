@@ -29,7 +29,7 @@ export function registerLeaseEventRoutes(app: Express) {
       }
       const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
       const rows = await pool.query(
-        `SELECT id, property_id AS "propertyId", address, tenant, tenant_company_id AS "tenantCompanyId",
+        `SELECT id, property_id AS "propertyId", address, landlord, tenant, tenant_company_id AS "tenantCompanyId",
                 unit_ref AS "unitRef", event_type AS "eventType", event_date AS "eventDate",
                 notice_date AS "noticeDate", current_rent AS "currentRent", estimated_erv AS "estimatedErv",
                 sqft, source_evidence AS "sourceEvidence", source_url AS "sourceUrl",
@@ -49,9 +49,12 @@ export function registerLeaseEventRoutes(app: Express) {
 
   app.post("/api/lease-events", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (!req.body.eventDate) {
+        return res.status(400).json({ error: "Event date is required" });
+      }
       const payload: InsertLeaseEvent = {
         ...req.body,
-        eventDate: req.body.eventDate ? new Date(req.body.eventDate) : null,
+        eventDate: new Date(req.body.eventDate),
         noticeDate: req.body.noticeDate ? new Date(req.body.noticeDate) : null,
         createdBy: req.body.createdBy || req.session?.userId || null,
       };
@@ -65,10 +68,13 @@ export function registerLeaseEventRoutes(app: Express) {
 
   app.patch("/api/lease-events/:id", requireAuth, async (req: Request, res: Response) => {
     try {
+      if ("eventDate" in req.body && !req.body.eventDate) {
+        return res.status(400).json({ error: "Event date is required" });
+      }
       const updates: Record<string, any> = { ...req.body, updatedAt: new Date() };
       if (updates.eventDate) updates.eventDate = new Date(updates.eventDate);
       if (updates.noticeDate) updates.noticeDate = new Date(updates.noticeDate);
-      const [row] = await db.update(leaseEvents).set(updates).where(eq(leaseEvents.id, req.params.id)).returning();
+      const [row] = await db.update(leaseEvents).set(updates).where(eq(leaseEvents.id, req.params.id as string)).returning();
       if (!row) return res.status(404).json({ error: "Not found" });
       res.json(row);
     } catch (e: any) {
@@ -78,7 +84,7 @@ export function registerLeaseEventRoutes(app: Express) {
 
   app.delete("/api/lease-events/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      await db.delete(leaseEvents).where(eq(leaseEvents.id, req.params.id));
+      await db.delete(leaseEvents).where(eq(leaseEvents.id, req.params.id as string));
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });

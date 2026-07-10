@@ -240,7 +240,7 @@ function DocTab() {
 
 export function StudiosWidget() {
   return (
-    <Card className="h-full flex flex-col" data-testid="widget-studios">
+    <Card className="h-full flex flex-col overflow-hidden" data-testid="widget-studios">
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-0 pt-4 px-4">
         <div className="flex items-center gap-2">
           <Layers className="w-4 h-4 text-primary" />

@@ -4,6 +4,7 @@ import type { Express, Request, Response } from "express";
 import multer from "multer";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
+import { contentDispositionFor } from "./utils/http-headers";
 
 const SCOPES = [
   "User.Read",
@@ -25,6 +26,8 @@ const SCOPES = [
 const SHAREPOINT_HOST = "brucegillinghampollardlimited.sharepoint.com";
 const SHAREPOINT_SITE_PATH = "/sites/BGP";
 const SHAREPOINT_ROOT_FOLDER = "BGP share drive";
+
+export { SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, SHAREPOINT_ROOT_FOLDER };
 
 let msalClient: ConfidentialClientApplication | null = null;
 let msalCacheLock: Promise<void> | null = null;
@@ -62,6 +65,59 @@ function getMsalClient(): ConfidentialClientApplication {
     });
   }
   return msalClient;
+}
+
+// App-only (client-credential) Graph token for background jobs that have no
+// logged-in user session — e.g. the Revolut webhook enriching a card
+// transaction with the cardholder's calendar. Uses the same confidential
+// client as SharePoint uploads. Returns null (rather than throwing) so
+// callers can degrade gracefully when Azure creds / app permissions aren't
+// configured yet.
+export async function getAppGraphToken(): Promise<string | null> {
+  try {
+    const client = getMsalClient();
+    const r = await client.acquireTokenByClientCredential({
+      scopes: ["https://graph.microsoft.com/.default"],
+    });
+    return r?.accessToken || null;
+  } catch (e: any) {
+    console.warn("[microsoft] app-only Graph token failed:", e?.message);
+    return null;
+  }
+}
+
+// Session-less delegated Graph token for a specific BGP user, from their
+// stored MSAL cache (same mechanism as getValidMsToken, minus the org
+// fallback — we want *this* user's token so /me/calendarView reads their
+// own calendar). Returns null if the user hasn't connected M365 or the
+// silent refresh fails. Lets background jobs read a user's calendar using
+// the delegated Calendars.Read consent that's already in place, without
+// needing the app-only Application permission.
+export async function getDelegatedGraphTokenForUser(userId: string): Promise<string | null> {
+  if (!userId) return null;
+  return withMsalCacheLock(async () => {
+    try {
+      const client = getMsalClient();
+      const cacheData = await loadMsalCache(String(userId));
+      const homeAccountId = await getHomeAccountId(String(userId));
+      if (!cacheData || !homeAccountId) return null;
+
+      client.getTokenCache().deserialize(cacheData);
+      const accounts = await client.getTokenCache().getAllAccounts();
+      const account = accounts.find((a) => a.homeAccountId === homeAccountId);
+      if (!account) return null;
+
+      const result = await client.acquireTokenSilent({ scopes: SCOPES, account });
+      if (result?.accessToken) {
+        await saveMsalCache(String(userId), homeAccountId);
+        return result.accessToken;
+      }
+      return null;
+    } catch (e: any) {
+      console.warn(`[microsoft] delegated token for user ${userId} failed:`, e?.message);
+      return null;
+    }
+  });
 }
 
 function getRedirectUri(req: Request): string {
@@ -171,6 +227,19 @@ async function getHomeAccountId(userId: string): Promise<string | null> {
 }
 
 export async function getValidMsToken(req: Request): Promise<string | null> {
+  const userId = req.session.userId || (req as any).tokenUserId;
+  if (!userId) return null;
+
+  // Never hand a Microsoft token to an external client — not from the org
+  // fallback AND not from a session that happens to carry msTokens. This
+  // check runs BEFORE any token is returned so a client always gets null.
+  // (Root cause of the client-briefing + /mail/calendar leaks.) (Landsec audit.)
+  const roleRes = await pool.query("SELECT role, email FROM users WHERE id = $1", [userId]);
+  const roleRow = roleRes.rows[0];
+  const isClientPrincipal = roleRow?.role === "Client" ||
+    (roleRow?.email && !String(roleRow.email).toLowerCase().endsWith("@brucegillinghampollard.com"));
+  if (isClientPrincipal) return null;
+
   const expiresOn = req.session.msTokens?.expiresOn;
   const token = req.session.msTokens?.accessToken;
   const isExpired = !expiresOn || new Date(expiresOn) < new Date(Date.now() + 5 * 60 * 1000);
@@ -178,9 +247,6 @@ export async function getValidMsToken(req: Request): Promise<string | null> {
   if (token && !isExpired) {
     return token;
   }
-
-  const userId = req.session.userId || (req as any).tokenUserId;
-  if (!userId) return null;
 
   return withMsalCacheLock(async () => {
     try {
@@ -534,7 +600,7 @@ export function setupMicrosoftRoutes(app: Express) {
       res.setHeader("Content-Type", contentType);
       const fileName = req.query.fileName as string;
       if (fileName) {
-        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(fileName)}"`);
+        res.setHeader("Content-Disposition", contentDispositionFor(fileName));
       }
       const buffer = Buffer.from(await r.arrayBuffer());
       res.send(buffer);
@@ -566,6 +632,98 @@ export function setupMicrosoftRoutes(app: Express) {
       res.send(buffer);
     } catch (err: any) {
       console.error("Thumbnail error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── File/folder sharing ───────────────────────────────────────────────
+  // Create a shareable link to a drive item. Defaults to an anonymous
+  // "anyone with the link" view link (share-with-anyone). If the tenant's
+  // external-sharing policy blocks anonymous links, Graph returns 403 — we
+  // fall back to an organization-scoped link and flag it, so callers can
+  // tell the user "anyone" wasn't permitted rather than just failing.
+  app.post("/api/microsoft/files/share-link", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const { driveId, itemId, type, scope, expirationDateTime, password } = req.body || {};
+      if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
+      const linkType = type === "edit" ? "edit" : "view";
+
+      const createLink = async (linkScope: "anonymous" | "organization") => {
+        const body: Record<string, any> = { type: linkType, scope: linkScope };
+        if (linkScope === "anonymous" && expirationDateTime) body.expirationDateTime = expirationDateTime;
+        if (linkScope === "anonymous" && password) body.password = password;
+        const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/createLink`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        return r;
+      };
+
+      const requestedScope: "anonymous" | "organization" = scope === "organization" ? "organization" : "anonymous";
+      let r = await createLink(requestedScope);
+      let fellBackToOrg = false;
+
+      // Anonymous blocked by tenant policy → retry org-scoped.
+      if (!r.ok && requestedScope === "anonymous" && (r.status === 403 || r.status === 400)) {
+        r = await createLink("organization");
+        fellBackToOrg = r.ok;
+      }
+      if (!r.ok) {
+        const detail = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Graph createLink failed (${r.status})`, detail });
+      }
+      const data = await r.json();
+      res.json({
+        webUrl: data?.link?.webUrl || null,
+        scope: data?.link?.scope || (fellBackToOrg ? "organization" : requestedScope),
+        type: data?.link?.type || linkType,
+        fellBackToOrg,
+      });
+    } catch (err: any) {
+      console.error("Share link error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Invite named people (internal or external) to a drive item by email.
+  // Used when anonymous links are disallowed, or for granting edit access
+  // to a specific external person rather than anyone-with-the-link.
+  app.post("/api/microsoft/files/invite", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const { driveId, itemId, emails, role, message, requireSignIn } = req.body || {};
+      if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
+      const recipients = (Array.isArray(emails) ? emails : [emails])
+        .filter((e: any) => typeof e === "string" && e.includes("@"))
+        .map((email: string) => ({ email }));
+      if (!recipients.length) return res.status(400).json({ message: "At least one valid email is required" });
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/invite`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipients,
+          roles: [role === "write" ? "write" : "read"],
+          requireSignIn: requireSignIn !== false,
+          sendInvitation: true,
+          message: message || "Sharing a document with you from Bruce Gillingham Pollard.",
+        }),
+      });
+      if (!r.ok) {
+        const detail = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Graph invite failed (${r.status})`, detail });
+      }
+      const data = await r.json();
+      res.json({ invited: recipients.map(x => x.email), value: data?.value || [] });
+    } catch (err: any) {
+      console.error("Share invite error:", err.message);
       res.status(500).json({ error: err.message });
     }
   });
@@ -805,7 +963,7 @@ export function setupMicrosoftRoutes(app: Express) {
                d.pricing, d.deal_type, p.name as property_name
         FROM crm_deals d
         LEFT JOIN crm_properties p ON d.property_id = p.id
-        WHERE d.status NOT IN ('Dead', 'Completed', 'Lost')
+        WHERE d.status NOT IN ('WIT', 'COM', 'INV')
         ORDER BY d.created_at DESC
       `);
       const activeDealRows = dealsResult.rows;
@@ -1046,7 +1204,7 @@ export function setupMicrosoftRoutes(app: Express) {
                  p.name as property_name, p.address as property_address
           FROM crm_deals d
           LEFT JOIN crm_properties p ON d.property_id = p.id
-          WHERE d.company_id = ANY($1) AND d.status NOT IN ('Dead', 'Lost')
+          WHERE d.company_id = ANY($1) AND d.status NOT IN ('WIT')
           ORDER BY d.created_at DESC
           LIMIT 10
         `, [allCompanyIds]);
@@ -1319,7 +1477,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
             messages: [
               {
                 role: "system",
-                content: "You are an executive assistant for BGP (Bruce Gillingham Pollard), a London property consultancy. Provide a brief, professional summary of today's BUSINESS diary only. Personal items (lunch, gym, school runs, appointments, etc.) have already been filtered out — do not mention them. Focus exclusively on business-relevant meetings: client meetings, viewings, team catch-ups, calls with agents/tenants/landlords, legal meetings, and deal-related activity. Highlight key meetings, who they're with, and any scheduling clashes. Keep it to 2-3 sentences maximum. Use a warm but professional tone. IMPORTANT: Identify any meetings that appear to be with occupiers, tenants, retailers, or external clients (i.e. not internal BGP meetings). Flag these as 'Occupier/Tenant meetings' and name them specifically. For the London Leasing team this is especially important - highlight any leasing meetings, viewings, or tenant discussions.",
+                content: "You are an executive assistant for BGP (Bruce Gillingham Pollard), a London property consultancy. Provide a brief, professional summary of today's BUSINESS diary only. Personal items (lunch, gym, school runs, appointments, etc.) have already been filtered out — do not mention them. Focus exclusively on business-relevant meetings: client meetings, viewings, team catch-ups, calls with agents/tenants/landlords, legal meetings, and deal-related activity. Highlight key meetings, who they're with, and any scheduling clashes. Keep it to 2-3 sentences maximum. Use a warm but professional tone. IMPORTANT: Identify any meetings that appear to be with occupiers, tenants, retailers, or external clients (i.e. not internal BGP meetings). Flag these as 'Occupier/Tenant meetings' and name them specifically. For the London F&B and London Retail teams this is especially important - highlight any leasing meetings, viewings, or tenant discussions.",
               },
               {
                 role: "user",
@@ -1843,7 +2001,64 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     }
   });
 
-  const TEAM_FOLDERS = ["Investment", "London Leasing", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate"];
+  // Rename and/or move a file or folder. Graph does both in one PATCH:
+  // a `name` renames, a `parentReference.id` moves. Pass either or both.
+  app.patch("/api/microsoft/files/item", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const { driveId, itemId, name, parentId } = req.body || {};
+      if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
+      if (!name && !parentId) return res.status(400).json({ message: "Provide a new name and/or a parentId to move to" });
+      const body: Record<string, any> = {};
+      if (name) body.name = name;
+      if (parentId) body.parentReference = { id: parentId };
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        if (r.status === 409) return res.status(409).json({ message: `An item named "${name}" already exists here` });
+        const detail = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Graph update failed (${r.status})`, detail });
+      }
+      res.json(await r.json());
+    } catch (err: any) {
+      console.error("Rename/move error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete a file or folder. Graph sends it to the SharePoint recycle bin
+  // (recoverable), so this is a soft delete from the user's perspective.
+  app.delete("/api/microsoft/files/item", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const driveId = (req.body?.driveId || req.query.driveId) as string;
+      const itemId = (req.body?.itemId || req.query.itemId) as string;
+      if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
+      const r = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok && r.status !== 204) {
+        const detail = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Graph delete failed (${r.status})`, detail });
+      }
+      res.json({ deleted: true, itemId });
+    } catch (err: any) {
+      console.error("Delete item error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  const TEAM_FOLDERS = ["Investment", "London F&B", "London Retail", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate"];
 
   const TEAM_FOLDER_TREES: Record<string, string[]> = {
     "Investment": [
@@ -1867,7 +2082,28 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       "Correspondence",
       "Client Reporting",
     ],
-    "London Leasing": [
+    "London F&B": [
+      "Marketing",
+      "Marketing/Brochure",
+      "Marketing/Photography",
+      "Marketing/Floorplans",
+      "Marketing/Window Cards",
+      "Marketing/Social Media",
+      "Heads of Terms",
+      "Legal",
+      "Legal/Lease Drafts",
+      "Legal/Licence for Works",
+      "Inspections",
+      "Inspections/Measured Survey",
+      "Inspections/Schedule of Condition",
+      "Tenant Information",
+      "Tenant Information/References",
+      "Tenant Information/Accounts",
+      "Comparable Evidence",
+      "Correspondence",
+      "Rent Review",
+    ],
+    "London Retail": [
       "Marketing",
       "Marketing/Brochure",
       "Marketing/Photography",
@@ -2283,6 +2519,55 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     try {
       const { team, propertyName } = req.params;
       const subPath = req.query.path as string || "";
+      const folderUrl = (req.query.folderUrl as string || "").trim();
+
+      // If the caller has a stored SharePoint folder URL on the CRM property
+      // (crm_properties.sharepoint_folder_url) prefer that — it always
+      // resolves to the real folder regardless of whether the CRM record's
+      // `name` matches the on-disk folder name. Falls back to path
+      // synthesis (BGP share drive/{team}/{propertyName}) if no URL.
+      if (folderUrl) {
+        const encoded = Buffer.from(folderUrl).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        const driveItemRes = await fetch(`https://graph.microsoft.com/v1.0/shares/u!${encoded}/driveItem`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!driveItemRes.ok) {
+          if (driveItemRes.status === 404) return res.json({ exists: false, folders: [] });
+          throw new Error(`Failed to resolve folder URL: ${driveItemRes.status}`);
+        }
+        const driveItem = await driveItemRes.json();
+        const driveId = driveItem.parentReference?.driveId;
+        let itemId = driveItem.id;
+        // Walk into subPath if requested.
+        if (subPath && driveId) {
+          const encodedSub = subPath.split("/").map(s => encodeURIComponent(s)).join("/");
+          const subRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}:/${encodedSub}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!subRes.ok) {
+            if (subRes.status === 404) return res.json({ exists: false, folders: [] });
+            throw new Error(`Failed to walk into subPath: ${subRes.status}`);
+          }
+          const subItem = await subRes.json();
+          itemId = subItem.id;
+        }
+        const childrenRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=100`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!childrenRes.ok) throw new Error(`Failed to list children: ${childrenRes.status}`);
+        const childrenData = await childrenRes.json();
+        const items = (childrenData.value || []).map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          isFolder: !!item.folder,
+          childCount: item.folder?.childCount || 0,
+          size: item.size || 0,
+          webUrl: item.webUrl,
+          lastModified: item.lastModifiedDateTime,
+        }));
+        return res.json({ exists: true, folders: items, path: driveItem.name, webUrl: driveItem.webUrl, source: "url", driveId, currentItemId: itemId });
+      }
+
       const spInfo = await getSharePointDriveId(token);
       if (!spInfo) {
         return res.status(404).json({ message: "Could not find BGP SharePoint site" });
@@ -2315,7 +2600,16 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
         lastModified: item.lastModifiedDateTime,
       }));
 
-      res.json({ exists: true, folders: items, path: folderPath });
+      // Resolve the current folder's own item id so the UI can create
+      // subfolders / act on this folder by id (the children call above
+      // doesn't return the parent's id).
+      let currentItemId: string | null = null;
+      try {
+        const selfRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${encodedPath}`, { headers: { Authorization: `Bearer ${token}` } });
+        if (selfRes.ok) currentItemId = (await selfRes.json())?.id || null;
+      } catch {}
+
+      res.json({ exists: true, folders: items, path: folderPath, source: "path", driveId: spInfo.driveId, currentItemId });
     } catch (err: any) {
       console.error("Property folders list error:", err);
       res.status(500).json({ message: "Failed to list property folders" });
@@ -2491,8 +2785,11 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       const result = await uploadRes.json();
       res.json({ id: result.id, name: result.name, webUrl: result.webUrl, size: result.size });
     } catch (err: any) {
-      console.error("File upload error:", err);
-      res.status(500).json({ message: "Failed to upload file" });
+      // Surface the real reason instead of a blank 500 — otherwise an
+      // upload failure (token expiry, Graph 4xx, oversize, network) is
+      // indistinguishable to the user. The message is safe to show.
+      console.error("[SharePoint upload] error:", err?.message, err?.stack);
+      res.status(500).json({ message: `Upload failed: ${err?.message || "unknown error"}` });
     }
   });
 }

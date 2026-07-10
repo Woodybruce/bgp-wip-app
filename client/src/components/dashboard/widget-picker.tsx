@@ -46,8 +46,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
   { id: "sharepoint", name: "SharePoint Files", description: "Browse and open files from BGP SharePoint", icon: FolderOpen, category: "microsoft" },
   { id: "studios", name: "Studios", description: "Model Generate & Document Studio templates and recent runs", icon: Sparkles, category: "overview" },
   { id: "properties-deals", name: "Properties & Deals", description: "Properties grouped with their deals", icon: Building2, category: "crm" },
-  { id: "system-activity", name: "System Activity", description: "Real-time feed of automated background processes", icon: Zap, category: "overview" },
-  { id: "daily-digest", name: "Daily Digest", description: "Proactive alerts: stuck deals, KYC gaps, cooling contacts", icon: AlertTriangle, category: "crm" },
+  { id: "system-activity", name: "Activity Feed", description: "Proactive alerts (stuck deals, KYC gaps) plus the automated background process feed", icon: Zap, category: "overview" },
   { id: "my-tasks", name: "My Tasks & Briefing", description: "Personal task list with AI daily briefing", icon: ListTodo, category: "overview" },
   { id: "my-portfolio", name: "My Portfolio", description: "Properties and deals assigned to you", icon: Briefcase, category: "crm" },
   { id: "landsec-analytics", name: "Landsec Analytics", description: "Deep analytics for the Landsec portfolio: overview, agents, pipeline & activity", icon: Landmark, category: "crm" },
@@ -67,8 +66,7 @@ export const BOARD_REGISTRY: BoardDefinition[] = [
   { id: "sharepoint-files", name: "SharePoint Files", description: "Browse and open SharePoint files", icon: FolderOpen, widgetIds: ["sharepoint"] },
   { id: "studios-board", name: "Studios", description: "Model Generate & Document Studio", icon: Sparkles, widgetIds: ["studios"] },
   { id: "properties-deals-board", name: "Properties & Deals", description: "Properties grouped with their deals", icon: Building2, widgetIds: ["properties-deals"] },
-  { id: "system-activity-board", name: "System Activity", description: "Automated process activity feed", icon: Zap, widgetIds: ["system-activity"] },
-  { id: "daily-digest-board", name: "Daily Digest", description: "Proactive alerts and action items", icon: AlertTriangle, widgetIds: ["daily-digest"] },
+  { id: "system-activity-board", name: "Activity Feed", description: "Proactive alerts plus the automated process activity feed", icon: Zap, widgetIds: ["system-activity"] },
   { id: "tasks-briefing", name: "My Tasks & Briefing", description: "Personal tasks and AI daily briefing", icon: ListTodo, widgetIds: ["my-tasks"] },
   { id: "my-portfolio-board", name: "My Portfolio", description: "Properties and deals assigned to you", icon: Briefcase, widgetIds: ["my-portfolio"] },
   { id: "landsec-analytics-board", name: "Landsec Analytics", description: "Portfolio overview, agent performance, pipeline & activity for Landsec", icon: Landmark, widgetIds: ["landsec-analytics"] },
@@ -77,26 +75,39 @@ export const BOARD_REGISTRY: BoardDefinition[] = [
 
 export const DEFAULT_BOARDS = BOARD_REGISTRY.map(b => b.id);
 
-export function boardsToWidgets(boardIds: string[]): string[] {
+// Client logins (e.g. Landsec) may only add these vetted, portfolio-scoped
+// boards. Everything else in BOARD_REGISTRY is BGP-internal (fees, inbox,
+// WIP, KYC alerts) and must never be offered to a client.
+// NB: "Properties & Deals" is intentionally omitted — the Landsec portfolio
+// section already shows properties grouped with their deals, and that widget
+// self-suppresses for Landsec, so offering it here would add a dead card.
+export const CLIENT_BOARD_REGISTRY: BoardDefinition[] = [
+  { id: "news", name: "News Feed", description: "AI-curated market news feed", icon: Newspaper, widgetIds: ["news-summary"] },
+  { id: "letting-tracker", name: "Letting Tracker", description: "Live units being marketed across your portfolio", icon: Store, widgetIds: ["available-units"] },
+  { id: "tasks-briefing", name: "My Tasks & Briefing", description: "Your task list with an AI portfolio briefing", icon: ListTodo, widgetIds: ["my-tasks"] },
+];
+export const CLIENT_SAFE_WIDGET_IDS = CLIENT_BOARD_REGISTRY.flatMap(b => b.widgetIds);
+
+export function boardsToWidgets(boardIds: string[], registry: BoardDefinition[] = BOARD_REGISTRY): string[] {
   const result: string[] = [];
   for (const bid of boardIds) {
-    const board = BOARD_REGISTRY.find(b => b.id === bid);
+    const board = registry.find(b => b.id === bid);
     if (board) result.push(...board.widgetIds);
   }
   return result;
 }
 
-export function widgetsToBoards(widgetIds: string[]): string[] {
+export function widgetsToBoards(widgetIds: string[], registry: BoardDefinition[] = BOARD_REGISTRY): string[] {
   const widgetSet = new Set(widgetIds);
   const result: string[] = [];
-  for (const board of BOARD_REGISTRY) {
+  for (const board of registry) {
     if (board.widgetIds.every(wid => widgetSet.has(wid))) {
       result.push(board.id);
     }
   }
   const orderedResult: string[] = [];
   const boardByWidget = new Map<string, string>();
-  for (const board of BOARD_REGISTRY) {
+  for (const board of registry) {
     for (const wid of board.widgetIds) boardByWidget.set(wid, board.id);
   }
   const seen = new Set<string>();
@@ -119,18 +130,22 @@ export function WidgetPickerDialog({
   saving,
   viewMode,
   onViewModeChange,
+  boards = BOARD_REGISTRY,
+  showViewMode = true,
 }: {
   activeWidgets: string[];
   onSave: (widgets: string[], onDone: () => void) => void;
   saving: boolean;
   viewMode: "team" | "individual";
   onViewModeChange: (mode: "team" | "individual") => void;
+  boards?: BoardDefinition[];
+  showViewMode?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [selectedBoards, setSelectedBoards] = useState<string[]>(() => widgetsToBoards(activeWidgets));
+  const [selectedBoards, setSelectedBoards] = useState<string[]>(() => widgetsToBoards(activeWidgets, boards));
 
   const handleOpen = (isOpen: boolean) => {
-    if (isOpen) { setSelectedBoards(widgetsToBoards(activeWidgets)); }
+    if (isOpen) { setSelectedBoards(widgetsToBoards(activeWidgets, boards)); }
     setOpen(isOpen);
   };
 
@@ -147,7 +162,7 @@ export function WidgetPickerDialog({
   };
 
   const handleSave = () => {
-    onSave(boardsToWidgets(selectedBoards), () => setOpen(false));
+    onSave(boardsToWidgets(selectedBoards, boards), () => setOpen(false));
   };
 
   return (
@@ -164,6 +179,7 @@ export function WidgetPickerDialog({
           <p className="text-sm text-muted-foreground">Toggle boards on or off and drag to reorder</p>
         </DialogHeader>
 
+        {showViewMode && (
         <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/30">
           <div className="flex items-center gap-2">
             <Users className="w-4 h-4 text-muted-foreground" />
@@ -193,10 +209,11 @@ export function WidgetPickerDialog({
             </button>
           </div>
         </div>
+        )}
 
         <div className="space-y-1.5 py-1 max-h-[50vh] overflow-y-auto">
           {selectedBoards.map((bid, idx) => {
-            const board = BOARD_REGISTRY.find(b => b.id === bid);
+            const board = boards.find(b => b.id === bid);
             if (!board) return null;
             const Icon = board.icon;
             return (
@@ -241,12 +258,12 @@ export function WidgetPickerDialog({
             );
           })}
 
-          {BOARD_REGISTRY.filter(b => !selectedBoards.includes(b.id)).length > 0 && (
+          {boards.filter(b => !selectedBoards.includes(b.id)).length > 0 && (
             <>
               <div className="pt-2 pb-1">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Hidden boards</p>
               </div>
-              {BOARD_REGISTRY.filter(b => !selectedBoards.includes(b.id)).map(board => {
+              {boards.filter(b => !selectedBoards.includes(b.id)).map(board => {
                 const Icon = board.icon;
                 return (
                   <button
@@ -274,7 +291,7 @@ export function WidgetPickerDialog({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setSelectedBoards([...DEFAULT_BOARDS])}
+            onClick={() => setSelectedBoards(boards.map(b => b.id))}
             data-testid="button-reset-widgets"
           >
             Reset to default

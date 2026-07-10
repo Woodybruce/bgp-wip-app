@@ -12,7 +12,15 @@ export function getAuthHeaders(): Record<string, string> {
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+    // Surface the server's plain message (not raw JSON) so error toasts read
+    // cleanly. Client (read-only) accounts get a friendly line instead of a
+    // scary "403: {"error":"Read-only access for client accounts"}".
+    let msg = text;
+    try { const j = JSON.parse(text); msg = j.error || j.message || text; } catch {}
+    if (res.status === 403 && /read-only access for client/i.test(msg)) {
+      msg = "This is a read-only view — changes are managed by your BGP team.";
+    }
+    throw new Error(`${res.status}: ${msg}`);
   }
 }
 
@@ -82,3 +90,25 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+/**
+ * Invalidate every cache that derives from crm_deals so an edit on the Deals
+ * page, WIP report, deal detail panel, etc. propagates to all the other
+ * boards in one call. Call this anywhere a deal is created, updated, or
+ * deleted instead of hand-rolling individual invalidations.
+ */
+export function invalidateDealCaches(dealId?: string) {
+  queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/portfolio"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+  // Status writes on a deal mirror to available_units + leasing_schedule_units
+  // server-side. Refresh those caches too so the Letting Tracker + Leasing
+  // Schedule reflect deal status changes without a manual reload.
+  queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property"] });
+  if (dealId) {
+    queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
+    queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "timeline"] });
+  }
+}

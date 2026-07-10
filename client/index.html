@@ -68,24 +68,49 @@
       if ('serviceWorker' in navigator && !window.location.pathname.startsWith('/addin/')) {
         var refreshing = false;
         navigator.serviceWorker.addEventListener('controllerchange', function() {
+          // Only fires once the user has accepted the update (skipWaiting
+          // below), so reloading here no longer kicks people out mid-task.
           if (!refreshing) {
             refreshing = true;
             window.location.reload();
           }
         });
+
+        // Let the React layer know a new build is sitting in "waiting".
+        function announceUpdate() {
+          window.__bgpUpdateReady = true;
+          window.dispatchEvent(new CustomEvent('bgp:update-available'));
+        }
+
+        // Called by the in-app "Update now" button. Promotes the waiting SW;
+        // controllerchange (above) then reloads into the fresh build.
+        window.__bgpApplyUpdate = function() {
+          navigator.serviceWorker.getRegistration().then(function(reg) {
+            if (reg && reg.waiting) {
+              reg.waiting.postMessage('skipWaiting');
+            } else {
+              window.location.reload();
+            }
+          }).catch(function() { window.location.reload(); });
+        };
+
         window.addEventListener('load', function() {
           navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).then(function(reg) {
             reg.update();
             setInterval(function() { reg.update(); }, 60000);
-            if (reg.waiting) {
-              reg.waiting.postMessage('skipWaiting');
+            // A build was already waiting from a previous visit — offer it,
+            // but don't force it.
+            if (reg.waiting && navigator.serviceWorker.controller) {
+              announceUpdate();
             }
             reg.addEventListener('updatefound', function() {
               var newSw = reg.installing;
               if (newSw) {
                 newSw.addEventListener('statechange', function() {
+                  // installed + an existing controller => this is an UPDATE,
+                  // not a first install. Surface it; the user decides when.
                   if (newSw.state === 'installed' && navigator.serviceWorker.controller) {
-                    newSw.postMessage('skipWaiting');
+                    announceUpdate();
                   }
                 });
               }
