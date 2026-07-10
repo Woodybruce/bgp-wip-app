@@ -6257,6 +6257,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 dealType: deal.dealType || null,
                 ref: deal.name,
                 groupName: deal.groupName || null,
+                client: clientName,
                 project: propertyName,
                 tenant: tenantName,
                 billingEntity: billingEntityName,
