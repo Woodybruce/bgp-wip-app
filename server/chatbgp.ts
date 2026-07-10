@@ -588,7 +588,9 @@ function convertMessagesForClaude(messages: any[]): { system: string; messages: 
         claudeMessages.push({ role: "user", content: [toolResult] });
       }
     } else if (msg.role === "assistant") {
-      if (msg.tool_calls && msg.tool_calls.length > 0) {
+      if (Array.isArray(msg.anthropic_content) && msg.anthropic_content.length > 0) {
+        claudeMessages.push({ role: "assistant", content: msg.anthropic_content });
+      } else if (msg.tool_calls && msg.tool_calls.length > 0) {
         const content: any[] = [];
         if (msg.content) content.push({ type: "text", text: msg.content });
         for (const tc of msg.tool_calls) {
@@ -771,6 +773,11 @@ export async function callClaude(params: any): Promise<any> {
         role: "assistant",
         content: textContent || null,
         tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+        // Raw Anthropic content blocks (thinking/text/tool_use). When extended thinking
+        // is enabled, the API rejects any replayed assistant turn containing tool_use
+        // unless its original thinking block (with signature) is included verbatim —
+        // convertMessagesForClaude replays these blocks instead of reconstructing them.
+        anthropic_content: response.content,
       },
     }],
   };
@@ -854,6 +861,8 @@ export async function callClaudeStreaming(
             role: "assistant",
             content: fullText || null,
             tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+            // Same as callClaude: keep raw blocks so thinking survives replay (see comment there)
+            anthropic_content: finalMessage.content,
           },
         }],
       };
@@ -9995,13 +10004,8 @@ export function setupChatBGPRoutes(app: Express) {
         errorMsg = "Anthropic's API returned a server error. Please try again in a moment.";
       }
 
-      const lastAssistantContent = conversationMessages?.filter((m: any) => m.role === "assistant" && m.content).pop()?.content;
-      if (lastAssistantContent && lastAssistantContent.length > 30) {
-        errorMsg = lastAssistantContent;
-      }
-
       clearInterval(heartbeat);
-      safeSseWrite(`data: ${JSON.stringify({ reply: errorMsg, error: !lastAssistantContent, errorStatus: err?.status || 500 })}\n\n`);
+      safeSseWrite(`data: ${JSON.stringify({ reply: errorMsg, error: true, errorStatus: err?.status || 500 })}\n\n`);
       try { if (!res.writableEnded) res.end(); } catch {}
     }
   });
