@@ -12249,6 +12249,22 @@ export function setupChatBGPRoutes(app: Express) {
   app.post("/api/chatbgp/chat-with-files", requireAuth, chatUpload.array("files", 20), async (req: Request, res: Response) => {
     const files = req.files as Express.Multer.File[];
     let messages: Array<{ role: "user" | "assistant"; content: any }> = [];
+    // SSE plumbing, hoisted to handler scope so the catch block can finish the
+    // stream. Before fcStarted, fcSend degrades to a plain JSON response.
+    let fcStarted = false;
+    let fcClosed = false;
+    let fcHeartbeat: ReturnType<typeof setInterval> | null = null;
+    const fcProgress = (s: string) => { try { if (fcStarted && !fcClosed) res.write(`data: ${JSON.stringify({ progress: s })}\n\n`); } catch {} };
+    const fcDelta = (t: string) => { try { if (fcStarted && !fcClosed) res.write(`data: ${JSON.stringify({ delta: t })}\n\n`); } catch {} };
+    const fcSend = (obj: any) => {
+      if (fcHeartbeat) clearInterval(fcHeartbeat);
+      try {
+        if (fcClosed) return;
+        if (fcStarted) { res.write(`data: ${JSON.stringify(obj)}\n\n`); res.end(); }
+        else if (obj.error !== undefined) res.status(500).json({ message: obj.error });
+        else res.json(obj);
+      } catch {}
+    };
     try {
       if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ message: "AI API key not configured" });
@@ -12281,6 +12297,20 @@ export function setupChatBGPRoutes(app: Express) {
           messages[lastIdx] = { ...messages[lastIdx], content: slash.strippedContent } as any;
         }
       }
+
+      // SSE from here on. The old single-JSON response meant minutes of blind
+      // waiting (and gateway-timeout exposure) on long agentic runs — now the
+      // client gets live progress + token deltas like the /chat handler.
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+      fcStarted = true;
+      fcHeartbeat = setInterval(() => { try { res.write(": heartbeat\n\n"); } catch {} }, 5000);
+      req.on("close", () => { fcClosed = true; if (fcHeartbeat) clearInterval(fcHeartbeat); });
+      if (files && files.length > 0) fcProgress(`Reading ${files.length} file${files.length === 1 ? "" : "s"}...`);
 
       const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic"];
       const AUDIO_VIDEO_EXTENSIONS = [".mp3", ".mp4", ".m4a", ".wav", ".webm", ".ogg", ".aac", ".flac", ".wma", ".mov", ".avi", ".mkv", ".wmv", ".flv"];
@@ -12459,8 +12489,16 @@ export function setupChatBGPRoutes(app: Express) {
         }
 
         let completion: any;
+        // From loop 2 on, stream — the reply after a tool round is usually
+        // final, and deltas make it appear live (same pattern as /chat).
+        const useStreamingFile = loopCountFile > 1 || isLastLoop;
         try {
-          completion = await callClaude(loopOpts);
+          if (useStreamingFile) {
+            fcProgress("Composing response...");
+            completion = await callClaudeStreaming(loopOpts, (token) => fcDelta(token));
+          } else {
+            completion = await callClaude(loopOpts);
+          }
         } catch (thinkErr: any) {
           // If thinking mode is rejected (e.g. proxy doesn't support it), retry plain
           const isModelErr = thinkErr?.status === 400 || thinkErr?.status === 422;
@@ -12479,6 +12517,8 @@ export function setupChatBGPRoutes(app: Express) {
 
         if (message.tool_calls && message.tool_calls.length > 0) {
           convMessages.push(message);
+          const fcToolNames = (message.tool_calls as unknown as ToolCall[]).map(tc => tc.function.name);
+          fcProgress(fcToolNames.length === 1 ? getToolProgressLabel(fcToolNames[0]) : `Running ${fcToolNames.length} operations...`);
 
           for (const tc of message.tool_calls as unknown as ToolCall[]) {
             if (Date.now() > fileDeadline) {
@@ -12511,7 +12551,7 @@ export function setupChatBGPRoutes(app: Express) {
         } else {
           if (message.content) {
             console.log(`[ChatBGP] File-chat loop ${loopCountFile}: final reply received`);
-            return res.json({ reply: message.content, ...(lastActionFile ? { action: lastActionFile } : {}) });
+            return fcSend({ reply: message.content, ...(lastActionFile ? { action: lastActionFile } : {}) });
           }
           convMessages.push(message);
           break;
@@ -12519,7 +12559,7 @@ export function setupChatBGPRoutes(app: Express) {
       }
 
       const lastAMsg = convMessages.filter((m: any) => m.role === "assistant" && m.content).pop();
-      res.json({ reply: lastAMsg?.content || "I've processed your request. Please ask a follow-up for more details.", ...(lastActionFile ? { action: lastActionFile } : {}) });
+      fcSend({ reply: lastAMsg?.content || "I've processed your request. Please ask a follow-up for more details.", ...(lastActionFile ? { action: lastActionFile } : {}) });
     } catch (err: any) {
       console.error("ChatBGP file chat error:", err?.status, err?.message || err, err?.error || "");
       const errMsg = String(err?.message || err || "");
@@ -12539,9 +12579,9 @@ export function setupChatBGPRoutes(app: Express) {
           };
           const retry = await callClaude(retryOpts);
           const retryContent = retry.choices[0]?.message?.content || "I wasn't able to process that image. Could you try sending it again, or describe what you'd like help with?";
-          return res.json({ reply: retryContent });
+          return fcSend({ reply: retryContent });
         } catch {
-          return res.json({ reply: "I wasn't able to process that image. Could you try sending it again, or let me know what you need help with?" });
+          return fcSend({ reply: "I wasn't able to process that image. Could you try sending it again, or let me know what you need help with?" });
         }
       }
       // Surface the underlying error so callers (internal admin users)
@@ -12549,9 +12589,8 @@ export function setupChatBGPRoutes(app: Express) {
       // avoid leaking very large stack traces.
       const surfaceMsg = String(err?.message || err || "Unknown error").slice(0, 500);
       const fileSummary = files?.map(f => `${f.originalname} (${f.mimetype || "?"}, ${f.size} bytes)`).join(", ") || null;
-      res.status(500).json({
-        message: "Failed to process chat with files",
-        error: surfaceMsg,
+      fcSend({
+        error: `Failed to process chat with files: ${surfaceMsg}`,
         status: err?.status ?? null,
         files: fileSummary,
       });
@@ -13956,7 +13995,7 @@ On top of that, you have live read/write access to the user's OPEN workbook:
 - Cross-reference the spreadsheet against the CRM whenever the question touches BGP data — pull deal/property/pathway/company records with your tools rather than working only from the cells on screen.
 
 ### Writing to the open workbook
-You CAN write formulas and values straight into the open workbook via Office.js — never say you can't. When the user asks you to build / amend / fill in / add / update / populate the workbook, respond with one or more JSON action blocks (the add-in renders an "Apply" button per block, plus "Apply All"):
+You CAN write formulas and values straight into the open workbook via Office.js — never say you can't. By default the add-in applies your write actions to the workbook AUTOMATICALLY the moment your reply arrives (the user sees "Applied N changes"); if they've switched auto-apply off, each action renders as an Apply button instead. Either way: when the user asks you to build / amend / fill in / add / update / populate the workbook, respond with one or more JSON action blocks and speak as if you are making the change ("Writing the uplift into Summary C10…"), not as if you're handing over homework. Always include the exact sheet + cell on every action — untargeted actions are never auto-applied:
 
 \`\`\`json
 {"action": "writeFormula", "sheet": "Summary", "cell": "C10", "formula": "=B10*(1+0.025)"}
@@ -13977,10 +14016,12 @@ Read actions are fulfilled automatically (the data returns next turn, no user cl
 ### export_to_excel
 Only when the user explicitly wants a SEPARATE downloadable file ("send me an Excel file", "export as xlsx"). Never for changes to the workbook that's already open.
 
-### Response style
-- **Match depth to the question.** Analysis, strategy, CRM, market, "tell me about this deal/property" → give a full, considered answer (you're the real ChatBGP, not a formula bot). "Build / amend / fill in the model" → lead with the JSON action blocks. If they ask for both, do both.
-- When you show a formula, also emit its JSON action block so it's one click to apply — don't just paste formulas as text.
-- Reference real cell addresses from the user's actual sheets. UK English and UK number formatting.
+### Response style — the user NEVER sees your JSON
+Your JSON action blocks are stripped from the chat and applied to the workbook (automatically, or as Apply buttons), and read actions are fulfilled silently. So:
+- **Match depth to the question.** Analysis, strategy, CRM, market, "tell me about this deal/property" → give a full, considered answer (you're the real ChatBGP, not a formula bot). "Build / amend / fill in the model" → lead with the JSON action blocks.
+- Emit JSON action blocks as the ONLY machinery. Do NOT also print the formula in prose, in \`\`\`excel blocks, or in backticks — that duplicates what the applied change already shows and makes the reply read like code.
+- For workbook edits keep the prose SHORT and human: one or two sentences saying what you're doing and anything the user must decide. No cell-by-cell narration, no restating the JSON, no "Let me now…" workings.
+- Reference real cell addresses from the user's actual sheets (read the sheet first if you haven't seen it). UK English and UK number formatting.
 
 ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel workbook — all sheets):**\n${safeExcelContext}\n` : "**Note:** No spreadsheet data was provided. If the user asks about their sheet, suggest the refresh button next to the input."}
 `;
@@ -14018,7 +14059,7 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
         const loopOpts: any = {
           model: excelResolved.model,
           messages: convMessages,
-          max_completion_tokens: 4096,
+          max_completion_tokens: 8192,
         };
         if (!isLastLoop && tools.length > 0) {
           loopOpts.tools = tools;

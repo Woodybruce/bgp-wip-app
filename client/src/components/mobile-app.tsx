@@ -1364,7 +1364,39 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         if (token) headers["Authorization"] = `Bearer ${token}`;
         const res = await fetch("/api/chatbgp/chat-with-files", { method: "POST", body: formData, credentials: "include", headers });
         if (!res.ok) throw new Error("Request failed");
-        const data = await res.json();
+        // chat-with-files streams SSE now (progress + deltas + final reply) —
+        // parse it like the /chat path instead of expecting one JSON body.
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error("No response stream");
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let lastData = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const parsed = JSON.parse(line.slice(6));
+                if (parsed.progress) setStreamingProgress(parsed.progress);
+                if (parsed.reply !== undefined || parsed.error !== undefined) lastData = line.slice(6);
+              } catch {}
+            }
+          }
+        }
+        if (buffer.startsWith("data: ")) {
+          try {
+            const parsed = JSON.parse(buffer.slice(6));
+            if (parsed.reply !== undefined || parsed.error !== undefined) lastData = buffer.slice(6);
+          } catch {}
+        }
+        setStreamingProgress(null);
+        if (!lastData) throw new Error("Server closed the stream before sending a reply.");
+        const data = JSON.parse(lastData);
+        if (data.error !== undefined) throw new Error(String(data.error));
         return { ...data, threadId: currentThreadId };
       } else {
         const attemptChat = async (attempt: number): Promise<any> => {

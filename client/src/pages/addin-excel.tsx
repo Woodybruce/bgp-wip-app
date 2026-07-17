@@ -23,6 +23,11 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+  // Auto-read data round-trips stay in the API context but never render —
+  // dumping 200 rows of CSV into the visible thread buried the conversation.
+  hidden?: boolean;
+  // Set when auto-apply wrote this message's actions into the workbook.
+  autoApplied?: { ok: number; fail: number };
 }
 
 interface SPItem {
@@ -1171,15 +1176,18 @@ const EXCEL_MAX_COLS = 100;
 
 function parseExcelActions(content: string): ExcelAction[] {
   const actions: ExcelAction[] = [];
-  // Parse JSON action blocks
+  // Parse JSON action blocks — a block may hold one action object OR an
+  // array of them (the model batches when writing many cells).
   const jsonBlockRegex = /```json\s*\n?([\s\S]*?)```/g;
   let match;
   while ((match = jsonBlockRegex.exec(content)) !== null) {
     try {
       const parsed = JSON.parse(match[1].trim());
-      if (!parsed.action || !parsed.sheet || !parsed.cell) continue;
-      if (!SUPPORTED_EXCEL_ACTIONS.has(parsed.action)) continue;
-      actions.push(parsed);
+      for (const p of Array.isArray(parsed) ? parsed : [parsed]) {
+        if (!p || !p.action || !p.sheet || !p.cell) continue;
+        if (!SUPPORTED_EXCEL_ACTIONS.has(p.action)) continue;
+        actions.push(p);
+      }
     } catch {}
   }
   // Parse excel code blocks for formulas
@@ -1204,10 +1212,18 @@ function stripExcelActionBlocks(content: string): string {
   let out = content.replace(/```json\s*\n?([\s\S]*?)```/g, (full, body) => {
     try {
       const parsed = JSON.parse(String(body).trim());
-      if (parsed.action && SUPPORTED_EXCEL_ACTIONS.has(parsed.action)) return "";
+      // Strip ANY action block — writes render as Apply buttons, reads are
+      // fulfilled automatically, and hallucinated verbs are dropped. Every
+      // one of them is machinery the user shouldn't see. (Previously only
+      // supported writes were stripped, so readRange/readSheet blocks showed
+      // as raw JSON in the chat — the "code-y commentary" complaint.)
+      const items = Array.isArray(parsed) ? parsed : [parsed];
+      if (items.length && items.every((p: any) => p && typeof p.action === "string")) return "";
     } catch {}
     return full; // not an action block — leave it
   });
+  // Bare (unfenced) read requests the model sometimes emits inline in prose.
+  out = out.replace(/\{[^{}]*"action"\s*:\s*"(?:readRange|readSheet)"[^{}]*\}/g, "");
   // Excel formula blocks always become buttons — strip them all.
   out = out.replace(/```excel\s*\n?[\s\S]*?```/g, "");
   // Collapse the blank-line gaps left behind so the prose stays tight.
@@ -2064,6 +2080,20 @@ function AddinExcel() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  // Live status from the server's SSE progress events ("Searching CRM…",
+  // "Reading 2 files…") so long tool runs never look like a dead spinner.
+  const [chatProgress, setChatProgress] = useState<string | null>(null);
+  // Auto-apply (Claude add-in parity): write actions land in the workbook as
+  // they arrive, no clicking. Only explicitly-targeted cells — never the
+  // current selection. Off switch persists per machine.
+  const [autoApply, setAutoApply] = useState<boolean>(() => {
+    try { return localStorage.getItem("bgp-excel-autoapply") !== "off"; } catch { return true; }
+  });
+  const autoApplyRef = useRef(autoApply);
+  useEffect(() => {
+    autoApplyRef.current = autoApply;
+    try { localStorage.setItem("bgp-excel-autoapply", autoApply ? "on" : "off"); } catch {}
+  }, [autoApply]);
   const [excelContext, setExcelContext] = useState("");
   const [workbookInfo, setWorkbookInfo] = useState<WorkbookInfo | null>(null);
   const [readingSheet, setReadingSheet] = useState(false);
@@ -2225,10 +2255,12 @@ function AddinExcel() {
       role: "user",
       content: msg || (filesForThisSend.length > 0 ? `(Uploaded ${filesForThisSend.length} file${filesForThisSend.length === 1 ? "" : "s"})` : ""),
       timestamp: new Date(),
+      hidden: opts?.autoRead || undefined,
     };
 
     setMessages(prev => [...prev, userMsg]);
     setLoading(true);
+    if (opts?.autoRead) setChatProgress("Reading the workbook…");
 
     let ctx = excelContext;
     try {
@@ -2309,6 +2341,7 @@ function AddinExcel() {
             if (line.startsWith("data: ")) {
               try {
                 const data = JSON.parse(line.slice(6));
+                if (data.progress) setChatProgress(String(data.progress));
                 if (data.reply) {
                   fullReply = data.reply;
                 }
@@ -2332,6 +2365,28 @@ function AddinExcel() {
           timestamp: new Date(),
         };
         setMessages(prev => [...prev, assistantMsg]);
+
+        // Auto-apply: write the reply's actions straight into the workbook.
+        // Only actions with an explicit sheet+cell — auto-writing into
+        // whatever cell happens to be selected would be a footgun.
+        if (autoApplyRef.current) {
+          const targeted = parseExcelActions(fullReply).filter(a => a.sheet && a.cell && (a.formula || a.value !== undefined));
+          if (targeted.length > 0) {
+            setChatProgress(`Applying ${targeted.length} change${targeted.length === 1 ? "" : "s"} to the workbook…`);
+            let ok = 0, fail = 0, lastError = "";
+            for (const a of targeted) {
+              try {
+                if (a.formula) await setFormulaInCell(a.sheet, a.cell, a.formula);
+                else await writeToCell(a.sheet, a.cell, a.value as string | number);
+                ok++;
+              } catch (e: any) { fail++; lastError = e?.message || String(e); }
+            }
+            setMessages(prev => prev.map(m => m.id === assistantMsg.id ? { ...m, autoApplied: { ok, fail } } : m));
+            if (fail > 0) {
+              toast({ title: `${ok} of ${targeted.length} changes applied`, description: lastError, variant: ok === 0 ? "destructive" : undefined });
+            }
+          }
+        }
       }
 
       // Auto-fulfil any read requests — read the sheets/ranges live from Excel
@@ -2340,6 +2395,7 @@ function AddinExcel() {
       const reads = fullReply ? extractReadRequests(fullReply) : [];
       if (reads.length > 0 && autoReadRoundsRef.current < 5) {
         autoReadRoundsRef.current += 1;
+        setChatProgress(`Reading ${reads.slice(0, 8).map(r => r.range ? `${r.sheet}!${r.range}` : r.sheet).join(", ")}…`);
         let data = "";
         for (const r of reads.slice(0, 8)) data += await readExcelRange(r.sheet, r.range);
         await sendMessage(`Here is the Excel data you requested (read live from the workbook):\n${data}`, { autoRead: true });
@@ -2356,6 +2412,7 @@ function AddinExcel() {
     }
 
     setLoading(false);
+    setChatProgress(null);
     inputRef.current?.focus();
   };
 
@@ -2556,7 +2613,7 @@ function AddinExcel() {
               </div>
             ) : (
               <div className="px-4 py-3 space-y-4">
-                {messages.map((msg) => (
+                {messages.filter(m => !m.hidden).map((msg) => (
                   <div key={msg.id} data-testid={`message-${msg.role}-${msg.id}`}>
                     {msg.role === "user" ? (
                       <div className="flex justify-end">
@@ -2570,6 +2627,16 @@ function AddinExcel() {
                         {(() => {
                           const actions = parseExcelActions(msg.content);
                           if (actions.length === 0) return null;
+                          // Auto-applied cleanly — a quiet receipt instead of a
+                          // wall of already-done Apply buttons.
+                          if (msg.autoApplied && msg.autoApplied.fail === 0) {
+                            return (
+                              <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-border/30 text-[11px] font-medium text-emerald-600">
+                                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                                Applied {msg.autoApplied.ok} change{msg.autoApplied.ok === 1 ? "" : "s"} to the workbook
+                              </div>
+                            );
+                          }
                           // Default to the active sheet + currently selected cell when
                           // the model didn't name a target. Previously a `prompt()` dialog
                           // ran here — but iframe prompts don't render in Excel's task
@@ -2640,7 +2707,7 @@ function AddinExcel() {
                       <div className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: "150ms" }} />
                       <div className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: "300ms" }} />
                     </div>
-                    <span className="text-xs text-muted-foreground">Thinking...</span>
+                    <span className="text-xs text-muted-foreground">{chatProgress || "Thinking..."}</span>
                   </div>
                 )}
               </div>
@@ -2753,8 +2820,16 @@ function AddinExcel() {
                 {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               </button>
             </div>
-            <div className="flex items-center justify-center mt-1.5">
-              <span className="text-[9px] text-muted-foreground/50">Opus 4.6 · Hardcore Builder · BGP CRM</span>
+            <div className="flex items-center justify-center gap-2 mt-1.5">
+              <span className="text-[9px] text-muted-foreground/50">Claude Fable 5 · BGP CRM</span>
+              <button
+                onClick={() => setAutoApply(v => !v)}
+                className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border transition-colors ${autoApply ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-border text-muted-foreground/60"}`}
+                title={autoApply ? "Changes are written to the workbook automatically — click to switch to Apply buttons" : "Changes wait for you to click Apply — click to write them automatically"}
+                data-testid="button-toggle-autoapply"
+              >
+                Auto-apply {autoApply ? "on" : "off"}
+              </button>
             </div>
           </div>
         </>
