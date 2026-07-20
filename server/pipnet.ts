@@ -228,6 +228,34 @@ function parseTotalPages(html: string): number {
   return match ? parseInt(match[1], 10) : 1;
 }
 
+// PIPnet's WAF intermittently rejects an established session mid-search — a
+// 403 from reqfetch/detailsfetch, or a 200 that bounces back to the login
+// form. The login step already recovers from blocks, but the search POST used
+// to give up on the first failure and surface the error straight to the user.
+// Retry once on a completely fresh session (new login + new proxy IP) so
+// transient blocks heal silently.
+async function searchPostWithRetry(path: string, body: string): Promise<{ res: Response; html: string; cookie: string }> {
+  const attempt = async () => {
+    const cookie = await login();
+    const res = await pipFetch(`${PIPNET_URL}/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
+      body,
+    });
+    const html = res.ok ? await res.text() : "";
+    return { res, html, cookie };
+  };
+  let out = await attempt();
+  const bounced = out.res.status === 401 || out.res.status === 403
+    || (out.res.ok && looksUnauthenticated(out.html));
+  if (bounced) {
+    console.warn(`[pipnet] ${path} bounced (HTTP ${out.res.status}) — retrying on a fresh session`);
+    resetSession();
+    out = await attempt();
+  }
+  return out;
+}
+
 export async function searchPipnetRequirements(params: {
   location?: string;
   minSize?: string;
@@ -239,7 +267,6 @@ export async function searchPipnetRequirements(params: {
   maxPages?: number;
   stopBeforeDate?: Date;
 }): Promise<Record<string, string>[]> {
-  const cookie = await login();
   const body = new URLSearchParams({
     requirementType: "ReqRetail",
     locationSearchEdit: "",
@@ -254,17 +281,10 @@ export async function searchPipnetRequirements(params: {
     Search: "Search",
   });
 
-  const res = await pipFetch(`${PIPNET_URL}/reqfetch.jsp`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Cookie: cookie,
-    },
-    body: body.toString(),
-  });
+  const { res, html: firstHtml, cookie } = await searchPostWithRetry("reqfetch.jsp", body.toString());
 
   if (!res.ok) throw new Error(`PIPnet req search failed: ${res.status}`);
-  let html = await res.text();
+  let html = firstHtml;
   const allRows = parseHtmlTable(html);
   const totalPages = parseTotalPages(html);
 
@@ -358,13 +378,8 @@ export async function searchPipnetProperties(params: {
   if (params.minSize) body.set("operandAreaMinimum", params.minSize);
   if (params.maxSize) body.set("operandAreaMaximum", params.maxSize);
 
-  const res = await pipFetch(`${PIPNET_URL}/detailsfetch.jsp`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
-    body: body.toString(),
-  });
+  const { res, html } = await searchPostWithRetry("detailsfetch.jsp", body.toString());
   if (!res.ok) throw new Error(`PIPnet prop search failed: ${res.status}`);
-  const html = await res.text();
   return parseHtmlTable(html);
 }
 
