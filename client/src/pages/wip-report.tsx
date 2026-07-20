@@ -1467,30 +1467,30 @@ export default function WipReport() {
                               {!isActual && e.dealId ? (
                                 <input
                                   type="date"
-                                  // The target date belongs to the DEAL, so editing it here PATCHes
-                                  // the deal — every split row (e.g. AT / CR / LK on one deal) shares
-                                  // it. Keying on targetDate remounts this uncontrolled input when the
-                                  // deal's date changes, so the other agents' rows re-sync to the new
-                                  // date after the refetch instead of showing their stale defaultValue.
+                                  // The target date belongs to the DEAL, so this saves to the deal —
+                                  // every split row for that deal (e.g. AT / CR / LK) shares it, and
+                                  // keying on targetDate remounts the other agents' inputs after the
+                                  // refetch so they re-sync to the new date.
+                                  //
+                                  // Save on CHANGE, not blur: picking a date from the date popup often
+                                  // doesn't blur the field, so the old onBlur save silently never fired
+                                  // (this was the "I keep changing it and it won't save" bug).
                                   key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`}
                                   defaultValue={toDateInputValue(e.targetDate)}
                                   className="text-xs border border-gray-200 rounded px-1 py-0.5 w-[110px] focus:outline-none focus:border-blue-400"
-                                  onBlur={async (ev) => {
+                                  onChange={async (ev) => {
                                     const val = ev.target.value;
                                     if (!val) return;
-                                    // Write to the DEAL via PUT /api/crm/deals/:id — the same
-                                    // endpoint the Deals page uses. (The old PATCH /api/deals/:id
-                                    // route never existed, so the date silently never saved and the
-                                    // other split rows never moved.)
+                                    // PUT /api/crm/deals/:id — the endpoint the Deals page uses. (The
+                                    // old PATCH /api/deals/:id route never existed, so nothing saved.)
                                     try {
                                       await apiRequest("PUT", `/api/crm/deals/${e.dealId}`, { targetDate: val });
-                                    } catch (err) {
-                                      console.error("[wip] target date save failed:", err);
+                                      toast({ title: "Target date updated", description: "Applied to everyone on this deal." });
+                                      // Refetch so every split row on this deal re-syncs to the new date.
+                                      invalidateDealCaches();
+                                    } catch (err: any) {
+                                      toast({ title: "Couldn't save target date", description: err?.message || "Please try again.", variant: "destructive" });
                                     }
-                                    // Refetch so every split row on this deal re-syncs to the new
-                                    // date (the key above remounts their inputs). On failure the
-                                    // refetch simply restores the real date.
-                                    invalidateDealCaches();
                                   }}
                                 />
                               ) : dateStr ? (
