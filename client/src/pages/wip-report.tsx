@@ -25,7 +25,7 @@ import bgpLogo from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTeam } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
 import { Link } from "wouter";
-import { apiRequest, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
+import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
 import { legacyToCode, WIP_STATUSES } from "@shared/deal-status";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -361,6 +361,28 @@ function FeeCheckTab() {
     },
   });
   const money = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
+  const { toast } = useToast();
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  // Set the deal's recorded fee to the Xero net — fixes the WIP + commission
+  // in one go (both read deal.fee). Confirmed per row so a mis-click can't
+  // silently move a fee. Writes via the normal deal PUT (audited).
+  const matchToXero = async (row: FeeReconRow) => {
+    if (!window.confirm(
+      `Set the fee on ${row.dealRef ? `deal ${row.dealRef} ` : ""}"${row.name}" to ${money(row.xeroNet)} (Xero net)?\n\nThis updates the WIP report and the agents' commission.`,
+    )) return;
+    setSavingId(row.dealId);
+    try {
+      await apiRequest("PUT", `/api/crm/deals/${row.dealId}`, { fee: row.xeroNet });
+      toast({ title: "Fee updated", description: `${row.name} set to ${money(row.xeroNet)}.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/wip/fee-reconciliation"] });
+      invalidateDealCaches();
+    } catch (e: any) {
+      toast({ title: "Couldn't update fee", description: e?.message || "Please try again.", variant: "destructive" });
+    } finally {
+      setSavingId(null);
+    }
+  };
 
   if (isLoading) return <div className="p-6 text-sm text-muted-foreground">Checking fees against Xero…</div>;
   if (error) return <div className="p-6 text-sm text-muted-foreground">Couldn't load the fee check.</div>;
@@ -388,6 +410,7 @@ function FeeCheckTab() {
               <th className="px-3 py-2 font-medium text-right">Xero gross</th>
               <th className="px-3 py-2 font-medium text-right">Difference</th>
               <th className="px-3 py-2 font-medium">Invoice</th>
+              <th className="px-3 py-2 font-medium">Fix</th>
             </tr>
           </thead>
           <tbody>
@@ -409,6 +432,16 @@ function FeeCheckTab() {
                   {r.diff >= 0 ? "+" : "-"}{money(Math.abs(r.diff))}
                 </td>
                 <td className="px-3 py-2 text-gray-500">{r.invoiceNumbers || "—"}</td>
+                <td className="px-3 py-2">
+                  <button
+                    onClick={() => matchToXero(r)}
+                    disabled={savingId === r.dealId}
+                    className="text-xs px-2 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50 whitespace-nowrap"
+                    data-testid={`fee-check-match-${r.dealId}`}
+                  >
+                    {savingId === r.dealId ? "Saving…" : `Set → ${money(r.xeroNet)}`}
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
