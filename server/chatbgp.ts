@@ -9739,7 +9739,7 @@ Be thorough — include every unit row you can classify, across all properties i
       const params: any[] = [rawQuery];
       const whereClauses: string[] = [];
       // Rank against the same tsvector expression as the GIN index
-      const tsExpr = "to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(array_to_string(ai_tags, ' '),'') || ' ' || coalesce(category,''))";
+      const tsExpr = "to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(category,''))";
       whereClauses.push(`${tsExpr} @@ websearch_to_tsquery('english', $1)`);
       if (source) { params.push(source); whereClauses.push(`source = $${params.length}`); }
       if (category) { params.push(category); whereClauses.push(`category = $${params.length}`); }

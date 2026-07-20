@@ -1047,7 +1047,7 @@ function createBgpMcpServer(): McpServer {
       const cappedLimit = Math.min(50, Math.max(1, limit || 10));
       const params: any[] = [rawQuery];
       const whereClauses: string[] = [];
-      const tsExpr = "to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(array_to_string(ai_tags, ' '),'') || ' ' || coalesce(category,''))";
+      const tsExpr = "to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(category,''))";
       whereClauses.push(`${tsExpr} @@ websearch_to_tsquery('english', $1)`);
       if (source) { params.push(source); whereClauses.push(`source = $${params.length}`); }
       if (category) { params.push(category); whereClauses.push(`category = $${params.length}`); }
