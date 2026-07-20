@@ -656,12 +656,11 @@ export default function WipReport() {
   const rawEntries = Array.isArray(wipResponse) ? wipResponse : (wipResponse?.entries || []);
   const isWipAdmin = Array.isArray(wipResponse) ? false : (wipResponse?.isAdmin || false);
   const wipUserTeam = Array.isArray(wipResponse) ? null : (wipResponse?.userTeam || null);
-  // "Normal" hides the restricted-director fees (Charlotte / Jack / Rupert /
-  // Woody); "Admin" shows everything. Only senior / full-view users
-  // (canSeeAll) can switch to Admin — everyone else only ever receives the
-  // Normal data from the server, so the toggle isn't shown to them.
+  // canSeeAll (senior partners + finance full-view like Layla) receive the
+  // restricted-director fees and always see every agent; non-canSeeAll users
+  // never receive those rows from the server. No Normal/Admin toggle — the
+  // WIP always shows everyone.
   const canSeeAll = !Array.isArray(wipResponse) && !!(wipResponse as any)?.canSeeAll;
-  const [wipViewMode, setWipViewMode] = useState<"normal" | "admin">("normal");
 
   const isLandsecView = activeTeam === "Landsec";
 
@@ -674,17 +673,6 @@ export default function WipReport() {
       if (!code) return true; // unknown/null status — keep
       return WIP_STATUSES.includes(code);
     });
-    // Normal view hides the restricted-director fees. Non-senior users never
-    // receive these from the server; this also enforces it for senior users
-    // who are viewing in Normal mode.
-    if (wipViewMode === "normal") {
-      const directors = ["woody bruce", "charlotte roberts", "rupert bentley-smith", "jack barratt"];
-      filtered = filtered.filter((e) => {
-        if (!e.agent) return true;
-        const agents = (e.agent as string).split(",").map((a) => a.trim().toLowerCase());
-        return !agents.some((a) => directors.includes(a));
-      });
-    }
     if (isLandsecView) {
       filtered = filtered.filter((e) => {
         const gn = (e.groupName || "").toLowerCase().replace(/\s+/g, "");
@@ -702,7 +690,7 @@ export default function WipReport() {
       });
     }
     return filtered;
-  }, [rawEntries, isLandsecView, activeTeam, isWipAdmin, wipViewMode, canSeeAll]);
+  }, [rawEntries, isLandsecView, activeTeam, isWipAdmin, canSeeAll]);
 
   const INVOICED_STATUSES = useMemo(() => ["Invoiced", "Billed"], []);
   const [selectedTeams, setSelectedTeams] = useState<Set<string>>(new Set());
@@ -1246,26 +1234,6 @@ export default function WipReport() {
             Agent Summary
           </button>
         </div>
-        {/* Normal vs Admin — only senior/full-view users can switch to Admin
-            (everyone else only ever receives Normal data from the server). */}
-        {canSeeAll && (
-          <div className="flex items-center gap-0.5 rounded-lg border bg-muted p-0.5 mb-1" data-testid="wip-view-mode" title="Normal hides director fees (Charlotte, Jack, Rupert, Woody); Admin shows everything">
-            <button
-              onClick={() => setWipViewMode("normal")}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${wipViewMode === "normal" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-              data-testid="wip-view-normal"
-            >
-              Normal
-            </button>
-            <button
-              onClick={() => setWipViewMode("admin")}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${wipViewMode === "admin" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-              data-testid="wip-view-admin"
-            >
-              Admin
-            </button>
-          </div>
-        )}
       </div>
 
       {activeTab === "agent-summary" ? (
