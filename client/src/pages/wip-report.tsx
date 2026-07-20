@@ -333,6 +333,91 @@ interface AgentDrilldownRow {
   invoiced: number;
 }
 
+interface FeeReconRow {
+  dealId: string;
+  dealRef: number | null;
+  name: string;
+  team: string | null;
+  agents: string | null;
+  status: string | null;
+  fee: number;
+  xeroNet: number;
+  xeroGross: number;
+  diff: number;
+  invoiceCount: number;
+  invoiceNumbers: string | null;
+}
+
+// Fee Check — invoiced deals whose recorded fee (what the WIP + commission use)
+// doesn't match the NET invoiced in Xero. Net-to-net, so VAT isn't flagged as a
+// discrepancy. Leadership only (the tab is hidden otherwise).
+function FeeCheckTab() {
+  const { data = [], isLoading, error } = useQuery<FeeReconRow[]>({
+    queryKey: ["/api/wip/fee-reconciliation"],
+    queryFn: async () => {
+      const res = await fetch("/api/wip/fee-reconciliation", { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error(String(res.status));
+      return res.json();
+    },
+  });
+  const money = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
+
+  if (isLoading) return <div className="p-6 text-sm text-muted-foreground">Checking fees against Xero…</div>;
+  if (error) return <div className="p-6 text-sm text-muted-foreground">Couldn't load the fee check.</div>;
+  if (data.length === 0) return (
+    <div className="p-6 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg" data-testid="fee-check-clean">
+      ✅ No discrepancies — every invoiced deal's recorded fee matches its Xero net figure.
+    </div>
+  );
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        {data.length} deal{data.length === 1 ? "" : "s"} where the recorded fee doesn't match the net invoiced in Xero.
+        The WIP and commission both use the <strong>recorded fee</strong>, so fix these on the Deals page to bring them in line with Xero.
+      </p>
+      <div className="bg-white border border-gray-200 rounded-lg overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-left">
+            <tr>
+              <th className="px-3 py-2 font-medium">Deal</th>
+              <th className="px-3 py-2 font-medium">Team</th>
+              <th className="px-3 py-2 font-medium">Agent</th>
+              <th className="px-3 py-2 font-medium text-right">Recorded fee</th>
+              <th className="px-3 py-2 font-medium text-right">Xero net</th>
+              <th className="px-3 py-2 font-medium text-right">Xero gross</th>
+              <th className="px-3 py-2 font-medium text-right">Difference</th>
+              <th className="px-3 py-2 font-medium">Invoice</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((r) => (
+              <tr key={r.dealId} className="border-t hover:bg-gray-50" data-testid={`fee-check-${r.dealId}`}>
+                <td className="px-3 py-2">
+                  <Link href={`/deals/${r.dealId}`}>
+                    <span className="text-blue-600 hover:underline cursor-pointer">
+                      {r.dealRef ? `${r.dealRef} · ` : ""}{r.name || "—"}
+                    </span>
+                  </Link>
+                </td>
+                <td className="px-3 py-2 text-gray-600">{r.team || "—"}</td>
+                <td className="px-3 py-2 text-gray-600">{r.agents || "—"}</td>
+                <td className="px-3 py-2 text-right font-mono">{money(r.fee)}</td>
+                <td className="px-3 py-2 text-right font-mono">{money(r.xeroNet)}</td>
+                <td className="px-3 py-2 text-right font-mono text-gray-400">{money(r.xeroGross)}</td>
+                <td className={`px-3 py-2 text-right font-mono font-semibold ${r.diff < 0 ? "text-red-600" : "text-amber-600"}`}>
+                  {r.diff >= 0 ? "+" : "-"}{money(Math.abs(r.diff))}
+                </td>
+                <td className="px-3 py-2 text-gray-500">{r.invoiceNumbers || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function AgentSummaryTab() {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const summarySort = useTableSort<AgentSummaryRow>(null, "asc");
@@ -626,7 +711,7 @@ export default function WipReport() {
   // Sage WIP reconciliation tab retired — Deals Board + Letting Tracker
   // are now the canonical source. The page shows the live deals view
   // and the per-agent summary only.
-  const [activeTab, setActiveTab] = useState<"report" | "agent-summary">("report");
+  const [activeTab, setActiveTab] = useState<"report" | "agent-summary" | "fee-check">("report");
 
   const { data: user } = useQuery<{ id: string; name: string; email: string; team: string; isAdmin?: boolean }>({
     queryKey: ["/api/auth/me"],
@@ -1233,11 +1318,26 @@ export default function WipReport() {
           >
             Agent Summary
           </button>
+          {canSeeAll && (
+            <button
+              onClick={() => setActiveTab("fee-check")}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === "fee-check"
+                  ? "border-green-600 text-green-700"
+                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              }`}
+              data-testid="wip-tab-fee-check"
+            >
+              Fee Check
+            </button>
+          )}
         </div>
       </div>
 
       {activeTab === "agent-summary" ? (
         <AgentSummaryTab />
+      ) : activeTab === "fee-check" ? (
+        <FeeCheckTab />
       ) : (
       <div className="flex flex-col md:flex-row gap-4 flex-1 min-h-0">
         <div className="flex-1 md:overflow-y-auto space-y-4 min-h-0">

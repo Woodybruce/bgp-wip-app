@@ -6318,6 +6318,53 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
+  // Fee reconciliation — deals whose recorded fee (deal.fee, what the WIP and
+  // commission both use) doesn't match the NET amount actually invoiced in
+  // Xero (line_amount, ex-VAT). Surfaces stale/incorrect fees for finance to
+  // fix — e.g. 3437 was recorded at £10k but invoiced £11k. Compares net-to-net
+  // so VAT isn't mistaken for a discrepancy; the gross total is returned too
+  // for context. Leadership / finance only.
+  app.get("/api/wip/fee-reconciliation", requireAuth, async (req, res) => {
+    try {
+      const senior = await isWipSenior(req);
+      const fullView = await hasWipFullView(req);
+      if (!senior && !fullView) return res.status(403).json({ error: "Not authorised" });
+      const { rows } = await pool.query(`
+        SELECT d.id, d.deal_ref AS "dealRef", d.name, d.team, d.internal_agent AS "internalAgent",
+               d.status, d.fee,
+               SUM(COALESCE(xi.line_amount, 0)) AS "xeroNet",
+               SUM(COALESCE(xi.total_amount, 0)) AS "xeroGross",
+               COUNT(xi.id)::int AS "invoiceCount",
+               STRING_AGG(DISTINCT NULLIF(xi.invoice_number, ''), ', ') AS "invoiceNumbers"
+          FROM crm_deals d
+          JOIN xero_invoices xi ON xi.deal_id = d.id AND COALESCE(xi.status, '') <> 'ERROR'
+         WHERE d.fee IS NOT NULL
+         GROUP BY d.id
+        HAVING BOOL_OR(xi.line_amount IS NOT NULL)
+           AND ABS(COALESCE(d.fee, 0) - SUM(COALESCE(xi.line_amount, 0))) > 1
+         ORDER BY ABS(COALESCE(d.fee, 0) - SUM(COALESCE(xi.line_amount, 0))) DESC
+      `);
+      const out = rows.map((r: any) => ({
+        dealId: r.id,
+        dealRef: r.dealRef,
+        name: r.name,
+        team: Array.isArray(r.team) ? r.team.join(", ") : (r.team || null),
+        agents: Array.isArray(r.internalAgent) ? r.internalAgent.join(", ") : (r.internalAgent || null),
+        status: r.status,
+        fee: Number(r.fee) || 0,
+        xeroNet: Number(r.xeroNet) || 0,
+        xeroGross: Number(r.xeroGross) || 0,
+        diff: (Number(r.fee) || 0) - (Number(r.xeroNet) || 0),
+        invoiceCount: r.invoiceCount,
+        invoiceNumbers: r.invoiceNumbers || null,
+      }));
+      res.json(out);
+    } catch (e: any) {
+      console.error("[wip/fee-reconciliation]", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.delete("/api/wip", requireAuth, async (req, res) => {
     try {
       if (!(await isWipSenior(req))) return res.status(403).json({ error: "Not authorised" });
