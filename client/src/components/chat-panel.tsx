@@ -1119,6 +1119,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [panelProgressLabel, setPanelProgressLabel] = useState("");
+  // Token deltas streamed live into a draft bubble while the reply is being
+  // composed — the panel used to sit on a spinner and then dump the full text.
+  const [streamingText, setStreamingText] = useState("");
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   // Share activeThreadId with the full-page /chatbgp view (same
@@ -1495,6 +1498,39 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
         attachments: lastUserMsg.attachments,
       });
 
+      // Shared SSE reader: live progress → status label, token deltas → the
+      // streaming draft bubble, final {reply}/{error} → resolved result.
+      const readSseResponse = async (res: Response): Promise<any> => {
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error("No response stream");
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let lastData = "";
+        const handle = (raw: string) => {
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed.progress) { setPanelProgressLabel(parsed.progress); setStreamingText(""); }
+            if (parsed.delta) { setPanelProgressLabel(""); setStreamingText(prev => prev + parsed.delta); }
+            if (parsed.reply !== undefined || parsed.error !== undefined) lastData = raw;
+          } catch {}
+        };
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) if (line.startsWith("data: ")) handle(line.slice(6));
+        }
+        if (buffer.startsWith("data: ")) handle(buffer.slice(6));
+        if (lastData) {
+          const data = JSON.parse(lastData);
+          if (data.error !== undefined) throw new Error(String(data.error));
+          return data;
+        }
+        throw new Error("No response received");
+      };
+
       if (files.length > 0) {
         const formData = new FormData();
         formData.append("messages", JSON.stringify(plainMessages));
@@ -1515,7 +1551,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
           throw new Error(JSON.stringify(err));
         }
 
-        const data = await res.json();
+        const data = await readSseResponse(res);
         return { ...data, threadId: currentThreadId };
       } else {
         const attemptChat = async (attempt: number): Promise<any> => {
@@ -1541,41 +1577,8 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
               }
               throw new Error(`${res.status}: ${text}`);
             }
-            const reader = res.body?.getReader();
-            if (!reader) throw new Error("No response stream");
-            const decoder = new TextDecoder();
-            let buffer = "";
-            let lastData = "";
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split("\n");
-              buffer = lines.pop() || "";
-              for (const line of lines) {
-                if (line.startsWith("data: ")) {
-                  const raw = line.slice(6);
-                  try {
-                    const parsed = JSON.parse(raw);
-                    if (parsed.progress) setPanelProgressLabel(parsed.progress);
-                    if (parsed.reply) {
-                      lastData = raw;
-                    }
-                  } catch {}
-                }
-              }
-            }
-            if (buffer.startsWith("data: ")) {
-              try {
-                const parsed = JSON.parse(buffer.slice(6));
-                if (parsed.reply) lastData = buffer.slice(6);
-              } catch {}
-            }
-            if (lastData) {
-              const data = JSON.parse(lastData);
-              return { ...data, threadId: currentThreadId };
-            }
-            throw new Error("No response received");
+            const data = await readSseResponse(res);
+            return { ...data, threadId: currentThreadId };
           } catch (err: any) {
             clearTimeout(timeoutId);
             if (err.name === "AbortError") throw new Error("Request timed out after 5 minutes.");
@@ -1592,6 +1595,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     },
     onSuccess: async (data: { reply: string; action?: ChatAction; threadId: string; savedToThread?: boolean }) => {
       setPanelProgressLabel("");
+      setStreamingText("");
       const msg: LocalChatMessage = { role: "assistant", content: data.reply };
       if (data.action) {
         msg.action = data.action;
@@ -1645,6 +1649,8 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
         .catch(() => {});
     },
     onError: (err: any) => {
+      setPanelProgressLabel("");
+      setStreamingText("");
       let msg = "Something went wrong — please try again.";
       try {
         const raw = err?.message || "";
@@ -2765,6 +2771,15 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                   />
                 ))}
                 {(aiSendMutation.isPending || chatbgpMentionMutation.isPending) && (
+                  streamingText ? (
+                    // Live draft — tokens render as they stream, claude.ai-style.
+                    <div className="flex justify-start" data-testid="panel-streaming-response">
+                      <div className="bg-gray-100 dark:bg-gray-800 rounded-2xl rounded-bl-sm px-4 py-3 max-w-full overflow-hidden">
+                        <ChatBGPMarkdown content={streamingText} />
+                        <span className="inline-block w-1.5 h-3.5 ml-0.5 align-middle bg-muted-foreground/50 animate-pulse" />
+                      </div>
+                    </div>
+                  ) : (
                   <div className="flex justify-start" data-testid="panel-loading-response">
                     <div className="bg-gray-100 dark:bg-gray-800 rounded-2xl rounded-bl-sm px-4 py-3">
                       <div className="flex items-center gap-2">
@@ -2779,6 +2794,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                       </div>
                     </div>
                   </div>
+                  )
                 )}
                 {typingUsers.length > 0 && !aiSendMutation.isPending && (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="typing-indicator">
