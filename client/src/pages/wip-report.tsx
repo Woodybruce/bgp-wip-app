@@ -1478,11 +1478,15 @@ export default function WipReport() {
                                   onBlur={async (ev) => {
                                     const val = ev.target.value;
                                     if (!val) return;
-                                    await fetch(`/api/deals/${e.dealId}`, {
-                                      method: "PATCH",
-                                      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-                                      body: JSON.stringify({ targetDate: val }),
-                                    });
+                                    // Write to the DEAL via PUT /api/crm/deals/:id — the same
+                                    // endpoint the Deals page uses. (The old PATCH /api/deals/:id
+                                    // route never existed, so the date silently never saved and the
+                                    // other split rows never moved.)
+                                    try {
+                                      await apiRequest("PUT", `/api/crm/deals/${e.dealId}`, { targetDate: val });
+                                    } catch (err) {
+                                      console.error("[wip] target date save failed:", err);
+                                    }
                                     // Refetch so every split row on this deal re-syncs to the new
                                     // date (the key above remounts their inputs). On failure the
                                     // refetch simply restores the real date.
