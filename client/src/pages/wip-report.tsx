@@ -1467,6 +1467,12 @@ export default function WipReport() {
                               {!isActual && e.dealId ? (
                                 <input
                                   type="date"
+                                  // The target date belongs to the DEAL, so editing it here PATCHes
+                                  // the deal — every split row (e.g. AT / CR / LK on one deal) shares
+                                  // it. Keying on targetDate remounts this uncontrolled input when the
+                                  // deal's date changes, so the other agents' rows re-sync to the new
+                                  // date after the refetch instead of showing their stale defaultValue.
+                                  key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`}
                                   defaultValue={toDateInputValue(e.targetDate)}
                                   className="text-xs border border-gray-200 rounded px-1 py-0.5 w-[110px] focus:outline-none focus:border-blue-400"
                                   onBlur={async (ev) => {
@@ -1477,6 +1483,9 @@ export default function WipReport() {
                                       headers: { "Content-Type": "application/json", ...getAuthHeaders() },
                                       body: JSON.stringify({ targetDate: val }),
                                     });
+                                    // Refetch so every split row on this deal re-syncs to the new
+                                    // date (the key above remounts their inputs). On failure the
+                                    // refetch simply restores the real date.
                                     invalidateDealCaches();
                                   }}
                                 />
