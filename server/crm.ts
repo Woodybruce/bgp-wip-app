@@ -82,6 +82,178 @@ function parseAiJson(raw: string): any {
   }
 }
 
+export async function findOrCreateCompany(name: string, opts?: { companyType?: string }): Promise<string> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Company name required");
+  const existing = await db.select().from(crmCompanies)
+    .where(sql`LOWER(${crmCompanies.name}) = LOWER(${trimmed})`)
+    .limit(1);
+  if (existing.length > 0) {
+    if (opts?.companyType && !existing[0].companyType) {
+      await db.update(crmCompanies).set({ companyType: opts.companyType }).where(eq(crmCompanies.id, existing[0].id));
+    }
+    return existing[0].id;
+  }
+  const [created] = await db.insert(crmCompanies).values({
+    name: trimmed,
+    companyType: opts?.companyType || null,
+  }).returning({ id: crmCompanies.id });
+  return created.id;
+}
+
+export async function findOrCreateContact(
+  name: string,
+  opts: { email?: string | null; phone?: string | null; role?: string | null; companyId?: string | null; companyName?: string | null; contactType?: string | null; agentSpecialty?: string | null }
+): Promise<string> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Contact name required");
+  let existing: typeof crmContacts.$inferSelect | null = null;
+  if (opts.email) {
+    const byEmail = await db.select().from(crmContacts)
+      .where(sql`LOWER(${crmContacts.email}) = LOWER(${opts.email.trim()})`)
+      .limit(1);
+    if (byEmail.length > 0) existing = byEmail[0];
+  }
+  if (!existing && opts.companyId) {
+    const byNameAndCompany = await db.select().from(crmContacts)
+      .where(and(sql`LOWER(${crmContacts.name}) = LOWER(${trimmed})`, eq(crmContacts.companyId, opts.companyId)))
+      .limit(1);
+    if (byNameAndCompany.length > 0) existing = byNameAndCompany[0];
+  }
+  if (!existing) {
+    const byName = await db.select().from(crmContacts)
+      .where(sql`LOWER(${crmContacts.name}) = LOWER(${trimmed})`)
+      .limit(1);
+    if (byName.length > 0) existing = byName[0];
+  }
+  if (existing) {
+    const updates: Record<string, any> = {};
+    if (!existing.phone && opts.phone) updates.phone = opts.phone.trim();
+    if (!existing.role && opts.role) updates.role = opts.role.trim();
+    if (!existing.companyId && opts.companyId) updates.companyId = opts.companyId;
+    if (!existing.companyName && opts.companyName) updates.companyName = opts.companyName.trim();
+    if (!existing.contactType && opts.contactType) updates.contactType = opts.contactType;
+    if (!existing.agentSpecialty && opts.agentSpecialty) updates.agentSpecialty = opts.agentSpecialty;
+    if (!existing.email && opts.email) updates.email = opts.email.trim();
+    if (Object.keys(updates).length > 0) {
+      await db.update(crmContacts).set(updates).where(eq(crmContacts.id, existing.id));
+    }
+    return existing.id;
+  }
+  const [created] = await db.insert(crmContacts).values({
+    name: trimmed,
+    email: opts.email?.trim() || null,
+    phone: opts.phone?.trim() || null,
+    role: opts.role?.trim() || null,
+    companyId: opts.companyId || null,
+    companyName: opts.companyName?.trim() || null,
+    contactType: opts.contactType || null,
+    agentSpecialty: opts.agentSpecialty || null,
+  }).returning({ id: crmContacts.id });
+  return created.id;
+}
+
+export async function requirementExists(name: string, companyId: string | null): Promise<boolean> {
+  if (!companyId) {
+    const existing = await db.select({ id: crmRequirementsLeasing.id }).from(crmRequirementsLeasing)
+      .where(sql`LOWER(${crmRequirementsLeasing.name}) = LOWER(${name.trim()})`)
+      .limit(1);
+    return existing.length > 0;
+  }
+  const existing = await db.select({ id: crmRequirementsLeasing.id }).from(crmRequirementsLeasing)
+    .where(and(
+      sql`LOWER(${crmRequirementsLeasing.name}) = LOWER(${name.trim()})`,
+      eq(crmRequirementsLeasing.companyId, companyId)
+    ))
+    .limit(1);
+  return existing.length > 0;
+}
+
+const SIZE_BUCKETS = [
+  { label: "Under 500 sq ft", min: 0, max: 500 },
+  { label: "500 - 1,000 sq ft", min: 500, max: 1000 },
+  { label: "1,000 - 2,000 sq ft", min: 1000, max: 2000 },
+  { label: "2,000 - 3,500 sq ft", min: 2000, max: 3500 },
+  { label: "3,500 - 5,000 sq ft", min: 3500, max: 5000 },
+  { label: "5,000 - 10,000 sq ft", min: 5000, max: 10000 },
+  { label: "10,000 - 25,000 sq ft", min: 10000, max: 25000 },
+  { label: "25,000 - 50,000 sq ft", min: 25000, max: 50000 },
+  { label: "50,000 sq ft +", min: 50000, max: Infinity },
+];
+
+function parseNum(s: string): number {
+  return parseInt(s.replace(/,/g, ""), 10);
+}
+
+export function mapPitchToRequirementType(pitch: string | null, description: string | null): string[] {
+  if (!pitch && !description) return [];
+  const text = [pitch, description].filter(Boolean).join(" ").toLowerCase();
+  const types: string[] = [];
+  if (/shopping\s*centre|mall/i.test(text)) types.push("Shopping Centre");
+  if (/high\s*street|town\s*centre|city\s*centre|prime\s*pitch/i.test(text)) types.push("High street");
+  if (/retail\s*park|out\s*of\s*town|roadside/i.test(text)) types.push("Retail Park");
+  if (/leisure\s*park|leisure\s*scheme/i.test(text)) types.push("Leisure Park");
+  return types;
+}
+
+export function mapSizeToBuckets(raw: string): string[] {
+  if (!raw || raw === "Area") return [];
+  const normalized = raw.toLowerCase().trim();
+  if (normalized.includes("acre")) return [];
+
+  let minVal: number | null = null;
+  let maxVal: number | null = null;
+
+  const rangeMatch = normalized.match(/([\d,]+)\s*[-–to]+\s*([\d,]+)\s*(ft2|sq\s*ft|sqft|sf)?/);
+  if (rangeMatch) {
+    minVal = parseNum(rangeMatch[1]);
+    maxVal = rangeMatch[2] ? parseNum(rangeMatch[2]) : null;
+  }
+
+  if (minVal === null) {
+    const plusMatch = normalized.match(/([\d,]+)\s*\+/) || normalized.match(/([\d,]+)\s*(sq\s*ft|sqft|sf)?\s*(?:and\s+)?(?:above|over|upwards|minimum)/);
+    if (plusMatch) {
+      minVal = parseNum(plusMatch[1]);
+      maxVal = null;
+    }
+  }
+
+  if (minVal === null) {
+    const underMatch = normalized.match(/under\s*([\d,]+)|up\s*to\s*([\d,]+)|less\s*than\s*([\d,]+)|max(?:imum)?\s*([\d,]+)/);
+    if (underMatch) {
+      minVal = 0;
+      maxVal = parseNum(underMatch[1] || underMatch[2] || underMatch[3] || underMatch[4]);
+    }
+  }
+
+  if (minVal === null) {
+    const singleMatch = normalized.match(/([\d,]+)\s*(ft2|sq\s*ft|sqft|sf|square\s*f)/);
+    if (singleMatch) {
+      minVal = parseNum(singleMatch[1]);
+      maxVal = null;
+    }
+  }
+
+  if (minVal === null) {
+    const anyNum = normalized.match(/([\d,]{3,})/);
+    if (anyNum) {
+      minVal = parseNum(anyNum[1]);
+      maxVal = null;
+    }
+  }
+
+  if (minVal === null) return [];
+  if (maxVal === null || maxVal <= minVal) maxVal = minVal * 2 || 500;
+
+  const buckets: string[] = [];
+  for (const b of SIZE_BUCKETS) {
+    if (minVal < b.max && maxVal > b.min) {
+      buckets.push(b.label);
+    }
+  }
+  return buckets;
+}
+
 /**
  * Parse a Sage WIP Excel buffer and import it into wip_entries + sync to
  * crm_deals. Used by:
@@ -5053,177 +5225,6 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
-  async function findOrCreateCompany(name: string, opts?: { companyType?: string }): Promise<string> {
-    const trimmed = name.trim();
-    if (!trimmed) throw new Error("Company name required");
-    const existing = await db.select().from(crmCompanies)
-      .where(sql`LOWER(${crmCompanies.name}) = LOWER(${trimmed})`)
-      .limit(1);
-    if (existing.length > 0) {
-      if (opts?.companyType && !existing[0].companyType) {
-        await db.update(crmCompanies).set({ companyType: opts.companyType }).where(eq(crmCompanies.id, existing[0].id));
-      }
-      return existing[0].id;
-    }
-    const [created] = await db.insert(crmCompanies).values({
-      name: trimmed,
-      companyType: opts?.companyType || null,
-    }).returning({ id: crmCompanies.id });
-    return created.id;
-  }
-
-  async function findOrCreateContact(
-    name: string,
-    opts: { email?: string | null; phone?: string | null; role?: string | null; companyId?: string | null; companyName?: string | null; contactType?: string | null; agentSpecialty?: string | null }
-  ): Promise<string> {
-    const trimmed = name.trim();
-    if (!trimmed) throw new Error("Contact name required");
-    let existing: typeof crmContacts.$inferSelect | null = null;
-    if (opts.email) {
-      const byEmail = await db.select().from(crmContacts)
-        .where(sql`LOWER(${crmContacts.email}) = LOWER(${opts.email.trim()})`)
-        .limit(1);
-      if (byEmail.length > 0) existing = byEmail[0];
-    }
-    if (!existing && opts.companyId) {
-      const byNameAndCompany = await db.select().from(crmContacts)
-        .where(and(sql`LOWER(${crmContacts.name}) = LOWER(${trimmed})`, eq(crmContacts.companyId, opts.companyId)))
-        .limit(1);
-      if (byNameAndCompany.length > 0) existing = byNameAndCompany[0];
-    }
-    if (!existing) {
-      const byName = await db.select().from(crmContacts)
-        .where(sql`LOWER(${crmContacts.name}) = LOWER(${trimmed})`)
-        .limit(1);
-      if (byName.length > 0) existing = byName[0];
-    }
-    if (existing) {
-      const updates: Record<string, any> = {};
-      if (!existing.phone && opts.phone) updates.phone = opts.phone.trim();
-      if (!existing.role && opts.role) updates.role = opts.role.trim();
-      if (!existing.companyId && opts.companyId) updates.companyId = opts.companyId;
-      if (!existing.companyName && opts.companyName) updates.companyName = opts.companyName.trim();
-      if (!existing.contactType && opts.contactType) updates.contactType = opts.contactType;
-      if (!existing.agentSpecialty && opts.agentSpecialty) updates.agentSpecialty = opts.agentSpecialty;
-      if (!existing.email && opts.email) updates.email = opts.email.trim();
-      if (Object.keys(updates).length > 0) {
-        await db.update(crmContacts).set(updates).where(eq(crmContacts.id, existing.id));
-      }
-      return existing.id;
-    }
-    const [created] = await db.insert(crmContacts).values({
-      name: trimmed,
-      email: opts.email?.trim() || null,
-      phone: opts.phone?.trim() || null,
-      role: opts.role?.trim() || null,
-      companyId: opts.companyId || null,
-      companyName: opts.companyName?.trim() || null,
-      contactType: opts.contactType || null,
-      agentSpecialty: opts.agentSpecialty || null,
-    }).returning({ id: crmContacts.id });
-    return created.id;
-  }
-
-  async function requirementExists(name: string, companyId: string | null): Promise<boolean> {
-    if (!companyId) {
-      const existing = await db.select({ id: crmRequirementsLeasing.id }).from(crmRequirementsLeasing)
-        .where(sql`LOWER(${crmRequirementsLeasing.name}) = LOWER(${name.trim()})`)
-        .limit(1);
-      return existing.length > 0;
-    }
-    const existing = await db.select({ id: crmRequirementsLeasing.id }).from(crmRequirementsLeasing)
-      .where(and(
-        sql`LOWER(${crmRequirementsLeasing.name}) = LOWER(${name.trim()})`,
-        eq(crmRequirementsLeasing.companyId, companyId)
-      ))
-      .limit(1);
-    return existing.length > 0;
-  }
-
-  const SIZE_BUCKETS = [
-    { label: "Under 500 sq ft", min: 0, max: 500 },
-    { label: "500 - 1,000 sq ft", min: 500, max: 1000 },
-    { label: "1,000 - 2,000 sq ft", min: 1000, max: 2000 },
-    { label: "2,000 - 3,500 sq ft", min: 2000, max: 3500 },
-    { label: "3,500 - 5,000 sq ft", min: 3500, max: 5000 },
-    { label: "5,000 - 10,000 sq ft", min: 5000, max: 10000 },
-    { label: "10,000 - 25,000 sq ft", min: 10000, max: 25000 },
-    { label: "25,000 - 50,000 sq ft", min: 25000, max: 50000 },
-    { label: "50,000 sq ft +", min: 50000, max: Infinity },
-  ];
-
-  function parseNum(s: string): number {
-    return parseInt(s.replace(/,/g, ""), 10);
-  }
-
-  function mapPitchToRequirementType(pitch: string | null, description: string | null): string[] {
-    if (!pitch && !description) return [];
-    const text = [pitch, description].filter(Boolean).join(" ").toLowerCase();
-    const types: string[] = [];
-    if (/shopping\s*centre|mall/i.test(text)) types.push("Shopping Centre");
-    if (/high\s*street|town\s*centre|city\s*centre|prime\s*pitch/i.test(text)) types.push("High street");
-    if (/retail\s*park|out\s*of\s*town|roadside/i.test(text)) types.push("Retail Park");
-    if (/leisure\s*park|leisure\s*scheme/i.test(text)) types.push("Leisure Park");
-    return types;
-  }
-
-  function mapSizeToBuckets(raw: string): string[] {
-    if (!raw || raw === "Area") return [];
-    const normalized = raw.toLowerCase().trim();
-    if (normalized.includes("acre")) return [];
-
-    let minVal: number | null = null;
-    let maxVal: number | null = null;
-
-    const rangeMatch = normalized.match(/([\d,]+)\s*[-–to]+\s*([\d,]+)\s*(ft2|sq\s*ft|sqft|sf)?/);
-    if (rangeMatch) {
-      minVal = parseNum(rangeMatch[1]);
-      maxVal = rangeMatch[2] ? parseNum(rangeMatch[2]) : null;
-    }
-
-    if (minVal === null) {
-      const plusMatch = normalized.match(/([\d,]+)\s*\+/) || normalized.match(/([\d,]+)\s*(sq\s*ft|sqft|sf)?\s*(?:and\s+)?(?:above|over|upwards|minimum)/);
-      if (plusMatch) {
-        minVal = parseNum(plusMatch[1]);
-        maxVal = null;
-      }
-    }
-
-    if (minVal === null) {
-      const underMatch = normalized.match(/under\s*([\d,]+)|up\s*to\s*([\d,]+)|less\s*than\s*([\d,]+)|max(?:imum)?\s*([\d,]+)/);
-      if (underMatch) {
-        minVal = 0;
-        maxVal = parseNum(underMatch[1] || underMatch[2] || underMatch[3] || underMatch[4]);
-      }
-    }
-
-    if (minVal === null) {
-      const singleMatch = normalized.match(/([\d,]+)\s*(ft2|sq\s*ft|sqft|sf|square\s*f)/);
-      if (singleMatch) {
-        minVal = parseNum(singleMatch[1]);
-        maxVal = null;
-      }
-    }
-
-    if (minVal === null) {
-      const anyNum = normalized.match(/([\d,]{3,})/);
-      if (anyNum) {
-        minVal = parseNum(anyNum[1]);
-        maxVal = null;
-      }
-    }
-
-    if (minVal === null) return [];
-    if (maxVal === null || maxVal <= minVal) maxVal = minVal * 2 || 500;
-
-    const buckets: string[] = [];
-    for (const b of SIZE_BUCKETS) {
-      if (minVal < b.max && maxVal > b.min) {
-        buckets.push(b.label);
-      }
-    }
-    return buckets;
-  }
 
   app.post("/api/crm/bulk-import/:source", async (req, res) => {
     const source = req.params.source.toLowerCase();

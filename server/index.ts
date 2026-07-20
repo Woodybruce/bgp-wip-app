@@ -178,6 +178,7 @@ import { pool } from "./db";
     `CREATE INDEX IF NOT EXISTS knowledge_base_source_idx ON knowledge_base (source)`,
     `CREATE INDEX IF NOT EXISTS knowledge_base_category_idx ON knowledge_base (category)`,
     `CREATE INDEX IF NOT EXISTS chat_messages_content_search_idx ON chat_messages USING GIN (to_tsvector('english', coalesce(content,'')))`,
+    `CREATE TABLE IF NOT EXISTS pip_ingested_emails (id SERIAL PRIMARY KEY, message_key TEXT NOT NULL UNIQUE, mailbox TEXT, subject TEXT, from_address TEXT, requirement_id VARCHAR, status TEXT NOT NULL, detail TEXT, received_at TIMESTAMP, created_at TIMESTAMP DEFAULT now())`,
     `CREATE TABLE IF NOT EXISTS user_tasks (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), user_id VARCHAR NOT NULL, title TEXT NOT NULL, description TEXT, due_date TIMESTAMP, priority TEXT DEFAULT 'medium', status TEXT DEFAULT 'todo', category TEXT, linked_deal_id VARCHAR, linked_property_id VARCHAR, linked_contact_id VARCHAR, sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), completed_at TIMESTAMP)`,
     // Watch House awards — admin-issued or auto-detected recognitions.
     // emoji + reason are free-form; kind = 'coffee'|'beer'|'lunch'|'star'|'auto'
@@ -2671,6 +2672,7 @@ import { serveStatic } from "./static";
 import { registerEmailProcessorRoutes, startEmailProcessor } from "./email-processor";
 import { registerHealthCheckRoutes, startHealthCheck } from "./health-check";
 import { setupArchivistRoutes, runArchivistCrawl } from "./archivist";
+import { setupPipEmailIngestRoutes, startPipEmailIngest } from "./pip-email-ingest";
 import { registerAIIntelligenceRoutes } from "./ai-intelligence";
 import { setupLeadsRoutes } from "./leads";
 import { registerMcpRoutes } from "./mcp-server";
@@ -3214,6 +3216,7 @@ app.use("/api/branding/assets", express.static(
   setupWhatsAppRoutes(app);
   setupChatBGPRoutes(app);
   setupArchivistRoutes(app);
+  setupPipEmailIngestRoutes(app);
   setupNewsIntelligenceRoutes(app);
   setupNewsFeedRoutes(app);
   setupModelsRoutes(app);
@@ -3482,6 +3485,8 @@ app.use("/api/branding/assets", express.static(
       if (isProduction) {
         setTimeout(() => startAutoEnrichment(), 30000);
         setTimeout(() => startAutoTurnoverResearch(), 30000);
+        // PIP mailout email-ingest — light Graph scan of recent messages only
+        setTimeout(() => startPipEmailIngest(), 120000);
         import("./client-team-events-sync").then(m => m.startClientEventsSyncLoop()).catch(() => {});
         // Heavy crawls (image-sync + archivist) block the event loop and
         // were starving ChatBGP after every redeploy — a single chat turn
