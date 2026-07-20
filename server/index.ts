@@ -2439,6 +2439,60 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   }
   console.log(`[auto-migrate] Schema migration complete — ${ok} applied, ${skipped} skipped`);
 
+  // ── One-off (per Woody): deals 3437 & 3490 (Harry Elliott) are exempt from
+  // the 15% BGP House cut — the whole fee goes to the agent, not 85%. The fee
+  // editor hard-locks the house slice on every deal, so this can't be done in
+  // the UI; we correct it in the data. Scoped to these two deal refs only, so
+  // the 15% policy stays enforced everywhere else. Guarded on the BGP House
+  // row still existing, so it applies exactly once (no re-scaling drift on
+  // later boots). Removes the house slice and scales the remaining agent
+  // allocation(s) up to 100% (% rows) / the full fee (fixed rows) so BOTH the
+  // WIP split (share-normalised) and commission billing (raw %/amount) credit
+  // the agent the whole fee.
+  try {
+    const { rows: exemptDeals } = await pool.query(
+      `SELECT id, name, deal_ref, fee FROM crm_deals WHERE deal_ref = ANY($1::int[])`,
+      [[3437, 3490]],
+    );
+    for (const d of exemptDeals) {
+      const { rows: house } = await pool.query(
+        `SELECT 1 FROM deal_fee_allocations WHERE deal_id = $1 AND is_bgp_house = true LIMIT 1`,
+        [d.id],
+      );
+      if (house.length === 0) continue; // already corrected — idempotent
+      await pool.query(`DELETE FROM deal_fee_allocations WHERE deal_id = $1 AND is_bgp_house = true`, [d.id]);
+      await pool.query(
+        `UPDATE deal_fee_allocations a
+            SET percentage = ROUND((a.percentage * 100.0 / s.total)::numeric, 4)
+           FROM (SELECT SUM(percentage) AS total FROM deal_fee_allocations
+                  WHERE deal_id = $1 AND allocation_type = 'percentage' AND is_bgp_house = false) s
+          WHERE a.deal_id = $1 AND a.allocation_type = 'percentage' AND a.is_bgp_house = false AND s.total > 0`,
+        [d.id],
+      );
+      await pool.query(
+        `UPDATE deal_fee_allocations a
+            SET fixed_amount = ROUND((a.fixed_amount * $2 / s.total)::numeric, 2)
+           FROM (SELECT SUM(fixed_amount) AS total FROM deal_fee_allocations
+                  WHERE deal_id = $1 AND allocation_type = 'fixed' AND is_bgp_house = false) s
+          WHERE a.deal_id = $1 AND a.allocation_type = 'fixed' AND a.is_bgp_house = false AND s.total > 0 AND $2 IS NOT NULL`,
+        [d.id, d.fee],
+      );
+      const { rows: after } = await pool.query(
+        `SELECT agent_name, allocation_type, percentage, fixed_amount FROM deal_fee_allocations WHERE deal_id = $1`,
+        [d.id],
+      );
+      console.log(
+        `[one-off 3437/3490] Removed BGP House cut on deal ${d.deal_ref} "${d.name}" — full fee to agent(s): ` +
+        after.map((r: any) => `${r.agent_name}=${r.allocation_type === "fixed" ? "£" + r.fixed_amount : r.percentage + "%"}`).join(", "),
+      );
+    }
+    if (exemptDeals.length === 0) {
+      console.warn("[one-off 3437/3490] no deals found with ref 3437 or 3490 — nothing changed");
+    }
+  } catch (e: any) {
+    console.warn("[one-off 3437/3490] correction failed:", e?.message);
+  }
+
   // ── knowledge_base GIN search index — built off the boot path ──────────
   // The build takes longer than the pool's 30s query_timeout, so as a
   // MIGRATIONS entry it failed every boot — and the legacy DROP that ran
