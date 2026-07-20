@@ -7266,7 +7266,8 @@ Rules:
 - For global brands (Nike, Zara, H&M) report UK revenue if known, otherwise global converted to GBP
 - If the brand is primarily UK-based, report UK turnover
 - If genuinely unknown, set turnover to 0 and confidence to "Low"
-- Do not invent figures — Low confidence with real estimates is better than made-up High confidence`;
+- Do not invent figures — Low confidence with real estimates is better than made-up High confidence
+- "${company.name}" means ONLY the retail/leisure company described above — ignore unrelated films, video games, products, or other companies sharing the name. If you cannot identify the specific company, set turnover to 0 and confidence to "Low"`;
 
       const completion = await callClaude({
         model: CHATBGP_HELPER_MODEL,
@@ -8711,7 +8712,8 @@ Rules:
 - For global brands (Nike, Zara, H&M) report UK revenue if known, otherwise global converted to GBP
 - If the brand is primarily UK-based, report UK turnover
 - If genuinely unknown, set turnover to 0 and confidence to "Low"
-- Do not invent figures — Low confidence with real estimates is better than made-up High confidence`;
+- Do not invent figures — Low confidence with real estimates is better than made-up High confidence
+- "${company.name}" means ONLY the retail/leisure company described above — ignore unrelated films, video games, products, or other companies sharing the name. If you cannot identify the specific company, set turnover to 0 and confidence to "Low"`;
 
         const completion = await callClaude({
           model: CHATBGP_HELPER_MODEL,

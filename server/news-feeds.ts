@@ -6,7 +6,7 @@ import { DEFAULT_NEWS_TAGS } from "@shared/news-tags";
 import { authHeadersForUrl, authCookieStatus, loadPaywallCookies, setPaywallCookie, clearPaywallCookie } from "./auth-cookies";
 import { eq, desc, sql, and, inArray, gte, isNull } from "drizzle-orm";
 import { rssappHealth, createRssAppFeed, deleteRssAppFeed } from "./rssapp";
-import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands, backfillSignalClassifications, previewBrandSocialFeeds, ensureBrandSocialFeeds, type SocialPlatform } from "./news-brand-linking";
+import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands, backfillSignalClassifications, previewBrandSocialFeeds, ensureBrandSocialFeeds, purgeIrrelevantBrandNewsSignals, type SocialPlatform } from "./news-brand-linking";
 import { users } from "@shared/schema";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { getAppToken, graphRequest } from "./shared-mailbox";
@@ -1444,12 +1444,15 @@ export function setupNewsFeedRoutes(app: Express) {
     }
   });
 
-  // Re-link existing articles to tracked brands → brand_signals
+  // Re-link existing articles to tracked brands → brand_signals.
+  // Also purges previously-linked signals that fail the brand relevance
+  // filter (e.g. Assassin's Creed articles linked to the Creed page).
   app.post("/api/news-feed/link-brands", requireAuth, async (req: Request, res: Response) => {
     try {
       const limit = Number(req.query.limit) || 500;
+      const purged = await purgeIrrelevantBrandNewsSignals();
       const result = await linkRecentArticlesToBrands({ limit });
-      res.json(result);
+      res.json({ ...result, purged });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -1920,6 +1923,10 @@ export function setupNewsFeedRoutes(app: Express) {
         console.log(`[News Feed] Startup: no new articles (${errors} errors)`);
       }
       try {
+        // One-off per boot: drop previously-linked signals that fail the
+        // brand relevance filter, then re-link with the filter in place.
+        const purged = await purgeIrrelevantBrandNewsSignals();
+        if (purged.deleted > 0) console.log(`[News Feed] Purged ${purged.deleted} off-brand signals (of ${purged.checked} checked)`);
         const linked = await linkRecentArticlesToBrands({ limit: 500 });
         if (linked.linked > 0) console.log(`[News Feed] Linked ${linked.linked} brand signals from ${linked.articles} articles`);
       } catch (e: any) {

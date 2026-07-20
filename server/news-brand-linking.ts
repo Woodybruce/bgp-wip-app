@@ -5,32 +5,38 @@ import { crmCompanies, newsSources, newsArticles, brandSignals } from "@shared/s
 import { eq, and, sql, desc, isNotNull } from "drizzle-orm";
 import { googleNewsRssUrl, createRssAppFeed } from "./rssapp";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
+import { isTextRelevantToBrand, brandTokenAppears } from "./brand-relevance";
 
 type SignalType = "opening" | "closure" | "funding" | "exec_change" | "sector_move" | "news" | "rumour";
 type Magnitude = "small" | "medium" | "large";
 type Sentiment = "positive" | "neutral" | "negative";
 
-// Ask Haiku to classify an article headline into a brand_signals row.
-// Returns null if AI unavailable / fails — caller falls back to plain "news".
-async function classifySignal(brandName: string, title: string, summary: string | null): Promise<
-  { signalType: SignalType; magnitude: Magnitude; sentiment: Sentiment } | null
+// Ask Haiku to classify an article headline into a brand_signals row — and,
+// critically, to confirm the article is actually about THIS brand rather than
+// a namesake (Assassin's Creed for "Creed", footwear for "Boots"). Returns
+// null if AI unavailable / fails — caller falls back to plain "news".
+async function classifySignal(brandName: string, industry: string | null | undefined, title: string, summary: string | null): Promise<
+  { aboutBrand: boolean; signalType: SignalType; magnitude: Magnitude; sentiment: Sentiment } | null
 > {
   const haveKey = !!(process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY);
   if (!haveKey) return null;
 
-  const prompt = `Classify this news headline about the brand "${brandName}" into a structured signal.
+  const prompt = `"${brandName}" is a retail/hospitality/leisure company${industry ? ` (${industry})` : ""} tracked by a UK commercial property consultancy. Classify this news headline.
 
 Headline: ${title}
 ${summary ? `Summary: ${summary.slice(0, 400)}` : ""}
 
 Respond with JSON only:
 {
+  "aboutBrand": true/false,
   "signalType": one of ["opening","closure","funding","exec_change","sector_move","news","rumour"],
   "magnitude":  one of ["small","medium","large"],
   "sentiment":  one of ["positive","neutral","negative"]
 }
 
 Rules:
+- "aboutBrand" = is this article actually about that company? false if it is about ANYTHING else that merely shares the name — a video game (e.g. Assassin's Creed for "Creed"), film, band, sports item, generic product (e.g. footwear for "Boots"), court, or a different company. When unsure, use false.
+- If aboutBrand is false, set signalType "news", magnitude "small", sentiment "neutral".
 - "opening" = new store/flagship/branch opening
 - "closure" = store closure, administration, bankruptcy
 - "funding" = raise, investment, acquisition, IPO
@@ -51,6 +57,7 @@ Rules:
     const parsed = safeParseJSON(txt);
     if (!parsed?.signalType) return null;
     return {
+      aboutBrand: parsed.aboutBrand !== false,
       signalType: parsed.signalType as SignalType,
       magnitude: (parsed.magnitude || "medium") as Magnitude,
       sentiment: (parsed.sentiment || "neutral") as Sentiment,
@@ -90,6 +97,8 @@ function googleNewsQueryForBrand(brandName: string, industry?: string | null): s
     next: ' -week -year -month',
     pandora: ' -spotify -streaming -radio',
     boots: ' -football -wellington',
+    creed: ' -assassin -ubisoft -game -film',
+    pirate: ' -assassin -game -film -disney',
     river: ' -thames -nile -flood',
     mountain: ' -climbing -rescue',
     hollister: ' -fire -california',
@@ -146,7 +155,53 @@ export function articleLooksRelevantForBrand(brandName: string, industry: string
     if (hardOffTopic.test(txt)) return false;
   }
 
+  // Generic layer — needs no per-brand hand list. Only applies when the
+  // brand's name actually appears in the title/summary (brand-feed articles
+  // whose title doesn't name the brand are left to the checks above): an
+  // occurrence that only exists inside a possessive compound naming another
+  // entity ("Assassin's Creed" for Creed), an off-topic domain (games/film/
+  // sport charts), or an ambiguous single-word name with no retail/industry
+  // context all fail.
+  const raw = `${title} ${summary || ""}`;
+  if (brandTokenAppears(raw, brandName) && !isTextRelevantToBrand(raw, { name: brandName, industry })) {
+    return false;
+  }
+
   return true;
+}
+
+// Removes article-sourced brand_signals that fail the relevance filter —
+// cleans up rows created before the filter was strengthened (Assassin's Creed
+// on the Creed page, footwear on the Boots page). Only rows whose source is a
+// URL (i.e. created by the article linker) AND whose text names the brand yet
+// fails the relevance test are deleted; manually-added signals are left alone.
+export async function purgeIrrelevantBrandNewsSignals(): Promise<{ checked: number; deleted: number }> {
+  const rows = await db
+    .select({
+      id: brandSignals.id,
+      headline: brandSignals.headline,
+      detail: brandSignals.detail,
+      source: brandSignals.source,
+      brandName: crmCompanies.name,
+      industry: crmCompanies.industry,
+    })
+    .from(brandSignals)
+    .innerJoin(crmCompanies, eq(crmCompanies.id, brandSignals.brandCompanyId));
+
+  const toDelete = rows
+    .filter((r) => {
+      if (!r.source?.startsWith("http")) return false;
+      const text = [r.headline, r.detail || ""].join(" ");
+      return brandTokenAppears(text, r.brandName)
+        && !isTextRelevantToBrand(text, { name: r.brandName, industry: r.industry });
+    })
+    .map((r) => r.id);
+
+  for (const id of toDelete) {
+    await db.delete(brandSignals).where(eq(brandSignals.id, id));
+  }
+  if (toDelete.length > 0) console.log(`[news-brand-linking] Purged ${toDelete.length} off-brand signals (of ${rows.length} checked)`);
+  return { checked: rows.length, deleted: toDelete.length };
 }
 
 export async function ensureBrandGoogleNewsFeeds(): Promise<{ created: number; total: number; refreshed: number }> {
@@ -325,22 +380,17 @@ async function linkArticleToBrands(article: {
   sourceId: string | null;
   publishedAt: Date | null;
   aiSummary: string | null;
-}, brandIndex: { id: string; name: string; normalized: string }[]): Promise<string[]> {
-  const haystack = [article.title, article.summary || "", article.aiSummary || ""]
-    .join(" ")
-    .toLowerCase();
+}, brandIndex: { id: string; name: string; industry: string | null; normalized: string }[]): Promise<string[]> {
+  const haystack = [article.title, article.summary || "", article.aiSummary || ""].join(" ");
   const hits: string[] = [];
   for (const b of brandIndex) {
     if (b.normalized.length < 3) continue;
-    const token = b.normalized;
-    // word-boundary match against normalized brand name
-    const re = new RegExp(`(^|[^a-z0-9])${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
-    if (re.test(haystack)) hits.push(b.id);
+    if (isTextRelevantToBrand(haystack, { name: b.name, industry: b.industry })) hits.push(b.id);
   }
   return hits;
 }
 
-async function upsertBrandSignal(brandId: string, brandName: string, article: {
+async function upsertBrandSignal(brandId: string, brandName: string, industry: string | null | undefined, article: {
   id: string;
   url: string;
   title: string;
@@ -355,7 +405,9 @@ async function upsertBrandSignal(brandId: string, brandName: string, article: {
     .limit(1);
   if (existing.length > 0) return;
 
-  const classified = await classifySignal(brandName, article.title, article.summary);
+  const classified = await classifySignal(brandName, industry, article.title, article.summary);
+  // AI says the article is about a namesake, not the brand — don't link it.
+  if (classified && !classified.aboutBrand) return;
 
   await db.insert(brandSignals).values({
     brandCompanyId: brandId,
@@ -410,7 +462,7 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
       if (brandName && !articleLooksRelevantForBrand(brandName, brandIndustryById.get(brandId), a.title, a.summary)) {
         continue;
       }
-      await upsertBrandSignal(brandId, brandName, {
+      await upsertBrandSignal(brandId, brandName, brandIndustryById.get(brandId), {
         id: a.id,
         url: a.url,
         title: a.title,
@@ -436,7 +488,7 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
       brandIndex,
     );
     for (const brandId of hits) {
-      await upsertBrandSignal(brandId, brandNameById.get(brandId) || "", {
+      await upsertBrandSignal(brandId, brandNameById.get(brandId) || "", brandIndustryById.get(brandId), {
         id: a.id,
         url: a.url,
         title: a.title,
@@ -461,9 +513,10 @@ export async function backfillSignalClassifications(opts?: { limit?: number }): 
   if (!haveKey) return { scanned: 0, reclassified: 0, skipped: 0 };
 
   const brands = await db
-    .select({ id: crmCompanies.id, name: crmCompanies.name })
+    .select({ id: crmCompanies.id, name: crmCompanies.name, industry: crmCompanies.industry })
     .from(crmCompanies);
   const brandNameById = new Map(brands.map((b) => [b.id, b.name]));
+  const brandIndustryById = new Map(brands.map((b) => [b.id, b.industry]));
 
   const rows = await db
     .select()
@@ -476,8 +529,15 @@ export async function backfillSignalClassifications(opts?: { limit?: number }): 
   for (const r of rows) {
     const brandName = brandNameById.get(r.brandCompanyId) || "";
     if (!brandName) { skipped++; continue; }
-    const classified = await classifySignal(brandName, r.headline, r.detail);
+    const classified = await classifySignal(brandName, brandIndustryById.get(r.brandCompanyId), r.headline, r.detail);
     if (!classified) { skipped++; continue; }
+    // Backfill doubles as cleanup — the AI says this signal was never about
+    // the brand (namesake game/film/product), so remove it instead.
+    if (!classified.aboutBrand) {
+      await db.delete(brandSignals).where(eq(brandSignals.id, r.id));
+      reclassified++;
+      continue;
+    }
     await db
       .update(brandSignals)
       .set({

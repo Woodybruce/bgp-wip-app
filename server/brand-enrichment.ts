@@ -24,6 +24,7 @@ import path from "path";
 import fs from "fs/promises";
 import crypto from "crypto";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
+import { brandDisambiguationNote, isTextRelevantToBrand } from "./brand-relevance";
 
 const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -51,10 +52,10 @@ type EnrichableField = (typeof ENRICHABLE_FIELDS)[number];
 
 const ROLLOUT_VALUES = ["scaling", "stable", "contracting", "entering_uk", "rumoured"];
 
-async function fetchBrandWebContext(name: string, domain: string | null): Promise<string> {
+async function fetchBrandWebContext(name: string, domain: string | null, industry?: string | null): Promise<string> {
   if (!isPerplexityConfigured()) return "";
   try {
-    const query = `${name} UK retail brand: store count, expansion plans, investors, concept, industry sector${domain ? ` site:${domain} OR` : ""}`;
+    const query = `"${name}" ${industry || "UK retail brand"}${domain ? ` (website: ${domain})` : ""}: store count, expansion plans, investors, concept, industry sector. Only report on this specific company — ignore unrelated films, games, products, or other entities called "${name}".`;
     const r = await askPerplexity(query, { maxTokens: 400, temperature: 0.1 });
     const citations = r.citations.map(c => c.url).join(", ");
     return `\nLive web research (Perplexity, ${new Date().toISOString().slice(0, 10)}):\n${r.answer}${citations ? `\nSources: ${citations}` : ""}`;
@@ -86,6 +87,8 @@ Known facts (do not contradict):
 - Companies House: ${company.companies_house_number || "unknown"}
 - Existing concept pitch: ${company.concept_pitch || "(none)"}
 - Existing store count: ${company.store_count ?? "(none)"}
+
+${brandDisambiguationNote({ name: company.name, domain: company.domain || company.domain_url, industry: company.industry })}
 ${webContext}
 Output JSON only. No prose, no code fences.`;
 }
@@ -103,7 +106,7 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
 
   const aiFields: Record<string, string> = c.ai_generated_fields || {};
 
-  const webContext = await fetchBrandWebContext(c.name, c.domain || c.domain_url || null);
+  const webContext = await fetchBrandWebContext(c.name, c.domain || c.domain_url || null, c.industry);
   const prompt = buildPrompt(c, webContext);
   let aiOut: any = null;
   const modelsToTry = [MODEL_PRIMARY, MODEL_FALLBACK_1, MODEL_FALLBACK_2];
@@ -426,5 +429,43 @@ async function fetchBrandImages(_companyId: string, _brandName: string, _industr
   return imported;
   */
 }
+
+// ─── Purge off-brand auto-fetched images ─────────────────────────────────
+//
+// Auto-fetched stock images from before the relevance filter can be about the
+// wrong entity entirely (footwear photos on the Boots page). Removes any
+// 'brand-auto' tagged image whose filename/description fails the brand
+// relevance test. Manually uploaded images are never touched.
+export async function purgeOffBrandImages(): Promise<{ checked: number; deleted: number }> {
+  const { rows } = await pool.query(
+    `SELECT i.id, i.file_name, i.description, i.brand_name, i.local_path, c.industry
+       FROM image_studio_images i
+       LEFT JOIN crm_companies c ON LOWER(c.name) = LOWER(i.brand_name) AND c.merged_into_id IS NULL
+      WHERE 'brand-auto' = ANY(i.tags) AND i.brand_name IS NOT NULL`
+  );
+
+  let deleted = 0;
+  for (const img of rows) {
+    const text = [img.file_name, img.description].filter(Boolean).join(" ");
+    if (isTextRelevantToBrand(text, { name: img.brand_name, industry: img.industry })) continue;
+    await pool.query(`DELETE FROM image_studio_collection_images WHERE image_id = $1`, [img.id]);
+    await pool.query(`DELETE FROM image_studio_images WHERE id = $1`, [img.id]);
+    if (img.local_path) {
+      await fs.unlink(img.local_path).catch(() => {});
+    }
+    deleted++;
+  }
+  if (deleted > 0) console.log(`[brand-images] Purged ${deleted} off-brand auto-fetched images (of ${rows.length} checked)`);
+  return { checked: rows.length, deleted };
+}
+
+// Manual trigger — cleans the brand-page media galleries immediately
+router.post("/api/brand/images/purge-offbrand", requireAuth, async (_req: Request, res: Response) => {
+  try {
+    res.json(await purgeOffBrandImages());
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 export default router;

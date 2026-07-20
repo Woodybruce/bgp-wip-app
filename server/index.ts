@@ -3470,6 +3470,16 @@ app.use("/api/branding/assets", express.static(
       log(`serving on port ${port}`);
       // startEmailProcessor(); // DISABLED - maintenance mode
       setTimeout(() => startHealthCheck(), 10000);
+      // One-off per boot: remove auto-fetched brand images that fail the
+      // brand relevance filter (pre-filter imports, e.g. footwear on Boots)
+      setTimeout(async () => {
+        try {
+          const { purgeOffBrandImages } = await import("./brand-enrichment");
+          await purgeOffBrandImages();
+        } catch (e: any) {
+          console.error("[brand-images] Off-brand purge failed:", e?.message);
+        }
+      }, 45000);
       // ChatBGP-authored scheduled jobs — runs in dev too so local testing
       // works. Worker is idle if the table is empty / has nothing due.
       setTimeout(async () => {

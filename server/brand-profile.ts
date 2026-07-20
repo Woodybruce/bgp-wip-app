@@ -304,7 +304,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
             ORDER BY n.url, n.published_at DESC NULLS LAST
          ) deduped
         ORDER BY published_at DESC NULLS LAST
-        LIMIT 20`,
+        LIMIT 40`,
       [companyId]
     );
 
@@ -848,6 +848,13 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       return articleLooksRelevantForBrand(c.name, c.industry, s.headline || "", s.detail || null);
     }).slice(0, 20);
 
+    // Same treatment for the News & Media feed — the SQL ILIKE match is only
+    // a candidate fetch, so namesake articles (Assassin's Creed for "Creed",
+    // footwear for "Boots") drop out here before they reach the page.
+    const relevantNews = news.rows.filter((n: any) =>
+      articleLooksRelevantForBrand(c.name, c.industry, n.title || "", [n.summary, n.ai_summary].filter(Boolean).join(" ") || null)
+    );
+
     res.json({
       company: c,
       signals: filteredSignals,
@@ -860,7 +867,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       activeDeals,
       parentGroup: parentGroup.rows[0] || null,
       siblings: siblings.rows,
-      news: news.rows,
+      news: relevantNews,
       requirements: requirements.rows,
       pitchedTo: pitchedTo.rows,
       liveLocations: liveLocations.rows,
