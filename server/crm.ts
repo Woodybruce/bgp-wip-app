@@ -6160,7 +6160,12 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const totalFee = deal.fee || 0;
         // Presence check, not truthiness — a genuine £0 invoice must NOT fall
         // through to deal.fee (that overstated the invoiced column).
-        const totalInvoiceAmt = invoice ? invoice.totalAmount : (isInvoiced ? totalFee : 0);
+        // WIP shows NET fees throughout. Once a deal is invoiced, its fee moves
+        // to the Invoiced column at the deal's own net value (deal.fee) — never
+        // the gross Xero invoice total, which includes VAT and was overstating
+        // invoiced rows by the VAT (e.g. £6,641 net shown as £7,969 gross). This
+        // keeps the Invoiced figure identical to the WIP figure for the deal.
+        const totalInvoiceAmt = isInvoiced ? totalFee : 0;
 
         const dealAllocations = allocsByDealId.get(deal.id);
 
@@ -7870,7 +7875,12 @@ Rules:
         const stage = deriveStageExcel(deal.status);
         const isInvoiced = stage === "invoiced";
         const totalFee = deal.fee || 0;
-        const totalInvoiceAmt = invoice ? invoice.totalAmount : (isInvoiced ? totalFee : 0);
+        // WIP shows NET fees throughout. Once a deal is invoiced, its fee moves
+        // to the Invoiced column at the deal's own net value (deal.fee) — never
+        // the gross Xero invoice total, which includes VAT and was overstating
+        // invoiced rows by the VAT (e.g. £6,641 net shown as £7,969 gross). This
+        // keeps the Invoiced figure identical to the WIP figure for the deal.
+        const totalInvoiceAmt = isInvoiced ? totalFee : 0;
         const dealAllocations = allocsByDealId.get(deal.id);
 
         if (dealAllocations && dealAllocations.length > 0) {
