@@ -65,6 +65,24 @@ const FLAG_LABELS: Record<string, string> = {
   category_not_set: "No category picked",
 };
 
+// Purpose / attendees can run long. Show them truncated with a hover tooltip
+// (title) and click-to-expand, so approvers can read the whole thing inline
+// without opening a dialog — this was Wendy's "can't see the full purpose /
+// attendees" issue.
+function ExpandableText({ text, className }: { text: string; className?: string }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div
+      className={`${expanded ? "whitespace-pre-wrap break-words" : "truncate"} cursor-pointer ${className || ""}`}
+      title={text}
+      onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
+      data-testid="approvals-expandable-text"
+    >
+      {text}
+    </div>
+  );
+}
+
 export default function ExpensesApprovals() {
   const { toast } = useToast();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -509,16 +527,14 @@ function ExpenseTable({
                 </div>
               </td>
               <td className="px-3 py-2 text-xs max-w-[280px]">
-                {r.businessPurpose && <div className="truncate">{r.businessPurpose}</div>}
+                {r.businessPurpose && <ExpandableText text={r.businessPurpose} />}
                 {/* Structured attendees from the CRM picker take precedence
                     over the legacy free-text column (which is filled by
                     Outlook calendar context for inbound WhatsApp receipts). */}
                 {(r.attendeeContacts && r.attendeeContacts.length > 0) ? (
-                  <div className="text-muted-foreground truncate">
-                    w/ {r.attendeeContacts.map(c => c.name).filter(Boolean).join(", ")}
-                  </div>
+                  <ExpandableText className="text-muted-foreground" text={`w/ ${r.attendeeContacts.map(c => c.name).filter(Boolean).join(", ")}`} />
                 ) : r.attendees ? (
-                  <div className="text-muted-foreground truncate">w/ {r.attendees}</div>
+                  <ExpandableText className="text-muted-foreground" text={`w/ ${r.attendees}`} />
                 ) : null}
                 {!r.businessPurpose && !r.attendees && (!r.attendeeContacts || r.attendeeContacts.length === 0) && <span className="text-muted-foreground">—</span>}
                 {showFlags && r.flagReasons && r.flagReasons.length > 0 && (

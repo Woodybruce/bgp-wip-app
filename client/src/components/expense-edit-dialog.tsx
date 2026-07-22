@@ -14,10 +14,11 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Plus, Trash2, SplitSquareHorizontal } from "lucide-react";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Loader2, Plus, Trash2, SplitSquareHorizontal, Receipt } from "lucide-react";
+import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ErrorBoundary } from "@/components/error-boundary";
+import ReceiptViewer from "@/components/receipt-viewer";
 
 interface NominalCode { code: string; name: string; vatReclaimable?: boolean; vatRatePct?: number; taxType?: string; }
 interface AppUser { id: string; name: string; email?: string | null; isActive?: boolean | null; }
@@ -160,6 +161,29 @@ export default function ExpenseEditDialog({ expense, open, onClose, onSaved }: {
     onError: (e: any) => toast({ title: "Save failed", description: e?.message, variant: "destructive" }),
   });
 
+  // Receipt preview shown inside the dialog so an approver can read it while
+  // editing. The thumbnail is a blob fetch (auth headers ride along); clicking
+  // opens the full multi-photo viewer.
+  const [showReceipt, setShowReceipt] = useState(false);
+  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open || !expense?.id) { setThumbUrl(null); return; }
+    const eid = expense.id;
+    let cancelled = false;
+    let url: string | null = null;
+    (async () => {
+      try {
+        const res = await fetch(`/api/expenses/${eid}/receipt`, { credentials: "include", headers: { ...getAuthHeaders() } });
+        if (!res.ok) return;
+        const blob = await res.blob();
+        if (cancelled || !blob.type.startsWith("image/")) return; // PDFs open via the viewer button
+        url = URL.createObjectURL(blob);
+        setThumbUrl(url);
+      } catch { /* no receipt is fine — the button still opens the viewer */ }
+    })();
+    return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
+  }, [open, expense?.id]);
+
   // Every hook above runs on every render; only the JSX below is conditional.
   // Bailing out earlier skipped useMutation while the dialog was closed, so the
   // hook count jumped when it opened — React error #310.
@@ -174,6 +198,32 @@ export default function ExpenseEditDialog({ expense, open, onClose, onSaved }: {
             {expense.merchant || "Expense"} · {fmt(expense.amountPence)}
           </DialogTitle>
         </DialogHeader>
+
+        {/* Receipt shown inside the dialog so an approver can read it while
+            editing; click to enlarge (opens the full multi-photo viewer). */}
+        <button
+          type="button"
+          onClick={() => setShowReceipt(true)}
+          className="w-full flex items-center gap-3 rounded-lg border px-3 py-2 hover:bg-muted/40 text-left"
+          data-testid="edit-dialog-receipt"
+        >
+          {thumbUrl ? (
+            <img src={thumbUrl} alt="Receipt" className="h-16 w-16 object-cover rounded border shrink-0" />
+          ) : (
+            <div className="h-16 w-16 rounded border flex items-center justify-center text-muted-foreground shrink-0"><Receipt className="w-5 h-5" /></div>
+          )}
+          <div className="text-sm min-w-0">
+            <div className="font-medium">Receipt</div>
+            <div className="text-[11px] text-muted-foreground">{thumbUrl ? "Click to enlarge" : "View / add photos"}</div>
+          </div>
+        </button>
+        <ReceiptViewer
+          open={showReceipt}
+          onClose={() => setShowReceipt(false)}
+          expenseId={expense.id}
+          title={`${expense.merchant || "Receipt"} · ${fmt(expense.amountPence)}`}
+          editable
+        />
 
         {/* VAT read off the receipt — informational. */}
         <div className="rounded-lg bg-muted/40 px-3 py-2 text-sm">

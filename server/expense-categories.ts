@@ -45,6 +45,11 @@ export const EXPENSE_CATEGORY_MAP: Record<string, { code: string; name: string }
   "Printing - Pitch Documents":     { code: "512", name: "Printing - Pitch Documents" },   // seed
   "Software (subscriptions)":       { code: "750301", name: "Software (subscriptions)" },
   "IT Charges":                     { code: "750301", name: "IT Charges" },
+  // Computer Equipment is capitalised to a balance-sheet fixed-asset account
+  // (0032), not a P&L expense code. This map entry lets it past the poster's
+  // isKnownExpenseCode guard; BALANCE_SHEET_ALLOWLIST (below) surfaces it in
+  // the live picker, which otherwise only lists expense-type accounts.
+  "Computer Equipment":             { code: "0032", name: "Computer Equipment" },
   "Mobile Phone":                   { code: "611", name: "Mobile Phone" },                 // seed
   "Phone & Internet":               { code: "612", name: "Phone & Internet" },            // seed
   "Premises Expenses":              { code: "700", name: "Premises Expenses" },            // seed
@@ -80,6 +85,11 @@ function staticFallback(): ExpenseCategory[] {
   return Object.values(EXPENSE_CATEGORY_MAP).map(v => ({ code: v.code, name: v.name }));
 }
 
+// Balance-sheet / fixed-asset accounts that should still appear in the expense
+// picker even though their Xero account Type isn't a P&L expense type. Wendy
+// codes computer equipment to 0032 (capitalised), so let that one through.
+const BALANCE_SHEET_ALLOWLIST = new Set(["0032"]);
+
 export async function getExpenseCategories(opts?: { forceRefresh?: boolean }): Promise<ExpenseCategory[]> {
   const fresh = cached && Date.now() - cached.fetchedAt < TTL_MS && !opts?.forceRefresh;
   if (fresh) return cached!.categories;
@@ -93,7 +103,7 @@ export async function getExpenseCategories(opts?: { forceRefresh?: boolean }): P
       // (receipt parser, post-to-Xero) too, not just authed requests.
       const data = await xeroApiWithFallback(null, "/Accounts");
       const rows: ExpenseCategory[] = (data?.Accounts || [])
-        .filter((a: any) => a.Status === "ACTIVE" && EXPENSE_TYPES.has(a.Type))
+        .filter((a: any) => a.Status === "ACTIVE" && (EXPENSE_TYPES.has(a.Type) || BALANCE_SHEET_ALLOWLIST.has(String(a.Code))))
         .map((a: any) => ({
           code: String(a.Code),
           name: String(a.Name),
