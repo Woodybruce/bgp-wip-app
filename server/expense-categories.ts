@@ -85,10 +85,11 @@ function staticFallback(): ExpenseCategory[] {
   return Object.values(EXPENSE_CATEGORY_MAP).map(v => ({ code: v.code, name: v.name }));
 }
 
-// Balance-sheet / fixed-asset accounts that should still appear in the expense
-// picker even though their Xero account Type isn't a P&L expense type. Wendy
-// codes computer equipment to 0032 (capitalised), so let that one through.
-const BALANCE_SHEET_ALLOWLIST = new Set(["0032"]);
+// Balance-sheet / non-P&L accounts that should still appear in the expense
+// picker even though their Xero account Type isn't a P&L expense type:
+//   0032  Computer Equipment (fixed asset — capitalised)
+//   1106  Personal (deduct from payroll)
+const BALANCE_SHEET_ALLOWLIST = new Set(["0032", "1106"]);
 
 export async function getExpenseCategories(opts?: { forceRefresh?: boolean }): Promise<ExpenseCategory[]> {
   const fresh = cached && Date.now() - cached.fetchedAt < TTL_MS && !opts?.forceRefresh;

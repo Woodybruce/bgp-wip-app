@@ -225,6 +225,15 @@ export default function ExpenseEditDialog({ expense, open, onClose, onSaved }: {
           editable
         />
 
+        {/* Full purpose, read-only — the approver has the context in front of
+            them while checking the receipt. */}
+        {expense.businessPurpose && (
+          <div className="rounded-lg bg-muted/40 px-3 py-2 text-sm">
+            <div className="text-[11px] text-muted-foreground mb-0.5">Purpose</div>
+            <div className="whitespace-pre-wrap break-words">{expense.businessPurpose}</div>
+          </div>
+        )}
+
         {/* VAT read off the receipt — informational. */}
         <div className="rounded-lg bg-muted/40 px-3 py-2 text-sm">
           <span className="text-muted-foreground">VAT on receipt: </span>

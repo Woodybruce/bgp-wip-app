@@ -74,6 +74,22 @@ interface ExpenseRow {
 const fmt = (pence: number) => `£${(pence / 100).toFixed(2)}`;
 const fmtLimit = (pence: number) => `£${(pence / 100).toFixed(0)}`;
 
+// Purpose text: hover shows the full text (title tooltip), click toggles the
+// 2-line clamp so an approver can read the whole thing inline.
+function ExpandableText({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <span
+      className={`${expanded ? "whitespace-pre-wrap break-words" : "line-clamp-2"} cursor-pointer`}
+      title={text}
+      onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
+      data-testid="admin-expandable-purpose"
+    >
+      {text}
+    </span>
+  );
+}
+
 export default function ExpensesAdmin() {
   const { toast } = useToast();
   const [showCreate, setShowCreate] = useState(false);
@@ -380,7 +396,7 @@ export default function ExpensesAdmin() {
                                         <td className="py-2 pr-8 text-right font-mono whitespace-nowrap">{fmt(e.amountPence)}</td>
                                         <td className="py-2 pr-6 text-muted-foreground whitespace-nowrap">{e.category || "—"}</td>
                                         <td className="py-2 pr-6 text-muted-foreground max-w-[260px]">
-                                          <span className="line-clamp-2" title={e.businessPurpose || ""}>{e.businessPurpose || "—"}</span>
+                                          {e.businessPurpose ? <ExpandableText text={e.businessPurpose} /> : <span className="text-muted-foreground">—</span>}
                                         </td>
                                         <td className="py-2 pr-6 max-w-[200px]">
                                           {e.attendeeContacts && e.attendeeContacts.length > 0 ? (
