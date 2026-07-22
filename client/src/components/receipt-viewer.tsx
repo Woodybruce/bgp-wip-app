@@ -1,15 +1,24 @@
-// Receipt lightbox. The old approach dropped the receipt straight into an
-// <iframe src=/api/expenses/:id/receipt>, which renders a phone-photo at its
-// native pixel size — so Wendy/Layla opened a receipt and got a zoomed-in
-// corner with scrollbars. This fits the image to the screen by default and
-// gives proper zoom (buttons + scroll-wheel + double-click) and drag-to-pan.
-// PDFs fall through to the browser's native PDF viewer, which already
-// fits-to-page and has its own zoom.
+// Receipt lightbox. Fits a phone-photo to the screen by default with proper
+// zoom (buttons + scroll-wheel + double-click) and drag-to-pan; PDFs fall
+// through to the browser's native viewer.
+//
+// An expense can hold MULTIPLE photos (multi-page receipt, several items), so
+// this pages through every receipt on the expense (‹ 2/3 › in the header),
+// and in editable mode lets the owner add more (multi-select) or delete the
+// one on screen. Falls back to the single legacy pointer for old expenses that
+// have a receipt but no expense_receipts rows.
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { getAuthHeaders } from "@/lib/queryClient";
-import { ZoomIn, ZoomOut, Maximize2, ExternalLink, Loader2, X, FileText, Trash2 } from "lucide-react";
+import { ZoomIn, ZoomOut, Maximize2, ExternalLink, Loader2, X, FileText, Trash2, ChevronLeft, ChevronRight, ImagePlus } from "lucide-react";
+
+interface ReceiptMeta {
+  id: string;
+  filename: string | null;
+  mimeType: string | null;
+  uploadedAt?: string | null;
+}
 
 interface ReceiptViewerProps {
   open: boolean;
@@ -17,49 +26,78 @@ interface ReceiptViewerProps {
   expenseId: string | null;
   title?: string;
   filename?: string | null;
-  /** Show delete + re-add controls. Owner views only — the server also
-   *  enforces ownership, so this is just to hide the controls elsewhere. */
+  /** Show add + delete controls. Owner views only — the server also enforces
+   *  ownership, so this is just to hide the controls elsewhere. */
   editable?: boolean;
-  /** Fired after a delete or re-add so the caller can refresh its list. */
+  /** Fired after an add or delete so the caller can refresh its list. */
   onChanged?: () => void;
 }
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 6;
 const STEP = 0.5;
+const IMG_EXTS = ["jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp", "tiff"];
 
 export default function ReceiptViewer({ open, onClose, expenseId, title, filename, editable = false, onChanged }: ReceiptViewerProps) {
+  const [receipts, setReceipts] = useState<ReceiptMeta[]>([]);
+  const [listLoaded, setListLoaded] = useState(false);
+  const [idx, setIdx] = useState(0);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [kind, setKind] = useState<"image" | "pdf" | "other">("image");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Delete + re-add state (editable mode).
   const fileRef = useRef<HTMLInputElement>(null);
-  const [reloadKey, setReloadKey] = useState(0);
-  const [deleted, setDeleted] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  // Image zoom + pan. scale 1 === fit-to-screen (object-contain); above that
-  // we translate to let the user pan around the zoomed image.
+  // Image zoom + pan. scale 1 === fit-to-screen (object-contain).
   const [scale, setScale] = useState(1);
   const [tx, setTx] = useState(0);
   const [ty, setTy] = useState(0);
   const drag = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null);
-
-  const src = expenseId ? `/api/expenses/${expenseId}/receipt` : null;
-
   const resetView = useCallback(() => { setScale(1); setTx(0); setTy(0); }, []);
 
-  // Fetch as a blob so we can read the real content-type (image vs PDF) and
-  // so auth headers ride along, not just the cookie.
+  const current = receipts[idx] || null;
+  const currentName = current?.filename ?? filename ?? null;
+  const count = receipts.length;
+  // The bytes URL for the current receipt (by id when we have rows; the legacy
+  // "latest" pointer otherwise). Used by the image/iframe and the new-tab link.
+  const src = expenseId
+    ? (current ? `/api/expenses/${expenseId}/receipt?receiptId=${current.id}` : `/api/expenses/${expenseId}/receipt`)
+    : null;
+
+  const loadReceipts = useCallback(async (): Promise<ReceiptMeta[]> => {
+    if (!expenseId) return [];
+    try {
+      const res = await fetch(`/api/expenses/${expenseId}/receipts`, { credentials: "include", headers: { ...getAuthHeaders() } });
+      if (!res.ok) return [];
+      const list = await res.json();
+      return Array.isArray(list) ? list : [];
+    } catch { return []; }
+  }, [expenseId]);
+
+  // On open: load the receipt list and reset to the first.
   useEffect(() => {
-    if (!open || !src) return;
+    if (!open || !expenseId) return;
+    let cancelled = false;
+    setListLoaded(false);
+    (async () => {
+      const list = await loadReceipts();
+      if (cancelled) return;
+      setReceipts(list);
+      setIdx(0);
+      setListLoaded(true);
+    })();
+    return () => { cancelled = true; };
+  }, [open, expenseId, loadReceipts]);
+
+  // Fetch the current receipt's bytes (re-runs when paging or after add/delete).
+  useEffect(() => {
+    if (!open || !listLoaded || !src) return;
     let cancelled = false;
     let createdUrl: string | null = null;
     setLoading(true);
     setError(null);
     setBlobUrl(null);
-    setDeleted(false);
     resetView();
     (async () => {
       try {
@@ -68,10 +106,9 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
         const blob = await res.blob();
         if (cancelled) return;
         const type = blob.type || "";
-        const ext = (filename || "").toLowerCase().split(".").pop() || "";
+        const ext = (currentName || "").toLowerCase().split(".").pop() || "";
         const isPdf = type.includes("pdf") || ext === "pdf";
-        const isImage = type.startsWith("image/")
-          || ["jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "bmp", "tiff"].includes(ext);
+        const isImage = type.startsWith("image/") || IMG_EXTS.includes(ext);
         setKind(isPdf ? "pdf" : isImage ? "image" : "other");
         createdUrl = URL.createObjectURL(blob);
         setBlobUrl(createdUrl);
@@ -85,7 +122,7 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
       cancelled = true;
       if (createdUrl) URL.revokeObjectURL(createdUrl);
     };
-  }, [open, src, filename, resetView, reloadKey]);
+  }, [open, listLoaded, src, currentName, resetView]);
 
   const zoomIn = () => setScale((s) => Math.min(MAX_SCALE, +(s + STEP).toFixed(2)));
   const zoomOut = () => setScale((s) => {
@@ -103,7 +140,6 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
     });
   };
 
-  // Drag-to-pan, only meaningful once zoomed past fit.
   const onPointerDown = (e: React.PointerEvent) => {
     if (kind !== "image" || scale <= 1) return;
     (e.target as Element).setPointerCapture?.(e.pointerId);
@@ -119,34 +155,49 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
     (e.target as Element).releasePointerCapture?.(e.pointerId);
   };
 
+  const goPrev = () => setIdx((i) => Math.max(0, i - 1));
+  const goNext = () => setIdx((i) => Math.min(count - 1, i + 1));
+
   const handleDelete = async () => {
     if (!expenseId) return;
-    if (!window.confirm("Delete this receipt? You can add a new one straight after.")) return;
+    const one = count > 1;
+    if (!window.confirm(one ? "Delete this photo? The others stay on the expense." : "Delete this receipt? You can add a new one straight after.")) return;
     setBusy(true); setError(null);
     try {
-      const r = await fetch(`/api/expenses/${expenseId}/receipt`, { method: "DELETE", credentials: "include", headers: { ...getAuthHeaders() } });
+      const url = current
+        ? `/api/expenses/${expenseId}/receipt?receiptId=${current.id}`
+        : `/api/expenses/${expenseId}/receipt`;
+      const r = await fetch(url, { method: "DELETE", credentials: "include", headers: { ...getAuthHeaders() } });
       if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.error || `Couldn't delete (${r.status})`); }
-      setBlobUrl(null); setDeleted(true); onChanged?.();
+      const list = await loadReceipts();
+      setReceipts(list);
+      setIdx((i) => Math.max(0, Math.min(i, list.length - 1)));
+      if (list.length === 0) setBlobUrl(null);
+      onChanged?.();
     } catch (e: any) {
       setError(e?.message || "Couldn't delete receipt");
     } finally { setBusy(false); }
   };
 
-  const handleAdd = async (file: File | undefined) => {
-    if (!expenseId || !file) return;
+  const handleAdd = async (files: FileList | null) => {
+    if (!expenseId || !files || files.length === 0) return;
     setBusy(true); setError(null);
     try {
       const fd = new FormData();
-      fd.append("receipt", file);
+      Array.from(files).forEach((f) => fd.append("receipt", f));
       const r = await fetch(`/api/expenses/${expenseId}/receipt`, { method: "POST", credentials: "include", headers: { ...getAuthHeaders() }, body: fd });
       if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.message || b.error || `Upload failed (${r.status})`); }
-      setDeleted(false);
-      setReloadKey((k) => k + 1);
+      const list = await loadReceipts();
+      setReceipts(list);
+      setListLoaded(true);
+      setIdx(list.length > 0 ? list.length - 1 : 0); // jump to the newest
       onChanged?.();
     } catch (e: any) {
       setError(e?.message || "Couldn't add receipt");
     } finally { setBusy(false); }
   };
+
+  const showEmpty = listLoaded && !loading && !blobUrl && !error;
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -155,9 +206,22 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
           className="flex items-center justify-between gap-2 px-4 py-3 border-b shrink-0"
           style={{ paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}
         >
-          <DialogTitle className="text-sm font-medium truncate">{title || "Receipt"}</DialogTitle>
+          <DialogTitle className="text-sm font-medium truncate">
+            {title || "Receipt"}{count > 1 ? <span className="text-muted-foreground font-normal ml-1">({idx + 1}/{count})</span> : null}
+          </DialogTitle>
           <div className="flex items-center gap-1 shrink-0">
-            {kind === "image" && (
+            {count > 1 && (
+              <>
+                <Button variant="ghost" size="sm" onClick={goPrev} disabled={idx <= 0} title="Previous photo" data-testid="button-receipt-prev">
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+                <Button variant="ghost" size="sm" onClick={goNext} disabled={idx >= count - 1} title="Next photo" data-testid="button-receipt-next">
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+                <div className="w-px h-5 bg-border mx-1" />
+              </>
+            )}
+            {kind === "image" && blobUrl && (
               <>
                 <Button variant="ghost" size="sm" onClick={zoomOut} disabled={scale <= MIN_SCALE} title="Zoom out" data-testid="button-receipt-zoom-out">
                   <ZoomOut className="w-4 h-4" />
@@ -172,13 +236,18 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
                 <div className="w-px h-5 bg-border mx-1" />
               </>
             )}
-            {src && (
+            {editable && expenseId && (
+              <Button variant="ghost" size="sm" onClick={() => fileRef.current?.click()} disabled={busy} title="Add photo(s)" data-testid="button-receipt-add-more">
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImagePlus className="w-4 h-4" />}
+              </Button>
+            )}
+            {src && blobUrl && (
               <a href={src} target="_blank" rel="noreferrer" title="Open in new tab">
                 <Button variant="ghost" size="sm" data-testid="link-receipt-new-tab"><ExternalLink className="w-4 h-4" /></Button>
               </a>
             )}
-            {editable && expenseId && blobUrl && !deleted && (
-              <Button variant="ghost" size="sm" onClick={handleDelete} disabled={busy} title="Delete receipt" data-testid="button-receipt-delete" className="text-red-600 hover:text-red-700 hover:bg-red-50">
+            {editable && expenseId && blobUrl && (
+              <Button variant="ghost" size="sm" onClick={handleDelete} disabled={busy} title="Delete this photo" data-testid="button-receipt-delete" className="text-red-600 hover:text-red-700 hover:bg-red-50">
                 <Trash2 className="w-4 h-4" />
               </Button>
             )}
@@ -190,21 +259,23 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
           className="flex-1 overflow-hidden bg-muted/30 flex items-center justify-center select-none"
           onWheel={onWheel}
         >
-          {deleted && (
-            <div className="text-center px-6" data-testid="receipt-deleted-state">
-              <Trash2 className="w-10 h-10 mx-auto mb-2 opacity-40" />
-              <p className="text-sm text-muted-foreground mb-3">Receipt deleted</p>
-              <Button size="sm" onClick={() => fileRef.current?.click()} disabled={busy} data-testid="button-receipt-add">
-                {busy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : null} Add a receipt
-              </Button>
-            </div>
-          )}
           {loading && (
             <div className="flex items-center gap-2 text-muted-foreground">
               <Loader2 className="w-5 h-5 animate-spin" /><span className="text-sm">Loading receipt…</span>
             </div>
           )}
-          {!loading && error && (
+          {!loading && showEmpty && (
+            <div className="text-center px-6" data-testid="receipt-empty-state">
+              <FileText className="w-10 h-10 mx-auto mb-2 opacity-40" />
+              <p className="text-sm text-muted-foreground mb-3">No receipt on this expense yet.</p>
+              {editable && (
+                <Button size="sm" onClick={() => fileRef.current?.click()} disabled={busy} data-testid="button-receipt-add">
+                  {busy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <ImagePlus className="w-4 h-4 mr-1" />} Add photo(s)
+                </Button>
+              )}
+            </div>
+          )}
+          {!loading && error && !blobUrl && !showEmpty && (
             <div className="text-center text-sm text-muted-foreground px-6">
               <FileText className="w-10 h-10 mx-auto mb-2 opacity-40" />
               {error}
@@ -215,10 +286,10 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
               )}
             </div>
           )}
-          {!loading && !error && blobUrl && kind === "image" && (
+          {!loading && blobUrl && kind === "image" && (
             <img
               src={blobUrl}
-              alt={filename || "Receipt"}
+              alt={currentName || "Receipt"}
               draggable={false}
               onDoubleClick={() => (scale === 1 ? setScale(2.5) : resetView())}
               onPointerDown={onPointerDown}
@@ -234,7 +305,7 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
               data-testid="img-receipt"
             />
           )}
-          {!loading && !error && blobUrl && kind !== "image" && (
+          {!loading && blobUrl && kind !== "image" && (
             <iframe src={blobUrl} title="Receipt" className="w-full h-full bg-white" data-testid="iframe-receipt" />
           )}
         </div>
@@ -243,12 +314,15 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
           ref={fileRef}
           type="file"
           accept="image/*,application/pdf"
+          multiple
           className="hidden"
-          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; handleAdd(f); }}
+          onChange={(e) => { const f = e.target.files; e.target.value = ""; handleAdd(f); }}
           data-testid="input-receipt-add"
         />
-        {filename && !deleted && (
-          <div className="px-4 py-2 border-t shrink-0 text-xs text-muted-foreground truncate">{filename}</div>
+        {currentName && blobUrl && (
+          <div className="px-4 py-2 border-t shrink-0 text-xs text-muted-foreground truncate">
+            {currentName}{count > 1 ? ` · photo ${idx + 1} of ${count}` : ""}
+          </div>
         )}
       </DialogContent>
     </Dialog>

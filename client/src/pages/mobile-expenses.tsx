@@ -1029,9 +1029,9 @@ export default function MobileExpenses() {
   const { data: me } = useQuery<{ isAdmin?: boolean }>({ queryKey: ["/api/auth/me"] });
 
   const uploadMutation = useMutation({
-    mutationFn: async ({ id, file }: { id: string; file: File }) => {
+    mutationFn: async ({ id, files }: { id: string; files: FileList | File[] }) => {
       const fd = new FormData();
-      fd.append("receipt", file);
+      Array.from(files).forEach((f) => fd.append("receipt", f));
       const r = await fetch(`/api/expenses/${id}/receipt`, { method: "POST", credentials: "include", body: fd });
       const body = await r.json().catch(() => ({} as any));
       if (!r.ok) throw new Error(body?.error || `Upload failed (${r.status})`);
@@ -1177,13 +1177,13 @@ export default function MobileExpenses() {
   };
 
   const handleExpenseReceiptChange = (ev: React.ChangeEvent<HTMLInputElement>) => {
-    const file = ev.target.files?.[0];
+    const files = ev.target.files;
     const expenseId = targetExpenseIdRef.current;
     ev.target.value = "";
     targetExpenseIdRef.current = null;
-    if (!file || !expenseId) return;
+    if (!files || files.length === 0 || !expenseId) return;
     setUploadingFor(expenseId);
-    uploadMutation.mutate({ id: expenseId, file });
+    uploadMutation.mutate({ id: expenseId, files });
   };
 
   if (isLoading) {
@@ -1210,6 +1210,7 @@ export default function MobileExpenses() {
         ref={expenseReceiptInputRef}
         type="file"
         accept="image/*,application/pdf"
+        multiple
         className="hidden"
         onChange={handleExpenseReceiptChange}
         data-testid="mobile-expense-existing-input"

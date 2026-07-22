@@ -105,9 +105,9 @@ export default function MyExpenses() {
   });
 
   const uploadMutation = useMutation({
-    mutationFn: async (args: { id: string; file: File }) => {
+    mutationFn: async (args: { id: string; files: FileList | File[] }) => {
       const fd = new FormData();
-      fd.append("receipt", args.file);
+      Array.from(args.files).forEach((f) => fd.append("receipt", f));
       const r = await fetch(`/api/expenses/${args.id}/receipt`, { method: "POST", credentials: "include", body: fd });
       if (!r.ok) throw new Error((await r.json()).error || "Upload failed");
       return r.json();
@@ -188,9 +188,10 @@ export default function MyExpenses() {
     onError: (e: any) => toast({ title: "Failed", description: e?.message, variant: "destructive" }),
   });
 
-  const handleFile = (id: string, file: File) => {
+  const handleFile = (id: string, files: FileList | File[]) => {
+    if (!files || Array.from(files).length === 0) return;
     setUploadingFor(id);
-    uploadMutation.mutate({ id, file });
+    uploadMutation.mutate({ id, files });
   };
 
   // Bulk upload: server matches each file to a pending_receipt row by
@@ -627,11 +628,12 @@ export default function MyExpenses() {
         ref={fileInputRef}
         type="file"
         accept="image/*,application/pdf"
+        multiple
         className="hidden"
         onChange={(e) => {
-          const file = e.target.files?.[0];
+          const files = e.target.files;
           const id = e.target.dataset.expenseId;
-          if (file && id) handleFile(id, file);
+          if (files && files.length && id) handleFile(id, files);
           e.target.value = "";
         }}
       />

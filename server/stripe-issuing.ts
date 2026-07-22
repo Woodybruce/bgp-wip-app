@@ -1303,36 +1303,46 @@ export function setupStripeIssuingRoutes(app: Express) {
 
   // Upload a receipt for an expense from the web (alternative to WhatsApp photo)
   const receiptUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
-  app.post("/api/expenses/:id/receipt", requireAuth, receiptUpload.single("receipt"), async (req: Request, res: Response) => {
+  app.post("/api/expenses/:id/receipt", requireAuth, receiptUpload.array("receipt", 20), async (req: Request, res: Response) => {
     try {
       const expenseId = String(req.params.id);
       if (!(await userCanAccessExpense(req, expenseId))) return res.status(403).json({ error: "Forbidden" });
-      const file = req.file;
-      if (!file) return res.status(400).json({ error: "No file uploaded" });
+      // Accept one OR many files under the "receipt" field — an expense can
+      // hold multiple photos (multi-page receipt, several items). Back-compat:
+      // .array() puts a single upload into req.files as a one-element array.
+      const files = ((req.files as Express.Multer.File[]) || []).filter(Boolean);
+      if (files.length === 0) return res.status(400).json({ error: "No file uploaded" });
 
       const [exp] = await db.select().from(expenses).where(eq(expenses.id, expenseId)).limit(1);
       if (!exp) return res.status(404).json({ error: "Expense not found" });
 
-      const storageKey = `expense-receipts/${expenseId}-${Date.now()}-${file.originalname}`;
-      await saveFile(storageKey, file.buffer, file.mimetype, file.originalname);
-
-      await db.insert(expenseReceipts).values({
-        expenseId,
-        storageKey,
-        mimeType: file.mimetype,
-        filename: file.originalname,
-      });
+      let firstKey: string | null = null;
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        // Index in the key so multiple files uploaded in the same millisecond
+        // don't collide on the storage path.
+        const storageKey = `expense-receipts/${expenseId}-${Date.now()}-${i}-${file.originalname}`;
+        await saveFile(storageKey, file.buffer, file.mimetype, file.originalname);
+        await db.insert(expenseReceipts).values({
+          expenseId,
+          storageKey,
+          mimeType: file.mimetype,
+          filename: file.originalname,
+        });
+        if (i === 0) firstKey = storageKey;
+      }
+      const file = files[0]; // primary — drives the denormalised pointer + AI parse
 
       // Mark receipt attached immediately and respond — don't wait for AI
       // parsing which can take 10-30s and causes 504s on Railway.
       await db.update(expenses).set({
         receiptFilename: file.originalname,
-        receiptUrl: storageKey,
+        receiptUrl: firstKey,
         updatedAt: new Date(),
       }).where(eq(expenses.id, expenseId));
 
       // Respond before AI parsing so the client never times out.
-      res.json({ success: true, parsed: null, autoposted: false });
+      res.json({ success: true, count: files.length, parsed: null, autoposted: false });
 
       // Background: parse receipt, update fields, submit for approval.
       // Runs after the response is sent — a 504 can't happen here.
@@ -1389,6 +1399,24 @@ export function setupStripeIssuingRoutes(app: Express) {
       if (exp.status === "posted_to_xero") {
         return res.status(409).json({ error: "Cannot remove a receipt from an expense already posted to Xero." });
       }
+      // ?receiptId=<id> removes just that one photo (keeping the rest); without
+      // it, all receipts are removed and the expense drops back to pending.
+      const receiptId = req.query.receiptId ? String(req.query.receiptId) : null;
+      if (receiptId) {
+        await db.delete(expenseReceipts).where(and(eq(expenseReceipts.id, receiptId), eq(expenseReceipts.expenseId, id)));
+        const [latest] = await db.select().from(expenseReceipts)
+          .where(eq(expenseReceipts.expenseId, id)).orderBy(desc(expenseReceipts.uploadedAt)).limit(1);
+        // Repoint the denormalised fields at whatever's left (or clear + reset
+        // to pending if that was the last photo).
+        await db.update(expenses).set({
+          receiptFilename: latest?.filename ?? null,
+          receiptUrl: latest?.storageKey ?? null,
+          ...(latest ? {} : { status: "pending_receipt" as const }),
+          updatedAt: new Date(),
+        }).where(eq(expenses.id, id));
+        return res.json({ success: true, remaining: latest ? "some" : "none" });
+      }
+      await db.delete(expenseReceipts).where(eq(expenseReceipts.expenseId, id));
       await db.update(expenses).set({
         receiptFilename: null,
         receiptUrl: null,
@@ -1431,6 +1459,32 @@ export function setupStripeIssuingRoutes(app: Express) {
   // inline-base64 shape (old email/WhatsApp receipts). Inline by default;
   // ?download=1 forces a download. Approvers + finance can view, not just the
   // owner — see canViewExpenseReceipt.
+  // List every receipt attached to an expense (an expense can hold several
+  // photos). Metadata only — the bytes come from GET /receipt?receiptId=<id>.
+  app.get("/api/expenses/:id/receipts", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const userId = (req.session as any)?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not signed in" });
+      let allowed = await userCanAccessExpense(req, id);
+      if (!allowed) {
+        const { canViewExpenseReceipt } = await import("./expense-approval");
+        allowed = await canViewExpenseReceipt(userId, id);
+      }
+      if (!allowed) return res.status(403).json({ error: "Forbidden" });
+      const rows = await db.select({
+        id: expenseReceipts.id,
+        filename: expenseReceipts.filename,
+        mimeType: expenseReceipts.mimeType,
+        uploadedAt: expenseReceipts.uploadedAt,
+      }).from(expenseReceipts).where(eq(expenseReceipts.expenseId, id)).orderBy(expenseReceipts.uploadedAt);
+      res.json(rows);
+    } catch (e: any) {
+      console.error("[expenses receipts list] error:", e?.message);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   app.get("/api/expenses/:id/receipt", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
@@ -1447,10 +1501,14 @@ export function setupStripeIssuingRoutes(app: Express) {
       const [exp] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
       if (!exp) return res.status(404).json({ error: "Expense not found" });
 
-      // Prefer the most recent uploaded receipt row; fall back to the
-      // denormalised pointer on the expense itself.
-      const [receipt] = await db.select().from(expenseReceipts)
-        .where(eq(expenseReceipts.expenseId, id)).orderBy(desc(expenseReceipts.uploadedAt)).limit(1);
+      // A specific receipt (?receiptId=) when paging a multi-photo expense;
+      // otherwise the most recent, falling back to the denormalised pointer.
+      const receiptId = req.query.receiptId ? String(req.query.receiptId) : null;
+      const [receipt] = receiptId
+        ? await db.select().from(expenseReceipts)
+            .where(and(eq(expenseReceipts.id, receiptId), eq(expenseReceipts.expenseId, id))).limit(1)
+        : await db.select().from(expenseReceipts)
+            .where(eq(expenseReceipts.expenseId, id)).orderBy(desc(expenseReceipts.uploadedAt)).limit(1);
       const storageKey = receipt?.storageKey || exp.receiptUrl || null;
       if (!storageKey) return res.status(404).json({ error: "No receipt attached to this expense" });
 
