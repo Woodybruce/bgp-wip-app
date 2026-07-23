@@ -742,17 +742,6 @@ function DealUnitPicker({
       seen.add(key);
       out.push({ id: pu.id, label: pu.unitName });
     }
-    // Fallback: if a saved value matches no built item (e.g. its property_units
-    // shadow was created on the previous save and the cached unit list is
-    // momentarily stale), surface a synthetic item so the picker shows the
-    // saved unit instead of going blank.
-    if (value && !out.some((i) => i.id === value)) {
-      const label =
-        unitOptions.find((u) => u.id === value)?.unitName ||
-        tenancyUnits.find((t) => String(t.id) === value || `__tenancy__${t.id}` === value)?.unit_number ||
-        "Saved unit";
-      out.unshift({ id: value, label });
-    }
     return out;
   })();
 
