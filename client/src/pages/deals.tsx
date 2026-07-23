@@ -712,6 +712,24 @@ function DealUnitPicker({
     staleTime: 60_000,
   });
 
+  // Fetch this property's units directly so the picker never depends on the
+  // parent page's global unit cache being fresh. A unit picked from the
+  // tenancy schedule is persisted as a property_units "shadow" row on save;
+  // if the global cache hasn't refreshed, the saved id can't resolve to a
+  // name and the trigger shows "Select again". staleTime 0 → refetched each
+  // time the picker opens, so a just-saved unit is always resolvable.
+  const { data: freshUnits = [] } = useQuery<Array<{ id: string; unitName: string; propertyId: string }>>({
+    queryKey: ["/api/property-units", propertyId],
+    queryFn: async () => {
+      if (!propertyId) return [];
+      const r = await fetch(`/api/property-units?propertyId=${propertyId}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!propertyId,
+    staleTime: 0,
+  });
+
   // Build combobox items. Tenancy rows that already have a matching
   // property_units shadow use the property_units id; orphans use the
   // "__tenancy__<id>" token which the server resolves on deal save.
@@ -719,8 +737,14 @@ function DealUnitPicker({
   const items: Item[] = (() => {
     const seen = new Set<string>();
     const out: Item[] = [];
+    // Merge the parent's unit list with the picker's own freshly-fetched one
+    // so a just-saved shadow unit is always present when resolving the value.
+    const unitById = new Map<string, { id: string; unitName: string }>();
+    for (const pu of unitOptions) unitById.set(pu.id, { id: pu.id, unitName: pu.unitName });
+    for (const pu of freshUnits) unitById.set(pu.id, { id: pu.id, unitName: pu.unitName });
+    const allUnits = Array.from(unitById.values());
     const pUnitsByName = new Map<string, string>();
-    for (const pu of unitOptions) {
+    for (const pu of allUnits) {
       pUnitsByName.set((pu.unitName || "").trim().toLowerCase(), pu.id);
     }
     for (const t of tenancyUnits) {
@@ -736,7 +760,7 @@ function DealUnitPicker({
         keywords: [t.tenant_name || "", t.status || ""],
       });
     }
-    for (const pu of unitOptions) {
+    for (const pu of allUnits) {
       const key = (pu.unitName || "").trim().toLowerCase();
       if (!key || seen.has(key)) continue;
       seen.add(key);
