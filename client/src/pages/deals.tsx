@@ -1273,6 +1273,112 @@ function ClientXeroCell({
 //   - Vendor / Purchaser: investment-side counterparties.
 //   - BGP contacts: users, sorted alphabetically by name.
 // ─────────────────────────────────────────────────────────────────────────
+// Consultant deals are fee-only — no property, counterparty, agent or unit
+// context. When "Consultant" is the deal type, the create form collapses to
+// just Deal Type, Deal Name, Total fee, timing for completion and the BGP fee
+// split (this renders instead of SimplifiedCreateBody). The counterparty
+// requirement in handleSubmit is skipped for this type.
+function ConsultantCreateBody({
+  form, set, setForm, feeRows, setFeeRows, feeAllocType, setFeeAllocType, users,
+}: {
+  form: any;
+  set: (k: any, v: any) => void;
+  setForm: any;
+  feeRows: FeeAllocationEditorRow[];
+  setFeeRows: (r: FeeAllocationEditorRow[]) => void;
+  feeAllocType: "percentage" | "fixed";
+  setFeeAllocType: (t: "percentage" | "fixed") => void;
+  users: { id: number; name: string }[];
+}) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <Label>Deal Type *</Label>
+        <Select
+          value={form.dealType || undefined}
+          onValueChange={(v) => {
+            const val = v === "__clear__" ? "" : v;
+            set("dealType", val);
+            // Switching to a standard type auto-assigns its team (mirrors the
+            // simplified form); Consultant itself gets no auto-team.
+            let autoTeam: string | null = null;
+            if (["Purchase", "Sale"].includes(val)) autoTeam = "Investment";
+            else if (val === "Lease Acquisition") autoTeam = "Tenant Rep";
+            else if (["Lease Disposal", "Lease Renewal", "Rent Review", "Regear"].includes(val)) autoTeam = "Lease Advisory";
+            if (autoTeam && !form.team.includes(autoTeam)) {
+              setForm((p: any) => ({ ...p, team: [...p.team, autoTeam] }));
+            }
+          }}
+        >
+          <SelectTrigger data-testid="select-deal-type">
+            <SelectValue placeholder="Select type" />
+          </SelectTrigger>
+          <SelectContent>
+            {CRM_OPTIONS.dealType.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div>
+        <Label htmlFor="consultant-deal-name">Deal Name <span className="text-rose-600">*</span></Label>
+        <Input
+          id="consultant-deal-name"
+          value={form.name}
+          onChange={(e) => set("name", e.target.value)}
+          placeholder="e.g. Acme Ltd — retail strategy advice"
+          data-testid="input-deal-name"
+        />
+      </div>
+
+      <div>
+        <Label htmlFor="consultant-fee">Total fee £</Label>
+        <Input
+          id="consultant-fee"
+          type="number"
+          step="0.01"
+          min="0"
+          value={form.fee}
+          onChange={(e) => set("fee", e.target.value)}
+          placeholder="e.g. 15000"
+          data-testid="input-deal-fee"
+        />
+      </div>
+
+      <div>
+        <Label htmlFor="consultant-target-date">
+          Timing for completion <span className="text-rose-600">*</span>
+        </Label>
+        <Input
+          id="consultant-target-date"
+          type="date"
+          value={form.targetDate}
+          onChange={(e) => set("targetDate", e.target.value)}
+          required
+          className={!form.targetDate ? "border-rose-300" : ""}
+          data-testid="input-deal-target-date"
+        />
+        {!form.targetDate && (
+          <p className="text-[10px] text-rose-600 mt-0.5">Required — drives the WIP report bucket.</p>
+        )}
+      </div>
+
+      <div>
+        <Label className="text-xs">BGP fee split</Label>
+        <div className="border rounded-md p-2.5 bg-muted/30">
+          <FeeAllocationEditor
+            rows={feeRows}
+            onChange={setFeeRows}
+            allocType={feeAllocType}
+            onAllocTypeChange={setFeeAllocType}
+            dealFee={parseFloat(form.fee) || null}
+            bgpAgents={users.map(u => ({ id: String(u.id), name: u.name }))}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SimplifiedCreateBody({
   form, set, properties, propertyUnits, companies, users, toggleAgent, setForm,
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
@@ -2051,7 +2157,9 @@ export function DealFormDialog({
     // client, lighter screen on the counterparty). Applies to edits too:
     // a historic deal missing a side needs the missing party filled in
     // before any further changes save.
-    if (form.dealType) {
+    // Consultant deals are fee-only — no counterparty, so skip the landlord/
+    // tenant (or vendor/purchaser) requirement for them.
+    if (form.dealType && form.dealType !== "Consultant") {
       // Include both the canonical "Sale"/"Purchase" and the legacy
       // "Investment Sale"/"Investment Acquisition" labels still present
       // in DEAL_TYPE_COLORS — without these, legacy-typed deals bypass
@@ -2101,6 +2209,18 @@ export function DealFormDialog({
               also be filled in later on the actual deal board. The
               EDIT path always renders the full form. */}
           {!isEdit && !showAllFields ? (
+            form.dealType === "Consultant" ? (
+            <ConsultantCreateBody
+              form={form}
+              set={set}
+              setForm={setForm}
+              feeRows={feeRows}
+              setFeeRows={setFeeRows}
+              feeAllocType={feeAllocType}
+              setFeeAllocType={setFeeAllocType}
+              users={users}
+            />
+            ) : (
             <SimplifiedCreateBody
               form={form}
               set={set}
@@ -2117,6 +2237,7 @@ export function DealFormDialog({
               nameAutoFilled={nameAutoFilled}
               setNameAutoFilled={setNameAutoFilled}
             />
+            )
           ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
