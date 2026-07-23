@@ -179,12 +179,12 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
     } finally { setBusy(false); }
   };
 
-  const handleAdd = async (files: FileList | null) => {
-    if (!expenseId || !files || files.length === 0) return;
+  const handleAdd = async (files: File[]) => {
+    if (!expenseId || files.length === 0) return;
     setBusy(true); setError(null);
     try {
       const fd = new FormData();
-      Array.from(files).forEach((f) => fd.append("receipt", f));
+      files.forEach((f) => fd.append("receipt", f));
       const r = await fetch(`/api/expenses/${expenseId}/receipt`, { method: "POST", credentials: "include", headers: { ...getAuthHeaders() }, body: fd });
       if (!r.ok) { const b = await r.json().catch(() => ({})); throw new Error(b.message || b.error || `Upload failed (${r.status})`); }
       const list = await loadReceipts();
@@ -316,7 +316,7 @@ export default function ReceiptViewer({ open, onClose, expenseId, title, filenam
           accept="image/*,application/pdf"
           multiple
           className="hidden"
-          onChange={(e) => { const f = e.target.files; e.target.value = ""; handleAdd(f); }}
+          onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ""; handleAdd(files); }}
           data-testid="input-receipt-add"
         />
         {currentName && blobUrl && (

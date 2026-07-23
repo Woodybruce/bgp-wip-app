@@ -631,10 +631,13 @@ export default function MyExpenses() {
         multiple
         className="hidden"
         onChange={(e) => {
-          const files = e.target.files;
+          // Copy the File objects out before clearing the input — resetting
+          // e.target.value empties the live FileList, so reading it after
+          // (or in the async mutation) would upload nothing.
+          const files = Array.from(e.target.files ?? []);
           const id = e.target.dataset.expenseId;
-          if (files && files.length && id) handleFile(id, files);
           e.target.value = "";
+          if (files.length && id) handleFile(id, files);
         }}
       />
 

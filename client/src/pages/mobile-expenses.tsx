@@ -1177,11 +1177,14 @@ export default function MobileExpenses() {
   };
 
   const handleExpenseReceiptChange = (ev: React.ChangeEvent<HTMLInputElement>) => {
-    const files = ev.target.files;
+    // Copy the File objects out before clearing the input — resetting the
+    // value empties the live FileList, so the async mutation would otherwise
+    // upload nothing (this was the "second photo won't add" bug).
+    const files = Array.from(ev.target.files ?? []);
     const expenseId = targetExpenseIdRef.current;
     ev.target.value = "";
     targetExpenseIdRef.current = null;
-    if (!files || files.length === 0 || !expenseId) return;
+    if (files.length === 0 || !expenseId) return;
     setUploadingFor(expenseId);
     uploadMutation.mutate({ id: expenseId, files });
   };
