@@ -152,6 +152,7 @@ export const CRM_OPTIONS = {
     "Sub-Letting",
     "Temp Lease",
     "Consultancy",
+    "Consultant",
     "Secondment",
   ],
   dealTeam: ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"],
