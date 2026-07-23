@@ -4951,7 +4951,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const { activeTeam } = useTeam();
   // Saved Views / per-user localStorage key — without scoping by user id,
   // two users sharing a browser see each other's saved views.
-  const { data: currentUserForViews } = useQuery<{ id?: string | number; email?: string }>({ queryKey: ["/api/auth/me"] });
+  const { data: currentUserForViews } = useQuery<{ id?: string | number; email?: string; name?: string }>({ queryKey: ["/api/auth/me"] });
+  // Lower-cased current-user name, matched against a deal's internalAgent so a
+  // user's own deals — where they're the BGP contact or a fee-split agent
+  // (the fee-split save syncs split agents into internalAgent) — always show
+  // regardless of the team filter.
+  const myName = (currentUserForViews?.name || "").trim().toLowerCase();
   const urlParams = new URLSearchParams(window.location.search);
   const urlTeamParam = urlParams.get("team");
   const [search, setSearch] = useState("");
@@ -5472,7 +5477,17 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         if (!ok) return false;
       }
       if (columnFilters["type"]?.length && (!deal.dealType || !columnFilters["type"].includes(deal.dealType))) return false;
-      if (columnFilters["team"]?.length) {
+      // A deal you're on always shows on your deals page, even if its team
+      // doesn't match the team filter (or it has no team). "On it" = you're in
+      // internalAgent — the BGP contact and, since the fee-split save syncs
+      // them, the fee-split agents too. So your own deals are never hidden by
+      // the team view (this is why Emily couldn't see Costain — no team set,
+      // but she's the contact).
+      const dealAgents: string[] = Array.isArray(deal.internalAgent)
+        ? deal.internalAgent
+        : deal.internalAgent ? [deal.internalAgent as string] : [];
+      const isMyDeal = !!myName && dealAgents.some((a) => (a || "").trim().toLowerCase() === myName);
+      if (columnFilters["team"]?.length && !isMyDeal) {
         const dealTeams: string[] = Array.isArray(deal.team) ? deal.team : deal.team ? [deal.team] : [];
         if (dealTeams.length === 0) return false;
         const matchesTeam = dealTeams.some(t => columnFilters["team"].some(filter => t === filter || t.startsWith(filter + " ") || (filter.startsWith(t) && filter.includes(" "))));
@@ -5518,7 +5533,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       }
       return true;
     });
-  }, [baseDeals, activeGroup, columnFilters, search, properties, companies, propertyUnits]);
+  }, [baseDeals, activeGroup, columnFilters, search, properties, companies, propertyUnits, myName]);
 
   const teamFilteredDeals = useMemo(() => {
     if (!columnFilters["team"]?.length) return baseDeals;
