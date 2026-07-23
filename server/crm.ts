@@ -3803,12 +3803,17 @@ Only return the JSON object. If uncertain, return {"role": null}.`
             error: `Percentage allocations must sum to 100% — currently ${totalPct.toFixed(2)}%. Adjust the agent rows to make the total balance.`,
           });
         }
-        const hasBgpHouse = validated.some((a: any) => a.isBgpHouse);
-        if (!hasBgpHouse) {
-          return res.status(400).json({
-            error: "Fee split must include the BGP House row. Open the editor to re-add it (it should auto-insert).",
-          });
-        }
+      }
+      // BGP House takes 15% off the top of EVERY deal — a fee split must always
+      // include the BGP House row, whatever the split type (percentage OR fixed)
+      // and even if it's the only row. This used to be enforced for percentage
+      // splits only, so a fixed-amount or empty split slipped through with no
+      // firm slice (that's how deal 3511 ended up with none).
+      const hasBgpHouse = validated.some((a: any) => a.isBgpHouse);
+      if (!hasBgpHouse) {
+        return res.status(400).json({
+          error: "Fee split must include the BGP House 15% row. Open the editor to re-add it (it auto-inserts).",
+        });
       }
       const result = await storage.setDealFeeAllocations(req.params.id, validated);
       // Keep crm_deals.internal_agent in sync with the fee-allocation
