@@ -25,7 +25,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { useState, useRef, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -1032,7 +1032,7 @@ export default function MobileExpenses() {
     mutationFn: async ({ id, files }: { id: string; files: FileList | File[] }) => {
       const fd = new FormData();
       Array.from(files).forEach((f) => fd.append("receipt", f));
-      const r = await fetch(`/api/expenses/${id}/receipt`, { method: "POST", credentials: "include", body: fd });
+      const r = await fetch(`/api/expenses/${id}/receipt`, { method: "POST", credentials: "include", headers: { ...getAuthHeaders() }, body: fd });
       const body = await r.json().catch(() => ({} as any));
       if (!r.ok) throw new Error(body?.error || `Upload failed (${r.status})`);
       return body;
@@ -1061,7 +1061,7 @@ export default function MobileExpenses() {
     mutationFn: async (file: File) => {
       const fd = new FormData();
       fd.append("receipt", file);
-      const r = await fetch(`/api/expenses/submit`, { method: "POST", credentials: "include", body: fd });
+      const r = await fetch(`/api/expenses/submit`, { method: "POST", credentials: "include", headers: { ...getAuthHeaders() }, body: fd });
       const body = await r.json().catch(() => ({}));
       if (!r.ok || !body?.ok) throw new Error(body?.error || `Upload failed: ${r.status}`);
       return body as { ok: true; expenseId: string; duplicateOf?: string };

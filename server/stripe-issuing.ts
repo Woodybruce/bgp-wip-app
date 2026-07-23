@@ -267,7 +267,10 @@ function sniffReceiptMime(buf: Buffer): string {
 
 // Check that the current user owns this expense (or is admin). Returns true if allowed.
 async function userCanAccessExpense(req: Request, expenseId: string): Promise<boolean> {
-  const userId = (req.session as any)?.userId;
+  // Fall back to the token user id — a token-authenticated user (no cookie
+  // session) passes requireAuth but was then denied here, so they got 403 on
+  // uploading/deleting receipts on their own expenses.
+  const userId = (req.session as any)?.userId || (req as any).tokenUserId;
   if (!userId) return false;
   const [exp] = await db.select().from(expenses).where(eq(expenses.id, expenseId)).limit(1);
   if (!exp) return false;

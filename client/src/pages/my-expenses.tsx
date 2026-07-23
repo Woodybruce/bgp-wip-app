@@ -18,7 +18,7 @@ import {
   CheckCircle2, Loader2, RefreshCw, Sparkles, Camera, ImagePlus, Pencil,
   Users as UsersIcon, Building2, Briefcase, X as XIcon, ChevronsUpDown, CalendarClock, Trash2,
 } from "lucide-react";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import ReceiptViewer from "@/components/receipt-viewer";
 
@@ -108,7 +108,7 @@ export default function MyExpenses() {
     mutationFn: async (args: { id: string; files: FileList | File[] }) => {
       const fd = new FormData();
       Array.from(args.files).forEach((f) => fd.append("receipt", f));
-      const r = await fetch(`/api/expenses/${args.id}/receipt`, { method: "POST", credentials: "include", body: fd });
+      const r = await fetch(`/api/expenses/${args.id}/receipt`, { method: "POST", credentials: "include", headers: { ...getAuthHeaders() }, body: fd });
       if (!r.ok) throw new Error((await r.json()).error || "Upload failed");
       return r.json();
     },
@@ -207,7 +207,7 @@ export default function MyExpenses() {
         const chunk = files.slice(i, i + chunkSize);
         const fd = new FormData();
         for (const f of chunk) fd.append("receipts", f);
-        const r = await fetch("/api/expenses/bulk-receipts", { method: "POST", credentials: "include", body: fd });
+        const r = await fetch("/api/expenses/bulk-receipts", { method: "POST", credentials: "include", headers: { ...getAuthHeaders() }, body: fd });
         if (!r.ok) throw new Error((await r.json()).error || "Bulk upload failed");
         const json = await r.json();
         results.push(...(json.results || []));
@@ -811,7 +811,7 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
   const removeReceiptMutation = useMutation({
     mutationFn: async () => {
       if (!expense) throw new Error("No expense");
-      const r = await fetch(`/api/expenses/${expense.id}/receipt`, { method: "DELETE", credentials: "include" });
+      const r = await fetch(`/api/expenses/${expense.id}/receipt`, { method: "DELETE", credentials: "include", headers: { ...getAuthHeaders() } });
       if (!r.ok) throw new Error((await r.json()).error || "Failed to remove receipt");
       return r.json();
     },
@@ -828,7 +828,7 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
       if (!expense) throw new Error("No expense");
       const fd = new FormData();
       fd.append("receipt", file);
-      const r = await fetch(`/api/expenses/${expense.id}/receipt`, { method: "POST", credentials: "include", body: fd });
+      const r = await fetch(`/api/expenses/${expense.id}/receipt`, { method: "POST", credentials: "include", headers: { ...getAuthHeaders() }, body: fd });
       if (!r.ok) throw new Error((await r.json()).error || "Upload failed");
       return r.json();
     },
