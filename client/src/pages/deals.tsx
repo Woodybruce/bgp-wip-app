@@ -1279,7 +1279,7 @@ function ClientXeroCell({
 // split (this renders instead of SimplifiedCreateBody). The counterparty
 // requirement in handleSubmit is skipped for this type.
 function ConsultantCreateBody({
-  form, set, setForm, feeRows, setFeeRows, feeAllocType, setFeeAllocType, users,
+  form, set, setForm, feeRows, setFeeRows, feeAllocType, setFeeAllocType, users, toggleAgent,
 }: {
   form: any;
   set: (k: any, v: any) => void;
@@ -1289,7 +1289,9 @@ function ConsultantCreateBody({
   feeAllocType: "percentage" | "fixed";
   setFeeAllocType: (t: "percentage" | "fixed") => void;
   users: { id: number; name: string }[];
+  toggleAgent: (name: string) => void;
 }) {
+  const sortedUsers = [...users].sort((a, b) => a.name.localeCompare(b.name));
   return (
     <div className="space-y-4">
       <div>
@@ -1328,6 +1330,41 @@ function ConsultantCreateBody({
           placeholder="e.g. Acme Ltd — retail strategy advice"
           data-testid="input-deal-name"
         />
+      </div>
+
+      <div>
+        <Label>BGP Contact</Label>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="w-full justify-start font-normal h-auto min-h-[36px] py-1.5" data-testid="input-deal-agent">
+              {form.internalAgent.length === 0 ? (
+                <span className="text-muted-foreground">Select BGP contacts…</span>
+              ) : (
+                <div className="flex flex-wrap gap-1">
+                  {form.internalAgent.map((name: string) => (
+                    <Badge key={name} variant="secondary" className="text-xs">{name}</Badge>
+                  ))}
+                </div>
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56 max-h-[300px] overflow-y-auto">
+            {sortedUsers.map(u => (
+              <DropdownMenuItem key={u.id} onClick={() => toggleAgent(u.name)} data-testid={`agent-option-${u.name}`}>
+                <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${form.internalAgent.includes(u.name) ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
+                  {form.internalAgent.includes(u.name) && <span className="text-primary-foreground text-[8px]">✓</span>}
+                </div>
+                <span className="truncate">{u.name}</span>
+              </DropdownMenuItem>
+            ))}
+            {form.internalAgent.length > 0 && (
+              <DropdownMenuItem onClick={() => setForm((p: any) => ({ ...p, internalAgent: [] }))} data-testid="agent-clear-all">
+                <X className="w-3 h-3 mr-2 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">Clear all</span>
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       <div>
@@ -2219,6 +2256,7 @@ export function DealFormDialog({
               feeAllocType={feeAllocType}
               setFeeAllocType={setFeeAllocType}
               users={users}
+              toggleAgent={toggleAgent}
             />
             ) : (
             <SimplifiedCreateBody
