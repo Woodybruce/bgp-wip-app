@@ -5575,11 +5575,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const clearAllFilters = () => {
     setSearch("");
     setActiveGroup("all");
-    if (activeTeam && activeTeam !== "all") {
-      setColumnFilters({ team: [activeTeam] });
-    } else {
-      setColumnFilters({});
-    }
+    // Clear everything, including the team filter — "Clear all" should mean all.
+    // It used to re-apply the team filter here, so someone whose team switcher
+    // was set to their own team could never drop it from the deals page and
+    // thought their deals (on another team) had vanished.
+    setColumnFilters({});
   };
 
   const hasFilters = search || activeGroup !== "all" || activeFilterCount > 0;
