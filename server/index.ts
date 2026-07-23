@@ -2493,6 +2493,72 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     console.warn("[one-off 3437/3490] correction failed:", e?.message);
   }
 
+  // ── One-off (per Woody): deal 3511 was saved with NO BGP House 15% slice
+  // (the pre-fix loophole let a fixed/blank split through). Add it back: scale
+  // the existing agent allocation(s) down to make room, then insert the BGP
+  // House row (15% for a percentage split, 15% of the fee for a fixed one).
+  // Guarded on the row being absent so it runs exactly once (no drift).
+  try {
+    const { rows: fixDeals } = await pool.query(
+      `SELECT id, name, deal_ref, fee FROM crm_deals WHERE deal_ref = $1`,
+      [3511],
+    );
+    for (const d of fixDeals) {
+      const { rows: house } = await pool.query(
+        `SELECT 1 FROM deal_fee_allocations WHERE deal_id = $1 AND is_bgp_house = true LIMIT 1`,
+        [d.id],
+      );
+      if (house.length > 0) continue; // already has the 15% — idempotent
+      const { rows: existing } = await pool.query(
+        `SELECT allocation_type FROM deal_fee_allocations WHERE deal_id = $1 AND is_bgp_house = false LIMIT 1`,
+        [d.id],
+      );
+      const fee = Number(d.fee) || 0;
+      if (existing[0]?.allocation_type === "fixed") {
+        await pool.query(
+          `UPDATE deal_fee_allocations a
+              SET fixed_amount = ROUND((a.fixed_amount * ($2 * 0.85) / NULLIF(s.total, 0))::numeric, 2)
+             FROM (SELECT SUM(fixed_amount) AS total FROM deal_fee_allocations
+                    WHERE deal_id = $1 AND allocation_type = 'fixed' AND is_bgp_house = false) s
+            WHERE a.deal_id = $1 AND a.allocation_type = 'fixed' AND a.is_bgp_house = false AND s.total > 0`,
+          [d.id, fee],
+        );
+        await pool.query(
+          `INSERT INTO deal_fee_allocations (deal_id, agent_name, allocation_type, fixed_amount, is_bgp_house)
+             VALUES ($1, 'BGP House', 'fixed', ROUND(($2 * 0.15)::numeric, 2), true)`,
+          [d.id, fee],
+        );
+      } else {
+        await pool.query(
+          `UPDATE deal_fee_allocations a
+              SET percentage = ROUND((a.percentage * 85.0 / s.total)::numeric, 4)
+             FROM (SELECT SUM(percentage) AS total FROM deal_fee_allocations
+                    WHERE deal_id = $1 AND allocation_type = 'percentage' AND is_bgp_house = false) s
+            WHERE a.deal_id = $1 AND a.allocation_type = 'percentage' AND a.is_bgp_house = false AND s.total > 0`,
+          [d.id],
+        );
+        await pool.query(
+          `INSERT INTO deal_fee_allocations (deal_id, agent_name, allocation_type, percentage, is_bgp_house)
+             VALUES ($1, 'BGP House', 'percentage', 15, true)`,
+          [d.id],
+        );
+      }
+      const { rows: after } = await pool.query(
+        `SELECT agent_name, allocation_type, percentage, fixed_amount FROM deal_fee_allocations WHERE deal_id = $1`,
+        [d.id],
+      );
+      console.log(
+        `[one-off 3511] Added BGP House 15% to deal ${d.deal_ref} "${d.name}": ` +
+        after.map((r: any) => `${r.agent_name}=${r.allocation_type === "fixed" ? "£" + r.fixed_amount : r.percentage + "%"}`).join(", "),
+      );
+    }
+    if (fixDeals.length === 0) {
+      console.warn("[one-off 3511] deal 3511 not found — nothing changed");
+    }
+  } catch (e: any) {
+    console.warn("[one-off 3511] correction failed:", e?.message);
+  }
+
   // ── knowledge_base GIN search index — built off the boot path ──────────
   // The build takes longer than the pool's 30s query_timeout, so as a
   // MIGRATIONS entry it failed every boot — and the legacy DROP that ran
