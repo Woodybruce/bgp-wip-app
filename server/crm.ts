@@ -1109,11 +1109,13 @@ export function setupCrmRoutes(app: Express) {
   // Keep in sync with CLIENT_BRAND_TYPE_PATTERNS (the SQL ILIKE variant).
   const CLIENT_BRAND_TYPE_RE = /^tenant -.*(restaurant|dining|f&b|qsr|fast food|fast casual|food|bakery|patisserie|caf[ée]|coffee|bar|hospitality|hotel|leisure|cinema|entertainment|fitness|gym|yoga)/i;
 
-  // BGP's fee/commission on a deal is internal — never send any of it to a
-  // client login. One helper so every deal response strips the same fields.
+  // Clients now see the fee they're paying us — total fee, agency %, and the
+  // fee-agreement label (Woody, 2026-07: "client should see fees anywhere").
+  // Still stripped: the internal fee NOTES, the signed FA document link, and
+  // the raw commission field. The per-BGP-agent split lives on a separate
+  // staff-gated endpoint (deal_fee_allocations), so it never rides along here.
   const stripDealFees = <T extends Record<string, any>>(d: T): T => ({
-    ...d, fee: null, feeNotes: null, feePercentage: null,
-    feeAgreement: null, feeAgreementUrl: null, commission: null,
+    ...d, feeNotes: null, feeAgreementUrl: null, commission: null,
   });
   // Ensure new comp columns exist (safe to re-run)
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS fee_agreement_url TEXT`).catch(() => {});

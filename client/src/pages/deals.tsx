@@ -1053,13 +1053,31 @@ function PropertyUnitCell({
 // underneath. Popover lets the team set both without touching two
 // columns.
 function FeeCombinedCell({
-  deal, onSave,
+  deal, onSave, readOnly = false,
 }: {
   deal: any;
   onSave: (field: string, value: number | string | null) => void;
+  readOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const feeStr = deal.fee != null ? `£${Number(deal.fee).toLocaleString("en-GB")}` : null;
+
+  // Clients (and client-view mode) see the fee they're paying, read-only —
+  // no edit popover, and no "Add fee" placeholder when it's unset.
+  if (readOnly) {
+    return (
+      <div className="flex flex-col gap-0.5 px-1 py-0.5 text-xs min-w-[100px]" data-testid={`fee-combined-cell-${deal.id}`}>
+        {feeStr
+          ? <span className="font-mono text-xs font-medium">{feeStr}</span>
+          : <span className="text-muted-foreground text-[11px]">—</span>}
+        {deal.feeAgreement && (
+          <Badge variant="secondary" className={`text-[9px] px-1 py-0 leading-tight w-fit ${DEAL_FEE_AGREEMENT_COLORS[deal.feeAgreement] || ""}`}>
+            FA {deal.feeAgreement}
+          </Badge>
+        )}
+      </div>
+    );
+  }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -5709,7 +5727,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           : activeTeam && activeTeam !== "all"
             ? `${filteredDeals.length} deal${filteredDeals.length !== 1 ? "s" : ""} — ${activeTeam}`
             : `${deals.length} deal${deals.length !== 1 ? "s" : ""} in the CRM`}
-      actions={!isCompsMode ? (
+      actions={!isCompsMode && !isClientDeals ? (
         <>
           {!isMobile && (<>
           <Button
@@ -6089,7 +6107,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
                     {visibleColumns.feeCombined && <TableHead className="min-w-[110px]">Fee</TableHead>}
                     {visibleColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
-                    {visibleColumns.feeAlloc && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
+                    {visibleColumns.feeAlloc && !isClientDeals && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
                     {visibleColumns.agent && <SortableTableHead sortKey="agent" sort={dealsSort} className="min-w-[80px]">BGP Contact</SortableTableHead>}
                     {visibleColumns.assetClass && (
                       <TableHead className="min-w-[80px]">
@@ -6301,19 +6319,26 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           <FeeCombinedCell
                             deal={deal}
                             onSave={(field, value) => handleInlineSave(deal.id, field, value)}
+                            readOnly={isClientDeals}
                           />
                         </TableCell>
                       )}
                       {visibleColumns.fee && (
                         <TableCell className="px-1.5 py-1">
-                          <InlineNumber
-                            value={deal.fee}
-                            onSave={(v) => handleInlineSave(deal.id, "fee", v)}
-                            prefix="£"
-                          />
+                          {isClientDeals ? (
+                            <span className="font-mono text-xs">{deal.fee != null ? `£${Number(deal.fee).toLocaleString("en-GB")}` : "—"}</span>
+                          ) : (
+                            <InlineNumber
+                              value={deal.fee}
+                              onSave={(v) => handleInlineSave(deal.id, "fee", v)}
+                              prefix="£"
+                            />
+                          )}
                         </TableCell>
                       )}
-                      {visibleColumns.feeAlloc && (
+                      {/* Fee Split is the internal per-BGP-agent breakdown —
+                          staff-only, never shown to a client/client-view. */}
+                      {visibleColumns.feeAlloc && !isClientDeals && (
                         <TableCell className="px-1.5 py-1">
                           <FeeAllocCell dealId={deal.id} dealFee={deal.fee} allAllocations={allFeeAllocations} colorMap={userColorMap2} teams={deal.team} onClick={() => setFeeAllocEditDeal(deal)} />
                         </TableCell>

@@ -735,7 +735,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           BGP contacts, so the separate BGP Contacts card was removed —
           edit the agents via the Fee Allocation "Edit" button.
           BGP fees are never shown to client logins. */}
-      {!isClientDeal && (
+      {!isClientDeal ? (
       <FeeAllocationCard
         dealId={deal.id}
         dealFee={deal.fee}
@@ -743,7 +743,31 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         users={users.map(u => ({ id: String(u.id), name: u.name }))}
         colorMap={userColorMap}
       />
-      )}
+      ) : (deal.fee != null || deal.feePercentage != null) ? (
+        // Client-facing fee view: the fee they're paying us. Headline rent
+        // already appears in the metrics card below, so it's not repeated
+        // here. The internal per-agent split (FeeAllocationCard) stays
+        // staff-only.
+        <Card>
+          <CardContent className="p-3">
+            <h3 className="text-[10px] text-muted-foreground font-medium uppercase tracking-widest mb-2">BGP Fee</h3>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+              {deal.fee != null && (
+                <div className="flex flex-col py-1">
+                  <p className="text-[10px] text-muted-foreground leading-tight">Total Fee</p>
+                  <p className="text-xs font-mono font-medium" data-testid="text-client-fee-total">{formatCurrency(deal.fee)}</p>
+                </div>
+              )}
+              {deal.feePercentage != null && (
+                <div className="flex flex-col py-1">
+                  <p className="text-[10px] text-muted-foreground leading-tight">Agency Fee</p>
+                  <p className="text-xs font-mono font-medium" data-testid="text-client-fee-pct">{deal.feePercentage}%</p>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
       </div>
 
       {(numericFields.some((f) => f.value != null) || [deal.gfAreaSqft, deal.ffAreaSqft, deal.basementAreaSqft, deal.itzaAreaSqft].some((v) => v != null)) && (
@@ -975,12 +999,14 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </DialogContent>
       </Dialog>
 
+      {!isClientDeal && (
       <div className="flex justify-start mt-6 pt-3 border-t">
         <Button variant="outline" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteOpen(true)} data-testid="button-delete-deal">
           <Trash2 className="w-4 h-4 mr-2" />
           Delete Deal
         </Button>
       </div>
+      )}
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
