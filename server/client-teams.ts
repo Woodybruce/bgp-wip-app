@@ -31,15 +31,47 @@ router.get("/api/client-teams/:clientCompanyId", requireAuth, async (req, res) =
     if (scopeCompanyId && scopeCompanyId !== clientCompanyId) {
       return res.status(403).json({ error: "Access denied" });
     }
+    // Two sources, unioned: the curated org chart (crm_client_team_members)
+    // PLUS everyone assigned to one of the client's properties via
+    // crm_property_agents — otherwise the board reads "no team" while the
+    // property pages show a full BGP Contacts strip. Each row also carries
+    // the list of the client's properties that person covers, so the board
+    // can show who is on what.
     const rows = await pool.query(`
-      SELECT m.id,
-             m.client_company_id,
-             m.user_id,
-             m.team_group,
-             m.role,
-             m.reports_to_user_id,
-             m.sort_order,
-             COALESCE(m.is_lead, false) AS is_lead,
+      WITH scoped_props AS (
+        SELECT id, name FROM crm_properties WHERE landlord_id = $1
+        UNION
+        SELECT p.id, p.name FROM crm_company_properties cp
+          JOIN crm_properties p ON p.id = cp.property_id
+         WHERE cp.company_id = $1
+      ),
+      agent_props AS (
+        SELECT pa.user_id, pa.role, s.id AS property_id, s.name AS property_name
+          FROM crm_property_agents pa
+          JOIN scoped_props s ON s.id = pa.property_id
+      ),
+      members AS (
+        SELECT m.id, m.user_id, m.team_group, m.role, m.reports_to_user_id,
+               m.sort_order, COALESCE(m.is_lead, false) AS is_lead
+          FROM crm_client_team_members m
+         WHERE m.client_company_id = $1
+        UNION ALL
+        SELECT 'pa-' || ap.user_id, ap.user_id, 'Property Team',
+               MIN(ap.role), NULL, 999, bool_or(ap.role = 'Lead')
+          FROM agent_props ap
+         WHERE ap.user_id NOT IN (
+                 SELECT user_id FROM crm_client_team_members WHERE client_company_id = $1
+               )
+         GROUP BY ap.user_id
+      )
+      SELECT mem.id,
+             $1 AS client_company_id,
+             mem.user_id,
+             mem.team_group,
+             mem.role,
+             mem.reports_to_user_id,
+             mem.sort_order,
+             mem.is_lead,
              u.username,
              u.name AS full_name,
              u.email,
@@ -47,15 +79,14 @@ router.get("/api/client-teams/:clientCompanyId", requireAuth, async (req, res) =
              sp.cv_summary,
              sp.cv_specialisms,
              sp.bio,
-             (SELECT COUNT(*)::int FROM crm_property_agents pa
-                JOIN crm_properties p ON p.id = pa.property_id
-               WHERE pa.user_id = m.user_id
-                 AND p.landlord_id = m.client_company_id) AS property_count
-      FROM crm_client_team_members m
-      LEFT JOIN users u ON u.id = m.user_id
-      LEFT JOIN staff_profiles sp ON sp.user_id = m.user_id
-      WHERE m.client_company_id = $1
-      ORDER BY m.sort_order, COALESCE(m.team_group, ''), u.name
+             (SELECT COUNT(DISTINCT ap.property_id)::int FROM agent_props ap
+               WHERE ap.user_id = mem.user_id) AS property_count,
+             (SELECT array_agg(DISTINCT ap.property_name) FROM agent_props ap
+               WHERE ap.user_id = mem.user_id) AS properties
+      FROM members mem
+      LEFT JOIN users u ON u.id = mem.user_id
+      LEFT JOIN staff_profiles sp ON sp.user_id = mem.user_id
+      ORDER BY mem.sort_order, COALESCE(mem.team_group, ''), u.name
     `, [clientCompanyId]);
     res.json(rows.rows);
   } catch (e: any) {

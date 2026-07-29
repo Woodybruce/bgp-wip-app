@@ -28,6 +28,7 @@ interface TeamMember {
   cv_specialisms: string[] | null;
   bio: string | null;
   property_count: number;
+  properties?: string[] | null;
 }
 
 interface Candidate {
@@ -132,6 +133,15 @@ function MemberCard({ member, onClick, onDragStart, isLead, onDragOver, onDrop, 
           {member.bgp_title && <div className="text-[10px] text-muted-foreground truncate" title={member.bgp_title}>{member.bgp_title}</div>}
           {member.role && (
             <div className="text-[10px] text-indigo-600 dark:text-indigo-400 truncate mt-0.5" title={member.role}>{member.role}</div>
+          )}
+          {Array.isArray(member.properties) && member.properties.length > 0 && (
+            <div
+              className="text-[10px] text-muted-foreground truncate mt-0.5"
+              title={member.properties.join(", ")}
+            >
+              {member.properties.slice(0, 2).join(", ")}
+              {member.properties.length > 2 ? ` +${member.properties.length - 2}` : ""}
+            </div>
           )}
         </div>
       </div>

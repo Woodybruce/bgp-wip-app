@@ -388,9 +388,10 @@ export function AppSidebar() {
         <NavSection
           label="AI Tools"
           items={aiNav
-            // Clients don't get the firm-wide Image Studio at all — their
-            // property imagery shows on the portfolio boards. (Landsec audit.)
-            .filter(i => !(isClientUser && i.url === "/image-studio"))
+            // Clients don't get the firm-wide Image Studio, the Property
+            // Intelligence map (every layer 403s → blank grey map) or CAD
+            // Measure — all staff tools. (Landsec audit + visual QA.)
+            .filter(i => !(isClientUser && ["/image-studio", "/property-intelligence", "/cad-measure"].includes(i.url)))
             .map(i =>
               // The full /image-studio page is admin-only (it calls admin
               // endpoints). Non-admins (e.g. CGI partners like Luke) get the

@@ -770,11 +770,15 @@ export function PropertyDetail({ id }: { id: string }) {
                 <PropertyDecksPanel propertyId={property.id} />
               </ErrorBoundary>
               */}
+              {/* BGP brand-strategy intel — staff only; the API is client-
+                  blocked so the panel only ever showed a refusal message. */}
+              {!isClientViewer && (
               <ErrorBoundary compact name="Brand gap">
                 <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
                   <BrandGapPanel propertyId={property.id} />
                 </CollapsibleCard>
               </ErrorBoundary>
+              )}
             </div>
 
             {/* Pipeline + Performance combined — single 'how's the
@@ -843,11 +847,15 @@ export function PropertyDetail({ id }: { id: string }) {
                 The deal-CRM letting-tracker function it sourced from
                 (available_units) is untouched. */}
 
+            {/* Plans GET is client-blocked — the panel rendered an empty
+                card with a dead Upload button for clients. */}
+            {!isClientViewer && (
             <ErrorBoundary compact name="Property plans">
               <CollapsibleCard open={mainSections.plans} onToggle={() => toggleMain("plans")} icon={MapIcon} title="Plans" testId="toggle-plans">
                 <PropertyPlansPanel propertyId={property.id} />
               </CollapsibleCard>
             </ErrorBoundary>
+            )}
 
             {/* Schedule — unified view (Lettings / Tenancy lens toggle)
                 rendered for every property. Bluewater was the rollout

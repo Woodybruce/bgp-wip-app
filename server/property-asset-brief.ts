@@ -169,11 +169,13 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     // doesn't flood each of their properties; when nobody is assigned yet,
     // any BGP user counts.
     const activityQ = await pool.query<any>(
-      `SELECT i.id, i.type, i.direction, i.interaction_date, i.bgp_user,
+      `SELECT i.id, i.type, i.direction, i.interaction_date,
+              COALESCE(bu.name, i.bgp_user) AS bgp_user,
               c.name AS contact_name,
               co.name AS company_name,
               d.id AS deal_id, d.name AS deal_name
          FROM crm_interactions i
+         LEFT JOIN users bu ON lower(bu.email) = lower(i.bgp_user)
          LEFT JOIN crm_contacts c ON c.id = i.contact_id
          LEFT JOIN crm_companies co ON co.id = c.company_id
          LEFT JOIN crm_deals d ON d.id = i.deal_id

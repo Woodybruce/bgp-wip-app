@@ -527,7 +527,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
       if (!r.ok) return { deals: [], lettingUnits: [] };
       return r.json();
     },
-    enabled: !!propertyId,
+    // The links endpoint is client-blocked; read-only viewers don't get
+    // the WIP/LT badges anyway, so skip the guaranteed 403.
+    enabled: !!propertyId && !readOnly,
   });
 
   const updateMutation = useMutation({

@@ -3293,7 +3293,7 @@ app.use("/api/branding/assets", express.static(
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
     "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",
     "/api/available-units", "/api/tasks",
-    "/api/chat/threads", "/api/chat-media/",
+    "/api/chat/threads", "/api/chat-media/", "/api/brand-logo/",
     // Harmless infra reads every logged-in browser makes: the public web-push
     // VAPID key (push writes are already client-allowed) and aggregate logo
     // cache stats used by the shared company-logo helper.
@@ -3642,7 +3642,9 @@ app.use("/api/branding/assets", express.static(
   httpServer.listen(
     {
       port,
-      host: "::",
+      // "::" (dual-stack) unless the host has no IPv6 (some containers) —
+      // HOST=0.0.0.0 overrides without a code change.
+      host: process.env.HOST || "::",
     },
     () => {
       log(`serving on port ${port}`);
