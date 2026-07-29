@@ -339,7 +339,7 @@ export function AppSidebar() {
   // Client logins (e.g. Landsec) get a trimmed nav: no People & HR, My Card,
   // Reporting or WIP — those are BGP-internal. Staff nav is unchanged.
   const isClientUser = user?.role === "Client";
-  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/comps"];
+  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/reporting", "/wip-report"];
   const coreNav = isClientUser
     ? coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
     : coreWithTeamExpenses;
@@ -585,7 +585,7 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
   // Parity with desktop: Reporting hidden everywhere now, and client logins
   // also lose the BGP-internal items (People & HR, My Card, WIP).
   const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
-  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/comps", "/today", "/sharepoint", "/calendar", "/mail", "/m/images", "/property-intelligence", "/cad-measure"];
+  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/sharepoint", "/calendar", "/mail", "/m/images", "/property-intelligence", "/cad-measure"];
   const items = user?.role === "Client"
     ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
     : filteredByAdmin.filter(i => i.url !== "/reporting" || isLandsec);

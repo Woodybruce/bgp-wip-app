@@ -59,8 +59,11 @@ router.get("/api/client-teams/:clientCompanyId", requireAuth, async (req, res) =
         SELECT 'pa-' || ap.user_id, ap.user_id, 'Property Team',
                MIN(ap.role), NULL, 999, bool_or(ap.role = 'Lead')
           FROM agent_props ap
-         WHERE ap.user_id NOT IN (
-                 SELECT user_id FROM crm_client_team_members WHERE client_company_id = $1
+         -- NOT EXISTS, not NOT IN: one NULL user_id on the curated board
+         -- made NOT IN drop EVERY property agent from the card.
+         WHERE NOT EXISTS (
+                 SELECT 1 FROM crm_client_team_members m2
+                  WHERE m2.client_company_id = $1 AND m2.user_id = ap.user_id
                )
          GROUP BY ap.user_id
       )
@@ -223,6 +226,7 @@ router.get("/api/client-teams/:clientCompanyId/member/:userId/properties", requi
              ) AS assigned
       FROM crm_properties p
       WHERE p.landlord_id = $1
+         OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
       ORDER BY p.name
     `, [clientCompanyId, userId]);
     res.json(rows.rows);
@@ -251,7 +255,9 @@ router.post("/api/client-teams/:clientCompanyId/member/:userId/properties", requ
       await pool.query(`
         INSERT INTO crm_property_agents (property_id, user_id)
         SELECT $1, $2 WHERE EXISTS (
-          SELECT 1 FROM crm_properties WHERE id = $1 AND landlord_id = $3
+          SELECT 1 FROM crm_properties p WHERE p.id = $1
+             AND (p.landlord_id = $3
+                  OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $3))
         )
       `, [pid, userId, clientCompanyId]);
     }
@@ -260,7 +266,9 @@ router.post("/api/client-teams/:clientCompanyId/member/:userId/properties", requ
         DELETE FROM crm_property_agents pa
          USING crm_properties p
          WHERE pa.property_id = $1 AND pa.user_id = $2
-           AND p.id = pa.property_id AND p.landlord_id = $3
+           AND p.id = pa.property_id
+           AND (p.landlord_id = $3
+                OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $3))
       `, [pid, userId, clientCompanyId]);
     }
     res.json({ ok: true, added: add.length, removed: remove.length });

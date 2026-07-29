@@ -2256,6 +2256,24 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
 
+  // Portfolio dataset → comps import. Staff upload the client's raw unit/
+  // letting workbook; every letting becomes a comp on its scheme, deduped
+  // on unit+contract so newer cuts update in place. Devaluation happens on
+  // read in /api/crm/comps.
+  const compsImportUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 25 * 1024 * 1024 },
+  });
+  app.post("/api/admin/import-portfolio-comps", requireAuth, compsImportUpload.single("file"), async (req: any, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      if (!req.file?.buffer) return res.status(400).json({ error: "Upload the portfolio .xlsx as 'file'" });
+      const { importPortfolioComps } = await import("./comps-import");
+      const result = await importPortfolioComps(req.file.buffer);
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // logo.dev Brand API backfill — fills blank socials/description across the
   // brand book (fill-blanks only, ~1¢ per brand that needs it). Staff only.
   app.post("/api/admin/logo-dev-backfill", requireAuth, async (req, res) => {
@@ -4716,14 +4734,40 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   app.get("/api/crm/comps", requireAuth, async (req, res) => {
     try {
-      if (await isClientRequest(req)) return res.json([]);
       const filters = {
         search: req.query.search as string | undefined,
         groupName: req.query.groupName as string | undefined,
         dealType: req.query.dealType as string | undefined,
       };
-      const comps = await storage.getCrmComps(filters);
-      res.json(comps);
+      let comps = await storage.getCrmComps(filters);
+
+      // Clients see the comp evidence on THEIR schemes only: comps linked
+      // to a property in their portfolio, or where they're the landlord.
+      const compsScope = await resolveCompanyScope(req);
+      if (compsScope) {
+        const propRows = await pool.query(
+          `SELECT id, name FROM crm_properties
+            WHERE landlord_id = $1
+               OR id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)`,
+          [compsScope]
+        );
+        const propIds = new Set(propRows.rows.map((r: any) => r.id));
+        const propNames = propRows.rows
+          .map((r: any) => String(r.name || "").toLowerCase().replace(/,.*$/, "").trim())
+          .filter((n: string) => n.length >= 5);
+        comps = comps.filter((c: any) => {
+          if (c.propertyId && propIds.has(c.propertyId)) return true;
+          if (c.landlordCompanyId === compsScope) return true;
+          // Legacy comps carry the scheme only as free text in name/address.
+          const hay = `${c.name || ""} ${JSON.stringify(c.address || "")}`.toLowerCase();
+          return propNames.some(n => hay.includes(n));
+        });
+      }
+
+      // Devalue every deal — headline package → net effective rent,
+      // computed fresh on read since the underlying fields are free text.
+      const { devalueComp } = await import("./comp-devalue");
+      res.json(comps.map((c: any) => ({ ...c, devaluation: devalueComp(c) })));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -4742,9 +4786,16 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   app.get("/api/crm/comps/:id", async (req, res) => {
     try {
-      const comp = await storage.getCrmComp(req.params.id);
+      const comp: any = await storage.getCrmComp(req.params.id);
       if (!comp) return res.status(404).json({ error: "Not found" });
-      res.json(comp);
+      const compScope = await resolveCompanyScope(req);
+      if (compScope) {
+        const inScope = comp.landlordCompanyId === compScope ||
+          (comp.propertyId && (await isPropertyInScope(compScope, comp.propertyId)));
+        if (!inScope) return res.status(403).json({ error: "Access denied" });
+      }
+      const { devalueComp } = await import("./comp-devalue");
+      res.json({ ...comp, devaluation: devalueComp(comp) });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
