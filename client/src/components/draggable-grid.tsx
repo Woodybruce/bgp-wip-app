@@ -8,6 +8,7 @@ import { GripVertical, EyeOff } from "lucide-react";
 interface GridItem {
   id: string;
   label?: string;
+  description?: string;
   content: React.ReactNode;
   defaultW?: number;
   defaultH?: number;
@@ -135,6 +136,13 @@ export function DraggableGrid({
     hadSavedRef.current = !!savedLayout;
   }
 
+  // Layouts are CONTROLLED state. Previously the grid was fed a frozen
+  // initial-layouts ref: a drag moved the board, then the next parent
+  // re-render (any widget refetching data) snapped everything back to the
+  // stale prop — and the snap-back is what got saved. Boards appeared
+  // impossible to move.
+  const [layouts, setLayouts] = useState<ResponsiveLayouts>(initialLayoutsRef.current);
+
   const itemIdsKey = items.map(i => i.id).sort().join(",");
   const prevItemIdsRef = useRef(itemIdsKey);
   const needsRebuild =
@@ -144,6 +152,7 @@ export function DraggableGrid({
     initialLayoutsRef.current = buildInitialLayouts(items, savedLayout, cols);
     prevItemIdsRef.current = itemIdsKey;
     hadSavedRef.current = !!savedLayout;
+    setLayouts(initialLayoutsRef.current);
   }
 
   const pendingLayoutRef = useRef<ResponsiveLayouts | null>(null);
@@ -158,6 +167,7 @@ export function DraggableGrid({
   }
 
   const handleLayoutChange = useCallback((_currentLayout: Layout, allLayouts: ResponsiveLayouts) => {
+    setLayouts(allLayouts);
     if (!editing) return;
     const sig = computeSignature(allLayouts.lg);
     if (sig === lastSavedLayoutRef.current) return;
@@ -196,7 +206,7 @@ export function DraggableGrid({
         <ResponsiveGridLayout
           className="dashboard-grid"
           width={width}
-          layouts={initialLayoutsRef.current!}
+          layouts={layouts}
           breakpoints={{ lg: 1, md: 0, sm: 0, xs: 0 }}
           cols={cols}
           rowHeight={rowHeight}
@@ -219,7 +229,12 @@ export function DraggableGrid({
                 {editing && (
                   <div className="grid-drag-handle flex-shrink-0 relative z-50 bg-muted/90 border border-border rounded-t-md px-3 py-1 cursor-grab active:cursor-grabbing flex items-center gap-1.5 select-none">
                     <GripVertical className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground font-medium flex-1">{labelMap.get(item.id) || item.id}</span>
+                    <span className="text-[10px] text-muted-foreground font-medium flex-1 truncate" title={item.description || undefined}>
+                      {labelMap.get(item.id) || item.id}
+                      {item.description && (
+                        <span className="font-normal text-muted-foreground/70"> — {item.description}</span>
+                      )}
+                    </span>
                     {onHideItem && (
                       <button
                         onClick={(e) => { e.stopPropagation(); onHideItem(item.id); }}

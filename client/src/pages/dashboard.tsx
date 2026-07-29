@@ -818,6 +818,27 @@ export default function Dashboard() {
     return map;
   }, []);
 
+  const widgetDescriptionMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    WIDGET_REGISTRY.forEach(w => { if (w.description) map[w.id] = w.description; });
+    return map;
+  }, []);
+
+  // Board blurbs for the client-portfolio grid — shown in the edit-mode
+  // handle so each board says what it does.
+  const PORTFOLIO_DESCRIPTIONS: Record<string, string> = {
+    "portfolio-company": "Your landlord entity and account summary",
+    "portfolio-events": "Portfolio meetings, viewings and calls from the BGP account team's diaries",
+    "portfolio-kpis": "Headline metrics across your portfolio",
+    "portfolio-team": "The BGP people working across your portfolio and their properties",
+    "portfolio-properties": "Every property linked to your account",
+    "portfolio-leasing": "Every unit — tenant, occupancy, rent and expiry",
+    "portfolio-activity": "Recent emails, calls and meetings with your BGP team",
+    "portfolio-contacts": "Your key contacts on the account",
+    "portfolio-deals": "Live deals across your properties",
+    "portfolio-lease-expiry": "Upcoming lease expiries and the deals against them",
+  };
+
   const handleHideWidget = useCallback((widgetId: string) => {
     const currentWidgets = activeWidgets.filter(id => id !== widgetId);
     saveMutation.mutate(currentWidgets);
@@ -1804,7 +1825,7 @@ export default function Dashboard() {
               )}
             </div>
             <DraggableGrid
-              items={visiblePortfolioItems}
+              items={visiblePortfolioItems.map((i: any) => ({ ...i, description: i.description || PORTFOLIO_DESCRIPTIONS[i.id] }))}
               savedLayout={portfolioSavedLayout}
               onLayoutSave={handlePortfolioLayoutSave}
               onHideItem={handleHidePortfolioBoard}
@@ -2538,6 +2559,7 @@ export default function Dashboard() {
           return {
             id: wid,
             label: widgetLabelMap[wid] || wid,
+            description: widgetDescriptionMap[wid],
             content: renderWidget(wid),
             defaultW: sizes.w,
             defaultH: sizes.h,
