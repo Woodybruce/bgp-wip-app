@@ -532,6 +532,7 @@ function getToolProgressLabel(toolName: string): string {
     find_duplicate_properties: "Scanning for duplicates...",
     merge_properties: "Merging properties...",
     reconcile_tenancy_rows: "Reconciling tenancy rows...",
+    run_brand_enrichment_backfill: "Enriching brands from logo.dev...",
     create_investment_tracker: "Adding to tracker...",
     update_investment_tracker: "Updating tracker...",
     send_email: "Sending email...",
@@ -3143,6 +3144,21 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           mergePropertyId: { type: "string", description: "Duplicate property ID to merge in and delete" },
         },
         required: ["keepPropertyId", "mergePropertyId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "run_brand_enrichment_backfill",
+      description: "Run the logo.dev Brand API backfill over the brand book: fills BLANK description, Instagram/TikTok/X handles and LinkedIn on brand records that have a website domain (never overwrites existing data; skips brands with nothing missing). Costs ~1p per brand that needs filling, so confirm the run size with the user first. hospitalityOnly=true limits it to the client-visible hospitality/F&B slice (e.g. 'all Landsec brands').",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max brands to process this run (default 100, cap 500)." },
+          hospitalityOnly: { type: "boolean", description: "true = only the hospitality/F&B client slice (Landsec's brands)." },
+        },
       },
     },
   });
@@ -6149,6 +6165,27 @@ export async function executeCrmToolRaw(
       };
     } catch (e: any) {
       return { data: { success: false, error: e?.message || "Merge failed" } };
+    }
+  }
+
+  if (fnName === "run_brand_enrichment_backfill") {
+    const { runLogoDevBackfill, isLogoDevBrandConfigured } = await import("./logo-dev-brand");
+    if (!isLogoDevBrandConfigured()) {
+      return { data: { success: false, error: "LOGO_DEV_SECRET_KEY isn't configured on this environment yet — add it to the deployment's variables first." } };
+    }
+    try {
+      const stats = await runLogoDevBackfill(
+        Number(fnArgs.limit ?? 100),
+        fnArgs.hospitalityOnly === true
+      );
+      return {
+        data: {
+          success: true, ...stats,
+          instruction: "Report: how many brands were candidates, how many got fields filled, and that re-running later picks up brands logo.dev hadn't indexed yet.",
+        },
+      };
+    } catch (e: any) {
+      return { data: { success: false, error: e?.message || "Backfill failed" } };
     }
   }
 

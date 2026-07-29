@@ -139,19 +139,26 @@ export async function enrichCompanyFromLogoDev(companyId: string): Promise<{ upd
 // Bulk backfill over the brand book — brands with a domain and at least one
 // blank target field. Sequential (the API allows bursts, but credits are
 // the real constraint) with a hard per-run limit.
-export async function runLogoDevBackfill(limit = 100): Promise<{
+export async function runLogoDevBackfill(limit = 100, hospitalityOnly = false): Promise<{
   configured: boolean; candidates: number; processed: number; filled: number; fieldsFilled: number;
 }> {
+  // hospitalityOnly = the client-visible (Landsec) brand slice only.
+  const sliceFilter = hospitalityOnly ? `AND company_type ~* $2` : "";
+  const params: any[] = [Math.min(limit, 500)];
+  if (hospitalityOnly) {
+    const { CLIENT_VISIBLE_BRAND_RE } = await import("./company-scope");
+    params.push(CLIENT_VISIBLE_BRAND_RE.source);
+  }
   const candidatesQ = await pool.query(
     `SELECT id FROM crm_companies
-      WHERE company_type ILIKE 'Tenant%' AND merged_into_id IS NULL
+      WHERE company_type ILIKE 'Tenant%' AND merged_into_id IS NULL ${sliceFilter}
         AND COALESCE(NULLIF(TRIM(COALESCE(domain, domain_url)), ''), NULL) IS NOT NULL
         AND (COALESCE(TRIM(description), '') = '' OR COALESCE(TRIM(instagram_handle), '') = ''
              OR COALESCE(TRIM(tiktok_handle), '') = '' OR COALESCE(TRIM(x_handle), '') = ''
              OR COALESCE(TRIM(linkedin_url), '') = '')
       ORDER BY is_tracked_brand DESC NULLS LAST, name
       LIMIT $1`,
-    [Math.min(limit, 500)]
+    params
   );
   const stats = { configured: isLogoDevBrandConfigured(), candidates: candidatesQ.rows.length, processed: 0, filled: 0, fieldsFilled: 0 };
   if (!stats.configured) return stats;

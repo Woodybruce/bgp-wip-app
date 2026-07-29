@@ -2280,7 +2280,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     try {
       if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
       const { runLogoDevBackfill } = await import("./logo-dev-brand");
-      const stats = await runLogoDevBackfill(Number(req.body?.limit ?? 100));
+      const stats = await runLogoDevBackfill(Number(req.body?.limit ?? 100), req.body?.hospitalityOnly === true);
       res.json(stats);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
