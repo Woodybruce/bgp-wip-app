@@ -197,6 +197,16 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     queryKey: ["/api/crm/deals", id],
   });
 
+  // Client logins (e.g. Landsec) see a trimmed deal page — no BGP-internal
+  // panels (AI activity feed of staff emails, KYC/AML, Xero billing,
+  // SharePoint folders). Those endpoints 403 for clients anyway; hiding the
+  // panels stops broken cards + console noise on the deal they open.
+  const { data: ddUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  // Treat the user as a client until auth/me resolves — on a hard page load
+  // the panels otherwise mount for a beat and fire their (403) queries
+  // before the role is known. Staff just see the panels pop in a tick later.
+  const isClientDeal = !ddUser || ddUser.role === "Client";
+
   const { data: properties = [] } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
   });
@@ -221,6 +231,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     unitUprn?: string | null; unitAddressFreeText?: string | null;
   }>>({
     queryKey: ["/api/property-units"],
+    enabled: !isClientDeal,
   });
   const linkedUnit = (deal as any)?.unitId
     ? propertyUnits.find((u) => u.id === (deal as any).unitId)
@@ -697,6 +708,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 placeholder="Link purchaser"
               />
             </div>
+            {!isClientDeal && (
             <div className="flex flex-col gap-1">
               <p className="text-[10px] text-muted-foreground leading-tight">Xero Contact</p>
               {(deal as any).xeroContactName ? (
@@ -710,13 +722,16 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 <span className="text-[11px] text-muted-foreground italic">Set via Edit · Xero Contact</span>
               )}
             </div>
+            )}
           </div>
         </CardContent>
       </Card>
 
       {/* Fee Allocation sits next to Parties. The allocated agents ARE the
           BGP contacts, so the separate BGP Contacts card was removed —
-          edit the agents via the Fee Allocation "Edit" button. */}
+          edit the agents via the Fee Allocation "Edit" button.
+          BGP fees are never shown to client logins. */}
+      {!isClientDeal && (
       <FeeAllocationCard
         dealId={deal.id}
         dealFee={deal.fee}
@@ -724,6 +739,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         users={users.map(u => ({ id: String(u.id), name: u.name }))}
         colorMap={userColorMap}
       />
+      )}
       </div>
 
       {(numericFields.some((f) => f.value != null) || [deal.gfAreaSqft, deal.ffAreaSqft, deal.basementAreaSqft, deal.itzaAreaSqft].some((v) => v != null)) && (
@@ -770,7 +786,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       </Card>
       )}
 
-      <XeroInvoiceSection dealId={deal.id} deal={deal} companies={companies} />
+      {!isClientDeal && <XeroInvoiceSection dealId={deal.id} deal={deal} companies={companies} />}
 
       <Dialog open={sharepointDialogOpen} onOpenChange={setSharepointDialogOpen}>
         <DialogContent className="max-w-md">
@@ -822,9 +838,12 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       </Dialog>
 
       {/* AI-curated activity — primary comms feed (emails + meetings), shown
-          above KYC. Raw sources live in "History & activity" in the rail. */}
-      <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />
+          above KYC. Raw sources live in "History & activity" in the rail.
+          Hidden for clients: it surfaces BGP staff emails/meetings. */}
+      {!isClientDeal && <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />}
 
+      {/* KYC/AML is BGP-internal compliance — never shown to clients. */}
+      {!isClientDeal && (
       <CollapsibleCard open={mainSections.kyc} onToggle={() => toggleMain("kyc")} icon={ShieldCheck} title="KYC" testId="toggle-deal-kyc">
         <div className="space-y-3">
           <DealKYCPanel deal={deal} companies={companies} />
@@ -834,6 +853,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           <DealAmlStatusCard dealId={id} />
         </div>
       </CollapsibleCard>
+      )}
 
       {[
         { company: linkedTenant, role: "Tenant" },
@@ -993,14 +1013,17 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 {/* The deal's files live in its property's folder — render the
                     same unified Files panel (browse / upload / new folder /
                     rename / delete / share) instead of just a link. */}
-                {linkedProperty && (
+                {linkedProperty && !isClientDeal && (
                   <PropertyFoldersPanel
                     propertyName={linkedProperty.name}
                     folderTeams={(linkedProperty as any).folderTeams}
                     sharepointFolderUrl={(linkedProperty as any).sharepointFolderUrl}
                   />
                 )}
-                {!linkedProperty && (
+                {isClientDeal && (
+                  <p className="text-xs text-muted-foreground italic">Documents are managed by the BGP team.</p>
+                )}
+                {!linkedProperty && !isClientDeal && (
                   <p className="text-xs text-muted-foreground italic">Link this deal to a property to see its folders.</p>
                 )}
               </div>

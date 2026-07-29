@@ -3293,6 +3293,10 @@ app.use("/api/branding/assets", express.static(
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
     "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",
     "/api/available-units", "/api/tasks",
+    // Harmless infra reads every logged-in browser makes: the public web-push
+    // VAPID key (push writes are already client-allowed) and aggregate logo
+    // cache stats used by the shared company-logo helper.
+    "/api/push/vapid-key", "/api/brand-logo-stats",
   ];
   // Microsoft 365 stays fully blocked for clients (mail/calendar/files all
   // 403) — the client UI must not call it at all; see nav + poller gating.

@@ -380,6 +380,7 @@ export default function AvailableUnitsPage() {
 
   const { data: propertyUnits = [] } = useQuery<PropertyUnit[]>({
     queryKey: ["/api/property-units"],
+    enabled: !isClientTracker, // staff-only master-unit cache; 403s for clients
   });
 
   const { data: deals = [] } = useQuery<CrmDeal[]>({
