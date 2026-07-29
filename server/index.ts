@@ -2439,10 +2439,10 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   }
   console.log(`[auto-migrate] Schema migration complete — ${ok} applied, ${skipped} skipped`);
 
-  // ── One-off (per Woody): deals 3437 & 3490 (Harry Elliott) are exempt from
+  // ── One-off (per Woody): deals 3437, 3490 & 3226 (Harry) are exempt from
   // the 15% BGP House cut — the whole fee goes to the agent, not 85%. The fee
   // editor hard-locks the house slice on every deal, so this can't be done in
-  // the UI; we correct it in the data. Scoped to these two deal refs only, so
+  // the UI; we correct it in the data. Scoped to these deal refs only, so
   // the 15% policy stays enforced everywhere else. Guarded on the BGP House
   // row still existing, so it applies exactly once (no re-scaling drift on
   // later boots). Removes the house slice and scales the remaining agent
@@ -2452,7 +2452,7 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   try {
     const { rows: exemptDeals } = await pool.query(
       `SELECT id, name, deal_ref, fee FROM crm_deals WHERE deal_ref = ANY($1::int[])`,
-      [[3437, 3490]],
+      [[3437, 3490, 3226]],
     );
     for (const d of exemptDeals) {
       const { rows: house } = await pool.query(
@@ -2482,15 +2482,15 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
         [d.id],
       );
       console.log(
-        `[one-off 3437/3490] Removed BGP House cut on deal ${d.deal_ref} "${d.name}" — full fee to agent(s): ` +
+        `[one-off 3437/3490/3226] Removed BGP House cut on deal ${d.deal_ref} "${d.name}" — full fee to agent(s): ` +
         after.map((r: any) => `${r.agent_name}=${r.allocation_type === "fixed" ? "£" + r.fixed_amount : r.percentage + "%"}`).join(", "),
       );
     }
     if (exemptDeals.length === 0) {
-      console.warn("[one-off 3437/3490] no deals found with ref 3437 or 3490 — nothing changed");
+      console.warn("[one-off 3437/3490/3226] no deals found with ref 3437, 3490 or 3226 — nothing changed");
     }
   } catch (e: any) {
-    console.warn("[one-off 3437/3490] correction failed:", e?.message);
+    console.warn("[one-off 3437/3490/3226] correction failed:", e?.message);
   }
 
   // ── One-off (per Woody): deal 3511 was saved with NO BGP House 15% slice
