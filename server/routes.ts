@@ -3163,6 +3163,138 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // --- Public leasing feed (bgp marketing website) ---
+  // Read-only, unauthenticated. Exposes only marketing-safe fields for units
+  // being publicly marketed, and skips properties with leasing privacy enabled.
+  const PUBLIC_MARKETING_STATUSES = ["Available", "Under Offer"];
+
+  app.use("/api/public", (req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type");
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+    next();
+  });
+
+  const publicListingColumns = () => import("@shared/schema").then(({ availableUnits, crmProperties }) => ({
+    id: availableUnits.id,
+    unitName: availableUnits.unitName,
+    floor: availableUnits.floor,
+    sqft: availableUnits.sqft,
+    askingRent: availableUnits.askingRent,
+    ratesPa: availableUnits.ratesPa,
+    serviceChargePa: availableUnits.serviceChargePa,
+    useClass: availableUnits.useClass,
+    condition: availableUnits.condition,
+    availableDate: availableUnits.availableDate,
+    marketingStatus: availableUnits.marketingStatus,
+    location: availableUnits.location,
+    epcRating: availableUnits.epcRating,
+    propertyName: crmProperties.name,
+    propertyAddress: crmProperties.address,
+    postcode: crmProperties.postcode,
+    latitude: crmProperties.latitude,
+    longitude: crmProperties.longitude,
+    assetClass: crmProperties.assetClass,
+  }));
+
+  app.get("/api/public/leasing-listings", async (_req, res) => {
+    try {
+      const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
+      const columns = await publicListingColumns();
+      const rows = await db
+        .select(columns)
+        .from(availableUnits)
+        .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
+        .where(and(
+          inArray(availableUnits.marketingStatus, PUBLIC_MARKETING_STATUSES),
+          or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
+        ))
+        .orderBy(desc(availableUnits.createdAt));
+      const unitIds = rows.map(r => r.id);
+      const files = unitIds.length
+        ? await db
+            .select({
+              id: unitMarketingFiles.id,
+              unitId: unitMarketingFiles.unitId,
+              fileName: unitMarketingFiles.fileName,
+              mimeType: unitMarketingFiles.mimeType,
+            })
+            .from(unitMarketingFiles)
+            .where(inArray(unitMarketingFiles.unitId, unitIds))
+        : [];
+      const byUnit: Record<string, typeof files> = {};
+      for (const f of files) (byUnit[f.unitId] ||= []).push(f);
+      res.json(rows.map(r => ({ ...r, files: byUnit[r.id] || [] })));
+    } catch (err: any) {
+      console.error("[routes] Public leasing listings error:", err?.message);
+      res.status(500).json({ message: "Failed to fetch listings" });
+    }
+  });
+
+  app.get("/api/public/leasing-listings/:id", async (req, res) => {
+    try {
+      const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
+      const columns = await publicListingColumns();
+      const [row] = await db
+        .select(columns)
+        .from(availableUnits)
+        .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
+        .where(and(
+          eq(availableUnits.id, req.params.id),
+          inArray(availableUnits.marketingStatus, PUBLIC_MARKETING_STATUSES),
+          or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
+        ));
+      if (!row) return res.status(404).json({ message: "Listing not found" });
+      const files = await db
+        .select({
+          id: unitMarketingFiles.id,
+          fileName: unitMarketingFiles.fileName,
+          mimeType: unitMarketingFiles.mimeType,
+        })
+        .from(unitMarketingFiles)
+        .where(eq(unitMarketingFiles.unitId, row.id));
+      res.json({ ...row, files });
+    } catch (err: any) {
+      console.error("[routes] Public leasing listing error:", err?.message);
+      res.status(500).json({ message: "Failed to fetch listing" });
+    }
+  });
+
+  app.get("/api/public/unit-files/:fileId", async (req, res) => {
+    try {
+      const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
+      const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId));
+      if (!file) return res.status(404).end();
+      const [unit] = await db
+        .select({ id: availableUnits.id })
+        .from(availableUnits)
+        .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
+        .where(and(
+          eq(availableUnits.id, file.unitId),
+          inArray(availableUnits.marketingStatus, PUBLIC_MARKETING_STATUSES),
+          or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
+        ));
+      if (!unit) return res.status(404).end();
+      const fileName = file.filePath.split("/").pop();
+      if (fileName) {
+        const stored = await getFile(`marketing-files/${fileName}`);
+        if (stored) {
+          res.setHeader("Content-Type", stored.contentType || file.mimeType || "application/octet-stream");
+          res.setHeader("Content-Disposition", `inline; filename="${file.fileName.replace(/"/g, "")}"`);
+          res.setHeader("Cache-Control", "public, max-age=3600");
+          return res.send(stored.data);
+        }
+      }
+      const diskPath = path.join(process.cwd(), file.filePath);
+      if (fs.existsSync(diskPath)) return res.sendFile(diskPath);
+      res.status(404).end();
+    } catch (err: any) {
+      console.error("[routes] Public unit file error:", err?.message);
+      res.status(500).end();
+    }
+  });
+
   app.get("/api/available-units", requireAuth, async (req, res) => {
     try {
       // Clients (e.g. Landsec) see the Letting Tracker for THEIR OWN
@@ -3201,6 +3333,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           COALESCE(pu.condition, au.condition) AS "condition",
           au.available_date AS "availableDate",
           au.marketing_status AS "marketingStatus",
+          au.location,
           COALESCE(pu.epc_rating, au.epc_rating) AS "epcRating",
           au.notes,
           au.restrictions,
@@ -4177,6 +4310,167 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // removed. Both were tied to the Sage WIP import lifecycle (recovery
   // for orphan-archive false-positives after a Sage reload, and a wipe-
   // before-reimport admin tool). Sage imports are retired.
+
+  // ---- Operator targeting briefs (per letting tracker unit) ----
+
+  app.get("/api/unit-briefs", requireAuth, async (_req, res) => {
+    try {
+      const { unitBriefs, availableUnits, crmProperties } = await import("@shared/schema");
+      const rows = await db
+        .select({
+          brief: unitBriefs,
+          unitName: availableUnits.unitName,
+          propertyName: crmProperties.name,
+        })
+        .from(unitBriefs)
+        .leftJoin(availableUnits, eq(unitBriefs.unitId, availableUnits.id))
+        .leftJoin(crmProperties, eq(unitBriefs.propertyId, crmProperties.id))
+        .orderBy(desc(unitBriefs.createdAt));
+      res.json(rows.map(r => ({ ...r.brief, unitName: r.unitName, propertyName: r.propertyName })));
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch briefs" });
+    }
+  });
+
+  app.get("/api/available-units/:id/brief", requireAuth, async (req, res) => {
+    try {
+      const { unitBriefs, unitTargetOperators } = await import("@shared/schema");
+      const [brief] = await db.select().from(unitBriefs)
+        .where(eq(unitBriefs.unitId, String(req.params.id)))
+        .orderBy(desc(unitBriefs.createdAt))
+        .limit(1);
+      if (!brief) return res.json(null);
+      const targets = await db.select().from(unitTargetOperators)
+        .where(eq(unitTargetOperators.briefId, brief.id))
+        .orderBy(unitTargetOperators.sortOrder, unitTargetOperators.createdAt);
+      res.json({ ...brief, targets });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch brief" });
+    }
+  });
+
+  app.post("/api/available-units/:id/brief", requireAuth, async (req: any, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(String(req.params.id));
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      const { unitBriefs, insertUnitBriefSchema } = await import("@shared/schema");
+      const userId = req.session?.userId || req.tokenUserId || null;
+      let userName: string | null = null;
+      if (userId) {
+        const r = await pool.query("SELECT name FROM users WHERE id = $1", [userId]);
+        userName = r.rows[0]?.name || null;
+      }
+      const parsed = insertUnitBriefSchema.parse({
+        ...req.body,
+        unitId: unit.id,
+        propertyId: unit.propertyId,
+        createdByUserId: userId,
+        createdByName: userName,
+      });
+      const [brief] = await db.insert(unitBriefs).values(parsed).returning();
+      res.json(brief);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to create brief" });
+    }
+  });
+
+  app.patch("/api/unit-briefs/:id", requireAuth, async (req, res) => {
+    try {
+      const { unitBriefs, insertUnitBriefSchema } = await import("@shared/schema");
+      const partial = insertUnitBriefSchema.partial().parse(req.body);
+      const [brief] = await db.update(unitBriefs)
+        .set({ ...partial, updatedAt: new Date() })
+        .where(eq(unitBriefs.id, String(req.params.id)))
+        .returning();
+      if (!brief) return res.status(404).json({ message: "Brief not found" });
+      res.json(brief);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to update brief" });
+    }
+  });
+
+  app.delete("/api/unit-briefs/:id", requireAuth, async (req, res) => {
+    try {
+      const { unitBriefs, unitTargetOperators } = await import("@shared/schema");
+      await db.delete(unitTargetOperators).where(eq(unitTargetOperators.briefId, String(req.params.id)));
+      await db.delete(unitBriefs).where(eq(unitBriefs.id, String(req.params.id)));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to delete brief" });
+    }
+  });
+
+  app.post("/api/unit-briefs/:id/targets", requireAuth, async (req, res) => {
+    try {
+      const { unitBriefs, unitTargetOperators, insertUnitTargetOperatorSchema } = await import("@shared/schema");
+      const [brief] = await db.select().from(unitBriefs).where(eq(unitBriefs.id, String(req.params.id)));
+      if (!brief) return res.status(404).json({ message: "Brief not found" });
+      const parsed = insertUnitTargetOperatorSchema.parse({ ...req.body, briefId: brief.id });
+      const [target] = await db.insert(unitTargetOperators).values(parsed).returning();
+      res.json(target);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to add target" });
+    }
+  });
+
+  app.patch("/api/unit-briefs/targets/:id", requireAuth, async (req, res) => {
+    try {
+      const { unitTargetOperators, insertUnitTargetOperatorSchema } = await import("@shared/schema");
+      const partial = insertUnitTargetOperatorSchema.partial().parse(req.body);
+      const [target] = await db.update(unitTargetOperators)
+        .set({ ...partial, updatedAt: new Date() })
+        .where(eq(unitTargetOperators.id, String(req.params.id)))
+        .returning();
+      if (!target) return res.status(404).json({ message: "Target not found" });
+      res.json(target);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to update target" });
+    }
+  });
+
+  app.delete("/api/unit-briefs/targets/:id", requireAuth, async (req, res) => {
+    try {
+      const { unitTargetOperators } = await import("@shared/schema");
+      await db.delete(unitTargetOperators).where(eq(unitTargetOperators.id, String(req.params.id)));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to delete target" });
+    }
+  });
+
+  app.post("/api/unit-briefs/extract", requireAuth, marketingUpload.single("file"), async (req: any, res) => {
+    let tmpPath: string | null = null;
+    try {
+      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      tmpPath = path.join(MARKETING_FILES_DIR, `extract-${Date.now()}-${crypto.randomBytes(6).toString("hex")}${ext}`);
+      fs.writeFileSync(tmpPath, req.file.buffer);
+      const { extractTextFromFile } = await import("./chatbgp");
+      const text = await extractTextFromFile(tmpPath, req.file.originalname);
+      if (!text || text.trim().length < 40) return res.status(400).json({ message: "Could not read any text from that file" });
+      const { extractBriefFromText } = await import("./unit-brief-doc");
+      const extracted = await extractBriefFromText(text);
+      res.json(extracted);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to extract brief" });
+    } finally {
+      if (tmpPath) { try { fs.unlinkSync(tmpPath); } catch {} }
+    }
+  });
+
+  app.post("/api/unit-briefs/:id/generate-document", requireAuth, async (req, res) => {
+    try {
+      const { generateBriefDocument } = await import("./unit-brief-doc");
+      const result = await generateBriefDocument(String(req.params.id));
+      res.json({ ...result, sharepoint: !!result.sharepointUrl });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to generate brief document" });
+    }
+  });
 
   app.post("/api/available-units/migrate-letting-deals", requireAuth, async (req, res) => {
     try {

@@ -611,7 +611,7 @@ export function InlineMultiSelect({ value, options, colorMap, placeholder = "—
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="top" className="w-56 max-h-64 overflow-y-auto z-[9999]">
         {options.map(opt => (
-          <DropdownMenuItem key={opt.value} onClick={() => toggle(opt.value)}>
+          <DropdownMenuItem key={opt.value} onSelect={e => { e.preventDefault(); toggle(opt.value); }}>
             <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${selected.includes(opt.value) ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
               {selected.includes(opt.value) && <Check className="h-2 w-2 text-primary-foreground" />}
             </div>

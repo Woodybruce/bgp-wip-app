@@ -527,6 +527,7 @@ function getToolProgressLabel(toolName: string): string {
     create_requirement: "Logging requirement...",
     create_available_unit: "Creating unit...",
     update_available_unit: "Updating unit...",
+    create_targeting_brief: "Creating targeting brief...",
     create_investment_tracker: "Adding to tracker...",
     update_investment_tracker: "Updating tracker...",
     send_email: "Sending email...",
@@ -2951,6 +2952,50 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           fee: { type: "number", description: "Fee percentage" },
         },
         required: ["propertyId", "unitName"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "create_targeting_brief",
+      description: "Create an operator targeting brief for a letting tracker unit and generate the branded brief document (PDF). Use when a client (e.g. Landsec) or agent describes a leasing instruction for a specific unit: the letting objective, what kind of operator they want, priority categories, named target operators, deliverable deadlines and success measures. Ask for the property and unit first (search available units to find the unit ID), then gather the brief content conversationally before calling this tool. The generated document is saved against the unit in the Letting Tracker and filed to the scheme's SharePoint folder.",
+      parameters: {
+        type: "object",
+        properties: {
+          unitId: { type: "string", description: "Available unit ID the brief is for. Search available units first to get the ID." },
+          title: { type: "string", description: "Brief title, e.g. 'Operator Targeting Brief – 145A Queen Street, Westgate (L29A)'" },
+          clientCompany: { type: "string", description: "Instructing client / landlord, e.g. 'Landsec'. Defaults to the current user's client company if they are a client user." },
+          objective: { type: "string", description: "The letting objective" },
+          locationContext: { type: "string", description: "Location, adjacencies, categories already represented nearby" },
+          targetCriteria: { type: "string", description: "What the preferred operator should demonstrate" },
+          priorityCategories: { type: "string", description: "Priority categories, keeping category names and example operators together" },
+          agentInstruction: { type: "string", description: "Instruction to the agent (emphasis, constraints)" },
+          successMeasures: { type: "string", description: "How success will be measured" },
+          instructedDate: { type: "string", description: "YYYY-MM-DD instruction date (default today)" },
+          deadline1Date: { type: "string", description: "YYYY-MM-DD first deliverable deadline (e.g. +14 days)" },
+          deadline1Deliverables: { type: "string", description: "What is due at the first deadline" },
+          deadline2Date: { type: "string", description: "YYYY-MM-DD second deliverable deadline (e.g. +30 days)" },
+          deadline2Deliverables: { type: "string", description: "What is due at the second deadline" },
+          minTargets: { type: "number", description: "Minimum number of target operators required (default 5)" },
+          priorityTargets: { type: "number", description: "Number of priority targets required (default 2)" },
+          targets: {
+            type: "array",
+            description: "Named target operators from the instruction",
+            items: {
+              type: "object",
+              properties: {
+                operatorName: { type: "string" },
+                category: { type: "string" },
+                priority: { type: "string", description: "A or B" },
+                rationale: { type: "string" },
+              },
+              required: ["operatorName"],
+            },
+          },
+        },
+        required: ["unitId", "objective"],
       },
     },
   });
@@ -5565,7 +5610,13 @@ export async function executeCrmToolRaw(
       results.investmentTracker = await db.select({ id: investmentTracker.id, assetName: investmentTracker.assetName, address: investmentTracker.address, status: investmentTracker.status, boardType: investmentTracker.boardType, client: investmentTracker.client }).from(investmentTracker).where(buildOr([investmentTracker.assetName, investmentTracker.address, investmentTracker.client, investmentTracker.vendor])).limit(100);
     }
     if (entityType === "all" || entityType === "units") {
-      results.availableUnits = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName, marketingStatus: availableUnits.marketingStatus, propertyId: availableUnits.propertyId }).from(availableUnits).where(buildOr([availableUnits.unitName])).limit(100);
+      const { eq: eqUnits } = await import("drizzle-orm");
+      results.availableUnits = await db
+        .select({ id: availableUnits.id, unitName: availableUnits.unitName, marketingStatus: availableUnits.marketingStatus, propertyId: availableUnits.propertyId, propertyName: crmProperties.name })
+        .from(availableUnits)
+        .leftJoin(crmProperties, eqUnits(availableUnits.propertyId, crmProperties.id))
+        .where(buildOr([availableUnits.unitName, crmProperties.name]))
+        .limit(100);
     }
     if (entityType === "all" || entityType === "requirements") {
       const reqConds = [exactQ, ...wordPatterns].map((p, i) => `(company_name ILIKE $${i+1} OR contact_name ILIKE $${i+1} OR location ILIKE $${i+1} OR notes ILIKE $${i+1})`);
@@ -5865,6 +5916,88 @@ export async function executeCrmToolRaw(
       epcRating: fnArgs.epcRating, notes: fnArgs.notes, fee: fnArgs.fee,
     }).returning();
     return { data: { success: true, action: "created", entity: "available unit", id: created.id, name: created.unitName }, action: { type: "crm_created", entityType: "unit", id: created.id } };
+  }
+
+  if (fnName === "create_targeting_brief") {
+    const { availableUnits, unitBriefs, unitTargetOperators } = await import("@shared/schema");
+    const { eq } = await import("drizzle-orm");
+    const [unit] = await db.select().from(availableUnits).where(eq(availableUnits.id, fnArgs.unitId)).limit(1);
+    if (!unit) return { data: { success: false, error: `No available unit found with ID "${fnArgs.unitId}". Search available units first.` } };
+
+    const userId = (req as any)?.session?.userId || (req as any)?.tokenUserId || null;
+    let userName: string | null = null;
+    let clientCompany: string | null = fnArgs.clientCompany || null;
+    if (userId) {
+      const user = await storage.getUser(userId);
+      userName = user?.name || null;
+      if (!clientCompany && user?.email && !user.email.toLowerCase().endsWith("@brucegillinghampollard.com")) {
+        clientCompany = user.team || null;
+      }
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const [brief] = await db.insert(unitBriefs).values({
+      unitId: unit.id,
+      propertyId: unit.propertyId,
+      clientCompany,
+      title: fnArgs.title || `Operator Targeting Brief — ${unit.unitName}`,
+      objective: fnArgs.objective,
+      locationContext: fnArgs.locationContext,
+      targetCriteria: fnArgs.targetCriteria,
+      priorityCategories: fnArgs.priorityCategories,
+      agentInstruction: fnArgs.agentInstruction,
+      successMeasures: fnArgs.successMeasures,
+      instructedDate: fnArgs.instructedDate || today,
+      deadline1Date: fnArgs.deadline1Date,
+      deadline1Deliverables: fnArgs.deadline1Deliverables,
+      deadline2Date: fnArgs.deadline2Date,
+      deadline2Deliverables: fnArgs.deadline2Deliverables,
+      minTargets: fnArgs.minTargets ?? 5,
+      priorityTargets: fnArgs.priorityTargets ?? 2,
+      createdByUserId: userId,
+      createdByName: userName,
+    }).returning();
+
+    const targetsIn: any[] = Array.isArray(fnArgs.targets) ? fnArgs.targets : [];
+    for (let i = 0; i < targetsIn.length; i++) {
+      const t = targetsIn[i];
+      if (!t?.operatorName) continue;
+      await db.insert(unitTargetOperators).values({
+        briefId: brief.id,
+        operatorName: t.operatorName,
+        category: t.category || null,
+        priority: t.priority === "A" ? "A" : "B",
+        rationale: t.rationale || null,
+        sortOrder: i,
+      });
+    }
+
+    let docResult: any = null;
+    try {
+      const { generateBriefDocument } = await import("./unit-brief-doc");
+      docResult = await generateBriefDocument(brief.id);
+    } catch (err: any) {
+      console.warn("[chatbgp] Brief document generation failed:", err?.message);
+    }
+
+    return {
+      data: {
+        success: true,
+        action: "created",
+        entity: "targeting brief",
+        id: brief.id,
+        unit: unit.unitName,
+        targetsAdded: targetsIn.length,
+        ...(docResult ? {
+          downloadUrl: docResult.downloadUrl,
+          filename: docResult.fileName,
+          sharepointUrl: docResult.sharepointUrl || null,
+          downloadMarkdown: `[Download ${docResult.fileName}](${docResult.downloadUrl})`,
+          instruction: "IMPORTANT: Include the downloadMarkdown text EXACTLY as-is in your response so the user can download the brief document. Mention it is also saved on the unit's Letting Tracker files" + (docResult.sharepointUrl ? " and filed in the scheme's SharePoint folder." : "."),
+        } : { documentNote: "Brief saved, but document generation failed — it can be regenerated from the Letting Tracker." }),
+      },
+      action: { type: "crm_created", entityType: "unit_brief", id: brief.id },
+    };
   }
 
   if (fnName === "update_available_unit") {

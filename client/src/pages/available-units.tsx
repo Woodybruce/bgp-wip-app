@@ -20,8 +20,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown, ExternalLink, AlertTriangle, FileBadge,
+  ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target,
 } from "lucide-react";
+import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -302,6 +303,8 @@ export default function AvailableUnitsPage() {
   const [propertyFilter, setPropertyFilter] = useState("all");
   const [assetClassFilter, setAssetClassFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
+  const [bgpTeamFilter, setBgpTeamFilter] = useState("all");
+  const [agentFilter, setAgentFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [unifiedAddOpen, setUnifiedAddOpen] = useState(false);
   const [editItem, setEditItem] = useState<AvailableUnit | null>(null);
@@ -319,6 +322,7 @@ export default function AvailableUnitsPage() {
   // Start Date, Restrictions) collapse behind it.
   const [showAllUnitFields, setShowAllUnitFields] = useState(false);
   const [filesUnit, setFilesUnit] = useState<AvailableUnit | null>(null);
+  const [briefUnit, setBriefUnit] = useState<AvailableUnit | null>(null);
   const [viewingsUnit, setViewingsUnit] = useState<AvailableUnit | null>(null);
   const [offersUnit, setOffersUnit] = useState<AvailableUnit | null>(null);
   const [addViewingOpen, setAddViewingOpen] = useState(false);
@@ -382,7 +386,7 @@ export default function AvailableUnitsPage() {
     queryKey: ["/api/crm/deals"],
   });
 
-  const { data: bgpUsers = [] } = useQuery<{ id: string; name: string; team?: string }[]>({
+  const { data: bgpUsers = [] } = useQuery<{ id: string; name: string; team?: string; additionalTeams?: string[] }[]>({
     queryKey: ["/api/users"],
   });
 
@@ -950,6 +954,15 @@ export default function AvailableUnitsPage() {
     if (propertyFilter !== "all") result = result.filter(u => u.propertyId === propertyFilter);
     if (assetClassFilter !== "all") result = result.filter(u => u.useClass === assetClassFilter);
     if (locationFilter !== "all") result = result.filter(u => u.location === locationFilter);
+    if (bgpTeamFilter !== "all") {
+      const teamUserIds = new Set(
+        bgpUsers
+          .filter(bu => bu.team === bgpTeamFilter || (bu.additionalTeams || []).includes(bgpTeamFilter))
+          .map(bu => bu.id)
+      );
+      result = result.filter(u => Array.isArray(u.agentUserIds) && u.agentUserIds.some(id => teamUserIds.has(id)));
+    }
+    if (agentFilter !== "all") result = result.filter(u => Array.isArray(u.agentUserIds) && u.agentUserIds.includes(agentFilter));
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(u => {
@@ -968,7 +981,7 @@ export default function AvailableUnitsPage() {
       });
     }
     return result;
-  }, [teamUnits, statusFilter, propertyFilter, assetClassFilter, locationFilter, search, propertyMap, dealMap, crmCompanies]);
+  }, [teamUnits, statusFilter, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies]);
 
   const stats = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -989,6 +1002,21 @@ export default function AvailableUnitsPage() {
   const agentOptions = useMemo(() => {
     return bgpUsers.map(u => ({ value: u.id, label: u.name }));
   }, [bgpUsers]);
+
+  const activeAgents = useMemo(() => {
+    const ids = new Set<string>();
+    for (const u of teamUnits) for (const id of (Array.isArray(u.agentUserIds) ? u.agentUserIds : [])) ids.add(id);
+    return bgpUsers.filter(u => ids.has(u.id)).sort((a, b) => a.name.localeCompare(b.name));
+  }, [teamUnits, bgpUsers]);
+
+  const activeBgpTeams = useMemo(() => {
+    const teams = new Set<string>();
+    for (const u of activeAgents) {
+      if (u.team) teams.add(u.team);
+      for (const t of u.additionalTeams || []) teams.add(t);
+    }
+    return [...teams].sort();
+  }, [activeAgents]);
 
   const FY_MONTHS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
   const FY_MONTH_NUMS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3];
@@ -1148,6 +1176,28 @@ export default function AvailableUnitsPage() {
             already act as filter buttons (same setStatusFilter call)
             and carry counts too, so this row was duplicated UI. The
             cards now own status filtering on this page. */}
+        <Select value={bgpTeamFilter} onValueChange={setBgpTeamFilter}>
+          <SelectTrigger className="w-[170px]" data-testid="select-team-filter">
+            <SelectValue placeholder="All Teams" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Teams</SelectItem>
+            {activeBgpTeams.map(t => (
+              <SelectItem key={t} value={t}>{t}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={agentFilter} onValueChange={setAgentFilter}>
+          <SelectTrigger className="w-[170px]" data-testid="select-agent-filter">
+            <SelectValue placeholder="All Agents" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Agents</SelectItem>
+            {activeAgents.map(u => (
+              <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         {activeAssetClasses.length > 0 && (
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-xs text-muted-foreground mr-0.5">Class:</span>
@@ -1352,13 +1402,14 @@ export default function AvailableUnitsPage() {
                 <TableHead className="text-center min-w-[100px]">Activity</TableHead>
                 <TableHead className="min-w-[120px]">Fee &amp; FA</TableHead>
                 <TableHead>Files</TableHead>
+                <TableHead>Brief</TableHead>
                 <TableHead className="w-[100px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={15} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={16} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1708,6 +1759,18 @@ export default function AvailableUnitsPage() {
                           Files
                         </Button>
                       </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs gap-1"
+                          onClick={() => setBriefUnit(u)}
+                          data-testid={`button-brief-${u.id}`}
+                        >
+                          <Target className="h-3.5 w-3.5" />
+                          Brief
+                        </Button>
+                      </TableCell>
                       <TableCell className={`sticky right-0 z-10 border-l ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
                         <div className="flex gap-1">
                           <Button
@@ -1755,6 +1818,12 @@ export default function AvailableUnitsPage() {
         open={unifiedAddOpen}
         onOpenChange={setUnifiedAddOpen}
         mode="tracker"
+      />
+
+      <UnitBriefDialog
+        unit={briefUnit}
+        open={!!briefUnit}
+        onClose={() => setBriefUnit(null)}
       />
 
       <UnitFormDialog
@@ -2819,6 +2888,9 @@ function UnitFormDialog({
     pu => pu.name.trim().toLowerCase() === (form.unitName || "").trim().toLowerCase()
   );
 
+  const updSel = (field: keyof UnitFormState, value: string) => setForm({ ...form, [field]: value === "__none__" ? "" : value });
+  const noneItem = <SelectItem value="__none__"><span className="text-muted-foreground">— None —</span></SelectItem>;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[700px] max-h-[85vh] overflow-y-auto">
@@ -2999,9 +3071,10 @@ function UnitFormDialog({
           </div>
           <div>
             <Label>Floor</Label>
-            <Select value={form.floor} onValueChange={v => upd("floor", v)}>
+            <Select value={form.floor} onValueChange={v => updSel("floor", v)}>
               <SelectTrigger><SelectValue placeholder="Select floor..." /></SelectTrigger>
               <SelectContent>
+                {noneItem}
                 {FLOORS.map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}
               </SelectContent>
             </Select>
