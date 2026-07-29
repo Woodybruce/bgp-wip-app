@@ -5158,6 +5158,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   const { data: propertyUnits = [] } = useQuery<PropertyUnit[]>({
     queryKey: ["/api/property-units"],
+    // Staff-only master-unit cache (403s for clients); clients read units via
+    // the tenancy/leasing schedules instead.
+    enabled: !isClientDeals && !!currentUserForViews,
   });
 
   const { data: users = [] } = useQuery<{ id: number; name: string; email: string }[]>({
