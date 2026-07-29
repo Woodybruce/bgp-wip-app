@@ -66,6 +66,24 @@ router.get("/api/client-teams/:clientCompanyId", requireAuth, async (req, res) =
                   WHERE m2.client_company_id = $1 AND m2.user_id = ap.user_id
                )
          GROUP BY ap.user_id
+        UNION ALL
+        -- Third leg: BGP people ACTIVE on the account (synced M365 emails/
+        -- meetings with the client's contacts in the last 90 days) who are
+        -- neither on the curated board nor property-assigned. Without this,
+        -- someone working the account entirely through meetings never shows.
+        SELECT 'ia-' || u.id, u.id, 'Active on Account', NULL, NULL, 1500, false
+          FROM users u
+         WHERE u.email ILIKE '%@brucegillinghampollard.com'
+           AND lower(u.email) IN (
+                 SELECT DISTINCT lower(i.bgp_user) FROM crm_interactions i
+                  WHERE i.company_id = $1 AND i.bgp_user IS NOT NULL
+                    AND i.interaction_date > NOW() - INTERVAL '90 days'
+               )
+           AND NOT EXISTS (
+                 SELECT 1 FROM crm_client_team_members m3
+                  WHERE m3.client_company_id = $1 AND m3.user_id = u.id
+               )
+           AND NOT EXISTS (SELECT 1 FROM agent_props ap2 WHERE ap2.user_id = u.id)
       )
       SELECT mem.id,
              $1 AS client_company_id,
