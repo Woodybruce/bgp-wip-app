@@ -19,7 +19,7 @@ import {
   UtensilsCrossed, Soup, Diamond, Car, Wifi, BookOpen, Smartphone,
   Flower2, Clapperboard, Tv, Gamepad2, Baby, Palette, PartyPopper,
   HeartPulse, Bath, Dumbbell, Tag, Wrench, Watch, Gem, Footprints,
-  ShoppingCart, Crosshair, TrendingDown, Eye, Lightbulb,
+  ShoppingCart, Crosshair, TrendingDown, Eye, Lightbulb, Target, ClipboardList,
 } from "lucide-react";
 
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
@@ -603,6 +603,8 @@ function BrandExplorer() {
   const [search, setSearch] = useState(() => {
     try { return localStorage.getItem("brand-explorer-search") || ""; } catch { return ""; }
   });
+  const [relFilter, setRelFilter] = useState<string>("all");
+  const [propFilter, setPropFilter] = useState<string>("all");
 
   const { data: allCompanies = [] } = useQuery<any[]>({
     queryKey: ["/api/crm/companies"],
@@ -612,6 +614,29 @@ function BrandExplorer() {
     },
     staleTime: 120_000,
   });
+
+  // Firm-wide relationship flags per brand (staff only) — powers the
+  // relationship pills, the targeted-at-property dropdown and card chips.
+  const { data: explorerFlags = {} } = useQuery<Record<string, {
+    isTenant: boolean;
+    targetedAt: { propertyId: string; propertyName: string; unitName: string | null }[];
+    hasContacts: boolean;
+    hunterFlag: boolean;
+    isTracked: boolean;
+    liveRequirement: boolean;
+  }>>({
+    queryKey: ["/api/brands/explorer-flags"],
+    enabled: !isClientExplorer,
+    staleTime: 120_000,
+  });
+
+  const targetProperties = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of Object.values(explorerFlags)) {
+      for (const t of f.targetedAt || []) m.set(t.propertyId, t.propertyName);
+    }
+    return [...m.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [explorerFlags]);
 
   const companies = useMemo(
     () => (allCompanies as any[]).filter((c: any) => (c.companyType || "").startsWith("Tenant")),
@@ -673,8 +698,24 @@ function BrandExplorer() {
       const s = search.toLowerCase();
       list = list.filter(c => c.name.toLowerCase().includes(s));
     }
+    if (!isClientExplorer && relFilter !== "all") {
+      list = list.filter(c => {
+        const f = explorerFlags[c.id];
+        if (!f) return false;
+        if (relFilter === "tenant") return f.isTenant;
+        if (relFilter === "targeted") return (f.targetedAt || []).length > 0;
+        if (relFilter === "contacts") return f.hasContacts;
+        if (relFilter === "hunter") return f.hunterFlag;
+        if (relFilter === "tracked") return f.isTracked;
+        if (relFilter === "requirement") return f.liveRequirement;
+        return true;
+      });
+    }
+    if (!isClientExplorer && propFilter !== "all") {
+      list = list.filter(c => (explorerFlags[c.id]?.targetedAt || []).some(t => t.propertyId === propFilter));
+    }
     return list.sort((a: any, b: any) => a.name.localeCompare(b.name));
-  }, [companies, activeCat, activeSub, activeCatObj, search]);
+  }, [companies, activeCat, activeSub, activeCatObj, search, isClientExplorer, relFilter, propFilter, explorerFlags]);
 
   return (
     <div className="space-y-4">
@@ -774,9 +815,9 @@ function BrandExplorer() {
         );
       })()}
 
-      {/* Search + count */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
+      {/* Search + relationship filters + count */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Search brands..."
@@ -785,19 +826,80 @@ function BrandExplorer() {
             className="pl-9 h-9"
           />
         </div>
-        <p className="text-sm text-muted-foreground">{filtered.length} results</p>
+        {!isClientExplorer && (
+          <>
+            <div className="flex gap-1.5 flex-wrap">
+              {([
+                ["all", "All"],
+                ["tenant", "Existing tenants"],
+                ["targeted", "Being targeted"],
+                ["contacts", "With contacts"],
+                ["requirement", "Live requirement"],
+                ["hunter", "Hunter-flagged"],
+                ["tracked", "Tracked"],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setRelFilter(key)}
+                  className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                    relFilter === key ? "bg-teal-600 text-white border-teal-600" : "bg-background hover:bg-muted"
+                  }`}
+                  data-testid={`explorer-rel-${key}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {targetProperties.length > 0 && (
+              <select
+                value={propFilter}
+                onChange={e => setPropFilter(e.target.value)}
+                className="h-7 rounded-full border bg-background px-2.5 text-xs text-muted-foreground"
+                data-testid="explorer-prop-filter"
+              >
+                <option value="all">Targeted at: any property</option>
+                {targetProperties.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            )}
+          </>
+        )}
+        <p className="text-sm text-muted-foreground ml-auto">{filtered.length} results</p>
       </div>
 
       {/* Brand cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8 gap-2">
         {filtered.map((c: any) => {
           const parent = c.parentCompanyId ? companyById.get(c.parentCompanyId) : null;
+          const cf = isClientExplorer ? undefined : explorerFlags[c.id];
+          const targetCount = (cf?.targetedAt || []).length;
           return (
             <div key={c.id} className="relative flex flex-col items-center gap-1.5 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-center group">
               <Link href={`/companies/${c.id}`} className="absolute inset-0 rounded-lg" aria-label={c.name} />
               <BrandLogo name={c.name} domain={c.domain} size={36} />
               <p className="text-xs font-medium leading-tight truncate w-full group-hover:text-primary transition-colors">{c.name}</p>
               <p className="text-[10px] text-muted-foreground truncate w-full">{(c.companyType || "").replace("Tenant - ", "")}</p>
+              {cf && (cf.isTenant || targetCount > 0 || cf.liveRequirement) && (
+                <div className="flex items-center justify-center gap-1 flex-wrap">
+                  {cf.isTenant && (
+                    <span className="text-[9px] px-1.5 py-px rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">Tenant</span>
+                  )}
+                  {targetCount > 0 && (
+                    <span
+                      className="text-[9px] px-1.5 py-px rounded-full border border-amber-400 text-amber-700 dark:text-amber-400 inline-flex items-center gap-0.5"
+                      title={(cf.targetedAt || []).map(t => `${t.unitName ? `${t.unitName} · ` : ""}${t.propertyName}`).join("\n")}
+                    >
+                      <Target className="w-2.5 h-2.5" />{targetCount}
+                    </span>
+                  )}
+                  {cf.liveRequirement && (
+                    <span className="text-[9px] px-1.5 py-px rounded-full border border-violet-400 text-violet-700 dark:text-violet-400 inline-flex items-center gap-0.5" title="Live leasing requirement">
+                      <ClipboardList className="w-2.5 h-2.5" />Req
+                    </span>
+                  )}
+                </div>
+              )}
               {c.parentCompanyId && (
                 <Link
                   href={`/companies/${c.parentCompanyId}`}

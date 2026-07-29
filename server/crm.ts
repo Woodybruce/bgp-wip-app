@@ -7163,6 +7163,58 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
+  // ── Brand Explorer relationship flags (staff only) ──────────────────
+  // Firm-wide per-brand flags for the explorer's filter pills: tenant
+  // anywhere in the book, targeted on any leasing schedule (with the
+  // property/unit list), has contacts, hunter-flagged, tracked, and live
+  // leasing requirement. Keyed by company id so the explorer merges them
+  // onto its existing companies list. Cross-landlord targeting data —
+  // stays BGP-internal (clients get the scoped /api/client/brand-directory).
+  app.get("/api/brands/explorer-flags", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) {
+        return res.status(403).json({ error: "Not available for client accounts" });
+      }
+      const rows = await pool.query(
+        `SELECT c.id,
+                (EXISTS (SELECT 1 FROM tenancy_schedule_units t WHERE t.tenant_company_id = c.id)
+                 OR EXISTS (SELECT 1 FROM crm_deals d WHERE d.tenant_id = c.id AND d.status = 'COM')) AS "isTenant",
+                (
+                  SELECT COALESCE(json_agg(json_build_object('propertyId', tg.property_id, 'propertyName', tg.property_name, 'unitName', tg.unit_name)), '[]')
+                  FROM (
+                    SELECT p.id AS property_id, p.name AS property_name, u.unit_name
+                      FROM leasing_schedule_units u JOIN crm_properties p ON p.id = u.property_id
+                     WHERE u.target_company_ids @> ARRAY[c.id::text]::text[]
+                    UNION
+                    SELECT p.id, p.name, u2.unit_name
+                      FROM target_tenants tt
+                      JOIN leasing_schedule_units u2 ON u2.id = tt.unit_id
+                      JOIN crm_properties p ON p.id = u2.property_id
+                     WHERE tt.company_id = c.id AND COALESCE(tt.status, '') <> 'rejected'
+                    UNION
+                    SELECT p.id, p.name, au.unit_name
+                      FROM unit_target_operators uto
+                      JOIN unit_briefs ub ON ub.id = uto.brief_id
+                      JOIN available_units au ON au.id = ub.unit_id
+                      JOIN crm_properties p ON p.id = au.property_id
+                     WHERE uto.company_id = c.id AND COALESCE(uto.status, '') NOT IN ('Passed')
+                    LIMIT 8
+                  ) tg
+                ) AS "targetedAt",
+                EXISTS (SELECT 1 FROM crm_contacts ct WHERE ct.company_id = c.id) AS "hasContacts",
+                (COALESCE(c.hunter_flag, false) OR COALESCE(c.letting_hunter_flag, false) OR COALESCE(c.investment_hunter_flag, false)) AS "hunterFlag",
+                COALESCE(c.is_tracked_brand, false) AS "isTracked",
+                EXISTS (SELECT 1 FROM crm_requirements_leasing rl
+                         WHERE rl.company_id = c.id AND LOWER(COALESCE(rl.status, '')) = 'active') AS "liveRequirement"
+           FROM crm_companies c
+          WHERE c.company_type ILIKE 'Tenant%' AND c.merged_into_id IS NULL`
+      );
+      const map: Record<string, any> = {};
+      for (const r of rows.rows) { const { id, ...flags } = r; map[id] = flags; }
+      res.json(map);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // ── Brands Hub aggregated data ───────────────────────────────────────
   app.get("/api/brands/hub", requireAuth, async (req, res) => {
     try {
