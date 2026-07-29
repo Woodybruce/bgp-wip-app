@@ -4,7 +4,7 @@ import { queryClient, getQueryFn, apiRequest } from "./lib/queryClient";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { MessageSquare, ArrowLeft, Sparkles, Menu, Smartphone } from "lucide-react";
 import { Toaster } from "@/components/ui/toaster";
-import { HandwritingPanel } from "@/components/handwriting-panel";
+import { HandwritingPanel, HandwritingToggle } from "@/components/handwriting-panel";
 import { GlobalPdfHandler } from "@/components/global-pdf-handler";
 import { useToast } from "@/hooks/use-toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -576,6 +576,7 @@ function AuthenticatedApp() {
                 <GlobalSearch />
               </div>
               <div className="flex items-center gap-2">
+                <HandwritingToggle />
                 <ColorSchemeSelector />
                 <NotificationCenter />
                 {!isClientShell && (

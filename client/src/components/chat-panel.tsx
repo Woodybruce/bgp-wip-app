@@ -2721,7 +2721,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       ) : (
         <>
           <div className="flex-1 overflow-y-auto p-3" ref={scrollRef}>
-            {messages.length === 0 && isActiveThreadAi && !activeThreadId ? (
+            {messages.length === 0 && isActiveThreadAi ? (
               <div className="flex flex-col items-center justify-center h-full text-center px-4">
                 <div className="w-14 h-14 rounded-2xl bg-gray-900 text-white flex items-center justify-center mb-4">
                   <Sparkles className="w-7 h-7" />

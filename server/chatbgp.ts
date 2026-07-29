@@ -531,6 +531,7 @@ function getToolProgressLabel(toolName: string): string {
     create_targeting_brief: "Creating targeting brief...",
     find_duplicate_properties: "Scanning for duplicates...",
     merge_properties: "Merging properties...",
+    reconcile_tenancy_rows: "Reconciling tenancy rows...",
     create_investment_tracker: "Adding to tracker...",
     update_investment_tracker: "Updating tracker...",
     send_email: "Sending email...",
@@ -3142,6 +3143,21 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           mergePropertyId: { type: "string", description: "Duplicate property ID to merge in and delete" },
         },
         required: ["keepPropertyId", "mergePropertyId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "reconcile_tenancy_rows",
+      description: "Fix split tenancy-schedule rows — where one import put the passing rent on one row and another import put the lease dates on a parallel row for the same unit, so almost no row has both (breaking rent coverage, WAULT weighting and expiry-vs-income analysis). Dry run (default) returns the full merge plan: which rows merge, which groups are ambiguous, and what rent+expiry coverage becomes. Only call with apply=true AFTER showing the user the dry-run numbers and getting their explicit confirmation — applying merges rows and deletes the duplicates (references are re-pointed first). Conflicting rows (different tenant/rent/expiry) are never auto-merged; they come back in the 'ambiguous' list for human review.",
+      parameters: {
+        type: "object",
+        properties: {
+          propertyId: { type: "string", description: "Optional: limit to one property. Omit to reconcile the whole tenancy schedule." },
+          apply: { type: "boolean", description: "false/omitted = dry run (report only). true = execute the merge plan — requires the user's explicit confirmation of the dry-run numbers first." },
+        },
       },
     },
   });
@@ -6133,6 +6149,37 @@ export async function executeCrmToolRaw(
       };
     } catch (e: any) {
       return { data: { success: false, error: e?.message || "Merge failed" } };
+    }
+  }
+
+  if (fnName === "reconcile_tenancy_rows") {
+    const { reconcileTenancyRows } = await import("./tenancy-reconcile");
+    try {
+      const report = await reconcileTenancyRows({
+        propertyId: fnArgs.propertyId ? String(fnArgs.propertyId) : null,
+        apply: fnArgs.apply === true,
+      });
+      // Keep the tool payload compact for big books — the model summarises,
+      // the user doesn't need 1,000 raw merge rows in context.
+      const sample = report.merges.slice(0, 25);
+      return {
+        data: {
+          success: true,
+          applied: report.applied,
+          rowsScanned: report.rowsScanned,
+          duplicateGroups: report.duplicateGroups,
+          mergeCount: report.merges.length,
+          mergesSample: sample,
+          ambiguousCount: report.ambiguous.length,
+          ambiguous: report.ambiguous.slice(0, 25),
+          coverage: report.coverage,
+          instruction: report.applied
+            ? "Report what was merged and the new rent+expiry coverage."
+            : "Summarise for the user: how many rows would merge, projected rent+expiry coverage before → after, and list the ambiguous groups needing a human decision. Ask for explicit confirmation before calling again with apply=true.",
+        },
+      };
+    } catch (e: any) {
+      return { data: { success: false, error: e?.message || "Reconcile failed" } };
     }
   }
 

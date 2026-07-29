@@ -5957,21 +5957,26 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // client's name, not a specific property) surface on the events card.
       const cpCompanyName = (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId])).rows[0]?.name || null;
 
-      let totalUnits = 0, vacantUnits = 0, totalPassingRent = 0;
+      let totalUnits = 0, vacantUnits = 0, totalPassingRent = 0, rentRecordedUnits = 0;
       if (propertyIds.length > 0) {
         // Portfolio-overview stats come from the TENANCY schedule — the master
         // rent roll (every unit). The leasing board is only strategy + live
         // deals now, so it must NOT drive whole-portfolio counts.
+        // rent_recorded = how many of those rows actually carry a rent — the
+        // headline £ is a partial sum until data onboarding completes, and
+        // the dashboard states that coverage rather than implying a total.
         const tenancyResult = await pool.query(
           `SELECT COUNT(*) as total,
                   COUNT(*) FILTER (WHERE status IN ('Vacant', 'Void', 'Available')) as vacant,
-                  COALESCE(SUM(CASE WHEN passing_rent_pa IS NOT NULL THEN passing_rent_pa ELSE 0 END), 0) as passing_rent
+                  COALESCE(SUM(CASE WHEN passing_rent_pa IS NOT NULL THEN passing_rent_pa ELSE 0 END), 0) as passing_rent,
+                  COUNT(*) FILTER (WHERE passing_rent_pa IS NOT NULL AND passing_rent_pa > 0) as rent_recorded
            FROM tenancy_schedule_units WHERE property_id = ANY($1)`,
           [propertyIds]
         );
         totalUnits = parseInt(tenancyResult.rows[0]?.total || "0");
         vacantUnits = parseInt(tenancyResult.rows[0]?.vacant || "0");
         totalPassingRent = parseFloat(tenancyResult.rows[0]?.passing_rent || "0");
+        rentRecordedUnits = parseInt(tenancyResult.rows[0]?.rent_recorded || "0");
       }
 
       const dealsResult = await pool.query(
@@ -6135,6 +6140,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           vacantUnits,
           vacancyRate: totalUnits > 0 ? ((vacantUnits / totalUnits) * 100).toFixed(1) : "0",
           totalPassingRent,
+          rentRecordedUnits,
           activeDeals: parseInt(dealsResult.rows[0]?.active || "0"),
           totalContacts: parseInt(contactsResult.rows[0]?.total || "0"),
           upcomingEvents,

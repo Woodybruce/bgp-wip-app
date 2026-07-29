@@ -989,8 +989,12 @@ export default function Dashboard() {
         ];
 
         const stats = portfolioData.stats || {};
-        const avgRentPerUnit = stats.totalUnits > 0 ? stats.totalPassingRent / stats.totalUnits : 0;
+        // Average over units that actually carry a rent — dividing by every
+        // unit understates it while rent coverage is partial.
+        const rentUnits = stats.rentRecordedUnits ?? 0;
+        const avgRentPerUnit = rentUnits > 0 ? stats.totalPassingRent / rentUnits : 0;
         const occupiedCount = stats.totalUnits - stats.vacantUnits;
+        const rentCoveragePct = occupiedCount > 0 ? Math.round((rentUnits / occupiedCount) * 100) : 0;
         const occupancyRate = stats.totalUnits > 0 ? ((occupiedCount / stats.totalUnits) * 100).toFixed(1) : "0";
 
         const portfolioGridItems = [
@@ -1151,7 +1155,11 @@ export default function Dashboard() {
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800" data-testid="kpi-rent">
                       <p className="text-[10px] text-purple-600 dark:text-purple-400 font-medium uppercase tracking-wider">Passing Rent</p>
                       <p className="text-xl font-bold text-purple-700 dark:text-purple-300">£{(stats.totalPassingRent / 1000000).toFixed(1)}m</p>
-                      <p className="text-[10px] text-muted-foreground">£{avgRentPerUnit.toLocaleString("en-GB", { maximumFractionDigits: 0 })}/unit avg</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {rentUnits > 0 && rentCoveragePct < 95
+                          ? `across ${rentUnits.toLocaleString()} units with rent recorded (${rentCoveragePct}% of occupied)`
+                          : `£${avgRentPerUnit.toLocaleString("en-GB", { maximumFractionDigits: 0 })}/unit avg`}
+                      </p>
                     </div>
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800" data-testid="kpi-deals">
                       <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium uppercase tracking-wider">Active Deals</p>

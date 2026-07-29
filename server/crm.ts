@@ -2245,6 +2245,33 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
 
+  // Tenancy split-row reconcile (rent on one row, expiry on its shadow).
+  // GET = dry run: full merge plan + projected coverage, touches nothing.
+  // POST /apply = execute the same plan transactionally.
+  app.get("/api/admin/tenancy-reconcile", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { reconcileTenancyRows } = await import("./tenancy-reconcile");
+      const report = await reconcileTenancyRows({
+        propertyId: req.query.propertyId ? String(req.query.propertyId) : null,
+        apply: false,
+      });
+      res.json(report);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/admin/tenancy-reconcile/apply", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { reconcileTenancyRows } = await import("./tenancy-reconcile");
+      const report = await reconcileTenancyRows({
+        propertyId: req.body?.propertyId ? String(req.body.propertyId) : null,
+        apply: true,
+      });
+      res.json(report);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.post("/api/crm/properties/bulk-update", requireAuth, async (req, res) => {
     try {
       const { ids, field, value } = req.body;
