@@ -1058,8 +1058,17 @@ const CLIENT_REL_FILTERS = [
   { key: "contact", label: "With contacts" },
 ] as const;
 
+interface DirectoryAgent {
+  id: string;
+  name: string;
+  domain: string | null;
+  companyType: string | null;
+  contacts: { id: string; name: string; role: string | null; email: string | null; phone: string | null; specialty: string | null }[];
+  represents: { brandId: string; brandName: string; region: string | null }[];
+}
+
 function ClientCrmHub() {
-  const [tab, setTab] = useState<"brands" | "contacts">("brands");
+  const [tab, setTab] = useState<"brands" | "agents" | "contacts">("brands");
   const [search, setSearch] = useState("");
   const [cat, setCat] = useState("all");
   const [rel, setRel] = useState<string>("all");
@@ -1071,6 +1080,7 @@ function ClientCrmHub() {
     queryKey: ["/api/client/brand-directory"],
   });
   const { data: myContacts = [] } = useQuery<CrmContact[]>({ queryKey: ["/api/crm/contacts"] });
+  const { data: agents = [] } = useQuery<DirectoryAgent[]>({ queryKey: ["/api/client/agent-directory"] });
 
   // Properties this client is actively targeting brands at — drives the
   // "targeting at" dropdown without another fetch.
@@ -1102,12 +1112,12 @@ function ClientCrmHub() {
       <div>
         <h1 className="text-2xl font-bold">CRM</h1>
         <p className="text-sm text-muted-foreground">
-          {brands.length.toLocaleString()} brands · {myContacts.length.toLocaleString()} of your contacts
+          {brands.length.toLocaleString()} brands · {agents.length.toLocaleString()} tenant rep agents · {myContacts.length.toLocaleString()} of your contacts
         </p>
       </div>
 
       <div className="flex gap-1 border-b">
-        {([["brands", "Brand Directory"], ["contacts", `${hubUser?.team || "My"} Contacts`]] as const).map(([key, label]) => (
+        {([["brands", "Brand Directory"], ["agents", "Agents"], ["contacts", `${hubUser?.team || "My"} Contacts`]] as const).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -1268,6 +1278,79 @@ function ClientCrmHub() {
               )}
             </div>
           )}
+        </>
+      ) : tab === "agents" ? (
+        <>
+          <div className="flex items-center gap-3 flex-wrap">
+            <Input
+              placeholder="Search agents, people or brands…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="max-w-xs"
+              data-testid="client-agent-search"
+            />
+            <span className="text-xs text-muted-foreground ml-auto">
+              Tenant rep agents — the agents acquiring sites for brands
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {agents
+              .filter(a => {
+                const q = search.trim().toLowerCase();
+                if (!q) return true;
+                if (a.name.toLowerCase().includes(q)) return true;
+                if (a.contacts.some(c => c.name?.toLowerCase().includes(q))) return true;
+                return a.represents.some(r => r.brandName?.toLowerCase().includes(q));
+              })
+              .map(a => (
+                <Card key={a.id} className="overflow-hidden" data-testid={`client-agent-${a.id}`}>
+                  <CardContent className="p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <CompanyLogo company={{ id: a.id, name: a.name, domain: a.domain } as CrmCompany} size="sm" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold truncate">{a.name}</p>
+                        <Badge variant="secondary" className="text-[9px]">Tenant Rep</Badge>
+                      </div>
+                    </div>
+                    {a.represents.length > 0 && (
+                      <div className="flex gap-1 flex-wrap">
+                        {a.represents.slice(0, 6).map(r => (
+                          <Link key={r.brandId} href={`/companies/${r.brandId}`}>
+                            <Badge variant="outline" className="text-[9px] cursor-pointer hover:bg-muted">
+                              {r.brandName}{r.region ? ` · ${r.region}` : ""}
+                            </Badge>
+                          </Link>
+                        ))}
+                        {a.represents.length > 6 && (
+                          <span className="text-[10px] text-muted-foreground">+{a.represents.length - 6} more</span>
+                        )}
+                      </div>
+                    )}
+                    {a.contacts.length > 0 ? (
+                      <div className="space-y-1 pt-1 border-t">
+                        {a.contacts.slice(0, 3).map(c => (
+                          <div key={c.id} className="text-xs flex items-baseline gap-2 min-w-0">
+                            <span className="font-medium whitespace-nowrap">{c.name}</span>
+                            {c.role && <span className="text-muted-foreground truncate">{c.role}</span>}
+                            {c.email && (
+                              <a href={`mailto:${c.email}`} className="text-blue-600 dark:text-blue-400 hover:underline ml-auto shrink-0">email</a>
+                            )}
+                          </div>
+                        ))}
+                        {a.contacts.length > 3 && (
+                          <p className="text-[10px] text-muted-foreground">+{a.contacts.length - 3} more</p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground pt-1 border-t">No contacts on file — ask your BGP team.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            {agents.length === 0 && (
+              <p className="text-sm text-muted-foreground col-span-full py-8 text-center">No tenant rep agents on file yet.</p>
+            )}
+          </div>
         </>
       ) : (
         <>

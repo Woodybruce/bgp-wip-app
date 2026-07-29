@@ -4607,6 +4607,56 @@ Return a JSON object with these fields (use null for any field you cannot find):
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Agent directory for client CRM lookup — TENANT REP agents only (the
+  // agents chasing sites for brands, i.e. who a landlord wants to reach).
+  // Landlord-side and investment agents stay out of client view. An agent
+  // qualifies via an active tenant_rep representation, a company-level
+  // agent_type of tenant_rep, or a Tenant Rep specialty contact. The
+  // "represents" list is limited to brands in the client brand slice.
+  app.get("/api/client/agent-directory", requireAuth, async (_req, res) => {
+    try {
+      const rows = await pool.query(
+        `WITH slice_brands AS (
+           SELECT id, name FROM crm_companies
+            WHERE company_type ILIKE ANY($1) AND merged_into_id IS NULL
+         )
+         SELECT a.id, a.name, a.domain, a.company_type AS "companyType",
+                COALESCE((
+                  SELECT json_agg(json_build_object(
+                    'id', ct.id, 'name', ct.name, 'role', ct.role,
+                    'email', ct.email, 'phone', COALESCE(ct.phone_mobile, ct.phone),
+                    'specialty', ct.agent_specialty
+                  ) ORDER BY ct.name)
+                  FROM crm_contacts ct WHERE ct.company_id = a.id
+                ), '[]') AS contacts,
+                COALESCE((
+                  SELECT json_agg(json_build_object(
+                    'brandId', b.id, 'brandName', b.name, 'region', r.region
+                  ) ORDER BY b.name)
+                  FROM brand_agent_representations r
+                  JOIN slice_brands b ON b.id = r.brand_company_id
+                 WHERE r.agent_company_id = a.id AND r.end_date IS NULL
+                   AND r.agent_type = 'tenant_rep'
+                ), '[]') AS represents
+           FROM crm_companies a
+          WHERE a.merged_into_id IS NULL
+            AND (
+              EXISTS (SELECT 1 FROM brand_agent_representations r2
+                       WHERE r2.agent_company_id = a.id AND r2.end_date IS NULL
+                         AND r2.agent_type = 'tenant_rep')
+              OR a.agent_type = 'tenant_rep'
+              OR (lower(COALESCE(a.company_type, '')) = 'agent'
+                  AND EXISTS (SELECT 1 FROM crm_contacts c2
+                               WHERE c2.company_id = a.id
+                                 AND lower(COALESCE(c2.agent_specialty, '')) = 'tenant rep'))
+            )
+          ORDER BY a.name`,
+        [CLIENT_BRAND_TYPE_PATTERNS]
+      );
+      res.json(rows.rows);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.get("/api/crm/comps", requireAuth, async (req, res) => {
     try {
       if (await isClientRequest(req)) return res.json([]);

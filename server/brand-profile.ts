@@ -859,7 +859,11 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     res.json({
       company: c,
       signals: filteredSignals,
-      representedBy: repsForBrand.rows,
+      // Client accounts only see tenant-rep representation — landlord-side
+      // and investment agent relationships are BGP-internal.
+      representedBy: bpScope
+        ? repsForBrand.rows.filter((r: any) => r.agent_type === "tenant_rep")
+        : repsForBrand.rows,
       representing: brandsForAgent.rows,
       kyc: kyc.rows[0] || { doc_count: 0, last_uploaded_at: null },
       images: images.rows,
