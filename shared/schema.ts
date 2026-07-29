@@ -1854,6 +1854,8 @@ export const unitOffers = pgTable("unit_offers", {
   fittingOutContribution: real("fitting_out_contribution"),
   status: text("status").default("Pending"),
   comments: text("comments"),
+  source: text("source"), // 'email' when auto-detected from a synced inbox; null = manual
+  emailConversationId: text("email_conversation_id"), // Graph conversationId — dedupe key so one offer thread = one row
   createdAt: timestamp("created_at").defaultNow(),
 });
 

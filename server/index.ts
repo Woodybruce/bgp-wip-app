@@ -43,6 +43,11 @@ import { pool } from "./db";
     `ALTER TABLE unit_viewings ADD COLUMN IF NOT EXISTS source TEXT`,
     `ALTER TABLE unit_viewings ADD COLUMN IF NOT EXISTS calendar_event_id TEXT`,
     `CREATE UNIQUE INDEX IF NOT EXISTS unit_viewings_calendar_event_idx ON unit_viewings (calendar_event_id) WHERE calendar_event_id IS NOT NULL`,
+    // Email→offers check: provenance + one-row-per-thread dedupe for offers
+    // auto-detected from synced inboxes (see server/viewing-sync.ts).
+    `ALTER TABLE unit_offers ADD COLUMN IF NOT EXISTS source TEXT`,
+    `ALTER TABLE unit_offers ADD COLUMN IF NOT EXISTS email_conversation_id TEXT`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS unit_offers_email_conversation_idx ON unit_offers (email_conversation_id) WHERE email_conversation_id IS NOT NULL`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS leasing_privacy_enabled BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT`,
     `ALTER TABLE lease_events ADD COLUMN IF NOT EXISTS landlord TEXT`,

@@ -214,8 +214,18 @@ async function syncEmailsForUser(
   let count = 0;
 
   try {
-    const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=receivedDateTime ge ${since}&$select=id,subject,bodyPreview,from,toRecipients,ccRecipients,receivedDateTime&$top=100&$orderby=receivedDateTime desc`;
+    const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=receivedDateTime ge ${since}&$select=id,conversationId,subject,bodyPreview,from,toRecipients,ccRecipients,receivedDateTime&$top=100&$orderby=receivedDateTime desc`;
     const messages = await graphGetPaged(token, url, 5);
+
+    // Email → offers check: offer-looking emails anchored to a tracker unit
+    // from a known external contact become unconfirmed unit_offers rows
+    // (one per thread; skipped when the offer is already logged).
+    try {
+      const { syncOfferEmails } = await import("./viewing-sync");
+      await syncOfferEmails(messages, userEmail);
+    } catch (e: any) {
+      console.error(`[offer-check] ${userEmail}:`, e?.message);
+    }
 
     for (const msg of messages) {
       const msId = `email_${msg.id}`;

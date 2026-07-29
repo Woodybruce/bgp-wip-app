@@ -18,7 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2,
+  Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
   ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target,
 } from "lucide-react";
@@ -2445,6 +2445,11 @@ export default function AvailableUnitsPage() {
                       {o.contactName && <span className="text-xs text-muted-foreground ml-2">({o.contactId ? <a href={`/contacts?contact=${o.contactId}`} className="text-blue-600 hover:underline dark:text-blue-400">{o.contactName}</a> : o.contactName})</span>}
                     </div>
                     <div className="flex items-center gap-2">
+                      {o.source === "email" && (
+                        <Badge variant="outline" className="text-[10px] gap-1 border-amber-400 text-amber-700 dark:text-amber-400">
+                          <Mail className="w-2.5 h-2.5" /> From email — confirm figures
+                        </Badge>
+                      )}
                       <Badge variant="outline" className={o.status === "Accepted" ? "bg-emerald-100 text-emerald-800" : o.status === "Rejected" ? "bg-red-100 text-red-800" : ""}>{o.status || "Pending"}</Badge>
                       <span className="text-xs text-muted-foreground">{o.offerDate}</span>
                       <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive" onClick={() => deleteOfferMutation.mutate(o.id)}>

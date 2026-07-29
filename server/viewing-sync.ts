@@ -184,3 +184,110 @@ export async function syncDiaryViewings(events: DiaryEvent[], mailboxEmail: stri
   if (upserted > 0) console.log(`[viewing-sync] ${mailboxEmail}: ${upserted} viewing(s) from diary`);
   return upserted;
 }
+
+// ─── Email → offers check ────────────────────────────────────────────────
+// Offers arrive by email, not diary. The hourly inbox sweep runs each
+// message through this: offer language + a tracker-unit anchor + a known
+// external contact ⇒ an unconfirmed offer row (status 'Pending',
+// source 'email', figures left blank for a human to confirm). One row per
+// email thread via Graph conversationId, and never a second row when an
+// offer for the same unit + company was already logged in the last 60
+// days — so it flags what's missing from the tracker without duplicating
+// what the team already typed in.
+
+export interface InboxMessage {
+  id: string;
+  conversationId?: string | null;
+  subject?: string | null;
+  bodyPreview?: string | null;
+  receivedDateTime?: string | null;
+  from?: { emailAddress?: { name?: string; address?: string } } | null;
+  toRecipients?: { emailAddress?: { name?: string; address?: string } }[] | null;
+  ccRecipients?: { emailAddress?: { name?: string; address?: string } }[] | null;
+}
+
+export function looksLikeOffer(subject: string | null | undefined, bodyPreview?: string | null): boolean {
+  if (/\boffers?\b/i.test(subject || "")) return true;
+  return /\b(our offer|offer of|revised offer|improved offer|offer for|make an offer|submit(ted)? an offer|offer submitted|best and final|heads of terms)\b/i.test(bodyPreview || "");
+}
+
+export async function syncOfferEmails(messages: InboxMessage[], mailboxEmail: string): Promise<number> {
+  const candidates = messages.filter(m => looksLikeOffer(m.subject, m.bodyPreview));
+  if (candidates.length === 0) return 0;
+
+  const units = await loadTrackerUnits();
+  if (units.length === 0) return 0;
+  let created = 0;
+
+  for (const msg of candidates) {
+    try {
+      const hay = norm(`${msg.subject || ""} ${msg.bodyPreview || ""}`);
+      const unit = resolveUnit(hay, units);
+      if (!unit) continue;
+
+      // The offering party: a non-BGP participant we know in the CRM. No
+      // known external contact → too weak a signal, skip (keeps "special
+      // offer" newsletters that happen to name a scheme out of the tracker).
+      const external = [
+        msg.from?.emailAddress,
+        ...(msg.toRecipients || []).map(r => r?.emailAddress),
+        ...(msg.ccRecipients || []).map(r => r?.emailAddress),
+      ].filter((a): a is { name?: string; address?: string } =>
+        !!a?.address && !a.address.toLowerCase().endsWith(BGP_DOMAIN)
+      );
+      if (external.length === 0) continue;
+      const emails = [...new Set(external.map(a => a.address!.toLowerCase()))];
+      const contactRes = await pool.query(
+        `SELECT ct.id, ct.name, ct.company_id, co.name AS company_name
+           FROM crm_contacts ct
+           LEFT JOIN crm_companies co ON co.id = ct.company_id
+          WHERE LOWER(ct.email) = ANY($1) LIMIT 1`,
+        [emails]
+      );
+      if (!contactRes.rows.length) continue;
+      const contact = contactRes.rows[0];
+
+      // Already logged? Same unit + company with an offer in the last 60
+      // days (manual or synced) means the tracker is up to date — skip.
+      if (contact.company_id) {
+        const existing = await pool.query(
+          `SELECT 1 FROM unit_offers
+            WHERE unit_id = $1 AND company_id = $2
+              AND offer_date ~ '^\\d{4}-\\d{2}-\\d{2}'
+              AND offer_date::date >= (NOW() - INTERVAL '60 days')::date
+            LIMIT 1`,
+          [unit.id, contact.company_id]
+        );
+        if (existing.rows.length) continue;
+      }
+
+      const received = msg.receivedDateTime ? new Date(msg.receivedDateTime) : new Date();
+      const fmt = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" });
+      const parts = Object.fromEntries(fmt.formatToParts(received).map(p => [p.type, p.value]));
+      const offerDate = `${parts.year}-${parts.month}-${parts.day}`;
+      const convKey = msg.conversationId ? `conv_${msg.conversationId}` : `msg_${msg.id}`;
+
+      const res = await pool.query(
+        `INSERT INTO unit_offers
+           (unit_id, company_name, contact_name, contact_id, company_id,
+            offer_date, status, comments, source, email_conversation_id)
+         VALUES ($1, $2, $3, $4, $5, $6, 'Pending', $7, 'email', $8)
+         ON CONFLICT (email_conversation_id) WHERE email_conversation_id IS NOT NULL
+         DO NOTHING
+         RETURNING id`,
+        [
+          unit.id, contact.company_name || null, contact.name || null,
+          contact.id, contact.company_id || null, offerDate,
+          `Detected in ${mailboxEmail}'s inbox: "${msg.subject || ""}" — figures need confirming from the email/heads of terms.`,
+          convKey,
+        ]
+      );
+      if (res.rows.length) created++;
+    } catch (e: any) {
+      console.error("[offer-check] upsert failed:", e?.message);
+    }
+  }
+
+  if (created > 0) console.log(`[offer-check] ${mailboxEmail}: ${created} unconfirmed offer(s) from inbox`);
+  return created;
+}
