@@ -2144,10 +2144,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.get("/api/crm/properties/:id", requireAuth, async (req, res) => {
     try {
-      const property = await storage.getCrmProperty(req.params.id);
+      const property = await storage.getCrmProperty(String(req.params.id));
       if (!property) return res.status(404).json({ error: "Not found" });
       const scopeCompanyId = await resolveCompanyScope(req);
-      if (scopeCompanyId && !(await isPropertyInScope(scopeCompanyId, req.params.id))) {
+      if (scopeCompanyId && !(await isPropertyInScope(scopeCompanyId, String(req.params.id)))) {
         return res.status(403).json({ error: "Access denied" });
       }
       res.json(property);
@@ -2165,7 +2165,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   app.put("/api/crm/properties/:id", requireAuth, async (req, res) => {
     try {
       const scopeCompanyId = await resolveCompanyScope(req);
-      if (scopeCompanyId && !(await isPropertyInScope(scopeCompanyId, req.params.id))) {
+      if (scopeCompanyId && !(await isPropertyInScope(scopeCompanyId, String(req.params.id)))) {
         return res.status(403).json({ error: "Access denied" });
       }
       const updates = { ...req.body };
@@ -2175,7 +2175,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           updates[f] = new Date(updates[f]);
         }
       }
-      const property = await storage.updateCrmProperty(req.params.id, updates);
+      const property = await storage.updateCrmProperty(String(req.params.id), updates);
       res.json(property);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -2186,7 +2186,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (scopeCompanyId) {
         return res.status(403).json({ error: "Read-only access for client accounts" });
       }
-      await storage.deleteCrmProperty(req.params.id);
+      await storage.deleteCrmProperty(String(req.params.id));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
