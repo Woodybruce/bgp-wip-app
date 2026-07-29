@@ -160,6 +160,14 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     //    SUMMARY only (kind / contact name / direction / date) — we
     //    deliberately don't return the email body / preview so the
     //    client view stays at headline level without leaking content.
+    // Two legs: interactions on a DEAL at this property, plus interactions
+    // with contacts at the property's client/landlord company. The hourly
+    // M365 sync links emails/meetings to CONTACTS (never deals), so the
+    // deal leg alone rendered "no activity" on accounts with daily traffic
+    // (the Landsec case). The company leg is limited to the property's
+    // assigned BGP agents so a busy landlord's every touchpoint firm-wide
+    // doesn't flood each of their properties; when nobody is assigned yet,
+    // any BGP user counts.
     const activityQ = await pool.query<any>(
       `SELECT i.id, i.type, i.direction, i.interaction_date, i.bgp_user,
               c.name AS contact_name,
@@ -171,8 +179,25 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
          LEFT JOIN crm_deals d ON d.id = i.deal_id
          LEFT JOIN property_units pu ON pu.id = d.unit_id
          LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
-        WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
-          AND i.interaction_date > NOW() - INTERVAL '14 days'
+        WHERE i.interaction_date > NOW() - INTERVAL '14 days'
+          AND (
+            (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
+            OR (
+              c.company_id IN (
+                SELECT p2.landlord_id FROM crm_properties p2 WHERE p2.id = $1 AND p2.landlord_id IS NOT NULL
+                UNION
+                SELECT cp.company_id FROM crm_company_properties cp WHERE cp.property_id = $1
+              )
+              AND (
+                NOT EXISTS (SELECT 1 FROM crm_property_agents pa WHERE pa.property_id = $1)
+                OR lower(coalesce(i.bgp_user, '')) IN (
+                  SELECT lower(u2.email) FROM crm_property_agents pa
+                    JOIN users u2 ON u2.id = pa.user_id
+                   WHERE pa.property_id = $1 AND u2.email IS NOT NULL
+                )
+              )
+            )
+          )
         ORDER BY i.interaction_date DESC
         LIMIT 30`,
       [propertyId]
