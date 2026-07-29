@@ -481,6 +481,25 @@ thead th {
   }
 }
 
+/* Container-query pair for detail-page bodies: Tailwind's lg:grid-cols-2
+   keys off the VIEWPORT, but the ChatBGP side panel shrinks the CONTAINER —
+   two-up card grids were rendering in space that only fits one, crushing
+   text to a word per line. Two-up only when the container itself is wide. */
+.cq-body {
+  container-type: inline-size;
+}
+.cq-two-up {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.625rem;
+  align-items: start;
+}
+@container (min-width: 44rem) {
+  .cq-two-up {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 .dashboard-grid .react-grid-item {
   transition: all 200ms ease;
 }

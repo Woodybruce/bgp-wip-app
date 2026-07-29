@@ -487,7 +487,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       </div>
 
       <div className="flex-1 flex min-h-0">
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto cq-body">
           <div className="p-4 sm:p-5 space-y-2.5">
       <div className="flex items-center gap-2 flex-wrap">
         <Button
@@ -501,7 +501,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         >
           <ArrowLeft className="w-4 h-4" />
         </Button>
-        <div className="flex-1 min-w-0">
+        {/* min-w-[16rem], not min-w-0: with basis 0 the title block "fits" at
+            any width, so the wrap never triggered and a narrow window (chat
+            panel open) crushed the heading to one word per line — the action
+            buttons must wrap below instead. */}
+        <div className="flex-1 min-w-[16rem]">
           {(() => {
             // Investment (Sale/Purchase) deals are about the whole property —
             // heading = property name. Leasing deals are about a specific unit
@@ -656,7 +660,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       )}
 
       {/* Parties + Fee Allocation side by side to use the horizontal space. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5 items-start">
+      <div className="cq-two-up">
       <Card>
         <CardContent className="p-4 space-y-2">
           <div className="flex items-center gap-2 mb-1">

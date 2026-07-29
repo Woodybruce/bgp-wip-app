@@ -38,12 +38,25 @@ router.get("/api/client-teams/:clientCompanyId", requireAuth, async (req, res) =
     // the list of the client's properties that person covers, so the board
     // can show who is on what.
     const rows = await pool.query(`
-      WITH scoped_props AS (
-        SELECT id, name FROM crm_properties WHERE landlord_id = $1
+      WITH board_companies AS (
+        -- The BGP-maintained board is the source of truth, but it can hang
+        -- off a duplicate company row (a second "Landsec" record). Read the
+        -- board across every same-named, unmerged sibling so the client card
+        -- always reflects what BGP configured.
+        SELECT id FROM crm_companies WHERE id = $1
+        UNION
+        SELECT c2.id FROM crm_companies c1
+          JOIN crm_companies c2
+            ON lower(trim(c2.name)) = lower(trim(c1.name)) AND c2.id <> c1.id
+         WHERE c1.id = $1 AND c2.merged_into_id IS NULL
+      ),
+      scoped_props AS (
+        SELECT id, name FROM crm_properties
+         WHERE landlord_id IN (SELECT id FROM board_companies)
         UNION
         SELECT p.id, p.name FROM crm_company_properties cp
           JOIN crm_properties p ON p.id = cp.property_id
-         WHERE cp.company_id = $1
+         WHERE cp.company_id IN (SELECT id FROM board_companies)
       ),
       agent_props AS (
         SELECT pa.user_id, pa.role, s.id AS property_id, s.name AS property_name
@@ -54,7 +67,7 @@ router.get("/api/client-teams/:clientCompanyId", requireAuth, async (req, res) =
         SELECT m.id, m.user_id, m.team_group, m.role, m.reports_to_user_id,
                m.sort_order, COALESCE(m.is_lead, false) AS is_lead
           FROM crm_client_team_members m
-         WHERE m.client_company_id = $1
+         WHERE m.client_company_id IN (SELECT id FROM board_companies)
         UNION ALL
         SELECT 'pa-' || ap.user_id, ap.user_id, 'Property Team',
                MIN(ap.role), NULL, 999, bool_or(ap.role = 'Lead')
@@ -63,7 +76,8 @@ router.get("/api/client-teams/:clientCompanyId", requireAuth, async (req, res) =
          -- made NOT IN drop EVERY property agent from the card.
          WHERE NOT EXISTS (
                  SELECT 1 FROM crm_client_team_members m2
-                  WHERE m2.client_company_id = $1 AND m2.user_id = ap.user_id
+                  WHERE m2.client_company_id IN (SELECT id FROM board_companies)
+                    AND m2.user_id = ap.user_id
                )
          GROUP BY ap.user_id
       )
