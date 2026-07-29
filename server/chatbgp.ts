@@ -14,6 +14,7 @@ import { getValidMsToken } from "./microsoft";
 import { getFile, saveFile, findChatMediaByOriginalName } from "./file-storage";
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
+import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
 
 const CHATBGP_MODEL = "claude-opus-4-6";        // Main chat: Opus for intelligence
 const CHATBGP_OPUS_MODEL = "claude-opus-4-6";   // Same
@@ -1423,6 +1424,163 @@ export async function getCrmContext(): Promise<string> {
 // Invalidate CRM context cache when CRM data changes (call from crm.ts on mutations)
 export function invalidateCrmContextCache() {
   contextCache.delete("crmContext");
+}
+
+// ---- Client scope (external logins, e.g. Landsec) ----
+// External client users get: a restricted tool allowlist, a CRM context
+// scoped to their own properties/units/deals/tenants, and none of the
+// firm-wide knowledge base, business learnings, or pipeline data.
+
+export const CLIENT_SAFE_TOOLS = new Set([
+  "search_crm",
+  "create_targeting_brief",
+  "generate_pdf",
+  "generate_word",
+  "web_search",
+  "search_news",
+  "navigate_to",
+  "transcribe_audio",
+]);
+
+export function filterToolsForClientScope(tools: any[]): any[] {
+  return tools.filter(t => CLIENT_SAFE_TOOLS.has(t?.function?.name));
+}
+
+export const CLIENT_SYSTEM_PROMPT = `You are ChatBGP, the AI assistant of Bruce Gillingham Pollard (BGP), currently speaking with a CLIENT of BGP — not a BGP staff member.
+
+Strict rules:
+- You may only discuss this client's own properties, units, deals and the tenants on them. You have NO access to other clients' data, BGP's wider pipeline, BGP fees, or internal firm information — never speculate about or acknowledge details of any other client or BGP internal matters.
+- Use search_crm to look up the client's properties, available units, deals and tenants. Results are already filtered to their portfolio.
+- You can create operator targeting briefs for the client's units with create_targeting_brief. Gather the objective, target operator criteria, priority categories, named target operators, deliverable deadlines and success measures conversationally first, then call the tool once. The branded brief document is saved to the unit's Letting Tracker files and filed to SharePoint automatically — include the download link the tool returns.
+- You can generate PDF and Word documents from content in the conversation, and search the web and news for market context.
+- Be professional and concise. Use UK English and UK date/number formats.
+- If asked for anything outside this scope, explain that their account covers their own portfolio only and suggest they contact their BGP team.`;
+
+export async function getClientCrmContext(scopeCompanyId: string): Promise<string> {
+  const cacheKey = `crmContext:client:${scopeCompanyId}`;
+  const cached = getCached<string>(cacheKey);
+  if (cached) return cached;
+  try {
+    const propsQ = await pool.query(
+      `SELECT p.id, p.name, p.address::text AS address
+       FROM crm_properties p
+       WHERE p.landlord_id = $1
+          OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+       ORDER BY p.name LIMIT 50`,
+      [scopeCompanyId]
+    );
+    const propIds = propsQ.rows.map(r => r.id);
+    let unitsQ: { rows: any[] } = { rows: [] };
+    let dealsQ: { rows: any[] } = { rows: [] };
+    if (propIds.length > 0) {
+      [unitsQ, dealsQ] = await Promise.all([
+        pool.query(
+          `SELECT au.unit_name, au.use_class, au.sqft, au.asking_rent, au.marketing_status, p.name AS property_name
+           FROM available_units au JOIN crm_properties p ON p.id = au.property_id
+           WHERE au.property_id = ANY($1) ORDER BY p.name, au.unit_name LIMIT 60`,
+          [propIds]
+        ).catch(() => ({ rows: [] })),
+        pool.query(
+          `SELECT d.name, d.status, d.deal_type, p.name AS property_name,
+                  (SELECT name FROM crm_companies WHERE id = d.tenant_id) AS tenant_name
+           FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
+           WHERE (d.property_id = ANY($1) OR d.landlord_id = $2)
+             AND d.status NOT IN ('Dead','Withdrawn')
+           ORDER BY d.updated_at DESC LIMIT 40`,
+          [propIds, scopeCompanyId]
+        ).catch(() => ({ rows: [] })),
+      ]);
+    }
+
+    let ctx = "\n\n## Your Portfolio (all data below is limited to your own instructions)\n";
+    if (propsQ.rows.length === 0) {
+      ctx += "No properties are currently linked to your account. Ask your BGP team to link your instructions.\n";
+    } else {
+      ctx += `\n### Properties (${propsQ.rows.length})\n`;
+      for (const p of propsQ.rows) {
+        let addr = "";
+        try { const a = JSON.parse(p.address); addr = a?.formatted || a?.address || ""; } catch { addr = p.address || ""; }
+        ctx += `- ${p.name}${addr ? " — " + addr : ""}\n`;
+      }
+      if (unitsQ.rows.length > 0) {
+        ctx += `\n### Units\n`;
+        for (const u of unitsQ.rows) {
+          ctx += `- ${u.unit_name} at ${u.property_name} — ${u.use_class || ""}${u.sqft ? ", " + Number(u.sqft).toLocaleString() + " sq ft" : ""}${u.asking_rent ? ", £" + Number(u.asking_rent).toLocaleString() + " pa asking" : ""} [${u.marketing_status || "Available"}]\n`;
+        }
+      }
+      if (dealsQ.rows.length > 0) {
+        ctx += `\n### Active deals on your properties\n`;
+        for (const d of dealsQ.rows) {
+          ctx += `- ${d.name}${d.property_name ? " at " + d.property_name : ""} | ${d.deal_type || ""} | ${d.status || ""}${d.tenant_name ? " | Tenant: " + d.tenant_name : ""}\n`;
+        }
+      }
+    }
+    setCache(cacheKey, ctx, 2 * 60 * 1000);
+    return ctx;
+  } catch (err) {
+    console.error("Failed to load client CRM context:", err);
+    return "";
+  }
+}
+
+// Scoped replacement for search_crm when the requester is a client login.
+// Searches ONLY the client's own properties, units on them, deals on them,
+// and the tenant companies on those deals. No contacts, no fees, no
+// investment pipeline, no comps, no requirements.
+export async function clientScopedCrmSearch(scopeCompanyId: string, rawQuery: string): Promise<any> {
+  const q = `%${rawQuery.trim()}%`;
+  const words = rawQuery.trim().split(/\s+/).filter(w => w.length >= 2).map(w => `%${w}%`);
+  const patterns = [q, ...words];
+  const like = (col: string, startIdx: number) => patterns.map((_, i) => `${col} ILIKE $${startIdx + i}`).join(" OR ");
+
+  const results: any = {};
+  const scopedPropsSql = `SELECT p.id FROM crm_properties p WHERE p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)`;
+
+  const props = await pool.query(
+    `SELECT p.id, p.name, p.status, p.address::text AS address FROM crm_properties p
+     WHERE p.id IN (${scopedPropsSql})
+       AND (${like("p.name", 2)} OR ${like("p.address::text", 2 + patterns.length)})
+     LIMIT 15`,
+    [scopeCompanyId, ...patterns, ...patterns]
+  ).catch(() => ({ rows: [] }));
+  results.properties = props.rows;
+
+  const units = await pool.query(
+    `SELECT au.id, au.unit_name AS "unitName", au.marketing_status AS "marketingStatus", au.property_id AS "propertyId", p.name AS "propertyName"
+     FROM available_units au JOIN crm_properties p ON p.id = au.property_id
+     WHERE au.property_id IN (${scopedPropsSql})
+       AND (${like("au.unit_name", 2)} OR ${like("p.name", 2 + patterns.length)})
+     LIMIT 15`,
+    [scopeCompanyId, ...patterns, ...patterns]
+  ).catch(() => ({ rows: [] }));
+  results.availableUnits = units.rows;
+
+  const deals = await pool.query(
+    `SELECT d.id, d.name, d.status, d.deal_type AS "dealType", p.name AS "propertyName",
+            (SELECT name FROM crm_companies WHERE id = d.tenant_id) AS "tenantName"
+     FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
+     WHERE (d.property_id IN (${scopedPropsSql}) OR d.landlord_id = $1)
+       AND d.status NOT IN ('Dead','Withdrawn')
+       AND (${like("d.name", 2)} OR ${like("p.name", 2 + patterns.length)})
+     LIMIT 15`,
+    [scopeCompanyId, ...patterns, ...patterns]
+  ).catch(() => ({ rows: [] }));
+  results.deals = deals.rows;
+
+  const tenants = await pool.query(
+    `SELECT DISTINCT c.id, c.name FROM crm_companies c
+     WHERE (c.id = $1 OR c.id IN (
+        SELECT d.tenant_id FROM crm_deals d
+        WHERE d.tenant_id IS NOT NULL AND (d.property_id IN (${scopedPropsSql}) OR d.landlord_id = $1)
+     ))
+       AND (${like("c.name", 2)})
+     LIMIT 15`,
+    [scopeCompanyId, ...patterns]
+  ).catch(() => ({ rows: [] }));
+  results.companies = tenants.rows;
+
+  const totalFound = Object.values(results).reduce((sum: number, arr: any) => sum + (arr?.length || 0), 0);
+  return { success: true, query: rawQuery, totalFound, results, note: "Results are limited to your own portfolio." };
 }
 
 const SYSTEM_PROMPT_FALLBACK = "You are ChatBGP, an AI assistant for Bruce Gillingham Pollard (BGP). You are powered by Claude Opus. IMPORTANT: If deep_investigate returns report.property.ambiguous === true, present the options as a numbered list and ask the user to pick the correct property. Do NOT guess or proceed with unverified property data.";
@@ -4385,6 +4543,12 @@ async function executeCrmToolRaw(
   const { pool } = await import("./db");
 
   if (fnName === "search_crm") {
+    const searchScope = req ? await resolveCompanyScope(req).catch(() => null) : null;
+    if (searchScope) {
+      const rawQ = (fnArgs.query as string || "").trim();
+      if (rawQ.length < 2) return { data: { error: "Search term too short", results: {} } };
+      return { data: await clientScopedCrmSearch(searchScope, rawQ) };
+    }
     const { crmDeals, crmContacts, crmCompanies, crmProperties, investmentTracker, availableUnits } = await import("@shared/schema");
     const { ilike, or } = await import("drizzle-orm");
     const rawQuery = (fnArgs.query as string || "").trim();
@@ -4575,6 +4739,11 @@ async function executeCrmToolRaw(
     const { eq } = await import("drizzle-orm");
     const [unit] = await db.select().from(availableUnits).where(eq(availableUnits.id, fnArgs.unitId)).limit(1);
     if (!unit) return { data: { success: false, error: `No available unit found with ID "${fnArgs.unitId}". Search available units first.` } };
+
+    const briefScope = req ? await resolveCompanyScope(req).catch(() => null) : null;
+    if (briefScope && !(await isPropertyInScope(briefScope, unit.propertyId))) {
+      return { data: { success: false, error: "That unit is not part of your portfolio, so a brief can't be created for it from this account." } };
+    }
 
     const userId = (req as any)?.session?.userId || (req as any)?.tokenUserId || null;
     let userName: string | null = null;
@@ -7868,6 +8037,13 @@ export async function handleCrmToolCall(
 ): Promise<{ handled: boolean; response?: any }> {
   const { db } = await import("./db");
 
+  try {
+    const gateScope = await resolveCompanyScope(req);
+    if (gateScope && !CLIENT_SAFE_TOOLS.has(fnName)) {
+      return { handled: true, response: { reply: "That capability isn't available on client accounts — your account covers your own portfolio only. Contact your BGP team for anything further." } };
+    }
+  } catch {}
+
   const summaryHelper = async (toolResult: any) => {
     const summaryMessages = [
       ...completionOptions.messages,
@@ -7991,6 +8167,12 @@ export async function handleCrmToolCall(
     const rawQuery = (fnArgs.query as string || "").trim();
     if (rawQuery.length < 2) {
       return { handled: true, response: { reply: "Please provide a longer search term (at least 2 characters)." } };
+    }
+    const legacySearchScope = req ? await resolveCompanyScope(req).catch(() => null) : null;
+    if (legacySearchScope) {
+      const scoped = await clientScopedCrmSearch(legacySearchScope, rawQuery);
+      const reply = await summaryHelper(scoped);
+      return { handled: true, response: { reply: reply || JSON.stringify(scoped) } };
     }
     const entityType = fnArgs.entityType || "all";
     const results: any = {};
@@ -9225,21 +9407,29 @@ export function setupChatBGPRoutes(app: Express) {
         }
       }
 
-      const { tools } = await getAvailableTools();
+      let { tools } = await getAvailableTools();
+      const fileScopeCompanyId = await resolveCompanyScope(req).catch(() => null);
+      if (fileScopeCompanyId) tools = filterToolsForClientScope(tools);
 
       const fileUserId = req.session.userId!;
       const [knowledgeContext, fileMemoryContext, fileEmailCalContext, fileCrmCtx, businessLearnings] = await Promise.all([
-        withTimeout(getKnowledgeContext(), 8000, ""),
+        fileScopeCompanyId ? Promise.resolve("") : withTimeout(getKnowledgeContext(), 8000, ""),
         withTimeout(getMemoryContext(fileUserId), 8000, ""),
         withTimeout(getEmailAndCalendarContext(req), 8000, ""),
-        withTimeout(getCrmContext(), 8000, ""),
-        withTimeout(getBusinessLearningsContext(), 8000, ""),
+        fileScopeCompanyId
+          ? withTimeout(getClientCrmContext(fileScopeCompanyId), 8000, "")
+          : withTimeout(getCrmContext(), 8000, ""),
+        fileScopeCompanyId ? Promise.resolve("") : withTimeout(getBusinessLearningsContext(), 8000, ""),
       ]);
       let systemPrompt: string;
-      try {
-        systemPrompt = await buildSystemPrompt();
-      } catch {
-        systemPrompt = SYSTEM_PROMPT_FALLBACK;
+      if (fileScopeCompanyId) {
+        systemPrompt = CLIENT_SYSTEM_PROMPT;
+      } else {
+        try {
+          systemPrompt = await buildSystemPrompt();
+        } catch {
+          systemPrompt = SYSTEM_PROMPT_FALLBACK;
+        }
       }
       const systemContent = systemPrompt + knowledgeContext + businessLearnings + fileMemoryContext + fileEmailCalContext + fileCrmCtx;
 
@@ -9380,6 +9570,14 @@ export function setupChatBGPRoutes(app: Express) {
     req: Request,
     msToken: string | null
   ): Promise<{ data: any; action?: any }> {
+    // Hard gate: external client logins (e.g. Landsec) may only run the
+    // client-safe allowlist, regardless of what the model asked for.
+    try {
+      const gateScope = await resolveCompanyScope(req);
+      if (gateScope && !CLIENT_SAFE_TOOLS.has(tcName)) {
+        return { data: { success: false, error: "This capability is not available on client accounts. Your account covers your own portfolio only — contact your BGP team for anything further." } };
+      }
+    } catch {}
     // SharePoint tools
     if (tcName === "browse_sharepoint_folder") {
       if (!msToken) return { data: { error: "Microsoft 365 not connected. Please connect via the SharePoint page." } };
@@ -9808,7 +10006,9 @@ export function setupChatBGPRoutes(app: Express) {
 
     let conversationMessages: any[] = [];
     try {
-      const { tools } = await getAvailableTools();
+      let { tools } = await getAvailableTools();
+      const sseScopeCompanyId = await resolveCompanyScope(req).catch(() => null);
+      if (sseScopeCompanyId) tools = filterToolsForClientScope(tools);
       const userId = req.session.userId!;
       // Load contexts with size limits and error handling
       let knowledgeContext2 = "";
@@ -9816,14 +10016,16 @@ export function setupChatBGPRoutes(app: Express) {
       let emailCalContext = "";
       let crmCtx = "";
       let businessLearnings2 = "";
-      
+
       try {
         sendProgress("Gathering intelligence...");
         const contextResults = await Promise.all([
           withTimeout(getMemoryContext(userId), 3000, ""),
-          withTimeout(getBusinessLearningsContext(), 3000, ""),
-          withTimeout(getCrmContext(), 3000, ""),
-          withTimeout(getKnowledgeContext(), 3000, ""),
+          sseScopeCompanyId ? Promise.resolve("") : withTimeout(getBusinessLearningsContext(), 3000, ""),
+          sseScopeCompanyId
+            ? withTimeout(getClientCrmContext(sseScopeCompanyId), 3000, "")
+            : withTimeout(getCrmContext(), 3000, ""),
+          sseScopeCompanyId ? Promise.resolve("") : withTimeout(getKnowledgeContext(), 3000, ""),
           withTimeout(getEmailAndCalendarContext(req), 3000, ""),
         ]);
         memoryContext = contextResults[0];
@@ -9848,7 +10050,7 @@ export function setupChatBGPRoutes(app: Express) {
         }
       } catch {}
 
-      if (verifiedThreadId) {
+      if (verifiedThreadId && !sseScopeCompanyId) {
         try {
           const thread = await storage.getChatThread(verifiedThreadId);
           if (thread?.propertyId) {
@@ -9917,10 +10119,14 @@ export function setupChatBGPRoutes(app: Express) {
       }
 
       let systemPrompt2: string;
-      try {
-        systemPrompt2 = await buildSystemPrompt();
-      } catch {
-        systemPrompt2 = SYSTEM_PROMPT_FALLBACK;
+      if (sseScopeCompanyId) {
+        systemPrompt2 = CLIENT_SYSTEM_PROMPT;
+      } else {
+        try {
+          systemPrompt2 = await buildSystemPrompt();
+        } catch {
+          systemPrompt2 = SYSTEM_PROMPT_FALLBACK;
+        }
       }
       // Split system prompt: static (cacheable) vs dynamic (per-request)
       const dynamicContext = currentUserContext + threadContext + knowledgeContext2 + businessLearnings2 + memoryContext + emailCalContext + crmCtx;
@@ -10266,16 +10472,23 @@ export function setupChatBGPRoutes(app: Express) {
       // Load full contexts (same as main ChatBGP) so Excel add-in has the same reach
       sendProgress("Gathering intelligence...");
       const userId = req.session.userId!;
+      const excelScopeCompanyId = await resolveCompanyScope(req).catch(() => null);
       const [memoryContext, businessLearnings, crmCtx, knowledgeContext, emailCalContext] = await Promise.all([
         withTimeout(getMemoryContext(userId), 5000, ""),
-        withTimeout(getBusinessLearningsContext(), 5000, ""),
-        withTimeout(getCrmContext(), 5000, ""),
-        withTimeout(getKnowledgeContext(), 5000, ""),
+        excelScopeCompanyId ? Promise.resolve("") : withTimeout(getBusinessLearningsContext(), 5000, ""),
+        excelScopeCompanyId
+          ? withTimeout(getClientCrmContext(excelScopeCompanyId), 5000, "")
+          : withTimeout(getCrmContext(), 5000, ""),
+        excelScopeCompanyId ? Promise.resolve("") : withTimeout(getKnowledgeContext(), 5000, ""),
         withTimeout(getEmailAndCalendarContext(req), 5000, ""),
       ]);
 
       let baseSystemPrompt: string;
-      try { baseSystemPrompt = await buildSystemPrompt(); } catch { baseSystemPrompt = SYSTEM_PROMPT_FALLBACK; }
+      if (excelScopeCompanyId) {
+        baseSystemPrompt = CLIENT_SYSTEM_PROMPT;
+      } else {
+        try { baseSystemPrompt = await buildSystemPrompt(); } catch { baseSystemPrompt = SYSTEM_PROMPT_FALLBACK; }
+      }
 
       const excelSupplement = `
 
@@ -10322,7 +10535,8 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
       const systemContent = baseSystemPrompt + dynamicContext;
 
       // Load all the tools the main ChatBGP has
-      const { tools } = await getAvailableTools();
+      let { tools } = await getAvailableTools();
+      if (excelScopeCompanyId) tools = filterToolsForClientScope(tools);
       let msToken: string | null = null;
       try { msToken = await getValidMsToken(req); } catch {}
 
