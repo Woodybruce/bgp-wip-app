@@ -158,7 +158,15 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     const { resolveCompanyScope } = await import("./company-scope");
     const bpScope = await resolveCompanyScope(req as any);
     if (bpScope && bpScope !== companyId) {
-      return res.status(403).json({ error: "Not available for this account" });
+      // Clients get full Brand Intelligence on the hospitality/F&B brand
+      // slice (same predicate as GET /api/crm/companies — keep in sync
+      // with CLIENT_BRAND_TYPE_RE in crm.ts). Everything else stays 403.
+      const { pool } = await import("./db");
+      const t = await pool.query(`SELECT company_type FROM crm_companies WHERE id = $1`, [companyId]);
+      const bpBrandRe = /^tenant -.*(restaurant|dining|f&b|qsr|fast food|fast casual|food|bakery|patisserie|caf[ée]|coffee|bar|hospitality|hotel|leisure|cinema|entertainment|fitness|gym|yoga)/i;
+      if (!bpBrandRe.test(t.rows[0]?.company_type || "")) {
+        return res.status(403).json({ error: "Not available for this account" });
+      }
     }
 
     const companyQ = pool.query(

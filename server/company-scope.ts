@@ -62,6 +62,16 @@ export async function resolveCompanyScope(req: Request): Promise<string | null> 
   return (req as any)._companyScope;
 }
 
+// Hospitality / F&B brand slice visible to client accounts. Keep in sync
+// with CLIENT_BRAND_TYPE_RE in crm.ts and bpBrandRe in brand-profile.ts.
+export const CLIENT_VISIBLE_BRAND_RE = /^tenant -.*(restaurant|dining|f&b|qsr|fast food|fast casual|food|bakery|patisserie|caf[ée]|coffee|bar|hospitality|hotel|leisure|cinema|entertainment|fitness|gym|yoga)/i;
+
+export async function isClientVisibleBrand(companyId: string): Promise<boolean> {
+  if (!companyId || !/^[0-9a-f-]{36}$/i.test(companyId)) return false;
+  const r = await pool.query(`SELECT company_type FROM crm_companies WHERE id = $1`, [companyId]);
+  return CLIENT_VISIBLE_BRAND_RE.test(r.rows[0]?.company_type || "");
+}
+
 // True when the requesting user is an external client (role='Client' or a
 // non-BGP email). Resolves + caches on the request object.
 export async function isClientRequestUser(req: Request): Promise<boolean> {

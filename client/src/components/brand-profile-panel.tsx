@@ -426,6 +426,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   // admin-only (work-in-progress) so it's hidden from the team.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isAdmin = !!currentUser?.isAdmin;
+  // Client viewers (e.g. Landsec) read the profile but can't fire the
+  // research/enrichment POSTs (all 403 server-side) — fail closed until
+  // the viewer is known so we never auto-fire on a client's first paint.
+  const isClientViewer = !currentUser || currentUser.role === "Client" || !!currentUser.companyScopeId;
   // 'BGP portfolio — potential pitches' is parked as a WIP — removed from the
   // brand profile for now (the £0pa rows aren't ready). The data + code stay;
   // flip this to true (or move it to a dedicated admin page) when it's ready.
@@ -444,7 +448,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   });
 
   useEffect(() => {
-    if (!data || autoContactsRan.current) return;
+    if (!data || isClientViewer || autoContactsRan.current) return;
     autoContactsRan.current = true;
     // Auto-discover a RocketReach property contact when the brand has none
     // yet. "Property contact" = role mentions property / real estate /
@@ -456,13 +460,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     });
     if (!hasPropertyContact) runContactDiscovery();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, currentUser]);
 
   // Auto-fire RocketReach brand intel on first profile load — sweeps the
   // industry_str and auto-fills BGP industry / company_type when blank.
   // Cheap (uses unlimited searchCompany credits, no person reveal).
   useEffect(() => {
-    if (!data || autoBrandIntelRan.current) return;
+    if (!data || isClientViewer || autoBrandIntelRan.current) return;
     autoBrandIntelRan.current = true;
     const hasCategory = !!(data.company.industry && String(data.company.industry).trim());
     const hasGoodType = !!(data.company.company_type && !["Tenant", "Tenant - Other", "Tenant - Retail", "Tenant - Unknown"].includes(String(data.company.company_type).trim()));
@@ -476,7 +480,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       })
       .catch(() => { /* silent — not critical */ });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, currentUser]);
 
   // Auto-fire the Companies House KYC sweep on first load if we have
   // a CH number but no officers/PSCs cached yet. Brands had this
@@ -486,7 +490,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   // like Land Sec where the data is one CH call away. Gated on having
   // a CH number so we don't kick off a no-op for brands without one.
   useEffect(() => {
-    if (!data || autoKycRan.current) return;
+    if (!data || isClientViewer || autoKycRan.current) return;
     const hasCh = !!data.company?.companies_house_number;
     const chData: any = data.company?.companies_house_data || {};
     const hasOfficers = Array.isArray(chData?.officers) && chData.officers.length > 0;
@@ -498,17 +502,17 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
         .catch(() => { /* failure surfaces in the compliance board's row state */ });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, currentUser]);
 
   const autoStoresRan = useRef(false);
   useEffect(() => {
-    if (!data || autoStoresRan.current) return;
+    if (!data || isClientViewer || autoStoresRan.current) return;
     autoStoresRan.current = true;
     if ((data.stores?.length || 0) === 0 && !researchStoresMutation.isPending) {
       researchStoresMutation.mutate("uk");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, currentUser]);
 
   // Auto-fire the UK trading-entity scraper on first brand load when we
   // don't have one stored yet. UK law (Companies Act 2006) requires brands
@@ -518,13 +522,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   // known, AML/KYC checks downstream can't run against the right CH row.
   const autoUkEntityRan = useRef(false);
   useEffect(() => {
-    if (!data || autoUkEntityRan.current) return;
+    if (!data || isClientViewer || autoUkEntityRan.current) return;
     if (data.company?.uk_entity_name) return; // already set — don't re-scrape
     if (!(data.company?.domain || data.company?.domain_url)) return; // no website to scrape
     autoUkEntityRan.current = true;
     findUkEntityMutation.mutate();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, currentUser]);
 
   const patchMutation = useMutation({
     mutationFn: async (body: Partial<BrandProfile["company"]>) => {
@@ -2774,16 +2778,19 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
 
   // Auto-trigger research the first time we land on a brand that has no
   // competitor set yet — saves the user a click and means the panel is
-  // populated by the time they scroll to it.
+  // populated by the time they scroll to it. Client viewers can't fire
+  // research POSTs (403 server-side), so don't auto-fire for them.
+  const { data: cpViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const cpIsClient = !cpViewer || cpViewer.role === "Client" || !!cpViewer.companyScopeId;
   const autoTriggered = useRef(false);
   useEffect(() => {
-    if (autoTriggered.current) return;
+    if (autoTriggered.current || cpIsClient) return;
     if (competitors.length > 0 || generatedAt) return;
     if (research.isPending) return;
     autoTriggered.current = true;
     research.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId, competitors.length, generatedAt]);
+  }, [companyId, competitors.length, generatedAt, cpViewer]);
 
   // Lookup by name: returns the CRM row (with id + domain) if we already
   // track this competitor, else undefined. Used to wire the "View in CRM"
@@ -4188,9 +4195,11 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   // target, a refresh fires in the background and the gallery updates
   // when it finishes.
   const [lightboxImg, setLightboxImg] = useState<any | null>(null);
+  const { data: sbViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const sbIsClient = !sbViewer || sbViewer.role === "Client" || !!sbViewer.companyScopeId;
   const autoImageRefreshRan = useRef(false);
   useEffect(() => {
-    if (autoImageRefreshRan.current) return;
+    if (autoImageRefreshRan.current || sbIsClient) return;
     // Heuristic for "needs refresh": 0-4 images for a landlord row, 0
     // images for any other row. Avoids the 5-min round-trip cost when
     // we already have a decent gallery.
@@ -4221,7 +4230,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         setTimeout(poll, 5000);
       } catch { /* silent — the buttons are gone, but the user can still hit Image Studio */ }
     })();
-  }, [companyId, isLandlord, data.images?.length]);
+  }, [companyId, isLandlord, data.images?.length, sbViewer]);
 
   const deleteImageMutation = useMutation({
     mutationFn: async (imageId: string) => {

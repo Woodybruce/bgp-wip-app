@@ -3084,7 +3084,12 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
   const [expandedProps, setExpandedProps] = useState<Set<string>>(new Set());
   const { data: units = [], isLoading } = useQuery<LeasingUnit[]>({
     queryKey: ["/api/leasing-schedule/company", companyId],
-    queryFn: () => fetch(`/api/leasing-schedule/company/${companyId}`, { credentials: "include", headers: { ...getAuthHeaders() } }).then(r => r.json()),
+    queryFn: async () => {
+      const r = await fetch(`/api/leasing-schedule/company/${companyId}`, { credentials: "include", headers: { ...getAuthHeaders() } });
+      if (!r.ok) return [];
+      const data = await r.json();
+      return Array.isArray(data) ? data : [];
+    },
     enabled: !!companyId,
   });
 

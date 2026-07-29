@@ -148,10 +148,9 @@ export default function BrandsHub() {
     ? rawTab as HubTab
     : (typeof window !== "undefined" && window.innerWidth < 768 ? "explorer" : "overview");
   const [activeTab, setActiveTab] = useState<HubTab>(initialTab);
-  // Client logins (e.g. Landsec) get ONLY Brand Explorer — the curated
-  // hospitality/F&B/fitness directory. Overview (turnover leaders + the
-  // "Research Turnover" admin panel), Turnover Board and Brand Hunter are all
-  // BGP intel and stay staff-only.
+  // Client logins (e.g. Landsec) get the full hub read-only — all four
+  // boards; only the "Research Turnover" trigger panel stays staff-only
+  // (the research POSTs are 403 for client accounts).
   const { data: hubUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientHub = hubUser?.role === "Client";
   // The other boards (Overview/Turnover/Hunter) are still being built, so on
@@ -162,18 +161,12 @@ export default function BrandsHub() {
     { key: "turnover", label: "Turnover Board", icon: TrendingUp },
     { key: "hunter",  label: "Brand Hunter",   icon: Crosshair },
   ] as { key: HubTab; label: string; icon: any }[])
-    .filter(t => !isMobile || t.key === "explorer")
-    .filter(t => !isClientHub || t.key === "explorer");
+    .filter(t => !isMobile || t.key === "explorer");
   const [search, setSearch] = useState("");
   const [researchingId, setResearchingId] = useState<string | null>(null);
 
-  // Clients only have the explorer — force it and bounce any deep-link to a
-  // staff board (overview/turnover/hunter).
-  useEffect(() => {
-    if (isClientHub && activeTab !== "explorer") {
-      setActiveTab("explorer");
-    }
-  }, [isClientHub, activeTab]);
+  // Clients get the full Brand Intelligence hub (all four boards) — the
+  // data endpoints scope the brand slice server-side. (Landsec request.)
 
   const { data, isLoading } = useQuery<HubData>({
     queryKey: ["/api/brands/hub"],
@@ -464,7 +457,9 @@ export default function BrandsHub() {
         </CardContent>
       </Card>
 
-      {/* ── Turnover Research Panel ─────────────────────────────────── */}
+      {/* ── Turnover Research Panel — staff-only (research POSTs are
+             403 for client accounts, so don't show the trigger UI). ── */}
+      {!isClientHub && (
       <Card>
         <CardHeader className="pb-3 pt-4 px-5">
           <div className="flex items-center justify-between flex-wrap gap-2">
@@ -479,6 +474,7 @@ export default function BrandsHub() {
           <TurnoverResearchPanel onResearch={(id) => researchMut.mutate(id)} researchingId={researchingId} />
         </CardContent>
       </Card>
+      )}
 
       </>)}
 

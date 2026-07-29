@@ -71,6 +71,7 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
   const [loading, setLoading] = useState(true);
   const [curating, setCurating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [forbidden, setForbidden] = useState(false);
   const [openEmail, setOpenEmail] = useState<{ msgId: string; mailboxEmail: string } | null>(null);
   const [openMeeting, setOpenMeeting] = useState<{ eventId: string; mailboxEmail: string } | null>(null);
   const { toast } = useToast();
@@ -86,6 +87,9 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
           headers: getAuthHeaders(),
           credentials: "include",
         });
+        // 403 = viewer isn't allowed this feed (client accounts) — the card
+        // simply doesn't apply, so render nothing rather than an error.
+        if (r.status === 403) { if (!cancelled) setForbidden(true); return; }
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const d = await r.json();
         if (!cancelled) setData(d);
@@ -164,6 +168,8 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
 
   const lastTouchPill = data?.latestActivityDate ? <LastTouchBadge iso={data.latestActivityDate} /> : null;
   const hasContent = !!data?.markdown?.trim();
+
+  if (forbidden) return null;
 
   return (
     <>

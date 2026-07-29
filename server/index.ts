@@ -3283,7 +3283,10 @@ app.use("/api/branding/assets", express.static(
   // setupAuth so req.session.userId is populated for token logins too.
   // GET/HEAD surfaces a client may read.
   const CLIENT_ALLOWED_API = [
-    "/api/client/", "/api/crm/", "/api/brands/hub", "/api/client-teams/",
+    // /api/brands/ = Brand Intelligence hub reads (hub, hunter, turnover
+    // status, market commentary). GET-only here; the research/flag POSTs
+    // stay staff-only via the write allowlist. (Landsec brand access.)
+    "/api/client/", "/api/crm/", "/api/brands/", "/api/client-teams/",
     "/api/portfolio/", "/api/company-portfolio", "/api/leasing-schedule/",
     "/api/tenancy-schedule/", "/api/properties/", "/api/property/",
     "/api/property-intelligence", "/api/land-registry", "/api/business-rates",
@@ -3314,6 +3317,9 @@ app.use("/api/branding/assets", express.static(
     // /api/chat/upload lets a client attach a document (e.g. their own
     // targeting brief PDF) to a chat message.
     "/api/chat/threads", "/api/chat/upload",
+    // Landsec may add/amend CRM contacts — POST/PUT scope-checked in crm.ts
+    // (own company or the hospitality-brand slice only).
+    "/api/crm/contacts",
     "/api/push/", "/api/config/", "/api/favorite-instructions",
     // Clients may edit their OWN leasing/tenancy schedule rows (positioning,
     // bands, targets, meeting updates). Each endpoint verifies the property is
@@ -3331,8 +3337,6 @@ app.use("/api/branding/assets", express.static(
   // rides on Microsoft, which stays sealed for clients).
   const CLIENT_BLOCKED_SUBPATHS = [
     /^\/api\/chat\/threads\/[^/]+\/(members|group-pic)/,
-    /^\/api\/brands\/(hunter|turnover)/,
-    /^\/api\/brand\/[^/]+\/(hunter-score|competitors|suggested-units|ai-take|pack|image-diag)/,
     /^\/api\/tasks\/(onenote|import)/,
     // ── Firm-wide / cross-company GETs that sit under an allowed parent
     //    prefix but were never company-scoped. Blocked for clients so a
@@ -3351,7 +3355,6 @@ app.use("/api/branding/assets", express.static(
     /^\/api\/leasing-schedule\/property\/[^/]+\/privacy/,
     /^\/api\/tenancy-schedule\/property\/[^/]+\/links/,
     /^\/api\/properties\/[^/]+\/(360|brochures|tasks|orphan-deals|instructions|project-files|duplicate-units|plan-pickable-units|plans|unresolved-tenants|linkage-audit)\b/,
-    /^\/api\/property\/[^/]+\/brand-gaps/,
     /^\/api\/client-teams\/[^/]+\/candidates/,          // whole BGP staff directory
     /^\/api\/image-studio\/orphans/,
   ];
@@ -3383,10 +3386,16 @@ app.use("/api/branding/assets", express.static(
       const allowed = CLIENT_ALLOWED_API.some(pre =>
         pre.endsWith("/") ? p.startsWith(pre) : (p === pre || p.startsWith(pre + "/") || p.startsWith(pre + "?"))
       );
-      // Allow a client to read only their OWN brand profile / images (scope
-      // enforced in the handlers); other /api/brand/* stays blocked.
-      const ownBrand = /^\/api\/brand\/[^/]+\/(profile|refresh-images\/status)$/.test(p);
-      if (allowed || ownBrand) return next();
+      // Full Brand Intelligence reads (profile, hunter-score, competitors,
+      // suggested-units, ai-take, pack…) for the client's own company or any
+      // brand in the hospitality slice; everything else stays blocked.
+      const brandRead = p.match(/^\/api\/brand\/([^/]+)\//);
+      if (brandRead) {
+        const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+        const scope = await resolveCompanyScope(req);
+        if (brandRead[1] === scope || (await isClientVisibleBrand(brandRead[1]))) return next();
+      }
+      if (allowed) return next();
       return res.status(403).json({ error: "Not available for client accounts" });
     } catch { return next(); }
   });

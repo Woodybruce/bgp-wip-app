@@ -770,15 +770,11 @@ export function PropertyDetail({ id }: { id: string }) {
                 <PropertyDecksPanel propertyId={property.id} />
               </ErrorBoundary>
               */}
-              {/* BGP brand-strategy intel — staff only; the API is client-
-                  blocked so the panel only ever showed a refusal message. */}
-              {!isClientViewer && (
               <ErrorBoundary compact name="Brand gap">
                 <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
                   <BrandGapPanel propertyId={property.id} />
                 </CollapsibleCard>
               </ErrorBoundary>
-              )}
             </div>
 
             {/* Pipeline + Performance combined — single 'how's the
