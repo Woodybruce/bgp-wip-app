@@ -3293,6 +3293,7 @@ app.use("/api/branding/assets", express.static(
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
     "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",
     "/api/available-units", "/api/tasks",
+    "/api/chat/threads", "/api/chat-media/",
     // Harmless infra reads every logged-in browser makes: the public web-push
     // VAPID key (push writes are already client-allowed) and aggregate logo
     // cache stats used by the shared company-logo helper.
@@ -3306,6 +3307,13 @@ app.use("/api/branding/assets", express.static(
   // clients inside those handlers via clientChatGuard.)
   const CLIENT_ALLOWED_WRITES = [
     "/api/auth/logout", "/api/chatbgp/", "/api/heartbeat",
+    // ChatBGP panel bookkeeping: the AI reply goes to /api/chatbgp/ (allowed)
+    // but the panel first creates a thread + posts the user message here.
+    // Message POST enforces thread membership server-side; membership and
+    // group-pic management stay staff-only via CLIENT_BLOCKED_SUBPATHS.
+    // /api/chat/upload lets a client attach a document (e.g. their own
+    // targeting brief PDF) to a chat message.
+    "/api/chat/threads", "/api/chat/upload",
     "/api/push/", "/api/config/", "/api/favorite-instructions",
     // Clients may edit their OWN leasing/tenancy schedule rows (positioning,
     // bands, targets, meeting updates). Each endpoint verifies the property is
@@ -3322,6 +3330,7 @@ app.use("/api/branding/assets", express.static(
   // brand pipeline that isn't the client's own profile; OneNote task import
   // rides on Microsoft, which stays sealed for clients).
   const CLIENT_BLOCKED_SUBPATHS = [
+    /^\/api\/chat\/threads\/[^/]+\/(members|group-pic)/,
     /^\/api\/brands\/(hunter|turnover)/,
     /^\/api\/brand\/[^/]+\/(hunter-score|competitors|suggested-units|ai-take|pack|image-diag)/,
     /^\/api\/tasks\/(onenote|import)/,
