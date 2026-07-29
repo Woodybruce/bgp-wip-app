@@ -2326,8 +2326,13 @@ export default function AvailableUnitsPage() {
               {viewingsForUnit.map(v => (
                 <div key={v.id} className="border rounded-lg p-3 text-sm space-y-1">
                   <div className="flex items-center justify-between">
-                    <div className="font-medium">
+                    <div className="font-medium flex items-center gap-2">
                       {v.companyId ? <a href={`/contacts?company=${v.companyId}`} className="text-blue-600 hover:underline dark:text-blue-400">{v.companyName}</a> : (v.companyName || v.contactName || "Unknown")}
+                      {v.source === "diary" && (
+                        <Badge variant="outline" className="text-[10px] gap-1 border-sky-400 text-sky-700 dark:text-sky-400">
+                          <CalendarDays className="w-2.5 h-2.5" /> Diary
+                        </Badge>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">{v.viewingDate}{v.viewingTime ? ` at ${v.viewingTime}` : ""}</span>

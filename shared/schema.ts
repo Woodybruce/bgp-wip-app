@@ -1828,6 +1828,8 @@ export const unitViewings = pgTable("unit_viewings", {
   attendees: text("attendees"),
   notes: text("notes"),
   outcome: text("outcome"),
+  source: text("source"), // 'diary' when auto-synced from an Outlook calendar event; null = manual
+  calendarEventId: text("calendar_event_id"), // Graph iCalUId — idempotent upsert key for synced viewings
   createdAt: timestamp("created_at").defaultNow(),
 });
 

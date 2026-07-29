@@ -977,6 +977,31 @@ export function setupMicrosoftRoutes(app: Express) {
       `);
       const recentEvents = eventsResult.rows;
 
+      // Letting Tracker viewings (manual + diary-synced) — the canonical
+      // viewing record. team_events only carries manually-tagged 'viewing'
+      // rows, which in practice are rare, so without this the viewing
+      // insights sit permanently empty.
+      const unitViewingsResult = await pool.query(`
+        SELECT uv.viewing_date, uv.viewing_time, uv.company_name, p.name AS property_name
+        FROM unit_viewings uv
+        JOIN available_units au ON au.id = uv.unit_id
+        JOIN crm_properties p ON p.id = au.property_id
+        WHERE uv.viewing_date ~ '^\\d{4}-\\d{2}-\\d{2}'
+          AND uv.viewing_date::date >= (NOW() - INTERVAL '30 days')::date
+      `);
+      const eventsForInsights = [
+        ...recentEvents,
+        ...unitViewingsResult.rows.map((v: any) => ({
+          title: null,
+          event_type: "viewing",
+          start_time: `${v.viewing_date}T${v.viewing_time || "09:00"}:00`,
+          property_name: v.property_name,
+          company_name: v.company_name,
+          created_by: null,
+          attendees: null,
+        })),
+      ];
+
       const propertiesResult = await pool.query(`
         SELECT p.name, p.address, p.status, p.asset_class
         FROM crm_properties p
@@ -993,7 +1018,7 @@ export function setupMicrosoftRoutes(app: Express) {
       const weekAgo = new Date(now.getTime() - 7 * 86400000);
       const twoWeeksAgo = new Date(now.getTime() - 14 * 86400000);
 
-      recentEvents.forEach((e: any) => {
+      eventsForInsights.forEach((e: any) => {
         const d = new Date(e.start_time);
         const dayKey = d.toLocaleDateString("en-GB", { weekday: "short" });
         eventsByDay.set(dayKey, (eventsByDay.get(dayKey) || 0) + 1);
@@ -1114,7 +1139,7 @@ export function setupMicrosoftRoutes(app: Express) {
         });
       }
 
-      const todayEvents = recentEvents.filter((e: any) => {
+      const todayEvents = eventsForInsights.filter((e: any) => {
         const d = new Date(e.start_time);
         return d.toDateString() === now.toDateString();
       });
