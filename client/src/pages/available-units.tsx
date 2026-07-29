@@ -19,8 +19,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown,
+  ChevronDown, Target,
 } from "lucide-react";
+import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -298,6 +299,7 @@ export default function AvailableUnitsPage() {
   const [linkDealId, setLinkDealId] = useState("");
   const [form, setForm] = useState<UnitFormState>(emptyForm);
   const [filesUnit, setFilesUnit] = useState<AvailableUnit | null>(null);
+  const [briefUnit, setBriefUnit] = useState<AvailableUnit | null>(null);
   const [viewingsUnit, setViewingsUnit] = useState<AvailableUnit | null>(null);
   const [offersUnit, setOffersUnit] = useState<AvailableUnit | null>(null);
   const [addViewingOpen, setAddViewingOpen] = useState(false);
@@ -584,7 +586,7 @@ export default function AvailableUnitsPage() {
     setWipForm({
       dealType: "Letting",
       team: [],
-      agent: unit.agent || "",
+      agent: bgpUsers.find(bu => (unit.agentUserIds || []).includes(bu.id))?.name || "",
       tenantName: "",
       fee: unit.fee?.toString() || "",
       feeAgreement: "",
@@ -602,6 +604,7 @@ export default function AvailableUnitsPage() {
     if (field === "marketingStatus" && value === "Under Offer") {
       const unit = units.find(u => u.id === id);
       if (unit && !unit.dealId) {
+        updateMutation.mutate({ id, data: { [field]: value } });
         openWipDialog(unit);
         return;
       }
@@ -987,13 +990,14 @@ export default function AvailableUnitsPage() {
                 <TableHead>Agent</TableHead>
                 <TableHead>WIP Deal</TableHead>
                 <TableHead>Marketing</TableHead>
+                <TableHead>Brief</TableHead>
                 <TableHead className="w-[100px]">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={20} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={22} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1208,6 +1212,18 @@ export default function AvailableUnitsPage() {
                         </Button>
                       </TableCell>
                       <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs gap-1"
+                          onClick={() => setBriefUnit(u)}
+                          data-testid={`button-brief-${u.id}`}
+                        >
+                          <Target className="h-3.5 w-3.5" />
+                          Brief
+                        </Button>
+                      </TableCell>
+                      <TableCell>
                         <div className="flex gap-1">
                           <Button
                             variant="ghost"
@@ -1247,6 +1263,12 @@ export default function AvailableUnitsPage() {
           </Table>
         </ScrollableTable>
       </Card>
+
+      <UnitBriefDialog
+        unit={briefUnit}
+        open={!!briefUnit}
+        onClose={() => setBriefUnit(null)}
+      />
 
       <UnitFormDialog
         open={createOpen}
@@ -1982,6 +2004,8 @@ function UnitFormDialog({
   isPending: boolean;
 }) {
   const upd = (field: keyof UnitFormState, value: string) => setForm({ ...form, [field]: value });
+  const updSel = (field: keyof UnitFormState, value: string) => setForm({ ...form, [field]: value === "__none__" ? "" : value });
+  const noneItem = <SelectItem value="__none__"><span className="text-muted-foreground">— None —</span></SelectItem>;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -2009,9 +2033,10 @@ function UnitFormDialog({
           </div>
           <div>
             <Label>Floor</Label>
-            <Select value={form.floor} onValueChange={v => upd("floor", v)}>
+            <Select value={form.floor} onValueChange={v => updSel("floor", v)}>
               <SelectTrigger><SelectValue placeholder="Select floor..." /></SelectTrigger>
               <SelectContent>
+                {noneItem}
                 {FLOORS.map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}
               </SelectContent>
             </Select>
@@ -2038,18 +2063,20 @@ function UnitFormDialog({
           </div>
           <div>
             <Label>Asset Class</Label>
-            <Select value={form.useClass} onValueChange={v => upd("useClass", v)}>
+            <Select value={form.useClass} onValueChange={v => updSel("useClass", v)}>
               <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
               <SelectContent>
+                {noneItem}
                 {USE_CLASSES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
           <div>
             <Label>Location</Label>
-            <Select value={form.location} onValueChange={v => upd("location", v)}>
+            <Select value={form.location} onValueChange={v => updSel("location", v)}>
               <SelectTrigger data-testid="select-location"><SelectValue placeholder="Select location..." /></SelectTrigger>
               <SelectContent>
+                {noneItem}
                 {LOCATIONS.map(l => (
                   <SelectItem key={l} value={l}>
                     <span className="flex items-center gap-2">
@@ -2063,18 +2090,20 @@ function UnitFormDialog({
           </div>
           <div>
             <Label>Condition</Label>
-            <Select value={form.condition} onValueChange={v => upd("condition", v)}>
+            <Select value={form.condition} onValueChange={v => updSel("condition", v)}>
               <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
               <SelectContent>
+                {noneItem}
                 {CONDITIONS.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
           <div>
             <Label>EPC Rating</Label>
-            <Select value={form.epcRating} onValueChange={v => upd("epcRating", v)}>
+            <Select value={form.epcRating} onValueChange={v => updSel("epcRating", v)}>
               <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
               <SelectContent>
+                {noneItem}
                 {EPC_RATINGS.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
               </SelectContent>
             </Select>

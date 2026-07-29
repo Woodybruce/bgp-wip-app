@@ -1934,6 +1934,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           condition: availableUnits.condition,
           availableDate: availableUnits.availableDate,
           marketingStatus: availableUnits.marketingStatus,
+          location: availableUnits.location,
           epcRating: availableUnits.epcRating,
           notes: availableUnits.notes,
           restrictions: availableUnits.restrictions,
@@ -2067,6 +2068,167 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete unit" });
+    }
+  });
+
+  // ---- Operator targeting briefs (per letting tracker unit) ----
+
+  app.get("/api/unit-briefs", requireAuth, async (_req, res) => {
+    try {
+      const { unitBriefs, availableUnits, crmProperties } = await import("@shared/schema");
+      const rows = await db
+        .select({
+          brief: unitBriefs,
+          unitName: availableUnits.unitName,
+          propertyName: crmProperties.name,
+        })
+        .from(unitBriefs)
+        .leftJoin(availableUnits, eq(unitBriefs.unitId, availableUnits.id))
+        .leftJoin(crmProperties, eq(unitBriefs.propertyId, crmProperties.id))
+        .orderBy(desc(unitBriefs.createdAt));
+      res.json(rows.map(r => ({ ...r.brief, unitName: r.unitName, propertyName: r.propertyName })));
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch briefs" });
+    }
+  });
+
+  app.get("/api/available-units/:id/brief", requireAuth, async (req, res) => {
+    try {
+      const { unitBriefs, unitTargetOperators } = await import("@shared/schema");
+      const [brief] = await db.select().from(unitBriefs)
+        .where(eq(unitBriefs.unitId, String(req.params.id)))
+        .orderBy(desc(unitBriefs.createdAt))
+        .limit(1);
+      if (!brief) return res.json(null);
+      const targets = await db.select().from(unitTargetOperators)
+        .where(eq(unitTargetOperators.briefId, brief.id))
+        .orderBy(unitTargetOperators.sortOrder, unitTargetOperators.createdAt);
+      res.json({ ...brief, targets });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch brief" });
+    }
+  });
+
+  app.post("/api/available-units/:id/brief", requireAuth, async (req: any, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(String(req.params.id));
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      const { unitBriefs, insertUnitBriefSchema } = await import("@shared/schema");
+      const userId = req.session?.userId || req.tokenUserId || null;
+      let userName: string | null = null;
+      if (userId) {
+        const r = await pool.query("SELECT name FROM users WHERE id = $1", [userId]);
+        userName = r.rows[0]?.name || null;
+      }
+      const parsed = insertUnitBriefSchema.parse({
+        ...req.body,
+        unitId: unit.id,
+        propertyId: unit.propertyId,
+        createdByUserId: userId,
+        createdByName: userName,
+      });
+      const [brief] = await db.insert(unitBriefs).values(parsed).returning();
+      res.json(brief);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to create brief" });
+    }
+  });
+
+  app.patch("/api/unit-briefs/:id", requireAuth, async (req, res) => {
+    try {
+      const { unitBriefs, insertUnitBriefSchema } = await import("@shared/schema");
+      const partial = insertUnitBriefSchema.partial().parse(req.body);
+      const [brief] = await db.update(unitBriefs)
+        .set({ ...partial, updatedAt: new Date() })
+        .where(eq(unitBriefs.id, String(req.params.id)))
+        .returning();
+      if (!brief) return res.status(404).json({ message: "Brief not found" });
+      res.json(brief);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to update brief" });
+    }
+  });
+
+  app.delete("/api/unit-briefs/:id", requireAuth, async (req, res) => {
+    try {
+      const { unitBriefs, unitTargetOperators } = await import("@shared/schema");
+      await db.delete(unitTargetOperators).where(eq(unitTargetOperators.briefId, String(req.params.id)));
+      await db.delete(unitBriefs).where(eq(unitBriefs.id, String(req.params.id)));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to delete brief" });
+    }
+  });
+
+  app.post("/api/unit-briefs/:id/targets", requireAuth, async (req, res) => {
+    try {
+      const { unitBriefs, unitTargetOperators, insertUnitTargetOperatorSchema } = await import("@shared/schema");
+      const [brief] = await db.select().from(unitBriefs).where(eq(unitBriefs.id, String(req.params.id)));
+      if (!brief) return res.status(404).json({ message: "Brief not found" });
+      const parsed = insertUnitTargetOperatorSchema.parse({ ...req.body, briefId: brief.id });
+      const [target] = await db.insert(unitTargetOperators).values(parsed).returning();
+      res.json(target);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to add target" });
+    }
+  });
+
+  app.patch("/api/unit-briefs/targets/:id", requireAuth, async (req, res) => {
+    try {
+      const { unitTargetOperators, insertUnitTargetOperatorSchema } = await import("@shared/schema");
+      const partial = insertUnitTargetOperatorSchema.partial().parse(req.body);
+      const [target] = await db.update(unitTargetOperators)
+        .set({ ...partial, updatedAt: new Date() })
+        .where(eq(unitTargetOperators.id, String(req.params.id)))
+        .returning();
+      if (!target) return res.status(404).json({ message: "Target not found" });
+      res.json(target);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to update target" });
+    }
+  });
+
+  app.delete("/api/unit-briefs/targets/:id", requireAuth, async (req, res) => {
+    try {
+      const { unitTargetOperators } = await import("@shared/schema");
+      await db.delete(unitTargetOperators).where(eq(unitTargetOperators.id, String(req.params.id)));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to delete target" });
+    }
+  });
+
+  app.post("/api/unit-briefs/extract", requireAuth, marketingUpload.single("file"), async (req: any, res) => {
+    let tmpPath: string | null = null;
+    try {
+      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      tmpPath = path.join(MARKETING_FILES_DIR, `extract-${Date.now()}-${crypto.randomBytes(6).toString("hex")}${ext}`);
+      fs.writeFileSync(tmpPath, req.file.buffer);
+      const { extractTextFromFile } = await import("./chatbgp");
+      const text = await extractTextFromFile(tmpPath, req.file.originalname);
+      if (!text || text.trim().length < 40) return res.status(400).json({ message: "Could not read any text from that file" });
+      const { extractBriefFromText } = await import("./unit-brief-doc");
+      const extracted = await extractBriefFromText(text);
+      res.json(extracted);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to extract brief" });
+    } finally {
+      if (tmpPath) { try { fs.unlinkSync(tmpPath); } catch {} }
+    }
+  });
+
+  app.post("/api/unit-briefs/:id/generate-document", requireAuth, async (req, res) => {
+    try {
+      const { generateBriefDocument } = await import("./unit-brief-doc");
+      const result = await generateBriefDocument(String(req.params.id));
+      res.json({ ...result, sharepoint: !!result.sharepointUrl });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to generate brief document" });
     }
   });
 

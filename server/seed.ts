@@ -313,13 +313,14 @@ async function seedInvestmentTracker() {
 
     const compressed = readFileSync(seedPath);
     const sqlContent = gunzipSync(compressed).toString("utf-8");
-    const expectedCount = (sqlContent.match(/^INSERT /gm) || []).length;
 
-    if (existingCount >= expectedCount) {
+    // Only seed a completely empty table — a partial count means users have
+    // deleted rows deliberately, and re-importing would wipe their edits.
+    if (existingCount > 0) {
       return;
     }
 
-    console.log(`[seed] Investment tracker has ${existingCount}/${expectedCount} records — importing...`);
+    console.log(`[seed] Investment tracker empty — importing seed...`);
     const client = await pool.connect();
     try {
       await client.query("DELETE FROM investment_tracker");
@@ -361,11 +362,12 @@ async function seedLettingTracker() {
 
     const compressed = readFileSync(seedPath);
     const sqlContent = gunzipSync(compressed).toString("utf-8");
-    const expectedCount = (sqlContent.match(/INSERT INTO public\.available_units/g) || []).length;
 
-    if (existingCount >= expectedCount) return;
+    // Only seed a completely empty table — a partial count means users have
+    // deleted rows deliberately, and re-importing would wipe their edits.
+    if (existingCount > 0) return;
 
-    console.log(`[seed] Letting tracker has ${existingCount}/${expectedCount} records — importing...`);
+    console.log(`[seed] Letting tracker empty — importing seed...`);
     const client = await pool.connect();
     try {
       await client.query("DELETE FROM unit_marketing_files");
