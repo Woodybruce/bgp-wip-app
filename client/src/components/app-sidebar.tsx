@@ -338,7 +338,7 @@ export function AppSidebar() {
     : coreWithApprovals;
   // Client logins (e.g. Landsec) get a trimmed nav: no People & HR, My Card,
   // Reporting or WIP — those are BGP-internal. Staff nav is unchanged.
-  const isClientUser = user?.role === "Client";
+  const isClientUser = user?.role === "Client" || !!(user as any)?.companyScopeId;
   const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/reporting", "/wip-report"];
   const coreNav = isClientUser
     ? coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
@@ -388,15 +388,17 @@ export function AppSidebar() {
         <NavSection
           label="AI Tools"
           items={aiNav
-            // Clients don't get the firm-wide Image Studio, the Property
-            // Intelligence map (every layer 403s → blank grey map) or CAD
-            // Measure — all staff tools. (Landsec audit + visual QA.)
-            .filter(i => !(isClientUser && ["/image-studio", "/property-intelligence", "/cad-measure"].includes(i.url)))
+            // Clients don't get the Property Intelligence map (every layer
+            // 403s → blank grey map) or CAD Measure — staff tools. (Landsec
+            // audit + visual QA.) Image Studio stays: the server scopes the
+            // gallery to the client's own buildings.
+            .filter(i => !(isClientUser && ["/property-intelligence", "/cad-measure"].includes(i.url)))
             .map(i =>
               // The full /image-studio page is admin-only (it calls admin
-              // endpoints). Non-admins (e.g. CGI partners like Luke) get the
-              // lightweight images page that works on auth alone.
-              i.url === "/image-studio" && !user?.isAdmin ? { ...i, url: "/m/images" } : i
+              // endpoints). Non-admins (e.g. CGI partners like Luke) and
+              // client viewers get the lightweight images page that works
+              // on auth alone.
+              i.url === "/image-studio" && (!user?.isAdmin || isClientUser) ? { ...i, url: "/m/images" } : i
             )}
           storageKey="ai"
         />
@@ -585,8 +587,8 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
   // Parity with desktop: Reporting hidden everywhere now, and client logins
   // also lose the BGP-internal items (People & HR, My Card, WIP).
   const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
-  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/sharepoint", "/calendar", "/mail", "/m/images", "/property-intelligence", "/cad-measure"];
-  const items = user?.role === "Client"
+  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/sharepoint", "/calendar", "/mail", "/property-intelligence", "/cad-measure"];
+  const items = (user?.role === "Client" || !!(user as any)?.companyScopeId)
     ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
     : filteredByAdmin.filter(i => i.url !== "/reporting" || isLandsec);
 

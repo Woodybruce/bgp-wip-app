@@ -3301,7 +3301,7 @@ app.use("/api/branding/assets", express.static(
     "/api/tenancy-schedule/", "/api/properties/", "/api/property/",
     "/api/property-intelligence", "/api/land-registry", "/api/business-rates",
     "/api/voa", "/api/map-layers", "/api/os-data", "/api/edozo",
-    "/api/image-studio/search", "/api/image-studio/", "/api/ai-briefing",
+    "/api/image-studio", "/api/ai-briefing",
     "/api/notifications", "/api/daily-digest", "/api/activity-feed",
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
     "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",

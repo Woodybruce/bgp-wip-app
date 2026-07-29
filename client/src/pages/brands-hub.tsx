@@ -152,7 +152,7 @@ export default function BrandsHub() {
   // boards; only the "Research Turnover" trigger panel stays staff-only
   // (the research POSTs are 403 for client accounts).
   const { data: hubUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isClientHub = hubUser?.role === "Client";
+  const isClientHub = hubUser?.role === "Client" || !!hubUser?.companyScopeId;
   // The other boards (Overview/Turnover/Hunter) are still being built, so on
   // mobile we show only Brand Explorer. Desktop keeps the full tab bar.
   const VISIBLE_HUB_TABS = ([
@@ -601,7 +601,7 @@ function BrandExplorer() {
   // so hide the category cards that can never have brands for them (Luxury,
   // Fashion & Retail, …) rather than showing a row of zeros.
   const { data: exUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isClientExplorer = exUser?.role === "Client";
+  const isClientExplorer = exUser?.role === "Client" || !!exUser?.companyScopeId;
   const [activeCat, setActiveCat] = useState<string | null>(() => {
     try { return localStorage.getItem("brand-explorer-cat") || null; } catch { return null; }
   });

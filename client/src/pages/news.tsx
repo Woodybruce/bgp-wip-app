@@ -213,7 +213,7 @@ function FeedTab() {
   // Client logins: articles are never relevance-scored against client teams
   // (e.g. "Landsec"), so "For You" would filter the feed to nothing — give
   // them the whole curated trade feed instead, and skip the BGP team tabs.
-  const isClientNews = currentUser?.role === "Client";
+  const isClientNews = currentUser?.role === "Client" || !!(currentUser as any)?.companyScopeId;
   const visibleTeams = isClientNews ? ["For You", "Saved"] : TEAMS;
   const effectiveTeam = activeTeam === "For You" ? (isClientNews ? "All" : userTeam) : activeTeam;
 
@@ -1266,7 +1266,7 @@ function MobileNewsFeed() {
 export default function News() {
   const isMobile = useIsMobile();
   const { data: newsUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isClientNewsPage = newsUser?.role === "Client";
+  const isClientNewsPage = newsUser?.role === "Client" || !!(newsUser as any)?.companyScopeId;
   const { data: intelStatus } = useQuery<{
     connected: boolean;
     emailAddress?: string;

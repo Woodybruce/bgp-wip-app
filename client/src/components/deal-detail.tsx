@@ -205,7 +205,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   // Treat the user as a client until auth/me resolves — on a hard page load
   // the panels otherwise mount for a beat and fire their (403) queries
   // before the role is known. Staff just see the panels pop in a tick later.
-  const isClientDeal = !ddUser || ddUser.role === "Client";
+  const isClientDeal = !ddUser || ddUser.role === "Client" || !!ddUser.companyScopeId;
 
   const { data: properties = [] } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],

@@ -1026,7 +1026,7 @@ export default function PeoplePage() {
   // food / café / fitness slice. The staff hub (landlords, agents,
   // lenders) is BGP-internal.
   if (userLoading) return <PageLoader />;
-  if (user?.role === "Client") return <ClientCrmHub />;
+  if (user?.role === "Client" || !!(user as any)?.companyScopeId) return <ClientCrmHub />;
 
   return <PeopleHub />;
 }

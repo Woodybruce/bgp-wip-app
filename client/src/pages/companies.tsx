@@ -1078,7 +1078,7 @@ function CompanyDetail({ id }: { id: string }) {
   const [editOpen, setEditOpen] = useState(false);
   // Client logins get a read-only view — hide BGP staff editing controls.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isClientViewer = currentUser?.role === "Client";
+  const isClientViewer = currentUser?.role === "Client" || !!(currentUser as any)?.companyScopeId;
   const { data: company, isLoading } = useQuery<CrmCompany>({
     queryKey: ["/api/crm/companies", id],
   });

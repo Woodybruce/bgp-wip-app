@@ -164,7 +164,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   // Client logins get a read-only "Your BGP team" view — no editing, no
   // drag/drop, and internal-only columns (e.g. "On the Bench") hidden.
   const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const readOnly = viewer?.role === "Client";
+  const readOnly = viewer?.role === "Client" || !!viewer?.companyScopeId;
 
   const { data: members = [], isLoading } = useQuery<TeamMember[]>({
     queryKey: ["/api/client-teams", clientCompanyId],
@@ -232,7 +232,11 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
 
   useEffect(() => {
     if (selected) {
-      const fresh = members.find(m => m.id === selected.id);
+      // Fall back to user_id — editing an auto-included "pa-…" row converts
+      // it to a curated row with a fresh id, and the sheet must re-bind to
+      // that row or every subsequent edit re-converts (duplicating them).
+      const fresh = members.find(m => m.id === selected.id)
+        || members.find(m => m.user_id === selected.user_id);
       if (fresh) setSelected(fresh);
     }
   }, [members]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -240,6 +244,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   const reorderMutation = useMutation({
     mutationFn: (items: Array<{ id: string; team_group: string | null; sort_order: number }>) =>
       apiRequest("POST", `/api/client-teams/${clientCompanyId}/reorder`, { items }),
+    onError: (e: any) => toast({ title: "Move failed", description: e?.message || "Unknown error", variant: "destructive" }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] }),
   });
 
@@ -562,8 +567,22 @@ function MemberSheet({ member, allMembers, clientCompanyId, columnNames, onClose
   const photoUrl = `/api/hr/photo/${member.user_id}`;
   const displayName = member.full_name || member.username || "Unknown";
 
+  // "pa-…" rows are synthesized from property assignments — there's no
+  // board row to PATCH/DELETE, so edits convert them to a curated row first.
+  const isSynth = member.id.startsWith("pa-");
+
   const updateMutation = useMutation({
-    mutationFn: (patch: any) => apiRequest("PATCH", `/api/client-teams/member/${member.id}`, patch),
+    mutationFn: (patch: any) =>
+      isSynth
+        ? apiRequest("POST", `/api/client-teams/${clientCompanyId}/member`, {
+            user_id: member.user_id,
+            team_group: member.team_group,
+            role: member.role,
+            reports_to_user_id: member.reports_to_user_id,
+            sort_order: member.sort_order,
+            ...patch,
+          })
+        : apiRequest("PATCH", `/api/client-teams/member/${member.id}`, patch),
     onSuccess: () => { onChange(); toast({ title: "Updated" }); },
     onError: (e: any) => toast({ title: "Update failed", description: e.message, variant: "destructive" }),
   });
@@ -747,12 +766,26 @@ function MemberSheet({ member, allMembers, clientCompanyId, columnNames, onClose
               variant="destructive"
               size="sm"
               className="text-xs h-7"
-              onClick={() => { if (confirm(`Remove ${displayName} from this client's team?`)) removeMutation.mutate(); }}
+              onClick={() => {
+                if (isSynth) {
+                  toast({
+                    title: "Auto-included from property assignments",
+                    description: `${displayName} appears here because they're assigned to this client's properties. Untick their properties above to take them off the board.`,
+                  });
+                  return;
+                }
+                if (confirm(`Remove ${displayName} from this client's team?`)) removeMutation.mutate();
+              }}
               disabled={removeMutation.isPending}
               data-testid="btn-remove-member"
             >
               Remove from team
             </Button>
+            {isSynth && (
+              <div className="text-[10px] text-muted-foreground mt-1.5">
+                Auto-included via property assignments — remove their properties above to take them off the board.
+              </div>
+            )}
           </div>
         </div>
       </SheetContent>

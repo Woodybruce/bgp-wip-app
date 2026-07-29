@@ -1629,7 +1629,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
             )}
           </div>
           {landlordName && <p className="text-xs text-muted-foreground">{landlordName}</p>}
-          {(currentUser as any)?.role === "Client" && (
+          {((currentUser as any)?.role === "Client" || !!(currentUser as any)?.companyScopeId) && (
             <p className="text-xs text-muted-foreground">
               The leasing strategy board — zone positioning, target brands and priorities for each key unit, plus live deals mirrored from the Letting Tracker. Unit facts (tenant, rent, dates) pull live from the Tenancy Schedule.
             </p>
@@ -3209,7 +3209,7 @@ export default function LeasingSchedulePage() {
   const propertyId = params?.propertyId;
   // Client logins get a one-line explainer of what the board is for.
   const { data: lsUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isClientBoard = lsUser?.role === "Client";
+  const isClientBoard = lsUser?.role === "Client" || !!(lsUser as any)?.companyScopeId;
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">(

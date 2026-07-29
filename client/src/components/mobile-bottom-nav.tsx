@@ -15,7 +15,7 @@ export function MobileBottomNav() {
   // Client logins have no Microsoft 365 access, so the Mail tab would just
   // show a connect screen that can never work — hide it for them.
   const { data: navUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const items = navUser?.role === "Client"
+  const items = (navUser?.role === "Client" || !!(navUser as any)?.companyScopeId)
     ? NAV_ITEMS.filter((i) => i.label !== "Mail")
     : NAV_ITEMS;
 

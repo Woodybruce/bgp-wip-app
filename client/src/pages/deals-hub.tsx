@@ -53,7 +53,7 @@ export default function DealsHub() {
   // Client logins (e.g. Landsec) only get the Deals list — never the WIP
   // Report (BGP financials), Letting Tracker or Investment tabs.
   const { data: dhUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isClient = dhUser?.role === "Client";
+  const isClient = dhUser?.role === "Client" || !!(dhUser as any)?.companyScopeId;
   const [tab, setTab] = useState<TabKey>(() =>
     getTabFromLocation(location) || ((typeof window !== "undefined" && window.innerWidth < 768) ? "deals" : "wip-report")
   );

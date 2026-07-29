@@ -1162,7 +1162,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   });
   // Team chat is BGP-internal — client logins use ChatBGP (AI) only, so skip
   // the team-thread/notification polling that would otherwise 403.
-  const chatIsClient = (currentUser as any)?.role === "Client";
+  const chatIsClient = (currentUser as any)?.role === "Client" || !!(currentUser as any)?.companyScopeId;
 
   const { data: status } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/chatbgp/status"],

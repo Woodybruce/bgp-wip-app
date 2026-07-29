@@ -376,7 +376,7 @@ function AuthenticatedApp() {
     }
   }, [currentUser, isPushSupported, isPushSubscribed, subscribePush]);
   // Team Chat is BGP-internal — clients never poll it (and the button is hidden).
-  const isClientShell = (currentUser as any)?.role === "Client";
+  const isClientShell = (currentUser as any)?.role === "Client" || !!(currentUser as any)?.companyScopeId;
   const { data: chatNotifications } = useQuery<{ unseenCount: number }>({
     queryKey: ["/api/chat/notifications"],
     enabled: !!currentUser && !isClientShell,
@@ -679,7 +679,7 @@ function AppContent() {
   useEffect(() => {
     if (user?.id) {
       setUserId(user.id);
-      setTeamLocked((user as any)?.role === "Client");
+      setTeamLocked((user as any)?.role === "Client" || !!(user as any)?.companyScopeId);
     }
     if (user?.team) {
       setUserTeam(user.team as TeamName);

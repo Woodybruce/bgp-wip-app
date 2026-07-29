@@ -5013,7 +5013,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   // Client logins (e.g. Landsec) are already scoped to their company by the
   // API, and their deals aren't tagged with a BGP team — so never apply the
   // activeTeam column filter for them (it would hide everything).
-  const isClientDeals = (currentUserForViews as any)?.role === "Client";
+  const isClientDeals = (currentUserForViews as any)?.role === "Client" || !!(currentUserForViews as any)?.companyScopeId;
 
   useEffect(() => {
     if (!teamFilterInitialised) {
