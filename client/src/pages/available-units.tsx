@@ -288,6 +288,8 @@ export default function AvailableUnitsPage() {
   const [propertyFilter, setPropertyFilter] = useState("all");
   const [assetClassFilter, setAssetClassFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
+  const [bgpTeamFilter, setBgpTeamFilter] = useState("all");
+  const [agentFilter, setAgentFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [editItem, setEditItem] = useState<AvailableUnit | null>(null);
   const [deleteItem, setDeleteItem] = useState<AvailableUnit | null>(null);
@@ -332,7 +334,7 @@ export default function AvailableUnitsPage() {
     queryKey: ["/api/crm/deals"],
   });
 
-  const { data: bgpUsers = [] } = useQuery<{ id: string; name: string; team?: string }[]>({
+  const { data: bgpUsers = [] } = useQuery<{ id: string; name: string; team?: string; additionalTeams?: string[] }[]>({
     queryKey: ["/api/users"],
   });
 
@@ -618,6 +620,15 @@ export default function AvailableUnitsPage() {
     if (propertyFilter !== "all") result = result.filter(u => u.propertyId === propertyFilter);
     if (assetClassFilter !== "all") result = result.filter(u => u.useClass === assetClassFilter);
     if (locationFilter !== "all") result = result.filter(u => u.location === locationFilter);
+    if (bgpTeamFilter !== "all") {
+      const teamUserIds = new Set(
+        bgpUsers
+          .filter(bu => bu.team === bgpTeamFilter || (bu.additionalTeams || []).includes(bgpTeamFilter))
+          .map(bu => bu.id)
+      );
+      result = result.filter(u => Array.isArray(u.agentUserIds) && u.agentUserIds.some(id => teamUserIds.has(id)));
+    }
+    if (agentFilter !== "all") result = result.filter(u => Array.isArray(u.agentUserIds) && u.agentUserIds.includes(agentFilter));
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(u => {
@@ -626,7 +637,7 @@ export default function AvailableUnitsPage() {
       });
     }
     return result;
-  }, [teamUnits, statusFilter, propertyFilter, assetClassFilter, locationFilter, search, propertyMap]);
+  }, [teamUnits, statusFilter, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap]);
 
   const stats = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -644,6 +655,21 @@ export default function AvailableUnitsPage() {
   const agentOptions = useMemo(() => {
     return bgpUsers.map(u => ({ value: u.id, label: u.name }));
   }, [bgpUsers]);
+
+  const activeAgents = useMemo(() => {
+    const ids = new Set<string>();
+    for (const u of teamUnits) for (const id of (Array.isArray(u.agentUserIds) ? u.agentUserIds : [])) ids.add(id);
+    return bgpUsers.filter(u => ids.has(u.id)).sort((a, b) => a.name.localeCompare(b.name));
+  }, [teamUnits, bgpUsers]);
+
+  const activeBgpTeams = useMemo(() => {
+    const teams = new Set<string>();
+    for (const u of activeAgents) {
+      if (u.team) teams.add(u.team);
+      for (const t of u.additionalTeams || []) teams.add(t);
+    }
+    return [...teams].sort();
+  }, [activeAgents]);
 
   const FY_MONTHS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
   const FY_MONTH_NUMS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3];
@@ -807,6 +833,28 @@ export default function AvailableUnitsPage() {
                   {l}
                 </span>
               </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={bgpTeamFilter} onValueChange={setBgpTeamFilter}>
+          <SelectTrigger className="w-[170px]" data-testid="select-team-filter">
+            <SelectValue placeholder="All Teams" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Teams</SelectItem>
+            {activeBgpTeams.map(t => (
+              <SelectItem key={t} value={t}>{t}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={agentFilter} onValueChange={setAgentFilter}>
+          <SelectTrigger className="w-[170px]" data-testid="select-agent-filter">
+            <SelectValue placeholder="All Agents" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Agents</SelectItem>
+            {activeAgents.map(u => (
+              <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>
