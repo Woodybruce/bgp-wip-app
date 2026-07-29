@@ -5988,9 +5988,19 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       let upcomingEvents = 0;
       if (propertyIds.length > 0) {
+        // Same filter + dedupe as the events list below, so the count on the
+        // stats strip matches the number of events actually shown.
         const eventsResult = await pool.query(
-          `SELECT COUNT(*) as total FROM team_events
-           WHERE (property_id = ANY($1) OR company_name = $2) AND start_time >= NOW()`,
+          `SELECT COUNT(*) as total FROM (
+             SELECT DISTINCT lower(regexp_replace(title, '^(FW:|RE:|FWD:)\\s*', '', 'i')), start_time
+             FROM team_events
+             WHERE (property_id = ANY($1) OR company_name = $2)
+               AND start_time >= NOW()
+               AND title NOT ILIKE 'cancelled:%'
+               AND title NOT ILIKE '%team meeting (%'
+               AND title NOT ILIKE '%weekly call%'
+               AND title NOT ILIKE '%padel%'
+           ) t`,
           [propertyIds, cpCompanyName]
         );
         upcomingEvents = parseInt(eventsResult.rows[0]?.total || "0");
@@ -6024,14 +6034,28 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       let upcomingEventsList: any[] = [];
       let calendarEvents: any[] = [];
       if (propertyIds.length > 0) {
+        // Client-facing events must be about the client's portfolio, not BGP's
+        // own diary. Drop cancelled meetings, BGP-internal team calls/socials,
+        // and de-duplicate the same meeting synced from several attendees'
+        // calendars (same title + start slot).
         const eventsListResult = await pool.query(
-          `SELECT id, title, start_time, end_time, event_type, location, property_id
+          `SELECT DISTINCT ON (lower(regexp_replace(title, '^(FW:|RE:|FWD:)\\s*', '', 'i')), start_time)
+                  id, regexp_replace(title, '^(FW:|RE:|FWD:)\\s*', '', 'i') AS title,
+                  start_time, end_time, event_type, location, property_id
            FROM team_events
-           WHERE (property_id = ANY($1) OR company_name = $2) AND start_time >= NOW()
-           ORDER BY start_time LIMIT 20`,
+           WHERE (property_id = ANY($1) OR company_name = $2)
+             AND start_time >= NOW()
+             AND title NOT ILIKE 'cancelled:%'
+             AND title NOT ILIKE '%team meeting (%'
+             AND title NOT ILIKE '%weekly call%'
+             AND title NOT ILIKE '%padel%'
+           ORDER BY lower(regexp_replace(title, '^(FW:|RE:|FWD:)\\s*', '', 'i')), start_time, id`,
           [propertyIds, cpCompanyName]
         );
-        upcomingEventsList = eventsListResult.rows;
+        // DISTINCT ON forces title ordering, so re-sort chronologically here.
+        upcomingEventsList = eventsListResult.rows
+          .sort((a: any, b: any) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+          .slice(0, 20);
 
         const calendarResult = await pool.query(
           `SELECT te.id, te.title, te.start_time, te.end_time, te.event_type, te.location, te.property_id, p.name as property_name
@@ -6121,12 +6145,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           description: company.description,
           address: company.head_office_address,
           companyType: company.company_type,
-          kycStatus: company.kyc_status,
-          kycCheckedAt: company.kyc_checked_at,
+          // KYC/AML status and PSC ownership are BGP's own compliance record
+          // ON this client — never send them back to the client themselves.
+          kycStatus: scopeCompanyId ? null : company.kyc_status,
+          kycCheckedAt: scopeCompanyId ? null : company.kyc_checked_at,
           bgpContacts: company.bgp_contact_user_ids || [],
           companiesHouseNumber: company.companies_house_number,
           parentCompanyName,
-          pscList,
+          pscList: scopeCompanyId ? [] : pscList,
           linkedinUrl: company.linkedin_url,
           phone: company.phone,
           industry: company.industry,

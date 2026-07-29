@@ -8,6 +8,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useTeam } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
 import { DraggableGrid } from "@/components/draggable-grid";
+import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
 import {
   Building2,
   CalendarDays,
@@ -1010,7 +1011,10 @@ export default function Dashboard() {
                             </p>
                           </div>
                         )}
-                        {(companyInfo.kycStatus) && (
+                        {/* KYC/AML status + PSC ownership is BGP's own
+                            compliance record on the client — never show it
+                            back to the client themselves. */}
+                        {(companyInfo.kycStatus && !isClientUser) && (
                           <div>
                             <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mb-0.5">KYC & Ownership</p>
                             <div className="flex items-center gap-2">
@@ -1138,6 +1142,29 @@ export default function Dashboard() {
                       <p className="text-[10px] text-muted-foreground">leases expiring soon</p>
                     </div>
                   </div>
+                </CardContent>
+              </Card>
+            ),
+          },
+          {
+            id: "portfolio-team",
+            label: "Your BGP Team",
+            defaultW: 12, defaultH: 12, minW: 6, minH: 6,
+            content: (
+              <Card className="h-full flex flex-col">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
+                  <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-teal-500" />
+                    Your BGP Team
+                  </h3>
+                  <p className="text-[10px] text-muted-foreground -mt-1">
+                    The BGP people working across your portfolio — account leads, asset management and leasing.
+                  </p>
+                  <ScrollArea className="flex-1">
+                    <div className="pr-2">
+                      <ClientTeamOrgChart clientCompanyId={resolvedCompanyId!} />
+                    </div>
+                  </ScrollArea>
                 </CardContent>
               </Card>
             ),
