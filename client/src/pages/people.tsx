@@ -1117,7 +1117,7 @@ function ClientCrmHub() {
       </div>
 
       <div className="flex gap-1 border-b">
-        {([["brands", "Brand Directory"], ["agents", "Agents"], ["contacts", `${hubUser?.team || "My"} Contacts`]] as const).map(([key, label]) => (
+        {([["brands", "Brand Directory"], ["agents", "Agents"], ["contacts", `${hubUser?.team || "Your"} Contacts`]] as const).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -1164,7 +1164,7 @@ function ClientCrmHub() {
                   key={f.key}
                   onClick={() => setRel(f.key)}
                   className={`px-3 py-1 rounded-full text-xs border transition-colors ${
-                    rel === f.key ? "bg-emerald-600 text-white border-emerald-600" : "bg-background hover:bg-muted"
+                    rel === f.key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"
                   }`}
                   data-testid={`client-rel-${f.key}`}
                 >
@@ -1216,10 +1216,11 @@ function ClientCrmHub() {
                           <Badge
                             key={`${t.propertyId}-${t.unitName || i}`}
                             variant="outline"
-                            className="text-[9px] gap-1 border-amber-400 text-amber-700 dark:text-amber-400"
+                            className="text-[9px] gap-1 max-w-full border-amber-400 text-amber-700 dark:text-amber-400"
+                            title={`${t.unitName ? `${t.unitName} · ` : ""}${t.propertyName}`}
                           >
-                            <Target className="w-2.5 h-2.5" />
-                            {t.unitName ? `${t.unitName} · ` : ""}{t.propertyName}
+                            <Target className="w-2.5 h-2.5 shrink-0" />
+                            <span className="truncate">{t.unitName ? `${t.unitName} · ` : ""}{t.propertyName}</span>
                           </Badge>
                         ))}
                       </div>
@@ -1289,9 +1290,7 @@ function ClientCrmHub() {
               className="max-w-xs"
               data-testid="client-agent-search"
             />
-            <span className="text-xs text-muted-foreground ml-auto">
-              Tenant rep agents — the agents acquiring sites for brands
-            </span>
+            <span className="text-xs text-muted-foreground ml-auto">{agents.length} tenant rep agents</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {agents
@@ -1316,8 +1315,8 @@ function ClientCrmHub() {
                       <div className="flex gap-1 flex-wrap">
                         {a.represents.slice(0, 6).map(r => (
                           <Link key={r.brandId} href={`/companies/${r.brandId}`}>
-                            <Badge variant="outline" className="text-[9px] cursor-pointer hover:bg-muted">
-                              {r.brandName}{r.region ? ` · ${r.region}` : ""}
+                            <Badge variant="outline" className="text-[9px] max-w-full cursor-pointer hover:bg-muted" title={`${r.brandName}${r.region ? ` · ${r.region}` : ""}`}>
+                              <span className="truncate">{r.brandName}{r.region ? ` · ${r.region}` : ""}</span>
                             </Badge>
                           </Link>
                         ))}
@@ -1359,7 +1358,7 @@ function ClientCrmHub() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => setContactDialog({ companyId: hubUser.companyScopeId, companyName: hubUser.team || "your company" })}
+                onClick={() => setContactDialog({ companyId: hubUser.companyScopeId, companyName: hubUser.team || "Your company" })}
                 data-testid="client-add-own-contact"
               >
                 <Plus className="w-3.5 h-3.5 mr-1" /> Add contact
@@ -1375,7 +1374,7 @@ function ClientCrmHub() {
                       <p className="text-sm font-semibold hover:underline cursor-pointer">{c.name}</p>
                     </Link>
                     <button
-                      onClick={() => setContactDialog({ companyId: c.companyId, companyName: hubUser?.team || "your company", contact: c })}
+                      onClick={() => setContactDialog({ companyId: c.companyId, companyName: hubUser?.team || "Your company", contact: c })}
                       className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity shrink-0"
                       title="Edit contact"
                       data-testid={`client-edit-own-contact-${c.id}`}

@@ -705,8 +705,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   // Occupied + Trading both count as "in possession" for the headline
   // KPI. Vacant + In Negotiation + Under Offer + Lease Event all count
   // as "actionable" — surfaced as their own buckets below if non-zero.
-  const occupied = units.filter(u => u.status === "Occupied" || u.status === "Trading").length;
-  const vacant = units.filter(u => u.status === "Vacant").length;
+  const occupied = units.filter(u => u.status === "Occupied" || u.status === "Trading" || u.status === "Let").length;
+  // Void/Available/AVA are vacancy statuses too (dashboard counts them as
+  // vacant; synthetic tracker rows arrive as their marketing status).
+  const vacant = units.filter(u => ["Vacant", "Void", "Available", "AVA"].includes(u.status || "")).length;
   const inNeg = units.filter(u => u.status === "In Negotiation").length;
   const underOffer = units.filter(u => u.status === "Under Offer").length;
   const leaseEvent = units.filter(u => u.status === "Lease Event").length;
@@ -717,13 +719,23 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   // WAULT is rent-weighted (Σ rent × term ÷ Σ rent), not a simple mean —
   // otherwise one 999-year ground lease at a peppercorn drags the figure
   // to absurdity. Falls back to the unweighted mean when no rents exist.
-  const waultUnits = units.filter(u => Number(u.unexpired_term) > 0);
+  // Term comes from lease_expiry directly: the imported unexpired_term
+  // column mixes units (years from BGP sheets, months from the Landsec
+  // feed), which made the displayed "yrs" figure meaningless.
+  const yearsToExpiry = (u: TenancyUnit): number => {
+    if (u.lease_expiry) {
+      const yrs = (new Date(u.lease_expiry).getTime() - Date.now()) / (365.25 * 24 * 3600 * 1000);
+      return yrs > 0 ? yrs : 0;
+    }
+    return 0;
+  };
+  const waultUnits = units.filter(u => yearsToExpiry(u) > 0);
   const waultRentedUnits = waultUnits.filter(u => Number(u.passing_rent_pa) > 0);
   const waultRentTotal = waultRentedUnits.reduce((s, u) => s + Number(u.passing_rent_pa), 0);
   const avgWAULT = waultRentTotal > 0
-    ? waultRentedUnits.reduce((s, u) => s + Number(u.unexpired_term) * Number(u.passing_rent_pa), 0) / waultRentTotal
+    ? waultRentedUnits.reduce((s, u) => s + yearsToExpiry(u) * Number(u.passing_rent_pa), 0) / waultRentTotal
     : waultUnits.length
-      ? waultUnits.reduce((s, u) => s + Number(u.unexpired_term), 0) / waultUnits.length
+      ? waultUnits.reduce((s, u) => s + yearsToExpiry(u), 0) / waultUnits.length
       : 0;
 
   const matchDeal = (unit: TenancyUnit): DealLink | undefined => {

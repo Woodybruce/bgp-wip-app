@@ -20,6 +20,7 @@
  *   - Hunter row drill-downs
  */
 import { useEffect, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -598,6 +599,10 @@ export function AIActivityTrigger({
   title?: string;
   variant?: "ghost" | "outline" | "default";
 }) {
+  // Client accounts can't read activity feeds (403) — the card inside the
+  // sheet would render nothing, so don't offer the empty sheet at all.
+  const { data: atViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  if (atViewer?.role === "Client" || atViewer?.companyScopeId) return null;
   return (
     <Sheet>
       <SheetTrigger asChild>

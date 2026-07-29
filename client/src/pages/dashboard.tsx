@@ -799,7 +799,7 @@ export default function Dashboard() {
   // they've added from the vetted client-safe set. Every other standard
   // widget is BGP-ops (inbox, WIP, SharePoint, KPI fees, org alerts) and is
   // filtered out even if it somehow ends up saved.
-  const isClientUser = user?.role === "Client";
+  const isClientUser = user?.role === "Client" || !!(user as any)?.companyScopeId;
   // Migrate one renamed legacy id, then ensure the three always-on widgets are
   // present (staff only — clients fully control their own safe widget set).
   const requested = (user?.dashboardWidgets ?? (isClientUser ? [] : DEFAULT_WIDGETS))
@@ -878,7 +878,7 @@ export default function Dashboard() {
             </h1>
             <p className="text-sm text-muted-foreground">
               {isBrandLandsec ? (
-                <>{brand.footerText} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>
+                <>{brand.footerText}{!isClientUser && <> · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>}</>
               ) : (
                 <>{currentTeam} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>
               )}
@@ -994,7 +994,7 @@ export default function Dashboard() {
         const rentUnits = stats.rentRecordedUnits ?? 0;
         const avgRentPerUnit = rentUnits > 0 ? stats.totalPassingRent / rentUnits : 0;
         const occupiedCount = stats.totalUnits - stats.vacantUnits;
-        const rentCoveragePct = occupiedCount > 0 ? Math.round((rentUnits / occupiedCount) * 100) : 0;
+        const rentCoveragePct = occupiedCount > 0 ? Math.min(100, Math.round((rentUnits / occupiedCount) * 100)) : 0;
         const occupancyRate = stats.totalUnits > 0 ? ((occupiedCount / stats.totalUnits) * 100).toFixed(1) : "0";
 
         const portfolioGridItems = [
@@ -1004,7 +1004,7 @@ export default function Dashboard() {
             defaultW: 6, defaultH: 12, minW: 4, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-4 flex-1 overflow-hidden flex flex-col">
+                <CardContent className="p-3 flex-1 overflow-hidden flex flex-col">
                   <div className="flex items-start gap-3 mb-3">
                     <div className="w-12 h-12 rounded-lg bg-teal-50 dark:bg-teal-900/30 border flex items-center justify-center flex-shrink-0">
                       <Landmark className="w-6 h-6 text-teal-600 dark:text-teal-400" />
@@ -1101,7 +1101,7 @@ export default function Dashboard() {
                 <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <CalendarDays className="w-3.5 h-3.5 text-teal-500" />
-                    Upcoming Events ({portfolioData.events?.length || 0})
+                    Upcoming Events ({stats.upcomingEvents ?? portfolioData.events?.length ?? 0})
                   </h3>
                   <p className="text-[10px] text-muted-foreground -mt-1">Portfolio meetings, viewings and calls from the BGP account team's diaries.</p>
                   {portfolioData.events?.length > 0 ? (
@@ -1140,12 +1140,12 @@ export default function Dashboard() {
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 h-full">
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800" data-testid="kpi-properties">
                       <p className="text-[10px] text-teal-600 dark:text-teal-400 font-medium uppercase tracking-wider">Properties</p>
-                      <p className="text-2xl font-bold text-teal-700 dark:text-teal-300">{stats.totalProperties}</p>
+                      <p className="text-2xl font-bold text-teal-700 dark:text-teal-300">{Number(stats.totalProperties || 0).toLocaleString("en-GB")}</p>
                     </div>
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800" data-testid="kpi-units">
                       <p className="text-[10px] text-blue-600 dark:text-blue-400 font-medium uppercase tracking-wider">Total Units</p>
-                      <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">{stats.totalUnits}</p>
-                      <p className="text-[10px] text-muted-foreground">{occupiedCount} occupied · {stats.vacantUnits} vacant</p>
+                      <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">{Number(stats.totalUnits || 0).toLocaleString("en-GB")}</p>
+                      <p className="text-[10px] text-muted-foreground">{occupiedCount.toLocaleString("en-GB")} occupied · {Number(stats.vacantUnits || 0).toLocaleString("en-GB")} vacant</p>
                     </div>
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800" data-testid="kpi-occupancy">
                       <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium uppercase tracking-wider">Occupancy</p>
@@ -1248,8 +1248,8 @@ export default function Dashboard() {
                       <Badge variant="secondary" className="text-[10px]">{totalLeasingUnits} units across {leasingByProperty.size} properties</Badge>
                     </h3>
                     <div className="flex items-center gap-3 text-[10px]">
-                      <span className="text-emerald-600">{occupiedUnits} occupied</span>
-                      {expiringUnits > 0 && <span className="text-amber-600">{expiringUnits} expiring</span>}
+                      <span className="text-emerald-600 dark:text-emerald-400">{occupiedUnits} occupied</span>
+                      {expiringUnits > 0 && <span className="text-amber-600 dark:text-amber-400">{expiringUnits} expiring</span>}
                       <Link href="/leasing-schedule">
                         <span className="text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-leasing-board">
                           <ExternalLink className="w-3 h-3" />Open Board
@@ -1409,7 +1409,7 @@ export default function Dashboard() {
                       <div className="border rounded-lg overflow-hidden mt-2">
                         <div className="flex items-center gap-2 p-2 bg-muted/50">
                           <BarChart3 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                          <p className="text-xs font-medium">Other Deals (no property linked)</p>
+                          <p className="text-xs font-medium">Other Deals</p>
                           <Badge variant="outline" className="text-[10px] shrink-0 ml-auto">{unlinkedDeals.length}</Badge>
                         </div>
                         <div className="divide-y">
@@ -1509,9 +1509,9 @@ export default function Dashboard() {
                     <h3 className="font-semibold text-xs flex items-center gap-1.5 mb-2">
                       <CalendarDays className="w-3.5 h-3.5 text-teal-500" />
                       Lease Expiry Timeline
-                      <Badge variant="secondary" className="text-[10px]">{unitsWithExpiry.length} leases across {propertyNames.size} properties</Badge>
+                      <Badge variant="secondary" className="text-[10px]">{Array.from(quarterData.values()).reduce((s, q) => s + Object.values(q).reduce((a, v) => a + v.count, 0), 0)} expiring within 5 yrs across {propertyNames.size} properties</Badge>
                     </h3>
-                    <p className="text-[10px] text-muted-foreground -mt-1 mb-1">When leases expire over time — the income-at-risk view by month.</p>
+                    <p className="text-[10px] text-muted-foreground -mt-1 mb-1">Units with leases expiring, grouped by quarter over the next five years.</p>
                     <div className="flex-1 min-h-0">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
@@ -1567,6 +1567,10 @@ export default function Dashboard() {
               const st = (d.status || "").toLowerCase();
               const isActive = !st.includes("completed") && !st.includes("withdrawn") && !st.includes("closed") && !st.includes("fallen");
               if (!isActive) continue;
+              // Rent reviews / investment deals don't fill a void — only
+              // letting-type deals count towards vacancy coverage.
+              const dt = (d.deal_type || d.dealType || "").toLowerCase();
+              if (dt && !dt.includes("leas") && !dt.includes("lett")) continue;
               if (!propMap.has(d.property_id)) {
                 const prop = properties.find((p: any) => p.id === d.property_id);
                 propMap.set(d.property_id, { vacantUnits: 0, totalUnits: 0, activeDeals: 0, propName: prop?.name || d.property_name || "Unknown" });
@@ -1641,7 +1645,7 @@ export default function Dashboard() {
                     </ScrollArea>
                     <div className="border-t pt-2 mt-auto">
                       <p className="text-[10px] text-muted-foreground text-center">
-                        {totalVacant} total vacant unit{totalVacant !== 1 ? "s" : ""} across {propertiesWithVacancy} propert{propertiesWithVacancy !== 1 ? "ies" : "y"} · {totalActiveDeals} active deal{totalActiveDeals !== 1 ? "s" : ""} in progress
+                        {totalVacant} total vacant unit{totalVacant !== 1 ? "s" : ""} across {propertiesWithVacancy} propert{propertiesWithVacancy !== 1 ? "ies" : "y"} · {totalActiveDeals} letting deal{totalActiveDeals !== 1 ? "s" : ""} working the voids
                       </p>
                     </div>
                   </CardContent>
@@ -2517,7 +2521,7 @@ export default function Dashboard() {
                       <div className="border rounded-lg overflow-hidden mt-2">
                         <div className="flex items-center gap-2 p-2 bg-muted/50">
                           <BarChart3 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                          <p className="text-xs font-medium">Other Deals (no property linked)</p>
+                          <p className="text-xs font-medium">Other Deals</p>
                           <Badge variant="outline" className="text-[10px] shrink-0 ml-auto">{unlinked.length}</Badge>
                         </div>
                         <div className="divide-y">

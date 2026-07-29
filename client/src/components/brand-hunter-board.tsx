@@ -160,6 +160,10 @@ export default function BrandHunterBoard() {
   const [search, setSearch] = useState("");
   const [filterFlag, setFilterFlag] = useState<string>("All");
 
+  // Client logins (e.g. Landsec) get the board read-only — flag/research POSTs are 403 for them.
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = viewer?.role === "Client" || !!viewer?.companyScopeId;
+
   const { data: brands = [], isLoading } = useQuery<HunterBrand[]>({
     queryKey: ["/api/brands/hunter"],
     queryFn: async () => {
@@ -303,22 +307,26 @@ export default function BrandHunterBoard() {
                           </div>
 
                           {/* Hunter flag toggle */}
-                          <button
-                            onClick={() => flagMut.mutate(brand.id)}
-                            className={`p-1.5 rounded-full transition-colors ${
-                              brand.hunter_flag
-                                ? "text-orange-500 bg-orange-50 hover:bg-orange-100"
-                                : "text-muted-foreground hover:text-orange-500 hover:bg-orange-50"
-                            }`}
-                            title={brand.hunter_flag ? "Remove from Hunter watchlist" : "Flag as Hunter Pick"}
-                          >
-                            {brand.hunter_flag ? (
-                              <BookmarkCheck className="w-4 h-4" />
-                            ) : (
-                              <Bookmark className="w-4 h-4" />
-                            )}
-                          </button>
-                          <AIActivityTrigger subjectType="brand" subjectId={brand.id} title={`${brand.name} — Activity`} />
+                          {!isClientViewer && (
+                            <button
+                              onClick={() => flagMut.mutate(brand.id)}
+                              className={`p-1.5 rounded-full transition-colors ${
+                                brand.hunter_flag
+                                  ? "text-orange-500 bg-orange-50 hover:bg-orange-100"
+                                  : "text-muted-foreground hover:text-orange-500 hover:bg-orange-50"
+                              }`}
+                              title={brand.hunter_flag ? "Remove from Hunter watchlist" : "Flag as Hunter Pick"}
+                            >
+                              {brand.hunter_flag ? (
+                                <BookmarkCheck className="w-4 h-4" />
+                              ) : (
+                                <Bookmark className="w-4 h-4" />
+                              )}
+                            </button>
+                          )}
+                          {!isClientViewer && (
+                            <AIActivityTrigger subjectType="brand" subjectId={brand.id} title={`${brand.name} — Activity`} />
+                          )}
                         </div>
                       </div>
 
@@ -445,9 +453,11 @@ export default function BrandHunterBoard() {
               </div>
             ))}
           </div>
-          <p className="pt-1 text-[11px]">
-            Flag any brand as a "Hunter Pick" with the bookmark icon. Fill in Dept Store / Franchise / TikTok / stock ticker fields in the brand profile to boost the score. Brand signals (openings, funding, exec changes) are auto-detected from the news feed; stock data comes from Yahoo Finance (6h cache).
-          </p>
+          {!isClientViewer && (
+            <p className="pt-1 text-[11px]">
+              Flag any brand as a "Hunter Pick" with the bookmark icon. Fill in Dept Store / Franchise / TikTok / stock ticker fields in the brand profile to boost the score. Brand signals (openings, funding, exec changes) are auto-detected from the news feed; stock data comes from Yahoo Finance (6h cache).
+            </p>
+          )}
         </CardContent>
       </Card>
 

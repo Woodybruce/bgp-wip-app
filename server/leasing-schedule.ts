@@ -79,10 +79,10 @@ router.get("/api/leasing-schedule/properties", requireAuth, async (req, res) => 
       const scoped = await pool.query(`
         SELECT p.id, p.name, p.address, p.asset_class, p.bgp_engagement, p.leasing_privacy_enabled,
           c.name as landlord_name, c.id as landlord_id,
-          COUNT(CASE WHEN u.status != 'Archived' THEN 1 END)::int as unit_count,
+          COUNT(CASE WHEN COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as unit_count,
           COUNT(CASE WHEN u.status = 'Occupied' THEN 1 END)::int as occupied_count,
           COUNT(CASE WHEN u.status = 'Vacant' THEN 1 END)::int as vacant_count,
-          COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND u.status != 'Archived' THEN 1 END)::int as expiring_soon
+          COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as expiring_soon
         FROM crm_properties p
         JOIN leasing_schedule_units u ON u.property_id = p.id
         LEFT JOIN crm_companies c ON p.landlord_id = c.id
@@ -96,10 +96,10 @@ router.get("/api/leasing-schedule/properties", requireAuth, async (req, res) => 
       SELECT p.id, p.name, p.address, p.asset_class, p.bgp_engagement,
         p.leasing_privacy_enabled,
         c.name as landlord_name, c.id as landlord_id,
-        COUNT(CASE WHEN u.status != 'Archived' THEN 1 END)::int as unit_count,
+        COUNT(CASE WHEN COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as unit_count,
         COUNT(CASE WHEN u.status = 'Occupied' THEN 1 END)::int as occupied_count,
         COUNT(CASE WHEN u.status = 'Vacant' THEN 1 END)::int as vacant_count,
-        COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND u.status != 'Archived' THEN 1 END)::int as expiring_soon
+        COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as expiring_soon
       FROM crm_properties p
       JOIN leasing_schedule_units u ON u.property_id = p.id
       LEFT JOIN crm_companies c ON p.landlord_id = c.id

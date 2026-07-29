@@ -5969,7 +5969,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           `SELECT COUNT(*) as total,
                   COUNT(*) FILTER (WHERE status IN ('Vacant', 'Void', 'Available')) as vacant,
                   COALESCE(SUM(CASE WHEN passing_rent_pa IS NOT NULL THEN passing_rent_pa ELSE 0 END), 0) as passing_rent,
-                  COUNT(*) FILTER (WHERE passing_rent_pa IS NOT NULL AND passing_rent_pa > 0) as rent_recorded
+                  COUNT(*) FILTER (WHERE passing_rent_pa IS NOT NULL AND passing_rent_pa > 0
+                                     AND status NOT IN ('Vacant', 'Void', 'Available')) as rent_recorded
            FROM tenancy_schedule_units WHERE property_id = ANY($1)`,
           [propertyIds]
         );
@@ -5986,8 +5987,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         [companyId]
       );
 
+      // Distinct people, not raw rows — imports create duplicate contact
+      // rows and the CRM page dedupes by name, so this count must match it.
       const contactsResult = await pool.query(
-        "SELECT COUNT(*) as total FROM crm_contacts WHERE company_id = $1",
+        "SELECT COUNT(DISTINCT lower(trim(name))) as total FROM crm_contacts WHERE company_id = $1",
         [companyId]
       );
 

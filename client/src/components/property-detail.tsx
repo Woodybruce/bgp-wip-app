@@ -503,9 +503,9 @@ export function PropertyDetail({ id }: { id: string }) {
                     const ageMs = Date.now() - new Date(property.createdAt).getTime();
                     const isRecent = ageMs < 5 * 60 * 1000;
                     const hasEnrichmentData = !!(property.proprietorName || property.landlordId || property.titleNumber);
-                    if (isRecent && !hasEnrichmentData && property.address) {
+                    if (isRecent && !hasEnrichmentData && property.address && !isClientViewer) {
                       return (
-                        <Badge variant="outline" className="text-[10px] border-purple-300 text-purple-600 bg-purple-50 animate-pulse gap-1" data-testid="badge-enriching">
+                        <Badge variant="outline" className="text-[10px] border-purple-300 text-purple-600 bg-purple-50 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800 animate-pulse gap-1" data-testid="badge-enriching">
                           <Loader2 className="w-2.5 h-2.5 animate-spin" />
                           Auto-enriching...
                         </Badge>
@@ -588,19 +588,19 @@ export function PropertyDetail({ id }: { id: string }) {
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2 min-w-0">
                     <div className="min-w-0">
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Status</p>
-                      <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />
+                      {isClientViewer ? <span className="text-sm">{property.status || "—"}</span> : <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />}
                     </div>
                     <div className="min-w-0">
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Asset Class</p>
-                      <InlineLabelSelect value={Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />
+                      {isClientViewer ? <span className="text-sm">{(Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass) || "—"}</span> : <InlineLabelSelect value={Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />}
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Team</p>
-                      <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />
+                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">BGP Team</p>
+                      {isClientViewer ? <span className="text-sm">{Array.isArray(property.bgpEngagement) ? property.bgpEngagement.join(", ") : (property.bgpEngagement || "—")}</span> : <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />}
                     </div>
                     <div className="min-w-0">
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Website</p>
-                      <InlineText value={property.website || ""} onSave={(val) => inlineUpdate("website", val)} placeholder="Set website" className="text-sm truncate block" />
+                      {isClientViewer ? <span className="text-sm truncate block">{property.website || "—"}</span> : <InlineText value={property.website || ""} onSave={(val) => inlineUpdate("website", val)} placeholder="Set website" className="text-sm truncate block" />}
                     </div>
                   </div>
 
@@ -689,7 +689,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 <div className="border-t pt-2 grid grid-cols-2 gap-x-4 gap-y-1">
                   <div>
                     <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Area</p>
-                    <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />
+                    {isClientViewer ? <span className="text-sm font-mono font-medium">{property.sqft ? `${Number(property.sqft).toLocaleString()} sq ft` : "—"}</span> : <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />}
                   </div>
                   {/* Competitor intel is BGP-internal — never shown to clients. */}
                   {!isClientViewer && (
@@ -1026,7 +1026,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 onToggle={() => toggleSection("availableUnits")}
                 testId="toggle-available-units-section"
               >
-                <AvailableUnitsPanel propertyId={property.id} />
+                <AvailableUnitsPanel propertyId={property.id} readOnly={isClientViewer} />
               </ReferenceSection>
 
               {!isClientViewer && (
@@ -1060,7 +1060,7 @@ interface AvailableUnitRow {
   dealId: string | null;
   dealRef: string | null;
 }
-function AvailableUnitsPanel({ propertyId }: { propertyId: string }) {
+function AvailableUnitsPanel({ propertyId, readOnly }: { propertyId: string; readOnly?: boolean }) {
   const { data: units = [], isLoading } = useQuery<AvailableUnitRow[]>({
     queryKey: ["/api/available-units", { propertyId }],
     queryFn: async () => {
@@ -1077,10 +1077,12 @@ function AvailableUnitsPanel({ propertyId }: { propertyId: string }) {
     return (
       <div className="text-center py-4">
         <Store className="w-7 h-7 mx-auto mb-1.5 text-muted-foreground/30" />
-        <p className="text-xs text-muted-foreground">No units on the Letting Tracker yet</p>
-        <a href={`/deals/letting?propertyId=${propertyId}`} className="text-[11px] text-blue-600 hover:underline mt-1 inline-block">
-          Add unit →
-        </a>
+        <p className="text-xs text-muted-foreground">{readOnly ? "No units currently being marketed here." : "No units on the Letting Tracker yet"}</p>
+        {!readOnly && (
+          <a href={`/deals/letting?propertyId=${propertyId}`} className="text-[11px] text-blue-600 hover:underline mt-1 inline-block">
+            Add unit →
+          </a>
+        )}
       </div>
     );
   }
@@ -1107,9 +1109,11 @@ function AvailableUnitsPanel({ propertyId }: { propertyId: string }) {
           )}
         </div>
       ))}
-      <a href={`/deals/letting?propertyId=${propertyId}`} className="text-[11px] text-blue-600 hover:underline block pt-1">
-        Open in Letting Tracker →
-      </a>
+      {!readOnly && (
+        <a href={`/deals/letting?propertyId=${propertyId}`} className="text-[11px] text-blue-600 hover:underline block pt-1">
+          Open in Letting Tracker →
+        </a>
+      )}
     </div>
   );
 }

@@ -594,6 +594,8 @@ function formatInteractionDate(dateStr: string) {
 
 function ContactDetail({ id }: { id: string }) {
   const { toast } = useToast();
+  const { data: cdViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const cdIsClient = cdViewer?.role === "Client" || !!cdViewer?.companyScopeId;
   const [editOpen, setEditOpen] = useState(false);
 
   const { data: contact, isLoading } = useQuery<CrmContact>({
@@ -746,6 +748,7 @@ function ContactDetail({ id }: { id: string }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {!cdIsClient && (
           <Button
             variant="outline"
             size="sm"
@@ -756,6 +759,7 @@ function ContactDetail({ id }: { id: string }) {
             {enrichMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
             Enrich
           </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} data-testid="button-edit-contact">
             <Pencil className="w-4 h-4 mr-1" />
             Edit

@@ -144,6 +144,14 @@ const AI_SUGGESTIONS = [
   "Search CRM contacts",
 ];
 
+// Client logins get landlord-voiced prompts — no BGP calendar, no CRM jargon.
+const CLIENT_AI_SUGGESTIONS = [
+  "Which of my leases expire in the next 12 months?",
+  "What's happening on my vacant units?",
+  "Create a targeting brief for one of my units",
+  "What's the latest news on brands we're targeting?",
+];
+
 const NAME_COLORS = [
   "text-rose-600", "text-blue-600", "text-emerald-600", "text-purple-600",
   "text-orange-600", "text-teal-600", "text-pink-600", "text-indigo-600",
@@ -2570,7 +2578,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
           </div>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
-          {view === "chat" && !activeThreadId && (
+          {view === "chat" && !activeThreadId && !chatIsClient && (
             <Button
               variant="ghost"
               size="icon"
@@ -2655,7 +2663,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                 data-testid="sidebar-chatbgp-home"
               >
                 <Sparkles className="w-4 h-4 shrink-0" />
-                <span className="truncate">Chat BGP</span>
+                <span className="truncate">ChatBGP</span>
               </button>
             </div>
             <div className="h-px bg-border mx-3 shrink-0" />
@@ -2731,7 +2739,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                   Ask questions, run models, or generate documents.
                 </p>
                 <div className="grid grid-cols-1 gap-2 w-full">
-                  {AI_SUGGESTIONS.map((s, i) => (
+                  {(chatIsClient ? CLIENT_AI_SUGGESTIONS : AI_SUGGESTIONS).map((s, i) => (
                     <button
                       key={i}
                       onClick={() => handleSuggestion(s)}

@@ -344,15 +344,15 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     <div className="space-y-3" data-testid="client-team-orgchart">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
-          <Badge variant="secondary" className="text-xs">{members.length} team member{members.length === 1 ? "" : "s"}</Badge>
+          <Badge variant="secondary" className="text-xs">{new Set(members.map(m => m.user_id)).size} team member{new Set(members.map(m => m.user_id)).size === 1 ? "" : "s"}</Badge>
           {lead ? (
             <span className="text-[11px] text-muted-foreground flex items-center gap-1">
               <Star className="w-3 h-3 text-amber-500" fill="currentColor" />
               Lead: <span className="font-medium text-foreground">{lead.full_name || lead.username}</span>
-              {!lead.is_lead && <span className="text-[10px] text-muted-foreground/70">(auto)</span>}
+              {!lead.is_lead && !readOnly && <span className="text-[10px] text-muted-foreground/70">(auto)</span>}
             </span>
           ) : (
-            <span className="text-[11px] text-muted-foreground italic">No lead pinned</span>
+            <span className="text-[11px] text-muted-foreground italic">{readOnly ? "" : "No lead pinned"}</span>
           )}
         </div>
         {!readOnly && (
@@ -394,7 +394,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
         <div className="border rounded-lg py-12 flex flex-col items-center justify-center text-muted-foreground text-sm">
           <Building2 className="w-8 h-8 opacity-30 mb-2" />
           <div>No BGP team assigned yet</div>
-          <div className="text-xs mt-1">Click "Add to team" to get started</div>
+          <div className="text-xs mt-1">{readOnly ? "Your BGP team hasn't been set up yet — ask your BGP team." : 'Click "Add to team" to get started'}</div>
         </div>
       ) : (
         <div className="overflow-x-auto pb-2">

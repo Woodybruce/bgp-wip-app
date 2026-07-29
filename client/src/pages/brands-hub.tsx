@@ -230,7 +230,7 @@ export default function BrandsHub() {
             <Store className="w-6 h-6 text-pink-500" />
             Brand Intelligence
           </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Live view of every brand across the Hub</p>
+          <p className="text-sm text-muted-foreground mt-0.5">{isClientHub ? "Brands across your portfolio and the wider hospitality market" : "Live view of every brand across the Hub"}</p>
         </div>
         <Link href="/companies?tab=tenants">
           <Button variant="outline" size="sm">
@@ -268,7 +268,7 @@ export default function BrandsHub() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: "Total Brands", value: totalBrands, icon: Store, colour: "text-pink-500" },
-          { label: "Active Requirements", value: activeReqs, icon: FileText, colour: "text-blue-500" },
+          { label: "Brands with Live Requirements", value: activeReqs, icon: FileText, colour: "text-blue-500" },
           { label: "With Turnover Data", value: brandsWithTurnover, icon: BarChart3, colour: "text-emerald-500" },
           { label: "Categories", value: BRAND_CATEGORIES.length, icon: Zap, colour: "text-purple-500" },
         ].map(s => (
@@ -378,7 +378,9 @@ export default function BrandsHub() {
           </CardContent>
         </Card>
 
-        {/* Super Brands */}
+        {/* Super Brands — luxury/flagship intel, staff only (server sends
+            [] for clients, so the card would sit permanently empty). */}
+        {!isClientHub && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
             <div className="flex items-center gap-2">
@@ -408,6 +410,7 @@ export default function BrandsHub() {
             </div>
           </CardContent>
         </Card>
+        )}
       </div>
 
       {/* ── Active Requirements Radar ───────────────────────────────── */}
@@ -432,20 +435,25 @@ export default function BrandsHub() {
                       <p className="text-sm font-medium truncate">{r.company_name}</p>
                       <p className="text-[10px] text-muted-foreground truncate">{(r.company_type || "").replace("Tenant - ", "")}</p>
                       <div className="flex flex-wrap gap-1 mt-1">
+                        {/* max-w-full + truncate — free-text sizes ("Prezzo:
+                            2,500-3,500 sq ft; Jamie's Italian: …") must clip
+                            inside the card, not bleed across the grid. */}
                         {r.size?.length ? (
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0">
-                            <Maximize2 className="w-2.5 h-2.5 mr-0.5" />
-                            {formatSize(r.size)}
+                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 max-w-full" title={formatSize(r.size)}>
+                            <Maximize2 className="w-2.5 h-2.5 mr-0.5 shrink-0" />
+                            <span className="truncate">{formatSize(r.size)}</span>
                           </Badge>
                         ) : null}
                         {r.requirement_locations && r.requirement_locations.length > 0 && (
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0">
-                            <MapPin className="w-2.5 h-2.5 mr-0.5" />
-                            {r.requirement_locations.slice(0, 2).join(", ")}
+                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 max-w-full" title={r.requirement_locations.join(", ")}>
+                            <MapPin className="w-2.5 h-2.5 mr-0.5 shrink-0" />
+                            <span className="truncate">{r.requirement_locations.slice(0, 2).join(", ")}</span>
                           </Badge>
                         )}
                         {r.use?.length ? (
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0">{r.use.join(", ")}</Badge>
+                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 max-w-full" title={r.use.join(", ")}>
+                            <span className="truncate">{r.use.join(", ")}</span>
+                          </Badge>
                         ) : null}
                       </div>
                     </div>
@@ -1013,6 +1021,8 @@ function MarketCommentaryBoard({
   accent: string;
 }) {
   const { toast } = useToast();
+  const { data: mcViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const mcIsClient = mcViewer?.role === "Client" || !!mcViewer?.companyScopeId;
   const params = new URLSearchParams({
     scope: scopeKey,
     label: scopeLabel,
@@ -1089,6 +1099,7 @@ function MarketCommentaryBoard({
               </div>
             </div>
           </div>
+          {!mcIsClient && (
           <Button
             size="sm"
             variant="ghost"
@@ -1100,6 +1111,7 @@ function MarketCommentaryBoard({
             <RefreshCw className={`w-3 h-3 mr-1 ${refreshing ? "animate-spin" : ""}`} />
             Refresh
           </Button>
+          )}
         </div>
       </div>
 

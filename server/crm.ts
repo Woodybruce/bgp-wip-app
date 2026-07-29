@@ -1703,7 +1703,15 @@ export function setupCrmRoutes(app: Express) {
         const ct = String(company.companyType || "");
         const isAllowedBrand = /^Tenant - /.test(ct) &&
           /(restaurant|dining|f&b|qsr|fast|food|bakery|patisserie|caf|coffee|bar|leisure|cinema|entertainment|fitness|gym|yoga|hotel|hospitality)/i.test(ct);
-        if (!isAllowedBrand) return res.status(403).json({ error: "Access denied" });
+        // Tenant-rep agents are in the client agent directory and linked
+        // from brand profiles ("Represented by") — readable too.
+        const isTenantRepAgent = company.agentType === "tenant_rep" ||
+          (await pool.query(
+            `SELECT 1 FROM brand_agent_representations
+              WHERE agent_company_id = $1 AND end_date IS NULL AND agent_type = 'tenant_rep' LIMIT 1`,
+            [req.params.id]
+          )).rows.length > 0;
+        if (!isAllowedBrand && !isTenantRepAgent) return res.status(403).json({ error: "Access denied" });
         // Strip BGP-internal + KYC/AML/PEP fields for client viewers.
         const {
           kycStatus, kycCheckedAt, kycApprovedBy, kycExpiresAt,
@@ -1939,7 +1947,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (!contact) return res.status(404).json({ error: "Not found" });
       const scopeCompanyId = await resolveCompanyScope(req);
       if (scopeCompanyId && !(await isContactInScope(scopeCompanyId, req.params.id))) {
-        return res.status(403).json({ error: "Access denied" });
+        // The client brand directory links to hospitality-brand contacts —
+        // those are readable, same rule as adding/amending them.
+        const ok = await clientCanTouchCompany(scopeCompanyId, (contact as any).companyId);
+        if (!ok) return res.status(403).json({ error: "Access denied" });
       }
       res.json(contact);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -4591,10 +4602,20 @@ Return a JSON object with these fields (use null for any field you cannot find):
          )
          SELECT c.id, c.name, c.company_type AS "companyType", c.domain,
                 c.instagram_handle AS "instagramHandle",
-                COALESCE(json_agg(json_build_object(
-                  'id', ct.id, 'name', ct.name, 'role', ct.role,
-                  'email', ct.email, 'phone', COALESCE(ct.phone_mobile, ct.phone)
-                ) ORDER BY ct.name) FILTER (WHERE ct.id IS NOT NULL), '[]') AS contacts,
+                COALESCE((
+                  SELECT json_agg(json_build_object(
+                    'id', dct.id, 'name', dct.name, 'role', dct.role,
+                    'email', dct.email, 'phone', COALESCE(dct.phone_mobile, dct.phone)
+                  ) ORDER BY dct.name)
+                  FROM (
+                    -- one row per person — imports duplicate contact rows,
+                    -- keep the most recently updated per name
+                    SELECT DISTINCT ON (lower(trim(ct2.name))) ct2.*
+                      FROM crm_contacts ct2
+                     WHERE ct2.company_id = c.id
+                     ORDER BY lower(trim(ct2.name)), ct2.updated_at DESC NULLS LAST
+                  ) dct
+                ), '[]') AS contacts,
                 EXISTS (
                   SELECT 1 FROM tenancy_schedule_units t JOIN scoped_props sp ON sp.id = t.property_id
                    WHERE t.tenant_company_id = c.id
@@ -4624,9 +4645,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
                   ) tg
                 ) AS "targetedAt"
          FROM crm_companies c
-         LEFT JOIN crm_contacts ct ON ct.company_id = c.id
          WHERE c.company_type ILIKE ANY($1) AND c.merged_into_id IS NULL
-         GROUP BY c.id
          ORDER BY c.name`,
         [CLIENT_BRAND_TYPE_PATTERNS, scopeCompanyId]
       );
@@ -7248,9 +7267,13 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       // Client logins only see the hospitality / food / café / fitness
       // slice — same whitelist as the client brand directory.
       const clientScoped = await isClientRequest(req);
-      const tenantFilter = clientScoped
+      // merged_into_id IS NULL is part of the filter itself — otherwise the
+      // Overview tiles count merged duplicates that Brand Explorer (which
+      // reads /api/crm/companies, correctly filtered) no longer shows, and
+      // the same page displays two different brand totals.
+      const tenantFilter = (clientScoped
         ? `company_type ILIKE ANY(ARRAY[${CLIENT_BRAND_TYPE_PATTERNS.map(p => `'${p}'`).join(",")}])`
-        : `company_type ILIKE 'Tenant -%'`;
+        : `company_type ILIKE 'Tenant -%'`) + ` AND merged_into_id IS NULL`;
 
       // Category counts
       const catRows = await pool.query(
@@ -7300,7 +7323,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           c.company_type, c.domain
         FROM turnover_data t
         LEFT JOIN crm_companies c ON c.id = t.company_id
-        WHERE t.turnover IS NOT NULL
+        WHERE t.turnover IS NOT NULL AND (c.id IS NULL OR c.merged_into_id IS NULL)
         ORDER BY t.company_id, t.period DESC, t.turnover DESC
       `).then(r => r.rows);
 
@@ -7350,9 +7373,17 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
   });
 
   // ── Brand Hunter — ranked list of brands most likely to expand into UK ──
-  app.get("/api/brands/hunter", requireAuth, async (_req, res) => {
+  app.get("/api/brands/hunter", requireAuth, async (req, res) => {
     try {
       const { getStockSnapshots } = await import("./stock-price");
+
+      // Client logins get the hospitality slice only — the full tracked
+      // universe (luxury/fashion/retail) is BGP intel, and its rows link to
+      // brand profiles a client can't open anyway.
+      const hunterClientScoped = await isClientRequest(req);
+      const hunterSliceFilter = hunterClientScoped
+        ? ` AND c.company_type ILIKE ANY(ARRAY[${CLIENT_BRAND_TYPE_PATTERNS.map(p => `'${p}'`).join(",")}])`
+        : "";
 
       // Fetch all tracked brands + any manually hunter-flagged brands
       const brands = await pool.query(`
@@ -7366,7 +7397,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           c.created_at
         FROM crm_companies c
         WHERE (c.is_tracked_brand = true OR c.hunter_flag = true)
-          AND c.merged_into_id IS NULL
+          AND c.merged_into_id IS NULL${hunterSliceFilter}
         ORDER BY c.name
       `).then(r => r.rows);
 

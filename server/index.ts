@@ -3311,6 +3311,10 @@ app.use("/api/branding/assets", express.static(
     // VAPID key (push writes are already client-allowed) and aggregate logo
     // cache stats used by the shared company-logo helper.
     "/api/push/vapid-key", "/api/brand-logo-stats",
+    // Turnover Board reads (the tab is client-visible; research/edit POSTs
+    // stay staff-only via the write allowlist) and the saved dashboard
+    // template (read-only layout defaults).
+    "/api/turnover", "/api/dashboard-template",
   ];
   // Microsoft 365 stays fully blocked for clients (mail/calendar/files all
   // 403) — the client UI must not call it at all; see nav + poller gating.
@@ -3334,7 +3338,9 @@ app.use("/api/branding/assets", express.static(
     // Clients may edit their OWN leasing/tenancy schedule rows (positioning,
     // bands, targets, meeting updates). Each endpoint verifies the property is
     // in the client's scope; import/bulk-delete stay staff-only. (Landsec.)
-    "/api/tenancy-schedule/unit", "/api/leasing-schedule/unit",
+    // Both singular (/unit/:id PUT) and plural (/units/:id/archive PATCH) —
+    // the archive button 403'd while the delete beside it worked.
+    "/api/tenancy-schedule/unit", "/api/leasing-schedule/unit", "/api/leasing-schedule/units",
     // Clients may manage their OWN tasks (every task endpoint is scoped to
     // user_id); the My Tasks dashboard widget needs create/complete/reorder.
     "/api/tasks",

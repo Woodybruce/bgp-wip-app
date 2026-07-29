@@ -68,7 +68,8 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     // property appears, occupied or not. The vacant rows carry the
     // linked available_unit_id so the UI can deep-link into the tracker.
     const vacant = await pool.query(
-      `SELECT au.id AS available_unit_id, au.unit_name, au.sqft, au.asking_rent,
+      `SELECT DISTINCT ON (lower(trim(coalesce(au.unit_name, ''))))
+              au.id AS available_unit_id, au.unit_name, au.sqft, au.asking_rent,
               au.marketing_status, au.deal_id, d.deal_ref
        FROM available_units au
        LEFT JOIN crm_deals d ON d.id = au.deal_id
@@ -76,9 +77,9 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
          AND NOT EXISTS (
            SELECT 1 FROM tenancy_schedule_units ts
            WHERE ts.property_id = au.property_id
-             AND lower(trim(coalesce(ts.unit_number, ts.premises, ''))) = lower(trim(coalesce(au.unit_name, '')))
+             AND lower(trim(coalesce(nullif(trim(ts.unit_number), ''), ts.premises, ''))) = lower(trim(coalesce(au.unit_name, '')))
          )
-       ORDER BY au.unit_name`,
+       ORDER BY lower(trim(coalesce(au.unit_name, ''))), au.created_at DESC`,
       [propertyId]
     );
 
