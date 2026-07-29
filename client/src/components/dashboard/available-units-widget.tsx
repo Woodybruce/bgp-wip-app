@@ -69,6 +69,7 @@ export function AvailableUnitsWidget() {
         )}
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-4 flex-1 overflow-auto">
+        <p className="text-[10px] text-muted-foreground -mt-1">Units being marketed across the portfolio and where each one is in the letting process.</p>
         <div className="flex gap-4">
           {Object.entries(statusCounts).filter(([k]) => k !== "Let").map(([status, count]) => (
             <div key={status} className="flex items-center gap-1.5">

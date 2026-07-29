@@ -833,10 +833,11 @@ export default function Dashboard() {
     "portfolio-team": "The BGP people working across your portfolio and their properties",
     "portfolio-properties": "Every property linked to your account",
     "portfolio-leasing": "Every unit — tenant, occupancy, rent and expiry",
-    "portfolio-activity": "Recent emails, calls and meetings with your BGP team",
+    "portfolio-activity": "The latest deal movements across your portfolio",
     "portfolio-contacts": "Your key contacts on the account",
     "portfolio-deals": "Live deals across your properties",
-    "portfolio-lease-expiry": "Upcoming lease expiries and the deals against them",
+    "portfolio-lease-expiry": "Units with leases expiring over the next five years, by quarter",
+    "portfolio-vacancy-pipeline": "Vacant units per property vs the letting deals working to fill them",
   };
 
   const handleHideWidget = useCallback((widgetId: string) => {
@@ -1189,11 +1190,13 @@ export default function Dashboard() {
                   <p className="text-[10px] text-muted-foreground -mt-1">
                     The BGP people working across your portfolio — account leads, asset management and leasing.
                   </p>
-                  <ScrollArea className="flex-1">
-                    <div className="pr-2">
-                      <ClientTeamOrgChart clientCompanyId={resolvedCompanyId!} />
-                    </div>
-                  </ScrollArea>
+                  {/* Plain overflow container, not ScrollArea — the team
+                      columns overflow HORIZONTALLY and radix ScrollArea only
+                      scrolls vertically, clipping the extra columns with no
+                      way to reach them. */}
+                  <div className="flex-1 overflow-auto pr-1">
+                    <ClientTeamOrgChart clientCompanyId={resolvedCompanyId!} />
+                  </div>
                 </CardContent>
               </Card>
             ),
@@ -1294,6 +1297,7 @@ export default function Dashboard() {
                     <Clock className="w-3.5 h-3.5 text-teal-500" />
                     Recent Activity
                   </h3>
+                  <p className="text-[10px] text-muted-foreground -mt-1">The latest deal movements across your portfolio.</p>
                   {portfolioData.activity?.length > 0 ? (
                     <ScrollArea className="flex-1">
                       <div className="space-y-0.5 pr-2">
@@ -1330,6 +1334,7 @@ export default function Dashboard() {
                     <Users className="w-3.5 h-3.5 text-teal-500" />
                     Contacts ({portfolioData.contacts?.length || 0})
                   </h3>
+                  <p className="text-[10px] text-muted-foreground -mt-1">Your company's people on the account — click through for details.</p>
                   {portfolioData.contacts?.length > 0 ? (
                     <ScrollArea className="flex-1 overflow-y-auto">
                       <div className="space-y-0.5 pr-2">
