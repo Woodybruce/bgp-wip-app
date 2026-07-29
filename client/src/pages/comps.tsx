@@ -1929,6 +1929,9 @@ export default function Comps() {
 
   const { data: pdfTemplate } = useQuery<PdfTemplateConfig>({
     queryKey: ["/api/comp-pdf-template"],
+    // staff-only PDF export config — wait for the viewer to resolve so a
+    // client's first paint doesn't fire it (403)
+    enabled: !!compsViewer && !isClientComps,
   });
 
   const { data: properties = [] } = useQuery<any[]>({

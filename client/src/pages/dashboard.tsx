@@ -498,6 +498,9 @@ export default function Dashboard() {
     try { return (localStorage.getItem("bgp_dashboard_view_mode") as "team" | "individual") || "team"; }
     catch { return "team"; }
   });
+  // Client logins AND staff in client-view mode — both are served the client
+  // dashboard, so the staff-only intelligence/stats calls would just 403.
+  const isClientViewer = user?.role === "Client" || !!(user as any)?.companyScopeId;
   const [diaryRange, setDiaryRange] = useState<"today" | "week">("week");
   const handleViewModeChange = useCallback((mode: "team" | "individual") => {
     setDashboardViewMode(mode);
@@ -505,6 +508,7 @@ export default function Dashboard() {
   }, []);
   const { isLoading: statsLoading } = useQuery<CrmStats>({
     queryKey: ["/api/crm/stats"],
+    enabled: !!user && !isClientViewer,
   });
   const { data: crmProperties } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
@@ -535,10 +539,11 @@ export default function Dashboard() {
       return res.json();
     },
     staleTime: 60_000,
+    enabled: !!user && !isClientViewer,
   });
   const { data: myCalEvents } = useQuery<CalendarEvent[]>({
     queryKey: ["/api/microsoft/calendar"],
-    enabled: user?.role !== "Client", // clients have no Microsoft 365 access
+    enabled: !!user && !isClientViewer, // clients (and client-view mode) have no M365 surface
   });
   const { data: msStatus } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/user-mail/status"],

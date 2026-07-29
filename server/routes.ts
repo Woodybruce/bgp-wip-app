@@ -6696,6 +6696,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.json(result);
     } catch (e: any) {
       console.error("[ai-briefing] Error:", e.message);
+      // Missing/invalid AI credentials is an environment state, not a server
+      // fault — return 503 with a clean message instead of a raw SDK error.
+      if (/api ?key|authentication|authToken/i.test(e.message || "")) {
+        return res.status(503).json({ error: "AI briefing unavailable — AI service is not configured" });
+      }
       res.status(500).json({ error: e.message });
     }
   });

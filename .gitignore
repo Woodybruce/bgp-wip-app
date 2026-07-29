@@ -28,3 +28,4 @@ data/*
 .claude/*
 !.claude/settings.json
 !.claude/hooks/
+qa/logs/

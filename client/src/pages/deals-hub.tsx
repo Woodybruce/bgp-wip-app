@@ -52,7 +52,7 @@ export default function DealsHub() {
   const isMobile = useIsMobile();
   // Client logins (e.g. Landsec) only get the Deals list — never the WIP
   // Report (BGP financials), Letting Tracker or Investment tabs.
-  const { data: dhUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const { data: dhUser, isLoading: dhUserLoading } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClient = dhUser?.role === "Client" || !!(dhUser as any)?.companyScopeId;
   const [tab, setTab] = useState<TabKey>(() =>
     getTabFromLocation(location) || ((typeof window !== "undefined" && window.innerWidth < 768) ? "deals" : "wip-report")
@@ -133,7 +133,10 @@ export default function DealsHub() {
         {tab === "deals" && <Deals />}
         {tab === "letting" && <AvailableUnits />}
         {tab === "investment" && <InvestmentTracker />}
-        {tab === "wip-report" && <WipReport />}
+        {/* Don't mount the staff WIP report until we know the viewer isn't a
+            client — the default tab is wip-report, so a client's first paint
+            briefly mounted it and fired staff-only /api/wip calls (403s). */}
+        {tab === "wip-report" && !dhUserLoading && !isClient && <WipReport />}
         {tab === "properties" && <Properties />}
       </Suspense>
     </div>

@@ -2131,12 +2131,13 @@ export function DealFormDialog({
       } else {
         const res = await apiRequest("POST", "/api/crm/deals", payload);
         const created = await res.json();
-        // Persist fee allocations alongside the new deal. Only fires when
-        // the user actually entered any rows — empty array = "no split set"
-        // (deal still saves, allocations can be added later on the deal
-        // detail page). PUT /fee-allocations replaces the existing set;
-        // for a new deal that's empty anyway.
-        if (created?.id && feeRows.length > 0) {
+        // Persist fee allocations alongside the new deal. The fee-split editor
+        // auto-seeds a BGP House 15% row, so feeRows is rarely empty — but a
+        // lone BGP House row (no agents) is just the placeholder, not a real
+        // split, and PUTting it 400s the "must sum to 100%" check. Only fire
+        // when the user actually added at least one agent row. Everything else
+        // is set later on the deal board.
+        if (created?.id && feeRows.some(r => !r.isBgpHouse && r.agentName)) {
           const allocations = feeRows
             .filter(r => (r.isBgpHouse || r.agentName))
             .map(r => ({
