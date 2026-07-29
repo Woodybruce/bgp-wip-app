@@ -2142,7 +2142,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     }
   });
 
-  app.get("/api/crm/properties/:id", async (req, res) => {
+  app.get("/api/crm/properties/:id", requireAuth, async (req, res) => {
     try {
       const property = await storage.getCrmProperty(req.params.id);
       if (!property) return res.status(404).json({ error: "Not found" });
@@ -2162,8 +2162,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
 
-  app.put("/api/crm/properties/:id", async (req, res) => {
+  app.put("/api/crm/properties/:id", requireAuth, async (req, res) => {
     try {
+      const scopeCompanyId = await resolveCompanyScope(req);
+      if (scopeCompanyId && !(await isPropertyInScope(scopeCompanyId, req.params.id))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const updates = { ...req.body };
       const dateFields = ["titleSearchDate", "createdAt", "updatedAt", "kycCheckedAt"];
       for (const f of dateFields) {
@@ -2176,8 +2180,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.delete("/api/crm/properties/:id", async (req, res) => {
+  app.delete("/api/crm/properties/:id", requireAuth, async (req, res) => {
     try {
+      const scopeCompanyId = await resolveCompanyScope(req);
+      if (scopeCompanyId) {
+        return res.status(403).json({ error: "Read-only access for client accounts" });
+      }
       await storage.deleteCrmProperty(req.params.id);
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2190,7 +2198,17 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const allowedFields = ["bgpEngagement", "status", "assetClass", "tenure"];
       if (!allowedFields.includes(field)) return res.status(400).json({ error: `Field '${field}' not allowed for bulk update` });
       for (const id of ids) {
-        await storage.updateCrmProperty(id, { [field]: value });
+        // Bulk "Assign Team" is ADDITIVE, matching the single-row inline
+        // editor — replacing the whole array silently wiped every other
+        // team from 40 rows at once.
+        if (field === "bgpEngagement" && Array.isArray(value)) {
+          const current = await storage.getCrmProperty(id);
+          const existing = Array.isArray((current as any)?.bgpEngagement) ? (current as any).bgpEngagement : [];
+          const merged = [...new Set([...existing, ...value])];
+          await storage.updateCrmProperty(id, { bgpEngagement: merged });
+        } else {
+          await storage.updateCrmProperty(id, { [field]: value });
+        }
       }
       res.json({ ok: true, updated: ids.length });
     } catch (e: any) { res.status(500).json({ error: e.message }); }

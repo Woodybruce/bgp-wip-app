@@ -81,12 +81,9 @@ import {
   formatAddress,
   InlineEngagement,
   InlineAgents,
-  InlineLandlord,
   InlineOwnerLink,
   InlineCompetitorAgent,
   InlineBillingEntity,
-  InlineDeals,
-  InlineTenants,
   SetUpFoldersDialog,
   PropertyFoldersPanel,
   PropertySharepointLink,
@@ -265,7 +262,11 @@ export function PropertyDetail({ id }: { id: string }) {
   // Client logins (e.g. Landsec) get a read-only view — no BGP staff tools
   // (Image Studio, doc gen, folders, delete, KYC/risk/data-linkage panels).
   const { data: pdViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isClientViewer = pdViewer?.role === "Client";
+  // Fail CLOSED while /api/auth/me loads, and match the server's wider
+  // definition of a client (any non-BGP login gets companyScopeId) —
+  // role === "Client" alone let mis-provisioned external users see the
+  // full internal shell with every panel in a 403 error state.
+  const isClientViewer = !pdViewer || pdViewer.role === "Client" || !!pdViewer.companyScopeId;
   const { data: property, isLoading } = useQuery<CrmProperty>({
     queryKey: ["/api/crm/properties", id],
     refetchInterval: (query) => {
@@ -292,16 +293,6 @@ export function PropertyDetail({ id }: { id: string }) {
       if (!res.ok) throw new Error("Failed to load companies");
       return res.json();
     },
-  });
-  const { data: tenantLinks = [] } = useQuery<{ propertyId: string; companyId: string }[]>({
-    queryKey: ["/api/crm/property-tenants"],
-  });
-  const { data: dealLinks = [] } = useQuery<DealLink[]>({
-    queryKey: ["/api/crm/property-deal-links"],
-  });
-  const { data: allDealsForDetail = [] } = useQuery<DealLink[]>({
-    queryKey: ["/api/crm/deals"],
-    select: (data: any[]) => data.map((d: any) => ({ id: d.id, name: d.name, propertyId: d.propertyId, status: d.status, groupName: d.groupName })),
   });
   useEffect(() => {
     if (property) {
@@ -361,6 +352,8 @@ export function PropertyDetail({ id }: { id: string }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", id, "asset-brief"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", id, "linkage-audit"] });
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -658,15 +651,23 @@ export function PropertyDetail({ id }: { id: string }) {
                         // leaving only ~30px for the value column after
                         // the 130px label. Stack instead.
                         <div className="grid grid-cols-1 gap-y-1 text-[11px]">
+                          {/* Clients see names only — the pickers depend on
+                              the full company list (scope-limited for them)
+                              and every save 403s, so editing renders as
+                              broken "+ Add owner" affordances. */}
                           {filled.map(row => (
                             <div key={row.field} className="grid grid-cols-[130px,1fr] items-center gap-2">
                               <span className="text-muted-foreground leading-tight truncate" title={row.label}>{row.label}</span>
                               <div className="min-w-0">
-                                <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} />
+                                {isClientViewer ? (
+                                  <span className="truncate block">{allCompanies.find(c => c.id === row.id)?.name || "—"}</span>
+                                ) : (
+                                  <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} />
+                                )}
                               </div>
                             </div>
                           ))}
-                          {empty.length > 0 && (
+                          {empty.length > 0 && !isClientViewer && (
                             <div className="grid grid-cols-[130px,1fr] items-center gap-2">
                               <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
                               <div className="min-w-0">
@@ -690,6 +691,8 @@ export function PropertyDetail({ id }: { id: string }) {
                     <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Area</p>
                     <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />
                   </div>
+                  {/* Competitor intel is BGP-internal — never shown to clients. */}
+                  {!isClientViewer && (
                   <div>
                     <div className="flex items-center gap-1 mb-0.5">
                       <p className="text-[10px] text-muted-foreground leading-tight">Competitor Agent</p>
@@ -706,6 +709,7 @@ export function PropertyDetail({ id }: { id: string }) {
                       allCompanies={allCompanies}
                     />
                   </div>
+                  )}
                 </div>
 
                 </CardContent>
@@ -714,11 +718,16 @@ export function PropertyDetail({ id }: { id: string }) {
                   makes the card stretch to fill the leftover vertical
                   space in the column, so the right-hand News card
                   never has a white void beneath it. */}
+              {/* Hidden for clients: the tasks GET is blocked for client
+                  accounts, so the card showed empty while still accepting
+                  input that silently vanished. */}
+              {!isClientViewer && (
               <ErrorBoundary compact name="Weekly focus">
                 <div className="flex-1 flex flex-col min-h-0 [&>div]:flex-1 [&>div]:flex [&>div]:flex-col">
                   <WeeklyFocusCard propertyId={property.id} />
                 </div>
               </ErrorBoundary>
+              )}
               </div>
 
               {/* Right column stack: News + Risk Register. Risk
@@ -750,9 +759,11 @@ export function PropertyDetail({ id }: { id: string }) {
                 slot; Risk Register went up so the operational watch
                 list reads alongside the news ticker. */}
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+              {!isClientViewer && (
               <ErrorBoundary compact name="Property brochures">
                 <PropertyBrochuresPanel propertyId={property.id} />
               </ErrorBoundary>
+              )}
               {/* Property Decks panel hidden for the Monday demo —
                   feature not yet ready for the firm. See PRESENTATION_BACKLOG.md.
               <ErrorBoundary compact name="Property decks">
@@ -901,6 +912,10 @@ export function PropertyDetail({ id }: { id: string }) {
               column itself is sticky so it stays visible as you scroll
               through the (longer) left column. */}
           <aside className="space-y-3 lg:sticky lg:top-4 self-start">
+              {/* SharePoint is fully sealed for client accounts — the
+                  panel could only ever render dead Upload/Delete buttons
+                  over a 403, so it's staff-only. */}
+              {!isClientViewer && (
               <ReferenceSection
                 title="Files"
                 icon={FolderOpen}
@@ -911,6 +926,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} />
                 <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
               </ReferenceSection>
+              )}
 
               {!isClientViewer && (
               <ReferenceSection

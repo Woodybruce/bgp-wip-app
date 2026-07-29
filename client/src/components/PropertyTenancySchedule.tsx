@@ -566,6 +566,27 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
     onError: (err: any) => { toast({ title: "Couldn't add to schedule", description: err.message, variant: "destructive" }); },
   });
 
+  // Tenancy → Letting Tracker: one click on a vacant tenancy row creates
+  // the available_units listing (the POST stamps tenancy_unit_id by name
+  // match and auto-creates the linked deal), so marketing can start
+  // without re-typing the unit in Add Unit.
+  const sendToTrackerMutation = useMutation({
+    mutationFn: (unit: TenancyUnit) => apiRequest("POST", "/api/available-units", {
+      propertyId,
+      unitName: unit.unit_number || unit.premises || "Unit",
+      sqft: unit.nia_sqft || unit.gia_sqft || undefined,
+      useClass: unit.permitted_use || undefined,
+      askingRent: unit.erv_pa || undefined,
+      marketingStatus: "AVA",
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId, "links"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      toast({ title: "On the Letting Tracker", description: "Listing created and linked back to this tenancy row." });
+    },
+    onError: (err: any) => { toast({ title: "Couldn't add to tracker", description: err.message, variant: "destructive" }); },
+  });
+
   // Re-sync the status mirror across all four boards for this property.
   // Links any unmatched Letting Tracker / leasing rows by name and pushes
   // the current canonical status onto each projection. Heals drift in one
@@ -691,9 +712,17 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
   const totalRent = units.reduce((s, u) => s + Number(u.passing_rent_pa || 0), 0);
   const totalSC = units.reduce((s, u) => s + Number(u.service_charge || 0), 0);
   const avgERV = units.length ? units.reduce((s, u) => s + Number(u.blended_erv || 0), 0) / units.length : 0;
-  const avgWAULT = units.filter(u => Number(u.unexpired_term) > 0).length
-    ? units.filter(u => Number(u.unexpired_term) > 0).reduce((s, u) => s + Number(u.unexpired_term), 0) / units.filter(u => Number(u.unexpired_term) > 0).length
-    : 0;
+  // WAULT is rent-weighted (Σ rent × term ÷ Σ rent), not a simple mean —
+  // otherwise one 999-year ground lease at a peppercorn drags the figure
+  // to absurdity. Falls back to the unweighted mean when no rents exist.
+  const waultUnits = units.filter(u => Number(u.unexpired_term) > 0);
+  const waultRentedUnits = waultUnits.filter(u => Number(u.passing_rent_pa) > 0);
+  const waultRentTotal = waultRentedUnits.reduce((s, u) => s + Number(u.passing_rent_pa), 0);
+  const avgWAULT = waultRentTotal > 0
+    ? waultRentedUnits.reduce((s, u) => s + Number(u.unexpired_term) * Number(u.passing_rent_pa), 0) / waultRentTotal
+    : waultUnits.length
+      ? waultUnits.reduce((s, u) => s + Number(u.unexpired_term), 0) / waultUnits.length
+      : 0;
 
   const matchDeal = (unit: TenancyUnit): DealLink | undefined => {
     if (unit.deal_id) return links?.deals.find(d => d.id === unit.deal_id);
@@ -942,7 +971,7 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
               <th className="text-center p-2 font-medium" style={{ minWidth: 80 }}>Links</th>
               {/* Sticky right so the delete button is always visible
                   without horizontal scrolling to the end of the table. */}
-              <th className="text-center p-2 font-medium w-10 sticky right-0 bg-slate-800 z-10"></th>
+              <th className="text-center p-2 font-medium w-10 sticky right-0 bg-gray-100 dark:bg-gray-800 border-l z-10"></th>
             </tr>
           </thead>
           <tbody>
@@ -961,6 +990,8 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
                   onDelete={() => deleteMutation.mutate(unit.id)}
                   onPromote={() => promoteMutation.mutate()}
                   promoting={promoteMutation.isPending}
+                  onSendToTracker={() => sendToTrackerMutation.mutate(unit)}
+                  sendingToTracker={sendToTrackerMutation.isPending}
                   deal={matchDeal(unit)}
                   letting={matchLetting(unit)}
                 />
@@ -1061,13 +1092,15 @@ function TenantBrandPicker({
   );
 }
 
-function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, deal, letting }: {
+function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSendToTracker, sendingToTracker, deal, letting }: {
   unit: TenancyUnit;
   columns: Col[];
   onUpdate: (id: string | number, field: string, val: string) => void;
   onDelete: () => void;
   onPromote?: () => void;
   promoting?: boolean;
+  onSendToTracker?: () => void;
+  sendingToTracker?: boolean;
   deal?: DealLink; letting?: LettingLink;
 }) {
   const isVacant = unit.status === "Vacant" || unit.is_vacant;
@@ -1289,6 +1322,17 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, deal
             <a href={`/available`} className="inline-flex items-center" title={`Letting: ${letting.unit_name} (${letting.marketing_status})`} data-testid={`tenancy-letting-link-${unit.id}`}>
               <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-green-50"><ExternalLink className="w-2.5 h-2.5" />LT</Badge>
             </a>
+          )}
+          {!letting && unit.status === "Vacant" && !unit.is_vacant && onSendToTracker && (
+            <button
+              onClick={onSendToTracker}
+              disabled={sendingToTracker}
+              className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+              title="Create a Letting Tracker listing for this vacant unit"
+              data-testid={`tenancy-to-tracker-${unit.id}`}
+            >
+              <Plus className="w-2.5 h-2.5" />{sendingToTracker ? "Adding…" : "Tracker"}
+            </button>
           )}
           {/* View this unit on the plan — sets the URL hash so the
               PropertyPlansPanel pulses the matching polygon and scrolls
