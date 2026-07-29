@@ -142,6 +142,11 @@ router.get("/api/brand/:companyId/rocketreach-company", requireAuth, async (req:
 
 router.post("/api/brand/:companyId/rocketreach-company/refresh", requireAuth, async (req: Request, res: Response) => {
   try {
+    // Cheap deterministic fill first (skips itself when nothing is blank).
+    try {
+      const { enrichCompanyFromLogoDev } = await import("./logo-dev-brand");
+      await enrichCompanyFromLogoDev(String(req.params.companyId));
+    } catch {}
     if (!process.env.ROCKETREACH_API_KEY) {
       return res.status(503).json({ error: "ROCKETREACH_API_KEY not configured" });
     }

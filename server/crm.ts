@@ -2256,6 +2256,17 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
 
+  // logo.dev Brand API backfill — fills blank socials/description across the
+  // brand book (fill-blanks only, ~1¢ per brand that needs it). Staff only.
+  app.post("/api/admin/logo-dev-backfill", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { runLogoDevBackfill } = await import("./logo-dev-brand");
+      const stats = await runLogoDevBackfill(Number(req.body?.limit ?? 100));
+      res.json(stats);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // Tenancy split-row reconcile (rent on one row, expiry on its shadow).
   // GET = dry run: full merge plan + projected coverage, touches nothing.
   // POST /apply = execute the same plan transactionally.

@@ -91,6 +91,16 @@ Output JSON only. No prose, no code fences.`;
 }
 
 async function enrichCompany(companyId: string): Promise<{ updated: string[]; skipped: string[]; reason?: string; aiOut?: any }> {
+  // Deterministic first pass: logo.dev Brand API fills blank socials /
+  // description for ~1¢ before the Claude+Perplexity pass runs (and the
+  // reload below means Claude sees those fields as already present).
+  try {
+    const { enrichCompanyFromLogoDev } = await import("./logo-dev-brand");
+    await enrichCompanyFromLogoDev(companyId);
+  } catch (e: any) {
+    console.warn(`[brand-enrichment] logo.dev pass failed: ${e?.message}`);
+  }
+
   const q = await pool.query(
     `SELECT id, name, domain, domain_url, companies_house_number, concept_pitch, store_count,
             rollout_status, backers, instagram_handle, description, industry, employee_count,
