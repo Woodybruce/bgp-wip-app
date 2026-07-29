@@ -3792,12 +3792,27 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         }
         if ("fee" in partial) dealPatch.fee = (partial as any).fee;
         if ("askingRent" in partial) dealPatch.rentPa = (partial as any).askingRent;
+        if ((req.body as any).landlordId) dealPatch.landlordId = (req.body as any).landlordId;
         if (Object.keys(dealPatch).length > 0) {
           try {
             await storage.updateCrmDeal(existing.dealId, dealPatch as any);
           } catch (e: any) {
             console.warn(`[available-units PATCH] deal sync failed for ${existing.dealId}:`, e?.message);
           }
+        }
+      }
+
+      // Landlord edited on the dialog: available_units doesn't carry a
+      // landlord column (Zod strips it above), so persist it by stamping
+      // the property when it has none — same semantics as the POST route.
+      if ((req.body as any).landlordId && existing.propertyId) {
+        try {
+          await pool.query(
+            `UPDATE crm_properties SET landlord_id = $1 WHERE id = $2 AND landlord_id IS NULL`,
+            [(req.body as any).landlordId, existing.propertyId]
+          );
+        } catch (e: any) {
+          console.warn("[available-units PATCH] property landlord backfill failed:", e?.message);
         }
       }
 

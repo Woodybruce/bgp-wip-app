@@ -853,6 +853,7 @@ export function PropertyDetail({ id }: { id: string }) {
               </CollapsibleCard>
             </ErrorBoundary>
 
+            {!isClientViewer && (
             <ErrorBoundary compact name="Pathway intel strip">
               <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway Intel" testId="toggle-pathway">
                 <PathwayIntelStrip
@@ -862,6 +863,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 />
               </CollapsibleCard>
             </ErrorBoundary>
+            )}
 
             {/* KYC panel removed from the main column — it lives in
                 the right sidebar's Compliance & KYC dropdown so the
@@ -961,6 +963,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} />
               </ReferenceSection>
 
+              {!isClientViewer && (
               <ReferenceSection
                 title="Client Board"
                 icon={Users}
@@ -970,6 +973,7 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <ClientBoardPanel propertyId={property.id} landlordId={property.landlordId} allCompanies={allCompanies} />
               </ReferenceSection>
+              )}
 
               <ReferenceSection
                 title="Linked Contacts"
@@ -1001,6 +1005,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 <AvailableUnitsPanel propertyId={property.id} />
               </ReferenceSection>
 
+              {!isClientViewer && (
               <ReferenceSection
                 title="Land Registry"
                 icon={Landmark}
@@ -1010,6 +1015,7 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <LinkedLandRegistryPanel propertyId={property.id} />
               </ReferenceSection>
+              )}
           </aside>
         </div>
 

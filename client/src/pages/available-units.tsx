@@ -234,7 +234,7 @@ function formToPayload(f: UnitFormState) {
   };
 }
 
-function unitToForm(u: AvailableUnit, dealType?: string | null): UnitFormState {
+function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id: string; name: string } | null): UnitFormState {
   return {
     unitName: u.unitName || "",
     propertyId: u.propertyId || "",
@@ -256,8 +256,8 @@ function unitToForm(u: AvailableUnit, dealType?: string | null): UnitFormState {
     feePercentage: "",
     marketingStartDate: u.marketingStartDate || "",
     agentUserIds: Array.isArray(u.agentUserIds) ? u.agentUserIds : [],
-    landlordId: (u as any).landlordId || "",
-    landlordName: "",
+    landlordId: (u as any).landlordId || landlord?.id || "",
+    landlordName: landlord?.name || "",
   };
 }
 
@@ -540,6 +540,15 @@ export default function AvailableUnitsPage() {
     for (const d of deals) m[d.id] = d;
     return m;
   }, [deals]);
+
+  // Landlord for the Edit Unit dialog: the unit row doesn't carry one, so
+  // fall back to the linked deal's landlord, then the property's.
+  const landlordPrefillFor = (u: AvailableUnit): { id: string; name: string } | null => {
+    const deal = u.dealId ? dealMap[u.dealId] : null;
+    const id = (deal as any)?.landlordId || (propertyMap[u.propertyId] as any)?.landlordId || "";
+    if (!id) return null;
+    return { id, name: crmCompanies.find(c => c.id === id)?.name || "" };
+  };
 
   const unitsByProperty = useMemo(() => {
     const m: Record<string, PropertyUnit[]> = {};
@@ -1361,7 +1370,7 @@ export default function AvailableUnitsPage() {
                     <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setOffersUnit(u); setAddOfferOpen(true); }} data-testid={`unit-interest-${u.id}`}>
                       <HandCoins className="w-3.5 h-3.5" /> Interest{oCount ? ` (${oCount})` : ""}
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null)); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
+                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
                       <Pencil className="w-3.5 h-3.5" /> Edit
                     </Button>
                   </div>
@@ -1787,7 +1796,7 @@ export default function AvailableUnitsPage() {
                             variant="ghost"
                             size="sm"
                             className="h-7 w-7 p-0"
-                            onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null)); setEditItem(u); }}
+                            onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }}
                             data-testid={`button-edit-${u.id}`}
                           >
                             <Pencil className="h-3.5 w-3.5" />

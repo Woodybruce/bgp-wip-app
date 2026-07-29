@@ -2447,7 +2447,7 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
     const ids = new Set<string>();
     deals.forEach((d) => {
       if (d.clientContactId) ids.add(d.clientContactId);
-      if (d.tenantId) ids.add(d.tenantId);
+      if ((d as any).tenantContactId) ids.add((d as any).tenantContactId);
     });
     return Array.from(ids);
   }, [deals]);
