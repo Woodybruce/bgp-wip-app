@@ -529,6 +529,8 @@ function getToolProgressLabel(toolName: string): string {
     create_available_unit: "Creating unit...",
     update_available_unit: "Updating unit...",
     create_targeting_brief: "Creating targeting brief...",
+    find_duplicate_properties: "Scanning for duplicates...",
+    merge_properties: "Merging properties...",
     create_investment_tracker: "Adding to tracker...",
     update_investment_tracker: "Updating tracker...",
     send_email: "Sending email...",
@@ -3110,6 +3112,36 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           fee: { type: "number", description: "Fee percentage" },
         },
         required: ["propertyId", "unitName"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "find_duplicate_properties",
+      description: "Find duplicate property records (same normalised name) with counts of linked deals, tenancy units and files on each, so the right keeper can be chosen before merging. Use before merge_properties.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Optional name filter, e.g. 'Bluewater'. Omit to scan the whole CRM." },
+        },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "merge_properties",
+      description: "Merge a duplicate property into the canonical one. Re-points every linked record (deals, units, schedules, files, briefs, threads, etc.) to the keeper, fills any blank fields on the keeper from the duplicate, then deletes the duplicate. IRREVERSIBLE — always run find_duplicate_properties first, tell the user which record will be kept and which removed (with their linked-record counts), and get their explicit confirmation before calling this.",
+      parameters: {
+        type: "object",
+        properties: {
+          keepPropertyId: { type: "string", description: "Property ID to KEEP (usually the one with more linked data)" },
+          mergePropertyId: { type: "string", description: "Duplicate property ID to merge in and delete" },
+        },
+        required: ["keepPropertyId", "mergePropertyId"],
       },
     },
   });
@@ -6080,6 +6112,28 @@ export async function executeCrmToolRaw(
       epcRating: fnArgs.epcRating, notes: fnArgs.notes, fee: fnArgs.fee,
     }).returning();
     return { data: { success: true, action: "created", entity: "available unit", id: created.id, name: created.unitName }, action: { type: "crm_created", entityType: "unit", id: created.id } };
+  }
+
+  if (fnName === "find_duplicate_properties") {
+    const { findDuplicateProperties } = await import("./property-merge");
+    const groups = await findDuplicateProperties(fnArgs.name || undefined);
+    if (groups.length === 0) {
+      return { data: { success: true, duplicates: [], note: fnArgs.name ? `No duplicate properties matching "${fnArgs.name}"` : "No duplicate properties found" } };
+    }
+    return { data: { success: true, duplicates: groups, instruction: "Present each group to the user with the linked-record counts (deals/units/files) per record, recommend which to keep (usually the one with more linked data), and get explicit confirmation before calling merge_properties." } };
+  }
+
+  if (fnName === "merge_properties") {
+    const { mergeProperties } = await import("./property-merge");
+    try {
+      const result = await mergeProperties(String(fnArgs.keepPropertyId || ""), String(fnArgs.mergePropertyId || ""));
+      return {
+        data: { success: true, ...result },
+        action: { type: "crm_updated", entityType: "property", id: result.keptId },
+      };
+    } catch (e: any) {
+      return { data: { success: false, error: e?.message || "Merge failed" } };
+    }
   }
 
   if (fnName === "create_targeting_brief") {

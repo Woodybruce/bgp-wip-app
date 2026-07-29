@@ -2191,6 +2191,25 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  app.get("/api/admin/duplicate-properties", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { findDuplicateProperties } = await import("./property-merge");
+      const groups = await findDuplicateProperties((req.query.name as string) || undefined);
+      res.json({ groups });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/admin/merge-properties", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { keepId, mergeId } = req.body || {};
+      const { mergeProperties } = await import("./property-merge");
+      const result = await mergeProperties(String(keepId || ""), String(mergeId || ""));
+      res.json(result);
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
   app.post("/api/crm/properties/bulk-update", requireAuth, async (req, res) => {
     try {
       const { ids, field, value } = req.body;

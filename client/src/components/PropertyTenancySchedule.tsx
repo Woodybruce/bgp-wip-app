@@ -444,7 +444,7 @@ const LETTINGS_HIDDEN_FIELDS = new Set([
   "underwriting_comments",   // tenancy view
 ]);
 
-export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: string; lens?: "lettings" | "tenancy" }) {
+export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { propertyId: string; lens?: "lettings" | "tenancy"; readOnly?: boolean }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [location] = useLocation();
@@ -786,12 +786,15 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." className="h-7 text-xs pl-7 w-40" data-testid="tenancy-search" />
           </div>
           <input type="file" ref={fileInputRef} accept=".xlsx,.xls" onChange={handleImport} className="hidden" />
+          {!readOnly && (
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fileInputRef.current?.click()} disabled={importing} data-testid="btn-import-tenancy">
             {importing ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Upload className="w-3 h-3 mr-1" />}Import
           </Button>
+          )}
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleExport} data-testid="btn-export-tenancy">
             <Download className="w-3 h-3 mr-1" />Excel
           </Button>
+          {!readOnly && (<>
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => UNIFIED_ADD_UNIT_ENABLED ? setUnifiedAddOpen(true) : setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
             <Plus className="w-3 h-3 mr-1" />Add
           </Button>
@@ -806,6 +809,7 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
           >
             {resyncMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}Re-sync (all)
           </Button>
+          </>)}
           <Popover>
             <PopoverTrigger asChild>
               <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="btn-tenancy-columns">
@@ -857,7 +861,7 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
               })()}
             </PopoverContent>
           </Popover>
-          {!onFullBoard && (
+          {!onFullBoard && !readOnly && (
             <Link href={`/tenancy-schedule/${propertyId}`}>
               <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer ml-1" data-testid="link-tenancy-full-board">
                 <ExternalLink className="w-3 h-3" />Full Board
@@ -979,7 +983,7 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
                 ("Bluewater Welcome Hall · £1.2m total rent") were doubling up
                 the visual line count without adding info. Floor is now its
                 own column so groups remain visible at a glance. */}
-            {filtered.map(unit => {
+            {filtered.filter(unit => !(readOnly && unit.is_vacant)).map(unit => {
               const isExpanded = true;
               return (
                 <UnitRow
@@ -988,10 +992,11 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
                   columns={visibleColumns}
                   onUpdate={inlineUpdate}
                   onDelete={() => deleteMutation.mutate(unit.id)}
-                  onPromote={() => promoteMutation.mutate()}
+                  onPromote={readOnly ? undefined : () => promoteMutation.mutate()}
                   promoting={promoteMutation.isPending}
-                  onSendToTracker={() => sendToTrackerMutation.mutate(unit)}
+                  onSendToTracker={readOnly ? undefined : () => sendToTrackerMutation.mutate(unit)}
                   sendingToTracker={sendToTrackerMutation.isPending}
+                  readOnly={readOnly}
                   deal={matchDeal(unit)}
                   letting={matchLetting(unit)}
                 />
@@ -1092,7 +1097,7 @@ function TenantBrandPicker({
   );
 }
 
-function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSendToTracker, sendingToTracker, deal, letting }: {
+function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSendToTracker, sendingToTracker, readOnly, deal, letting }: {
   unit: TenancyUnit;
   columns: Col[];
   onUpdate: (id: string | number, field: string, val: string) => void;
@@ -1101,6 +1106,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
   promoting?: boolean;
   onSendToTracker?: () => void;
   sendingToTracker?: boolean;
+  readOnly?: boolean;
   deal?: DealLink; letting?: LettingLink;
 }) {
   const isVacant = unit.status === "Vacant" || unit.is_vacant;
@@ -1358,6 +1364,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
         </div>
       </td>
       <td className="p-1 text-center sticky right-0 bg-background border-l shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.1)] z-[5]">
+        {readOnly ? <span className="text-muted-foreground">—</span> : (
         <button
           onClick={() => {
             const label = unit.unit_number || unit.tenant_name || "this unit";
@@ -1369,6 +1376,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
+        )}
       </td>
     </tr>
   );

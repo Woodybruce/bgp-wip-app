@@ -810,19 +810,23 @@ export function PropertyDetail({ id }: { id: string }) {
                 on the brand profile's brand_analysis. */}
             <BgpCommentaryWrapper propertyId={property.id} />
 
-            {streetViewExpanded ? (
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+            {isClientViewer ? null : streetViewExpanded ? (
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-stretch">
                 <StreetViewSection
                   address={formatAddress(property.address) || property.name}
                   propertyId={property.id}
                   onClose={() => setStreetViewExpanded(false)}
                 />
-                <div className="rounded-lg border bg-card p-3">
+                {/* h-full + flex so the card stretches to match the (taller)
+                    Street View capture instead of leaving a dead gap. */}
+                <div className="rounded-lg border bg-card p-3 h-full flex flex-col">
                   <div className="flex items-center gap-2 mb-2">
                     <ImageIcon className="h-4 w-4 text-muted-foreground" />
                     <span className="text-sm font-semibold">Images</span>
                   </div>
-                  <EntityImagesPanel entityType="property" entityId={property.id} />
+                  <div className="flex-1 min-h-0">
+                    <EntityImagesPanel entityType="property" entityId={property.id} />
+                  </div>
                   <BrandPipelineImagesLink propertyId={property.id} propertyName={property.name} />
                 </div>
               </div>
