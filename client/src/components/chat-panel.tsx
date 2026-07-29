@@ -1246,6 +1246,22 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     }
   }, [activeThreadId, view]);
 
+  // The saved thread id lives in localStorage, which is shared across
+  // logins on the same browser — if a different user signs in, drop the
+  // previous user's thread instead of 403ing on every send.
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    try {
+      const owner = localStorage.getItem("chatbgp:threadOwner");
+      if (owner && owner !== currentUser.id) {
+        setActiveThreadId(null);
+        setMessages([]);
+      }
+      localStorage.setItem("chatbgp:threadOwner", currentUser.id);
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id]);
+
   const isActiveThreadAi = activeThread?.isAiChat ?? true;
 
   const mentionUsers = useMemo(() => {
@@ -1487,24 +1503,44 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
         return { role: m.role, content };
       });
 
-      let currentThreadId = threadId;
-      if (!currentThreadId) {
+      const createFreshThread = async (): Promise<string> => {
         const firstMsg = newMessages[0]?.content || "New conversation";
         const title = firstMsg.length > 50 ? firstMsg.slice(0, 50) + "..." : firstMsg;
         const res = await apiRequest("POST", "/api/chat/threads", { title, isAiChat: true });
         const thread = await res.json();
-        currentThreadId = thread.id;
-        setActiveThreadId(currentThreadId);
+        setActiveThreadId(thread.id);
         queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
-      }
+        return thread.id;
+      };
+
+      let currentThreadId = threadId;
+      if (!currentThreadId) currentThreadId = await createFreshThread();
 
       const lastUserMsg = newMessages[newMessages.length - 1];
-      await saveMessageMutation.mutateAsync({
-        threadId: currentThreadId!,
-        role: "user",
-        content: lastUserMsg.content,
-        attachments: lastUserMsg.attachments,
-      });
+      try {
+        await saveMessageMutation.mutateAsync({
+          threadId: currentThreadId!,
+          role: "user",
+          content: lastUserMsg.content,
+          attachments: lastUserMsg.attachments,
+        });
+      } catch (e: any) {
+        // Stale thread — the saved id can outlive its thread (deleted, or
+        // left over from a different login on this browser). Rather than
+        // dead-ending with "not a member", start fresh and carry the
+        // message across.
+        if (/not a member|403|404|not found/i.test(String(e?.message || ""))) {
+          currentThreadId = await createFreshThread();
+          await saveMessageMutation.mutateAsync({
+            threadId: currentThreadId!,
+            role: "user",
+            content: lastUserMsg.content,
+            attachments: lastUserMsg.attachments,
+          });
+        } else {
+          throw e;
+        }
+      }
 
       // Shared SSE reader: live progress → status label, token deltas → the
       // streaming draft bubble, final {reply}/{error} → resolved result.
