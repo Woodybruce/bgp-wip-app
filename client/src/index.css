@@ -485,9 +485,13 @@ thead th {
   transition: all 200ms ease;
 }
 .dashboard-grid .react-grid-item.react-grid-placeholder {
-  background: hsl(var(--primary) / 0.1);
-  border: 2px dashed hsl(var(--primary) / 0.3);
+  /* The library also sets an inline/base opacity of 0.2 on the placeholder,
+     which multiplied with the 10% tint made the landing slot invisible —
+     drags looked like they "didn't open a gap". Force it visible. */
+  background: hsl(var(--primary) / 0.12) !important;
+  border: 2px dashed hsl(var(--primary) / 0.55);
   border-radius: 0.5rem;
+  opacity: 1 !important;
 }
 .dashboard-grid .react-grid-item > .react-resizable-handle {
   width: 20px;

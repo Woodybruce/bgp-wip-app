@@ -107,7 +107,7 @@ function MemberCard({ member, onClick, onDragStart, isLead, onDragOver, onDrop, 
       onDragOver={readOnly ? undefined : onDragOver}
       onDrop={readOnly ? undefined : onDrop}
       onClick={readOnly ? undefined : onClick}
-      className={`group relative w-full text-left bg-card border rounded-lg shadow-sm transition-all px-2.5 py-2 ${readOnly ? "cursor-default" : "hover:shadow-md hover:border-primary/40"} ${isLead ? "ring-2 ring-amber-400/70 border-amber-300" : ""}`}
+      className={`group relative w-full text-left bg-card border rounded-lg shadow-sm transition-all px-2.5 py-2 ${readOnly ? "cursor-default" : "hover:shadow-md hover:border-primary/40"} ${isLead ? "border-amber-300/70 dark:border-amber-700/60" : ""}`}
       data-testid={`team-member-card-${member.id}`}
     >
       {isLead && (
