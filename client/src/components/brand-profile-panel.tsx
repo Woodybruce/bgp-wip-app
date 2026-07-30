@@ -1897,6 +1897,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             )}
             <div className="space-y-2.5">
             {!isClientViewer && (<>
+            {/* AI relationship read — the calendar/interaction commentary.
+                Consolidated away in the single-strip pass, missed and asked
+                back (Woody, 2026-07-30). */}
+            <BgpTakeStrip companyId={companyId} tab="activity" />
             {/* BGP coverage — who covers this brand internally, plus
                 a click-to-edit role per person so we can label
                 Charlotte = Investment lead, Harriette = Leasing. */}
