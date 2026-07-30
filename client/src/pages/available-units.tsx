@@ -20,7 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target, CheckCircle2,
+  ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target,
 } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
@@ -30,7 +30,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useState, useMemo, useRef, useCallback } from "react";
+import { Fragment, useState, useMemo, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
@@ -41,6 +41,7 @@ import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiS
 import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer, PropertyUnit } from "@shared/schema";
 import { BRIEF_TARGET_STATUSES } from "@shared/schema";
 import { BrandSearchInput, type BrandPick } from "@/components/brand-search-input";
+import { TargetOperatorsTable } from "@/components/target-operators-table";
 import { useTeam } from "@/lib/team-context";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { DEAL_TYPE_COLORS, DEAL_TEAM_COLORS } from "@/pages/deals";
@@ -57,17 +58,6 @@ import { FeeAllocationEditor, type FeeAllocationRow } from "@/components/fee-all
 
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 const MARKETING_STATUSES = LETTING_STATUSES;
-
-// Status dot colours for target-operator chips in the Tenant column.
-const TARGET_STATUS_DOT: Record<string, string> = {
-  "Identified": "bg-zinc-400",
-  "Approached": "bg-blue-500",
-  "Meeting Held": "bg-violet-500",
-  "Inspection Done": "bg-amber-500",
-  "Offer": "bg-orange-500",
-  "Let": "bg-emerald-500",
-  "Passed": "bg-red-500",
-};
 const USE_CLASSES = ["E", "E(a)", "E(b)", "E(c)", "E(d)", "E(e)", "A1", "A2", "A3", "A4", "A5", "B1", "B2", "B8", "C1", "C3", "D1", "D2", "F1", "F2", "Sui Generis"];
 const FLOORS = ["Basement", "Lower Ground", "Ground", "Mezzanine", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "Upper"];
 const CONDITIONS = ["Shell & Core", "Cat A", "Cat A+", "Cat B", "Fitted", "Turn Key", "As Is"];
@@ -973,13 +963,15 @@ export default function AvailableUnitsPage() {
     queryClient.invalidateQueries({ queryKey: ["/api/unit-briefs"] });
     if (unitId) queryClient.invalidateQueries({ queryKey: ["/api/available-units", unitId, "brief"] });
   };
+  const ensureBriefFor = async (u: { id: string; unitName: string }): Promise<string> => {
+    const existingId = briefByUnit[u.id]?.id;
+    if (existingId) return existingId;
+    const r = await apiRequest("POST", `/api/available-units/${u.id}/brief`, { title: `Operator Targeting — ${u.unitName}` });
+    return (await r.json()).id;
+  };
   const addUnitTarget = async (u: { id: string; unitName: string }, pick: BrandPick) => {
     try {
-      let briefId = briefByUnit[u.id]?.id;
-      if (!briefId) {
-        const r = await apiRequest("POST", `/api/available-units/${u.id}/brief`, { title: `Operator Targeting — ${u.unitName}` });
-        briefId = (await r.json()).id;
-      }
+      const briefId = await ensureBriefFor(u);
       await apiRequest("POST", `/api/unit-briefs/${briefId}/targets`, {
         operatorName: pick.name,
         companyId: pick.companyId,
@@ -991,22 +983,6 @@ export default function AvailableUnitsPage() {
       toast({ title: "Target added", description: pick.name });
     } catch (e: any) {
       toast({ title: "Couldn't add target", description: e?.message, variant: "destructive" });
-    }
-  };
-  const patchUnitTarget = async (targetId: string, unitId: string, data: Record<string, unknown>) => {
-    try {
-      await apiRequest("PATCH", `/api/unit-briefs/targets/${targetId}`, data);
-      invalidateBriefs(unitId);
-    } catch (e: any) {
-      toast({ title: "Couldn't update target", description: e?.message, variant: "destructive" });
-    }
-  };
-  const deleteUnitTarget = async (targetId: string, unitId: string) => {
-    try {
-      await apiRequest("DELETE", `/api/unit-briefs/targets/${targetId}`);
-      invalidateBriefs(unitId);
-    } catch (e: any) {
-      toast({ title: "Couldn't remove target", description: e?.message, variant: "destructive" });
     }
   };
 
@@ -1480,20 +1456,20 @@ export default function AvailableUnitsPage() {
                     data-testid="checkbox-select-all-units"
                   />
                 </TableHead>
-                <TableHead className="w-[50px]">Ref</TableHead>
-                <TableHead className="min-w-[200px]">Property / Unit</TableHead>
-                <TableHead className="w-[120px]">Deal Type</TableHead>
-                <TableHead className="w-[140px]">Client</TableHead>
-                <TableHead className="w-[140px]">Tenant</TableHead>
-                <TableHead className="w-[160px]">Team / BGP</TableHead>
-                <TableHead className="min-w-[140px]">Floor Areas</TableHead>
-                <TableHead className="min-w-[120px] text-right">Costs</TableHead>
-                <TableHead className="min-w-[110px]">Class / Cond</TableHead>
-                <TableHead>Deal Status</TableHead>
-                <TableHead className="text-center min-w-[100px]">Activity</TableHead>
-                {!isClientTracker && <TableHead className="min-w-[120px]">Fee &amp; FA</TableHead>}
-                <TableHead>Files</TableHead>
-                <TableHead>Brief</TableHead>
+                <TableHead className="w-[56px]">Ref</TableHead>
+                <TableHead className="min-w-[220px]">Property / Unit</TableHead>
+                <TableHead className="w-[130px] min-w-[130px]">Deal Type</TableHead>
+                <TableHead className="w-[150px] min-w-[150px]">Client</TableHead>
+                <TableHead className="w-[180px] min-w-[180px]">Tenant</TableHead>
+                <TableHead className="w-[150px] min-w-[150px]">Team / BGP</TableHead>
+                <TableHead className="w-[130px] min-w-[130px]">Floor Areas</TableHead>
+                <TableHead className="w-[130px] min-w-[130px] text-right">Costs</TableHead>
+                <TableHead className="w-[110px] min-w-[110px]">Class / Cond</TableHead>
+                <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>
+                <TableHead className="w-[100px] min-w-[100px] text-center">Activity</TableHead>
+                {!isClientTracker && <TableHead className="w-[130px] min-w-[130px]">Fee &amp; FA</TableHead>}
+                <TableHead className="w-[90px] min-w-[90px]">Files</TableHead>
+                <TableHead className="w-[90px] min-w-[90px]">Brief</TableHead>
                 <TableHead className="w-[100px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -1510,7 +1486,8 @@ export default function AvailableUnitsPage() {
                   const prop = propertyMap[u.propertyId];
                   const deal = u.dealId ? dealMap[u.dealId] : null;
                   return (
-                    <TableRow key={u.id} className={selectedIds.has(u.id) ? "bg-primary/5" : ""} data-testid={`row-unit-${u.id}`}>
+                    <Fragment key={u.id}>
+                    <TableRow className={selectedIds.has(u.id) ? "bg-primary/5" : ""} data-testid={`row-unit-${u.id}`}>
                       <TableCell className="px-2">
                         <Checkbox
                           checked={selectedIds.has(u.id)}
@@ -1621,53 +1598,18 @@ export default function AvailableUnitsPage() {
                             placeholder="Link tenant"
                           />
                         ) : <span className="text-xs text-muted-foreground">—</span>}
-                        {(() => {
-                          const unitTargets: any[] = briefByUnit[u.id]?.targets || [];
-                          return (
-                            <div className="mt-1 space-y-0.5">
-                              {unitTargets.map((t: any) => (
-                                <DropdownMenu key={t.id}>
-                                  <DropdownMenuTrigger asChild>
-                                    <button
-                                      type="button"
-                                      className="flex items-center gap-1 text-[10px] rounded-full border px-1.5 py-0.5 hover:bg-muted max-w-full"
-                                      title={`${t.status || "Identified"}${t.category ? ` · ${t.category}` : ""}`}
-                                      data-testid={`unit-target-${t.id}`}
-                                    >
-                                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${TARGET_STATUS_DOT[t.status || "Identified"] || "bg-zinc-400"}`} />
-                                      <span className="truncate">{t.operatorName}</span>
-                                    </button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="start" className="text-xs">
-                                    {BRIEF_TARGET_STATUSES.map(s => (
-                                      <DropdownMenuItem key={s} onClick={() => patchUnitTarget(t.id, u.id, { status: s })}>
-                                        <span className={`w-1.5 h-1.5 rounded-full mr-2 ${TARGET_STATUS_DOT[s]}`} />
-                                        {s}
-                                        {(t.status || "Identified") === s && <CheckCircle2 className="w-3 h-3 ml-auto text-emerald-500" />}
-                                      </DropdownMenuItem>
-                                    ))}
-                                    {t.companyId && (
-                                      <DropdownMenuItem asChild>
-                                        <a href={`/companies/${t.companyId}`}>Open brand profile</a>
-                                      </DropdownMenuItem>
-                                    )}
-                                    <DropdownMenuItem className="text-red-600" onClick={() => deleteUnitTarget(t.id, u.id)}>
-                                      Remove target
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              ))}
-                              <BrandSearchInput
-                                className="h-6 w-full border-dashed text-[10px]"
-                                placeholder="+ Target operator"
-                                value=""
-                                allowCreate={!isClientTracker}
-                                onPick={p => addUnitTarget(u, p)}
-                                testId={`add-target-${u.id}`}
-                              />
-                            </div>
-                          );
-                        })()}
+                        {(briefByUnit[u.id]?.targets || []).length === 0 && (
+                          <div className="mt-1">
+                            <BrandSearchInput
+                              className="h-6 w-full border-dashed text-[10px]"
+                              placeholder="+ Target operator"
+                              value=""
+                              allowCreate={!isClientTracker}
+                              onPick={p => addUnitTarget(u, p)}
+                              testId={`add-target-${u.id}`}
+                            />
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="px-1.5 max-w-[180px]">
                         <div className="space-y-1">
@@ -1944,6 +1886,19 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                     </TableRow>
+                    {(briefByUnit[u.id]?.targets || []).length > 0 && (
+                      <TableRow className="bg-muted/20 hover:bg-muted/20">
+                        <TableCell colSpan={isClientTracker ? 15 : 16} className="p-3">
+                          <TargetOperatorsTable
+                            targets={briefByUnit[u.id]?.targets || []}
+                            clientCompanyId={briefByUnit[u.id]?.clientCompanyId || null}
+                            ensureBriefId={() => ensureBriefFor(u)}
+                            onChanged={() => invalidateBriefs(u.id)}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    </Fragment>
                   );
                 })
               )}
