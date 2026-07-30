@@ -161,10 +161,11 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   const [showAddCol, setShowAddCol] = useState(false);
   const [addColName, setAddColName] = useState("");
 
-  // Client logins get a read-only "Your BGP team" view — no editing, no
-  // drag/drop, and internal-only columns (e.g. "On the Bench") hidden.
-  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const readOnly = viewer?.role === "Client" || !!viewer?.companyScopeId;
+  // The client (Landsec) app gets the SAME board as the internal client
+  // page — bench visible, fully editable (Woody, 2026-07: the Landsec app
+  // "should mirror our internal client Landsec board"). Server-side the
+  // client-teams writes are opened in index.ts's client write allowlist.
+  const readOnly = false;
 
   const { data: members = [], isLoading } = useQuery<TeamMember[]>({
     queryKey: ["/api/client-teams", clientCompanyId],
@@ -189,17 +190,12 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   // Columns list always includes Unassigned at the end as a catch-all so
   // a freshly added member or a deleted-column orphan is never invisible.
   const columnList = useMemo<ColumnDef[]>(() => {
-    let base = [...columns].sort((a, b) => a.sort_order - b.sort_order);
-    // Hide internal-only columns from clients (bench = people deliberately
-    // parked off the account). Unassigned members still render for clients
-    // — under a neutral "Team" heading (relabelled below) — so the chart
-    // never silently loses people ("12 team members" showing 8).
-    if (readOnly) base = base.filter(c => !/bench|unassigned/i.test(c.name));
+    const base = [...columns].sort((a, b) => a.sort_order - b.sort_order);
     if (!base.find(c => c.name === "Unassigned")) {
       base.push({ name: "Unassigned", sort_order: 999, color_key: "slate" });
     }
     return base;
-  }, [columns, readOnly]);
+  }, [columns]);
 
   // Bucket members by column name. Anything whose team_group doesn't
   // match a real column falls into Unassigned so the card stays visible.
@@ -208,8 +204,6 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     const map: Record<string, TeamMember[]> = {};
     for (const c of columnList) map[c.name] = [];
     for (const m of members) {
-      // Clients never see bench members — that's the one intentional hide.
-      if (readOnly && m.team_group && /bench/i.test(m.team_group)) continue;
       const key = m.team_group && valid.has(m.team_group) ? m.team_group : "Unassigned";
       map[key].push(m);
     }
@@ -217,7 +211,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
       map[k].sort((a, b) => (a.sort_order - b.sort_order) || (a.full_name || "").localeCompare(b.full_name || ""));
     }
     return map;
-  }, [members, columnList, readOnly]);
+  }, [members, columnList]);
 
   // Count what's actually rendered — the badge lied when hidden buckets
   // dropped members ("12 team members" over 8 cards).
@@ -456,7 +450,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
                           data-testid={`input-rename-column-${col.name}`}
                         />
                       ) : (
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground truncate">{readOnly && col.name === "Unassigned" ? "Team" : col.name}</span>
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground truncate">{col.name}</span>
                       )}
                     </div>
                     <div className="flex items-center gap-1">
