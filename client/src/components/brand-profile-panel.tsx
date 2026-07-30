@@ -11,8 +11,7 @@ import { InteractionsBoard } from "@/components/interactions-board";
 import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
 import { CompanyPropertiesBoard } from "@/components/CompanyPropertiesBoard";
 import { useToast } from "@/hooks/use-toast";
-import { InlineMultiSelect } from "@/components/inline-edit";
-import { buildUserColorMap } from "@/lib/agent-colors";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -1901,14 +1900,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             {/* BGP coverage — who covers this brand internally, plus
                 a click-to-edit role per person so we can label
                 Charlotte = Investment lead, Harriette = Leasing. */}
-            {data.coverers && data.coverers.length > 0 && (
-              <div className="flex items-center gap-2 flex-wrap border-t pt-2">
-                <span className="text-[10px] text-muted-foreground font-medium">Coverage:</span>
-                {data.coverers.map((cov: any) => (
-                  <CovererChip key={cov.id} cov={cov} companyId={companyId} />
-                ))}
-              </div>
-            )}
+            <div className="flex items-center gap-2 flex-wrap border-t pt-2">
+              <span className="text-[10px] text-muted-foreground font-medium">Coverage:</span>
+              {(data.coverers || []).map((cov: any) => (
+                <CovererChip key={cov.id} cov={cov} companyId={companyId} />
+              ))}
+              <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />
+            </div>
 
             {/* Relationship strip — lead broker, last touchpoint, active contacts */}
             {(c.bgp_contact_crm || data.contacts.length > 0) && (() => {
@@ -3696,6 +3694,56 @@ function PendingSendersList({ data, companyId }: { data: BrandProfile; companyId
 // crm_company_bgp_roles via POST /api/brand/:id/bgp-role. Empty role
 // clears the row. Same inline-edit pattern as KeyContactRow so the
 // behaviour is consistent.
+// Add/remove people on the BGP team (coverage) — the only edit point for
+// bgpContactUserIds now the sidebar relationship card is gone. CovererChip
+// alongside handles the per-person role label.
+function BgpTeamMenu({ companyId, coverers }: { companyId: string; coverers: Array<{ id: string; name: string }> }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data: allUsers } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ["/api/users"],
+    staleTime: 5 * 60_000,
+  });
+  const currentIds = (coverers || []).map(u => u.id);
+  const save = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await apiRequest("PUT", `/api/crm/companies/${companyId}`, {
+        bgpContactUserIds: ids.length > 0 ? ids : null,
+        bgpContactCrm: null,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't save BGP team", description: e?.message, variant: "destructive" }),
+  });
+  const toggle = (id: string) => {
+    const next = currentIds.includes(id) ? currentIds.filter(v => v !== id) : [...currentIds, id];
+    save.mutate(next);
+  };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className="text-[10px] text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-0.5" data-testid={`bgp-team-edit-${companyId}`}>
+          <Plus className="w-3 h-3" />
+          {currentIds.length > 0 ? "Edit team" : "Set BGP team"}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-56 max-h-64 overflow-y-auto">
+        {(allUsers || []).slice().sort((a, b) => a.name.localeCompare(b.name)).map(u => (
+          <DropdownMenuItem key={u.id} onSelect={e => { e.preventDefault(); toggle(u.id); }}>
+            <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${currentIds.includes(u.id) ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
+              {currentIds.includes(u.id) && <Check className="h-2 w-2 text-primary-foreground" />}
+            </div>
+            {u.name}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role: string | null }; companyId: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -4367,30 +4415,6 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
     onError: (e: any) => toast({ title: "Couldn't update", description: e?.message, variant: "destructive" }),
   });
 
-  const { data: allUsers } = useQuery<{ id: string; name: string }[]>({
-    queryKey: ["/api/users"],
-    staleTime: 5 * 60_000,
-  });
-  const userColorMap = useMemo(() => buildUserColorMap(allUsers || []), [allUsers]);
-  const userOptions = useMemo(
-    () => (allUsers || []).map(u => ({ label: u.name, value: u.name })).sort((a, b) => a.label.localeCompare(b.label)),
-    [allUsers]
-  );
-  const currentBgpContacts = (data.coverers || []).map((u: any) => u.name).filter(Boolean);
-  const saveBgpContacts = async (names: string[]) => {
-    const nameToId = new Map((allUsers || []).map(u => [u.name, u.id]));
-    const ids = names.map(n => nameToId.get(n)).filter(Boolean) as string[];
-    try {
-      await apiRequest("PUT", `/api/crm/companies/${companyId}`, {
-        bgpContactUserIds: ids.length > 0 ? ids : null,
-        bgpContactCrm: null,
-      });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
-    } catch (e: any) {
-      toast({ title: "Couldn't save BGP contacts", description: e?.message, variant: "destructive" });
-    }
-  };
   const runCreditCheck = async () => {
     try {
       const r = await fetch(`/api/brand/${companyId}/credit-check`, { method: "POST", credentials: "include" });
@@ -4412,10 +4436,6 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       : cov?.trafficLight === "red"
         ? "bg-rose-500"
         : "bg-zinc-300";
-  const activeDeals = data.activeDeals?.length || 0;
-  const completedDeals = data.completedDeals?.length || 0;
-  const totalFee = [...(data.activeDeals || []), ...(data.completedDeals || [])]
-    .reduce((s: number, d: any) => s + (Number(d.fee) || 0), 0);
   const topContacts = (data.contacts || []).slice(0, 5);
 
   return (
@@ -4456,54 +4476,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       {/* Key contacts */}
       <SidebarKeyContacts data={data} companyId={companyId} topContacts={topContacts} />
 
-      {/* BGP relationship */}
-      <Card>
-        <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-            <Briefcase className="w-3.5 h-3.5" /> BGP relationship
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-3 pt-0 text-sm space-y-1.5">
-          {/* Key contacts at the brand — clickable through to each CRM record,
-              so the relationship card connects to "who" we actually deal with. */}
-          {topContacts.length > 0 && (
-            <div>
-              <div className="text-[10px] text-muted-foreground mb-1">Key contacts ({topContacts.length})</div>
-              <div className="flex flex-wrap gap-1">
-                {topContacts.map((ct: any) => (
-                  <Link
-                    key={ct.id}
-                    href={`/contacts/${ct.id}`}
-                    className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full border bg-card hover:bg-muted transition-colors"
-                    title={ct.role || ct.email || ct.name}
-                  >
-                    <span className="font-medium truncate max-w-[120px]">{ct.name}</span>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
-          <div>
-            <div className="text-[10px] text-muted-foreground mb-1">BGP team</div>
-            <InlineMultiSelect
-              value={currentBgpContacts}
-              options={userOptions}
-              colorMap={userColorMap}
-              placeholder="Set BGP team"
-              onSave={saveBgpContacts}
-              testId={`sidebar-bgp-contacts-${companyId}`}
-            />
-          </div>
-          <div className="flex justify-between pt-1 border-t"><span className="text-muted-foreground">Active deals</span><span className="font-medium tabular-nums">{activeDeals}</span></div>
-          <div className="flex justify-between"><span className="text-muted-foreground">Completed deals</span><span className="font-medium tabular-nums">{completedDeals}</span></div>
-          {totalFee > 0 && (
-            <div className="flex justify-between"><span className="text-muted-foreground">Total fees</span><span className="font-medium tabular-nums">£{Math.round(totalFee).toLocaleString()}</span></div>
-          )}
-          {!!c.is_tracked_brand && (
-            <div className="flex justify-between pt-1 border-t"><span className="text-muted-foreground">Tracked brand</span><span className="text-emerald-600 text-xs">✓</span></div>
-          )}
-        </CardContent>
-      </Card>
+      {/* BGP relationship card removed — it duplicated the Key contacts card
+          above, the Deal ledger zone and the header's Tracked-brand badge.
+          Team membership is now edited in Zone 4's Coverage row (BgpTeamMenu). */}
 
       {/* News & Media */}
       {data.news && data.news.length > 0 && (() => {
