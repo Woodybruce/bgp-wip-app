@@ -49,6 +49,7 @@ import {
   Store,
   Globe,
   Target,
+  Eye,
 } from "lucide-react";
 import {
   Sidebar,
@@ -339,6 +340,13 @@ export function AppSidebar() {
   // Client logins (e.g. Landsec) get a trimmed nav: no People & HR, My Card,
   // Reporting or WIP — those are BGP-internal. Staff nav is unchanged.
   const isClientUser = user?.role === "Client" || !!(user as any)?.companyScopeId;
+  // A REAL external client login vs a BGP staff member who has switched the
+  // team picker to a client team. Both see the client nav (that's the point —
+  // "we see what they see"), but only a real client login is pinned to it.
+  // Staff must keep the switcher, or switching in traps them with no way back.
+  const isRealClientLogin = user?.role === "Client";
+  const isViewingAsClient = !isRealClientLogin && !!(user as any)?.companyScopeId;
+  const viewingAsName = (user as any)?.companyScopeName || activeTeam;
   const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/reporting", "/wip-report"];
   const coreNav = isClientUser
     ? coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
@@ -457,8 +465,27 @@ export function AppSidebar() {
           </DropdownMenu>
         </div>
 
-        {isClientUser ? (
-          // Client logins are pinned to their own team — no switching into
+        {/* Staff who've switched to a client team are seeing exactly what that
+            client sees. Say so plainly, with a one-click way out — otherwise
+            missing staff data reads as the app being broken. */}
+        {isViewingAsClient && (
+          <button
+            type="button"
+            onClick={() => setActiveTeam("all")}
+            className="flex items-center justify-between gap-2 w-full px-2 py-1.5 mb-1 rounded-md text-[11px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors group-data-[collapsible=icon]:hidden"
+            title="You're seeing the client's view. Click to return to the full BGP view."
+            data-testid="button-exit-client-view"
+          >
+            <span className="flex items-center gap-1.5 min-w-0">
+              <Eye className="w-3 h-3 shrink-0" />
+              <span className="truncate">Viewing as {viewingAsName}</span>
+            </span>
+            <span className="shrink-0 opacity-70">Exit</span>
+          </button>
+        )}
+
+        {isRealClientLogin ? (
+          // Real client logins are pinned to their own team — no switching into
           // BGP's internal team views. (Landsec audit.)
           <div className="flex items-center gap-2 w-full px-2 py-1.5 text-xs font-medium" data-testid="client-team-label">
             <div className="w-5 h-5 rounded bg-primary/20 flex items-center justify-center shrink-0">

@@ -193,6 +193,44 @@ async function victoriaRound(page, cross) {
     await page.waitForTimeout(600);
   });
 
+  // 4b. Switching the team picker to a CLIENT team must put the agent into
+  // that client's exact view (nav trims, scope set, "Viewing as" banner), and
+  // Exit must restore the full staff view. Woody: "everyone needs the ability
+  // to switch to it... we see what they see." Previously the switch only
+  // re-branded the UI and looked like it did nothing.
+  await step(page, p, 'staff-switch-to-client-view', async () => {
+    const scope = () => page.evaluate(async () => {
+      const r = await fetch('/api/auth/me', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      return (await r.json()).companyScopeId || null;
+    });
+    // Start from the agent's own team so the assertion is honest.
+    await page.evaluate(async () => {
+      await fetch('/api/auth/active-team', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') },
+        body: JSON.stringify({ team: 'all' }),
+      });
+    });
+    await page.goto(`${BASE}/deals`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(2500);
+    if (await scope()) throw new Error('agent already scoped to a client before switching');
+    if (!(await page.locator('[data-testid="button-team-switcher"]').count())) throw new Error('no team switcher for staff');
+
+    await page.locator('[data-testid="button-team-switcher"]').click();
+    await page.waitForTimeout(700);
+    await page.locator('[data-testid="menu-team-landsec"]').click();
+    await page.waitForTimeout(3500);
+    if (!(await scope())) throw new Error('switching to the Landsec team did not scope the session to the client view');
+    const exit = page.locator('[data-testid="button-exit-client-view"]');
+    if (!(await exit.count())) throw new Error('no "Viewing as" banner / exit while in client view — staff would be trapped');
+    if (!(await page.locator('[data-testid="button-team-switcher"]').count())) throw new Error('team switcher vanished in client view — no way back');
+
+    await exit.first().click();
+    await page.waitForTimeout(3000);
+    if (await scope()) throw new Error('Exit did not restore the full staff view');
+  });
+
   // 5. Deal board (kanban) renders its pipeline columns without a crash.
   await step(page, p, 'deal-board-render', async () => {
     await page.goto(`${BASE}/deals`);
@@ -465,11 +503,14 @@ async function markRound(page, cross) {
     const mob = await page.context().newPage();
     try {
       await mob.setViewportSize({ width: 390, height: 780 });
-      await mob.goto(`${BASE}/`);
+      // domcontentloaded + explicit timeout: the dashboard polls continuously,
+      // so goto's default "load" wait can burn 30s and log a false failure.
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
       await mob.evaluate(([tok, u]) => {
         localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
       }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
-      await mob.goto(`${BASE}/`);
+      await mob.goto(`${BASE}/`, nav);
       // Dashboard widgets poll (news/map), so networkidle can't settle here.
       await mob.waitForLoadState('networkidle').catch(() => {});
       await mob.waitForTimeout(3000);

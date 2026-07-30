@@ -87,6 +87,26 @@ export function TeamProvider({ children }: { children: ReactNode }) {
     if (userId) {
       localStorage.setItem(`bgp_active_team_${userId}`, team);
     }
+    // Persist to the server too. Selecting a CLIENT team (e.g. "Landsec")
+    // scopes the whole session to that client's view, so every query has to
+    // be refetched — otherwise the switch only re-brands the UI and looks
+    // like nothing happened.
+    (async () => {
+      try {
+        const token = localStorage.getItem("authToken");
+        await fetch("/api/auth/active-team", {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ team }),
+        });
+        const { queryClient } = await import("@/lib/queryClient");
+        await queryClient.invalidateQueries();
+      } catch { /* offline / logged out — localStorage still holds the choice */ }
+    })();
   }, [userId, teamLocked]);
 
   const isAllTeams = activeTeam === "all";

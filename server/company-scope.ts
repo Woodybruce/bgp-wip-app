@@ -28,7 +28,7 @@ export async function resolveCompanyScope(req: Request): Promise<string | null> 
   }
 
   const userResult = await pool.query(
-    `SELECT team, email, client_view_mode, role FROM users WHERE id = $1`,
+    `SELECT team, email, client_view_mode, role, active_team FROM users WHERE id = $1`,
     [userId]
   );
   if (!userResult.rows.length) {
@@ -37,7 +37,7 @@ export async function resolveCompanyScope(req: Request): Promise<string | null> 
     return null;
   }
 
-  const { team, email, client_view_mode, role } = userResult.rows[0];
+  const { team, email, client_view_mode, role, active_team } = userResult.rows[0];
   const isBgpStaff = email && email.toLowerCase().endsWith(BGP_EMAIL_DOMAIN);
   const isClientRole = role === "Client" || (!isBgpStaff && !!email);
   (req as any)._isClientRole = isClientRole;
@@ -47,6 +47,21 @@ export async function resolveCompanyScope(req: Request): Promise<string | null> 
     // A client with no team maps to nothing — fail closed, not open.
     (req as any)._companyScope = isClientRole ? NO_ACCESS_SCOPE : null;
     return (req as any)._companyScope;
+  }
+
+  // Any BGP staff member who switches the team picker to a CLIENT team (e.g.
+  // "Landsec") is put into that client's exact view — same scoping the client
+  // login gets, so "we see what they see". The picker persists the selection
+  // to users.active_team, which is why this is server-visible at all.
+  // Switching back to their own team or "All Teams" clears it. Internal teams
+  // (Investment, Lease Advisory…) never map to a company, so they no-op here.
+  if (isBgpStaff && role !== "Client" && active_team && active_team !== "all" && active_team !== team) {
+    const switchedScope = await getCompanyIdForClientTeam(active_team);
+    if (switchedScope) {
+      (req as any)._companyScopeResolved = true;
+      (req as any)._companyScope = switchedScope;
+      return switchedScope;
+    }
   }
 
   if (isBgpStaff && !client_view_mode && role !== "Client") {
@@ -92,6 +107,15 @@ export async function getClientTeamInfo(userId: string): Promise<{ team: string;
   if (!companyId) return null;
 
   return { team, companyId, companyName: team };
+}
+
+// Display name for whichever company the request is scoped to. Used for the
+// "Viewing as <client>" label — reading it off the user's own team column gets
+// it wrong the moment a staff member switches into a different client's view.
+export async function getScopeCompanyName(companyId: string | null): Promise<string | null> {
+  if (!companyId || companyId === NO_ACCESS_SCOPE) return null;
+  const r = await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId]);
+  return r.rows[0]?.name ?? null;
 }
 
 export async function getCompanyIdForClientTeam(teamName: string): Promise<string | null> {
