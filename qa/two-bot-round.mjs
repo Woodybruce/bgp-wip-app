@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -742,6 +742,44 @@ async function markRound(page, cross) {
     const allowed = results.filter(r => r.status >= 200 && r.status < 300);
     if (allowed.length) {
       throw new Error(`client was allowed a destructive write: ${allowed.map(a => `${a.url} → ${a.status}`).join(', ')}`);
+    }
+  });
+
+  // Client Letting Tracker parity (JOGQK rework): a client can ADD a unit on
+  // their own property, it lands on the tracker, and they can delete it again.
+  // The same create against a property outside their scope must be refused.
+  await step(page, p, 'client-add-delete-unit', async () => {
+    const stamp = `QA-UNIT-R${ROUND}`;
+    const r = await page.evaluate(async (name) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const props = await (await fetch('/api/crm/properties?excludeComps=true', { headers: auth })).json();
+      const list = Array.isArray(props) ? props : (props?.data || []);
+      if (!list[0]) return { skip: true };
+      const create = await fetch('/api/available-units', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ propertyId: list[0].id, unitName: name, marketingStatus: 'AVA' }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const made = await create.json();
+      const outOfScope = await fetch('/api/available-units', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ propertyId: 'aaaa1111-0000-0000-0000-00000000dead', unitName: name + '-X' }) });
+      const del = await fetch(`/api/available-units/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      return { ok: true, madeId: made.id, outOfScopeStatus: outOfScope.status, delOk: del.ok, delStatus: del.status };
+    }, stamp);
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`client unit create failed (${r.why}) on their own property`);
+    if (r.outOfScopeStatus >= 200 && r.outOfScopeStatus < 300) throw new Error('client created a unit on an out-of-scope property');
+    if (!r.delOk) throw new Error(`client could not delete their own unit (${r.delStatus})`);
+  });
+
+  // The reworked target-operator columns must render on the client tracker —
+  // either existing target rows or the add affordance, without a crash.
+  await step(page, p, 'client-target-columns', async () => {
+    await page.goto(`${BASE}/deals/letting`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(3500);
+    const targetRows = await page.locator('[data-testid^="row-unit-target-"]').count();
+    const addAffordance = await page.getByText('Target operator', { exact: false }).count();
+    if (!targetRows && !addAffordance) {
+      throw new Error('no target-operator rows or add affordance on the client Letting Tracker');
     }
   });
 
