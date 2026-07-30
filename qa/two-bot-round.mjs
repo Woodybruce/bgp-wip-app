@@ -231,6 +231,34 @@ async function victoriaRound(page, cross) {
     if (await scope()) throw new Error('Exit did not restore the full staff view');
   });
 
+  // 4c. Agent creates a leasing requirement via the API, confirms it lands on
+  // the requirements board, then cleans up. Stamped so the client round can
+  // cross-check what it does/doesn't see.
+  await step(page, p, 'agent-create-requirement', async () => {
+    const stamp = `QA-REQ-R${ROUND}`;
+    const r = await page.evaluate(async (needle) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const create = await fetch('/api/crm/requirements-leasing', {
+        method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: needle, status: 'Active' }),
+      });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const made = await create.json().catch(() => ({}));
+      const list = await (await fetch('/api/crm/requirements-leasing', { headers: auth })).json();
+      const rows = Array.isArray(list) ? list : (list?.data || []);
+      return { ok: true, id: made?.id, found: rows.some(x => JSON.stringify(x).includes(needle)) };
+    }, stamp);
+    if (!r.ok) throw new Error(r.why);
+    if (!r.found) throw new Error('created requirement absent from the requirements board');
+    cross.reqStamp = stamp;
+    if (r.id) {
+      await page.evaluate(async (id) => {
+        await fetch(`/api/crm/requirements-leasing/${id}`, { method: 'DELETE', credentials: 'include',
+          headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+      }, r.id);
+    }
+  });
+
   // 5. Deal board (kanban) renders its pipeline columns without a crash.
   await step(page, p, 'deal-board-render', async () => {
     await page.goto(`${BASE}/deals`);
@@ -494,6 +522,44 @@ async function markRound(page, cross) {
       return { n: (d.properties || []).filter((x) => x.lat != null && x.lng != null).length };
     });
     if (!coords.n) throw new Error('portfolio payload returned no property coordinates for the map');
+  });
+
+  // Client opens the viewings + offers panels on one of their own units — the
+  // leasing-activity surfaces they'd actually check. Must return data (not
+  // 4xx) for a unit in their scope.
+  await step(page, p, 'client-viewings-offers', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = Array.isArray(units) ? units[0] : null;
+      if (!unit) return { ok: false, why: 'no available units in client scope' };
+      const v = await fetch(`/api/available-units/${unit.id}/viewings`, { headers: auth });
+      const o = await fetch(`/api/available-units/${unit.id}/offers`, { headers: auth });
+      return { ok: v.ok && o.ok, vStatus: v.status, oStatus: o.status };
+    });
+    if (!r.ok) throw new Error(r.why || `viewings ${r.vStatus} / offers ${r.oStatus} for an in-scope unit`);
+    // And the Letting Tracker UI must render the controls that open them.
+    // NB the client's tracker is the Deals-hub tab at /deals/letting —
+    // /leasing-schedule is the leasing STRATEGY board (zones/positioning) and
+    // /available is staff-only (clients get redirected to the dashboard).
+    await page.goto(`${BASE}/deals/letting`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(3500);
+    const controls = '[data-testid^="button-viewings-"], [data-testid^="unit-viewing-"], [data-testid^="button-offers-"], [data-testid^="unit-interest-"]';
+    if (!(await page.locator(controls).count())) {
+      throw new Error('no viewings/offers controls on the client Letting Tracker (/deals/letting)');
+    }
+  });
+
+  // Client must NOT see the requirement the agent just created for another
+  // brand unless it's theirs — guards requirements-board scoping.
+  await step(page, p, 'client-requirement-scoping', async () => {
+    if (!cross.reqStamp) return; // agent step didn't run
+    await page.goto(`${BASE}/requirements`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(2500);
+    const leaked = await page.getByText(cross.reqStamp, { exact: false }).count();
+    if (leaked) throw new Error(`agent-only requirement "${cross.reqStamp}" visible to client`);
   });
 
   // Client dashboard on a phone-width viewport must not overflow horizontally

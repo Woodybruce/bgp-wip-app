@@ -1826,19 +1826,53 @@ export async function clientChatGuard(req: any): Promise<{ isClient: boolean; co
 // scoped to their own properties/units/deals/tenants, and none of the
 // firm-wide knowledge base, business learnings, or pipeline data.
 
-export const CLIENT_SAFE_TOOLS = new Set([
-  "search_crm",
-  "create_targeting_brief",
-  "generate_pdf",
-  "generate_word",
-  "web_search",
-  "search_news",
-  "navigate_to",
-  "transcribe_audio",
+// Woody, 2026-07: "release chat to fully access the app, no restrictions
+// other than BGP SharePoint." So this is a BLOCKlist, not an allowlist — a
+// client's ChatBGP can drive the app the same way an agent's can (boards,
+// letting tracker, units, viewings/offers, deals, briefs, documents, decks,
+// images, tasks, comps, requirements, pathway), and new app tools are
+// available to clients by default instead of silently missing.
+//
+// What stays blocked, and why:
+//  1. BGP's own systems — SharePoint / OneDrive / Dropbox / BGP mailboxes /
+//     BGP diaries / WhatsApp. This is the carve-out Woody asked for; filing
+//     to SharePoint stays a BGP-team action.
+//  2. Raw database, codebase and destructive/firm-wide operations. These
+//     aren't app features, they're admin — and they're the one route by which
+//     a client session (or a prompt injection inside one) could read or wreck
+//     ANOTHER client's data or the app itself.
+//  3. BGP's money and internal memory — WIP, Xero, the firm knowledge base,
+//     saved learnings, other people's chat history.
+export const CLIENT_BLOCKED_TOOLS = new Set([
+  // 1. BGP systems (the SharePoint carve-out)
+  "browse_sharepoint_folder", "create_sharepoint_folder", "move_sharepoint_item",
+  "read_sharepoint_file", "upload_to_sharepoint", "copy_dropbox_to_sharepoint",
+  "browse_dropbox", "download_email_attachment", "get_email_attachments",
+  "search_emails", "reply_email", "send_email", "send_whatsapp",
+  "query_calendar", "search_calendar",
+  // 2. Raw DB / codebase / destructive / firm-wide
+  "sql_query", "sql_write", "add_database_column", "describe_schema",
+  "delete_record", "wipe_crm_deals", "bulk_update_crm", "merge_properties",
+  "scan_duplicates", "find_duplicate_properties", "delete_document_template",
+  "run_shell_command", "restart_application", "git_diff", "git_status",
+  "grep_codebase", "read_source_file", "edit_source_file", "list_project_files",
+  "list_chatbgp_branches", "merge_chatbgp_branch", "revert_chatbgp_commit",
+  "trigger_archivist_crawl", "run_brand_enrichment_backfill", "import_wip_excel",
+  // 3. BGP money + internal memory
+  "query_wip", "query_xero", "search_knowledge_base", "save_learning",
+  "search_chat_history",
 ]);
 
+export function isToolAllowedForClient(name: string): boolean {
+  return !!name && !CLIENT_BLOCKED_TOOLS.has(name);
+}
+
+// Kept as a named export for the two hard gates below; `.has()` now means
+// "allowed for a client", so the gate logic reads the same as before.
+export const CLIENT_SAFE_TOOLS = { has: (name: string) => isToolAllowedForClient(name) };
+
 export function filterToolsForClientScope(tools: any[]): any[] {
-  return tools.filter(t => CLIENT_SAFE_TOOLS.has(t?.function?.name));
+  return tools.filter(t => isToolAllowedForClient(t?.function?.name));
 }
 
 export const CLIENT_SYSTEM_PROMPT = `You are ChatBGP, the AI assistant of Bruce Gillingham Pollard (BGP), currently speaking with a CLIENT of BGP — not a BGP staff member.
@@ -1847,9 +1881,10 @@ Strict rules:
 - You may only discuss this client's own properties, units, deals and the tenants on them. You have NO access to other clients' data, BGP's wider pipeline, BGP fees, or internal firm information — never speculate about or acknowledge details of any other client or BGP internal matters.
 - Use search_crm to look up the client's properties, available units, deals and tenants. Results are already filtered to their portfolio.
 - You can create operator targeting briefs for the client's units with create_targeting_brief. Gather the objective, target operator criteria, priority categories, named target operators, deliverable deadlines and success measures conversationally first, then call the tool once. The branded brief document is saved to the unit's Letting Tracker files and filed to SharePoint automatically — include the download link the tool returns.
-- You can generate PDF and Word documents from content in the conversation, and search the web and news for market context.
-- Be professional and concise. Use UK English and UK date/number formats.
-- If asked for anything outside this scope, explain that their account covers their own portfolio only and suggest they contact their BGP team.`;
+- **You can drive the app on their behalf, not just answer questions.** You have the same app tooling an agent has for their portfolio: update properties and units, maintain the tenancy/leasing schedule, log viewings and offers, create and update deals, requirements, comps, companies and contacts, run the Property Pathway, generate documents/decks/PDFs/Word/Excel, create and edit images and file them to a building, manage tasks and diary entries, run KYC/covenant checks and look up market data. If a request maps to a tool, DO IT rather than telling them to ask their BGP team.
+- Two things you genuinely cannot do: (a) anything in BGP's own systems — SharePoint/OneDrive filing, BGP mailboxes, BGP diaries; and (b) raw database, bulk/merge/delete or app-administration operations. For those, say plainly that it's a BGP-team action and offer to do the in-app equivalent (e.g. attach the document to the property/unit record instead of a SharePoint folder).
+- Never reveal or infer anything about another client, another landlord's portfolio, BGP's internal fees/WIP or the firm's pipeline. Every tool call you make must concern THIS client's own properties, units, deals and tenants. If a request would require reaching outside their portfolio, decline that part.
+- Be professional and concise. Use UK English and UK date/number formats.`;
 
 export async function getClientCrmContext(scopeCompanyId: string): Promise<string> {
   const cacheKey = `crmContext:client:${scopeCompanyId}`;

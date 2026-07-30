@@ -3391,9 +3391,29 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Letting-activity aggregates for the tracker. These used to be blocked
+  // outright for clients (they were firm-wide), which meant a client's Letting
+  // Tracker silently lost its viewings/offers controls. They're now SCOPED
+  // instead: a client sees viewings/offers on their OWN units only, staff see
+  // everything. Landsec seeing activity on their vacant units is the point of
+  // the tracker.
+  async function clientUnitScopeSql(req: any) {
+    const scope = await resolveCompanyScope(req);
+    if (!scope) return null; // staff — unrestricted
+    return scope;
+  }
+
   app.get("/api/available-units/all-viewings-counts", requireAuth, async (req, res) => {
     try {
-      const rows = await db.execute(sql`SELECT unit_id, COUNT(*)::int as count FROM unit_viewings GROUP BY unit_id`);
+      const scope = await clientUnitScopeSql(req);
+      const rows = scope
+        ? await db.execute(sql`SELECT v.unit_id, COUNT(*)::int as count FROM unit_viewings v
+             JOIN available_units u ON u.id = v.unit_id
+             LEFT JOIN crm_properties p ON p.id = u.property_id
+             LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
+            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            GROUP BY v.unit_id`)
+        : await db.execute(sql`SELECT unit_id, COUNT(*)::int as count FROM unit_viewings GROUP BY unit_id`);
       const counts: Record<string, number> = {};
       for (const r of rows.rows as any[]) counts[r.unit_id] = r.count;
       res.json(counts);
@@ -3404,7 +3424,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/all-offers-counts", requireAuth, async (req, res) => {
     try {
-      const rows = await db.execute(sql`SELECT unit_id, COUNT(*)::int as count FROM unit_offers GROUP BY unit_id`);
+      const scope = await clientUnitScopeSql(req);
+      const rows = scope
+        ? await db.execute(sql`SELECT o.unit_id, COUNT(*)::int as count FROM unit_offers o
+             JOIN available_units u ON u.id = o.unit_id
+             LEFT JOIN crm_properties p ON p.id = u.property_id
+             LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
+            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            GROUP BY o.unit_id`)
+        : await db.execute(sql`SELECT unit_id, COUNT(*)::int as count FROM unit_offers GROUP BY unit_id`);
       const counts: Record<string, number> = {};
       for (const r of rows.rows as any[]) counts[r.unit_id] = r.count;
       res.json(counts);
@@ -3415,6 +3443,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/all-viewings", requireAuth, async (req, res) => {
     try {
+      const scope = await clientUnitScopeSql(req);
+      if (scope) {
+        const rows = await db.execute(sql`SELECT v.* FROM unit_viewings v
+             JOIN available_units u ON u.id = v.unit_id
+             LEFT JOIN crm_properties p ON p.id = u.property_id
+             LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
+            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            ORDER BY v.viewing_date`);
+        return res.json(rows.rows);
+      }
       const { unitViewings } = await import("@shared/schema");
       const rows = await db.select().from(unitViewings).orderBy(unitViewings.viewingDate);
       res.json(rows);
@@ -3425,6 +3463,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/all-offers", requireAuth, async (req, res) => {
     try {
+      const scope = await clientUnitScopeSql(req);
+      if (scope) {
+        const rows = await db.execute(sql`SELECT o.* FROM unit_offers o
+             JOIN available_units u ON u.id = o.unit_id
+             LEFT JOIN crm_properties p ON p.id = u.property_id
+             LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
+            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            ORDER BY o.offer_date`);
+        return res.json(rows.rows);
+      }
       const { unitOffers } = await import("@shared/schema");
       const rows = await db.select().from(unitOffers).orderBy(unitOffers.offerDate);
       res.json(rows);
