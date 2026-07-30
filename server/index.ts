@@ -38,6 +38,11 @@ import { pool } from "./db";
 // first error, which is how compliance_board/training tables went missing.
 (async () => {
   const MIGRATIONS: string[] = [
+    // Target operators: BGP agent pills (auto-tagged to whoever adds the
+    // target) + the client-side contact driving it.
+    `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS agent_user_ids TEXT[]`,
+    `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS client_contact_id VARCHAR`,
+    `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS comments JSONB`,
     // Diary→viewings sync: provenance + idempotent upsert key for viewings
     // auto-created from Outlook calendar events (see server/viewing-sync.ts).
     `ALTER TABLE unit_viewings ADD COLUMN IF NOT EXISTS source TEXT`,
@@ -3361,6 +3366,15 @@ app.use("/api/branding/assets", express.static(
     // Per-user news actions (click/save/dismiss tracking) — harmless and
     // needed for the News tab; the fetch/scrape trigger stays staff-only.
     "/api/news-feed/engage",
+    // The client app's "Your BGP Team" board is a full mirror of the
+    // internal client-team board — same data, same editing (Woody,
+    // 2026-07). Covers member add/edit/reorder and column management.
+    "/api/client-teams/",
+    // Letting Tracker parity ("client needs to be able to do as much as
+    // the agent"): unit add/edit/delete, viewings, offers, marketing
+    // files, deal link. Every handler scope-checks the unit's property
+    // against the client's company and strips BGP fee fields.
+    "/api/available-units",
   ];
   // Sub-routes to block even though a parent prefix is allowed (BGP intel /
   // brand pipeline that isn't the client's own profile; OneNote task import
@@ -3389,7 +3403,6 @@ app.use("/api/branding/assets", express.static(
     /^\/api\/leasing-schedule\/property\/[^/]+\/privacy/,
     /^\/api\/tenancy-schedule\/property\/[^/]+\/links/,
     /^\/api\/properties\/[^/]+\/(360|brochures|tasks|orphan-deals|instructions|project-files|duplicate-units|plan-pickable-units|plans|unresolved-tenants|linkage-audit)\b/,
-    /^\/api\/client-teams\/[^/]+\/candidates/,          // whole BGP staff directory
     /^\/api\/image-studio\/orphans/,
   ];
   app.use("/api", async (req: any, res, next) => {
@@ -3412,6 +3425,13 @@ app.use("/api/branding/assets", express.static(
         // handler verifies the unit's property is in the client's scope.
         // (We don't open all of /api/available-units, only the brief POST.)
         if (req.method === "POST" && /^\/api\/available-units\/[^/]+\/brief$/.test(p)) return next();
+        // Leasing strategy board writes on the client's OWN property — the
+        // strategic-principles key block, AI target generation and target-
+        // tenant rows ("Save failed — read-only" on the Landsec board).
+        // checkPropertyAccess in leasing-schedule.ts confines clients to
+        // their own company's properties on every one of these routes.
+        if (/^\/api\/leasing-schedule\/property\/[^/]+\/(strategic-principles|generate-targets)$/.test(p)) return next();
+        if (/^\/api\/leasing-schedule\/target\/[^/]+$/.test(p)) return next();
         // Same prefix-matching rule as the read allowlist: entries ending in
         // "/" match by prefix, others match exactly or as a path segment.
         if (CLIENT_ALLOWED_WRITES.some(w =>

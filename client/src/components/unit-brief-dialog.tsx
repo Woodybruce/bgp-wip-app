@@ -3,34 +3,17 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
-import { Target, Upload, FileDown, Trash2, Plus, Loader2, Sparkles } from "lucide-react";
+import { Target, Upload, FileDown, Loader2, Sparkles } from "lucide-react";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
+import { TargetOperatorsTable } from "@/components/target-operators-table";
 import { useToast } from "@/hooks/use-toast";
 import type { AvailableUnit, UnitBrief, UnitTargetOperator } from "@shared/schema";
-import { BRIEF_TARGET_STATUSES } from "@shared/schema";
 
 type BriefWithTargets = UnitBrief & { targets: UnitTargetOperator[] };
-
-const TARGET_STATUS_COLORS: Record<string, string> = {
-  "Identified": "bg-gray-500",
-  "Approached": "bg-sky-500",
-  "Meeting Held": "bg-blue-600",
-  "Inspection Done": "bg-violet-500",
-  "Offer": "bg-amber-500",
-  "Let": "bg-green-600",
-  "Passed": "bg-zinc-400",
-};
 
 const MET_STATUSES = new Set(["Meeting Held", "Inspection Done", "Offer", "Let"]);
 const INSPECTED_STATUSES = new Set(["Inspection Done", "Offer", "Let"]);
@@ -80,7 +63,6 @@ export function UnitBriefDialog({ unit, open, onClose }: {
   const [generating, setGenerating] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
-  const [newTarget, setNewTarget] = useState({ operatorName: "", category: "", priority: "B" });
   const [pendingTargets, setPendingTargets] = useState<any[]>([]);
 
   const briefKey = ["/api/available-units", unit?.id, "brief"];
@@ -96,6 +78,8 @@ export function UnitBriefDialog({ unit, open, onClose }: {
     queryClient.invalidateQueries({ queryKey: briefKey });
     queryClient.invalidateQueries({ queryKey: ["/api/unit-briefs"] });
   };
+
+  const briefClientCompanyId = (brief as any)?.clientCompanyId || null;
 
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", `/api/available-units/${unit?.id}/brief`, data),
@@ -119,23 +103,6 @@ export function UnitBriefDialog({ unit, open, onClose }: {
     mutationFn: ({ id, data }: { id: string; data: any }) => apiRequest("PATCH", `/api/unit-briefs/${id}`, data),
     onSuccess: () => { invalidate(); setDirty(false); toast({ title: "Brief saved" }); },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-
-  const addTargetMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", `/api/unit-briefs/${brief?.id}/targets`, data),
-    onSuccess: () => { invalidate(); setNewTarget({ operatorName: "", category: "", priority: "B" }); },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-
-  const updateTargetMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => apiRequest("PATCH", `/api/unit-briefs/targets/${id}`, data),
-    onSuccess: invalidate,
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
-
-  const deleteTargetMutation = useMutation({
-    mutationFn: (id: string) => apiRequest("DELETE", `/api/unit-briefs/targets/${id}`),
-    onSuccess: invalidate,
   });
 
   const f = (field: keyof UnitBrief): string => {
@@ -325,109 +292,12 @@ export function UnitBriefDialog({ unit, open, onClose }: {
             </div>
 
             {brief && (
-              <div className="space-y-2">
-                <h4 className="text-sm font-semibold flex items-center gap-2">
-                  Target operators
-                  <Badge variant="outline" className="text-[10px]">{targets.length}</Badge>
-                </h4>
-                <div className="border rounded-lg overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-[160px]">Operator</TableHead>
-                        <TableHead>Category</TableHead>
-                        <TableHead className="w-[70px]">Priority</TableHead>
-                        <TableHead className="w-[140px]">Status</TableHead>
-                        <TableHead>Rationale</TableHead>
-                        <TableHead>Relationship</TableHead>
-                        <TableHead>Feedback</TableHead>
-                        <TableHead className="w-[40px]" />
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {targets.length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={8} className="text-center text-muted-foreground text-xs py-6">
-                            No target operators yet — add them below or extract from the client brief
-                          </TableCell>
-                        </TableRow>
-                      )}
-                      {targets.map(t => (
-                        <TableRow key={t.id} data-testid={`row-target-${t.id}`}>
-                          <TableCell className="text-xs font-medium">{t.operatorName}</TableCell>
-                          <TableCell className="text-xs">{t.category || "—"}</TableCell>
-                          <TableCell>
-                            <Select value={t.priority || "B"} onValueChange={v => updateTargetMutation.mutate({ id: t.id, data: { priority: v } })}>
-                              <SelectTrigger className="h-7 text-xs w-[60px]"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="A">A</SelectItem>
-                                <SelectItem value="B">B</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </TableCell>
-                          <TableCell>
-                            <Select value={t.status || "Identified"} onValueChange={v => updateTargetMutation.mutate({ id: t.id, data: { status: v } })}>
-                              <SelectTrigger className="h-7 text-xs w-[130px]">
-                                <SelectValue>
-                                  <Badge className={`text-[10px] text-white ${TARGET_STATUS_COLORS[t.status || "Identified"]}`}>{t.status || "Identified"}</Badge>
-                                </SelectValue>
-                              </SelectTrigger>
-                              <SelectContent>
-                                {BRIEF_TARGET_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                          </TableCell>
-                          <TableCell className="text-xs max-w-[180px]">
-                            <EditableCell value={t.rationale} onSave={v => updateTargetMutation.mutate({ id: t.id, data: { rationale: v } })} />
-                          </TableCell>
-                          <TableCell className="text-xs max-w-[140px]">
-                            <EditableCell value={t.existingRelationship} onSave={v => updateTargetMutation.mutate({ id: t.id, data: { existingRelationship: v } })} />
-                          </TableCell>
-                          <TableCell className="text-xs max-w-[180px]">
-                            <EditableCell value={t.feedback} onSave={v => updateTargetMutation.mutate({ id: t.id, data: { feedback: v } })} />
-                          </TableCell>
-                          <TableCell>
-                            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => deleteTargetMutation.mutate(t.id)} data-testid={`button-delete-target-${t.id}`}>
-                              <Trash2 className="h-3 w-3 text-muted-foreground" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Input
-                    className="h-8 text-xs max-w-[200px]"
-                    placeholder="Operator name…"
-                    value={newTarget.operatorName}
-                    onChange={e => setNewTarget(p => ({ ...p, operatorName: e.target.value }))}
-                    data-testid="input-new-target-name"
-                  />
-                  <Input
-                    className="h-8 text-xs max-w-[180px]"
-                    placeholder="Category…"
-                    value={newTarget.category}
-                    onChange={e => setNewTarget(p => ({ ...p, category: e.target.value }))}
-                  />
-                  <Select value={newTarget.priority} onValueChange={v => setNewTarget(p => ({ ...p, priority: v }))}>
-                    <SelectTrigger className="h-8 text-xs w-[60px]"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="A">A</SelectItem>
-                      <SelectItem value="B">B</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    size="sm"
-                    className="h-8"
-                    disabled={!newTarget.operatorName || addTargetMutation.isPending}
-                    onClick={() => addTargetMutation.mutate(newTarget)}
-                    data-testid="button-add-target"
-                  >
-                    <Plus className="h-3.5 w-3.5 mr-1" /> Add
-                  </Button>
-                </div>
-              </div>
+              <TargetOperatorsTable
+                targets={targets}
+                clientCompanyId={briefClientCompanyId}
+                ensureBriefId={async () => brief.id}
+                onChanged={invalidate}
+              />
             )}
 
             {!brief && !dirty && (
@@ -439,31 +309,5 @@ export function UnitBriefDialog({ unit, open, onClose }: {
         )}
       </DialogContent>
     </Dialog>
-  );
-}
-
-function EditableCell({ value, onSave }: { value: string | null | undefined; onSave: (v: string) => void }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  if (editing) {
-    return (
-      <Textarea
-        autoFocus
-        rows={2}
-        className="text-xs"
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        onBlur={() => { setEditing(false); if (draft !== (value || "")) onSave(draft); }}
-      />
-    );
-  }
-  return (
-    <span
-      className="cursor-pointer hover:bg-muted/60 rounded px-1 block truncate"
-      title={value || ""}
-      onClick={() => { setDraft(value || ""); setEditing(true); }}
-    >
-      {value || <span className="text-muted-foreground italic">—</span>}
-    </span>
   );
 }

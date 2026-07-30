@@ -1076,11 +1076,20 @@ router.post("/api/leasing-schedule/unit/:unitId/targets", requireAuth, async (re
     const validRatings = ["green", "amber", "red"];
     const rating = validRatings.includes(quality_rating) ? quality_rating : "amber";
 
+    // No explicit link (free-typed or AI-suggested name) — auto-link an
+    // exact name match so targets tie back to the brand list wherever
+    // possible.
+    let linkedCompanyId = company_id || null;
+    if (!linkedCompanyId) {
+      const match = await pool.query(`SELECT id FROM crm_companies WHERE LOWER(name) = LOWER($1) LIMIT 1`, [brand_name.trim()]);
+      linkedCompanyId = match.rows[0]?.id || null;
+    }
+
     const result = await pool.query(
       `INSERT INTO target_tenants (unit_id, property_id, company_id, brand_name, rationale, quality_rating, suggested_by, approved_by, status)
        VALUES ($1, $2, $3, $4, $5, $6, 'manual', $7, 'approved')
        RETURNING *`,
-      [req.params.unitId, unitCheck.rows[0].property_id, company_id || null,
+      [req.params.unitId, unitCheck.rows[0].property_id, linkedCompanyId,
        brand_name, rationale || null, rating, user?.id]
     );
 

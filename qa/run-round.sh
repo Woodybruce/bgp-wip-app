@@ -23,6 +23,13 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM unit_target_operators WHERE brief_id IN (SELECT id FROM unit_briefs WHERE title LIKE 'QA Brief%');
   DELETE FROM unit_briefs WHERE title LIKE 'QA Brief%';
   DELETE FROM image_studio_images WHERE file_name = 'qa-unit-photo.jpg';
+  DELETE FROM team_events WHERE title LIKE 'QA-CAL-%' OR title LIKE 'QA Landsec brainstorm' OR title LIKE 'QA Other Client review';
+  -- The team-board scenario adds a member then removes it; if a round dies
+  -- mid-way the row survives, so sweep anyone not in the account contacts.
+  DELETE FROM crm_client_team_members m
+   USING crm_companies c
+   WHERE c.id = m.client_company_id
+     AND (m.user_id IS NULL OR NOT (m.user_id = ANY(COALESCE(c.bgp_contact_user_ids, '{}'::text[]))));
 " >/dev/null 2>&1 || echo "[qa] (cleanup skipped — no local psql)"
 
 # 3. Run the round.

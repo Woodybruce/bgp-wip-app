@@ -1316,6 +1316,14 @@ export default function Calendar() {
   const userTeam = currentUser?.team || "All";
   const isClientTeam = !!userTeam && !INTERNAL_BGP_TEAMS.has(userTeam) && userTeam !== "All";
   const effectiveTeamFilter = isClientTeam ? userTeam : (teamFilter ?? (TEAMS.includes(userTeam) ? userTeam : "All"));
+  // A selected CLIENT team (e.g. "Landsec") is an event-attribution filter, not
+  // a BGP-member filter. Keep the member query unfiltered ("All") so we search
+  // every BGP diary, then narrow the events themselves in mergedEvents.
+  const clientTeamFilter =
+    effectiveTeamFilter && effectiveTeamFilter !== "All" && !INTERNAL_BGP_TEAMS.has(effectiveTeamFilter)
+      ? effectiveTeamFilter
+      : null;
+  const memberTeamFilter = clientTeamFilter ? "All" : effectiveTeamFilter;
 
   const { data: status, isLoading: statusLoading } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/microsoft/status"],
@@ -1337,10 +1345,10 @@ export default function Calendar() {
   });
 
   const { data: teamSchedules } = useQuery<TeamMemberSchedule[]>({
-    queryKey: ["/api/microsoft/team-calendar", effectiveTeamFilter],
+    queryKey: ["/api/microsoft/team-calendar", memberTeamFilter],
     queryFn: async () => {
       const params = new URLSearchParams();
-      if (effectiveTeamFilter !== "All") params.set("team", effectiveTeamFilter);
+      if (memberTeamFilter !== "All") params.set("team", memberTeamFilter);
       params.set("days", "14");
       const res = await fetch(`/api/microsoft/team-calendar?${params}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to fetch team calendar");
@@ -1388,11 +1396,34 @@ export default function Calendar() {
       _eventType: e._eventType || classifyOutlookEvent(e.subject, e.categories),
     })));
     if (showCrmEvents && teamEventsRaw) events.push(...teamEventsRaw.map(teamEventToCalendarEvent));
-    if (activeEventType) {
-      return events.filter(e => e._eventType === activeEventType);
+    let out = events;
+    // Picking a CLIENT team (e.g. "Landsec") means "show me that client's
+    // calendar". The server-side team filter matches BGP staff by users.team,
+    // which no client team ever matches — so it just emptied the board. Filter
+    // by the event's client attribution instead: the CRM company tag, the
+    // client's name in the subject/location, or an attendee on their domain.
+    if (clientTeamFilter) {
+      const needle = clientTeamFilter.toLowerCase();
+      const domains = (crmContacts || [])
+        .filter(c => (c.company_name || "").toLowerCase() === needle && c.email && c.email.includes("@"))
+        .map(c => c.email!.split("@")[1].toLowerCase());
+      const uniqDomains = Array.from(new Set(domains));
+      out = out.filter(e => {
+        if ((e._companyName || "").toLowerCase() === needle) return true;
+        const hay = `${e.subject || ""} ${e.location?.displayName || ""} ${e.bodyPreview || ""}`.toLowerCase();
+        if (hay.includes(needle)) return true;
+        const atts = (e.attendees || []) as any[];
+        return atts.some(a => {
+          const addr = (a?.emailAddress?.address || "").toLowerCase();
+          return !!addr && uniqDomains.some(d => addr.endsWith("@" + d));
+        });
+      });
     }
-    return events;
-  }, [outlookEvents, teamEventsRaw, showCrmEvents, showOutlookEvents, activeEventType]);
+    if (activeEventType) {
+      return out.filter(e => e._eventType === activeEventType);
+    }
+    return out;
+  }, [outlookEvents, teamEventsRaw, showCrmEvents, showOutlookEvents, activeEventType, clientTeamFilter, crmContacts]);
 
   const eventsLoading = teamEventsLoading || (status?.connected && outlookLoading);
 

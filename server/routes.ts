@@ -3632,6 +3632,17 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const { insertAvailableUnitSchema } = await import("@shared/schema");
       const parsed = insertAvailableUnitSchema.parse(req.body);
+      // Clients: own-portfolio only, and never set BGP's fee.
+      {
+        const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+        const auScope = await resolveCompanyScope(req);
+        if (auScope) {
+          if (!parsed.propertyId || !(await isPropertyInScope(auScope, parsed.propertyId))) {
+            return res.status(403).json({ message: "Unit is outside your portfolio" });
+          }
+          delete (parsed as any).fee;
+        }
+      }
 
       // Ensure a property_units master row exists for this (property, unit name).
       // Create one if missing, then set unit_id on the listing.
@@ -3794,6 +3805,17 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!existing) return res.status(404).json({ message: "Unit not found" });
       const { insertAvailableUnitSchema } = await import("@shared/schema");
       const partial = insertAvailableUnitSchema.partial().parse(req.body);
+      // Clients: own-portfolio only, and never set BGP's fee.
+      {
+        const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+        const auScope = await resolveCompanyScope(req);
+        if (auScope) {
+          if (!(await isPropertyInScope(auScope, existing.propertyId))) {
+            return res.status(403).json({ message: "Unit is outside your portfolio" });
+          }
+          delete (partial as any).fee;
+        }
+      }
 
       // Master-managed fields: write to property_units (the source of truth).
       // We still write the same value to the listing cache so direct DB queries
@@ -3841,12 +3863,45 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if ("fee" in partial) dealPatch.fee = (partial as any).fee;
         if ("askingRent" in partial) dealPatch.rentPa = (partial as any).askingRent;
         if ((req.body as any).landlordId) dealPatch.landlordId = (req.body as any).landlordId;
+        if ((req.body as any).dealType) dealPatch.dealType = (req.body as any).dealType;
         if (Object.keys(dealPatch).length > 0) {
           try {
             await storage.updateCrmDeal(existing.dealId, dealPatch as any);
           } catch (e: any) {
             console.warn(`[available-units PATCH] deal sync failed for ${existing.dealId}:`, e?.message);
           }
+        }
+      } else if ((req.body as any).dealType) {
+        // The unit has no backing deal (imported row, or born under
+        // UNIFIED_ADD_UNIT where deals wait for SOL) but the user
+        // explicitly set a Deal Type on the edit dialog. Zod strips
+        // dealType from the unit patch (available_units has no such
+        // column), so without this the edit silently went nowhere and
+        // the tracker's Deal Type column stayed "—". Create the backing
+        // deal now and link it — same shape as the POST auto-create.
+        try {
+          const property = existing.propertyId ? await storage.getCrmProperty(existing.propertyId) : null;
+          const dealLandlordId = (req.body as any).landlordId || (property as any)?.landlordId || null;
+          const agentNames = await resolveAgentNames((unit as any).agentUserIds);
+          const deal = await storage.createCrmDeal({
+            name: property
+              ? `${property.name}${(unit as any).unitName ? ` – ${(unit as any).unitName}` : ""}`
+              : (unit as any).unitName,
+            propertyId: existing.propertyId || undefined,
+            unitId: (existing as any).unitId || undefined,
+            status: (unit as any).marketingStatus || "AVA",
+            dealType: (req.body as any).dealType,
+            internalAgent: agentNames,
+            fee: (unit as any).fee ?? undefined,
+            rentPa: (unit as any).askingRent ?? undefined,
+            totalAreaSqft: (unit as any).sqft ?? undefined,
+            landlordId: dealLandlordId || undefined,
+          } as any);
+          await storage.updateAvailableUnit(req.params.id as string, { dealId: deal.id });
+          (unit as any).dealId = deal.id;
+          (unit as any).dealRef = (deal as any).dealRef;
+        } catch (e: any) {
+          console.warn("[available-units PATCH] deal auto-create failed:", e?.message);
         }
       }
 
@@ -3914,6 +3969,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // and just lose their unit link via deleteAvailableUnit.
       const unitId = String(req.params.id);
       const unitRow = await storage.getAvailableUnit(unitId);
+      if (await assertUnitInClientScope(req, unitRow?.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       await storage.deleteAvailableUnit(unitId);
       if (unitRow?.dealId) {
         try {
@@ -4378,7 +4436,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/unit-briefs", requireAuth, async (_req, res) => {
     try {
-      const { unitBriefs, availableUnits, crmProperties } = await import("@shared/schema");
+      const { unitBriefs, availableUnits, crmProperties, unitTargetOperators } = await import("@shared/schema");
       const rows = await db
         .select({
           brief: unitBriefs,
@@ -4389,7 +4447,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .leftJoin(availableUnits, eq(unitBriefs.unitId, availableUnits.id))
         .leftJoin(crmProperties, eq(unitBriefs.propertyId, crmProperties.id))
         .orderBy(desc(unitBriefs.createdAt));
-      res.json(rows.map(r => ({ ...r.brief, unitName: r.unitName, propertyName: r.propertyName })));
+      // Targets ride along so the Letting Tracker can show each unit's
+      // target operators without a per-unit round trip.
+      const allTargets = await db.select().from(unitTargetOperators);
+      const targetsByBrief = new Map<string, typeof allTargets>();
+      for (const t of allTargets) {
+        if (!targetsByBrief.has(t.briefId)) targetsByBrief.set(t.briefId, []);
+        targetsByBrief.get(t.briefId)!.push(t);
+      }
+      res.json(rows.map(r => ({ ...r.brief, unitName: r.unitName, propertyName: r.propertyName, targets: (targetsByBrief.get(r.brief.id) || []).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)) })));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch briefs" });
     }
@@ -4505,6 +4571,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const [brief] = await db.select().from(unitBriefs).where(eq(unitBriefs.id, String(req.params.id)));
       if (!brief) return res.status(404).json({ message: "Brief not found" });
       const parsed = insertUnitTargetOperatorSchema.parse({ ...req.body, briefId: brief.id });
+      // Auto-link an exact brand-list match when the caller didn't pick one,
+      // so every target ties back to the brand list wherever possible.
+      if (!parsed.companyId && parsed.operatorName) {
+        const match = await pool.query(`SELECT id FROM crm_companies WHERE LOWER(name) = LOWER($1) LIMIT 1`, [parsed.operatorName.trim()]);
+        if (match.rows[0]?.id) parsed.companyId = match.rows[0].id;
+      }
       const [target] = await db.insert(unitTargetOperators).values(parsed).returning();
       res.json(target);
     } catch (err: any) {
@@ -4580,6 +4652,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/available-units/migrate-letting-deals", requireAuth, async (req, res) => {
     try {
+      // Firm-wide bulk migration — staff only, even though the parent
+      // prefix is client-writable for tracker parity.
+      {
+        const { resolveCompanyScope } = await import("./company-scope");
+        if (await resolveCompanyScope(req)) return res.status(403).json({ message: "Not available for client accounts" });
+      }
       const { crmDeals, availableUnits } = await import("@shared/schema");
       // Match both canonical and legacy strings — migration may not yet have run
       const NEGOTIATION_STATUSES = ["NEG", "Under Negotiation", "HOTs"];
@@ -5045,6 +5123,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!dealId) return res.status(400).json({ message: "dealId is required" });
       const existing = await storage.getAvailableUnit(req.params.id as string);
       if (!existing) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, existing.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       const deal = await storage.getCrmDeal(dealId);
       if (!deal) return res.status(404).json({ message: "Deal not found" });
       const unit = await storage.updateAvailableUnit(req.params.id as string, { dealId });
@@ -5058,8 +5139,21 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const unit = await storage.getAvailableUnit(req.params.id as string);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       const property = await storage.getCrmProperty(unit.propertyId);
       const body = req.body || {};
+      // Clients never set or see BGP's fee — same rule as the deals API.
+      {
+        const { resolveCompanyScope } = await import("./company-scope");
+        if (await resolveCompanyScope(req)) {
+          delete body.fee;
+          delete body.feePercentage;
+          delete body.feeAgreement;
+          delete body.feeAgreementUrl;
+        }
+      }
 
       // Build the field set from the form. Used to either UPDATE an existing
       // linked deal (the common case now that Add Unit auto-creates a deal)
@@ -5238,6 +5332,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const unit = await storage.getAvailableUnit(req.params.id);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       if (!req.file) return res.status(400).json({ message: "No file uploaded" });
       const ext = path.extname(req.file.originalname).toLowerCase();
       const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
@@ -5262,6 +5359,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const { unitMarketingFiles } = await import("@shared/schema");
       const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId as string));
       if (!file) return res.status(404).json({ message: "File not found" });
+      {
+        const fileUnit = await storage.getAvailableUnit(file.unitId);
+        if (await assertUnitInClientScope(req, fileUnit?.propertyId)) {
+          return res.status(403).json({ message: "Unit is outside your portfolio" });
+        }
+      }
       const fileName = file.filePath.split("/").pop();
       if (fileName) {
         const { deleteFile } = await import("./file-storage");
@@ -5289,6 +5392,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/available-units/:id/viewings", requireAuth, async (req, res) => {
     try {
+      const vUnit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, vUnit?.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       const { unitViewings, insertUnitViewingSchema } = await import("@shared/schema");
       const parsed = insertUnitViewingSchema.safeParse({ ...req.body, unitId: req.params.id });
       if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
@@ -5302,6 +5409,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/viewings/:viewingId", requireAuth, async (req, res) => {
     try {
       const { unitViewings } = await import("@shared/schema");
+      const [viewing] = await db.select().from(unitViewings).where(eq(unitViewings.id, req.params.viewingId as string));
+      if (viewing) {
+        const vUnit = await storage.getAvailableUnit(viewing.unitId);
+        if (await assertUnitInClientScope(req, vUnit?.propertyId)) {
+          return res.status(403).json({ message: "Unit is outside your portfolio" });
+        }
+      }
       await db.delete(unitViewings).where(eq(unitViewings.id, req.params.viewingId as string));
       res.json({ success: true });
     } catch (err: any) {
@@ -5322,6 +5436,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/available-units/:id/offers", requireAuth, async (req, res) => {
     try {
+      const oUnit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, oUnit?.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       const { unitOffers, insertUnitOfferSchema } = await import("@shared/schema");
       const parsed = insertUnitOfferSchema.safeParse({ ...req.body, unitId: req.params.id });
       if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
@@ -5335,6 +5453,13 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.delete("/api/available-units/offers/:offerId", requireAuth, async (req, res) => {
     try {
       const { unitOffers } = await import("@shared/schema");
+      const [offer] = await db.select().from(unitOffers).where(eq(unitOffers.id, req.params.offerId as string));
+      if (offer) {
+        const oUnit = await storage.getAvailableUnit(offer.unitId);
+        if (await assertUnitInClientScope(req, oUnit?.propertyId)) {
+          return res.status(403).json({ message: "Unit is outside your portfolio" });
+        }
+      }
       await db.delete(unitOffers).where(eq(unitOffers.id, req.params.offerId as string));
       res.json({ success: true });
     } catch (err: any) {

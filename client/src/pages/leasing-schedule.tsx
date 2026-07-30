@@ -6,6 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
+import { BrandSearchInput } from "@/components/brand-search-input";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -372,14 +373,14 @@ function BrandPickerCell({ unitId, field, value, onSave, placeholder = "Type to 
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(value || "");
   const inputRef = useRef<HTMLInputElement>(null);
-  const { data: companies = [] } = useQuery<Array<{ id: string; name: string }>>({
+  const { data: companies = [] } = useQuery<Array<{ id: string; name: string; companyType?: string | null }>>({
     queryKey: ["/api/crm/companies-basic"],
     queryFn: async () => {
       const r = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
       if (!r.ok) return [];
       const d = await r.json();
       const arr = Array.isArray(d) ? d : (d.companies || []);
-      return arr.map((c: any) => ({ id: String(c.id), name: c.name }));
+      return arr.map((c: any) => ({ id: String(c.id), name: c.name, companyType: c.companyType ?? c.company_type ?? null }));
     },
     staleTime: 120000,
   });
@@ -1011,6 +1012,7 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
   const [generating, setGenerating] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [newBrand, setNewBrand] = useState("");
+  const [newCompanyId, setNewCompanyId] = useState<string | null>(null);
   const [newRating, setNewRating] = useState("amber");
 
   const unitTargets = targets.filter(t => t.unit_id === unitId);
@@ -1058,10 +1060,11 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
       const res = await fetch(`/api/leasing-schedule/unit/${unitId}/targets`, {
         method: "POST",
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ brand_name: newBrand, quality_rating: newRating }),
+        body: JSON.stringify({ brand_name: newBrand, company_id: newCompanyId, quality_rating: newRating }),
       });
       if (!res.ok) { toast({ title: "Failed to add target", variant: "destructive" }); return; }
       setNewBrand("");
+      setNewCompanyId(null);
       setShowAdd(false);
       onRefresh();
       toast({ title: "Target added" });
@@ -1079,8 +1082,14 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
         </button>
         {showAdd && (
           <div className="flex items-center gap-1">
-            <input value={newBrand} onChange={e => setNewBrand(e.target.value)} placeholder="Brand name..." className="border rounded px-1.5 py-0.5 text-[11px] w-[120px]" data-testid={`new-target-input-${unitId}`}
-              onKeyDown={e => { if (e.key === "Enter") handleAdd(); if (e.key === "Escape") setShowAdd(false); }} autoFocus />
+            <BrandSearchInput
+              className="h-6 w-[150px] text-[11px]"
+              placeholder="Brand name..."
+              value={newBrand}
+              companyId={newCompanyId}
+              onPick={p => { setNewBrand(p.name); setNewCompanyId(p.companyId); }}
+              testId={`new-target-input-${unitId}`}
+            />
             <button onClick={handleAdd} className="text-emerald-500 p-0.5"><Check className="w-3 h-3" /></button>
             <button onClick={() => setShowAdd(false)} className="text-gray-400 p-0.5"><X className="w-3 h-3" /></button>
           </div>
@@ -1109,8 +1118,14 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
       </div>
       {showAdd && (
         <div className="flex items-center gap-1 px-2 py-1">
-          <input value={newBrand} onChange={e => setNewBrand(e.target.value)} placeholder="Brand name..." className="border rounded px-1.5 py-0.5 text-[11px] w-[120px]" data-testid={`new-target-input-${unitId}`}
-            onKeyDown={e => { if (e.key === "Enter") handleAdd(); if (e.key === "Escape") setShowAdd(false); }} autoFocus />
+          <BrandSearchInput
+            className="h-6 w-[150px] text-[11px]"
+            placeholder="Brand name..."
+            value={newBrand}
+            companyId={newCompanyId}
+            onPick={p => { setNewBrand(p.name); setNewCompanyId(p.companyId); }}
+            testId={`new-target-input-${unitId}`}
+          />
           <select value={newRating} onChange={e => setNewRating(e.target.value)} className="border rounded px-1 py-0.5 text-[11px]" data-testid={`new-target-rating-${unitId}`}>
             <option value="green">Green</option>
             <option value="amber">Amber</option>

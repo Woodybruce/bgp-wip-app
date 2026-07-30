@@ -354,8 +354,14 @@ export function CompanyPropertiesBoard({
   const findingsAreFresh = !!brand?.landlordWebsiteFindings?.scraped_at && (
     Date.now() - new Date(brand.landlordWebsiteFindings.scraped_at).getTime() < 14 * 24 * 60 * 60 * 1000
   );
+  // Who's looking — the auto-scrape is a BGP enrichment job, so it must not
+  // fire on a client login (it 403s on every client visit to the profile).
+  const { data: cpbViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const cpbIsClient = cpbViewer?.role === "Client" || !!cpbViewer?.companyScopeId;
+
   useEffect(() => {
     if (kind !== "landlord") return;
+    if (cpbIsClient) return;
     if (autoSyncRan.current) return;
     if (!brand) return;
     if (findingsAreFresh) return;
@@ -383,7 +389,7 @@ export function CompanyPropertiesBoard({
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId, kind, brand, findingsAreFresh]);
+  }, [companyId, kind, brand, findingsAreFresh, cpbIsClient]);
 
   const createPropertyMutation = useMutation({
     mutationFn: async (item: { name: string; address?: string; postcode?: string; sector?: string }) => {

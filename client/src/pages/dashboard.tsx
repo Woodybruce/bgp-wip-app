@@ -10,6 +10,7 @@ import { useBrand } from "@/lib/brand-context";
 import { DraggableGrid } from "@/components/draggable-grid";
 import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
+import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import {
   Building2,
   CalendarDays,
@@ -1274,32 +1275,31 @@ export default function Dashboard() {
                       BGP Relationship
                     </h3>
                     <p className="text-[10px] text-muted-foreground -mt-1">
-                      Your account with Bruce Gillingham Pollard at a glance.
+                      How the account is actually going — AI read of the live
+                      relationship, not a count.
                     </p>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div>
-                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Properties</div>
-                        <div className="font-medium font-mono">{Number(stats.totalProperties || 0).toLocaleString("en-GB")}</div>
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Live deals</div>
-                        <div className="font-medium font-mono">{Number(stats.activeDeals || 0).toLocaleString("en-GB")}</div>
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Your contacts</div>
-                        <div className="font-medium font-mono">{portfolioData.contacts?.length || 0}</div>
-                      </div>
-                      <div>
-                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Last touch</div>
-                        <div className={`font-medium ${
-                          daysSince == null ? "text-muted-foreground"
-                          : daysSince < 30 ? "text-emerald-700 dark:text-emerald-400"
-                          : daysSince < 90 ? "text-amber-600 dark:text-amber-400"
-                          : "text-red-600 dark:text-red-400"
-                        }`}>
-                          {daysSince == null ? "—" : daysSince === 0 ? "Today" : `${daysSince}d ago`}
-                        </div>
-                      </div>
+                    {/* The AI relationship read, not a stats grid. Properties /
+                        live deals already sit in the tiles at the top of this
+                        dashboard, so repeating them here said nothing; the
+                        'activity' take is the "BGP take — relationship read". */}
+                    {clientCompanyId ? (
+                      <BgpTakeStrip companyId={clientCompanyId} tab="activity" />
+                    ) : (
+                      <p className="text-xs text-muted-foreground italic">Relationship read unavailable.</p>
+                    )}
+                    <div className="flex items-center gap-3 text-[10px] text-muted-foreground border-t pt-2">
+                      <span>Last touch{" "}
+                        <span className={
+                          daysSince == null ? "" 
+                          : daysSince < 30 ? "text-emerald-700 dark:text-emerald-400 font-medium"
+                          : daysSince < 90 ? "text-amber-600 dark:text-amber-400 font-medium"
+                          : "text-red-600 dark:text-red-400 font-medium"
+                        }>
+                          {daysSince == null ? "—" : daysSince === 0 ? "today" : `${daysSince}d ago`}
+                        </span>
+                      </span>
+                      <span>·</span>
+                      <span>{portfolioData.contacts?.length || 0} of your contacts</span>
                     </div>
                     {bgpTeam.length > 0 && (
                       <div className="border-t pt-2">
@@ -1335,7 +1335,7 @@ export default function Dashboard() {
                   <div className="flex-1 min-h-0 rounded-lg overflow-hidden border">
                     <BrandPortfolioMap
                       alwaysRender
-                      height={9999}
+                      height="100%"
                       stores={(portfolioData.properties || [])
                         .filter((p: any) => p.lat != null && p.lng != null)
                         .map((p: any) => ({
