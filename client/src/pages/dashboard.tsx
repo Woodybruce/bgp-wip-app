@@ -11,6 +11,7 @@ import { DraggableGrid } from "@/components/draggable-grid";
 import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
+import { AIActivityCard } from "@/components/ai-activity-card";
 import {
   Building2,
   CalendarDays,
@@ -1286,7 +1287,7 @@ export default function Dashboard() {
           {
             id: "portfolio-relationship",
             label: "BGP Relationship",
-            defaultW: 6, defaultH: 6, minW: 3, minH: 4,
+            defaultW: 6, defaultH: 14, minW: 3, minH: 4,
             content: (() => {
               const evs = (portfolioData.events || []) as any[];
               const past = evs
@@ -1342,6 +1343,19 @@ export default function Dashboard() {
                           ))}
                         </div>
                       </div>
+                    )}
+                    {/* The full AI activity commentary — same card as the
+                        internal company page's BGP Relationship zone ("just
+                        mirror our page", Woody 2026-07-30). Read-only for
+                        clients; the middleware scopes it to their own
+                        company and the curate action stays staff-side. */}
+                    {clientCompanyId && (
+                      <AIActivityCard
+                        subjectType="landlord"
+                        subjectId={clientCompanyId}
+                        title={`${clientCompanyName || companyInfo?.name || "Account"} — Activity`}
+                        compact
+                      />
                     )}
                   </CardContent>
                 </Card>

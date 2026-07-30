@@ -3473,6 +3473,17 @@ app.use("/api/branding/assets", express.static(
         const scope = await resolveCompanyScope(req);
         if (brandRead[1] === scope || (await isClientVisibleBrand(brandRead[1]))) return next();
       }
+      // AI activity commentary (AIActivityCard) on the client's OWN company —
+      // the dashboard BGP Relationship board mirrors the internal page
+      // (Woody, 2026-07-30). Read-only: the exact landlord|brand/:id shape
+      // only, so the raw meeting/email viewer routes and the curate POST
+      // (a write) stay sealed for clients.
+      const activityRead = p.match(/^\/api\/activity\/(landlord|brand)\/([^/]+)$/);
+      if (activityRead) {
+        const { resolveCompanyScope } = await import("./company-scope");
+        const scope = await resolveCompanyScope(req);
+        if (scope && activityRead[2] === scope) return next();
+      }
       if (allowed) return next();
       return res.status(403).json({ error: "Not available for client accounts" });
     } catch { return next(); }

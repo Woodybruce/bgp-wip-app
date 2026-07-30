@@ -68,6 +68,10 @@ interface Props {
 }
 
 export function AIActivityCard({ subjectType, subjectId, title, compact, autoCurate }: Props) {
+  // Client logins get the commentary read-only: the curate POST is staff-
+  // only server-side, so don't offer an Analyse button that would 403.
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = !!viewer && (viewer.role === "Client" || !!viewer.companyScopeId);
   const [data, setData] = useState<CuratedActivity | null>(null);
   const [loading, setLoading] = useState(true);
   const [curating, setCurating] = useState(false);
@@ -187,16 +191,18 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
                 </span>
               )}
             </CardTitle>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 text-[11px] gap-1"
-              disabled={curating}
-              onClick={curate}
-            >
-              {curating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-              {curating ? "Analysing…" : (hasContent ? "Re-analyse" : "Analyse")}
-            </Button>
+            {!isClientViewer && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-[11px] gap-1"
+                disabled={curating}
+                onClick={curate}
+              >
+                {curating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                {curating ? "Analysing…" : (hasContent ? "Re-analyse" : "Analyse")}
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent className={compact ? "pb-2 px-3" : "pb-2"}>
@@ -208,7 +214,9 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
 
           {!loading && !error && !hasContent && !curating && (
             <p className="text-[11px] text-muted-foreground italic">
-              No AI commentary yet — click <strong>Analyse</strong> to ask ChatBGP what's in the inboxes for this {subjectType}.
+              {isClientViewer
+                ? "No commentary yet — your BGP team publishes the relationship read here."
+                : <>No AI commentary yet — click <strong>Analyse</strong> to ask ChatBGP what's in the inboxes for this {subjectType}.</>}
             </p>
           )}
 
@@ -222,8 +230,8 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
                 markdown={data.markdown}
                 emailHits={data.emailHits}
                 meetingHits={data.meetingHits}
-                onOpenEmail={(h) => setOpenEmail({ msgId: h.msgId, mailboxEmail: h.mailboxEmail || "" })}
-                onOpenMeeting={(h) => setOpenMeeting({ eventId: h.eventId, mailboxEmail: h.mailboxEmail || "" })}
+                onOpenEmail={(h) => { if (!isClientViewer) setOpenEmail({ msgId: h.msgId, mailboxEmail: h.mailboxEmail || "" }); }}
+                onOpenMeeting={(h) => { if (!isClientViewer) setOpenMeeting({ eventId: h.eventId, mailboxEmail: h.mailboxEmail || "" }); }}
               />
             </div>
           )}
