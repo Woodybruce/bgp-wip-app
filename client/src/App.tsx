@@ -679,7 +679,12 @@ function AppContent() {
   useEffect(() => {
     if (user?.id) {
       setUserId(user.id);
-      setTeamLocked((user as any)?.role === "Client" || !!(user as any)?.companyScopeId);
+      // Lock the team switcher for real client logins only. Staff viewing
+      // as a client also carry companyScopeId, and locking on it made
+      // setActiveTeam("all") a no-op — the Exit button looked dead and
+      // staff were trapped in client-view mode.
+      const isBgpStaff = ((user as any)?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
+      setTeamLocked(((user as any)?.role === "Client" || !!(user as any)?.companyScopeId) && !isBgpStaff);
     }
     if (user?.team) {
       setUserTeam(user.team as TeamName);
