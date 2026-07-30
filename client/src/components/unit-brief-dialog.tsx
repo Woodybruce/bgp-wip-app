@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/table";
 import { Target, Upload, FileDown, Trash2, Plus, Loader2, Sparkles } from "lucide-react";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
+import { BrandSearchInput } from "@/components/brand-search-input";
 import { useToast } from "@/hooks/use-toast";
 import type { AvailableUnit, UnitBrief, UnitTargetOperator } from "@shared/schema";
 import { BRIEF_TARGET_STATUSES } from "@shared/schema";
@@ -80,7 +81,7 @@ export function UnitBriefDialog({ unit, open, onClose }: {
   const [generating, setGenerating] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
-  const [newTarget, setNewTarget] = useState({ operatorName: "", category: "", priority: "B" });
+  const [newTarget, setNewTarget] = useState<{ operatorName: string; companyId: string | null; category: string; priority: string }>({ operatorName: "", companyId: null, category: "", priority: "B" });
   const [pendingTargets, setPendingTargets] = useState<any[]>([]);
 
   const briefKey = ["/api/available-units", unit?.id, "brief"];
@@ -123,7 +124,7 @@ export function UnitBriefDialog({ unit, open, onClose }: {
 
   const addTargetMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", `/api/unit-briefs/${brief?.id}/targets`, data),
-    onSuccess: () => { invalidate(); setNewTarget({ operatorName: "", category: "", priority: "B" }); },
+    onSuccess: () => { invalidate(); setNewTarget({ operatorName: "", companyId: null, category: "", priority: "B" }); },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
@@ -397,12 +398,13 @@ export function UnitBriefDialog({ unit, open, onClose }: {
                   </Table>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Input
-                    className="h-8 text-xs max-w-[200px]"
+                  <BrandSearchInput
+                    className="max-w-[200px] w-[200px]"
                     placeholder="Operator name…"
                     value={newTarget.operatorName}
-                    onChange={e => setNewTarget(p => ({ ...p, operatorName: e.target.value }))}
-                    data-testid="input-new-target-name"
+                    companyId={newTarget.companyId}
+                    onPick={p => setNewTarget(prev => ({ ...prev, operatorName: p.name, companyId: p.companyId }))}
+                    testId="input-new-target-name"
                   />
                   <Input
                     className="h-8 text-xs max-w-[180px]"

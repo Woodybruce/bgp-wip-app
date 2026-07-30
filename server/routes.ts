@@ -4505,6 +4505,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const [brief] = await db.select().from(unitBriefs).where(eq(unitBriefs.id, String(req.params.id)));
       if (!brief) return res.status(404).json({ message: "Brief not found" });
       const parsed = insertUnitTargetOperatorSchema.parse({ ...req.body, briefId: brief.id });
+      // Auto-link an exact brand-list match when the caller didn't pick one,
+      // so every target ties back to the brand list wherever possible.
+      if (!parsed.companyId && parsed.operatorName) {
+        const match = await pool.query(`SELECT id FROM crm_companies WHERE LOWER(name) = LOWER($1) LIMIT 1`, [parsed.operatorName.trim()]);
+        if (match.rows[0]?.id) parsed.companyId = match.rows[0].id;
+      }
       const [target] = await db.insert(unitTargetOperators).values(parsed).returning();
       res.json(target);
     } catch (err: any) {

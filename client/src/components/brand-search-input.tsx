@@ -1,0 +1,114 @@
+// Search-and-pick a brand from the CRM company list. Used everywhere a
+// target operator is typed in (Operator Targeting Brief, strategy-board
+// targets) so targets carry a company_id link back to the brand list
+// instead of a free-text name. Picking a CRM brand links it; "use as
+// typed" falls back to an unlinked name (the server still auto-links an
+// exact name match at insert time).
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Check, ChevronsUpDown, Link2Off } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { getAuthHeaders } from "@/lib/queryClient";
+
+export interface BrandPick {
+  name: string;
+  companyId: string | null;
+}
+
+export function BrandSearchInput({ value, companyId, onPick, placeholder = "Search brands…", className = "", testId }: {
+  value: string;
+  companyId?: string | null;
+  onPick: (pick: BrandPick) => void;
+  placeholder?: string;
+  className?: string;
+  testId?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  // Same key + shape as the leasing-schedule page's basic company cache,
+  // so the two share one fetch.
+  const { data: companies = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ["/api/crm/companies-basic"],
+    queryFn: async () => {
+      const r = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      const d = await r.json();
+      const arr = Array.isArray(d) ? d : (d.companies || []);
+      return arr.map((c: any) => ({ id: String(c.id), name: c.name }));
+    },
+    staleTime: 120000,
+  });
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return companies.slice(0, 50);
+    return companies.filter(c => (c.name || "").toLowerCase().includes(q)).slice(0, 50);
+  }, [companies, query]);
+
+  const exactMatch = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? companies.some(c => (c.name || "").toLowerCase() === q) : false;
+  }, [companies, query]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={`flex h-8 items-center justify-between gap-1 rounded-md border border-input bg-background px-2 text-xs ring-offset-background hover:bg-muted/40 ${className}`}
+          data-testid={testId || "brand-search-input"}
+        >
+          <span className={`truncate ${value ? "" : "text-muted-foreground"}`}>
+            {value || placeholder}
+          </span>
+          <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="p-0 w-[320px]" align="start">
+        <Command shouldFilter={false}>
+          <CommandInput
+            placeholder={placeholder}
+            value={query}
+            onValueChange={setQuery}
+          />
+          <CommandList>
+            <CommandEmpty>No brands match.</CommandEmpty>
+            {filtered.length > 0 && (
+              <CommandGroup heading="Brand list">
+                {filtered.map(c => (
+                  <CommandItem
+                    key={c.id}
+                    onSelect={() => {
+                      onPick({ name: c.name, companyId: c.id });
+                      setOpen(false);
+                      setQuery("");
+                    }}
+                  >
+                    <Check className={`mr-2 h-3.5 w-3.5 ${companyId === c.id ? "opacity-100" : "opacity-0"}`} />
+                    {c.name}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+            {query.trim() && !exactMatch && (
+              <CommandGroup heading="Not in the brand list">
+                <CommandItem
+                  onSelect={() => {
+                    onPick({ name: query.trim(), companyId: null });
+                    setOpen(false);
+                    setQuery("");
+                  }}
+                >
+                  <Link2Off className="mr-2 h-3.5 w-3.5 text-muted-foreground" />
+                  Use "{query.trim()}" as typed
+                </CommandItem>
+              </CommandGroup>
+            )}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
