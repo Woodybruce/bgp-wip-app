@@ -644,9 +644,22 @@ export default function Dashboard() {
   const rawTemplate = templateData?.template;
   const templateLayout = (rawTemplate?._version >= LAYOUT_VERSION) ? rawTemplate : null;
 
-  const portfolioSavedLayout = validSaved?.portfolio || templateLayout?.portfolio || null;
   const widgetSavedLayout = validSaved?.widgets || templateLayout?.widgets || null;
   const hiddenPortfolioBoards: string[] = validSaved?.hiddenPortfolio ?? templateLayout?.hiddenPortfolio ?? ["portfolio-properties"];
+
+  // Portfolio boards and widgets used to live in two separate grids stacked
+  // on the page, so a widget (e.g. My Tasks & Briefing) could never be
+  // dragged above the portfolio boards — drags "to the top" silently snapped
+  // back. When the portfolio section is present they now render as ONE grid,
+  // laid out from `combined` — seeded by stacking the two legacy layouts so
+  // existing arrangements carry over.
+  const combinedSavedLayout = validSaved?.combined || templateLayout?.combined || (() => {
+    const p = (validSaved?.portfolio || templateLayout?.portfolio)?.lg as any[] | undefined;
+    const w = (validSaved?.widgets || templateLayout?.widgets)?.lg as any[] | undefined;
+    if (!p && !w) return null;
+    const maxY = (p || []).reduce((m: number, l: any) => Math.max(m, l.y + l.h), 0);
+    return { lg: [...(p || []), ...(w || []).map((l: any) => ({ ...l, y: l.y + maxY }))] };
+  })();
 
   const isAdmin = (user as any)?.isAdmin || (user as any)?.is_admin;
 
@@ -664,9 +677,9 @@ export default function Dashboard() {
     },
   });
 
-  const handlePortfolioLayoutSave = useCallback((layout: Record<string, any>) => {
+  const handleCombinedLayoutSave = useCallback((layout: Record<string, any>) => {
     const current = (user as any)?.dashboardLayout || {};
-    layoutSaveMutation.mutate({ ...current, portfolio: layout, _version: LAYOUT_VERSION });
+    layoutSaveMutation.mutate({ ...current, combined: layout, _version: LAYOUT_VERSION });
   }, [layoutSaveMutation, user]);
 
   const handleWidgetLayoutSave = useCallback((layout: Record<string, any>) => {
@@ -694,7 +707,10 @@ export default function Dashboard() {
     const portfolio = current.portfolio?.lg
       ? { ...current.portfolio, lg: current.portfolio.lg.filter((l: any) => l.i !== boardId) }
       : current.portfolio;
-    layoutSaveMutation.mutate({ ...current, portfolio, hiddenPortfolio: hidden, _version: LAYOUT_VERSION });
+    const combined = current.combined?.lg
+      ? { ...current.combined, lg: current.combined.lg.filter((l: any) => l.i !== boardId) }
+      : current.combined;
+    layoutSaveMutation.mutate({ ...current, portfolio, combined, hiddenPortfolio: hidden, _version: LAYOUT_VERSION });
   }, [layoutSaveMutation, user, hiddenPortfolioBoards]);
 
   const handleResetLayout = useCallback(() => {
@@ -886,6 +902,11 @@ export default function Dashboard() {
     dealsByGroup[group] = (dealsByGroup[group] || 0) + 1;
   }
   const topGroups = Object.entries(dealsByGroup).sort(([, a], [, b]) => b - a).slice(0, 5);
+
+  // Filled in by the portfolio section below (renders earlier in the JSX)
+  // and consumed by the single dashboard grid at the bottom — portfolio
+  // boards and widgets share one grid so any board can be dragged anywhere.
+  let portfolioBoardsForGrid: any[] = [];
 
   return (
     <div className="p-4 sm:p-6 space-y-6" data-testid="dashboard-page">
@@ -1948,6 +1969,8 @@ export default function Dashboard() {
         const visiblePortfolioItems = clientScopedItems.filter((item: any) => !hiddenPortfolioBoards.includes(item.id));
         const hiddenPortfolioItems = clientScopedItems.filter((item: any) => hiddenPortfolioBoards.includes(item.id));
 
+        portfolioBoardsForGrid = visiblePortfolioItems.map((i: any) => ({ ...i, description: i.description || PORTFOLIO_DESCRIPTIONS[i.id] }));
+
         return (
           <div data-testid="portfolio-overview">
             <div className="flex items-center gap-2 mb-2">
@@ -1969,14 +1992,6 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
-            <DraggableGrid
-              items={visiblePortfolioItems.map((i: any) => ({ ...i, description: i.description || PORTFOLIO_DESCRIPTIONS[i.id] }))}
-              savedLayout={portfolioSavedLayout}
-              onLayoutSave={handlePortfolioLayoutSave}
-              onHideItem={handleHidePortfolioBoard}
-              editing={dashboardEditing}
-              rowHeight={30}
-            />
           </div>
         );
       })()}
@@ -2712,7 +2727,7 @@ export default function Dashboard() {
         return null;
         };
 
-        const gridItems = activeWidgets.map((wid) => {
+        const widgetGridItems = activeWidgets.map((wid) => {
           const sizes = WIDGET_GRID_SIZES[wid] || { w: 12, h: 8, minW: 4, minH: 4 };
           return {
             id: wid,
@@ -2726,19 +2741,25 @@ export default function Dashboard() {
           };
         }).filter(item => item.content !== null);
 
+        // One grid for everything. When portfolio boards are present they
+        // share the grid with the widgets (combined layout key); plain staff
+        // dashboards keep their existing widgets layout untouched.
+        const hasPortfolioBoards = portfolioBoardsForGrid.length > 0;
+        const gridItems = [...portfolioBoardsForGrid, ...widgetGridItems];
+
         return (
           <DraggableGrid
             items={gridItems}
-            savedLayout={widgetSavedLayout}
-            onLayoutSave={handleWidgetLayoutSave}
-            onHideItem={handleHideWidget}
+            savedLayout={hasPortfolioBoards ? combinedSavedLayout : widgetSavedLayout}
+            onLayoutSave={hasPortfolioBoards ? handleCombinedLayoutSave : handleWidgetLayoutSave}
+            onHideItem={(id) => (id.startsWith("portfolio-") ? handleHidePortfolioBoard(id) : handleHideWidget(id))}
             editing={dashboardEditing}
             rowHeight={30}
           />
         );
       })()}
 
-      {activeWidgets.length === 0 && (
+      {activeWidgets.length === 0 && portfolioBoardsForGrid.length === 0 && (
         <Card>
           <CardContent className="py-16 text-center">
             <Settings2 className="w-10 h-10 mx-auto mb-3 text-muted-foreground opacity-30" />

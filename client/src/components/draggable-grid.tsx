@@ -192,6 +192,62 @@ export function DraggableGrid({
     };
   }, []);
 
+  // Auto-scroll while dragging near the viewport edge. react-grid-layout
+  // doesn't scroll the page itself, so a board deep in a long dashboard
+  // could never be dragged "to the top" in one gesture — the drag just
+  // stalled at the viewport boundary. The app scrolls in an inner
+  // overflow container (not the window), so walk up from the grid to the
+  // nearest scrollable ancestor.
+  const autoScrollSpeed = useRef(0);
+  useEffect(() => {
+    if (!editing) return;
+    const EDGE = 90;
+    const MAX_SPEED = 22;
+    const findScrollParent = (): HTMLElement | null => {
+      let el: HTMLElement | null = (containerRef as React.RefObject<HTMLDivElement>).current;
+      while (el) {
+        const style = getComputedStyle(el);
+        if (/(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight) return el;
+        el = el.parentElement;
+      }
+      return null;
+    };
+    const isDraggingNow = () => !!document.querySelector(".react-draggable-dragging");
+    const onMove = (e: MouseEvent | TouchEvent) => {
+      if (!isDraggingNow()) { autoScrollSpeed.current = 0; return; }
+      const clientY = "touches" in e ? (e.touches[0]?.clientY ?? 0) : e.clientY;
+      if (clientY < EDGE) {
+        autoScrollSpeed.current = -Math.min(MAX_SPEED, (EDGE - clientY) / 3);
+      } else if (clientY > window.innerHeight - EDGE) {
+        autoScrollSpeed.current = Math.min(MAX_SPEED, (clientY - (window.innerHeight - EDGE)) / 3);
+      } else {
+        autoScrollSpeed.current = 0;
+      }
+    };
+    const onEnd = () => { autoScrollSpeed.current = 0; };
+    let raf: number;
+    const tick = () => {
+      if (autoScrollSpeed.current !== 0 && isDraggingNow()) {
+        const scroller = findScrollParent();
+        if (scroller) scroller.scrollTop += autoScrollSpeed.current;
+        else window.scrollBy(0, autoScrollSpeed.current);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    window.addEventListener("mousemove", onMove, true);
+    window.addEventListener("touchmove", onMove, true);
+    window.addEventListener("mouseup", onEnd, true);
+    window.addEventListener("touchend", onEnd, true);
+    raf = requestAnimationFrame(tick);
+    return () => {
+      window.removeEventListener("mousemove", onMove, true);
+      window.removeEventListener("touchmove", onMove, true);
+      window.removeEventListener("mouseup", onEnd, true);
+      window.removeEventListener("touchend", onEnd, true);
+      cancelAnimationFrame(raf);
+    };
+  }, [editing, containerRef]);
+
   const labelMap = useMemo(() => {
     const map = new Map<string, string>();
     items.forEach(item => { if (item.label) map.set(item.id, item.label); });
