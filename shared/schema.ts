@@ -1923,6 +1923,9 @@ export const unitTargetOperators = pgTable("unit_target_operators", {
   rationale: text("rationale"),
   existingRelationship: text("existing_relationship"),
   feedback: text("feedback"),
+  agentUserIds: text("agent_user_ids").array(), // → users.id — BGP agent(s) on this target; defaults to whoever added it
+  clientContactId: varchar("client_contact_id"), // → crm_contacts.id — the client-side contact driving this target
+  comments: jsonb("comments"), // [{ userId, userName, text, at }] — attributed comment log
   status: text("status").default("Identified"),
   sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at").defaultNow(),

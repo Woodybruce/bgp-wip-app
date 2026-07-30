@@ -347,7 +347,7 @@ export function AppSidebar() {
   const isRealClientLogin = user?.role === "Client";
   const isViewingAsClient = !isRealClientLogin && !!(user as any)?.companyScopeId;
   const viewingAsName = (user as any)?.companyScopeName || activeTeam;
-  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/reporting", "/wip-report"];
+  const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/team-expenses", "/reporting", "/wip-report"];
   const coreNav = isClientUser
     ? coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
     : coreWithTeamExpenses;

@@ -276,7 +276,7 @@ export default function MobileHome() {
       {/* Team Expenses — read-only, only for designated team overseers
           (e.g. Victoria → National Leasing). Same responsive page the
           desktop sidebar links to. */}
-      {Array.isArray(user?.expenseOverseerTeams) && user.expenseOverseerTeams.length > 0 && (
+      {!isClientHome && Array.isArray(user?.expenseOverseerTeams) && user.expenseOverseerTeams.length > 0 && (
         <Link
           href="/team-expenses"
           className="flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-900/40 px-4 py-3 active:bg-blue-100"
