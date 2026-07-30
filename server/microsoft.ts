@@ -2516,6 +2516,29 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
   // for every property that client owns. Woody, 2026-07: "Set up a new folder
   // in our share drive as landsec … folder trees in there for all of their
   // properties." Reuses createFolderByPath + the retail/leasing template.
+  //
+  // Runs as a BACKGROUND JOB: the edge proxy 504s requests at ~45s and a
+  // full client run (properties × ~20 folders) can exceed that even in
+  // parallel batches. POST validates + creates the root + stamps the folder
+  // URL (fast), kicks off the tree build, and returns 202; the UI polls
+  // GET /client-folders/status/:companyId. Same pattern as AI curation.
+  const clientFolderJobs = new Map<string, {
+    status: "running" | "done" | "failed";
+    startedAt: number;
+    companyName: string;
+    properties: number;
+    created: number;
+    errors: number;
+    total: number;
+    message?: string;
+  }>();
+
+  app.get("/api/microsoft/client-folders/status/:companyId", async (req: Request, res: Response) => {
+    const job = clientFolderJobs.get(String(req.params.companyId));
+    if (!job) return res.json({ status: "none" });
+    res.json(job);
+  });
+
   app.post("/api/microsoft/client-folders", async (req: Request, res: Response) => {
     const token = await getValidMsToken(req);
     if (!token) {
@@ -2587,37 +2610,61 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       // Per-property tree — the retail/leasing template (best fit for
       // shopping-centre lettings). Toggle a different template here if needed.
       const propertyTree = TEAM_FOLDER_TREES["London Retail"] || TEAM_FOLDER_TREES["London F&B"] || [];
-      const results: { path: string; success: boolean; error?: string }[] = [];
 
-      // Property roots first (bounded parallel), then each property's tree
-      // level-by-level — the whole run used to be one folder at a time and
-      // timed out on clients with a real property list.
-      const rootResults = await runChunked(properties, 5, async (propertyName) => {
-        const propRes = await createFolderByPath(token, spInfo.driveId, clientRoot, propertyName);
-        return { propertyName, propertyRoot: `${clientRoot}/${propertyName}`, ...propRes };
-      });
-      for (const r of rootResults) {
-        results.push({ path: r.propertyRoot, success: r.success, error: r.error });
+      const existing = clientFolderJobs.get(companyId);
+      if (existing?.status === "running") {
+        return res.status(202).json({ started: false, alreadyRunning: true, ...existing });
       }
-      const treeResults = await runChunked(
-        rootResults.filter(r => r.success),
-        3,
-        (r) => createTreeBatched(token, spInfo.driveId, r.propertyRoot, propertyTree),
-      );
-      for (const tr of treeResults) results.push(...tr);
 
-      res.json({
+      const job: {
+        status: "running" | "done" | "failed";
+        startedAt: number; companyName: string; properties: number;
+        created: number; errors: number; total: number; message?: string;
+      } = {
+        status: "running",
+        startedAt: Date.now(),
+        companyName,
+        properties: properties.length,
+        created: 1,
+        errors: 0,
+        total: 1 + properties.length * (1 + propertyTree.length),
+      };
+      clientFolderJobs.set(companyId, job);
+
+      // Fire-and-forget: property roots in bounded-parallel batches, then
+      // each property's tree level-by-level. Folder creates are idempotent
+      // (409 counts as success) so a re-run after a crash just resumes.
+      (async () => {
+        try {
+          const rootResults = await runChunked(properties, 5, async (propertyName) => {
+            const propRes = await createFolderByPath(token, spInfo.driveId, clientRoot, propertyName);
+            if (propRes.success) job.created++; else job.errors++;
+            return { propertyRoot: `${clientRoot}/${propertyName}`, success: propRes.success };
+          });
+          await runChunked(rootResults.filter(r => r.success), 3, async (r) => {
+            const tree = await createTreeBatched(token, spInfo.driveId, r.propertyRoot, propertyTree);
+            for (const t of tree) { if (t.success) job.created++; else job.errors++; }
+          });
+          job.status = "done";
+        } catch (err: any) {
+          console.error("Client folders job error:", err);
+          job.status = "failed";
+          job.message = err?.message || "Folder creation failed part-way — re-run to resume.";
+        }
+      })();
+
+      res.status(202).json({
+        started: true,
         companyName,
         rootPath: clientRoot,
         properties: properties.length,
-        totalFolders: results.length + 1,
-        created: results.filter(r => r.success).length + 1,
-        errors: results.filter(r => !r.success).length,
-        details: results,
+        total: job.total,
       });
     } catch (err: any) {
       console.error("Client folders error:", err);
-      res.status(500).json({ message: "Failed to create client folder structure" });
+      if (!res.headersSent) {
+        res.status(500).json({ message: "Failed to create client folder structure" });
+      }
     }
   });
 

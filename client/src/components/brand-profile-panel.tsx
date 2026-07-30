@@ -4226,20 +4226,46 @@ function LandlordSidebarBlock({
   // Create a top-level "{Client}" folder in the BGP share drive with a
   // per-property subfolder tree for every property this client owns. Runs
   // against live SharePoint, so it needs an M365-connected session.
+  // The build runs as a background job server-side (the edge proxy 504s
+  // anything over ~45s and a full client tree takes longer) — POST returns
+  // 202 straight away and we poll the status endpoint until it finishes.
   const setUpClientFolders = async () => {
     if (!window.confirm(`Create a "${companyName}" folder in the BGP share drive with a folder tree for each of their properties?`)) return;
     setClientFoldersBusy(true);
     try {
       const res = await apiRequest("POST", "/api/microsoft/client-folders", { companyId });
-      const data = await res.json();
+      const kick = await res.json();
       sbToast({
-        title: "Folders created",
-        description: `${companyName}: ${data.properties} propert${data.properties === 1 ? "y" : "ies"}, ${data.created} folders created${data.errors ? `, ${data.errors} errors` : ""}.`,
+        title: "Folder setup started",
+        description: `${companyName}: building trees for ${kick.properties} propert${kick.properties === 1 ? "y" : "ies"} in the background…`,
       });
+      const startedAt = Date.now();
+      const poll = async () => {
+        if (Date.now() - startedAt > 10 * 60_000) {
+          setClientFoldersBusy(false);
+          sbToast({ title: "Folder setup still running", description: "Taking longer than expected — check SharePoint in a few minutes. Re-running later is safe.", variant: "destructive" });
+          return;
+        }
+        try {
+          const sr = await apiRequest("GET", `/api/microsoft/client-folders/status/${companyId}`);
+          const s = await sr.json();
+          if (s.status === "done") {
+            setClientFoldersBusy(false);
+            sbToast({ title: "Folders created", description: `${companyName}: ${s.created} of ${s.total} folders in place${s.errors ? `, ${s.errors} errors` : ""}.` });
+            return;
+          }
+          if (s.status === "failed") {
+            setClientFoldersBusy(false);
+            sbToast({ title: "Folder setup failed part-way", description: `${s.created} folders created before the error — re-running resumes from there. ${s.message || ""}`, variant: "destructive" });
+            return;
+          }
+        } catch { /* transient — keep polling */ }
+        setTimeout(poll, 3000);
+      };
+      setTimeout(poll, 3000);
     } catch (e: any) {
-      sbToast({ title: "Folder setup failed", description: e?.message || "Not connected to Microsoft 365?", variant: "destructive" });
-    } finally {
       setClientFoldersBusy(false);
+      sbToast({ title: "Folder setup failed", description: e?.message || "Not connected to Microsoft 365?", variant: "destructive" });
     }
   };
   // Open (or reuse — the backend dedupes one AI thread per entity) a chat
