@@ -3415,6 +3415,13 @@ app.use("/api/branding/assets", express.static(
         // handler verifies the unit's property is in the client's scope.
         // (We don't open all of /api/available-units, only the brief POST.)
         if (req.method === "POST" && /^\/api\/available-units\/[^/]+\/brief$/.test(p)) return next();
+        // Leasing strategy board writes on the client's OWN property — the
+        // strategic-principles key block, AI target generation and target-
+        // tenant rows ("Save failed — read-only" on the Landsec board).
+        // checkPropertyAccess in leasing-schedule.ts confines clients to
+        // their own company's properties on every one of these routes.
+        if (/^\/api\/leasing-schedule\/property\/[^/]+\/(strategic-principles|generate-targets)$/.test(p)) return next();
+        if (/^\/api\/leasing-schedule\/target\/[^/]+$/.test(p)) return next();
         // Same prefix-matching rule as the read allowlist: entries ending in
         // "/" match by prefix, others match exactly or as a path segment.
         if (CLIENT_ALLOWED_WRITES.some(w =>

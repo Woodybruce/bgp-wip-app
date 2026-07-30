@@ -1410,7 +1410,7 @@ export default function AvailableUnitsPage() {
                 <TableHead className="min-w-[110px]">Class / Cond</TableHead>
                 <TableHead>Deal Status</TableHead>
                 <TableHead className="text-center min-w-[100px]">Activity</TableHead>
-                <TableHead className="min-w-[120px]">Fee &amp; FA</TableHead>
+                {!isClientTracker && <TableHead className="min-w-[120px]">Fee &amp; FA</TableHead>}
                 <TableHead>Files</TableHead>
                 <TableHead>Brief</TableHead>
                 <TableHead className="w-[100px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
@@ -1419,7 +1419,7 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={16} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={isClientTracker ? 15 : 16} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1706,6 +1706,7 @@ export default function AvailableUnitsPage() {
                           </Button>
                         </div>
                       </TableCell>
+                      {!isClientTracker && (
                       <TableCell className="px-1.5 py-1 max-w-[150px]">
                         <div className="space-y-0.5">
                           <InlineNumber
@@ -1757,6 +1758,7 @@ export default function AvailableUnitsPage() {
                           )}
                         </div>
                       </TableCell>
+                      )}
                       <TableCell>
                         <Button
                           variant="ghost"
