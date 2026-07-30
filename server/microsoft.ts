@@ -2517,6 +2517,30 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
         return res.status(500).json({ message: `Failed to create ${companyName} folder: ${rootResult.error}` });
       }
 
+      // Stamp the client folder's webUrl on the company (and same-named
+      // duplicate rows) — the client app's jailed SharePoint browser reads
+      // crm_companies.sharepoint_folder_url as its root, so without this
+      // the Landsec login sees "no folder linked" even after setup.
+      try {
+        const pathUrl = `https://graph.microsoft.com/v1.0/drives/${spInfo.driveId}/root:/${clientRoot.split("/").map(encodeURIComponent).join("/")}`;
+        const itemRes = await fetch(pathUrl, { headers: { Authorization: `Bearer ${token}` } });
+        if (itemRes.ok) {
+          const item = await itemRes.json();
+          if (item?.webUrl) {
+            await pool.query(
+              `UPDATE crm_companies SET sharepoint_folder_url = $1
+                WHERE id = $2
+                   OR (lower(trim(name)) = (SELECT lower(trim(name)) FROM crm_companies WHERE id = $2)
+                       AND merged_into_id IS NULL
+                       AND sharepoint_folder_url IS NULL)`,
+              [item.webUrl, companyId]
+            );
+          }
+        }
+      } catch (e: any) {
+        console.warn("[client-folders] folder URL stamp failed:", e?.message);
+      }
+
       // Per-property tree — the retail/leasing template (best fit for
       // shopping-centre lettings). Toggle a different template here if needed.
       const propertyTree = TEAM_FOLDER_TREES["London Retail"] || TEAM_FOLDER_TREES["London F&B"] || [];
