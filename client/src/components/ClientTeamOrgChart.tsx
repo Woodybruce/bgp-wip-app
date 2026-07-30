@@ -161,10 +161,11 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   const [showAddCol, setShowAddCol] = useState(false);
   const [addColName, setAddColName] = useState("");
 
-  // Client logins get a read-only "Your BGP team" view — no editing, no
-  // drag/drop, and internal-only columns (e.g. "On the Bench") hidden.
-  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const readOnly = viewer?.role === "Client" || !!viewer?.companyScopeId;
+  // The client (Landsec) app gets the SAME board as the internal client
+  // page — bench visible, fully editable (Woody, 2026-07: the Landsec app
+  // "should mirror our internal client Landsec board"). Server-side the
+  // client-teams writes are opened in index.ts's client write allowlist.
+  const readOnly = false;
 
   const { data: members = [], isLoading } = useQuery<TeamMember[]>({
     queryKey: ["/api/client-teams", clientCompanyId],
@@ -189,15 +190,12 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   // Columns list always includes Unassigned at the end as a catch-all so
   // a freshly added member or a deleted-column orphan is never invisible.
   const columnList = useMemo<ColumnDef[]>(() => {
-    let base = [...columns].sort((a, b) => a.sort_order - b.sort_order);
-    // Hide internal-only columns from clients (bench = people not on the
-    // account). Unassigned is a staff catch-all, also hidden from clients.
-    if (readOnly) base = base.filter(c => !/bench|unassigned/i.test(c.name));
-    if (!readOnly && !base.find(c => c.name === "Unassigned")) {
+    const base = [...columns].sort((a, b) => a.sort_order - b.sort_order);
+    if (!base.find(c => c.name === "Unassigned")) {
       base.push({ name: "Unassigned", sort_order: 999, color_key: "slate" });
     }
     return base;
-  }, [columns, readOnly]);
+  }, [columns]);
 
   // Bucket members by column name. Anything whose team_group doesn't
   // match a real column falls into Unassigned so the card stays visible.
@@ -207,16 +205,21 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     for (const c of columnList) map[c.name] = [];
     for (const m of members) {
       const key = m.team_group && valid.has(m.team_group) ? m.team_group : "Unassigned";
-      // In read-only (client) view the Unassigned/bench columns are hidden,
-      // so drop orphans rather than pushing into a bucket that doesn't exist.
-      if (!map[key]) { if (readOnly) continue; map[key] = []; }
       map[key].push(m);
     }
     for (const k of Object.keys(map)) {
       map[k].sort((a, b) => (a.sort_order - b.sort_order) || (a.full_name || "").localeCompare(b.full_name || ""));
     }
     return map;
-  }, [members, columnList, readOnly]);
+  }, [members, columnList]);
+
+  // Count what's actually rendered — the badge lied when hidden buckets
+  // dropped members ("12 team members" over 8 cards).
+  const visibleMemberCount = useMemo(() => {
+    const ids = new Set<string>();
+    for (const list of Object.values(byColumn)) for (const m of list) ids.add(m.user_id);
+    return ids.size;
+  }, [byColumn]);
 
   // Pinned lead wins; otherwise fall back to highest property_count as a
   // hint until the user nominates someone explicitly.
@@ -349,7 +352,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     <div className="space-y-3" data-testid="client-team-orgchart">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
-          <Badge variant="secondary" className="text-xs">{new Set(members.map(m => m.user_id)).size} team member{new Set(members.map(m => m.user_id)).size === 1 ? "" : "s"}</Badge>
+          <Badge variant="secondary" className="text-xs">{visibleMemberCount} team member{visibleMemberCount === 1 ? "" : "s"}</Badge>
           {lead ? (
             <span className="text-[11px] text-muted-foreground flex items-center gap-1">
               <Star className="w-3 h-3 text-amber-500" fill="currentColor" />

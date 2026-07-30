@@ -3361,6 +3361,10 @@ app.use("/api/branding/assets", express.static(
     // Per-user news actions (click/save/dismiss tracking) — harmless and
     // needed for the News tab; the fetch/scrape trigger stays staff-only.
     "/api/news-feed/engage",
+    // The client app's "Your BGP Team" board is a full mirror of the
+    // internal client-team board — same data, same editing (Woody,
+    // 2026-07). Covers member add/edit/reorder and column management.
+    "/api/client-teams/",
   ];
   // Sub-routes to block even though a parent prefix is allowed (BGP intel /
   // brand pipeline that isn't the client's own profile; OneNote task import
@@ -3389,7 +3393,6 @@ app.use("/api/branding/assets", express.static(
     /^\/api\/leasing-schedule\/property\/[^/]+\/privacy/,
     /^\/api\/tenancy-schedule\/property\/[^/]+\/links/,
     /^\/api\/properties\/[^/]+\/(360|brochures|tasks|orphan-deals|instructions|project-files|duplicate-units|plan-pickable-units|plans|unresolved-tenants|linkage-audit)\b/,
-    /^\/api\/client-teams\/[^/]+\/candidates/,          // whole BGP staff directory
     /^\/api\/image-studio\/orphans/,
   ];
   app.use("/api", async (req: any, res, next) => {

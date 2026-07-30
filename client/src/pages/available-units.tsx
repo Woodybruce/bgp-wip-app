@@ -2828,7 +2828,6 @@ function UnitFormDialog({
   isPending: boolean;
 }) {
   const upd = (field: keyof UnitFormState, value: string) => setForm({ ...form, [field]: value });
-  const [unitPickerOpen, setUnitPickerOpen] = useState(false);
 
   // Tenancy schedule is the canonical unit source. When a property
   // is picked, we fetch its tenancy rows and let the user pick from
@@ -3019,75 +3018,63 @@ function UnitFormDialog({
           </div>
           <div>
             <Label>Unit Name / Number *</Label>
-            <Popover open={unitPickerOpen} onOpenChange={setUnitPickerOpen}>
-              <PopoverTrigger asChild>
-                <div>
-                  <Input
-                    value={form.unitName}
-                    onChange={e => upd("unitName", e.target.value)}
-                    onFocus={() => pickerOptions.length > 0 && setUnitPickerOpen(true)}
-                    placeholder={form.propertyId ? "Pick from tenancy schedule or type a new name" : "Select a property first"}
-                    disabled={!form.propertyId}
-                    data-testid="input-unit-name"
-                  />
-                  {form.unitName && !matchedExistingUnit && pickerOptions.length > 0 && (
-                    <p className="text-[10px] text-emerald-600 mt-0.5">New unit — will be created. Add to the tenancy schedule next so it lives on the spine.</p>
-                  )}
-                  {matchedExistingUnit?.source === "tenancy" && (
-                    <p className="text-[10px] text-purple-700 mt-0.5">Tenancy schedule unit — canonical link will be stamped.</p>
-                  )}
-                  {matchedExistingUnit?.source === "property" && (
-                    <p className="text-[10px] text-muted-foreground mt-0.5">Legacy property_units row — add to the tenancy schedule to make it canonical.</p>
-                  )}
-                </div>
-              </PopoverTrigger>
-              {pickerOptions.length > 0 && (
-                <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0">
-                  <Command>
-                    <CommandInput placeholder="Search units..." />
-                    <CommandList>
-                      <CommandEmpty>No matches. Keep typing to create a new unit.</CommandEmpty>
-                      <CommandGroup heading={`Tenancy schedule (${pickerOptions.filter(o => o.source === "tenancy").length}) · Legacy (${pickerOptions.filter(o => o.source === "property").length})`}>
-                        {pickerOptions.map(pu => (
-                          <CommandItem
-                            key={`${pu.source}-${pu.id}`}
-                            value={pu.name}
-                            onSelect={() => {
-                              // Pre-fill every field the tenancy spine already knows so
-                              // Layla doesn't re-type values that exist canonically. Only
-                              // fills empty fields — anything the user already typed
-                              // wins.
-                              setForm({
-                                ...form,
-                                unitName: pu.name,
-                                floor: form.floor || pu.floor || "",
-                                sqft: form.sqft || (pu.sqft != null ? String(pu.sqft) : ""),
-                                useClass: form.useClass || pu.useClass || "",
-                                askingRent: form.askingRent || (pu.askingRent != null ? String(pu.askingRent) : ""),
-                                ratesPa: form.ratesPa || (pu.ratesPa != null ? String(pu.ratesPa) : ""),
-                                serviceChargePa: form.serviceChargePa || (pu.serviceChargePa != null ? String(pu.serviceChargePa) : ""),
-                                epcRating: form.epcRating || pu.epcRating || "",
-                              });
-                              setUnitPickerOpen(false);
-                            }}
-                          >
-                            <span className="text-sm">{pu.name}</span>
-                            {pu.source === "tenancy" && (
-                              <Badge variant="outline" className="ml-1.5 text-[9px] border-purple-300 text-purple-700">tenancy</Badge>
-                            )}
-                            {pu.vacant && (
-                              <Badge variant="outline" className="ml-1 text-[9px] border-amber-300 text-amber-700">vacant</Badge>
-                            )}
-                            {pu.floor && <span className="text-xs text-muted-foreground ml-2">{pu.floor}</span>}
-                            {pu.sqft != null && <span className="text-xs text-muted-foreground ml-2">{pu.sqft.toLocaleString()} sq ft</span>}
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              )}
-            </Popover>
+            <EntityCombobox
+              testId="input-unit-name"
+              placeholder={form.propertyId ? "Pick a unit or type a new name" : "Select a property first"}
+              searchPlaceholder="Search units on this property…"
+              emptyText="No units yet — type a name to create one"
+              disabled={!form.propertyId}
+              value={form.unitName}
+              items={pickerOptions.map(pu => ({
+                id: pu.name,
+                label: pu.name,
+                subLabel: [
+                  pu.source === "tenancy" ? "tenancy" : "legacy",
+                  pu.vacant ? "vacant" : null,
+                  pu.floor || null,
+                  pu.sqft != null ? `${pu.sqft.toLocaleString()} sq ft` : null,
+                ].filter(Boolean).join(" · ") || undefined,
+                keywords: [pu.useClass || ""].filter(Boolean),
+              }))}
+              onChange={(name) => {
+                // Picking an existing unit pre-fills every field the tenancy
+                // spine already knows so Layla doesn't re-type them — only
+                // empty fields are filled, anything already typed wins. A name
+                // that matches nothing (typed new) just sets the unit name.
+                const pu = pickerOptions.find(o => o.name === name);
+                if (pu) {
+                  setForm({
+                    ...form,
+                    unitName: pu.name,
+                    floor: form.floor || pu.floor || "",
+                    sqft: form.sqft || (pu.sqft != null ? String(pu.sqft) : ""),
+                    useClass: form.useClass || pu.useClass || "",
+                    askingRent: form.askingRent || (pu.askingRent != null ? String(pu.askingRent) : ""),
+                    ratesPa: form.ratesPa || (pu.ratesPa != null ? String(pu.ratesPa) : ""),
+                    serviceChargePa: form.serviceChargePa || (pu.serviceChargePa != null ? String(pu.serviceChargePa) : ""),
+                    epcRating: form.epcRating || pu.epcRating || "",
+                  });
+                } else {
+                  setForm({ ...form, unitName: name });
+                }
+              }}
+              onCreate={async (name) => {
+                // "Create" just adopts the typed name — the available_units
+                // row is written on Save, not now.
+                const clean = name.trim();
+                return { id: clean, label: clean };
+              }}
+              createLabel="unit"
+            />
+            {form.unitName && !matchedExistingUnit && pickerOptions.length > 0 && (
+              <p className="text-[10px] text-emerald-600 mt-0.5">New unit — will be created. Add to the tenancy schedule next so it lives on the spine.</p>
+            )}
+            {matchedExistingUnit?.source === "tenancy" && (
+              <p className="text-[10px] text-purple-700 mt-0.5">Tenancy schedule unit — canonical link will be stamped.</p>
+            )}
+            {matchedExistingUnit?.source === "property" && (
+              <p className="text-[10px] text-muted-foreground mt-0.5">Legacy property_units row — add to the tenancy schedule to make it canonical.</p>
+            )}
           </div>
           <div>
             <Label>Floor</Label>
