@@ -12,9 +12,11 @@
 //   - Auto on brand profile load when image count < target (in brand-profile.ts)
 //   - Bulk admin script (TODO)
 import { Router, type Request, type Response } from "express";
+import crypto from "crypto";
+import sharp from "sharp";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
-import { storeImageFromBuffer } from "./image-studio";
+import { storeImageFromBuffer, readPersistedImage } from "./image-studio";
 
 const router = Router();
 
@@ -361,6 +363,122 @@ async function findCseImages(brandName: string, industry: string | null, brandDo
   }
 }
 
+// ─── Content dedupe ────────────────────────────────────────────────────────
+// The source pipelines return a stable ordering, so a second refresh run
+// (higher target, partial first run) re-walks the same candidates and used
+// to import the same photo again — the gallery ended up with duplicates
+// (Landsec showed the same hero twice). We never stored the source image
+// URL, so dedupe on content instead: an exact sha256 catches byte-identical
+// re-imports, and an 8x8 average-hash catches near-duplicates (same scene
+// re-encoded / resized / lightly cropped by the CDN).
+
+async function averageHash(buffer: Buffer): Promise<bigint | null> {
+  try {
+    const raw = await sharp(buffer, { failOn: "none" }).grayscale().resize(8, 8, { fit: "fill" }).raw().toBuffer();
+    let sum = 0;
+    for (const v of raw) sum += v;
+    const avg = sum / raw.length;
+    let bits = 0n;
+    for (let i = 0; i < raw.length; i++) bits = (bits << 1n) | (raw[i] > avg ? 1n : 0n);
+    return bits;
+  } catch {
+    return null;
+  }
+}
+
+function hammingDistance(a: bigint, b: bigint): number {
+  let x = a ^ b;
+  let n = 0;
+  while (x) { n += Number(x & 1n); x >>= 1n; }
+  return n;
+}
+
+// ≤5 differing bits out of 64 = same image for all practical purposes.
+const NEAR_DUPLICATE_BITS = 5;
+
+class ImageDeduper {
+  private sha = new Set<string>();
+  private ahashes: bigint[] = [];
+
+  async preload(companyId: string, brandName: string): Promise<void> {
+    try {
+      const { rows } = await pool.query<{ local_path: string | null; thumbnail_data: string | null }>(
+        `SELECT local_path, thumbnail_data FROM image_studio_images
+          WHERE company_id = $1
+             OR (brand_name IS NOT NULL AND LOWER(brand_name) = LOWER($2))`,
+        [companyId, brandName]
+      );
+      for (const r of rows) {
+        // Prefer the original file (disk or DB file_storage); fall back to
+        // the stored thumbnail — aHash normalises to 8x8 so a thumbnail
+        // hashes the same as its source.
+        let buf = await readPersistedImage(r.local_path);
+        if (!buf && r.thumbnail_data) {
+          const b64 = r.thumbnail_data.replace(/^data:[^;]+;base64,/, "");
+          try { buf = Buffer.from(b64, "base64"); } catch {}
+        }
+        if (!buf) continue;
+        this.sha.add(crypto.createHash("sha256").update(buf).digest("hex"));
+        const ah = await averageHash(buf);
+        if (ah != null) this.ahashes.push(ah);
+      }
+    } catch (e: any) {
+      console.warn(`[brand-images] dedupe preload failed: ${e?.message}`);
+    }
+  }
+
+  async isDuplicate(buffer: Buffer): Promise<boolean> {
+    const hash = crypto.createHash("sha256").update(buffer).digest("hex");
+    if (this.sha.has(hash)) return true;
+    const ah = await averageHash(buffer);
+    if (ah != null && this.ahashes.some(seen => hammingDistance(seen, ah) <= NEAR_DUPLICATE_BITS)) return true;
+    this.sha.add(hash);
+    if (ah != null) this.ahashes.push(ah);
+    return false;
+  }
+}
+
+// One-shot healing sweep for galleries that already contain duplicates
+// (imported before content dedupe existed). Walks the brand's images in
+// keep-priority order (hero-pinned first, then oldest) and deletes any
+// brand-auto row whose content near-duplicates a row already kept. Manual
+// uploads are never deleted. Fired once per brand per boot from the
+// profile route, and at the start of every refresh run so the freed
+// slots refill with distinct images.
+export async function dedupeBrandImageRows(companyId: string): Promise<{ scanned: number; deleted: number }> {
+  const { rows } = await pool.query<{ id: string; local_path: string | null; thumbnail_data: string | null; tags: string[] | null }>(
+    `SELECT id, local_path, thumbnail_data, tags
+       FROM image_studio_images
+      WHERE company_id = $1
+         OR (brand_name IS NOT NULL AND LOWER(brand_name) = (SELECT LOWER(name) FROM crm_companies WHERE id = $1))
+      ORDER BY ('brand-hero' = ANY(tags))::int DESC, created_at ASC`,
+    [companyId]
+  );
+  const keptSha = new Set<string>();
+  const keptHashes: bigint[] = [];
+  let deleted = 0;
+  for (const r of rows) {
+    let buf = await readPersistedImage(r.local_path);
+    if (!buf && r.thumbnail_data) {
+      try { buf = Buffer.from(r.thumbnail_data.replace(/^data:[^;]+;base64,/, ""), "base64"); } catch {}
+    }
+    if (!buf) continue;
+    const sha = crypto.createHash("sha256").update(buf).digest("hex");
+    const ah = await averageHash(buf);
+    const isDupe = keptSha.has(sha) || (ah != null && keptHashes.some(k => hammingDistance(k, ah) <= NEAR_DUPLICATE_BITS));
+    const isAuto = Array.isArray(r.tags) && r.tags.includes("brand-auto");
+    if (isDupe && isAuto) {
+      await pool.query(`DELETE FROM image_studio_images WHERE id = $1`, [r.id]);
+      deleted++;
+      continue;
+    }
+    keptSha.add(sha);
+    if (ah != null) keptHashes.push(ah);
+  }
+  if (deleted > 0) console.log(`[brand-images] dedupe sweep: deleted ${deleted}/${rows.length} duplicate rows for company ${companyId}`);
+  return { scanned: rows.length, deleted };
+}
+
 // ─── Orchestrator ─────────────────────────────────────────────────────────
 
 export async function refreshBrandImages(companyId: string, opts: {
@@ -410,6 +528,14 @@ export async function refreshBrandImages(companyId: string, opts: {
       [brand.name]
     );
     deleted = del.rowCount || 0;
+  }
+
+  // Clear any pre-dedupe duplicates first so the count below reflects the
+  // cleaned set and this run refills the freed slots with distinct images.
+  if (!opts.force) {
+    try { await dedupeBrandImageRows(companyId); } catch (e: any) {
+      console.warn(`[brand-images] dedupe sweep failed: ${e?.message}`);
+    }
   }
 
   // Skip if we already have enough auto-fetched images. Manual uploads are
@@ -514,7 +640,10 @@ export async function refreshBrandImages(companyId: string, opts: {
   const bySource: Record<string, number> = {};
   let imported = 0;
   let attempted = 0;
+  let duplicatesSkipped = 0;
   const seenUrls = new Set<string>();
+  const deduper = new ImageDeduper();
+  await deduper.preload(brand.id, brand.name);
 
   for (const c of candidates) {
     if (imported >= targetNew) break;
@@ -524,6 +653,12 @@ export async function refreshBrandImages(companyId: string, opts: {
 
     const fetched = await fetchImage(c.url);
     if (!fetched) continue;
+
+    if (await deduper.isDuplicate(fetched.buffer)) {
+      duplicatesSkipped++;
+      console.log(`[brand-images ${brand.name}] skipping duplicate content: ${c.url}`);
+      continue;
+    }
 
     // Phase 2: try to match the URL slug against a CRM property
     // owned by this landlord (e.g. "trinity-leeds-...webp" → Trinity
@@ -553,7 +688,7 @@ export async function refreshBrandImages(companyId: string, opts: {
     }
   }
 
-  return { attempted, imported, bySource, skipped: "", deleted };
+  return { attempted, imported, bySource, skipped: duplicatesSkipped > 0 ? `${duplicatesSkipped} duplicate images skipped` : "", deleted };
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────

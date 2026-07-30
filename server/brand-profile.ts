@@ -8,6 +8,9 @@ import { pool } from "./db";
 
 const router = Router();
 
+// Brands whose gallery has had the duplicate-image healing sweep this boot.
+const dedupeSweepFired = new Set<string>();
+
 // Cheap ISO 3166-1 alpha-2 inference from Google Places formatted_address.
 // We only get formatted_address back from Text Search (no structured
 // components without an extra Place Details call), so we parse the tail.
@@ -153,6 +156,18 @@ ensureBrandStoresTable().catch(err =>
 router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, res: Response) => {
   try {
     const { companyId } = req.params;
+
+    // Heal galleries that picked up duplicate images before content dedupe
+    // existed (same photo imported twice across refresh runs). Once per
+    // brand per boot, fire-and-forget — the cleaned gallery shows on the
+    // next load.
+    const sweepId = String(companyId);
+    if (!dedupeSweepFired.has(sweepId)) {
+      dedupeSweepFired.add(sweepId);
+      import("./brand-images").then(m => m.dedupeBrandImageRows(sweepId)).catch(e =>
+        console.warn(`[brand-profile] image dedupe sweep failed: ${e?.message}`)
+      );
+    }
 
     // Clients may only read their OWN company's profile here. (Landsec audit.)
     const { resolveCompanyScope } = await import("./company-scope");
