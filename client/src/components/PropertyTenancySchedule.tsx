@@ -1289,7 +1289,10 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
                       {displayVal}
                     </span>
                   </Link>
-                  {c.field === "tenant_name" && <CovenantBadgeByCompany companyId={linkedId} />}
+                  {/* Covenant/credit score is staff-only (the by-crm endpoint
+                      is blocked for clients) — hide the badge in read-only
+                      (client) mode. */}
+                  {c.field === "tenant_name" && !readOnly && <CovenantBadgeByCompany companyId={linkedId} />}
                   <InlineEdit
                     value={displayVal}
                     field={c.field as string}

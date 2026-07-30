@@ -567,11 +567,13 @@ export function PropertyDetail({ id }: { id: string }) {
               <Card>
                 <CardContent className="p-3 space-y-2">
                   {/* Property covering strip — Asset Owner + Asset
-                      Lead + Last activity packed into a single tight
-                      row at the top of the card. */}
+                      Lead + Last activity. BGP-internal coverage (and it
+                      fires the staff-only linkage-audit), so staff-only. */}
+                  {!isClientViewer && (
                   <div className="pb-2 border-b">
                     <PropertyCoveringStrip propertyId={property.id} />
                   </div>
+                  )}
 
                   {/* Top strip — 4 cells, one field each. Tenure
                       removed. Sq Ft + Competitor Agent moved to a
@@ -770,11 +772,15 @@ export function PropertyDetail({ id }: { id: string }) {
                 <PropertyDecksPanel propertyId={property.id} />
               </ErrorBoundary>
               */}
+              {/* Brand Gap is a staff analysis (fires /brand-gaps, which is
+                  staff-only) — never render it for a client viewer. */}
+              {!isClientViewer && (
               <ErrorBoundary compact name="Brand gap">
                 <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
                   <BrandGapPanel propertyId={property.id} />
                 </CollapsibleCard>
               </ErrorBoundary>
+              )}
             </div>
 
             {/* Pipeline + Performance combined — single 'how's the

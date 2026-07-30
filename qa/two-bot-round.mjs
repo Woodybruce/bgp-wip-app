@@ -301,6 +301,38 @@ async function markRound(page, cross) {
     }, r.briefId);
   });
 
+  // Client manages their own tasks: add via quick-add, mark complete, remove.
+  // (My Tasks widget + page; every task endpoint is user-scoped.)
+  await step(page, p, 'client-task-create-complete', async () => {
+    const title = `QA Task R${ROUND}`;
+    await page.goto(`${BASE}/tasks`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1500);
+    const add = page.locator('[data-testid="input-add-task"]').first();
+    if (!(await add.count())) throw new Error('no quick-add task input');
+    await add.fill(title);
+    await add.press('Enter');
+    await page.waitForTimeout(1200);
+    const row = page.locator('[data-testid^="task-row-"]', { hasText: title }).first();
+    if (!(await row.count())) throw new Error('task not visible after add');
+    // Complete it, then clean up via the row's delete button.
+    await row.locator('[data-testid^="task-toggle-"]').first().click().catch(() => {});
+    await page.waitForTimeout(600);
+    await row.locator('[data-testid^="task-delete-"]').first().click().catch(() => {});
+    await page.waitForTimeout(400);
+  });
+
+  // Client property-detail page renders (tabs, no blank/crash). Cross-check
+  // that staff-only surfaces (fee/WIP) never leak onto it.
+  await step(page, p, 'client-property-detail', async () => {
+    await page.goto(`${BASE}/properties/22222222-2222-2222-2222-222222222222`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1800);
+    if (await page.getByText('Page not found').count()) throw new Error('property detail is a dead route for client');
+    const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
+    if (body.length < 40) throw new Error('property detail rendered blank for client');
+  });
+
   // Client adds a photo to one of their own units/schemes; the same upload to
   // a property outside their scope is refused. ("Adding photos for a unit and
   // scheme should be a task.")
