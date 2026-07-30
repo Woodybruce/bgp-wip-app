@@ -1113,6 +1113,7 @@ function CompanyDetail({ id }: { id: string }) {
 
   const { data: companyDealLinksForDetailRaw } = useQuery<{ companyId: string; dealId: string }[]>({
     queryKey: ["/api/crm/company-deal-links"],
+    enabled: !isClientViewer, // firm-wide cross-company map — staff-only (403 for clients)
   });
   const companyDealLinksForDetail = Array.isArray(companyDealLinksForDetailRaw) ? companyDealLinksForDetailRaw : [];
 

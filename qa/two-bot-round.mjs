@@ -346,8 +346,10 @@ async function markRound(page, cross) {
   // that staff-only surfaces (fee/WIP) never leak onto it.
   await step(page, p, 'client-property-detail', async () => {
     await page.goto(`${BASE}/properties/22222222-2222-2222-2222-222222222222`);
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1800);
+    // The property news panel polls, so networkidle can never settle here —
+    // tolerate the timeout and assert on rendered content instead.
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2500);
     if (await page.getByText('Page not found').count()) throw new Error('property detail is a dead route for client');
     const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
     if (body.length < 40) throw new Error('property detail rendered blank for client');
@@ -401,6 +403,35 @@ async function markRound(page, cross) {
     if (await page.getByText('Page not found').count()) throw new Error('requirements is a dead route for client');
     const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
     if (body.length < 40) throw new Error('requirements rendered blank for client');
+  });
+
+  // Client edits a contact they can touch (the one added earlier this round,
+  // or any editable brand contact) — change the role and save, no error.
+  await step(page, p, 'client-edit-contact', async () => {
+    await page.goto(`${BASE}/contacts`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1500);
+    const edit = page.locator('[data-testid^="client-edit-contact-"], [data-testid^="client-edit-own-contact-"]').first();
+    if (!(await edit.count())) throw new Error('no editable contact for client');
+    await edit.click();
+    await page.waitForTimeout(600);
+    const roleInput = page.locator('[data-testid="contact-dialog-role"]');
+    if (!(await roleInput.count())) throw new Error('contact edit dialog did not open');
+    await roleInput.fill(`Acquisitions (edited R${ROUND})`);
+    await page.locator('[data-testid="contact-dialog-save"]').click();
+    await page.waitForTimeout(1200);
+    if (await page.getByText(/failed|error/i).count()) throw new Error('error toast after editing contact');
+  });
+
+  // Client opens a hospitality brand profile (in their visible slice) — the
+  // page must render (tabs/content), no dead route / blank / staff leak.
+  await step(page, p, 'client-brand-profile', async () => {
+    await page.goto(`${BASE}/companies/77777777-7777-7777-7777-777777777777`); // Honi Poke
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(2000);
+    if (await page.getByText('Page not found').count()) throw new Error('brand profile is a dead route for client');
+    const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
+    if (body.length < 40) throw new Error('brand profile rendered blank for client');
   });
 
   // Client dashboard on a phone-width viewport must not overflow horizontally
