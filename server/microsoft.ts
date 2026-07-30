@@ -2317,7 +2317,16 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
         return res.status(400).json({ message: "propertyName and team are required" });
       }
 
-      const folderTree = TEAM_FOLDER_TREES[team];
+      let folderTree = TEAM_FOLDER_TREES[team];
+      if (!folderTree) {
+        // Client teams (e.g. "Landsec") aren't in the discipline tree map —
+        // file their properties with the same retail/leasing template the
+        // bulk client-folders setup uses, under the client's own top-level
+        // folder, so one-off and bulk setups produce the same structure.
+        const { getCompanyIdForClientTeam } = await import("./company-scope");
+        const clientCompanyId = await getCompanyIdForClientTeam(team);
+        if (clientCompanyId) folderTree = TEAM_FOLDER_TREES["London Retail"];
+      }
       if (!folderTree) {
         return res.status(400).json({ message: `Unknown team: ${team}. Valid teams: ${Object.keys(TEAM_FOLDER_TREES).join(", ")}` });
       }
