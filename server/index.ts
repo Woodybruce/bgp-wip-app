@@ -3337,6 +3337,10 @@ app.use("/api/branding/assets", express.static(
     // Tracker lists these, and the handler scopes the rows (and their target
     // operators) to the caller's portfolio.
     "/api/unit-briefs",
+    // Client calendar — the handler company-scopes events for client
+    // viewers (client-sync events only). Dropped out of the list in a
+    // branch merge, which blanked Mark's calendar with a 403.
+    "/api/team-events",
   ];
   // Microsoft 365 stays fully blocked for clients (mail/calendar/files all
   // 403) — the client UI must not call it at all; see nav + poller gating.
@@ -3408,7 +3412,10 @@ app.use("/api/branding/assets", express.static(
     //    matched here and keep working.
     /^\/api\/dashboard\/intelligence/,
     /^\/api\/crm\/(landlords|stats)\b/,
-    /^\/api\/crm\/(contact-property-links|contact-deal-links|contact-requirement-links|company-deal-links|property-deal-links|property-tenants)\b/,
+    // property-deal-links + property-tenants are no longer blocked: the
+    // client Properties page needs both maps and the handlers now scope
+    // them to the caller's own portfolio (same pattern as property-agents).
+    /^\/api\/crm\/(contact-property-links|contact-deal-links|contact-requirement-links|company-deal-links)\b/,
     /^\/api\/crm\/companies\/[^/]+\/trading-entities/,
     /^\/api\/crm\/properties\/[^/]+\/agents/,
     // all-viewings / all-offers (+counts) are now SCOPED per caller in

@@ -2691,6 +2691,16 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         status: crmDeals.status,
         groupName: crmDeals.groupName,
       }).from(crmDeals).where(isNotNull(crmDeals.propertyId));
+      // Client viewers: only deals on their own properties (same scoping
+      // as property-agents — the client Properties page needs this map).
+      const pdlScope = await resolveCompanyScope(req);
+      if (pdlScope) {
+        const inScope = await pool.query(
+          `SELECT id FROM crm_properties WHERE landlord_id = $1
+           UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`, [pdlScope]);
+        const ids = new Set(inScope.rows.map((r: any) => r.id || r.property_id));
+        return res.json(deals.filter((d: any) => ids.has(d.propertyId)));
+      }
       res.json(deals);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -2775,6 +2785,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   app.get("/api/crm/property-tenants", async (req, res) => {
     try {
       const links = await db.select().from(crmPropertyTenants);
+      const ptScope = await resolveCompanyScope(req);
+      if (ptScope) {
+        const inScope = await pool.query(
+          `SELECT id FROM crm_properties WHERE landlord_id = $1
+           UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`, [ptScope]);
+        const ids = new Set(inScope.rows.map((r: any) => r.id || r.property_id));
+        return res.json(links.filter((l: any) => ids.has(l.propertyId)));
+      }
       res.json(links);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });

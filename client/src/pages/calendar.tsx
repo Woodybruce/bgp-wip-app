@@ -394,10 +394,14 @@ function ConnectPrompt() {
 }
 
 function DaySummaryBar() {
+  // M365 is sealed for client logins — skip the probe (guaranteed 403).
+  const { data: dsUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const dsIsClient = !!dsUser && (dsUser.role === "Client" || !!dsUser.companyScopeId);
   const { data, isLoading } = useQuery<DaySummary>({
     queryKey: ["/api/microsoft/calendar/summary"],
     queryFn: getQueryFn({ on401: "returnNull" }),
     staleTime: 5 * 60 * 1000,
+    enabled: !dsIsClient,
   });
   if (isLoading || !data) return null;
   return (
@@ -1232,10 +1236,14 @@ const INSIGHT_COLORS: Record<string, string> = {
 };
 
 function IntelligenceFooter({ connected }: { connected: boolean }) {
+  // M365 is sealed for client logins — skip the probe (guaranteed 403).
+  const { data: ifUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const ifIsClient = !!ifUser && (ifUser.role === "Client" || !!ifUser.companyScopeId);
   const { data: insightsData, isLoading } = useQuery<{ insights: BackendInsight[] }>({
     queryKey: ["/api/microsoft/calendar/insights"],
     staleTime: 5 * 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
+    enabled: !ifIsClient,
   });
 
   const insights = insightsData?.insights || [];
@@ -1329,6 +1337,8 @@ export default function Calendar() {
   const { data: status, isLoading: statusLoading } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/microsoft/status"],
     queryFn: getQueryFn({ on401: "returnNull" }),
+    // M365 is sealed for client logins — don't probe it (guaranteed 403).
+    enabled: !isClientViewer,
   });
 
   const { data: outlookEvents, isLoading: outlookLoading } = useQuery<CalendarEvent[]>({
