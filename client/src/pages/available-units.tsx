@@ -30,7 +30,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Fragment, useState, useMemo, useRef, useCallback } from "react";
+import { Fragment, useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
@@ -326,6 +326,7 @@ export default function AvailableUnitsPage() {
   // Start Date, Restrictions) collapse behind it.
   const [showAllUnitFields, setShowAllUnitFields] = useState(false);
   const [filesUnit, setFilesUnit] = useState<AvailableUnit | null>(null);
+  const [hotsUnit, setHotsUnit] = useState<AvailableUnit | null>(null);
   const [briefUnit, setBriefUnit] = useState<AvailableUnit | null>(null);
   const [viewingsUnit, setViewingsUnit] = useState<AvailableUnit | null>(null);
   const [offersUnit, setOffersUnit] = useState<AvailableUnit | null>(null);
@@ -1488,7 +1489,7 @@ export default function AvailableUnitsPage() {
                 </TableHead>
                 <TableHead className="w-[56px]">Ref</TableHead>
                 <TableHead className="w-[200px] min-w-[180px]">Property / Unit</TableHead>
-                <TableHead className="w-[130px] min-w-[130px]">Deal Type</TableHead>
+                <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>
                 {!isClientTracker && <TableHead className="w-[150px] min-w-[150px]">Client</TableHead>}
                 <TableHead className="w-[170px] min-w-[170px]">Operator</TableHead>
                 <TableHead className="w-[150px] min-w-[150px]">Category</TableHead>
@@ -1499,7 +1500,7 @@ export default function AvailableUnitsPage() {
                 <TableHead className="min-w-[200px]">Comments</TableHead>
                 <TableHead className="w-[130px] min-w-[130px]">Floor Areas</TableHead>
                 <TableHead className="w-[130px] min-w-[130px] text-right">Costs</TableHead>
-                <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>
+                <TableHead className="w-[130px] min-w-[130px]">Deal Type</TableHead>
                 <TableHead className="w-[100px] min-w-[100px] text-center">Activity</TableHead>
                 <TableHead className="w-[90px] min-w-[90px]">Files</TableHead>
                 <TableHead className="w-[90px] min-w-[90px]">Brief</TableHead>
@@ -1595,14 +1596,14 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                       <TableCell rowSpan={unitRowSpan} className="px-1.5">
-                        {deal ? (
-                          <InlineLabelSelect
-                            value={deal.dealType}
-                            options={CRM_OPTIONS.dealType}
-                            colorMap={DEAL_TYPE_COLORS}
-                            onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "dealType", value: v || null })}
-                          />
-                        ) : <span className="text-xs text-muted-foreground">—</span>}
+                        <InlineLabelSelect
+                          value={legacyToCode(u.marketingStatus) || "AVA"}
+                          options={MARKETING_STATUSES}
+                          colorMap={STATUS_LABEL_COLORS}
+                          labelMap={DEAL_STATUS_LABELS}
+                          onSave={v => inlineUpdate(u.id, "marketingStatus", v || "AVA")}
+                          allowClear={false}
+                        />
                       </TableCell>
                       {!isClientTracker && (
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[140px]">
@@ -1744,14 +1745,14 @@ export default function AvailableUnitsPage() {
                         </Popover>
                       </TableCell>
                       <TableCell rowSpan={unitRowSpan}>
-                        <InlineLabelSelect
-                          value={legacyToCode(u.marketingStatus) || "AVA"}
-                          options={MARKETING_STATUSES}
-                          colorMap={STATUS_LABEL_COLORS}
-                          labelMap={DEAL_STATUS_LABELS}
-                          onSave={v => inlineUpdate(u.id, "marketingStatus", v || "AVA")}
-                          allowClear={false}
-                        />
+                        {deal ? (
+                          <InlineLabelSelect
+                            value={deal.dealType}
+                            options={CRM_OPTIONS.dealType}
+                            colorMap={DEAL_TYPE_COLORS}
+                            onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "dealType", value: v || null })}
+                          />
+                        ) : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
                       <TableCell rowSpan={unitRowSpan} className="text-center">
                         <div className="flex items-center justify-center gap-1">
@@ -1781,6 +1782,7 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                       <TableCell rowSpan={unitRowSpan}>
+                        <div className="flex flex-col items-start">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -1791,6 +1793,18 @@ export default function AvailableUnitsPage() {
                           <FileText className="h-3.5 w-3.5" />
                           Files
                         </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs gap-1"
+                          onClick={() => setHotsUnit(u)}
+                          title="Heads of Terms"
+                          data-testid={`button-hots-${u.id}`}
+                        >
+                          <FileBadge className="h-3.5 w-3.5" />
+                          HOTs
+                        </Button>
+                        </div>
                       </TableCell>
                       <TableCell rowSpan={unitRowSpan}>
                         <Button
@@ -2608,7 +2622,147 @@ export default function AvailableUnitsPage() {
         propertyName={filesUnit ? (propertyMap[filesUnit.propertyId]?.name || "") : ""}
         onClose={() => setFilesUnit(null)}
       />
+
+      <HotsDialog
+        unit={hotsUnit}
+        propertyName={hotsUnit ? (propertyMap[hotsUnit.propertyId]?.name || "") : ""}
+        isClient={isClientTracker}
+        onClose={() => setHotsUnit(null)}
+      />
     </div>
+  );
+}
+
+// ─── Heads of Terms dialog ──────────────────────────────────────────────
+// Standard HOTs live on the property; "Populate" copies them onto the unit
+// with the deal specifics filled in ({PROPERTY}, {UNIT}, {TENANT}, {RENT},
+// {SERVICE_CHARGE}, {RATES}, {AREA}, {LANDLORD}); the text is negotiated
+// inline and exported as a PDF for the solicitors.
+function HotsDialog({ unit, propertyName, isClient, onClose }: {
+  unit: AvailableUnit | null; propertyName: string; isClient: boolean; onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [content, setContent] = useState("");
+  const [template, setTemplate] = useState("");
+  const [editTemplate, setEditTemplate] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const { data, refetch } = useQuery<{ content: string | null; template: string | null; updatedAt: string | null }>({
+    queryKey: ["/api/available-units", unit?.id, "hots"],
+    queryFn: () => fetch(`/api/available-units/${unit!.id}/hots`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
+    enabled: !!unit,
+  });
+  useEffect(() => {
+    setContent(data?.content || "");
+    setTemplate(data?.template || "");
+  }, [data, unit?.id]);
+
+  const call = async (method: string, url: string, body?: any) => {
+    const r = await fetch(url, {
+      method,
+      credentials: "include",
+      headers: { ...getAuthHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `HTTP ${r.status}`);
+    return r.json();
+  };
+
+  if (!unit) return null;
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <FileBadge className="h-4 w-4" />
+            Heads of Terms — {propertyName}{unit.unitName ? ` · ${unit.unitName}` : ""}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              size="sm" variant="outline" className="h-7 text-xs" disabled={busy}
+              onClick={async () => {
+                if (content.trim() && !window.confirm("Replace the current HOTs with a fresh copy of the property standard?")) return;
+                setBusy(true);
+                try {
+                  const out = await call("POST", `/api/available-units/${unit.id}/hots/populate`);
+                  setContent(out.content || "");
+                  toast({ title: "HOTs populated from the property standard" });
+                } catch (e: any) { toast({ title: "Populate failed", description: e.message, variant: "destructive" }); }
+                finally { setBusy(false); }
+              }}
+              data-testid="hots-populate"
+            >
+              Populate from standard
+            </Button>
+            <Button
+              size="sm" className="h-7 text-xs" disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await call("PUT", `/api/available-units/${unit.id}/hots`, { content });
+                  toast({ title: "HOTs saved" });
+                  refetch();
+                } catch (e: any) { toast({ title: "Save failed", description: e.message, variant: "destructive" }); }
+                finally { setBusy(false); }
+              }}
+              data-testid="hots-save"
+            >
+              Save
+            </Button>
+            <a
+              href={`/api/available-units/${unit.id}/hots/pdf`}
+              target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center h-7 px-2.5 rounded-md border text-xs hover:bg-muted"
+              data-testid="hots-pdf"
+            >
+              Download PDF
+            </a>
+            {!isClient && (
+              <button
+                type="button"
+                className="text-[11px] text-muted-foreground hover:text-foreground underline ml-auto"
+                onClick={() => setEditTemplate(v => !v)}
+              >
+                {editTemplate ? "Hide standard template" : "Edit property standard"}
+              </button>
+            )}
+          </div>
+          {editTemplate && !isClient && (
+            <div className="space-y-1.5 rounded-md border p-2 bg-muted/30">
+              <p className="text-[11px] text-muted-foreground">
+                Standard HOTs for {propertyName} — placeholders {"{PROPERTY} {UNIT} {LANDLORD} {TENANT} {RENT} {SERVICE_CHARGE} {RATES} {AREA}"} fill from the unit and deal on Populate.
+              </p>
+              <Textarea value={template} onChange={e => setTemplate(e.target.value)} rows={10} className="font-mono text-xs" placeholder="Paste or write the property's standard Heads of Terms…" />
+              <Button
+                size="sm" variant="outline" className="h-7 text-xs" disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await call("PUT", `/api/properties/${unit.propertyId}/hots-template`, { template });
+                    toast({ title: "Standard HOTs saved for this property" });
+                  } catch (e: any) { toast({ title: "Save failed", description: e.message, variant: "destructive" }); }
+                  finally { setBusy(false); }
+                }}
+              >
+                Save standard template
+              </Button>
+            </div>
+          )}
+          <Textarea
+            value={content}
+            onChange={e => setContent(e.target.value)}
+            rows={22}
+            className="font-mono text-xs leading-relaxed"
+            placeholder={`No HOTs on this unit yet — click "Populate from standard" to pull the property's standard terms with this deal's details filled in.`}
+            data-testid="hots-content"
+          />
+          {data?.updatedAt && (
+            <p className="text-[10px] text-muted-foreground">Last saved {new Date(data.updatedAt).toLocaleString("en-GB")}</p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

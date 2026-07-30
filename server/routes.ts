@@ -5527,6 +5527,135 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // ─── Heads of Terms ────────────────────────────────────────────────
+  // Each property holds a standard HOTs template; each tracker unit holds
+  // its negotiated instance. Populate copies the template with the deal /
+  // unit specifics filled in; PDF renders the instance for solicitors.
+  app.get("/api/available-units/:id/hots", requireAuth, async (req, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      const u = await pool.query(`SELECT hots_content, hots_updated_at FROM available_units WHERE id = $1`, [req.params.id]);
+      const t = unit.propertyId
+        ? await pool.query(`SELECT hots_template FROM crm_properties WHERE id = $1`, [unit.propertyId])
+        : { rows: [] as any[] };
+      res.json({
+        content: u.rows[0]?.hots_content || null,
+        updatedAt: u.rows[0]?.hots_updated_at || null,
+        template: t.rows[0]?.hots_template || null,
+      });
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  });
+
+  app.put("/api/available-units/:id/hots", requireAuth, async (req, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      const content = typeof req.body?.content === "string" ? req.body.content : null;
+      await pool.query(`UPDATE available_units SET hots_content = $1, hots_updated_at = NOW() WHERE id = $2`, [content, req.params.id]);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  });
+
+  // Standard template lives on the property. Staff-only to edit (the
+  // template is BGP's standard form); clients read it via the unit GET.
+  app.put("/api/properties/:id/hots-template", requireAuth, async (req: any, res) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      if (await resolveCompanyScope(req)) return res.status(403).json({ message: "Staff only" });
+      const template = typeof req.body?.template === "string" ? req.body.template : null;
+      await pool.query(`UPDATE crm_properties SET hots_template = $1 WHERE id = $2`, [template, req.params.id]);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  });
+
+  // Populate: template + unit/deal specifics → the unit's HOTs draft.
+  app.post("/api/available-units/:id/hots/populate", requireAuth, async (req, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      const prop = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+      const t = unit.propertyId
+        ? await pool.query(`SELECT hots_template FROM crm_properties WHERE id = $1`, [unit.propertyId])
+        : { rows: [] as any[] };
+      const template: string = t.rows[0]?.hots_template ||
+        `HEADS OF TERMS — SUBJECT TO CONTRACT
+
+Property: {PROPERTY}
+Unit: {UNIT}
+Landlord: {LANDLORD}
+Tenant: {TENANT}
+
+Rent: {RENT} per annum exclusive
+Lease length: [term] years
+Rent free: [months] months
+Break option: [details]
+Rent reviews: [pattern]
+Service charge: {SERVICE_CHARGE}
+Rates payable: {RATES}
+Use: [permitted use]
+Repairing obligation: [FRI / IRI]
+Conditions: [board approval / planning / licences]
+
+Each party to bear its own legal costs.
+These terms are indicative only and do not constitute a binding agreement.`;
+      const deal = (unit as any).dealId ? await storage.getCrmDeal((unit as any).dealId).catch(() => null) : null;
+      const landlordQ = (prop as any)?.landlordId
+        ? await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [(prop as any).landlordId])
+        : { rows: [] as any[] };
+      const fmtGBP = (v: any) => (v != null && v !== "" && !isNaN(Number(v))) ? `£${Number(v).toLocaleString("en-GB")}` : "[amount]";
+      const filled = template
+        .replace(/\{PROPERTY\}/g, prop?.name || "[property]")
+        .replace(/\{UNIT\}/g, (unit as any).unitName || "[unit]")
+        .replace(/\{LANDLORD\}/g, landlordQ.rows[0]?.name || (deal as any)?.landlord || "[landlord]")
+        .replace(/\{TENANT\}/g, (deal as any)?.name?.split("—")[0]?.trim() || "[tenant]")
+        .replace(/\{RENT\}/g, fmtGBP((unit as any).askingRent))
+        .replace(/\{SERVICE_CHARGE\}/g, fmtGBP((unit as any).serviceChargePa))
+        .replace(/\{RATES\}/g, fmtGBP((unit as any).ratesPa))
+        .replace(/\{AREA\}/g, (unit as any).totalAreaSqft ? `${Number((unit as any).totalAreaSqft).toLocaleString("en-GB")} sq ft` : "[area]");
+      await pool.query(`UPDATE available_units SET hots_content = $1, hots_updated_at = NOW() WHERE id = $2`, [filled, req.params.id]);
+      res.json({ content: filled });
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  });
+
+  // PDF for solicitors — pdfkit render of the negotiated text.
+  app.get("/api/available-units/:id/hots/pdf", requireAuth, async (req, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      const u = await pool.query(`SELECT hots_content FROM available_units WHERE id = $1`, [req.params.id]);
+      const content: string = u.rows[0]?.hots_content;
+      if (!content) return res.status(404).json({ message: "No HOTs on this unit yet" });
+      const prop = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+      const PDFDocument = (await import("pdfkit")).default;
+      const doc = new PDFDocument({ margin: 56, size: "A4" });
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="HOTs - ${(prop?.name || "Property").replace(/[^a-zA-Z0-9 ]/g, "")} - ${((unit as any).unitName || "Unit").replace(/[^a-zA-Z0-9 ]/g, "")}.pdf"`);
+      doc.pipe(res);
+      doc.fontSize(9).fillColor("#666").text("SUBJECT TO CONTRACT — WITHOUT PREJUDICE", { align: "right" });
+      doc.moveDown(0.5);
+      doc.fontSize(16).fillColor("#000").text("Heads of Terms", { align: "left" });
+      doc.fontSize(10).fillColor("#444").text(`${prop?.name || ""}${(unit as any).unitName ? ` — ${(unit as any).unitName}` : ""}`);
+      doc.moveDown();
+      doc.fontSize(10).fillColor("#000").text(content, { lineGap: 3 });
+      doc.moveDown(2);
+      doc.fontSize(8).fillColor("#888").text(`Prepared by Bruce Gillingham Pollard — ${new Date().toLocaleDateString("en-GB")}`);
+      doc.end();
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  });
+
   app.get("/api/available-units/:id/files", requireAuth, async (req, res) => {
     try {
       const unit = await storage.getAvailableUnit(req.params.id as string);
@@ -5559,6 +5688,29 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         fileSize: req.file.size,
         mimeType: req.file.mimetype,
       }).returning();
+      // Photos uploaded against a tracker unit also land in the Image
+      // Gallery, filed under the property (and tagged with the unit) so
+      // they show organised on the property page / Image Studio.
+      if ((req.file.mimetype || "").startsWith("image/")) {
+        try {
+          const prop = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+          const { storeImageFromBuffer } = await import("./image-studio");
+          await storeImageFromBuffer({
+            buffer: req.file.buffer,
+            fileName: req.file.originalname,
+            category: "Properties",
+            tags: ["letting-tracker", ...(unit.unitName ? [unit.unitName] : []), ...(prop?.name ? [prop.name] : [])],
+            description: `Uploaded on the Letting Tracker${unit.unitName ? ` — ${unit.unitName}` : ""}${prop?.name ? ` at ${prop.name}` : ""}`,
+            source: "letting-tracker",
+            propertyId: unit.propertyId || null,
+            companyId: (prop as any)?.landlordId || null,
+            address: (prop as any)?.address || undefined,
+            mimeType: req.file.mimetype,
+          });
+        } catch (e: any) {
+          console.warn("[unit-files] gallery mirror failed:", e?.message);
+        }
+      }
       res.json(file);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to upload file" });

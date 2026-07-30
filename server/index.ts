@@ -38,6 +38,11 @@ import { pool } from "./db";
 // first error, which is how compliance_board/training tables went missing.
 (async () => {
   const MIGRATIONS: string[] = [
+    // Heads of Terms: each property carries a standard HOTs template;
+    // each tracker unit carries its negotiated instance.
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS hots_template TEXT`,
+    `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS hots_content TEXT`,
+    `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS hots_updated_at TIMESTAMPTZ`,
     // Target operators: BGP agent pills (auto-tagged to whoever adds the
     // target) + the client-side contact driving it.
     `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS agent_user_ids TEXT[]`,

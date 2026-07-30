@@ -127,7 +127,8 @@ const unfinishedNav = [
   { title: "Letting Hunter", url: "/hunters/letting", icon: Target },
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target },
   { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase },
-  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
+  // Leasing Schedule retired (archived) — Tenancy Schedule + Letting
+  // Tracker are the two boards now. Route stays live for old links.
   { title: "Lease Advisory", url: "/pla/matters", icon: Landmark },
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, badge: "BD" },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
@@ -580,7 +581,7 @@ export const mobileOverlayItems = [
   { title: "People & HR", url: "/hr", icon: Users },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },
   { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase, adminOnly: true },
-  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
+  // Leasing Schedule retired (archived) — route stays live for old links.
   { title: "Comps", url: "/comps", icon: Scale },
   { title: "Lease Advisory", url: "/pla/matters", icon: Landmark, adminOnly: true },
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
