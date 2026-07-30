@@ -20,7 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target,
+  ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target, CheckCircle2,
 } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
@@ -39,6 +39,8 @@ import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
 import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer, PropertyUnit } from "@shared/schema";
+import { BRIEF_TARGET_STATUSES } from "@shared/schema";
+import { BrandSearchInput, type BrandPick } from "@/components/brand-search-input";
 import { useTeam } from "@/lib/team-context";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { DEAL_TYPE_COLORS, DEAL_TEAM_COLORS } from "@/pages/deals";
@@ -55,6 +57,17 @@ import { FeeAllocationEditor, type FeeAllocationRow } from "@/components/fee-all
 
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 const MARKETING_STATUSES = LETTING_STATUSES;
+
+// Status dot colours for target-operator chips in the Tenant column.
+const TARGET_STATUS_DOT: Record<string, string> = {
+  "Identified": "bg-zinc-400",
+  "Approached": "bg-blue-500",
+  "Meeting Held": "bg-violet-500",
+  "Inspection Done": "bg-amber-500",
+  "Offer": "bg-orange-500",
+  "Let": "bg-emerald-500",
+  "Passed": "bg-red-500",
+};
 const USE_CLASSES = ["E", "E(a)", "E(b)", "E(c)", "E(d)", "E(e)", "A1", "A2", "A3", "A4", "A5", "B1", "B2", "B8", "C1", "C3", "D1", "D2", "F1", "F2", "Sui Generis"];
 const FLOORS = ["Basement", "Lower Ground", "Ground", "Mezzanine", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "Upper"];
 const CONDITIONS = ["Shell & Core", "Cat A", "Cat A+", "Cat B", "Fitted", "Turn Key", "As Is"];
@@ -300,6 +313,7 @@ export default function AvailableUnitsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [targetStatusFilter, setTargetStatusFilter] = useState("all");
   const [propertyFilter, setPropertyFilter] = useState("all");
   const [assetClassFilter, setAssetClassFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
@@ -941,6 +955,58 @@ export default function AvailableUnitsPage() {
     return { id: String(created.id), name: created.name };
   };
 
+  // Briefs (with target operators) keyed by unit — the Tenant column shows
+  // each unit's targets and lets you add one without opening the brief.
+  const { data: allBriefs = [] } = useQuery<any[]>({
+    queryKey: ["/api/unit-briefs"],
+    staleTime: 30_000,
+  });
+  const briefByUnit = useMemo(() => {
+    const m: Record<string, any> = {};
+    for (const b of allBriefs) if (b.unitId && !m[b.unitId]) m[b.unitId] = b;
+    return m;
+  }, [allBriefs]);
+  const invalidateBriefs = (unitId?: string) => {
+    queryClient.invalidateQueries({ queryKey: ["/api/unit-briefs"] });
+    if (unitId) queryClient.invalidateQueries({ queryKey: ["/api/available-units", unitId, "brief"] });
+  };
+  const addUnitTarget = async (u: { id: string; unitName: string }, pick: BrandPick) => {
+    try {
+      let briefId = briefByUnit[u.id]?.id;
+      if (!briefId) {
+        const r = await apiRequest("POST", `/api/available-units/${u.id}/brief`, { title: `Operator Targeting — ${u.unitName}` });
+        briefId = (await r.json()).id;
+      }
+      await apiRequest("POST", `/api/unit-briefs/${briefId}/targets`, {
+        operatorName: pick.name,
+        companyId: pick.companyId,
+        category: pick.companyType || undefined,
+        priority: "B",
+        agentUserIds: auUser?.id ? [String(auUser.id)] : undefined,
+      });
+      invalidateBriefs(u.id);
+      toast({ title: "Target added", description: pick.name });
+    } catch (e: any) {
+      toast({ title: "Couldn't add target", description: e?.message, variant: "destructive" });
+    }
+  };
+  const patchUnitTarget = async (targetId: string, unitId: string, data: Record<string, unknown>) => {
+    try {
+      await apiRequest("PATCH", `/api/unit-briefs/targets/${targetId}`, data);
+      invalidateBriefs(unitId);
+    } catch (e: any) {
+      toast({ title: "Couldn't update target", description: e?.message, variant: "destructive" });
+    }
+  };
+  const deleteUnitTarget = async (targetId: string, unitId: string) => {
+    try {
+      await apiRequest("DELETE", `/api/unit-briefs/targets/${targetId}`);
+      invalidateBriefs(unitId);
+    } catch (e: any) {
+      toast({ title: "Couldn't remove target", description: e?.message, variant: "destructive" });
+    }
+  };
+
   const uniqueProperties = useMemo(() => {
     const ids = new Set(teamUnits.map(u => u.propertyId));
     return properties.filter(p => ids.has(p.id));
@@ -973,6 +1039,9 @@ export default function AvailableUnitsPage() {
       result = result.filter(u => Array.isArray(u.agentUserIds) && u.agentUserIds.some(id => teamUserIds.has(id)));
     }
     if (agentFilter !== "all") result = result.filter(u => Array.isArray(u.agentUserIds) && u.agentUserIds.includes(agentFilter));
+    if (targetStatusFilter !== "all") {
+      result = result.filter(u => (briefByUnit[u.id]?.targets || []).some((t: any) => (t.status || "Identified") === targetStatusFilter));
+    }
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(u => {
@@ -991,7 +1060,7 @@ export default function AvailableUnitsPage() {
       });
     }
     return result;
-  }, [teamUnits, statusFilter, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies]);
+  }, [teamUnits, statusFilter, targetStatusFilter, briefByUnit, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies]);
 
   const stats = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1205,6 +1274,17 @@ export default function AvailableUnitsPage() {
             <SelectItem value="all">All Agents</SelectItem>
             {activeAgents.map(u => (
               <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={targetStatusFilter} onValueChange={setTargetStatusFilter}>
+          <SelectTrigger className="w-[170px]" data-testid="select-target-status-filter">
+            <SelectValue placeholder="Target status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Target Statuses</SelectItem>
+            {BRIEF_TARGET_STATUSES.map(s => (
+              <SelectItem key={s} value={s}>{s}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -1529,7 +1609,7 @@ export default function AvailableUnitsPage() {
                           );
                         })() : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell className="px-1.5 max-w-[140px]">
+                      <TableCell className="px-1.5 max-w-[160px]">
                         {deal ? (
                           <InlineLinkSelect
                             value={deal.tenantId}
@@ -1540,6 +1620,53 @@ export default function AvailableUnitsPage() {
                             placeholder="Link tenant"
                           />
                         ) : <span className="text-xs text-muted-foreground">—</span>}
+                        {(() => {
+                          const unitTargets: any[] = briefByUnit[u.id]?.targets || [];
+                          return (
+                            <div className="mt-1 space-y-0.5">
+                              {unitTargets.map((t: any) => (
+                                <DropdownMenu key={t.id}>
+                                  <DropdownMenuTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className="flex items-center gap-1 text-[10px] rounded-full border px-1.5 py-0.5 hover:bg-muted max-w-full"
+                                      title={`${t.status || "Identified"}${t.category ? ` · ${t.category}` : ""}`}
+                                      data-testid={`unit-target-${t.id}`}
+                                    >
+                                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${TARGET_STATUS_DOT[t.status || "Identified"] || "bg-zinc-400"}`} />
+                                      <span className="truncate">{t.operatorName}</span>
+                                    </button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="start" className="text-xs">
+                                    {BRIEF_TARGET_STATUSES.map(s => (
+                                      <DropdownMenuItem key={s} onClick={() => patchUnitTarget(t.id, u.id, { status: s })}>
+                                        <span className={`w-1.5 h-1.5 rounded-full mr-2 ${TARGET_STATUS_DOT[s]}`} />
+                                        {s}
+                                        {(t.status || "Identified") === s && <CheckCircle2 className="w-3 h-3 ml-auto text-emerald-500" />}
+                                      </DropdownMenuItem>
+                                    ))}
+                                    {t.companyId && (
+                                      <DropdownMenuItem asChild>
+                                        <a href={`/companies/${t.companyId}`}>Open brand profile</a>
+                                      </DropdownMenuItem>
+                                    )}
+                                    <DropdownMenuItem className="text-red-600" onClick={() => deleteUnitTarget(t.id, u.id)}>
+                                      Remove target
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              ))}
+                              <BrandSearchInput
+                                className="h-6 w-full border-dashed text-[10px]"
+                                placeholder="+ Target operator"
+                                value=""
+                                allowCreate={!isClientTracker}
+                                onPick={p => addUnitTarget(u, p)}
+                                testId={`add-target-${u.id}`}
+                              />
+                            </div>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell className="px-1.5 max-w-[180px]">
                         <div className="space-y-1">

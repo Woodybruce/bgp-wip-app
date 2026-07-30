@@ -373,14 +373,14 @@ function BrandPickerCell({ unitId, field, value, onSave, placeholder = "Type to 
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(value || "");
   const inputRef = useRef<HTMLInputElement>(null);
-  const { data: companies = [] } = useQuery<Array<{ id: string; name: string }>>({
+  const { data: companies = [] } = useQuery<Array<{ id: string; name: string; companyType?: string | null }>>({
     queryKey: ["/api/crm/companies-basic"],
     queryFn: async () => {
       const r = await fetch("/api/crm/companies?limit=5000", { headers: getAuthHeaders() });
       if (!r.ok) return [];
       const d = await r.json();
       const arr = Array.isArray(d) ? d : (d.companies || []);
-      return arr.map((c: any) => ({ id: String(c.id), name: c.name }));
+      return arr.map((c: any) => ({ id: String(c.id), name: c.name, companyType: c.companyType ?? c.company_type ?? null }));
     },
     staleTime: 120000,
   });

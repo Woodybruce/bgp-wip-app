@@ -38,6 +38,11 @@ import { pool } from "./db";
 // first error, which is how compliance_board/training tables went missing.
 (async () => {
   const MIGRATIONS: string[] = [
+    // Target operators: BGP agent pills (auto-tagged to whoever adds the
+    // target) + the client-side contact driving it.
+    `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS agent_user_ids TEXT[]`,
+    `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS client_contact_id VARCHAR`,
+    `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS comments JSONB`,
     // Diary→viewings sync: provenance + idempotent upsert key for viewings
     // auto-created from Outlook calendar events (see server/viewing-sync.ts).
     `ALTER TABLE unit_viewings ADD COLUMN IF NOT EXISTS source TEXT`,

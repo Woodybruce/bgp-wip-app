@@ -4378,7 +4378,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/unit-briefs", requireAuth, async (_req, res) => {
     try {
-      const { unitBriefs, availableUnits, crmProperties } = await import("@shared/schema");
+      const { unitBriefs, availableUnits, crmProperties, unitTargetOperators } = await import("@shared/schema");
       const rows = await db
         .select({
           brief: unitBriefs,
@@ -4389,7 +4389,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .leftJoin(availableUnits, eq(unitBriefs.unitId, availableUnits.id))
         .leftJoin(crmProperties, eq(unitBriefs.propertyId, crmProperties.id))
         .orderBy(desc(unitBriefs.createdAt));
-      res.json(rows.map(r => ({ ...r.brief, unitName: r.unitName, propertyName: r.propertyName })));
+      // Targets ride along so the Letting Tracker can show each unit's
+      // target operators without a per-unit round trip.
+      const allTargets = await db.select().from(unitTargetOperators);
+      const targetsByBrief = new Map<string, typeof allTargets>();
+      for (const t of allTargets) {
+        if (!targetsByBrief.has(t.briefId)) targetsByBrief.set(t.briefId, []);
+        targetsByBrief.get(t.briefId)!.push(t);
+      }
+      res.json(rows.map(r => ({ ...r.brief, unitName: r.unitName, propertyName: r.propertyName, targets: (targetsByBrief.get(r.brief.id) || []).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)) })));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch briefs" });
     }

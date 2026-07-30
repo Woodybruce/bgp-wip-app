@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useMemo, useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -17,6 +17,8 @@ import {
 import { Target, Upload, FileDown, Trash2, Plus, Loader2, Sparkles } from "lucide-react";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { BrandSearchInput } from "@/components/brand-search-input";
+import { InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
+import { CRM_OPTIONS } from "@/lib/crm-options";
 import { useToast } from "@/hooks/use-toast";
 import type { AvailableUnit, UnitBrief, UnitTargetOperator } from "@shared/schema";
 import { BRIEF_TARGET_STATUSES } from "@shared/schema";
@@ -82,6 +84,16 @@ export function UnitBriefDialog({ unit, open, onClose }: {
   const [form, setForm] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
   const [newTarget, setNewTarget] = useState<{ operatorName: string; companyId: string | null; category: string; priority: string }>({ operatorName: "", companyId: null, category: "", priority: "B" });
+
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const { data: briefUsers = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ["/api/users"],
+    staleTime: 5 * 60_000,
+  });
+  const agentOptions = useMemo(
+    () => briefUsers.map(u => ({ label: u.name, value: u.id })).sort((a, b) => a.label.localeCompare(b.label)),
+    [briefUsers]
+  );
   const [pendingTargets, setPendingTargets] = useState<any[]>([]);
 
   const briefKey = ["/api/available-units", unit?.id, "brief"];
@@ -97,6 +109,28 @@ export function UnitBriefDialog({ unit, open, onClose }: {
     queryClient.invalidateQueries({ queryKey: briefKey });
     queryClient.invalidateQueries({ queryKey: ["/api/unit-briefs"] });
   };
+
+  // Client-side contacts for the "Client" pill on each target — the CRM
+  // contacts at the brief's client company (e.g. Landsec).
+  const briefClientCompanyId = (brief as any)?.clientCompanyId || null;
+  const { data: clientContacts = [] } = useQuery<any[]>({
+    queryKey: ["/api/crm/contacts", "by-company", briefClientCompanyId],
+    queryFn: async () => {
+      const r = await fetch(`/api/crm/contacts?companyId=${briefClientCompanyId}&limit=500`, { headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      const d = await r.json();
+      return Array.isArray(d) ? d : (d.contacts || []);
+    },
+    enabled: !!briefClientCompanyId && open,
+    staleTime: 60_000,
+  });
+  const clientContactOptions = useMemo(
+    () => clientContacts
+      .map((c: any) => ({ id: String(c.id), name: c.name || [c.firstName, c.lastName].filter(Boolean).join(" ") }))
+      .filter(c => c.name)
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [clientContacts]
+  );
 
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", `/api/available-units/${unit?.id}/brief`, data),
@@ -339,9 +373,9 @@ export function UnitBriefDialog({ unit, open, onClose }: {
                         <TableHead>Category</TableHead>
                         <TableHead className="w-[70px]">Priority</TableHead>
                         <TableHead className="w-[140px]">Status</TableHead>
-                        <TableHead>Rationale</TableHead>
-                        <TableHead>Relationship</TableHead>
-                        <TableHead>Feedback</TableHead>
+                        <TableHead className="w-[130px]">Agent</TableHead>
+                        <TableHead className="w-[140px]">Client</TableHead>
+                        <TableHead>Comments</TableHead>
                         <TableHead className="w-[40px]" />
                       </TableRow>
                     </TableHeader>
@@ -355,8 +389,24 @@ export function UnitBriefDialog({ unit, open, onClose }: {
                       )}
                       {targets.map(t => (
                         <TableRow key={t.id} data-testid={`row-target-${t.id}`}>
-                          <TableCell className="text-xs font-medium">{t.operatorName}</TableCell>
-                          <TableCell className="text-xs">{t.category || "—"}</TableCell>
+                          <TableCell className="text-xs font-medium">
+                            {t.companyId ? (
+                              <a href={`/companies/${t.companyId}`} className="hover:underline text-primary">{t.operatorName}</a>
+                            ) : t.operatorName}
+                          </TableCell>
+                          <TableCell>
+                            <Select value={t.category || ""} onValueChange={v => updateTargetMutation.mutate({ id: t.id, data: { category: v } })}>
+                              <SelectTrigger className="h-7 text-xs w-[150px]"><SelectValue placeholder="—" /></SelectTrigger>
+                              <SelectContent className="max-h-64">
+                                {t.category && !(CRM_OPTIONS.companyType as readonly string[]).includes(t.category) && (
+                                  <SelectItem value={t.category}>{t.category}</SelectItem>
+                                )}
+                                {CRM_OPTIONS.companyType.filter(ct => ct !== "Landlord").map(ct => (
+                                  <SelectItem key={ct} value={ct}>{ct.replace(/^Tenant - /, "")}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
                           <TableCell>
                             <Select value={t.priority || "B"} onValueChange={v => updateTargetMutation.mutate({ id: t.id, data: { priority: v } })}>
                               <SelectTrigger className="h-7 text-xs w-[60px]"><SelectValue /></SelectTrigger>
@@ -378,14 +428,33 @@ export function UnitBriefDialog({ unit, open, onClose }: {
                               </SelectContent>
                             </Select>
                           </TableCell>
-                          <TableCell className="text-xs max-w-[180px]">
-                            <EditableCell value={t.rationale} onSave={v => updateTargetMutation.mutate({ id: t.id, data: { rationale: v } })} />
+                          <TableCell className="max-w-[140px]">
+                            <InlineMultiSelect
+                              value={(t as any).agentUserIds || []}
+                              options={agentOptions}
+                              placeholder="Set agent"
+                              onSave={v => updateTargetMutation.mutate({ id: t.id, data: { agentUserIds: v.length > 0 ? v : null } })}
+                              testId={`target-agent-${t.id}`}
+                            />
                           </TableCell>
-                          <TableCell className="text-xs max-w-[140px]">
-                            <EditableCell value={t.existingRelationship} onSave={v => updateTargetMutation.mutate({ id: t.id, data: { existingRelationship: v } })} />
+                          <TableCell className="max-w-[150px]">
+                            <InlineLinkSelect
+                              value={(t as any).clientContactId}
+                              options={clientContactOptions}
+                              href={(t as any).clientContactId ? `/contacts/${(t as any).clientContactId}` : undefined}
+                              onSave={v => updateTargetMutation.mutate({ id: t.id, data: { clientContactId: v } })}
+                              placeholder={briefClientCompanyId ? "Link client contact" : "No client company"}
+                              compact
+                            />
                           </TableCell>
-                          <TableCell className="text-xs max-w-[180px]">
-                            <EditableCell value={t.feedback} onSave={v => updateTargetMutation.mutate({ id: t.id, data: { feedback: v } })} />
+                          <TableCell className="text-xs max-w-[220px]">
+                            <TargetComments
+                              comments={(t as any).comments}
+                              onAdd={text => {
+                                const existing = Array.isArray((t as any).comments) ? (t as any).comments : [];
+                                updateTargetMutation.mutate({ id: t.id, data: { comments: [...existing, { userId: me?.id || null, userName: me?.name || me?.username || "Unknown", text, at: new Date().toISOString() }] } });
+                              }}
+                            />
                           </TableCell>
                           <TableCell>
                             <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => deleteTargetMutation.mutate(t.id)} data-testid={`button-delete-target-${t.id}`}>
@@ -403,15 +472,21 @@ export function UnitBriefDialog({ unit, open, onClose }: {
                     placeholder="Operator name…"
                     value={newTarget.operatorName}
                     companyId={newTarget.companyId}
-                    onPick={p => setNewTarget(prev => ({ ...prev, operatorName: p.name, companyId: p.companyId }))}
+                    allowCreate
+                    onPick={p => setNewTarget(prev => ({ ...prev, operatorName: p.name, companyId: p.companyId, category: p.companyType || prev.category }))}
                     testId="input-new-target-name"
                   />
-                  <Input
-                    className="h-8 text-xs max-w-[180px]"
-                    placeholder="Category…"
-                    value={newTarget.category}
-                    onChange={e => setNewTarget(p => ({ ...p, category: e.target.value }))}
-                  />
+                  <Select value={newTarget.category} onValueChange={v => setNewTarget(p => ({ ...p, category: v }))}>
+                    <SelectTrigger className="h-8 text-xs w-[180px]"><SelectValue placeholder="Category…" /></SelectTrigger>
+                    <SelectContent className="max-h-64">
+                      {newTarget.category && !(CRM_OPTIONS.companyType as readonly string[]).includes(newTarget.category) && (
+                        <SelectItem value={newTarget.category}>{newTarget.category}</SelectItem>
+                      )}
+                      {CRM_OPTIONS.companyType.filter(ct => ct !== "Landlord").map(ct => (
+                        <SelectItem key={ct} value={ct}>{ct.replace(/^Tenant - /, "")}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <Select value={newTarget.priority} onValueChange={v => setNewTarget(p => ({ ...p, priority: v }))}>
                     <SelectTrigger className="h-8 text-xs w-[60px]"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -423,7 +498,7 @@ export function UnitBriefDialog({ unit, open, onClose }: {
                     size="sm"
                     className="h-8"
                     disabled={!newTarget.operatorName || addTargetMutation.isPending}
-                    onClick={() => addTargetMutation.mutate(newTarget)}
+                    onClick={() => addTargetMutation.mutate({ ...newTarget, agentUserIds: me?.id ? [me.id] : undefined })}
                     data-testid="button-add-target"
                   >
                     <Plus className="h-3.5 w-3.5 mr-1" /> Add
@@ -444,28 +519,29 @@ export function UnitBriefDialog({ unit, open, onClose }: {
   );
 }
 
-function EditableCell({ value, onSave }: { value: string | null | undefined; onSave: (v: string) => void }) {
-  const [editing, setEditing] = useState(false);
+// Attributed comment log on a target — each entry names its author so the
+// thread reads "who said what" rather than one anonymous free-text blob.
+function TargetComments({ comments, onAdd }: { comments: unknown; onAdd: (text: string) => void }) {
   const [draft, setDraft] = useState("");
-  if (editing) {
-    return (
-      <Textarea
-        autoFocus
-        rows={2}
-        className="text-xs"
+  const list: Array<{ userName?: string; text?: string; at?: string }> = Array.isArray(comments) ? comments : [];
+  return (
+    <div className="space-y-1 min-w-[160px]">
+      {list.map((c, i) => (
+        <div key={i} className="text-[11px] leading-tight" title={c.at ? new Date(c.at).toLocaleString("en-GB") : undefined}>
+          <span className="font-semibold text-primary">{c.userName || "Unknown"}</span>{" "}
+          <span>{c.text}</span>
+        </div>
+      ))}
+      <input
         value={draft}
         onChange={e => setDraft(e.target.value)}
-        onBlur={() => { setEditing(false); if (draft !== (value || "")) onSave(draft); }}
+        onKeyDown={e => {
+          if (e.key === "Enter" && draft.trim()) { onAdd(draft.trim()); setDraft(""); }
+        }}
+        placeholder="Add comment…"
+        className="w-full bg-transparent border-0 border-b border-dashed border-muted-foreground/30 text-[11px] focus:outline-none focus:border-primary/50 placeholder:text-muted-foreground/50"
+        data-testid="input-target-comment"
       />
-    );
-  }
-  return (
-    <span
-      className="cursor-pointer hover:bg-muted/60 rounded px-1 block truncate"
-      title={value || ""}
-      onClick={() => { setDraft(value || ""); setEditing(true); }}
-    >
-      {value || <span className="text-muted-foreground italic">—</span>}
-    </span>
+    </div>
   );
 }
