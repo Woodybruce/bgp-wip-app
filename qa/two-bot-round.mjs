@@ -192,6 +192,26 @@ async function victoriaRound(page, cross) {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(600);
   });
+
+  // 5. Deal board (kanban) renders its pipeline columns without a crash.
+  await step(page, p, 'deal-board-render', async () => {
+    await page.goto(`${BASE}/deals`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1000);
+    // The /deals hub defaults to the WIP Report tab on desktop — switch to
+    // the Deals tab before the board view is reachable.
+    await page.getByRole('button', { name: /^Deals$/ }).first().click().catch(async () => {
+      await page.getByText('Deals', { exact: true }).first().click();
+    });
+    await page.waitForTimeout(1200);
+    // Then flip to Board view (ViewToggle button by accessible name).
+    const boardBtn = page.getByRole('button', { name: /board/i }).first();
+    if (await boardBtn.count()) { await boardBtn.click().catch(() => {}); await page.waitForTimeout(1200); }
+    const cols = await Promise.all(['Negotiating', 'Solicitors', 'Exchanged', 'Completed', 'Invoiced']
+      .map(c => page.getByText(c, { exact: false }).count()));
+    const shown = cols.filter(n => n > 0).length;
+    if (shown < 3) throw new Error(`deal board shows only ${shown}/5 pipeline columns`);
+  });
 }
 
 async function markRound(page, cross) {
@@ -381,6 +401,31 @@ async function markRound(page, cross) {
     if (await page.getByText('Page not found').count()) throw new Error('requirements is a dead route for client');
     const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
     if (body.length < 40) throw new Error('requirements rendered blank for client');
+  });
+
+  // Client dashboard on a phone-width viewport must not overflow horizontally
+  // (the app hit body-scroll bugs before; container queries fixed them). Use
+  // a fresh 390px page so the desktop context isn't reused.
+  await step(page, p, 'client-mobile-no-overflow', async () => {
+    const mob = await page.context().newPage();
+    try {
+      await mob.setViewportSize({ width: 390, height: 780 });
+      await mob.goto(`${BASE}/`);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mob.goto(`${BASE}/`);
+      await mob.waitForLoadState('networkidle');
+      await mob.waitForTimeout(2000);
+      const { scrollW, clientW } = await mob.evaluate(() => ({
+        scrollW: document.documentElement.scrollWidth,
+        clientW: document.documentElement.clientWidth,
+      }));
+      // 4px tolerance for sub-pixel rounding.
+      if (scrollW > clientW + 4) throw new Error(`client dashboard overflows on mobile: scrollWidth ${scrollW} > viewport ${clientW}`);
+    } finally {
+      await mob.close();
+    }
   });
 }
 
