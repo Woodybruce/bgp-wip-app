@@ -310,6 +310,44 @@ async function victoriaRound(page, cross) {
     if (!mineAfter) throw new Error('Landsec event missing after selecting the Landsec team');
   });
 
+  // 4f. Staff dashboard at phone width must not overflow horizontally.
+  await step(page, p, 'staff-mobile-no-overflow', async () => {
+    const mob = await page.context().newPage();
+    try {
+      await mob.setViewportSize({ width: 390, height: 780 });
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mob.goto(`${BASE}/`, nav);
+      await mob.waitForTimeout(3500);
+      const { scrollW, clientW } = await mob.evaluate(() => ({
+        scrollW: document.documentElement.scrollWidth,
+        clientW: document.documentElement.clientWidth,
+      }));
+      if (scrollW > clientW + 4) throw new Error(`staff dashboard overflows on mobile: scrollWidth ${scrollW} > viewport ${clientW}`);
+    } finally {
+      await mob.close();
+    }
+  });
+
+  // 4e. The retired Leasing Schedule shows its archived banner and the
+  // banner's Letting Tracker link goes somewhere real (it shipped pointing
+  // at /available-units, which has no route).
+  await step(page, p, 'leasing-archived-banner', async () => {
+    await page.goto(`${BASE}/leasing-schedule`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(2500);
+    if (!(await page.getByText('This board is retired', { exact: false }).count())) return; // banner not on this view
+    const link = page.getByRole('link', { name: 'Letting Tracker' }).first();
+    if (!(await link.count())) throw new Error('archived banner has no Letting Tracker link');
+    await link.click();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(2500);
+    if (await page.getByText('Page not found').count()) throw new Error('archived-banner Letting Tracker link is a dead route');
+  });
+
   // 5. Deal board (kanban) renders its pipeline columns without a crash.
   await step(page, p, 'deal-board-render', async () => {
     await page.goto(`${BASE}/deals`);

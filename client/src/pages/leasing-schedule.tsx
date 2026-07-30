@@ -3476,7 +3476,7 @@ export default function LeasingSchedulePage() {
   const archivedBanner = (
     <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2 flex-wrap">
       <span className="font-semibold uppercase tracking-wider">Archived</span>
-      <span>This board is retired — day-to-day leasing lives on the property Tenancy Schedule and the <Link href="/available-units" className="underline font-medium">Letting Tracker</Link>. It's kept here for reference.</span>
+      <span>This board is retired — day-to-day leasing lives on the property Tenancy Schedule and the <Link href="/deals/letting" className="underline font-medium">Letting Tracker</Link>. It's kept here for reference.</span>
     </div>
   );
 
