@@ -591,8 +591,20 @@ function MemberSheet({ member, allMembers, clientCompanyId, columnNames, onClose
   });
 
   const removeMutation = useMutation({
-    mutationFn: () => apiRequest("DELETE", `/api/client-teams/member/${member.id}`),
-    onSuccess: () => { onChange(); onClose(); toast({ title: "Removed from team" }); },
+    // Auto-included ("pa-") members have no board row — the server removes their
+    // property assignments instead, so it needs to know which client we're on.
+    mutationFn: async () => {
+      const r = await apiRequest("DELETE", `/api/client-teams/member/${member.id}?clientCompanyId=${encodeURIComponent(clientCompanyId)}`);
+      return await r.json().catch(() => ({}));
+    },
+    onSuccess: (res: any) => {
+      onChange(); onClose();
+      const n = res?.removedPropertyAssignments;
+      toast({
+        title: "Removed from team",
+        description: n ? `Unassigned from ${n} propert${n === 1 ? "y" : "ies"} on this client.` : undefined,
+      });
+    },
     onError: (e: any) => toast({ title: "Remove failed", description: e.message, variant: "destructive" }),
   });
 

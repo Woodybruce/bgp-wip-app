@@ -260,14 +260,45 @@ router.post("/api/client-teams/:clientCompanyId/reorder", requireAuth, async (re
 router.delete("/api/client-teams/member/:id", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    const r = await pool.query("DELETE FROM crm_client_team_members WHERE id = $1", [req.params.id]);
-    // A synthesized "pa-…" id (auto-included via property assignments) has no
-    // row here — the old blanket {ok:true} made "Remove" look like it worked.
-    if (r.rowCount === 0) {
-      return res.status(404).json({
-        error: "This person is on the board automatically via property assignments — remove their properties instead.",
-      });
+    const id = String(req.params.id);
+
+    // Auto-included members carry a synthesized "pa-<userId>" id — they're on
+    // the board because they're assigned to the client's properties, so there
+    // is no crm_client_team_members row to delete. Telling the user to go and
+    // unassign the properties themselves made Remove look broken; do it for
+    // them: drop their property-agent links on THIS client's properties (the
+    // client company comes from the query, so we never touch another client's).
+    if (id.startsWith("pa-")) {
+      const userId = id.slice(3);
+      const clientCompanyId = String(req.query.clientCompanyId || "");
+      if (!clientCompanyId) {
+        return res.status(400).json({ error: "clientCompanyId is required to remove an auto-included member" });
+      }
+      const del = await pool.query(`
+        WITH board_companies AS (
+          SELECT id FROM crm_companies WHERE id = $2
+          UNION
+          SELECT c2.id FROM crm_companies c1
+            JOIN crm_companies c2
+              ON lower(trim(c2.name)) = lower(trim(c1.name)) AND c2.id <> c1.id
+           WHERE c1.id = $2 AND c2.merged_into_id IS NULL
+        ),
+        scoped_props AS (
+          SELECT id FROM crm_properties WHERE landlord_id IN (SELECT id FROM board_companies)
+          UNION
+          SELECT property_id FROM crm_company_properties WHERE company_id IN (SELECT id FROM board_companies)
+        )
+        DELETE FROM crm_property_agents
+         WHERE user_id = $1 AND property_id IN (SELECT id FROM scoped_props)
+      `, [userId, clientCompanyId]);
+      if (!del.rowCount) {
+        return res.status(404).json({ error: "Nothing to remove — this person has no property assignments on this client." });
+      }
+      return res.json({ ok: true, removedPropertyAssignments: del.rowCount });
     }
+
+    const r = await pool.query("DELETE FROM crm_client_team_members WHERE id = $1", [id]);
+    if (r.rowCount === 0) return res.status(404).json({ error: "Team member not found" });
     res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -419,7 +450,7 @@ router.post("/api/client-teams/:clientCompanyId/columns", requireAuth, async (re
     await materialiseDefaultColumnsIfEmpty(pool, req.params.clientCompanyId as string);
     const r = await pool.query(`
       INSERT INTO crm_client_team_columns (client_company_id, name, sort_order, color_key)
-      VALUES ($1, $2, COALESCE($3, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM crm_client_team_columns WHERE client_company_id = $1)), $4)
+      VALUES ($1::varchar, $2::text, COALESCE($3::int, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM crm_client_team_columns WHERE client_company_id = $1::varchar)), $4::text)
       ON CONFLICT (client_company_id, name) DO UPDATE
         SET sort_order = COALESCE(EXCLUDED.sort_order, crm_client_team_columns.sort_order),
             color_key  = COALESCE(EXCLUDED.color_key, crm_client_team_columns.color_key)
@@ -437,7 +468,7 @@ router.post("/api/client-teams/:clientCompanyId/columns", requireAuth, async (re
         const { name, sort_order } = req.body || {};
         const r = await pool.query(`
           INSERT INTO crm_client_team_columns (client_company_id, name, sort_order)
-          VALUES ($1, $2, COALESCE($3, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM crm_client_team_columns WHERE client_company_id = $1)))
+          VALUES ($1::varchar, $2::text, COALESCE($3::int, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM crm_client_team_columns WHERE client_company_id = $1::varchar)))
           ON CONFLICT (client_company_id, name) DO UPDATE
             SET sort_order = COALESCE(EXCLUDED.sort_order, crm_client_team_columns.sort_order)
           RETURNING client_company_id, name, sort_order

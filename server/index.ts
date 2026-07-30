@@ -3323,6 +3323,10 @@ app.use("/api/branding/assets", express.static(
     // stay staff-only via the write allowlist) and the saved dashboard
     // template (read-only layout defaults).
     "/api/turnover", "/api/dashboard-template",
+    // Operator Targeting Briefs on the client's own units — the Letting
+    // Tracker lists these, and the handler scopes the rows (and their target
+    // operators) to the caller's portfolio.
+    "/api/unit-briefs",
   ];
   // Microsoft 365 stays fully blocked for clients (mail/calendar/files all
   // 403) — the client UI must not call it at all; see nav + poller gating.
