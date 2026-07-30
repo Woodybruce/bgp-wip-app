@@ -674,17 +674,28 @@ export default function Dashboard() {
     layoutSaveMutation.mutate({ ...current, widgets: layout, _version: LAYOUT_VERSION });
   }, [layoutSaveMutation, user]);
 
+  // Hide/show must base the hidden list on hiddenPortfolioBoards (what the
+  // UI is actually showing, template fallback included) — basing it on the
+  // user's own (often absent) layout meant a chip click saved the wrong
+  // list: showing one board unhid everything, hiding one re-showed the
+  // template-hidden ones.
   const handleHidePortfolioBoard = useCallback((boardId: string) => {
     const current = (user as any)?.dashboardLayout || {};
-    const hidden = [...(current.hiddenPortfolio || []), boardId];
+    const hidden = Array.from(new Set([...hiddenPortfolioBoards, boardId]));
     layoutSaveMutation.mutate({ ...current, hiddenPortfolio: hidden, _version: LAYOUT_VERSION });
-  }, [layoutSaveMutation, user]);
+  }, [layoutSaveMutation, user, hiddenPortfolioBoards]);
 
   const handleShowPortfolioBoard = useCallback((boardId: string) => {
     const current = (user as any)?.dashboardLayout || {};
-    const hidden = (current.hiddenPortfolio || []).filter((id: string) => id !== boardId);
-    layoutSaveMutation.mutate({ ...current, hiddenPortfolio: hidden, _version: LAYOUT_VERSION });
-  }, [layoutSaveMutation, user]);
+    const hidden = hiddenPortfolioBoards.filter((id: string) => id !== boardId);
+    // Drop the restored board's stale rect so the grid appends it fresh at
+    // the bottom (full width, own row) instead of dumping it onto its old
+    // coordinates on top of whatever now lives there.
+    const portfolio = current.portfolio?.lg
+      ? { ...current.portfolio, lg: current.portfolio.lg.filter((l: any) => l.i !== boardId) }
+      : current.portfolio;
+    layoutSaveMutation.mutate({ ...current, portfolio, hiddenPortfolio: hidden, _version: LAYOUT_VERSION });
+  }, [layoutSaveMutation, user, hiddenPortfolioBoards]);
 
   const handleResetLayout = useCallback(() => {
     layoutSaveMutation.mutate(null as any, {
