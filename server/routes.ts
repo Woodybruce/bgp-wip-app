@@ -4401,9 +4401,22 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   // ---- Operator targeting briefs (per letting tracker unit) ----
 
-  app.get("/api/unit-briefs", requireAuth, async (_req, res) => {
+  app.get("/api/unit-briefs", requireAuth, async (req, res) => {
     try {
       const { unitBriefs, availableUnits, crmProperties, unitTargetOperators } = await import("@shared/schema");
+      // Client logins get their OWN briefs only — this list was firm-wide, so
+      // opening it to the Letting Tracker would have exposed every other
+      // landlord's briefs and target operators.
+      const briefScope = await resolveCompanyScope(req);
+      const scopedPropertyIds = briefScope
+        ? (await pool.query(
+            `SELECT id FROM crm_properties WHERE landlord_id = $1
+             UNION
+             SELECT property_id FROM crm_company_properties WHERE company_id = $1`,
+            [briefScope]
+          )).rows.map((r: any) => r.id)
+        : null;
+      if (scopedPropertyIds && scopedPropertyIds.length === 0) return res.json([]);
       const rows = await db
         .select({
           brief: unitBriefs,
@@ -4413,10 +4426,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         .from(unitBriefs)
         .leftJoin(availableUnits, eq(unitBriefs.unitId, availableUnits.id))
         .leftJoin(crmProperties, eq(unitBriefs.propertyId, crmProperties.id))
+        .where(scopedPropertyIds ? inArray(unitBriefs.propertyId, scopedPropertyIds) : undefined)
         .orderBy(desc(unitBriefs.createdAt));
       // Targets ride along so the Letting Tracker can show each unit's
       // target operators without a per-unit round trip.
-      const allTargets = await db.select().from(unitTargetOperators);
+      // Only the targets belonging to the briefs we're returning — otherwise
+      // a client would still receive every other landlord's target operators.
+      const briefIds = rows.map(r => r.brief.id);
+      const allTargets = briefIds.length
+        ? await db.select().from(unitTargetOperators).where(inArray(unitTargetOperators.briefId, briefIds))
+        : [];
       const targetsByBrief = new Map<string, typeof allTargets>();
       for (const t of allTargets) {
         if (!targetsByBrief.has(t.briefId)) targetsByBrief.set(t.briefId, []);
