@@ -67,10 +67,37 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
     queryKey: ["/api/users"],
     staleTime: 5 * 60_000,
   });
-  const agentOptions = useMemo(
-    () => users.map(u => ({ label: u.name, value: u.id })).sort((a, b) => a.label.localeCompare(b.label)),
-    [users]
-  );
+  // Agent pills offer only the BGP people allocated to this client (the
+  // client-team board, e.g. Landsec's team) — fall back to the full user
+  // list when the unit has no client company or no team is set up yet.
+  const { data: clientTeam = [] } = useQuery<any[]>({
+    queryKey: ["/api/client-teams", clientCompanyId],
+    queryFn: async () => {
+      const r = await fetch(`/api/client-teams/${clientCompanyId}`, { headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!clientCompanyId,
+    staleTime: 60_000,
+  });
+  const agentOptions = useMemo(() => {
+    const teamById = new Map<string, string>();
+    for (const m of clientTeam) {
+      if (m.user_id) teamById.set(String(m.user_id), m.full_name || m.username || "Unknown");
+    }
+    // Keep any already-assigned agent visible even if they're not on the
+    // client team (so existing pills don't render as bare ids).
+    for (const id of (t.agentUserIds || [])) {
+      if (!teamById.has(String(id))) {
+        const u = users.find(x => String(x.id) === String(id));
+        if (u) teamById.set(String(u.id), u.name);
+      }
+    }
+    const pool = teamById.size > 0
+      ? Array.from(teamById.entries()).map(([id, name]) => ({ label: name, value: id }))
+      : users.map(u => ({ label: u.name, value: u.id }));
+    return pool.sort((a, b) => a.label.localeCompare(b.label));
+  }, [clientTeam, users, t.agentUserIds]);
   const { data: clientContacts = [] } = useQuery<any[]>({
     queryKey: ["/api/crm/contacts", "by-company", clientCompanyId],
     queryFn: async () => {

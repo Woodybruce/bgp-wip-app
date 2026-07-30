@@ -43,6 +43,15 @@ import { pool } from "./db";
     `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS agent_user_ids TEXT[]`,
     `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS client_contact_id VARCHAR`,
     `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS comments JSONB`,
+    // Backfill briefs created without a client company (tracker
+    // auto-creates) from the property's landlord, so the targets'
+    // Client-Contact picker has the client's people to offer.
+    `UPDATE unit_briefs ub
+        SET client_company_id = p.landlord_id
+       FROM crm_properties p
+      WHERE p.id = ub.property_id
+        AND ub.client_company_id IS NULL
+        AND p.landlord_id IS NOT NULL`,
     // Diary→viewings sync: provenance + idempotent upsert key for viewings
     // auto-created from Outlook calendar events (see server/viewing-sync.ts).
     `ALTER TABLE unit_viewings ADD COLUMN IF NOT EXISTS source TEXT`,

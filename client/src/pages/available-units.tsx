@@ -1459,7 +1459,7 @@ export default function AvailableUnitsPage() {
                 <TableHead className="w-[56px]">Ref</TableHead>
                 <TableHead className="w-[200px] min-w-[180px]">Property / Unit</TableHead>
                 <TableHead className="w-[130px] min-w-[130px]">Deal Type</TableHead>
-                <TableHead className="w-[150px] min-w-[150px]">Client</TableHead>
+                {!isClientTracker && <TableHead className="w-[150px] min-w-[150px]">Client</TableHead>}
                 <TableHead className="w-[170px] min-w-[170px]">Operator</TableHead>
                 <TableHead className="w-[150px] min-w-[150px]">Category</TableHead>
                 <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>
@@ -1467,10 +1467,8 @@ export default function AvailableUnitsPage() {
                 <TableHead className="w-[140px] min-w-[140px]">Agent</TableHead>
                 <TableHead className="w-[140px] min-w-[140px]">Client Contact</TableHead>
                 <TableHead className="min-w-[200px]">Comments</TableHead>
-                <TableHead className="w-[150px] min-w-[150px]">Team / BGP</TableHead>
                 <TableHead className="w-[130px] min-w-[130px]">Floor Areas</TableHead>
                 <TableHead className="w-[130px] min-w-[130px] text-right">Costs</TableHead>
-                <TableHead className="w-[110px] min-w-[110px]">Class / Cond</TableHead>
                 <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>
                 <TableHead className="w-[100px] min-w-[100px] text-center">Activity</TableHead>
                 {!isClientTracker && <TableHead className="w-[130px] min-w-[130px]">Fee &amp; FA</TableHead>}
@@ -1482,7 +1480,7 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isClientTracker ? 21 : 22} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={isClientTracker ? 18 : 20} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1497,7 +1495,7 @@ export default function AvailableUnitsPage() {
                   // happens via the small + next to the first operator —
                   // no dedicated add row eating vertical space.
                   const unitRowSpan = Math.max(1, unitTargets.length);
-                  const unitClientCompanyId = briefByUnit[u.id]?.clientCompanyId || null;
+                  const unitClientCompanyId = briefByUnit[u.id]?.clientCompanyId || (prop as any)?.landlordId || null;
                   return (
                     <Fragment key={u.id}>
                     <TableRow className={selectedIds.has(u.id) ? "bg-primary/5" : ""} data-testid={`row-unit-${u.id}`}>
@@ -1577,6 +1575,7 @@ export default function AvailableUnitsPage() {
                           />
                         ) : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
+                      {!isClientTracker && (
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[140px]">
                         {deal ? (() => {
                           const isTenantRep = (deal.dealType || "").toLowerCase().includes("tenant rep");
@@ -1594,6 +1593,7 @@ export default function AvailableUnitsPage() {
                           );
                         })() : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
+                      )}
                       {unitTargets.length === 0 ? (
                         <TableCell colSpan={7}>
                           <BrandSearchInput
@@ -1622,26 +1622,6 @@ export default function AvailableUnitsPage() {
                           }
                         />
                       )}
-                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[180px]">
-                        <div className="space-y-1">
-                          {deal ? (
-                            <InlineMultiSelect
-                              value={deal.team || []}
-                              options={CRM_OPTIONS.dealTeam.map(t => ({ label: t, value: t }))}
-                              colorMap={DEAL_TEAM_COLORS}
-                              placeholder="Set team"
-                              onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "team", value: v.length > 0 ? v : null })}
-                            />
-                          ) : <span className="text-xs text-muted-foreground italic">No team</span>}
-                          <InlineMultiSelect
-                            value={Array.isArray(u.agentUserIds) ? u.agentUserIds : []}
-                            options={agentOptions}
-                            onSave={v => inlineUpdate(u.id, "agentUserIds", v)}
-                            placeholder="Set agent"
-                            testId={`inline-agent-${u.id}`}
-                          />
-                        </div>
-                      </TableCell>
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1">
                         <div className="space-y-0.5">
                           {deal ? (
@@ -1734,23 +1714,7 @@ export default function AvailableUnitsPage() {
                           </PopoverContent>
                         </Popover>
                       </TableCell>
-                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[140px]">
-                        <div className="space-y-1">
-                          <InlineLabelSelect
-                            value={u.useClass || ""}
-                            options={USE_CLASSES}
-                            colorMap={ASSET_CLASS_COLORS}
-                            onSave={v => inlineUpdate(u.id, "useClass", v)}
-                            placeholder="Set class"
-                          />
-                          <InlineSelect
-                            value={u.condition || ""}
-                            options={CONDITIONS}
-                            onSave={v => inlineUpdate(u.id, "condition", v)}
-                          />
-                        </div>
-                      </TableCell>
-                      <TableCell>
+                      <TableCell rowSpan={unitRowSpan}>
                         <InlineLabelSelect
                           value={legacyToCode(u.marketingStatus) || "AVA"}
                           options={MARKETING_STATUSES}
@@ -1840,7 +1804,7 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                       )}
-                      <TableCell>
+                      <TableCell rowSpan={unitRowSpan}>
                         <Button
                           variant="ghost"
                           size="sm"
@@ -1852,7 +1816,7 @@ export default function AvailableUnitsPage() {
                           Files
                         </Button>
                       </TableCell>
-                      <TableCell>
+                      <TableCell rowSpan={unitRowSpan}>
                         <Button
                           variant="ghost"
                           size="sm"
@@ -3197,7 +3161,7 @@ function UnitFormDialog({
             <Input type="date" value={form.availableDate} onChange={e => upd("availableDate", e.target.value)} />
           </div>
           <div className="col-span-2">
-            <Label>BGP Contact *</Label>
+            <Label>BGP Contact</Label>
             {/* Same DropdownMenu pattern as the New Deal dialog so the
                 two forms feel like one. Stores agentUserIds (user IDs)
                 rather than names, since the server keyed off IDs. */}
@@ -3386,7 +3350,7 @@ function UnitFormDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={onSubmit} disabled={isPending || !form.unitName || !form.propertyId || !form.dealType || form.agentUserIds.length === 0} title={!form.dealType ? "Pick a deal type" : form.agentUserIds.length === 0 ? "Pick at least one BGP agent" : ""}>
+          <Button onClick={onSubmit} disabled={isPending || !form.unitName || !form.propertyId || !form.dealType} title={!form.dealType ? "Pick a deal type" : ""}>
             {isPending ? "Saving..." : "Save"}
           </Button>
         </DialogFooter>

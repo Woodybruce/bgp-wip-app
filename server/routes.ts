@@ -4540,6 +4540,21 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         createdByUserId: userId,
         createdByName: userName,
       });
+      // Default the client to the property's landlord (e.g. Landsec) —
+      // briefs auto-created from the tracker arrive without one, and the
+      // targets' Client-Contact picker needs it to offer the client's
+      // people (Mark Warne, Jonny Rushton, ...).
+      if (!parsed.clientCompanyId && unit.propertyId) {
+        const briefProp = await storage.getCrmProperty(unit.propertyId);
+        const briefLandlordId = (briefProp as any)?.landlordId;
+        if (briefLandlordId) {
+          parsed.clientCompanyId = briefLandlordId;
+          if (!parsed.clientCompany) {
+            const landlordCo = await storage.getCrmCompany(briefLandlordId);
+            if (landlordCo?.name) parsed.clientCompany = landlordCo.name;
+          }
+        }
+      }
       const [brief] = await db.insert(unitBriefs).values(parsed).returning();
       res.json(brief);
     } catch (err: any) {
