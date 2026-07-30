@@ -20,7 +20,7 @@ export interface BrandPick {
   companyType?: string | null;
 }
 
-export function BrandSearchInput({ value, companyId, onPick, placeholder = "Search brands…", className = "", testId, allowCreate = false }: {
+export function BrandSearchInput({ value, companyId, onPick, placeholder = "Search brands…", className = "", testId, allowCreate = false, iconOnly = false }: {
   value: string;
   companyId?: string | null;
   onPick: (pick: BrandPick) => void;
@@ -28,6 +28,8 @@ export function BrandSearchInput({ value, companyId, onPick, placeholder = "Sear
   className?: string;
   testId?: string;
   allowCreate?: boolean;
+  /** Render just a small + button as the trigger — for tight table cells. */
+  iconOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -84,16 +86,27 @@ export function BrandSearchInput({ value, companyId, onPick, placeholder = "Sear
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button
-          type="button"
-          className={`flex h-8 items-center justify-between gap-1 rounded-md border border-input bg-background px-2 text-xs ring-offset-background hover:bg-muted/40 ${className}`}
-          data-testid={testId || "brand-search-input"}
-        >
-          <span className={`truncate ${value ? "" : "text-muted-foreground"}`}>
-            {value || placeholder}
-          </span>
-          <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-50" />
-        </button>
+        {iconOnly ? (
+          <button
+            type="button"
+            className={`inline-flex items-center justify-center h-5 w-5 rounded border border-dashed border-muted-foreground/40 text-muted-foreground hover:text-foreground hover:border-foreground/60 shrink-0 ${className}`}
+            title={placeholder}
+            data-testid={testId || "brand-search-input"}
+          >
+            <Plus className="h-3 w-3" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={`flex h-8 items-center justify-between gap-1 rounded-md border border-input bg-background px-2 text-xs ring-offset-background hover:bg-muted/40 ${className}`}
+            data-testid={testId || "brand-search-input"}
+          >
+            <span className={`truncate ${value ? "" : "text-muted-foreground"}`}>
+              {value || placeholder}
+            </span>
+            <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-50" />
+          </button>
+        )}
       </PopoverTrigger>
       <PopoverContent className="p-0 w-[320px]" align="start">
         <Command shouldFilter={false}>

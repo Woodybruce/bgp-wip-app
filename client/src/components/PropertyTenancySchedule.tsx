@@ -192,6 +192,7 @@ const BAND_COLOURS: Record<string, string> = {
 // crm_deals via the existing mirror.
 const SCHEDULE_STATUSES = [
   "Vacant",         // available, no marketing activity yet
+  "Opportunity",    // a unit worth pursuing — schedule-only flag, doesn't mirror
   "In Negotiation", // letting agent in talks
   "Under Offer",    // offer accepted, pre-solicitors
   "Occupied",       // tenant in possession, lease alive
@@ -202,6 +203,7 @@ const SCHEDULE_STATUSES = [
 const SCHEDULE_STATUS_COLOURS: Record<string, string> = {
   "Vacant":         "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
   "Void":           "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300", // Landsec feed
+  "Opportunity":    "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900 dark:text-fuchsia-300",
   "In Negotiation": "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
   "Under Offer":    "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300",
   "Occupied":       "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",

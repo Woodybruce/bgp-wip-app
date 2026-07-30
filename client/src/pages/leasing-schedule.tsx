@@ -693,13 +693,15 @@ function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: st
   // Only Vacant / Under Offer / In Negotiation mirror onto the Letting
   // Tracker (they're the actively-let units); Occupied / Trading /
   // Lease Event / Archived are existing-tenant states and don't push a
-  // unit onto the marketing tracker.
-  const statuses = ["Occupied", "Trading", "Lease Event", "Vacant", "Under Offer", "In Negotiation", "Archived"];
+  // unit onto the marketing tracker. Opportunity is a schedule-only flag
+  // (a unit worth pursuing) — it shows on the schedule and doesn't mirror.
+  const statuses = ["Occupied", "Trading", "Lease Event", "Vacant", "Opportunity", "Under Offer", "In Negotiation", "Archived"];
   const colors: Record<string, string> = {
     "Occupied": "border-emerald-300 text-emerald-700 bg-emerald-50",
     "Trading": "border-emerald-300 text-emerald-700 bg-emerald-50",
     "Lease Event": "border-orange-300 text-orange-700 bg-orange-50",
     "Vacant": "border-gray-300 text-gray-500 bg-gray-50",
+    "Opportunity": "border-violet-300 text-violet-700 bg-violet-50",
     "Under Offer": "border-blue-300 text-blue-700 bg-blue-50",
     "In Negotiation": "border-amber-300 text-amber-700 bg-amber-50",
     "Archived": "border-gray-300 text-gray-400 bg-gray-100 line-through",
@@ -1223,6 +1225,7 @@ function UnitEditDialog({ unit, open, onClose, onSave }: {
               <SelectContent>
                 <SelectItem value="Occupied">Occupied</SelectItem>
                 <SelectItem value="Vacant">Vacant</SelectItem>
+                <SelectItem value="Opportunity">Opportunity</SelectItem>
                 <SelectItem value="Under Offer">Under Offer</SelectItem>
                 <SelectItem value="In Negotiation">In Negotiation</SelectItem>
                 <SelectItem value="Archived">Archived</SelectItem>
@@ -1907,6 +1910,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
             <SelectItem value="all">All Statuses</SelectItem>
             <SelectItem value="Occupied">Occupied</SelectItem>
             <SelectItem value="Vacant">Vacant</SelectItem>
+            <SelectItem value="Opportunity">Opportunity</SelectItem>
             <SelectItem value="Under Offer">Under Offer</SelectItem>
             <SelectItem value="In Negotiation">In Negotiation</SelectItem>
             <SelectItem value="Archived">Archived</SelectItem>
@@ -2157,6 +2161,7 @@ function AddUnitForm({ propertyId, onSave }: { propertyId: string; onSave: (data
             <SelectContent>
               <SelectItem value="Occupied">Occupied</SelectItem>
               <SelectItem value="Vacant">Vacant</SelectItem>
+              <SelectItem value="Opportunity">Opportunity</SelectItem>
               <SelectItem value="Under Offer">Under Offer</SelectItem>
             </SelectContent>
           </Select>
@@ -3079,6 +3084,7 @@ function PropAddUnitForm({ propertyId, onSave, onCancel, isPending }: {
             className="w-full h-7 text-xs border rounded px-2 bg-background" data-testid="select-new-unit-status">
             <option value="Occupied">Occupied</option>
             <option value="Vacant">Vacant</option>
+            <option value="Opportunity">Opportunity</option>
             <option value="Under Offer">Under Offer</option>
             <option value="In Negotiation">In Negotiation</option>
           </select>
