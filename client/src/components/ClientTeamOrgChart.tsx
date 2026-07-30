@@ -190,10 +190,12 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   // a freshly added member or a deleted-column orphan is never invisible.
   const columnList = useMemo<ColumnDef[]>(() => {
     let base = [...columns].sort((a, b) => a.sort_order - b.sort_order);
-    // Hide internal-only columns from clients (bench = people not on the
-    // account). Unassigned is a staff catch-all, also hidden from clients.
+    // Hide internal-only columns from clients (bench = people deliberately
+    // parked off the account). Unassigned members still render for clients
+    // — under a neutral "Team" heading (relabelled below) — so the chart
+    // never silently loses people ("12 team members" showing 8).
     if (readOnly) base = base.filter(c => !/bench|unassigned/i.test(c.name));
-    if (!readOnly && !base.find(c => c.name === "Unassigned")) {
+    if (!base.find(c => c.name === "Unassigned")) {
       base.push({ name: "Unassigned", sort_order: 999, color_key: "slate" });
     }
     return base;
@@ -206,10 +208,9 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     const map: Record<string, TeamMember[]> = {};
     for (const c of columnList) map[c.name] = [];
     for (const m of members) {
+      // Clients never see bench members — that's the one intentional hide.
+      if (readOnly && m.team_group && /bench/i.test(m.team_group)) continue;
       const key = m.team_group && valid.has(m.team_group) ? m.team_group : "Unassigned";
-      // In read-only (client) view the Unassigned/bench columns are hidden,
-      // so drop orphans rather than pushing into a bucket that doesn't exist.
-      if (!map[key]) { if (readOnly) continue; map[key] = []; }
       map[key].push(m);
     }
     for (const k of Object.keys(map)) {
@@ -217,6 +218,14 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     }
     return map;
   }, [members, columnList, readOnly]);
+
+  // Count what's actually rendered — the badge lied when hidden buckets
+  // dropped members ("12 team members" over 8 cards).
+  const visibleMemberCount = useMemo(() => {
+    const ids = new Set<string>();
+    for (const list of Object.values(byColumn)) for (const m of list) ids.add(m.user_id);
+    return ids.size;
+  }, [byColumn]);
 
   // Pinned lead wins; otherwise fall back to highest property_count as a
   // hint until the user nominates someone explicitly.
@@ -349,7 +358,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     <div className="space-y-3" data-testid="client-team-orgchart">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
-          <Badge variant="secondary" className="text-xs">{new Set(members.map(m => m.user_id)).size} team member{new Set(members.map(m => m.user_id)).size === 1 ? "" : "s"}</Badge>
+          <Badge variant="secondary" className="text-xs">{visibleMemberCount} team member{visibleMemberCount === 1 ? "" : "s"}</Badge>
           {lead ? (
             <span className="text-[11px] text-muted-foreground flex items-center gap-1">
               <Star className="w-3 h-3 text-amber-500" fill="currentColor" />
@@ -447,7 +456,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
                           data-testid={`input-rename-column-${col.name}`}
                         />
                       ) : (
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground truncate">{col.name}</span>
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground truncate">{readOnly && col.name === "Unassigned" ? "Team" : col.name}</span>
                       )}
                     </div>
                     <div className="flex items-center gap-1">
