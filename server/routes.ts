@@ -1135,10 +1135,23 @@ export async function registerRoutes(
       const now = new Date();
       const end = new Date(now);
       end.setDate(end.getDate() + days);
-      const result = await pool.query(
-        `SELECT * FROM team_events WHERE start_time >= $1 AND start_time <= $2 ORDER BY start_time`,
-        [now.toISOString(), end.toISOString()]
-      );
+      // Client logins (and staff in client view) only see their own
+      // company's events — the client-events-sync rows plus any manual
+      // team event tagged with their company name. BGP's wider diary
+      // never crosses over.
+      const teScope = await resolveCompanyScope(req);
+      const result = teScope
+        ? await pool.query(
+            `SELECT * FROM team_events
+              WHERE start_time >= $1 AND start_time <= $2
+                AND company_name = (SELECT name FROM crm_companies WHERE id = $3)
+              ORDER BY start_time`,
+            [now.toISOString(), end.toISOString(), teScope]
+          )
+        : await pool.query(
+            `SELECT * FROM team_events WHERE start_time >= $1 AND start_time <= $2 ORDER BY start_time`,
+            [now.toISOString(), end.toISOString()]
+          );
       res.json(result.rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch team events" });
@@ -4540,6 +4553,21 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         createdByUserId: userId,
         createdByName: userName,
       });
+      // Default the client to the property's landlord (e.g. Landsec) —
+      // briefs auto-created from the tracker arrive without one, and the
+      // targets' Client-Contact picker needs it to offer the client's
+      // people (Mark Warne, Jonny Rushton, ...).
+      if (!parsed.clientCompanyId && unit.propertyId) {
+        const briefProp = await storage.getCrmProperty(unit.propertyId);
+        const briefLandlordId = (briefProp as any)?.landlordId;
+        if (briefLandlordId) {
+          parsed.clientCompanyId = briefLandlordId;
+          if (!parsed.clientCompany) {
+            const landlordCo = await storage.getCrmCompany(briefLandlordId);
+            if (landlordCo?.name) parsed.clientCompany = landlordCo.name;
+          }
+        }
+      }
       const [brief] = await db.insert(unitBriefs).values(parsed).returning();
       res.json(brief);
     } catch (err: any) {

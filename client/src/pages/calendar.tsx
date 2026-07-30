@@ -1314,6 +1314,7 @@ export default function Calendar() {
   const [teamFilter, setTeamFilter] = useState<string | null>(null);
   const [activeEventType, setActiveEventType] = useState<string | null>(null);
   const userTeam = currentUser?.team || "All";
+  const isClientViewer = (currentUser as any)?.role === "Client" || !!(currentUser as any)?.companyScopeId;
   const isClientTeam = !!userTeam && !INTERNAL_BGP_TEAMS.has(userTeam) && userTeam !== "All";
   const effectiveTeamFilter = isClientTeam ? userTeam : (teamFilter ?? (TEAMS.includes(userTeam) ? userTeam : "All"));
   // A selected CLIENT team (e.g. "Landsec") is an event-attribution filter, not
@@ -1580,7 +1581,7 @@ export default function Calendar() {
         </div>
 
         <div className="flex-1 flex flex-col min-w-0 bg-background">
-          {!status?.connected && !teamEventsRaw ? (
+          {!status?.connected && !teamEventsRaw && !isClientViewer ? (
             <ConnectPrompt />
           ) : eventsLoading ? (
             <div className="p-4 space-y-3 flex-1">{[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-16 w-full" />)}</div>

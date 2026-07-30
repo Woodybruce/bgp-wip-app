@@ -410,10 +410,13 @@ export function AppSidebar() {
             )}
           storageKey="ai"
         />
-        {!isClientUser && (<>
         <SidebarSeparator />
-        <NavSection label="Microsoft 365" items={microsoftNav} storageKey="ms" defaultOpen={false} />
-        </>)}
+        <NavSection
+          label="Microsoft 365"
+          items={isClientUser ? microsoftNav.filter(i => i.url !== "/mail") : microsoftNav}
+          storageKey="ms"
+          defaultOpen={false}
+        />
         <SidebarSeparator />
         {user?.isAdmin && (
           <>
@@ -614,7 +617,7 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
   // Parity with desktop: Reporting hidden everywhere now, and client logins
   // also lose the BGP-internal items (People & HR, My Card, WIP).
   const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
-  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/sharepoint", "/calendar", "/mail", "/property-intelligence", "/cad-measure"];
+  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/mail", "/property-intelligence", "/cad-measure"];
   const items = (user?.role === "Client" || !!(user as any)?.companyScopeId)
     ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
     : filteredByAdmin.filter(i => i.url !== "/reporting" || isLandsec);
