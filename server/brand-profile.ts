@@ -1537,12 +1537,18 @@ router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Requ
     //    Loop the top matches so we can skip rows whose local file has
     //    been wiped on a deploy without falling through to 204 when
     //    other valid images are sitting right behind them.
+    // The banner renders this endpoint NEXT TO a gallery image — the client
+    // passes ?exclude=<imageId> for the pane it's already showing so the
+    // fallback can't serve the same photo twice side by side ("images are
+    // in here twice", Woody).
+    const excludeId = typeof req.query.exclude === "string" && req.query.exclude ? req.query.exclude : null;
     const fb = await pool.query(
       `SELECT i.local_path, i.mime_type
          FROM image_studio_images i
          JOIN crm_companies c ON LOWER(i.brand_name) = LOWER(c.name)
         WHERE c.id = $1
           AND 'brand-auto' = ANY(i.tags)
+          AND ($2::text IS NULL OR i.id::text <> $2::text)
         ORDER BY
           CASE
             WHEN 'landlord-website' = ANY(i.tags) THEN 1
@@ -1554,7 +1560,7 @@ router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Requ
           END,
           i.created_at DESC
         LIMIT 8`,
-      [companyId]
+      [companyId, excludeId]
     );
     if (fb.rows.length > 0) {
       // readPersistedImage falls back to a DB-stored copy when the local

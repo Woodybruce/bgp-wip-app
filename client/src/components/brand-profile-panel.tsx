@@ -1519,8 +1519,18 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 more get ignored. */}
             {(() => {
               const hasStreetView = stores.some((s: any) => typeof s.lat === "number" && typeof s.lng === "number");
+              // Dedupe pinned heroes by content — the gallery healing sweep
+              // deliberately keeps hero pins, so two pins of the same photo
+              // would otherwise render side by side.
+              const seenHero = new Set<string>();
               const heroes = (data.images || [])
                 .filter((i: any) => Array.isArray(i.tags) && i.tags.includes("brand-hero"))
+                .filter((i: any) => {
+                  const key = i.thumbnail_data || i.id;
+                  if (seenHero.has(key)) return false;
+                  seenHero.add(key);
+                  return true;
+                })
                 .slice(0, 2);
               const srcFor = (img: any) => img.thumbnail_data
                 ? (img.thumbnail_data.startsWith("data:")
@@ -1551,7 +1561,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     {hasStreetView && (
                       <div className="overflow-hidden rounded-md bg-muted/40">
                         <img
-                          src={`/api/brand/${companyId}/flagship-image`}
+                          src={`/api/brand/${companyId}/flagship-image?exclude=${encodeURIComponent(heroes[0].id)}`}
                           alt="Flagship store street view"
                           className="w-full h-full object-cover"
                           onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
@@ -1570,7 +1580,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   {hasStreetView && (
                     <div className="overflow-hidden rounded-md bg-muted/40">
                       <img
-                        src={`/api/brand/${companyId}/flagship-image`}
+                        src={`/api/brand/${companyId}/flagship-image${firstImg ? `?exclude=${encodeURIComponent(firstImg.id)}` : ""}`}
                         alt="Flagship store street view"
                         className="w-full h-full object-cover"
                         onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
@@ -4467,11 +4477,19 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         ? "bg-rose-500"
         : "bg-zinc-300";
   const topContacts = (data.contacts || []).slice(0, 5);
+  // On the full-width landlord/brand layout the sidebar cards render as
+  // stacked full-width boards — pair the related ones half-width instead
+  // (Compliance+Covenant, Key contacts+Files, News+Instagram; Woody,
+  // 2026-07-30). The narrow sticky sidebar keeps the single column.
+  const pairCls = (isLandlord || isBrand)
+    ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start"
+    : "space-y-3";
 
   return (
     <aside className={(isLandlord || isBrand)
       ? "w-full shrink-0 space-y-3 self-start"
       : "w-full md:w-[420px] lg:w-[480px] shrink-0 space-y-3 md:sticky md:top-3 self-start"}>
+      <div className={pairCls}>
       {/* Compliance / AML board — gates every downstream check on knowing
           the brand's actual UK trading entity. Scraper auto-fires on
           first load (from the parent useEffect); the user can overwrite
@@ -4502,14 +4520,30 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         </CardContent>
       </Card>
       )}
+      </div>
 
+      <div className={pairCls}>
       {/* Key contacts */}
       <SidebarKeyContacts data={data} companyId={companyId} topContacts={topContacts} />
+
+      {/* Files / Folders + scoped chat (moved up to pair with Key
+          contacts). Wrapped so the block's button + card stay one
+          grid cell. */}
+      <div className="space-y-3">
+        <LandlordSidebarBlock
+          companyId={companyId}
+          companyName={c.name}
+          folderTeams={c.folder_teams}
+          sharepointFolderUrl={c.sharepoint_folder_url}
+        />
+      </div>
+      </div>
 
       {/* BGP relationship card removed — it duplicated the Key contacts card
           above, the Deal ledger zone and the header's Tracked-brand badge.
           Team membership is now edited in Zone 4's Coverage row (BgpTeamMenu). */}
 
+      <div className={pairCls}>
       {/* News & Media */}
       {data.news && data.news.length > 0 && (() => {
         const newsSourceColor = (name: string | null): string => {
@@ -4710,6 +4744,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       })()}
 
       <BrandInstagramCard companyId={companyId} />
+      </div>
 
       {/* Menu / Best-sellers — F&B brands get menu items, retailers
           get best-sellers. Hidden for landlords (no consumer product). */}
@@ -4724,19 +4759,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         />
       )}
 
-      {/* Landlord-only sidebar block — Chat shortcut, Files / Folders
-          (with Set Up Folders dialog), reusing the property page's
-          components. Order mirrors the property sidebar in the
-          Bluewater screenshot. */}
-      {/* Files / Folders + scoped chat — now shown for EVERY company
-          (brands + landlords), so the folder toolkit is identical on
-          every company profile, not landlords-only. */}
-      <LandlordSidebarBlock
-        companyId={companyId}
-        companyName={c.name}
-        folderTeams={c.folder_teams}
-        sharepointFolderUrl={c.sharepoint_folder_url}
-      />
+      {/* Files / Folders block moved up — paired with Key contacts. */}
 
       {/* BGP Team — lives in the sidebar next to the Gallery (landlords
           only) so the right column fills and the page stays aligned. */}
