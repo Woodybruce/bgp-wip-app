@@ -23,6 +23,7 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM unit_target_operators WHERE brief_id IN (SELECT id FROM unit_briefs WHERE title LIKE 'QA Brief%');
   DELETE FROM unit_briefs WHERE title LIKE 'QA Brief%';
   DELETE FROM image_studio_images WHERE file_name = 'qa-unit-photo.jpg';
+  DELETE FROM team_events WHERE title LIKE 'QA-CAL-%' OR title LIKE 'QA Landsec brainstorm' OR title LIKE 'QA Other Client review';
 " >/dev/null 2>&1 || echo "[qa] (cleanup skipped — no local psql)"
 
 # 3. Run the round.

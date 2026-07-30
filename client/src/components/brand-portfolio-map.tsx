@@ -38,7 +38,11 @@ export function BrandPortfolioMap({
   alwaysRender = false,
 }: {
   stores: Store[];
-  height?: number;
+  // Pixel height, or "100%" to fill a flex/grid parent (dashboard widget).
+  // NB callers used to pass a huge number (9999) to mean "fill" — that made
+  // Leaflet initialise ~9999px tall, so fitBounds centred the map thousands
+  // of pixels below the visible slice and the widget looked blank.
+  height?: number | string;
   onSelect?: (s: Store) => void;
   alwaysRender?: boolean;     // landlord-profile flag — keep map up even with 0 markers
 }) {
@@ -125,6 +129,31 @@ export function BrandPortfolioMap({
     }
     mapInstance.current.fitBounds(bounds, { padding: [16, 16], maxZoom: 10 });
   }, [stores, onSelect]);
+
+  // The dashboard renders this inside a resizable grid widget, so the
+  // container is often 0-height (or the wrong height) at init and changes
+  // afterwards. Leaflet caches its size, so without invalidateSize the tiles
+  // and centring stay wrong and the panel reads as blank.
+  useEffect(() => {
+    const el = mapRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let frame = 0;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const map = mapInstance.current;
+        if (!map) return;
+        map.invalidateSize();
+        // Re-fit so the pins stay framed at the new size.
+        const pts = stores
+          .filter(s => typeof s.lat === "number" && typeof s.lng === "number" && Number.isFinite(s.lat) && Number.isFinite(s.lng))
+          .map(s => [s.lat!, s.lng!] as [number, number]);
+        if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [16, 16], maxZoom: 10 });
+      });
+    });
+    ro.observe(el);
+    return () => { cancelAnimationFrame(frame); ro.disconnect(); };
+  }, [stores]);
 
   useEffect(() => {
     return () => {

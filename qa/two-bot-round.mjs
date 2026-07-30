@@ -259,6 +259,35 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // 4d. Calendar team pills: picking a CLIENT team must filter the board to
+  // that client's events. It used to filter BGP staff by users.team, which no
+  // client team matches, so clicking "Landsec" did nothing / emptied it.
+  await step(page, p, 'calendar-client-team-filter', async () => {
+    const mine = `QA-CAL-MINE-R${ROUND}`, other = `QA-CAL-OTHER-R${ROUND}`;
+    await page.evaluate(async ([a, bb]) => {
+      const h = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      for (const [title, company] of [[a, 'Landsec'], [bb, 'Hammerson']]) {
+        await fetch('/api/team-events', { method: 'POST', credentials: 'include', headers: h,
+          body: JSON.stringify({ title, event_type: 'Meetings', company_name: company,
+            start_time: new Date(Date.now() + 2 * 36e5).toISOString(),
+            end_time: new Date(Date.now() + 3 * 36e5).toISOString() }) }).catch(() => {});
+      }
+    }, [mine, other]);
+    await page.goto(`${BASE}/calendar`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(4000);
+    const chip = page.locator('[data-testid="team-pill-landsec"]');
+    if (!(await chip.count())) throw new Error('no Landsec team pill on the calendar');
+    const seenBefore = await page.getByText(other, { exact: false }).count();
+    await chip.click();
+    await page.waitForTimeout(3500);
+    const mineAfter = await page.getByText(mine, { exact: false }).count();
+    const otherAfter = await page.getByText(other, { exact: false }).count();
+    // Only assert the exclusion when the control event was actually on the board.
+    if (seenBefore && otherAfter) throw new Error("another client's event still shown after selecting the Landsec team");
+    if (!mineAfter) throw new Error('Landsec event missing after selecting the Landsec team');
+  });
+
   // 5. Deal board (kanban) renders its pipeline columns without a crash.
   await step(page, p, 'deal-board-render', async () => {
     await page.goto(`${BASE}/deals`);
