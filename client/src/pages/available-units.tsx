@@ -1501,7 +1501,6 @@ export default function AvailableUnitsPage() {
                 <TableHead className="w-[130px] min-w-[130px] text-right">Costs</TableHead>
                 <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>
                 <TableHead className="w-[100px] min-w-[100px] text-center">Activity</TableHead>
-                {!isClientTracker && <TableHead className="w-[130px] min-w-[130px]">Fee &amp; FA</TableHead>}
                 <TableHead className="w-[90px] min-w-[90px]">Files</TableHead>
                 <TableHead className="w-[90px] min-w-[90px]">Brief</TableHead>
                 <TableHead className="w-[100px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
@@ -1510,7 +1509,7 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isClientTracker ? 18 : 20} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={isClientTracker ? 18 : 19} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1781,59 +1780,6 @@ export default function AvailableUnitsPage() {
                           </Button>
                         </div>
                       </TableCell>
-                      {!isClientTracker && (
-                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[150px]">
-                        <div className="space-y-0.5">
-                          <InlineNumber
-                            value={u.fee}
-                            onSave={v => inlineUpdate(u.id, "fee", v)}
-                            placeholder="—"
-                            prefix="£"
-                          />
-                          {deal ? (
-                            deal.feeAgreementUrl ? (
-                              <div className="flex items-center gap-1">
-                                <a
-                                  href={deal.feeAgreementUrl.startsWith("http") ? deal.feeAgreementUrl : `https://${deal.feeAgreementUrl}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 text-[11px] text-green-700 hover:underline"
-                                  title="Open fee agreement"
-                                >
-                                  <FileBadge className="h-3 w-3" />
-                                  FA signed
-                                </a>
-                                <button
-                                  className="text-[10px] text-muted-foreground hover:text-foreground"
-                                  title="Change URL"
-                                  onClick={() => {
-                                    const url = window.prompt("Fee agreement URL:", deal.feeAgreementUrl || "");
-                                    if (url !== null) dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreementUrl", value: url || null });
-                                  }}
-                                >✎</button>
-                              </div>
-                            ) : (
-                              <button
-                                className="inline-flex items-center gap-1 text-[11px] text-red-600 hover:text-red-800"
-                                title="No fee agreement on file — click to add link"
-                                onClick={() => {
-                                  const url = window.prompt("Paste fee agreement URL (SharePoint / OneDrive link):");
-                                  if (url) {
-                                    dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreementUrl", value: url });
-                                    dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreement", value: "YES" });
-                                  }
-                                }}
-                              >
-                                <AlertTriangle className="h-3 w-3" />
-                                FA missing
-                              </button>
-                            )
-                          ) : (
-                            <span className="text-[10px] text-muted-foreground italic">FA n/a</span>
-                          )}
-                        </div>
-                      </TableCell>
-                      )}
                       <TableCell rowSpan={unitRowSpan}>
                         <Button
                           variant="ghost"
