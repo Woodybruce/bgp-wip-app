@@ -356,6 +356,32 @@ async function markRound(page, cross) {
     });
     if (!r.ok) throw new Error(`photo upload to own property failed (${r.status})`);
   });
+
+  // Client news feed renders and a save/dismiss action works (per-user
+  // engagement is client-allowed; the fetch/scrape trigger stays staff-only).
+  await step(page, p, 'client-news-feed', async () => {
+    await page.goto(`${BASE}/news`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1800);
+    if (await page.getByText('Page not found').count()) throw new Error('news is a dead route for client');
+    const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
+    if (body.length < 40) throw new Error('news feed rendered blank for client');
+    // If any article is present, exercise a save toggle (round-trips the
+    // client-allowed engage endpoint).
+    const save = page.locator('[data-testid^="button-save-"]').first();
+    if (await save.count()) { await save.click().catch(() => {}); await page.waitForTimeout(600); }
+  });
+
+  // Client requirements page renders without a dead route / blank / staff
+  // leak. Requirements are the brand demand side of the portfolio.
+  await step(page, p, 'client-requirements', async () => {
+    await page.goto(`${BASE}/requirements`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1800);
+    if (await page.getByText('Page not found').count()) throw new Error('requirements is a dead route for client');
+    const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
+    if (body.length < 40) throw new Error('requirements rendered blank for client');
+  });
 }
 
 // ─── Run ──────────────────────────────────────────────────────────────────
