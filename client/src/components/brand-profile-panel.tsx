@@ -4164,7 +4164,32 @@ function LandlordSidebarBlock({
   sharepointFolderUrl: string | null | undefined;
 }) {
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [clientFoldersBusy, setClientFoldersBusy] = useState(false);
+  const { toast: sbToast } = useToast();
+  const { data: sbUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  // SharePoint folder creation is a BGP-staff action (M365 is sealed for
+  // clients), so only staff see the "{Client} property tree" button.
+  const sbIsStaff = !!sbUser && sbUser.role !== "Client" && !sbUser.companyScopeId;
   const [, navigate] = useLocation();
+  // Create a top-level "{Client}" folder in the BGP share drive with a
+  // per-property subfolder tree for every property this client owns. Runs
+  // against live SharePoint, so it needs an M365-connected session.
+  const setUpClientFolders = async () => {
+    if (!window.confirm(`Create a "${companyName}" folder in the BGP share drive with a folder tree for each of their properties?`)) return;
+    setClientFoldersBusy(true);
+    try {
+      const res = await apiRequest("POST", "/api/microsoft/client-folders", { companyId });
+      const data = await res.json();
+      sbToast({
+        title: "Folders created",
+        description: `${companyName}: ${data.properties} propert${data.properties === 1 ? "y" : "ies"}, ${data.created} folders created${data.errors ? `, ${data.errors} errors` : ""}.`,
+      });
+    } catch (e: any) {
+      sbToast({ title: "Folder setup failed", description: e?.message || "Not connected to Microsoft 365?", variant: "destructive" });
+    } finally {
+      setClientFoldersBusy(false);
+    }
+  };
   // Open (or reuse — the backend dedupes one AI thread per entity) a chat
   // scoped to this landlord, so ChatBGP actually knows who we're talking
   // about instead of landing on an empty generic chat.
@@ -4203,14 +4228,29 @@ function LandlordSidebarBlock({
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
             <FileText className="w-3.5 h-3.5" /> Files
           </CardTitle>
-          <button
-            type="button"
-            onClick={() => setFolderDialogOpen(true)}
-            className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
-            data-testid="button-setup-landlord-folders"
-          >
-            <FolderTree className="w-3 h-3" /> Set Up Folders
-          </button>
+          <div className="flex items-center gap-1.5">
+            {sbIsStaff && (
+            <button
+              type="button"
+              onClick={setUpClientFolders}
+              disabled={clientFoldersBusy}
+              className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1 disabled:opacity-60"
+              title={`Create a ${companyName} folder tree for every property`}
+              data-testid="button-setup-client-property-folders"
+            >
+              {clientFoldersBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <FolderTree className="w-3 h-3" />}
+              {companyName} property tree
+            </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setFolderDialogOpen(true)}
+              className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+              data-testid="button-setup-landlord-folders"
+            >
+              <FolderTree className="w-3 h-3" /> Set Up Folders
+            </button>
+          </div>
         </CardHeader>
         <CardContent className="p-3 pt-0">
           <PropertyFoldersPanel

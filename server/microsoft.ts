@@ -2468,6 +2468,90 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     }
   });
 
+  // Client folder tree — a top-level folder named after the client (e.g.
+  // "Landsec") under the BGP share drive, with a per-property subfolder tree
+  // for every property that client owns. Woody, 2026-07: "Set up a new folder
+  // in our share drive as landsec … folder trees in there for all of their
+  // properties." Reuses createFolderByPath + the retail/leasing template.
+  app.post("/api/microsoft/client-folders", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const { companyId } = req.body || {};
+      if (!companyId) return res.status(400).json({ message: "companyId is required" });
+
+      // Resolve the client and every property they own (landlord row +
+      // linked company-property rows), across same-named duplicate company
+      // records so we don't miss a property hung off a second "Landsec" row.
+      const companyQ = await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId]);
+      if (!companyQ.rows[0]) return res.status(404).json({ message: "Company not found" });
+      const companyName = String(companyQ.rows[0].name).trim().replace(/[\/\\<>:"|?*]/g, "_");
+
+      const propsQ = await pool.query(`
+        WITH board AS (
+          SELECT id FROM crm_companies WHERE id = $1
+          UNION
+          SELECT c2.id FROM crm_companies c1 JOIN crm_companies c2
+            ON lower(trim(c2.name)) = lower(trim(c1.name)) AND c2.id <> c1.id
+           WHERE c1.id = $1 AND c2.merged_into_id IS NULL
+        )
+        SELECT DISTINCT p.name FROM crm_properties p WHERE p.landlord_id IN (SELECT id FROM board)
+        UNION
+        SELECT DISTINCT p.name FROM crm_company_properties cp
+          JOIN crm_properties p ON p.id = cp.property_id
+         WHERE cp.company_id IN (SELECT id FROM board)
+      `, [companyId]);
+      const properties = propsQ.rows
+        .map((r: any) => String(r.name || "").trim().replace(/[\/\\<>:"|?*]/g, "_"))
+        .filter((n: string) => n.length > 0);
+
+      const spInfo = await getSharePointDriveId(token);
+      if (!spInfo) return res.status(404).json({ message: "Could not find BGP SharePoint site" });
+
+      // Top-level client folder under the share drive root.
+      const clientRoot = `${SHAREPOINT_ROOT_FOLDER}/${companyName}`;
+      const rootResult = await createFolderByPath(token, spInfo.driveId, SHAREPOINT_ROOT_FOLDER, companyName);
+      if (!rootResult.success) {
+        return res.status(500).json({ message: `Failed to create ${companyName} folder: ${rootResult.error}` });
+      }
+
+      // Per-property tree — the retail/leasing template (best fit for
+      // shopping-centre lettings). Toggle a different template here if needed.
+      const propertyTree = TEAM_FOLDER_TREES["London Retail"] || TEAM_FOLDER_TREES["London F&B"] || [];
+      const results: { path: string; success: boolean; error?: string }[] = [];
+
+      for (const propertyName of properties) {
+        const propertyRoot = `${clientRoot}/${propertyName}`;
+        const propRes = await createFolderByPath(token, spInfo.driveId, clientRoot, propertyName);
+        results.push({ path: propertyRoot, success: propRes.success, error: propRes.error });
+        if (!propRes.success) continue;
+        for (const subPath of propertyTree) {
+          const parts = subPath.split("/");
+          const folderName = parts[parts.length - 1];
+          const parentParts = parts.slice(0, -1);
+          const parentPath = parentParts.length > 0 ? `${propertyRoot}/${parentParts.join("/")}` : propertyRoot;
+          const sub = await createFolderByPath(token, spInfo.driveId, parentPath, folderName);
+          results.push({ path: `${propertyRoot}/${subPath}`, success: sub.success, error: sub.error });
+        }
+      }
+
+      res.json({
+        companyName,
+        rootPath: clientRoot,
+        properties: properties.length,
+        totalFolders: results.length + 1,
+        created: results.filter(r => r.success).length + 1,
+        errors: results.filter(r => !r.success).length,
+        details: results,
+      });
+    } catch (err: any) {
+      console.error("Client folders error:", err);
+      res.status(500).json({ message: "Failed to create client folder structure" });
+    }
+  });
+
   app.post("/api/microsoft/team-folders/setup", async (req: Request, res: Response) => {
     const token = await getValidMsToken(req);
     if (!token) {
