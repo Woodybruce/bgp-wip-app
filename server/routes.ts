@@ -1135,10 +1135,23 @@ export async function registerRoutes(
       const now = new Date();
       const end = new Date(now);
       end.setDate(end.getDate() + days);
-      const result = await pool.query(
-        `SELECT * FROM team_events WHERE start_time >= $1 AND start_time <= $2 ORDER BY start_time`,
-        [now.toISOString(), end.toISOString()]
-      );
+      // Client logins (and staff in client view) only see their own
+      // company's events — the client-events-sync rows plus any manual
+      // team event tagged with their company name. BGP's wider diary
+      // never crosses over.
+      const teScope = await resolveCompanyScope(req);
+      const result = teScope
+        ? await pool.query(
+            `SELECT * FROM team_events
+              WHERE start_time >= $1 AND start_time <= $2
+                AND company_name = (SELECT name FROM crm_companies WHERE id = $3)
+              ORDER BY start_time`,
+            [now.toISOString(), end.toISOString(), teScope]
+          )
+        : await pool.query(
+            `SELECT * FROM team_events WHERE start_time >= $1 AND start_time <= $2 ORDER BY start_time`,
+            [now.toISOString(), end.toISOString()]
+          );
       res.json(result.rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch team events" });

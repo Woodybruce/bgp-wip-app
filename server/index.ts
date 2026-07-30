@@ -2858,6 +2858,7 @@ import { registerPropertyBrochureRoutes } from "./property-brochures";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
 import clientTeamsRouter from "./client-teams";
+import clientSharepointRouter from "./client-sharepoint";
 import turnoverRouter from "./turnover";
 import { serveStatic } from "./static";
 import { registerEmailProcessorRoutes, startEmailProcessor } from "./email-processor";
@@ -3536,6 +3537,7 @@ app.use("/api/branding/assets", express.static(
   app.use(leasingScheduleRouter);
   app.use(tenancyScheduleRouter);
   app.use(clientTeamsRouter);
+  app.use(clientSharepointRouter);
   app.use(turnoverRouter);
   app.use(sanctionsRouter);
   app.use(kycClouseauRouter);

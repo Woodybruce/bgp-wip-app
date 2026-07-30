@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { apiRequest, getQueryFn, getAuthHeaders } from "@/lib/queryClient";
+import { ClientSharePointBrowser } from "@/components/client-sharepoint-browser";
 import {
   FolderOpen,
   FileText,
@@ -492,6 +493,15 @@ const SORT_LABELS: Record<SortKey, string> = {
 };
 
 export default function SharePoint() {
+  // Client logins (and staff viewing as a client) get the jailed browser —
+  // their company's own SharePoint folder only (server/client-sharepoint.ts).
+  const { data: spViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const spIsClient = spViewer?.role === "Client" || !!spViewer?.companyScopeId;
+  if (spIsClient) return <ClientSharePointBrowser />;
+  return <StaffSharePoint />;
+}
+
+function StaffSharePoint() {
   const [folderStack, setFolderStack] = useState<{ id: string; name: string }[]>([]);
   const [driveId, setDriveId] = useState<string | null>(null);
   const [previewItem, setPreviewItem] = useState<DriveItem | null>(null);
