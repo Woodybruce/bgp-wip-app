@@ -24,7 +24,7 @@ import {
 } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -57,6 +57,35 @@ import { FeeAllocationEditor, type FeeAllocationRow } from "@/components/fee-all
 
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 const MARKETING_STATUSES = LETTING_STATUSES;
+
+// Attributed comment thread inside a target chip's dropdown — same shape as
+// the brief dialog's Comments column: author name bold, then the text.
+function TargetChipComments({ comments, onAdd }: { comments: unknown; onAdd: (text: string) => void }) {
+  const [draft, setDraft] = useState("");
+  const list: Array<{ userName?: string; text?: string; at?: string }> = Array.isArray(comments) ? comments : [];
+  return (
+    <div className="px-2 py-1.5 w-60" onKeyDown={e => e.stopPropagation()}>
+      <div className="text-[10px] font-medium text-muted-foreground mb-1">Comments</div>
+      {list.map((c, i) => (
+        <div key={i} className="text-[11px] leading-tight mb-0.5" title={c.at ? new Date(c.at).toLocaleString("en-GB") : undefined}>
+          <span className="font-semibold text-primary">{c.userName || "Unknown"}</span>{" "}
+          <span>{c.text}</span>
+        </div>
+      ))}
+      <input
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onKeyDown={e => {
+          e.stopPropagation();
+          if (e.key === "Enter" && draft.trim()) { onAdd(draft.trim()); setDraft(""); }
+        }}
+        placeholder="Add comment…"
+        className="w-full bg-transparent border-0 border-b border-dashed border-muted-foreground/30 text-[11px] focus:outline-none focus:border-primary/50 placeholder:text-muted-foreground/50"
+        data-testid="input-chip-target-comment"
+      />
+    </div>
+  );
+}
 
 // Status dot colours for target-operator chips in the Tenant column.
 const TARGET_STATUS_DOT: Record<string, string> = {
@@ -1654,6 +1683,14 @@ export default function AvailableUnitsPage() {
                                     <DropdownMenuItem className="text-red-600" onClick={() => deleteUnitTarget(t.id, u.id)}>
                                       Remove target
                                     </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                    <TargetChipComments
+                                      comments={t.comments}
+                                      onAdd={text => {
+                                        const existing = Array.isArray(t.comments) ? t.comments : [];
+                                        patchUnitTarget(t.id, u.id, { comments: [...existing, { userId: auUser?.id || null, userName: auUser?.name || auUser?.username || "Unknown", text, at: new Date().toISOString() }] });
+                                      }}
+                                    />
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                               ))}
