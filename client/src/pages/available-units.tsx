@@ -926,7 +926,10 @@ export default function AvailableUnitsPage() {
     // Status → SOL always fires the promotion modal so the user captures the
     // SOL-handover fields (fee, fee agreement, tenant, lease length, rent free).
     // Pre-fill comes from the linked deal if it already exists.
-    if (field === "marketingStatus" && legacyToCode(value) === "SOL") {
+    // Clients skip the WIP-capture dialog on the SOL flip — that's the BGP
+    // fee/compliance handover, which stays internal. Their status change
+    // just applies directly (the server strips fee fields anyway).
+    if (field === "marketingStatus" && legacyToCode(value) === "SOL" && !isClientTracker) {
       const unit = units.find(u => u.id === id);
       if (unit) {
         openWipDialog(unit);
@@ -1156,7 +1159,6 @@ export default function AvailableUnitsPage() {
             )}
           </p>
         </div>
-        {!isClientTracker && (
         <Button
           onClick={() => {
             // Stage 3b feature flag — when on, the new unified dialog opens
@@ -1173,7 +1175,6 @@ export default function AvailableUnitsPage() {
         >
           <Plus className="h-4 w-4 mr-1" /> Add Unit
         </Button>
-        )}
       </div>
 
       {/* Single thin FY activity strip — was two full cards stacked

@@ -3370,6 +3370,11 @@ app.use("/api/branding/assets", express.static(
     // internal client-team board — same data, same editing (Woody,
     // 2026-07). Covers member add/edit/reorder and column management.
     "/api/client-teams/",
+    // Letting Tracker parity ("client needs to be able to do as much as
+    // the agent"): unit add/edit/delete, viewings, offers, marketing
+    // files, deal link. Every handler scope-checks the unit's property
+    // against the client's company and strips BGP fee fields.
+    "/api/available-units",
   ];
   // Sub-routes to block even though a parent prefix is allowed (BGP intel /
   // brand pipeline that isn't the client's own profile; OneNote task import
