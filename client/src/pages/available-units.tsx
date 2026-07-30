@@ -41,7 +41,7 @@ import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiS
 import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer, PropertyUnit } from "@shared/schema";
 import { BRIEF_TARGET_STATUSES } from "@shared/schema";
 import { BrandSearchInput, type BrandPick } from "@/components/brand-search-input";
-import { TargetOperatorsTable } from "@/components/target-operators-table";
+import { TargetRowCells } from "@/components/target-operators-table";
 import { useTeam } from "@/lib/team-context";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { DEAL_TYPE_COLORS, DEAL_TEAM_COLORS } from "@/pages/deals";
@@ -1460,6 +1460,13 @@ export default function AvailableUnitsPage() {
                 <TableHead className="w-[200px] min-w-[180px]">Property / Unit</TableHead>
                 <TableHead className="w-[130px] min-w-[130px]">Deal Type</TableHead>
                 <TableHead className="w-[150px] min-w-[150px]">Client</TableHead>
+                <TableHead className="w-[170px] min-w-[170px]">Operator</TableHead>
+                <TableHead className="w-[150px] min-w-[150px]">Category</TableHead>
+                <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>
+                <TableHead className="w-[130px] min-w-[130px]">Status</TableHead>
+                <TableHead className="w-[140px] min-w-[140px]">Agent</TableHead>
+                <TableHead className="w-[140px] min-w-[140px]">Client Contact</TableHead>
+                <TableHead className="min-w-[200px]">Comments</TableHead>
                 <TableHead className="w-[150px] min-w-[150px]">Team / BGP</TableHead>
                 <TableHead className="w-[130px] min-w-[130px]">Floor Areas</TableHead>
                 <TableHead className="w-[130px] min-w-[130px] text-right">Costs</TableHead>
@@ -1475,7 +1482,7 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isClientTracker ? 14 : 15} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={isClientTracker ? 21 : 22} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1484,10 +1491,15 @@ export default function AvailableUnitsPage() {
                 filtered.map(u => {
                   const prop = propertyMap[u.propertyId];
                   const deal = u.dealId ? dealMap[u.dealId] : null;
+                  const unitTargets: any[] = briefByUnit[u.id]?.targets || [];
+                  // Unit-level cells span every target row plus the trailing
+                  // add row, so targets read as first-class columns.
+                  const unitRowSpan = unitTargets.length === 0 ? 1 : unitTargets.length + 1;
+                  const unitClientCompanyId = briefByUnit[u.id]?.clientCompanyId || null;
                   return (
                     <Fragment key={u.id}>
                     <TableRow className={selectedIds.has(u.id) ? "bg-primary/5" : ""} data-testid={`row-unit-${u.id}`}>
-                      <TableCell className="px-2">
+                      <TableCell rowSpan={unitRowSpan} className="px-2">
                         <Checkbox
                           checked={selectedIds.has(u.id)}
                           onCheckedChange={() => {
@@ -1501,7 +1513,7 @@ export default function AvailableUnitsPage() {
                           data-testid={`checkbox-unit-${u.id}`}
                         />
                       </TableCell>
-                      <TableCell className="text-xs font-mono text-muted-foreground">
+                      <TableCell rowSpan={unitRowSpan} className="text-xs font-mono text-muted-foreground">
                         {deal?.dealRef ? (
                           <div className="flex items-center gap-1.5">
                             <a
@@ -1531,7 +1543,7 @@ export default function AvailableUnitsPage() {
                           </div>
                         ) : "—"}
                       </TableCell>
-                      <TableCell className="px-1.5 py-1 max-w-[220px]">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[220px]">
                         <div className="flex flex-col gap-0.5">
                           <div className="text-sm font-medium truncate">
                             <InlineLinkSelect
@@ -1553,7 +1565,7 @@ export default function AvailableUnitsPage() {
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell className="px-1.5">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5">
                         {deal ? (
                           <InlineLabelSelect
                             value={deal.dealType}
@@ -1563,7 +1575,7 @@ export default function AvailableUnitsPage() {
                           />
                         ) : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell className="px-1.5 max-w-[140px]">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[140px]">
                         {deal ? (() => {
                           const isTenantRep = (deal.dealType || "").toLowerCase().includes("tenant rep");
                           const field = isTenantRep ? "tenantId" : "landlordId";
@@ -1580,7 +1592,25 @@ export default function AvailableUnitsPage() {
                           );
                         })() : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell className="px-1.5 max-w-[180px]">
+                      {unitTargets.length === 0 ? (
+                        <TableCell colSpan={7}>
+                          <BrandSearchInput
+                            className="h-7 w-[220px] border-dashed text-[11px]"
+                            placeholder="+ Target operator"
+                            value=""
+                            allowCreate={!isClientTracker}
+                            onPick={p => addUnitTarget(u, p)}
+                            testId={`add-target-${u.id}`}
+                          />
+                        </TableCell>
+                      ) : (
+                        <TargetRowCells
+                          target={unitTargets[0]}
+                          clientCompanyId={unitClientCompanyId}
+                          onChanged={() => invalidateBriefs(u.id)}
+                        />
+                      )}
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[180px]">
                         <div className="space-y-1">
                           {deal ? (
                             <InlineMultiSelect
@@ -1600,7 +1630,7 @@ export default function AvailableUnitsPage() {
                           />
                         </div>
                       </TableCell>
-                      <TableCell className="px-1.5 py-1">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1">
                         <div className="space-y-0.5">
                           {deal ? (
                             [
@@ -1645,7 +1675,7 @@ export default function AvailableUnitsPage() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="px-1.5 py-1 text-right">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 text-right">
                         <Popover>
                           <PopoverTrigger asChild>
                             <button
@@ -1692,7 +1722,7 @@ export default function AvailableUnitsPage() {
                           </PopoverContent>
                         </Popover>
                       </TableCell>
-                      <TableCell className="px-1.5 py-1 max-w-[140px]">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[140px]">
                         <div className="space-y-1">
                           <InlineLabelSelect
                             value={u.useClass || ""}
@@ -1718,7 +1748,7 @@ export default function AvailableUnitsPage() {
                           allowClear={false}
                         />
                       </TableCell>
-                      <TableCell className="text-center">
+                      <TableCell rowSpan={unitRowSpan} className="text-center">
                         <div className="flex items-center justify-center gap-1">
                           <Button
                             variant="ghost"
@@ -1746,7 +1776,7 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                       {!isClientTracker && (
-                      <TableCell className="px-1.5 py-1 max-w-[150px]">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[150px]">
                         <div className="space-y-0.5">
                           <InlineNumber
                             value={u.fee}
@@ -1822,7 +1852,7 @@ export default function AvailableUnitsPage() {
                           Brief
                         </Button>
                       </TableCell>
-                      <TableCell className={`sticky right-0 z-10 border-l ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
+                      <TableCell rowSpan={unitRowSpan} className={`sticky right-0 z-10 border-l ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
                         <div className="flex gap-1">
                           <Button
                             variant="ghost"
@@ -1855,27 +1885,29 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                     </TableRow>
-                    <TableRow className="bg-muted/20 hover:bg-muted/20">
-                      <TableCell colSpan={isClientTracker ? 14 : 15} className="p-3">
-                        {(briefByUnit[u.id]?.targets || []).length > 0 ? (
-                          <TargetOperatorsTable
-                            targets={briefByUnit[u.id]?.targets || []}
-                            clientCompanyId={briefByUnit[u.id]?.clientCompanyId || null}
-                            ensureBriefId={() => ensureBriefFor(u)}
-                            onChanged={() => invalidateBriefs(u.id)}
-                          />
-                        ) : (
+                    {unitTargets.slice(1).map((t: any) => (
+                      <TableRow key={t.id} className={selectedIds.has(u.id) ? "bg-primary/5" : ""} data-testid={`row-unit-target-${t.id}`}>
+                        <TargetRowCells
+                          target={t}
+                          clientCompanyId={unitClientCompanyId}
+                          onChanged={() => invalidateBriefs(u.id)}
+                        />
+                      </TableRow>
+                    ))}
+                    {unitTargets.length > 0 && (
+                      <TableRow className={selectedIds.has(u.id) ? "bg-primary/5" : ""}>
+                        <TableCell colSpan={7}>
                           <BrandSearchInput
-                            className="h-7 w-[240px] border-dashed text-[11px]"
+                            className="h-6 w-[220px] border-dashed text-[10px]"
                             placeholder="+ Target operator"
                             value=""
                             allowCreate={!isClientTracker}
                             onPick={p => addUnitTarget(u, p)}
                             testId={`add-target-${u.id}`}
                           />
-                        )}
-                      </TableCell>
-                    </TableRow>
+                        </TableCell>
+                      </TableRow>
+                    )}
                     </Fragment>
                   );
                 })
