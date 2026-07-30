@@ -44,6 +44,10 @@ function logIssue(persona, scenario, kind, detail) {
 
 let currentScenario = { victoria: 'startup', mark: 'startup' };
 
+// Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
+// there is the PASS condition, so don't log it as an app issue.
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards']);
+
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
     if (msg.type() === 'error') {
@@ -57,6 +61,7 @@ function attachCollectors(page, persona) {
     const url = res.url();
     if (!url.includes('/api/')) return;
     if (res.status() < 400) return;
+    if (NEGATIVE_PROBE_SCENARIOS.has(currentScenario[persona])) return;
     if (IGNORED_RESPONSES.some((re) => re.test(url.split('?')[0]))) return;
     logIssue(persona, currentScenario[persona], `http-${res.status()}`, `${res.request().method()} ${url.replace(BASE, '')}`);
   });
@@ -708,6 +713,36 @@ async function markRound(page, cross) {
     const echoed = label && (String(composer || '').includes(label.slice(0, 12)) ||
       (await page.getByText(label.slice(0, 18), { exact: false }).count()) > 0);
     if (!echoed) throw new Error(`clicking the "${label.slice(0, 24)}" suggestion did nothing`);
+  });
+
+  // Destructive/firm-wide writes must STAY refused for a client, even as more
+  // client writes get opened up. Each of these should be 403 (or 404 for a
+  // scoped-out id) — never 200.
+  await step(page, p, 'client-destructive-guards', async () => {
+    const results = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json().catch(() => []);
+      const dealId = Array.isArray(deals) && deals[0] ? deals[0].id : '00000000-0000-0000-0000-000000000000';
+      const probes = [
+        ['DELETE', `/api/crm/deals/${dealId}`],
+        ['DELETE', `/api/crm/companies/11111111-1111-1111-1111-111111111111`],
+        ['POST',   '/api/crm/deals/bulk-rent-analysis'],
+        ['POST',   '/api/crm/wipe-deals'],
+        ['POST',   '/api/image-studio/bulk-assign-property'],
+      ];
+      const out = [];
+      for (const [method, url] of probes) {
+        try {
+          const r = await fetch(url, { method, credentials: 'include', headers: auth, body: method === 'POST' ? '{}' : undefined });
+          out.push({ url, status: r.status });
+        } catch { out.push({ url, status: 0 }); }
+      }
+      return out;
+    });
+    const allowed = results.filter(r => r.status >= 200 && r.status < 300);
+    if (allowed.length) {
+      throw new Error(`client was allowed a destructive write: ${allowed.map(a => `${a.url} → ${a.status}`).join(', ')}`);
+    }
   });
 
   // Client dashboard on a phone-width viewport must not overflow horizontally
