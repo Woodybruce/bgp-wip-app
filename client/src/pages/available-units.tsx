@@ -1457,10 +1457,9 @@ export default function AvailableUnitsPage() {
                   />
                 </TableHead>
                 <TableHead className="w-[56px]">Ref</TableHead>
-                <TableHead className="min-w-[220px]">Property / Unit</TableHead>
+                <TableHead className="w-[200px] min-w-[180px]">Property / Unit</TableHead>
                 <TableHead className="w-[130px] min-w-[130px]">Deal Type</TableHead>
                 <TableHead className="w-[150px] min-w-[150px]">Client</TableHead>
-                <TableHead className="w-[180px] min-w-[180px]">Tenant</TableHead>
                 <TableHead className="w-[150px] min-w-[150px]">Team / BGP</TableHead>
                 <TableHead className="w-[130px] min-w-[130px]">Floor Areas</TableHead>
                 <TableHead className="w-[130px] min-w-[130px] text-right">Costs</TableHead>
@@ -1476,7 +1475,7 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isClientTracker ? 15 : 16} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={isClientTracker ? 14 : 15} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1551,12 +1550,6 @@ export default function AvailableUnitsPage() {
                               placeholder="Unit name"
                               className="text-xs"
                             />
-                            <span className="text-[9px] opacity-60">·</span>
-                            <InlineSelect
-                              value={u.floor || ""}
-                              options={FLOORS}
-                              onSave={v => inlineUpdate(u.id, "floor", v)}
-                            />
                           </div>
                         </div>
                       </TableCell>
@@ -1586,30 +1579,6 @@ export default function AvailableUnitsPage() {
                             />
                           );
                         })() : <span className="text-xs text-muted-foreground">—</span>}
-                      </TableCell>
-                      <TableCell className="px-1.5 max-w-[160px]">
-                        {deal ? (
-                          <InlineLinkSelect
-                            value={deal.tenantId}
-                            options={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
-                            href={deal.tenantId ? `/companies/${deal.tenantId}` : undefined}
-                            onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "tenantId", value: v || null })}
-                            onCreate={async (name) => { const c = await createCompany(name); dealInlineUpdate.mutate({ id: deal.id, field: "tenantId", value: c.id }); }}
-                            placeholder="Link tenant"
-                          />
-                        ) : <span className="text-xs text-muted-foreground">—</span>}
-                        {(briefByUnit[u.id]?.targets || []).length === 0 && (
-                          <div className="mt-1">
-                            <BrandSearchInput
-                              className="h-6 w-full border-dashed text-[10px]"
-                              placeholder="+ Target operator"
-                              value=""
-                              allowCreate={!isClientTracker}
-                              onPick={p => addUnitTarget(u, p)}
-                              testId={`add-target-${u.id}`}
-                            />
-                          </div>
-                        )}
                       </TableCell>
                       <TableCell className="px-1.5 max-w-[180px]">
                         <div className="space-y-1">
@@ -1886,18 +1855,27 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                     </TableRow>
-                    {(briefByUnit[u.id]?.targets || []).length > 0 && (
-                      <TableRow className="bg-muted/20 hover:bg-muted/20">
-                        <TableCell colSpan={isClientTracker ? 15 : 16} className="p-3">
+                    <TableRow className="bg-muted/20 hover:bg-muted/20">
+                      <TableCell colSpan={isClientTracker ? 14 : 15} className="p-3">
+                        {(briefByUnit[u.id]?.targets || []).length > 0 ? (
                           <TargetOperatorsTable
                             targets={briefByUnit[u.id]?.targets || []}
                             clientCompanyId={briefByUnit[u.id]?.clientCompanyId || null}
                             ensureBriefId={() => ensureBriefFor(u)}
                             onChanged={() => invalidateBriefs(u.id)}
                           />
-                        </TableCell>
-                      </TableRow>
-                    )}
+                        ) : (
+                          <BrandSearchInput
+                            className="h-7 w-[240px] border-dashed text-[11px]"
+                            placeholder="+ Target operator"
+                            value=""
+                            allowCreate={!isClientTracker}
+                            onPick={p => addUnitTarget(u, p)}
+                            testId={`add-target-${u.id}`}
+                          />
+                        )}
+                      </TableCell>
+                    </TableRow>
                     </Fragment>
                   );
                 })
