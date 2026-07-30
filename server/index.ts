@@ -3342,6 +3342,12 @@ app.use("/api/branding/assets", express.static(
     // forces the deal onto the client's own company and strips every fee
     // field — clients never set or see BGP's fee. Delete stays staff-only.
     "/api/crm/deals",
+    // Clients may author Operator Targeting Briefs on their own units and
+    // upload/file photos for their own buildings — each endpoint verifies the
+    // unit/property is in the client's scope. ("Client does as much as the
+    // agent"; brief + photo authoring.) Only these specific image-studio
+    // writes are opened — delete / ai-generate / bulk ops stay staff-only.
+    "/api/unit-briefs", "/api/image-studio/upload",
     "/api/push/", "/api/config/", "/api/favorite-instructions",
     // Clients may edit their OWN leasing/tenancy schedule rows (positioning,
     // bands, targets, meeting updates). Each endpoint verifies the property is
@@ -3397,6 +3403,11 @@ app.use("/api/branding/assets", express.static(
         if (CLIENT_BLOCKED_SUBPATHS.some(re => re.test(p))) {
           return res.status(403).json({ error: "Not available for client accounts" });
         }
+        // Authoring an Operator Targeting Brief on one of their own units —
+        // the create route hangs off /api/available-units/:id/brief; the
+        // handler verifies the unit's property is in the client's scope.
+        // (We don't open all of /api/available-units, only the brief POST.)
+        if (req.method === "POST" && /^\/api\/available-units\/[^/]+\/brief$/.test(p)) return next();
         // Same prefix-matching rule as the read allowlist: entries ending in
         // "/" match by prefix, others match exactly or as a path segment.
         if (CLIENT_ALLOWED_WRITES.some(w =>

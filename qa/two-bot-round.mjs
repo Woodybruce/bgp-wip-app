@@ -271,6 +271,59 @@ async function markRound(page, cross) {
     if (await page.locator('[data-testid="button-toggle-all-fields"]').count()) throw new Error('"Show all fields" (exposes fees) visible to client');
     await page.keyboard.press('Escape');
   });
+
+  // Client authors an Operator Targeting Brief on one of their own units
+  // (like the Tag Heuer / 145A Westgate brief) and adds a target operator.
+  // (Woody: "one scenario for mark should be creating this on another unit.")
+  await step(page, p, 'client-create-targeting-brief', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = Array.isArray(units) ? units[0] : null;
+      if (!unit) return { ok: false, why: 'no available units in client scope' };
+      const briefRes = await fetch(`/api/available-units/${unit.id}/brief`, {
+        method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'QA Brief — food-led operator', objective: 'Secure a savoury meal-occasion operator' }),
+      });
+      if (!briefRes.ok) return { ok: false, why: `brief create ${briefRes.status}` };
+      const brief = await briefRes.json();
+      const tRes = await fetch(`/api/unit-briefs/${brief.id}/targets`, {
+        method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operatorName: 'Honi Poke', category: 'Handheld global food' }),
+      });
+      if (!tRes.ok) return { ok: false, why: `target add ${tRes.status}` };
+      return { ok: true, briefId: brief.id, unitId: unit.id };
+    });
+    if (!r.ok) throw new Error(r.why);
+    // Clean up so briefs don't pile up across rounds.
+    await page.evaluate(async (id) => {
+      await fetch(`/api/unit-briefs/${id}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
+    }, r.briefId);
+  });
+
+  // Client adds a photo to one of their own units/schemes; the same upload to
+  // a property outside their scope is refused. ("Adding photos for a unit and
+  // scheme should be a task.")
+  await step(page, p, 'client-add-unit-photo', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const props = await (await fetch('/api/crm/properties?excludeComps=true', { headers: auth })).json();
+      const list = Array.isArray(props) ? props : (props?.data || []);
+      const mine = list[0];
+      if (!mine) return { ok: false, why: 'no property in client scope' };
+      // 1x1 red JPEG
+      const b64 = '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAA//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AfwD/2Q==';
+      const bin = atob(b64); const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const fd = new FormData();
+      fd.append('images', new Blob([arr], { type: 'image/jpeg' }), 'qa-unit-photo.jpg');
+      fd.append('propertyId', mine.id);
+      fd.append('category', 'Property');
+      const up = await fetch('/api/image-studio/upload', { method: 'POST', headers: auth, body: fd });
+      return { ok: up.ok, status: up.status, propertyId: mine.id };
+    });
+    if (!r.ok) throw new Error(`photo upload to own property failed (${r.status})`);
+  });
 }
 
 // ─── Run ──────────────────────────────────────────────────────────────────

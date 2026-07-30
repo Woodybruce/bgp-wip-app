@@ -4364,10 +4364,35 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Clients may author briefs only on their own units. Returns 403 when a
+  // client request targets a unit/property outside their scope; a no-op for
+  // BGP staff (null scope).
+  async function assertUnitInClientScope(req: any, propertyId: string | null | undefined): Promise<string | null> {
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req);
+    if (!scope) return null; // staff — unrestricted
+    if (!propertyId || !(await isPropertyInScope(scope, propertyId))) return "out-of-scope";
+    return null;
+  }
+  async function briefPropertyId(briefId: string): Promise<string | null> {
+    const r = await pool.query("SELECT property_id FROM unit_briefs WHERE id = $1", [briefId]);
+    return r.rows[0]?.property_id ?? null;
+  }
+  async function targetPropertyId(targetId: string): Promise<string | null> {
+    const r = await pool.query(
+      "SELECT b.property_id FROM unit_target_operators t JOIN unit_briefs b ON b.id = t.brief_id WHERE t.id = $1",
+      [targetId]
+    );
+    return r.rows[0]?.property_id ?? null;
+  }
+
   app.post("/api/available-units/:id/brief", requireAuth, async (req: any, res) => {
     try {
       const unit = await storage.getAvailableUnit(String(req.params.id));
       if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Not available for client accounts" });
+      }
       const { unitBriefs, insertUnitBriefSchema } = await import("@shared/schema");
       const userId = req.session?.userId || req.tokenUserId || null;
       let userName: string | null = null;
@@ -4390,8 +4415,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
-  app.patch("/api/unit-briefs/:id", requireAuth, async (req, res) => {
+  app.patch("/api/unit-briefs/:id", requireAuth, async (req: any, res) => {
     try {
+      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
+        return res.status(403).json({ message: "Not available for client accounts" });
+      }
       const { unitBriefs, insertUnitBriefSchema } = await import("@shared/schema");
       const partial = insertUnitBriefSchema.partial().parse(req.body);
       const [brief] = await db.update(unitBriefs)
@@ -4406,8 +4434,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
-  app.delete("/api/unit-briefs/:id", requireAuth, async (req, res) => {
+  app.delete("/api/unit-briefs/:id", requireAuth, async (req: any, res) => {
     try {
+      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
+        return res.status(403).json({ message: "Not available for client accounts" });
+      }
       const { unitBriefs, unitTargetOperators } = await import("@shared/schema");
       await db.delete(unitTargetOperators).where(eq(unitTargetOperators.briefId, String(req.params.id)));
       await db.delete(unitBriefs).where(eq(unitBriefs.id, String(req.params.id)));
@@ -4417,8 +4448,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
-  app.post("/api/unit-briefs/:id/targets", requireAuth, async (req, res) => {
+  app.post("/api/unit-briefs/:id/targets", requireAuth, async (req: any, res) => {
     try {
+      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
+        return res.status(403).json({ message: "Not available for client accounts" });
+      }
       const { unitBriefs, unitTargetOperators, insertUnitTargetOperatorSchema } = await import("@shared/schema");
       const [brief] = await db.select().from(unitBriefs).where(eq(unitBriefs.id, String(req.params.id)));
       if (!brief) return res.status(404).json({ message: "Brief not found" });
@@ -4431,8 +4465,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
-  app.patch("/api/unit-briefs/targets/:id", requireAuth, async (req, res) => {
+  app.patch("/api/unit-briefs/targets/:id", requireAuth, async (req: any, res) => {
     try {
+      if (await assertUnitInClientScope(req, await targetPropertyId(String(req.params.id)))) {
+        return res.status(403).json({ message: "Not available for client accounts" });
+      }
       const { unitTargetOperators, insertUnitTargetOperatorSchema } = await import("@shared/schema");
       const partial = insertUnitTargetOperatorSchema.partial().parse(req.body);
       const [target] = await db.update(unitTargetOperators)
@@ -4447,8 +4484,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
-  app.delete("/api/unit-briefs/targets/:id", requireAuth, async (req, res) => {
+  app.delete("/api/unit-briefs/targets/:id", requireAuth, async (req: any, res) => {
     try {
+      if (await assertUnitInClientScope(req, await targetPropertyId(String(req.params.id)))) {
+        return res.status(403).json({ message: "Not available for client accounts" });
+      }
       const { unitTargetOperators } = await import("@shared/schema");
       await db.delete(unitTargetOperators).where(eq(unitTargetOperators.id, String(req.params.id)));
       res.json({ success: true });
@@ -4477,8 +4517,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
-  app.post("/api/unit-briefs/:id/generate-document", requireAuth, async (req, res) => {
+  app.post("/api/unit-briefs/:id/generate-document", requireAuth, async (req: any, res) => {
     try {
+      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
+        return res.status(403).json({ message: "Not available for client accounts" });
+      }
       const { generateBriefDocument } = await import("./unit-brief-doc");
       const result = await generateBriefDocument(String(req.params.id));
       res.json({ ...result, sharepoint: !!result.sharepointUrl });
