@@ -1135,6 +1135,35 @@ export default function AvailableUnitsPage() {
             )}
           </p>
         </div>
+        <div className="flex items-center gap-2">
+        {auUser?.isAdmin && (
+          <Button
+            variant="outline"
+            onClick={async () => {
+              // Dry-run first, then a numbers-in-hand confirm before touching data.
+              try {
+                const r = await apiRequest("POST", "/api/admin/letting-tracker-focus", { dryRun: true });
+                const plan = await r.json();
+                const msg = `Focus the tracker on units in play?\n\n` +
+                  `Keep: ${plan.keep}\nRemove idle rows: ${plan.prune}\nPull in from strategy boards: ${plan.pullIn}\nTargets to migrate: ${plan.targetsToMigrate}\n\n` +
+                  `Idle rows have no viewings, offers, files, targets, live deal or strategy-board activity. ` +
+                  `Their tenancy (rent roll) rows are untouched and can be re-listed any time.`;
+                if (!window.confirm(msg)) return;
+                const r2 = await apiRequest("POST", "/api/admin/letting-tracker-focus", { dryRun: false });
+                const done = await r2.json();
+                toast({ title: "Tracker focused", description: `Removed ${done.pruned}, pulled in ${done.added}, migrated ${done.migrated} targets.` });
+                queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+                queryClient.invalidateQueries({ queryKey: ["/api/unit-briefs"] });
+                queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+              } catch (e: any) {
+                toast({ title: "Tracker focus failed", description: e?.message, variant: "destructive" });
+              }
+            }}
+            data-testid="button-focus-tracker"
+          >
+            <Target className="h-4 w-4 mr-1" /> Focus tracker
+          </Button>
+        )}
         <Button
           onClick={() => {
             // Stage 3b feature flag — when on, the new unified dialog opens
@@ -1151,6 +1180,7 @@ export default function AvailableUnitsPage() {
         >
           <Plus className="h-4 w-4 mr-1" /> Add Unit
         </Button>
+        </div>
       </div>
 
       {/* Single thin FY activity strip — was two full cards stacked

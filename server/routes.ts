@@ -4697,6 +4697,170 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Focus the Letting Tracker on units actually in play. Three passes:
+  //   1. PRUNE — tracker rows with no leasing activity at all (idle AVA
+  //      imports: no viewings/offers/files/targets, stub-or-no deal, no
+  //      strategy-board activity) are deleted. The tenancy row (the rent
+  //      roll spine) is untouched — a pruned unit can be re-listed any
+  //      time with the one-click on its tenancy row.
+  //   2. PULL IN — strategy-board (leasing_schedule_units) rows showing
+  //      activity (updates / optimum target / targets) whose tenancy row
+  //      has no tracker listing get one created and linked.
+  //   3. MIGRATE — strategy-board target_tenants (approved/converted)
+  //      move onto the tracker's target-operator system so nothing typed
+  //      on the boards is lost when they're retired.
+  // dryRun (default true) reports what WOULD happen without touching data.
+  app.post("/api/admin/letting-tracker-focus", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const { legacyToCode } = await import("@shared/deal-status");
+
+      const units = (await pool.query(`
+        SELECT au.id, au.unit_name, au.property_id, au.marketing_status, au.deal_id, au.tenancy_unit_id,
+               p.name AS property_name,
+               d.status AS deal_status, d.tenant_id AS deal_tenant_id, d.fee AS deal_fee,
+               (SELECT COUNT(*) FROM unit_viewings v WHERE v.unit_id = au.id)::int AS viewings,
+               (SELECT COUNT(*) FROM unit_offers o WHERE o.unit_id = au.id)::int AS offers,
+               (SELECT COUNT(*) FROM unit_marketing_files f WHERE f.unit_id = au.id)::int AS files,
+               (SELECT COUNT(*) FROM unit_target_operators t JOIN unit_briefs b ON b.id = t.brief_id WHERE b.unit_id = au.id)::int AS brief_targets,
+               ls.id AS ls_id,
+               (COALESCE(ls.updates, '') <> '' OR COALESCE(ls.optimum_target, '') <> '' OR COALESCE(ls.target_brands, '') <> '') AS ls_activity,
+               (SELECT COUNT(*) FROM target_tenants tt WHERE tt.unit_id = ls.id AND tt.status IN ('approved','converted'))::int AS ls_targets
+          FROM available_units au
+          LEFT JOIN crm_properties p ON p.id = au.property_id
+          LEFT JOIN crm_deals d ON d.id = au.deal_id
+          LEFT JOIN leasing_schedule_units ls ON ls.tenancy_unit_id = au.tenancy_unit_id AND au.tenancy_unit_id IS NOT NULL
+      `)).rows;
+
+      const inPlay = (u: any): boolean => {
+        const code = legacyToCode(u.marketing_status) || "AVA";
+        if (code !== "AVA" && code !== "REP") return true;
+        if (u.viewings > 0 || u.offers > 0 || u.files > 0 || u.brief_targets > 0) return true;
+        const dealCode = u.deal_status ? (legacyToCode(u.deal_status) || "AVA") : "AVA";
+        if (u.deal_id && (dealCode !== "AVA" || u.deal_tenant_id || u.deal_fee)) return true;
+        if (u.ls_activity || u.ls_targets > 0) return true;
+        return false;
+      };
+
+      const keep = units.filter(inPlay);
+      const drop = units.filter((u: any) => !inPlay(u));
+
+      // Strategy-board rows in play whose tenancy row has no tracker listing.
+      const missing = (await pool.query(`
+        SELECT ls.id AS ls_id, ls.tenancy_unit_id, ls.property_id, ls.unit_name,
+               ts.unit_number, ts.premises, ts.nia_sqft, ts.gia_sqft, ts.marketing_rent_pa,
+               p.name AS property_name
+          FROM leasing_schedule_units ls
+          JOIN tenancy_schedule_units ts ON ts.id = ls.tenancy_unit_id
+          LEFT JOIN crm_properties p ON p.id = ls.property_id
+         WHERE (COALESCE(ls.updates, '') <> '' OR COALESCE(ls.optimum_target, '') <> '' OR COALESCE(ls.target_brands, '') <> ''
+                OR EXISTS (SELECT 1 FROM target_tenants tt WHERE tt.unit_id = ls.id AND tt.status IN ('approved','converted')))
+           AND NOT EXISTS (SELECT 1 FROM available_units au WHERE au.tenancy_unit_id = ls.tenancy_unit_id)
+      `)).rows;
+
+      // Strategy-board targets to migrate onto tracker targets.
+      const lsTargets = (await pool.query(`
+        SELECT tt.id, tt.brand_name, tt.company_id, tt.status, tt.outcome, tt.rationale, ls.tenancy_unit_id, ls.property_id
+          FROM target_tenants tt
+          JOIN leasing_schedule_units ls ON ls.id = tt.unit_id
+         WHERE tt.status IN ('approved','converted') AND ls.tenancy_unit_id IS NOT NULL
+      `)).rows;
+
+      const report: any = {
+        dryRun,
+        scanned: units.length,
+        keep: keep.length,
+        prune: drop.length,
+        pullIn: missing.length,
+        targetsToMigrate: lsTargets.length,
+        pruneSample: drop.slice(0, 12).map((u: any) => `${u.property_name || "?"} — ${u.unit_name}`),
+        pullInSample: missing.slice(0, 12).map((m: any) => `${m.property_name || "?"} — ${m.unit_name || m.unit_number || m.premises}`),
+      };
+      if (dryRun) return res.json(report);
+
+      // 1. Prune idle rows (storage handles files/viewings/offers cleanup,
+      //    clears the tenancy back-reference and removes still-AVA stub deals).
+      let pruned = 0;
+      for (const u of drop) {
+        try {
+          const unitRow = await storage.getAvailableUnit(u.id);
+          await storage.deleteAvailableUnit(u.id);
+          if (unitRow?.dealId) {
+            const linkedDeal = await storage.getCrmDeal(unitRow.dealId);
+            if (linkedDeal && (legacyToCode(linkedDeal.status) || "AVA") === "AVA" && !linkedDeal.tenantId && !linkedDeal.fee) {
+              await storage.deleteCrmDeal(unitRow.dealId);
+            }
+          }
+          pruned++;
+        } catch (e: any) {
+          console.warn(`[tracker-focus] prune failed for ${u.id}:`, e?.message);
+        }
+      }
+
+      // 2. Create listings for in-play strategy rows missing from the tracker.
+      let added = 0;
+      for (const m of missing) {
+        try {
+          const ins = await pool.query(
+            `INSERT INTO available_units (property_id, unit_name, sqft, asking_rent, marketing_status, tenancy_unit_id)
+             VALUES ($1, $2, $3, $4, 'Available', $5) RETURNING id`,
+            [m.property_id, m.unit_name || m.unit_number || m.premises || "Unit",
+             m.nia_sqft ?? m.gia_sqft ?? null, m.marketing_rent_pa ?? null, m.tenancy_unit_id]
+          );
+          await pool.query(
+            `UPDATE tenancy_schedule_units SET letting_tracker_unit_id = $1 WHERE id = $2`,
+            [ins.rows[0].id, m.tenancy_unit_id]
+          );
+          added++;
+        } catch (e: any) {
+          console.warn(`[tracker-focus] pull-in failed for ls ${m.ls_id}:`, e?.message);
+        }
+      }
+
+      // 3. Migrate strategy-board targets → tracker target operators
+      //    (converted → Let, approved → Identified), deduped by name per unit.
+      let migrated = 0;
+      for (const t of lsTargets) {
+        try {
+          const au = await pool.query(
+            `SELECT id, unit_name, property_id FROM available_units WHERE tenancy_unit_id = $1 LIMIT 1`,
+            [t.tenancy_unit_id]
+          );
+          if (!au.rows[0]) continue;
+          let brief = await pool.query(`SELECT id FROM unit_briefs WHERE unit_id = $1 LIMIT 1`, [au.rows[0].id]);
+          if (!brief.rows[0]) {
+            const prop = await storage.getCrmProperty(au.rows[0].property_id);
+            brief = await pool.query(
+              `INSERT INTO unit_briefs (unit_id, property_id, title, client_company_id, client_company)
+               VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+              [au.rows[0].id, au.rows[0].property_id, `Operator Targeting — ${au.rows[0].unit_name}`,
+               (prop as any)?.landlordId || null, null]
+            );
+          }
+          const dupe = await pool.query(
+            `SELECT 1 FROM unit_target_operators WHERE brief_id = $1 AND LOWER(operator_name) = LOWER($2) LIMIT 1`,
+            [brief.rows[0].id, t.brand_name]
+          );
+          if (dupe.rows[0]) continue;
+          await pool.query(
+            `INSERT INTO unit_target_operators (brief_id, operator_name, company_id, rationale, status)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [brief.rows[0].id, t.brand_name, t.company_id || null, t.rationale || null,
+             (t.status === "converted" || t.outcome === "signed") ? "Let" : "Identified"]
+          );
+          migrated++;
+        } catch (e: any) {
+          console.warn(`[tracker-focus] target migrate failed for ${t.id}:`, e?.message);
+        }
+      }
+
+      res.json({ ...report, dryRun: false, pruned, added, migrated });
+    } catch (err: any) {
+      console.error("[tracker-focus] failed:", err);
+      res.status(500).json({ message: err?.message || "Tracker focus failed" });
+    }
+  });
+
   app.post("/api/available-units/migrate-letting-deals", requireAuth, async (req, res) => {
     try {
       // Firm-wide bulk migration — staff only, even though the parent
