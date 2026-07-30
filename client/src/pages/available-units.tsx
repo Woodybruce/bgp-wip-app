@@ -20,11 +20,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target, CheckCircle2,
+  ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target,
 } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -58,46 +58,6 @@ import { FeeAllocationEditor, type FeeAllocationRow } from "@/components/fee-all
 
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 const MARKETING_STATUSES = LETTING_STATUSES;
-
-// Attributed comment thread inside a target chip's dropdown — same shape as
-// the brief dialog's Comments column: author name bold, then the text.
-function TargetChipComments({ comments, onAdd }: { comments: unknown; onAdd: (text: string) => void }) {
-  const [draft, setDraft] = useState("");
-  const list: Array<{ userName?: string; text?: string; at?: string }> = Array.isArray(comments) ? comments : [];
-  return (
-    <div className="px-2 py-1.5 w-60" onKeyDown={e => e.stopPropagation()}>
-      <div className="text-[10px] font-medium text-muted-foreground mb-1">Comments</div>
-      {list.map((c, i) => (
-        <div key={i} className="text-[11px] leading-tight mb-0.5" title={c.at ? new Date(c.at).toLocaleString("en-GB") : undefined}>
-          <span className="font-semibold text-primary">{c.userName || "Unknown"}</span>{" "}
-          <span>{c.text}</span>
-        </div>
-      ))}
-      <input
-        value={draft}
-        onChange={e => setDraft(e.target.value)}
-        onKeyDown={e => {
-          e.stopPropagation();
-          if (e.key === "Enter" && draft.trim()) { onAdd(draft.trim()); setDraft(""); }
-        }}
-        placeholder="Add comment…"
-        className="w-full bg-transparent border-0 border-b border-dashed border-muted-foreground/30 text-[11px] focus:outline-none focus:border-primary/50 placeholder:text-muted-foreground/50"
-        data-testid="input-chip-target-comment"
-      />
-    </div>
-  );
-}
-
-// Status dot colours for target-operator chips in the Tenant column.
-const TARGET_STATUS_DOT: Record<string, string> = {
-  "Identified": "bg-zinc-400",
-  "Approached": "bg-blue-500",
-  "Meeting Held": "bg-violet-500",
-  "Inspection Done": "bg-amber-500",
-  "Offer": "bg-orange-500",
-  "Let": "bg-emerald-500",
-  "Passed": "bg-red-500",
-};
 const USE_CLASSES = ["E", "E(a)", "E(b)", "E(c)", "E(d)", "E(e)", "A1", "A2", "A3", "A4", "A5", "B1", "B2", "B8", "C1", "C3", "D1", "D2", "F1", "F2", "Sui Generis"];
 const FLOORS = ["Basement", "Lower Ground", "Ground", "Mezzanine", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "Upper"];
 const CONDITIONS = ["Shell & Core", "Cat A", "Cat A+", "Cat B", "Fitted", "Turn Key", "As Is"];
@@ -344,7 +304,6 @@ export default function AvailableUnitsPage() {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [targetStatusFilter, setTargetStatusFilter] = useState("all");
-  const [expandedTargets, setExpandedTargets] = useState<Set<string>>(new Set());
   const [propertyFilter, setPropertyFilter] = useState("all");
   const [assetClassFilter, setAssetClassFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
@@ -1026,22 +985,6 @@ export default function AvailableUnitsPage() {
       toast({ title: "Couldn't add target", description: e?.message, variant: "destructive" });
     }
   };
-  const patchUnitTarget = async (targetId: string, unitId: string, data: Record<string, unknown>) => {
-    try {
-      await apiRequest("PATCH", `/api/unit-briefs/targets/${targetId}`, data);
-      invalidateBriefs(unitId);
-    } catch (e: any) {
-      toast({ title: "Couldn't update target", description: e?.message, variant: "destructive" });
-    }
-  };
-  const deleteUnitTarget = async (targetId: string, unitId: string) => {
-    try {
-      await apiRequest("DELETE", `/api/unit-briefs/targets/${targetId}`);
-      invalidateBriefs(unitId);
-    } catch (e: any) {
-      toast({ title: "Couldn't remove target", description: e?.message, variant: "destructive" });
-    }
-  };
 
   const uniqueProperties = useMemo(() => {
     const ids = new Set(teamUnits.map(u => u.propertyId));
@@ -1655,74 +1598,18 @@ export default function AvailableUnitsPage() {
                             placeholder="Link tenant"
                           />
                         ) : <span className="text-xs text-muted-foreground">—</span>}
-                        {(() => {
-                          const unitTargets: any[] = briefByUnit[u.id]?.targets || [];
-                          return (
-                            <div className="mt-1 space-y-0.5">
-                              {unitTargets.map((t: any) => (
-                                <DropdownMenu key={t.id}>
-                                  <DropdownMenuTrigger asChild>
-                                    <button
-                                      type="button"
-                                      className="flex items-center gap-1 text-[10px] rounded-full border px-1.5 py-0.5 hover:bg-muted max-w-full"
-                                      title={`${t.status || "Identified"}${t.category ? ` · ${t.category}` : ""}`}
-                                      data-testid={`unit-target-${t.id}`}
-                                    >
-                                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${TARGET_STATUS_DOT[t.status || "Identified"] || "bg-zinc-400"}`} />
-                                      <span className="truncate">{t.operatorName}</span>
-                                    </button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="start" className="text-xs">
-                                    {BRIEF_TARGET_STATUSES.map(s => (
-                                      <DropdownMenuItem key={s} onClick={() => patchUnitTarget(t.id, u.id, { status: s })}>
-                                        <span className={`w-1.5 h-1.5 rounded-full mr-2 ${TARGET_STATUS_DOT[s]}`} />
-                                        {s}
-                                        {(t.status || "Identified") === s && <CheckCircle2 className="w-3 h-3 ml-auto text-emerald-500" />}
-                                      </DropdownMenuItem>
-                                    ))}
-                                    {t.companyId && (
-                                      <DropdownMenuItem asChild>
-                                        <a href={`/companies/${t.companyId}`}>Open brand profile</a>
-                                      </DropdownMenuItem>
-                                    )}
-                                    <DropdownMenuItem className="text-red-600" onClick={() => deleteUnitTarget(t.id, u.id)}>
-                                      Remove target
-                                    </DropdownMenuItem>
-                                    <DropdownMenuSeparator />
-                                    <TargetChipComments
-                                      comments={t.comments}
-                                      onAdd={text => {
-                                        const existing = Array.isArray(t.comments) ? t.comments : [];
-                                        patchUnitTarget(t.id, u.id, { comments: [...existing, { userId: auUser?.id || null, userName: auUser?.name || auUser?.username || "Unknown", text, at: new Date().toISOString() }] });
-                                      }}
-                                    />
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              ))}
-                              <BrandSearchInput
-                                className="h-6 w-full border-dashed text-[10px]"
-                                placeholder="+ Target operator"
-                                value=""
-                                allowCreate={!isClientTracker}
-                                onPick={p => addUnitTarget(u, p)}
-                                testId={`add-target-${u.id}`}
-                              />
-                              <button
-                                type="button"
-                                className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground"
-                                onClick={() => setExpandedTargets(prev => {
-                                  const next = new Set(prev);
-                                  if (next.has(u.id)) next.delete(u.id); else next.add(u.id);
-                                  return next;
-                                })}
-                                data-testid={`toggle-targets-${u.id}`}
-                              >
-                                <ChevronDown className={`w-3 h-3 transition-transform ${expandedTargets.has(u.id) ? "rotate-180" : ""}`} />
-                                Targets table
-                              </button>
-                            </div>
-                          );
-                        })()}
+                        {(briefByUnit[u.id]?.targets || []).length === 0 && (
+                          <div className="mt-1">
+                            <BrandSearchInput
+                              className="h-6 w-full border-dashed text-[10px]"
+                              placeholder="+ Target operator"
+                              value=""
+                              allowCreate={!isClientTracker}
+                              onPick={p => addUnitTarget(u, p)}
+                              testId={`add-target-${u.id}`}
+                            />
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="px-1.5 max-w-[180px]">
                         <div className="space-y-1">
@@ -1999,7 +1886,7 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                     </TableRow>
-                    {expandedTargets.has(u.id) && (
+                    {(briefByUnit[u.id]?.targets || []).length > 0 && (
                       <TableRow className="bg-muted/20 hover:bg-muted/20">
                         <TableCell colSpan={isClientTracker ? 15 : 16} className="p-3">
                           <TargetOperatorsTable
