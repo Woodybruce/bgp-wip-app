@@ -3311,6 +3311,9 @@ app.use("/api/branding/assets", express.static(
     // VAPID key (push writes are already client-allowed) and aggregate logo
     // cache stats used by the shared company-logo helper.
     "/api/push/vapid-key", "/api/brand-logo-stats",
+    // Google Maps JS key for address autocomplete on the deal-create form
+    // (low-sensitivity, domain-restricted publishable key).
+    "/api/config/maps-key",
     // Turnover Board reads (the tab is client-visible; research/edit POSTs
     // stay staff-only via the write allowlist) and the saved dashboard
     // template (read-only layout defaults).
@@ -3334,6 +3337,11 @@ app.use("/api/branding/assets", express.static(
     // Landsec may add/amend CRM contacts — POST/PUT scope-checked in crm.ts
     // (own company or the hospitality-brand slice only).
     "/api/crm/contacts",
+    // Clients may create + edit deals on their OWN portfolio (Woody, 2026-07:
+    // "client needs to be able to do as much as the agent"). The handler
+    // forces the deal onto the client's own company and strips every fee
+    // field — clients never set or see BGP's fee. Delete stays staff-only.
+    "/api/crm/deals",
     "/api/push/", "/api/config/", "/api/favorite-instructions",
     // Clients may edit their OWN leasing/tenancy schedule rows (positioning,
     // bands, targets, meeting updates). Each endpoint verifies the property is

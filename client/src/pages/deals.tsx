@@ -288,10 +288,14 @@ export function formatDate(val: string | Date | null | undefined): string {
 // as the user types — autocomplete without a custom popover. The Input's
 // `list="deal-po-suggestions"` attribute binds to this.
 function PoNumberDatalist() {
-  const { data: poNumbers = [] } = useQuery<string[]>({
+  const { data } = useQuery<string[]>({
     queryKey: ["/api/crm/deals/po-numbers"],
     staleTime: 60_000,
   });
+  // The endpoint returns {} for client logins (PO numbers are staff-only),
+  // so guard against a non-array before mapping — otherwise the whole create
+  // dialog crashes when a client opens it.
+  const poNumbers = Array.isArray(data) ? data : [];
   return (
     <datalist id="deal-po-suggestions">
       {poNumbers.map(po => <option key={po} value={po} />)}
@@ -1461,7 +1465,7 @@ function ConsultantCreateBody({
 function SimplifiedCreateBody({
   form, set, properties, propertyUnits, companies, users, toggleAgent, setForm,
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
-  nameAutoFilled, setNameAutoFilled,
+  nameAutoFilled, setNameAutoFilled, hideFees = false,
 }: {
   form: any;
   set: (k: any, v: any) => void;
@@ -1477,6 +1481,7 @@ function SimplifiedCreateBody({
   users: { id: number; name: string }[];
   toggleAgent: (name: string) => void;
   setForm: any;
+  hideFees?: boolean;
 }) {
   // Counterparty picker contextual label + filter — driven by deal type.
   // Tenant Acquisition + New Letting + Sub-Letting + Consultancy + Secondment
@@ -1940,13 +1945,14 @@ function SimplifiedCreateBody({
       <div className="border-t pt-3 space-y-3">
         <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Financials & timing</div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className={`grid grid-cols-1 gap-3 ${hideFees ? "" : "sm:grid-cols-3"}`}>
           <div>
             <Label htmlFor="deal-rent-pa" className="text-xs">Headline Rent (£ p.a.)</Label>
             <Input id="deal-rent-pa" type="number" value={form.rentPa}
               onChange={(e) => set("rentPa", e.target.value)}
               placeholder="e.g. 175000" />
           </div>
+          {!hideFees && (<>
           <div>
             <Label htmlFor="deal-fee-pct" className="text-xs">% Agency fee</Label>
             <Input id="deal-fee-pct" type="number" step="0.01" value={form.feePercentage}
@@ -1967,8 +1973,10 @@ function SimplifiedCreateBody({
               onChange={(e) => set("fee", e.target.value)}
               placeholder="auto from rent × %" />
           </div>
+          </>)}
         </div>
 
+        {!hideFees && (
         <div>
           <Label className="text-xs">BGP fee split</Label>
           <div className="border rounded-md p-2.5 bg-muted/30">
@@ -1982,6 +1990,7 @@ function SimplifiedCreateBody({
             />
           </div>
         </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
@@ -2112,9 +2121,13 @@ export function DealFormDialog({
   const isApprovalStatus = statusChanged && formStatusCode !== null && APPROVAL_STATUS_CODES.includes(formStatusCode);
   const isCompletingNow = statusChanged && formStatusCode === "COM";
 
-  const { data: currentUser } = useQuery<{ isAdmin?: boolean; email?: string }>({
+  const { data: currentUser } = useQuery<{ isAdmin?: boolean; email?: string; role?: string; companyScopeId?: string }>({
     queryKey: ["/api/auth/me"],
   });
+  // Clients can create deals but never set fees — the server strips every
+  // fee field regardless, and here we hide the fee-exposing paths (Consultant
+  // fee-only body + "Show all fields") so they only see the fee-less form.
+  const isClientCreate = currentUser?.role === "Client" || !!currentUser?.companyScopeId;
   const SENIOR_EMAILS = new Set([
     "woody@brucegillinghampollard.com",
     "charlotte@brucegillinghampollard.com",
@@ -2293,8 +2306,10 @@ export function DealFormDialog({
               AML) lives behind a "Show all fields" toggle and can
               also be filled in later on the actual deal board. The
               EDIT path always renders the full form. */}
-          {!isEdit && !showAllFields ? (
-            form.dealType === "Consultant" ? (
+          {!isEdit && (!showAllFields || isClientCreate) ? (
+            // Clients always get the fee-less simplified body — never the
+            // Consultant fee-only body, never the full form.
+            (form.dealType === "Consultant" && !isClientCreate) ? (
             <ConsultantCreateBody
               form={form}
               set={set}
@@ -2316,6 +2331,7 @@ export function DealFormDialog({
               users={users}
               toggleAgent={toggleAgent}
               setForm={setForm}
+              hideFees={isClientCreate}
               feeRows={feeRows}
               setFeeRows={setFeeRows}
               feeAllocType={feeAllocType}
@@ -2863,7 +2879,7 @@ export function DealFormDialog({
           )}
 
           <DialogFooter className="flex items-center gap-2">
-            {!isEdit && (
+            {!isEdit && !isClientCreate && (
               <Button
                 type="button"
                 variant="ghost"
@@ -5727,9 +5743,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           : activeTeam && activeTeam !== "all"
             ? `${filteredDeals.length} deal${filteredDeals.length !== 1 ? "s" : ""} — ${activeTeam}`
             : `${deals.length} deal${deals.length !== 1 ? "s" : ""} in the CRM`}
-      actions={!isCompsMode && !isClientDeals ? (
+      actions={!isCompsMode ? (
         <>
-          {!isMobile && (<>
+          {!isMobile && !isClientDeals && (<>
           <Button
             variant="outline"
             size="sm"

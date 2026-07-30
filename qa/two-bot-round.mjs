@@ -248,6 +248,29 @@ async function markRound(page, cross) {
       if (leaked) throw new Error(`unscoped staff deal "${cross.dealStamp}" visible to client`);
     }
   });
+
+  // Client can open the deal-create dialog with no fee element and no crash.
+  // (Woody: "client can make a deal, hide the fee.") The full save requires
+  // the same counterparty + completion-date fields the agent fills; the
+  // end-to-end scoped, fee-stripped POST is covered by the server API test.
+  await step(page, p, 'client-create-deal-no-fee', async () => {
+    await page.goto(`${BASE}/deals`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1200);
+    if (!(await page.locator('[data-testid="button-create-deal"]').count()))
+      throw new Error('client has no New Deal button');
+    await page.locator('[data-testid="button-create-deal"]').first().click();
+    await page.waitForTimeout(800);
+    // Dialog must render (no ErrorBoundary) with the name field...
+    if (!(await page.locator('[data-testid="input-deal-name"]').count()))
+      throw new Error('client create dialog did not render');
+    // ...and none of the fee inputs / split / "Show all fields" escape hatch.
+    if (await page.locator('#deal-fee-pct').count()) throw new Error('agency % input visible to client');
+    if (await page.locator('#deal-fee').count()) throw new Error('total-fee input visible to client');
+    if (await page.getByText('BGP fee split', { exact: false }).count()) throw new Error('BGP fee split visible to client');
+    if (await page.locator('[data-testid="button-toggle-all-fields"]').count()) throw new Error('"Show all fields" (exposes fees) visible to client');
+    await page.keyboard.press('Escape');
+  });
 }
 
 // ─── Run ──────────────────────────────────────────────────────────────────

@@ -1411,7 +1411,11 @@ export function setupCrmRoutes(app: Express) {
     if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
     if (
       (req.method === "POST" && req.path === "/contacts") ||
-      (req.method === "PUT" && /^\/contacts\/[^/]+$/.test(req.path))
+      (req.method === "PUT" && /^\/contacts\/[^/]+$/.test(req.path)) ||
+      // Clients may create + edit deals on their own portfolio (scoped +
+      // fee-stripped inside the handlers). DELETE stays staff-only.
+      (req.method === "POST" && req.path === "/deals") ||
+      (req.method === "PUT" && /^\/deals\/[^/]+$/.test(req.path))
     ) return next();
     try {
       if (await isClientRequestUser(req)) {
@@ -2972,6 +2976,18 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.post("/api/crm/deals", async (req, res) => {
     try {
+      // A client creating a deal: pin it to their own company as landlord and
+      // strip every fee field — clients can make deals but never set BGP's
+      // fee. (Woody, 2026-07: "client can make a deal, just hide the fee.")
+      const dealScope = await resolveCompanyScope(req);
+      if (dealScope) {
+        req.body = {
+          ...req.body,
+          landlordId: dealScope,
+          fee: null, feePercentage: null, feeNotes: null,
+          feeAgreement: null, feeAgreementUrl: null, commission: null,
+        };
+      }
       // Resolve a "__tenancy__<id>" unitId picked from the tenancy
       // schedule directly. Finds (or creates) a matching property_units
       // row on the same property, then swaps the token for the real
@@ -3102,6 +3118,21 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   app.put("/api/crm/deals/:id", async (req, res) => {
     try {
       const oldDeal = await storage.getCrmDeal(req.params.id);
+      // Client editing: must be a deal on their own portfolio, and they can
+      // never touch any fee field. Scope check mirrors the deals-list filter.
+      const editScope = await resolveCompanyScope(req);
+      if (editScope) {
+        const inScope = oldDeal && (
+          (oldDeal as any).landlordId === editScope ||
+          (oldDeal as any).tenantId === editScope ||
+          (oldDeal as any).vendorId === editScope ||
+          (oldDeal as any).purchaserId === editScope
+        );
+        if (!inScope) return res.status(403).json({ error: "Not available for client accounts" });
+        for (const f of ["fee", "feePercentage", "feeNotes", "feeAgreement", "feeAgreementUrl", "commission"]) {
+          delete (req.body as any)[f];
+        }
+      }
       // Populated when a best-effort cross-board mirror fails — returned on
       // the response so the client can surface a sync warning instead of
       // the drift staying invisible in server logs.
