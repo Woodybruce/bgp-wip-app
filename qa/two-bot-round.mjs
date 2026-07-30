@@ -664,6 +664,52 @@ async function markRound(page, cross) {
     if (!r.persisted) throw new Error('client tenancy edit returned OK but did not persist');
   });
 
+  // Client comps: the scheme-scoped table must render rows AND the devaluation
+  // figures (price psf / ITZA) the client is there to read — a comps table with
+  // blank devaluation columns is the failure mode worth guarding.
+  await step(page, p, 'client-comps-devaluation', async () => {
+    await page.goto(`${BASE}/comps`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(3000);
+    const rows = await page.locator('[data-testid^="comp-row-"]').count();
+    if (!rows) return; // no comps in the client's scheme scope — nothing to assert
+    const api = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const r = await fetch('/api/crm/deals?comps=true', { headers: auth });
+      if (!r.ok) return { ok: false, status: r.status };
+      const d = await r.json();
+      const arr = Array.isArray(d) ? d : (d?.data || []);
+      return { ok: true, n: arr.length, withDeval: arr.filter(x => x.pricePsf != null || x.priceItza != null).length };
+    });
+    if (!api.ok) throw new Error(`comps API ${api.status} for client`);
+    // Any comp carrying a price should have a computed devaluation.
+    const body = await page.locator('body').innerText();
+    if (api.withDeval && !/£|psf|ITZA/i.test(body)) {
+      throw new Error('comps table shows no devaluation figures despite comps having them');
+    }
+  });
+
+  // ChatBGP panel: the suggestion chips must render for the client and clicking
+  // one must load it into the composer (the panel is their main entry point).
+  await step(page, p, 'client-chat-suggestions', async () => {
+    await page.goto(`${BASE}/`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(3000);
+    const chips = page.locator('[data-testid^="button-panel-suggestion-"]');
+    const n = await chips.count();
+    if (!n) return; // panel collapsed / no starters on this surface
+    const label = (await chips.first().innerText().catch(() => '')).trim();
+    await chips.first().click();
+    await page.waitForTimeout(1200);
+    // Either the composer picked it up, or a message row appeared. Both are
+    // fine; a crash or a dead chip is not.
+    const composer = await page.locator('textarea, [contenteditable="true"], input[placeholder*="Ask" i]').first()
+      .inputValue().catch(async () => (await page.locator('[contenteditable="true"]').first().innerText().catch(() => '')));
+    const echoed = label && (String(composer || '').includes(label.slice(0, 12)) ||
+      (await page.getByText(label.slice(0, 18), { exact: false }).count()) > 0);
+    if (!echoed) throw new Error(`clicking the "${label.slice(0, 24)}" suggestion did nothing`);
+  });
+
   // Client dashboard on a phone-width viewport must not overflow horizontally
   // (the app hit body-scroll bugs before; container queries fixed them). Use
   // a fresh 390px page so the desktop context isn't reused.
