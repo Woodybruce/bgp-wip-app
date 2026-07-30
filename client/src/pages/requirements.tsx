@@ -242,11 +242,11 @@ function MapLocationsCell({
   );
 }
 
-function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | null; companyFilter?: string | null }) {
+function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: string | null; companyFilter?: string | null; autoCreate?: boolean }) {
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(!!autoCreate);
   const [editItem, setEditItem] = useState<CrmRequirementsLeasing | null>(null);
   const isMobile = useIsMobile();
   const [deleteItem, setDeleteItem] = useState<CrmRequirementsLeasing | null>(null);
@@ -2950,13 +2950,13 @@ function LeasingFormDialog({
   );
 }
 
-function InvestmentTable({ teamFilter }: { teamFilter?: string | null }) {
+function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | null; autoCreate?: boolean }) {
   const [, navigate] = useLocation();
   const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(!!autoCreate);
   const [editItem, setEditItem] = useState<CrmRequirementsInvestment | null>(null);
   const [deleteItem, setDeleteItem] = useState<CrmRequirementsInvestment | null>(null);
   const [importing, setImporting] = useState(false);
@@ -3735,10 +3735,20 @@ export default function Requirements() {
   const typeParam = urlParams.get("type");
   const teamParam = urlParams.get("team");
   const companyIdParam = urlParams.get("companyId");
+  const newParam = urlParams.get("new");
   const effectiveTeam = activeTeam === "all" ? userTeam : activeTeam;
   const defaultIsInvestment = effectiveTeam === "Investment";
   const initialView = typeParam ? typeParam === "investment" : defaultIsInvestment;
   const [isInvestmentView, setIsInvestmentView] = useState(initialView);
+  // ?new=1 (dashboard widget "Add") opens the create dialog for the view we
+  // landed on; strip it from the URL so a refresh doesn't reopen the dialog.
+  const [autoCreateView] = useState(newParam ? (initialView ? "investment" : "leasing") : null);
+  useEffect(() => {
+    if (!newParam) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("new");
+    window.history.replaceState(null, "", url.pathname + url.search);
+  }, [newParam]);
 
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-[1600px] mx-auto" data-testid="requirements-page">
@@ -3774,7 +3784,7 @@ export default function Requirements() {
         </div>
       </div>
 
-      {isInvestmentView ? <InvestmentTable teamFilter={teamParam} /> : <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} />}
+      {isInvestmentView ? <InvestmentTable teamFilter={teamParam} autoCreate={autoCreateView === "investment"} /> : <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreateView === "leasing"} />}
     </div>
   );
 }
