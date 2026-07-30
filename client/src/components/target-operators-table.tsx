@@ -52,11 +52,14 @@ function CategoryItems({ current }: { current: string }) {
 // headers themselves so widths can differ, but the order is fixed here.
 export const TARGET_COLUMNS = ["Operator", "Category", "Priority", "Status", "Agent", "Client", "Comments"] as const;
 
-export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDelete = true }: {
+export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDelete = true, operatorExtra }: {
   target: any;
   clientCompanyId?: string | null;
   onChanged: () => void;
   showDelete?: boolean;
+  /** Rendered after the delete button in the Operator cell — e.g. the
+      tracker's small + add-target trigger on the first row of a unit. */
+  operatorExtra?: React.ReactNode;
 }) {
   const { toast } = useToast();
   const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -118,6 +121,7 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
               <Trash2 className="h-3 w-3 text-muted-foreground" />
             </Button>
           )}
+          {operatorExtra}
         </div>
       </TableCell>
       <TableCell>

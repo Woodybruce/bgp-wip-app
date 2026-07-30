@@ -1492,9 +1492,11 @@ export default function AvailableUnitsPage() {
                   const prop = propertyMap[u.propertyId];
                   const deal = u.dealId ? dealMap[u.dealId] : null;
                   const unitTargets: any[] = briefByUnit[u.id]?.targets || [];
-                  // Unit-level cells span every target row plus the trailing
-                  // add row, so targets read as first-class columns.
-                  const unitRowSpan = unitTargets.length === 0 ? 1 : unitTargets.length + 1;
+                  // Unit-level cells span every target row, so targets read
+                  // as first-class columns. Adding after the first target
+                  // happens via the small + next to the first operator —
+                  // no dedicated add row eating vertical space.
+                  const unitRowSpan = Math.max(1, unitTargets.length);
                   const unitClientCompanyId = briefByUnit[u.id]?.clientCompanyId || null;
                   return (
                     <Fragment key={u.id}>
@@ -1608,6 +1610,16 @@ export default function AvailableUnitsPage() {
                           target={unitTargets[0]}
                           clientCompanyId={unitClientCompanyId}
                           onChanged={() => invalidateBriefs(u.id)}
+                          operatorExtra={
+                            <BrandSearchInput
+                              iconOnly
+                              placeholder="Add target operator…"
+                              value=""
+                              allowCreate={!isClientTracker}
+                              onPick={p => addUnitTarget(u, p)}
+                              testId={`add-target-${u.id}`}
+                            />
+                          }
                         />
                       )}
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[180px]">
@@ -1894,20 +1906,6 @@ export default function AvailableUnitsPage() {
                         />
                       </TableRow>
                     ))}
-                    {unitTargets.length > 0 && (
-                      <TableRow className={selectedIds.has(u.id) ? "bg-primary/5" : ""}>
-                        <TableCell colSpan={7}>
-                          <BrandSearchInput
-                            className="h-6 w-[220px] border-dashed text-[10px]"
-                            placeholder="+ Target operator"
-                            value=""
-                            allowCreate={!isClientTracker}
-                            onPick={p => addUnitTarget(u, p)}
-                            testId={`add-target-${u.id}`}
-                          />
-                        </TableCell>
-                      </TableRow>
-                    )}
                     </Fragment>
                   );
                 })
