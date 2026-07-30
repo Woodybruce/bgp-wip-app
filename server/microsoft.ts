@@ -2285,24 +2285,73 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       createUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(cleanPath).replace(/%2F/g, "/")}:/children`;
     }
 
-    const response = await fetch(createUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: folderName,
-        folder: {},
-        "@microsoft.graph.conflictBehavior": "fail",
-      }),
-    });
+    // SharePoint throttles bursts (429) — honour Retry-After a couple of
+    // times before reporting failure, since folder setup now runs batches
+    // of creates concurrently.
+    for (let attempt = 0; ; attempt++) {
+      const response = await fetch(createUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: folderName,
+          folder: {},
+          "@microsoft.graph.conflictBehavior": "fail",
+        }),
+      });
 
-    if (response.ok || response.status === 409) {
-      return { success: true, name: folderName };
+      if (response.ok || response.status === 409) {
+        return { success: true, name: folderName };
+      }
+      if (response.status === 429 && attempt < 2) {
+        const wait = Math.min(10, Number(response.headers.get("Retry-After")) || 2);
+        await new Promise(r => setTimeout(r, wait * 1000));
+        continue;
+      }
+      const errText = await response.text();
+      return { success: false, name: folderName, error: `${response.status}: ${errText.slice(0, 100)}` };
     }
-    const errText = await response.text();
-    return { success: false, name: folderName, error: `${response.status}: ${errText.slice(0, 100)}` };
+  }
+
+  // Run async work over a list with bounded concurrency. Folder setup used
+  // to create every folder one Graph call at a time — a bulk client run
+  // (properties × ~20 folders each) took minutes and timed out the request.
+  async function runChunked<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+    const out: R[] = [];
+    for (let i = 0; i < items.length; i += limit) {
+      out.push(...await Promise.all(items.slice(i, i + limit).map(fn)));
+    }
+    return out;
+  }
+
+  // Create a folder tree under rootPath: parents must exist before children,
+  // so group the subpaths by depth and create each depth level in parallel.
+  async function createTreeBatched(
+    token: string,
+    driveId: string,
+    rootPath: string,
+    subPaths: string[],
+  ): Promise<{ path: string; success: boolean; error?: string }[]> {
+    const byDepth = new Map<number, string[]>();
+    for (const p of subPaths) {
+      const d = p.split("/").length;
+      byDepth.set(d, [...(byDepth.get(d) || []), p]);
+    }
+    const results: { path: string; success: boolean; error?: string }[] = [];
+    for (const depth of [...byDepth.keys()].sort((a, b) => a - b)) {
+      const level = await runChunked(byDepth.get(depth)!, 5, async (subPath) => {
+        const parts = subPath.split("/");
+        const folderName = parts[parts.length - 1];
+        const parentParts = parts.slice(0, -1);
+        const parentPath = parentParts.length > 0 ? `${rootPath}/${parentParts.join("/")}` : rootPath;
+        const r = await createFolderByPath(token, driveId, parentPath, folderName);
+        return { path: `${rootPath}/${subPath}`, success: r.success, error: r.error };
+      });
+      results.push(...level);
+    }
+    return results;
   }
 
   app.post("/api/microsoft/property-folders", async (req: Request, res: Response) => {
@@ -2346,23 +2395,8 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
 
       const results: { path: string; success: boolean; error?: string }[] = [
         { path: propertyRoot, success: true },
+        ...await createTreeBatched(token, spInfo.driveId, propertyRoot, folderTree),
       ];
-
-      for (const subPath of folderTree) {
-        const parts = subPath.split("/");
-        const folderName = parts[parts.length - 1];
-        const parentParts = parts.slice(0, -1);
-        const parentPath = parentParts.length > 0
-          ? `${propertyRoot}/${parentParts.join("/")}`
-          : propertyRoot;
-
-        const result = await createFolderByPath(token, spInfo.driveId, parentPath, folderName);
-        results.push({
-          path: `${propertyRoot}/${subPath}`,
-          success: result.success,
-          error: result.error,
-        });
-      }
 
       const successCount = results.filter(r => r.success).length;
       const errorCount = results.filter(r => !r.success).length;
@@ -2555,20 +2589,22 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       const propertyTree = TEAM_FOLDER_TREES["London Retail"] || TEAM_FOLDER_TREES["London F&B"] || [];
       const results: { path: string; success: boolean; error?: string }[] = [];
 
-      for (const propertyName of properties) {
-        const propertyRoot = `${clientRoot}/${propertyName}`;
+      // Property roots first (bounded parallel), then each property's tree
+      // level-by-level — the whole run used to be one folder at a time and
+      // timed out on clients with a real property list.
+      const rootResults = await runChunked(properties, 5, async (propertyName) => {
         const propRes = await createFolderByPath(token, spInfo.driveId, clientRoot, propertyName);
-        results.push({ path: propertyRoot, success: propRes.success, error: propRes.error });
-        if (!propRes.success) continue;
-        for (const subPath of propertyTree) {
-          const parts = subPath.split("/");
-          const folderName = parts[parts.length - 1];
-          const parentParts = parts.slice(0, -1);
-          const parentPath = parentParts.length > 0 ? `${propertyRoot}/${parentParts.join("/")}` : propertyRoot;
-          const sub = await createFolderByPath(token, spInfo.driveId, parentPath, folderName);
-          results.push({ path: `${propertyRoot}/${subPath}`, success: sub.success, error: sub.error });
-        }
+        return { propertyName, propertyRoot: `${clientRoot}/${propertyName}`, ...propRes };
+      });
+      for (const r of rootResults) {
+        results.push({ path: r.propertyRoot, success: r.success, error: r.error });
       }
+      const treeResults = await runChunked(
+        rootResults.filter(r => r.success),
+        3,
+        (r) => createTreeBatched(token, spInfo.driveId, r.propertyRoot, propertyTree),
+      );
+      for (const tr of treeResults) results.push(...tr);
 
       res.json({
         companyName,
