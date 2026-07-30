@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -810,6 +810,44 @@ async function markRound(page, cross) {
     if (r.skip) return;
     if (!r.ok) throw new Error(`client tenancy→tracker promote failed (${r.why})`);
     if (!r.delOk) throw new Error(`cleanup delete of the promoted tracker row failed (${r.delStatus})`);
+  });
+
+  // Heads of Terms (new): a client can read + edit the HOTs draft on their
+  // own unit and populate it from the property template; the standard
+  // template itself stays staff-only. (Woody's HOTs feature, tracker batch.)
+  await step(page, p, 'client-hots-roundtrip', async () => {
+    const note = `QA-HOTS-R${ROUND}`;
+    const r = await page.evaluate(async (marker) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = Array.isArray(units) ? units[0] : null;
+      if (!unit) return { skip: true };
+      const get1 = await fetch(`/api/available-units/${unit.id}/hots`, { headers: auth });
+      if (!get1.ok) return { ok: false, why: `hots GET ${get1.status}` };
+      const before = await get1.json().catch(() => ({}));
+      const put = await fetch(`/api/available-units/${unit.id}/hots`, {
+        method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ content: marker }),
+      });
+      if (!put.ok) return { ok: false, why: `hots PUT ${put.status}` };
+      const get2 = await (await fetch(`/api/available-units/${unit.id}/hots`, { headers: auth })).json();
+      const persisted = JSON.stringify(get2).includes(marker);
+      // restore whatever was there before so rounds leave no residue
+      await fetch(`/api/available-units/${unit.id}/hots`, {
+        method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ content: before?.content ?? null }),
+      }).catch(() => {});
+      // the property-level standard template must stay staff-only
+      const tpl = await fetch(`/api/properties/${unit.propertyId}/hots-template`, {
+        method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ template: 'nope' }),
+      });
+      return { ok: true, persisted, tplStatus: tpl.status };
+    }, note);
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`client HOTs flow failed (${r.why})`);
+    if (!r.persisted) throw new Error('client HOTs edit did not persist');
+    if (r.tplStatus >= 200 && r.tplStatus < 300) throw new Error('client was allowed to edit the staff-only HOTs template');
   });
 
   // Client dashboard on a phone-width viewport must not overflow horizontally
