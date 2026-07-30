@@ -3863,12 +3863,45 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         if ("fee" in partial) dealPatch.fee = (partial as any).fee;
         if ("askingRent" in partial) dealPatch.rentPa = (partial as any).askingRent;
         if ((req.body as any).landlordId) dealPatch.landlordId = (req.body as any).landlordId;
+        if ((req.body as any).dealType) dealPatch.dealType = (req.body as any).dealType;
         if (Object.keys(dealPatch).length > 0) {
           try {
             await storage.updateCrmDeal(existing.dealId, dealPatch as any);
           } catch (e: any) {
             console.warn(`[available-units PATCH] deal sync failed for ${existing.dealId}:`, e?.message);
           }
+        }
+      } else if ((req.body as any).dealType) {
+        // The unit has no backing deal (imported row, or born under
+        // UNIFIED_ADD_UNIT where deals wait for SOL) but the user
+        // explicitly set a Deal Type on the edit dialog. Zod strips
+        // dealType from the unit patch (available_units has no such
+        // column), so without this the edit silently went nowhere and
+        // the tracker's Deal Type column stayed "—". Create the backing
+        // deal now and link it — same shape as the POST auto-create.
+        try {
+          const property = existing.propertyId ? await storage.getCrmProperty(existing.propertyId) : null;
+          const dealLandlordId = (req.body as any).landlordId || (property as any)?.landlordId || null;
+          const agentNames = await resolveAgentNames((unit as any).agentUserIds);
+          const deal = await storage.createCrmDeal({
+            name: property
+              ? `${property.name}${(unit as any).unitName ? ` – ${(unit as any).unitName}` : ""}`
+              : (unit as any).unitName,
+            propertyId: existing.propertyId || undefined,
+            unitId: (existing as any).unitId || undefined,
+            status: (unit as any).marketingStatus || "AVA",
+            dealType: (req.body as any).dealType,
+            internalAgent: agentNames,
+            fee: (unit as any).fee ?? undefined,
+            rentPa: (unit as any).askingRent ?? undefined,
+            totalAreaSqft: (unit as any).sqft ?? undefined,
+            landlordId: dealLandlordId || undefined,
+          } as any);
+          await storage.updateAvailableUnit(req.params.id as string, { dealId: deal.id });
+          (unit as any).dealId = deal.id;
+          (unit as any).dealRef = (deal as any).dealRef;
+        } catch (e: any) {
+          console.warn("[available-units PATCH] deal auto-create failed:", e?.message);
         }
       }
 
