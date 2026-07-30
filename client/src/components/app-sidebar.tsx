@@ -49,6 +49,7 @@ import {
   Store,
   Globe,
   Target,
+  Eye,
 } from "lucide-react";
 import {
   Sidebar,
@@ -101,7 +102,7 @@ const coreNavBase = [
 ];
 
 const aiNav = [
-  { title: "Chat BGP", url: "/chatbgp", icon: Sparkles },
+  { title: "ChatBGP", url: "/chatbgp", icon: Sparkles },
   // Shown to all staff. Admins get the full /image-studio power page; the
   // render swaps non-admins (e.g. CGI partners like Luke) to /m/images, which
   // works on auth alone — so they finally have web access, not just mobile.
@@ -338,7 +339,14 @@ export function AppSidebar() {
     : coreWithApprovals;
   // Client logins (e.g. Landsec) get a trimmed nav: no People & HR, My Card,
   // Reporting or WIP — those are BGP-internal. Staff nav is unchanged.
-  const isClientUser = user?.role === "Client";
+  const isClientUser = user?.role === "Client" || !!(user as any)?.companyScopeId;
+  // A REAL external client login vs a BGP staff member who has switched the
+  // team picker to a client team. Both see the client nav (that's the point —
+  // "we see what they see"), but only a real client login is pinned to it.
+  // Staff must keep the switcher, or switching in traps them with no way back.
+  const isRealClientLogin = user?.role === "Client";
+  const isViewingAsClient = !isRealClientLogin && !!(user as any)?.companyScopeId;
+  const viewingAsName = (user as any)?.companyScopeName || activeTeam;
   const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/reporting", "/wip-report"];
   const coreNav = isClientUser
     ? coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
@@ -388,14 +396,17 @@ export function AppSidebar() {
         <NavSection
           label="AI Tools"
           items={aiNav
-            // Clients don't get the firm-wide Image Studio at all — their
-            // property imagery shows on the portfolio boards. (Landsec audit.)
-            .filter(i => !(isClientUser && i.url === "/image-studio"))
+            // Clients don't get the Property Intelligence map (every layer
+            // 403s → blank grey map) or CAD Measure — staff tools. (Landsec
+            // audit + visual QA.) Image Studio stays: the server scopes the
+            // gallery to the client's own buildings.
+            .filter(i => !(isClientUser && ["/property-intelligence", "/cad-measure"].includes(i.url)))
             .map(i =>
               // The full /image-studio page is admin-only (it calls admin
-              // endpoints). Non-admins (e.g. CGI partners like Luke) get the
-              // lightweight images page that works on auth alone.
-              i.url === "/image-studio" && !user?.isAdmin ? { ...i, url: "/m/images" } : i
+              // endpoints). Non-admins (e.g. CGI partners like Luke) and
+              // client viewers get the lightweight images page that works
+              // on auth alone.
+              i.url === "/image-studio" && (!user?.isAdmin || isClientUser) ? { ...i, url: "/m/images" } : i
             )}
           storageKey="ai"
         />
@@ -454,8 +465,27 @@ export function AppSidebar() {
           </DropdownMenu>
         </div>
 
-        {isClientUser ? (
-          // Client logins are pinned to their own team — no switching into
+        {/* Staff who've switched to a client team are seeing exactly what that
+            client sees. Say so plainly, with a one-click way out — otherwise
+            missing staff data reads as the app being broken. */}
+        {isViewingAsClient && (
+          <button
+            type="button"
+            onClick={() => setActiveTeam("all")}
+            className="flex items-center justify-between gap-2 w-full px-2 py-1.5 mb-1 rounded-md text-[11px] font-medium bg-primary/10 text-primary hover:bg-primary/20 transition-colors group-data-[collapsible=icon]:hidden"
+            title="You're seeing the client's view. Click to return to the full BGP view."
+            data-testid="button-exit-client-view"
+          >
+            <span className="flex items-center gap-1.5 min-w-0">
+              <Eye className="w-3 h-3 shrink-0" />
+              <span className="truncate">Viewing as {viewingAsName}</span>
+            </span>
+            <span className="shrink-0 opacity-70">Exit</span>
+          </button>
+        )}
+
+        {isRealClientLogin ? (
+          // Real client logins are pinned to their own team — no switching into
           // BGP's internal team views. (Landsec audit.)
           <div className="flex items-center gap-2 w-full px-2 py-1.5 text-xs font-medium" data-testid="client-team-label">
             <div className="w-5 h-5 rounded bg-primary/20 flex items-center justify-center shrink-0">
@@ -584,8 +614,8 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
   // Parity with desktop: Reporting hidden everywhere now, and client logins
   // also lose the BGP-internal items (People & HR, My Card, WIP).
   const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
-  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report"];
-  const items = user?.role === "Client"
+  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/sharepoint", "/calendar", "/mail", "/property-intelligence", "/cad-measure"];
+  const items = (user?.role === "Client" || !!(user as any)?.companyScopeId)
     ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
     : filteredByAdmin.filter(i => i.url !== "/reporting" || isLandsec);
 

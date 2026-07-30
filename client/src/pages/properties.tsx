@@ -346,9 +346,13 @@ function InlineFolderTree({
       });
       return res.json();
     },
-    onSuccess: (data, team) => {
+    onSuccess: async (data, team) => {
       const updated = [...current, team];
-      apiRequest("PUT", `/api/crm/properties/${propertyId}`, { folderTeams: updated });
+      try {
+        await apiRequest("PUT", `/api/crm/properties/${propertyId}`, { folderTeams: updated });
+      } catch (e: any) {
+        toast({ title: "Folders created, but the badge didn't save", description: e?.message, variant: "destructive" });
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties", propertyId] });
       toast({
@@ -861,7 +865,14 @@ export function InlineOwnerLink({
     mutationFn: async (val: string | null) => {
       await apiRequest("PUT", `/api/crm/properties/${propertyId}`, { [fieldName]: val });
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      // Asset-brief drives the covering strip / pipeline / compliance
+      // cards — different key prefix, so invalidate it explicitly or the
+      // owner change doesn't show until a hard reload.
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "asset-brief"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "linkage-audit"] });
+    },
     onError: (err: any) => toast({ title: `Failed to update ${label}`, description: err.message, variant: "destructive" }),
   });
 
@@ -2445,9 +2456,16 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
   const contactIds = useMemo(() => {
     if (!deals) return [];
     const ids = new Set<string>();
+    const CONTACT_FK_FIELDS = [
+      "clientContactId", "tenantContactId", "landlordContactId", "vendorContactId",
+      "purchaserContactId", "vendorAgentContactId", "acquisitionAgentContactId",
+      "purchaserAgentContactId", "leasingAgentContactId",
+    ];
     deals.forEach((d) => {
-      if (d.clientContactId) ids.add(d.clientContactId);
-      if (d.tenantId) ids.add(d.tenantId);
+      for (const f of CONTACT_FK_FIELDS) {
+        const v = (d as any)[f];
+        if (v) ids.add(v);
+      }
     });
     return Array.from(ids);
   }, [deals]);
@@ -2530,7 +2548,7 @@ function CreatePropertyDialog({
       })
       .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   }, [allCompaniesForLandlord]);
-  const [formData, setFormData] = useState({
+  const emptyCreateForm = {
     name: "",
     groupName: "Properties",
     status: "",
@@ -2543,7 +2561,19 @@ function CreatePropertyDialog({
     landlordId: "",
     notes: "",
     website: "",
-  });
+  };
+  const [formData, setFormData] = useState(emptyCreateForm);
+
+  // Reset on EVERY close, not just successful create. The dialog stays
+  // mounted, so a cancelled session otherwise leaves resolvedExistingId
+  // armed — and the next "Create" silently PATCHes that old property.
+  const handleOpenChange = (v: boolean) => {
+    if (!v) {
+      setFormData(emptyCreateForm);
+      setResolvedExistingId(null);
+    }
+    onOpenChange(v);
+  };
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -2597,7 +2627,7 @@ function CreatePropertyDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-lg" data-testid="dialog-create-property">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -2751,7 +2781,7 @@ function CreatePropertyDialog({
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-cancel-create-property">
+          <Button variant="outline" onClick={() => handleOpenChange(false)} data-testid="button-cancel-create-property">
             Cancel
           </Button>
           <Button
@@ -2897,7 +2927,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
   const kycStatus = property.proprietorKycStatus;
   const prof = kycData?.profile;
 
-  const postcode = (property.address as any)?.postcode || "";
+  const postcode = (property.address as any)?.postcode || (property as any).postcode || "";
 
   const searchFreeholds = async () => {
     if (!postcode) {
@@ -3155,9 +3185,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
     const lines: string[] = [];
     lines.push(`PROPERTY KYC REPORT — ${property.name}`);
     lines.push(`Generated: ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`);
-    lines.push(`Address: ${property.address ? [
-      (property.address as any).line1, (property.address as any).line2, (property.address as any).city, (property.address as any).postcode
-    ].filter(Boolean).join(", ") : "N/A"}`);
+    lines.push(`Address: ${formatAddress(property.address) || "N/A"}`);
     lines.push("");
     if (property.titleNumber) lines.push(`Title Number: ${property.titleNumber}`);
     if (property.proprietorName) {
@@ -3730,6 +3758,45 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
   const [leaseholdsData, setLeaseholdsData] = useState<Record<string, { titles: string[]; details: any[]; loading: boolean; page: number }>>({});
   const [downloadingDoc, setDownloadingDoc] = useState<string | null>(null);
 
+  const freeholds = data?.propertyDataCoUk?.freeholds?.data || [];
+  const hasFreeholds = freeholds.length > 0;
+
+  // Hooks must run on every render — these lived below the early
+  // no-postcode return, which crashed the panel with "Rendered more
+  // hooks" the moment a postcode arrived on a mounted instance.
+  useEffect(() => {
+    setAiMatch(null);
+    setAiMatchRan(false);
+    setAiMatchLoading(false);
+  }, [property.id]);
+
+  useEffect(() => {
+    if (hasFreeholds && !aiMatchRan && !property.titleNumber && fullAddress) {
+      setAiMatchRan(true);
+      setAiMatchLoading(true);
+      fetch("/api/title-search/ai-match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ propertyAddress: fullAddress, freeholds }),
+      })
+        .then(r => {
+          if (!r.ok) throw new Error("AI match failed");
+          return r.json();
+        })
+        .then(d => {
+          if (d.match) {
+            setAiMatch(d.match);
+            if (d.match.titleNumber && (d.match.confidence === "high" || d.match.confidence === "medium")) {
+              fillTitleFromIntelligence(d.match.titleNumber);
+            }
+          }
+        })
+        .catch(() => setAiMatch(null))
+        .finally(() => setAiMatchLoading(false));
+    }
+  }, [hasFreeholds, aiMatchRan, property.titleNumber, fullAddress]);
+
   if (!postcode) {
     return (
       <Card data-testid="property-intelligence-panel">
@@ -3747,8 +3814,6 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
     );
   }
 
-  const freeholds = data?.propertyDataCoUk?.freeholds?.data || [];
-  const hasFreeholds = freeholds.length > 0;
 
   const downloadTitleDocument = async (titleNumber: string, docType: "register" | "plan" = "register") => {
     setDownloadingDoc(`${titleNumber}-${docType}`);
@@ -3835,38 +3900,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
     }
   };
 
-  useEffect(() => {
-    setAiMatch(null);
-    setAiMatchRan(false);
-    setAiMatchLoading(false);
-  }, [property.id]);
 
-  useEffect(() => {
-    if (hasFreeholds && !aiMatchRan && !property.titleNumber && fullAddress) {
-      setAiMatchRan(true);
-      setAiMatchLoading(true);
-      fetch("/api/title-search/ai-match", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ propertyAddress: fullAddress, freeholds }),
-      })
-        .then(r => {
-          if (!r.ok) throw new Error("AI match failed");
-          return r.json();
-        })
-        .then(d => {
-          if (d.match) {
-            setAiMatch(d.match);
-            if (d.match.titleNumber && (d.match.confidence === "high" || d.match.confidence === "medium")) {
-              fillTitleFromIntelligence(d.match.titleNumber);
-            }
-          }
-        })
-        .catch(() => setAiMatch(null))
-        .finally(() => setAiMatchLoading(false));
-    }
-  }, [hasFreeholds, aiMatchRan, property.titleNumber, fullAddress]);
 
   const fillTitleFromIntelligence = async (selectedTitle: string) => {
     setFetchingTitle(selectedTitle);
@@ -4425,9 +4459,13 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
 }
 
 export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: string; propertyName: string }) {
-  const { data, isLoading, refetch, isFetching } = useQuery<{ articles: PropertyNewsArticle[]; searchQuery: string }>({
+  const { data, isLoading, isError, refetch, isFetching } = useQuery<{ articles: PropertyNewsArticle[]; searchQuery: string }>({
     queryKey: ["/api/properties", propertyId, "news"],
-    queryFn: () => fetch(`/api/properties/${propertyId}/news`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
+    queryFn: async () => {
+      const r = await fetch(`/api/properties/${propertyId}/news`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error(`News lookup failed (${r.status})`);
+      return r.json();
+    },
     staleTime: 5 * 60 * 1000,
   });
 
@@ -4462,6 +4500,11 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
             <Skeleton className="h-16 w-full" />
             <Skeleton className="h-16 w-full" />
             <Skeleton className="h-16 w-full" />
+          </div>
+        ) : isError ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <Newspaper className="w-6 h-6 mx-auto mb-2 opacity-30" />
+            <p className="text-xs">Couldn't load news — <button className="underline" onClick={() => refetch()}>retry</button></p>
           </div>
         ) : articles.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
@@ -4981,7 +5024,11 @@ function PropertiesList({
 
   const items = useMemo(() => {
     const all = properties || [];
-    if (!isLandsecView || !landsecCompanyIds) return all;
+    if (!isLandsecView) return all;
+    // Fail CLOSED: if the Landsec company can't be resolved, show nothing
+    // rather than presenting the entire BGP portfolio under a "Landsec
+    // portfolio" label.
+    if (!landsecCompanyIds) return [];
     return all.filter(p => p.landlordId && landsecCompanyIds.has(p.landlordId));
   }, [properties, isLandsecView, landsecCompanyIds]);
 
@@ -5404,7 +5451,7 @@ function PropertiesList({
               </div>
             ) : (
               <MobileCardView
-                items={filteredItems.map((item): MobileCardItem => {
+                items={sortedItems.map((item): MobileCardItem => {
                   const assignedIds = agentLinks.filter(l => l.propertyId === item.id).map(l => l.userId);
                   const agentNames = allUsers.filter(u => assignedIds.includes(String(u.id))).map(u => u.name || "").join(", ");
                   const teams = Array.isArray(item.bgpEngagement) ? item.bgpEngagement.join(", ") : (item.bgpEngagement || "");
@@ -5412,7 +5459,7 @@ function PropertiesList({
                   return {
                     id: item.id,
                     title: item.name,
-                    subtitle: item.address ? (typeof item.address === "object" ? (item.address as any).line1 || "" : String(item.address)) : undefined,
+                    subtitle: formatAddress(item.address) || undefined,
                     href: `/properties/${item.id}`,
                     status: item.status || undefined,
                     statusColor: BUILDING_ICON_COLORS[item.status || ""]?.replace("text-", "bg-") || "bg-muted-foreground",
@@ -5887,9 +5934,14 @@ function LandlordHealthView({
     missing_both: rows.filter(r => r.status === "missing_both").length,
   };
 
-  const landlordCompanies = allCompanies.filter(c =>
-    c.companyType === "Landlord" || c.companyType === "Client" || c.companyType === "Landlord / Client"
-  );
+  // Same predicate as InlineLandlord — funds, REITs, investors and
+  // developers are landlords too; the old exact-match list ("Client",
+  // "Landlord / Client" aren't even canonical types) hid most of them.
+  const landlordCompanies = allCompanies.filter(c => {
+    const t = (c.companyType || "").toLowerCase();
+    return t.includes("landlord") || t.includes("investor") || t.includes("developer")
+      || t.includes("reit") || t.includes("fund") || t.includes("freeholder") || t.includes("client");
+  });
 
   return (
     <div className="space-y-4">

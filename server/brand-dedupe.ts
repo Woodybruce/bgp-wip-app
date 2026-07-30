@@ -143,6 +143,27 @@ router.post("/api/brand/dedupe/scan", requireAuth, async (req: Request, res: Res
       }
     }
 
+    // Prefix containment — "200 Degrees" vs "200 Degrees Coffee" normalise
+    // to different keys, so exact clustering never pairs them. Pair names
+    // where one is a word-boundary prefix of the other (shorter ≥5 chars);
+    // AI judges each pair like any other fuzzy cluster.
+    {
+      const keys = [...nameClusters.keys()].sort();
+      for (let i = 0; i < keys.length - 1; i++) {
+        for (let j = i + 1; j < keys.length && keys[j].startsWith(keys[i]); j++) {
+          const a = keys[i], b = keys[j];
+          if (a.length < 5 || a === b) continue;
+          if (b[a.length] !== " ") continue; // word boundary — "leon" ≠ "leonardo"
+          const pair = [...nameClusters.get(a)!, ...nameClusters.get(b)!];
+          const idSet = new Set(pair.map(c => c.id));
+          const alreadyCovered = candidates.some(c => c.companies.every(x => idSet.has(x.id)));
+          if (!alreadyCovered) {
+            candidates.push({ clusterKey: `prefix:${a}~${b}`, companies: pair, reason: `One name contains the other ("${a}" ⊂ "${b}")`, needsAI: true });
+          }
+        }
+      }
+    }
+
     // AI judge the fuzzy name-only clusters (cap to protect budget)
     const MAX_AI = 40;
     let aiCalls = 0;

@@ -19,7 +19,7 @@ import {
   UtensilsCrossed, Soup, Diamond, Car, Wifi, BookOpen, Smartphone,
   Flower2, Clapperboard, Tv, Gamepad2, Baby, Palette, PartyPopper,
   HeartPulse, Bath, Dumbbell, Tag, Wrench, Watch, Gem, Footprints,
-  ShoppingCart, Crosshair, TrendingDown, Eye, Lightbulb,
+  ShoppingCart, Crosshair, TrendingDown, Eye, Lightbulb, Target, ClipboardList,
 } from "lucide-react";
 
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
@@ -148,12 +148,11 @@ export default function BrandsHub() {
     ? rawTab as HubTab
     : (typeof window !== "undefined" && window.innerWidth < 768 ? "explorer" : "overview");
   const [activeTab, setActiveTab] = useState<HubTab>(initialTab);
-  // Client logins (e.g. Landsec) get ONLY Brand Explorer — the curated
-  // hospitality/F&B/fitness directory. Overview (turnover leaders + the
-  // "Research Turnover" admin panel), Turnover Board and Brand Hunter are all
-  // BGP intel and stay staff-only.
+  // Client logins (e.g. Landsec) get the full hub read-only — all four
+  // boards; only the "Research Turnover" trigger panel stays staff-only
+  // (the research POSTs are 403 for client accounts).
   const { data: hubUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isClientHub = hubUser?.role === "Client";
+  const isClientHub = hubUser?.role === "Client" || !!hubUser?.companyScopeId;
   // The other boards (Overview/Turnover/Hunter) are still being built, so on
   // mobile we show only Brand Explorer. Desktop keeps the full tab bar.
   const VISIBLE_HUB_TABS = ([
@@ -162,18 +161,12 @@ export default function BrandsHub() {
     { key: "turnover", label: "Turnover Board", icon: TrendingUp },
     { key: "hunter",  label: "Brand Hunter",   icon: Crosshair },
   ] as { key: HubTab; label: string; icon: any }[])
-    .filter(t => !isMobile || t.key === "explorer")
-    .filter(t => !isClientHub || t.key === "explorer");
+    .filter(t => !isMobile || t.key === "explorer");
   const [search, setSearch] = useState("");
   const [researchingId, setResearchingId] = useState<string | null>(null);
 
-  // Clients only have the explorer — force it and bounce any deep-link to a
-  // staff board (overview/turnover/hunter).
-  useEffect(() => {
-    if (isClientHub && activeTab !== "explorer") {
-      setActiveTab("explorer");
-    }
-  }, [isClientHub, activeTab]);
+  // Clients get the full Brand Intelligence hub (all four boards) — the
+  // data endpoints scope the brand slice server-side. (Landsec request.)
 
   const { data, isLoading } = useQuery<HubData>({
     queryKey: ["/api/brands/hub"],
@@ -237,7 +230,7 @@ export default function BrandsHub() {
             <Store className="w-6 h-6 text-pink-500" />
             Brand Intelligence
           </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Live view of every brand across the Hub</p>
+          <p className="text-sm text-muted-foreground mt-0.5">{isClientHub ? "Brands across your portfolio and the wider hospitality market" : "Live view of every brand across the Hub"}</p>
         </div>
         <Link href="/companies?tab=tenants">
           <Button variant="outline" size="sm">
@@ -275,7 +268,7 @@ export default function BrandsHub() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: "Total Brands", value: totalBrands, icon: Store, colour: "text-pink-500" },
-          { label: "Active Requirements", value: activeReqs, icon: FileText, colour: "text-blue-500" },
+          { label: "Brands with Live Requirements", value: activeReqs, icon: FileText, colour: "text-blue-500" },
           { label: "With Turnover Data", value: brandsWithTurnover, icon: BarChart3, colour: "text-emerald-500" },
           { label: "Categories", value: BRAND_CATEGORIES.length, icon: Zap, colour: "text-purple-500" },
         ].map(s => (
@@ -385,7 +378,9 @@ export default function BrandsHub() {
           </CardContent>
         </Card>
 
-        {/* Super Brands */}
+        {/* Super Brands — luxury/flagship intel, staff only (server sends
+            [] for clients, so the card would sit permanently empty). */}
+        {!isClientHub && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
             <div className="flex items-center gap-2">
@@ -415,6 +410,7 @@ export default function BrandsHub() {
             </div>
           </CardContent>
         </Card>
+        )}
       </div>
 
       {/* ── Active Requirements Radar ───────────────────────────────── */}
@@ -439,20 +435,25 @@ export default function BrandsHub() {
                       <p className="text-sm font-medium truncate">{r.company_name}</p>
                       <p className="text-[10px] text-muted-foreground truncate">{(r.company_type || "").replace("Tenant - ", "")}</p>
                       <div className="flex flex-wrap gap-1 mt-1">
+                        {/* max-w-full + truncate — free-text sizes ("Prezzo:
+                            2,500-3,500 sq ft; Jamie's Italian: …") must clip
+                            inside the card, not bleed across the grid. */}
                         {r.size?.length ? (
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0">
-                            <Maximize2 className="w-2.5 h-2.5 mr-0.5" />
-                            {formatSize(r.size)}
+                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 max-w-full" title={formatSize(r.size)}>
+                            <Maximize2 className="w-2.5 h-2.5 mr-0.5 shrink-0" />
+                            <span className="truncate">{formatSize(r.size)}</span>
                           </Badge>
                         ) : null}
                         {r.requirement_locations && r.requirement_locations.length > 0 && (
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0">
-                            <MapPin className="w-2.5 h-2.5 mr-0.5" />
-                            {r.requirement_locations.slice(0, 2).join(", ")}
+                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 max-w-full" title={r.requirement_locations.join(", ")}>
+                            <MapPin className="w-2.5 h-2.5 mr-0.5 shrink-0" />
+                            <span className="truncate">{r.requirement_locations.slice(0, 2).join(", ")}</span>
                           </Badge>
                         )}
                         {r.use?.length ? (
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0">{r.use.join(", ")}</Badge>
+                          <Badge variant="outline" className="text-[9px] px-1.5 py-0 max-w-full" title={r.use.join(", ")}>
+                            <span className="truncate">{r.use.join(", ")}</span>
+                          </Badge>
                         ) : null}
                       </div>
                     </div>
@@ -464,7 +465,9 @@ export default function BrandsHub() {
         </CardContent>
       </Card>
 
-      {/* ── Turnover Research Panel ─────────────────────────────────── */}
+      {/* ── Turnover Research Panel — staff-only (research POSTs are
+             403 for client accounts, so don't show the trigger UI). ── */}
+      {!isClientHub && (
       <Card>
         <CardHeader className="pb-3 pt-4 px-5">
           <div className="flex items-center justify-between flex-wrap gap-2">
@@ -479,6 +482,7 @@ export default function BrandsHub() {
           <TurnoverResearchPanel onResearch={(id) => researchMut.mutate(id)} researchingId={researchingId} />
         </CardContent>
       </Card>
+      )}
 
       </>)}
 
@@ -597,7 +601,7 @@ function BrandExplorer() {
   // so hide the category cards that can never have brands for them (Luxury,
   // Fashion & Retail, …) rather than showing a row of zeros.
   const { data: exUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isClientExplorer = exUser?.role === "Client";
+  const isClientExplorer = exUser?.role === "Client" || !!exUser?.companyScopeId;
   const [activeCat, setActiveCat] = useState<string | null>(() => {
     try { return localStorage.getItem("brand-explorer-cat") || null; } catch { return null; }
   });
@@ -607,6 +611,8 @@ function BrandExplorer() {
   const [search, setSearch] = useState(() => {
     try { return localStorage.getItem("brand-explorer-search") || ""; } catch { return ""; }
   });
+  const [relFilter, setRelFilter] = useState<string>("all");
+  const [propFilter, setPropFilter] = useState<string>("all");
 
   const { data: allCompanies = [] } = useQuery<any[]>({
     queryKey: ["/api/crm/companies"],
@@ -616,6 +622,29 @@ function BrandExplorer() {
     },
     staleTime: 120_000,
   });
+
+  // Firm-wide relationship flags per brand (staff only) — powers the
+  // relationship pills, the targeted-at-property dropdown and card chips.
+  const { data: explorerFlags = {} } = useQuery<Record<string, {
+    isTenant: boolean;
+    targetedAt: { propertyId: string; propertyName: string; unitName: string | null }[];
+    hasContacts: boolean;
+    hunterFlag: boolean;
+    isTracked: boolean;
+    liveRequirement: boolean;
+  }>>({
+    queryKey: ["/api/brands/explorer-flags"],
+    enabled: !isClientExplorer,
+    staleTime: 120_000,
+  });
+
+  const targetProperties = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const f of Object.values(explorerFlags)) {
+      for (const t of f.targetedAt || []) m.set(t.propertyId, t.propertyName);
+    }
+    return [...m.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [explorerFlags]);
 
   const companies = useMemo(
     () => (allCompanies as any[]).filter((c: any) => (c.companyType || "").startsWith("Tenant")),
@@ -677,8 +706,24 @@ function BrandExplorer() {
       const s = search.toLowerCase();
       list = list.filter(c => c.name.toLowerCase().includes(s));
     }
+    if (!isClientExplorer && relFilter !== "all") {
+      list = list.filter(c => {
+        const f = explorerFlags[c.id];
+        if (!f) return false;
+        if (relFilter === "tenant") return f.isTenant;
+        if (relFilter === "targeted") return (f.targetedAt || []).length > 0;
+        if (relFilter === "contacts") return f.hasContacts;
+        if (relFilter === "hunter") return f.hunterFlag;
+        if (relFilter === "tracked") return f.isTracked;
+        if (relFilter === "requirement") return f.liveRequirement;
+        return true;
+      });
+    }
+    if (!isClientExplorer && propFilter !== "all") {
+      list = list.filter(c => (explorerFlags[c.id]?.targetedAt || []).some(t => t.propertyId === propFilter));
+    }
     return list.sort((a: any, b: any) => a.name.localeCompare(b.name));
-  }, [companies, activeCat, activeSub, activeCatObj, search]);
+  }, [companies, activeCat, activeSub, activeCatObj, search, isClientExplorer, relFilter, propFilter, explorerFlags]);
 
   return (
     <div className="space-y-4">
@@ -778,9 +823,9 @@ function BrandExplorer() {
         );
       })()}
 
-      {/* Search + count */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
+      {/* Search + relationship filters + count */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             placeholder="Search brands..."
@@ -789,19 +834,80 @@ function BrandExplorer() {
             className="pl-9 h-9"
           />
         </div>
-        <p className="text-sm text-muted-foreground">{filtered.length} results</p>
+        {!isClientExplorer && (
+          <>
+            <div className="flex gap-1.5 flex-wrap">
+              {([
+                ["all", "All"],
+                ["tenant", "Existing tenants"],
+                ["targeted", "Being targeted"],
+                ["contacts", "With contacts"],
+                ["requirement", "Live requirement"],
+                ["hunter", "Hunter-flagged"],
+                ["tracked", "Tracked"],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setRelFilter(key)}
+                  className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                    relFilter === key ? "bg-teal-600 text-white border-teal-600" : "bg-background hover:bg-muted"
+                  }`}
+                  data-testid={`explorer-rel-${key}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {targetProperties.length > 0 && (
+              <select
+                value={propFilter}
+                onChange={e => setPropFilter(e.target.value)}
+                className="h-7 rounded-full border bg-background px-2.5 text-xs text-muted-foreground"
+                data-testid="explorer-prop-filter"
+              >
+                <option value="all">Targeted at: any property</option>
+                {targetProperties.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            )}
+          </>
+        )}
+        <p className="text-sm text-muted-foreground ml-auto">{filtered.length} results</p>
       </div>
 
       {/* Brand cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8 gap-2">
         {filtered.map((c: any) => {
           const parent = c.parentCompanyId ? companyById.get(c.parentCompanyId) : null;
+          const cf = isClientExplorer ? undefined : explorerFlags[c.id];
+          const targetCount = (cf?.targetedAt || []).length;
           return (
             <div key={c.id} className="relative flex flex-col items-center gap-1.5 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-center group">
               <Link href={`/companies/${c.id}`} className="absolute inset-0 rounded-lg" aria-label={c.name} />
               <BrandLogo name={c.name} domain={c.domain} size={36} />
               <p className="text-xs font-medium leading-tight truncate w-full group-hover:text-primary transition-colors">{c.name}</p>
               <p className="text-[10px] text-muted-foreground truncate w-full">{(c.companyType || "").replace("Tenant - ", "")}</p>
+              {cf && (cf.isTenant || targetCount > 0 || cf.liveRequirement) && (
+                <div className="flex items-center justify-center gap-1 flex-wrap">
+                  {cf.isTenant && (
+                    <span className="text-[9px] px-1.5 py-px rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">Tenant</span>
+                  )}
+                  {targetCount > 0 && (
+                    <span
+                      className="text-[9px] px-1.5 py-px rounded-full border border-amber-400 text-amber-700 dark:text-amber-400 inline-flex items-center gap-0.5"
+                      title={(cf.targetedAt || []).map(t => `${t.unitName ? `${t.unitName} · ` : ""}${t.propertyName}`).join("\n")}
+                    >
+                      <Target className="w-2.5 h-2.5" />{targetCount}
+                    </span>
+                  )}
+                  {cf.liveRequirement && (
+                    <span className="text-[9px] px-1.5 py-px rounded-full border border-violet-400 text-violet-700 dark:text-violet-400 inline-flex items-center gap-0.5" title="Live leasing requirement">
+                      <ClipboardList className="w-2.5 h-2.5" />Req
+                    </span>
+                  )}
+                </div>
+              )}
               {c.parentCompanyId && (
                 <Link
                   href={`/companies/${c.parentCompanyId}`}
@@ -915,6 +1021,8 @@ function MarketCommentaryBoard({
   accent: string;
 }) {
   const { toast } = useToast();
+  const { data: mcViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const mcIsClient = mcViewer?.role === "Client" || !!mcViewer?.companyScopeId;
   const params = new URLSearchParams({
     scope: scopeKey,
     label: scopeLabel,
@@ -991,6 +1099,7 @@ function MarketCommentaryBoard({
               </div>
             </div>
           </div>
+          {!mcIsClient && (
           <Button
             size="sm"
             variant="ghost"
@@ -1002,6 +1111,7 @@ function MarketCommentaryBoard({
             <RefreshCw className={`w-3 h-3 mr-1 ${refreshing ? "animate-spin" : ""}`} />
             Refresh
           </Button>
+          )}
         </div>
       </div>
 

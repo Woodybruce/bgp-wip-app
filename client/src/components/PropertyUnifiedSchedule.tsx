@@ -30,7 +30,7 @@ export function PropertyUnifiedSchedule({ propertyId }: { propertyId: string }) 
   // Client logins get a fuller "what is this board" explainer instead of
   // the staff column-picker hint.
   const { data: schedUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isClientSched = schedUser?.role === "Client";
+  const isClientSched = !schedUser || schedUser.role === "Client" || !!schedUser.companyScopeId;
   const [lens, setLens] = useState<Lens>(() => {
     try {
       const stored = localStorage.getItem(lensKey);
@@ -93,7 +93,7 @@ export function PropertyUnifiedSchedule({ propertyId }: { propertyId: string }) 
       {/* Re-mount the underlying board when the lens changes so its
           internal hiddenFields state re-initialises from the lens-
           specific localStorage. Saves a more invasive refactor. */}
-      <PropertyTenancySchedule key={lens} propertyId={propertyId} lens={lens} />
+      <PropertyTenancySchedule key={lens} propertyId={propertyId} lens={lens} readOnly={isClientSched} />
     </div>
   );
 }

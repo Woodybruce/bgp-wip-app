@@ -3165,7 +3165,7 @@ export default function ChatBGP() {
             data-testid="button-chatbgp-home"
           >
             <Sparkles className="w-5 h-5 shrink-0" />
-            <span className="truncate">Chat BGP</span>
+            <span className="truncate">ChatBGP</span>
           </button>
 
           <button

@@ -101,6 +101,10 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
   const [foundStores, setFoundStores] = useState<Record<string, any[]>>({}); // brand -> stores
   const [populatingComps, setPopulatingComps] = useState(false);
 
+  // Client logins (e.g. Landsec) get the board read-only — edit POSTs are 403 for them.
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = viewer?.role === "Client" || !!viewer?.companyScopeId;
+
   const { data: entries = [], isLoading } = useQuery<TurnoverEntry[]>({
     queryKey: ["/api/turnover"],
     queryFn: async () => {
@@ -280,6 +284,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
   }
 
   function startEdit(id: string, field: string, currentValue: any) {
+    if (isClientViewer) return;
     setEditingCell({ id, field });
     setEditValue(currentValue?.toString() || "");
   }
@@ -326,12 +331,14 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
               </h1>
               <p className="text-sm text-muted-foreground">Brand revenue intelligence across your portfolio</p>
             </div>
-            <Button onClick={() => setShowAdd(true)} data-testid="button-add-entry">
-              <Plus className="w-4 h-4 mr-1" /> Add Entry
-            </Button>
+            {!isClientViewer && (
+              <Button onClick={() => setShowAdd(true)} data-testid="button-add-entry">
+                <Plus className="w-4 h-4 mr-1" /> Add Entry
+              </Button>
+            )}
           </div>
         )}
-        {embedded && (
+        {embedded && !isClientViewer && (
           <div className="flex justify-end">
             <Button onClick={() => setShowAdd(true)} data-testid="button-add-entry">
               <Plus className="w-4 h-4 mr-1" /> Add Entry
@@ -429,10 +436,12 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
               <Building2 className="w-3.5 h-3.5 inline mr-1" />By Brand
             </button>
           </div>
-          <Button variant="outline" size="sm" onClick={handlePopulateFromComps} disabled={populatingComps} data-testid="button-populate-comps">
-            {populatingComps ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Store className="w-3.5 h-3.5 mr-1" />}
-            From CRM Comps
-          </Button>
+          {!isClientViewer && (
+            <Button variant="outline" size="sm" onClick={handlePopulateFromComps} disabled={populatingComps} data-testid="button-populate-comps">
+              {populatingComps ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Store className="w-3.5 h-3.5 mr-1" />}
+              From CRM Comps
+            </Button>
+          )}
         </div>
 
         {isLoading ? (
@@ -444,6 +453,9 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
             <CardContent className="py-12 text-center">
               <BarChart3 className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
               {entries.length === 0 ? (
+                isClientViewer ? (
+                  <h3 className="font-medium mb-1">No turnover data yet.</h3>
+                ) : (
                 <>
                   <h3 className="font-medium mb-1">No turnover data yet</h3>
                   <p className="text-sm text-muted-foreground mb-4">Add your first entry to start tracking brand revenue</p>
@@ -451,6 +463,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                     <Plus className="w-4 h-4 mr-1" /> Add Entry
                   </Button>
                 </>
+                )
               ) : (
                 <>
                   <h3 className="font-medium mb-1">No matching entries</h3>
@@ -615,21 +628,23 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                           </div>
                         ) : (
                           <span className="text-xs text-muted-foreground cursor-pointer truncate block" onClick={() => startEdit(entry.id, "notes", entry.notes || "")} title={entry.notes || ""} data-testid={`cell-notes-${entry.id}`}>
-                            {entry.notes || <span className="italic">Click to add</span>}
+                            {entry.notes || <span className="italic">{isClientViewer ? "—" : "Click to add"}</span>}
                           </span>
                         )}
                       </td>
                       <td className="px-2 py-2.5">
-                        <div className="flex items-center gap-0.5">
-                          {entry.is_draft && (
-                            <Button size="icon" variant="ghost" className="h-6 w-6 text-green-600 hover:text-green-700" onClick={() => confirmMutation.mutate(entry.id)} title="Confirm store" data-testid={`button-confirm-${entry.id}`}>
-                              <Check className="w-3 h-3" />
+                        {!isClientViewer && (
+                          <div className="flex items-center gap-0.5">
+                            {entry.is_draft && (
+                              <Button size="icon" variant="ghost" className="h-6 w-6 text-green-600 hover:text-green-700" onClick={() => confirmMutation.mutate(entry.id)} title="Confirm store" data-testid={`button-confirm-${entry.id}`}>
+                                <Check className="w-3 h-3" />
+                              </Button>
+                            )}
+                            <Button size="icon" variant="ghost" className="h-6 w-6 text-muted-foreground hover:text-red-600" onClick={() => { if (confirm("Delete this entry?")) deleteMutation.mutate(entry.id); }} data-testid={`button-delete-${entry.id}`}>
+                              <Trash2 className="w-3 h-3" />
                             </Button>
-                          )}
-                          <Button size="icon" variant="ghost" className="h-6 w-6 text-muted-foreground hover:text-red-600" onClick={() => { if (confirm("Delete this entry?")) deleteMutation.mutate(entry.id); }} data-testid={`button-delete-${entry.id}`}>
-                            <Trash2 className="w-3 h-3" />
-                          </Button>
-                        </div>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -668,20 +683,22 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                     <span className="text-xs text-muted-foreground">{brandEntries.length} store{brandEntries.length !== 1 ? "s" : ""}</span>
                     {totalTurnover > 0 && <span className="text-xs font-semibold tabular-nums">{formatCurrency(totalTurnover)}</span>}
                     {avgPsf && <span className="text-xs text-muted-foreground tabular-nums">£{avgPsf.toFixed(0)}/sqft avg</span>}
-                    <div className="flex items-center gap-1 ml-2" onClick={e => e.stopPropagation()}>
-                      <Button
-                        size="sm" variant="outline"
-                        className="h-7 text-xs"
-                        disabled={findingStores === brandName}
-                        onClick={() => handleFindStores(brandName)}
-                      >
-                        {findingStores === brandName ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <MapPin className="w-3 h-3 mr-1" />}
-                        Find Stores
-                      </Button>
-                    </div>
+                    {!isClientViewer && (
+                      <div className="flex items-center gap-1 ml-2" onClick={e => e.stopPropagation()}>
+                        <Button
+                          size="sm" variant="outline"
+                          className="h-7 text-xs"
+                          disabled={findingStores === brandName}
+                          onClick={() => handleFindStores(brandName)}
+                        >
+                          {findingStores === brandName ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <MapPin className="w-3 h-3 mr-1" />}
+                          Find Stores
+                        </Button>
+                      </div>
+                    )}
                   </div>
 
-                  {previewStores && previewStores.length > 0 && (
+                  {!isClientViewer && previewStores && previewStores.length > 0 && (
                     <div className="px-4 pb-2 border-t bg-blue-50 dark:bg-blue-950/20">
                       <div className="flex items-center justify-between py-2">
                         <span className="text-xs font-medium text-blue-700 dark:text-blue-300">{previewStores.length} stores found via OpenStreetMap</span>
@@ -747,16 +764,18 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                                 <Badge variant="secondary" className={`text-[10px] ${sourceBadge(entry.source)}`}>{entry.source}</Badge>
                               </td>
                               <td className="px-2 py-2.5">
-                                <div className="flex items-center gap-0.5">
-                                  {entry.is_draft && (
-                                    <Button size="icon" variant="ghost" className="h-6 w-6 text-green-600 hover:text-green-700" onClick={() => confirmMutation.mutate(entry.id)} title="Confirm store">
-                                      <Check className="w-3 h-3" />
+                                {!isClientViewer && (
+                                  <div className="flex items-center gap-0.5">
+                                    {entry.is_draft && (
+                                      <Button size="icon" variant="ghost" className="h-6 w-6 text-green-600 hover:text-green-700" onClick={() => confirmMutation.mutate(entry.id)} title="Confirm store">
+                                        <Check className="w-3 h-3" />
+                                      </Button>
+                                    )}
+                                    <Button size="icon" variant="ghost" className="h-6 w-6 text-muted-foreground hover:text-red-600" onClick={() => { if (confirm("Delete?")) deleteMutation.mutate(entry.id); }}>
+                                      <Trash2 className="w-3 h-3" />
                                     </Button>
-                                  )}
-                                  <Button size="icon" variant="ghost" className="h-6 w-6 text-muted-foreground hover:text-red-600" onClick={() => { if (confirm("Delete?")) deleteMutation.mutate(entry.id); }}>
-                                    <Trash2 className="w-3 h-3" />
-                                  </Button>
-                                </div>
+                                  </div>
+                                )}
                               </td>
                             </tr>
                           ))}

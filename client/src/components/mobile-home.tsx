@@ -134,7 +134,7 @@ export default function MobileHome() {
   const { data: user } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   // Client logins (e.g. Landsec): no Expenses tile, and skip the BGP
   // commission/WIP queries entirely — they're staff-only and would 403.
-  const isClientHome = user?.role === "Client";
+  const isClientHome = user?.role === "Client" || !!(user as any)?.companyScopeId;
   const { data: alerts = [] } = useQuery<Alert[]>({ queryKey: ["/api/daily-digest"] });
   const { data: tasks = [] } = useQuery<Task[]>({ queryKey: ["/api/tasks"] });
   const { data: commission } = useQuery<Commission>({

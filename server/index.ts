@@ -38,6 +38,16 @@ import { pool } from "./db";
 // first error, which is how compliance_board/training tables went missing.
 (async () => {
   const MIGRATIONS: string[] = [
+    // Diary→viewings sync: provenance + idempotent upsert key for viewings
+    // auto-created from Outlook calendar events (see server/viewing-sync.ts).
+    `ALTER TABLE unit_viewings ADD COLUMN IF NOT EXISTS source TEXT`,
+    `ALTER TABLE unit_viewings ADD COLUMN IF NOT EXISTS calendar_event_id TEXT`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS unit_viewings_calendar_event_idx ON unit_viewings (calendar_event_id) WHERE calendar_event_id IS NOT NULL`,
+    // Email→offers check: provenance + one-row-per-thread dedupe for offers
+    // auto-detected from synced inboxes (see server/viewing-sync.ts).
+    `ALTER TABLE unit_offers ADD COLUMN IF NOT EXISTS source TEXT`,
+    `ALTER TABLE unit_offers ADD COLUMN IF NOT EXISTS email_conversation_id TEXT`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS unit_offers_email_conversation_idx ON unit_offers (email_conversation_id) WHERE email_conversation_id IS NOT NULL`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS leasing_privacy_enabled BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT`,
     `ALTER TABLE lease_events ADD COLUMN IF NOT EXISTS landlord TEXT`,
@@ -903,6 +913,54 @@ import { pool } from "./db";
     // available_units: link to leasing schedule unit
     `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS leasing_schedule_unit_id VARCHAR`,
     `CREATE INDEX IF NOT EXISTS idx_available_units_leasing_schedule_unit_id ON available_units(leasing_schedule_unit_id) WHERE leasing_schedule_unit_id IS NOT NULL`,
+
+    // unit_briefs: operator targeting briefs per letting tracker unit (e.g. Landsec instructions)
+    `CREATE TABLE IF NOT EXISTS unit_briefs (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       unit_id VARCHAR NOT NULL,
+       property_id VARCHAR NOT NULL,
+       client_company TEXT,
+       client_company_id VARCHAR,
+       title TEXT,
+       objective TEXT,
+       location_context TEXT,
+       target_criteria TEXT,
+       priority_categories TEXT,
+       agent_instruction TEXT,
+       success_measures TEXT,
+       instructed_date TEXT,
+       deadline1_date TEXT,
+       deadline1_deliverables TEXT,
+       deadline2_date TEXT,
+       deadline2_deliverables TEXT,
+       min_targets INTEGER DEFAULT 5,
+       priority_targets INTEGER DEFAULT 2,
+       status TEXT DEFAULT 'Active',
+       source_file_id VARCHAR,
+       document_file_id VARCHAR,
+       created_by_user_id VARCHAR,
+       created_by_name TEXT,
+       created_at TIMESTAMP DEFAULT now(),
+       updated_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_unit_briefs_unit ON unit_briefs(unit_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_unit_briefs_property ON unit_briefs(property_id)`,
+    `CREATE TABLE IF NOT EXISTS unit_target_operators (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       brief_id VARCHAR NOT NULL,
+       operator_name TEXT NOT NULL,
+       company_id VARCHAR,
+       category TEXT,
+       priority TEXT,
+       rationale TEXT,
+       existing_relationship TEXT,
+       feedback TEXT,
+       status TEXT DEFAULT 'Identified',
+       sort_order INTEGER DEFAULT 0,
+       created_at TIMESTAMP DEFAULT now(),
+       updated_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_unit_target_operators_brief ON unit_target_operators(brief_id)`,
 
     // brand_agent_representations
     `CREATE TABLE IF NOT EXISTS brand_agent_representations (
@@ -3235,16 +3293,31 @@ app.use("/api/branding/assets", express.static(
   // setupAuth so req.session.userId is populated for token logins too.
   // GET/HEAD surfaces a client may read.
   const CLIENT_ALLOWED_API = [
-    "/api/client/", "/api/crm/", "/api/brands/hub", "/api/client-teams/",
+    // /api/brands/ = Brand Intelligence hub reads (hub, hunter, turnover
+    // status, market commentary). GET-only here; the research/flag POSTs
+    // stay staff-only via the write allowlist. (Landsec brand access.)
+    "/api/client/", "/api/crm/", "/api/brands/", "/api/client-teams/",
     "/api/portfolio/", "/api/company-portfolio", "/api/leasing-schedule/",
     "/api/tenancy-schedule/", "/api/properties/", "/api/property/",
     "/api/property-intelligence", "/api/land-registry", "/api/business-rates",
     "/api/voa", "/api/map-layers", "/api/os-data", "/api/edozo",
-    "/api/image-studio/search", "/api/image-studio/", "/api/ai-briefing",
+    "/api/image-studio", "/api/ai-briefing",
     "/api/notifications", "/api/daily-digest", "/api/activity-feed",
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
     "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",
     "/api/available-units", "/api/tasks",
+    "/api/chat/threads", "/api/chat-media/", "/api/brand-logo/",
+    // Harmless infra reads every logged-in browser makes: the public web-push
+    // VAPID key (push writes are already client-allowed) and aggregate logo
+    // cache stats used by the shared company-logo helper.
+    "/api/push/vapid-key", "/api/brand-logo-stats",
+    // Google Maps JS key for address autocomplete on the deal-create form
+    // (low-sensitivity, domain-restricted publishable key).
+    "/api/config/maps-key",
+    // Turnover Board reads (the tab is client-visible; research/edit POSTs
+    // stay staff-only via the write allowlist) and the saved dashboard
+    // template (read-only layout defaults).
+    "/api/turnover", "/api/dashboard-template",
   ];
   // Microsoft 365 stays fully blocked for clients (mail/calendar/files all
   // 403) — the client UI must not call it at all; see nav + poller gating.
@@ -3254,11 +3327,34 @@ app.use("/api/branding/assets", express.static(
   // clients inside those handlers via clientChatGuard.)
   const CLIENT_ALLOWED_WRITES = [
     "/api/auth/logout", "/api/chatbgp/", "/api/heartbeat",
+    // ChatBGP panel bookkeeping: the AI reply goes to /api/chatbgp/ (allowed)
+    // but the panel first creates a thread + posts the user message here.
+    // Message POST enforces thread membership server-side; membership and
+    // group-pic management stay staff-only via CLIENT_BLOCKED_SUBPATHS.
+    // /api/chat/upload lets a client attach a document (e.g. their own
+    // targeting brief PDF) to a chat message.
+    "/api/chat/threads", "/api/chat/upload",
+    // Landsec may add/amend CRM contacts — POST/PUT scope-checked in crm.ts
+    // (own company or the hospitality-brand slice only).
+    "/api/crm/contacts",
+    // Clients may create + edit deals on their OWN portfolio (Woody, 2026-07:
+    // "client needs to be able to do as much as the agent"). The handler
+    // forces the deal onto the client's own company and strips every fee
+    // field — clients never set or see BGP's fee. Delete stays staff-only.
+    "/api/crm/deals",
+    // Clients may author Operator Targeting Briefs on their own units and
+    // upload/file photos for their own buildings — each endpoint verifies the
+    // unit/property is in the client's scope. ("Client does as much as the
+    // agent"; brief + photo authoring.) Only these specific image-studio
+    // writes are opened — delete / ai-generate / bulk ops stay staff-only.
+    "/api/unit-briefs", "/api/image-studio/upload",
     "/api/push/", "/api/config/", "/api/favorite-instructions",
     // Clients may edit their OWN leasing/tenancy schedule rows (positioning,
     // bands, targets, meeting updates). Each endpoint verifies the property is
     // in the client's scope; import/bulk-delete stay staff-only. (Landsec.)
-    "/api/tenancy-schedule/unit", "/api/leasing-schedule/unit",
+    // Both singular (/unit/:id PUT) and plural (/units/:id/archive PATCH) —
+    // the archive button 403'd while the delete beside it worked.
+    "/api/tenancy-schedule/unit", "/api/leasing-schedule/unit", "/api/leasing-schedule/units",
     // Clients may manage their OWN tasks (every task endpoint is scoped to
     // user_id); the My Tasks dashboard widget needs create/complete/reorder.
     "/api/tasks",
@@ -3270,8 +3366,7 @@ app.use("/api/branding/assets", express.static(
   // brand pipeline that isn't the client's own profile; OneNote task import
   // rides on Microsoft, which stays sealed for clients).
   const CLIENT_BLOCKED_SUBPATHS = [
-    /^\/api\/brands\/(hunter|turnover)/,
-    /^\/api\/brand\/[^/]+\/(hunter-score|competitors|suggested-units|ai-take|pack|image-diag)/,
+    /^\/api\/chat\/threads\/[^/]+\/(members|group-pic)/,
     /^\/api\/tasks\/(onenote|import)/,
     // ── Firm-wide / cross-company GETs that sit under an allowed parent
     //    prefix but were never company-scoped. Blocked for clients so a
@@ -3285,12 +3380,15 @@ app.use("/api/branding/assets", express.static(
     /^\/api\/crm\/(contact-property-links|contact-deal-links|contact-requirement-links|company-deal-links|property-deal-links|property-tenants)\b/,
     /^\/api\/crm\/companies\/[^/]+\/trading-entities/,
     /^\/api\/crm\/properties\/[^/]+\/agents/,
-    /^\/api\/available-units\/(all-viewings|all-offers|all-files|all-viewings-counts|all-offers-counts|matches)\b/,
+    // all-viewings / all-offers (+counts) are now SCOPED per caller in
+    // routes.ts, so clients get letting activity on their OWN units — the
+    // tracker's viewings/offers controls need them to render. all-files and
+    // matches are still firm-wide, so they stay blocked.
+    /^\/api\/available-units\/(all-files|matches)\b/,
     /^\/api\/leasing-schedule\/export-excel/,           // firm-wide export; per-property /property/:id/export stays scoped
     /^\/api\/leasing-schedule\/property\/[^/]+\/privacy/,
     /^\/api\/tenancy-schedule\/property\/[^/]+\/links/,
     /^\/api\/properties\/[^/]+\/(360|brochures|tasks|orphan-deals|instructions|project-files|duplicate-units|plan-pickable-units|plans|unresolved-tenants|linkage-audit)\b/,
-    /^\/api\/property\/[^/]+\/brand-gaps/,
     /^\/api\/client-teams\/[^/]+\/candidates/,          // whole BGP staff directory
     /^\/api\/image-studio\/orphans/,
   ];
@@ -3309,6 +3407,11 @@ app.use("/api/branding/assets", express.static(
         if (CLIENT_BLOCKED_SUBPATHS.some(re => re.test(p))) {
           return res.status(403).json({ error: "Not available for client accounts" });
         }
+        // Authoring an Operator Targeting Brief on one of their own units —
+        // the create route hangs off /api/available-units/:id/brief; the
+        // handler verifies the unit's property is in the client's scope.
+        // (We don't open all of /api/available-units, only the brief POST.)
+        if (req.method === "POST" && /^\/api\/available-units\/[^/]+\/brief$/.test(p)) return next();
         // Same prefix-matching rule as the read allowlist: entries ending in
         // "/" match by prefix, others match exactly or as a path segment.
         if (CLIENT_ALLOWED_WRITES.some(w =>
@@ -3322,10 +3425,16 @@ app.use("/api/branding/assets", express.static(
       const allowed = CLIENT_ALLOWED_API.some(pre =>
         pre.endsWith("/") ? p.startsWith(pre) : (p === pre || p.startsWith(pre + "/") || p.startsWith(pre + "?"))
       );
-      // Allow a client to read only their OWN brand profile / images (scope
-      // enforced in the handlers); other /api/brand/* stays blocked.
-      const ownBrand = /^\/api\/brand\/[^/]+\/(profile|refresh-images\/status)$/.test(p);
-      if (allowed || ownBrand) return next();
+      // Full Brand Intelligence reads (profile, hunter-score, competitors,
+      // suggested-units, ai-take, pack…) for the client's own company or any
+      // brand in the hospitality slice; everything else stays blocked.
+      const brandRead = p.match(/^\/api\/brand\/([^/]+)\//);
+      if (brandRead) {
+        const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+        const scope = await resolveCompanyScope(req);
+        if (brandRead[1] === scope || (await isClientVisibleBrand(brandRead[1]))) return next();
+      }
+      if (allowed) return next();
       return res.status(403).json({ error: "Not available for client accounts" });
     } catch { return next(); }
   });
@@ -3581,7 +3690,9 @@ app.use("/api/branding/assets", express.static(
   httpServer.listen(
     {
       port,
-      host: "::",
+      // "::" (dual-stack) unless the host has no IPv6 (some containers) —
+      // HOST=0.0.0.0 overrides without a code change.
+      host: process.env.HOST || "::",
     },
     () => {
       log(`serving on port ${port}`);

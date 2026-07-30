@@ -481,13 +481,36 @@ thead th {
   }
 }
 
+/* Container-query pair for detail-page bodies: Tailwind's lg:grid-cols-2
+   keys off the VIEWPORT, but the ChatBGP side panel shrinks the CONTAINER —
+   two-up card grids were rendering in space that only fits one, crushing
+   text to a word per line. Two-up only when the container itself is wide. */
+.cq-body {
+  container-type: inline-size;
+}
+.cq-two-up {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.625rem;
+  align-items: start;
+}
+@container (min-width: 44rem) {
+  .cq-two-up {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 .dashboard-grid .react-grid-item {
   transition: all 200ms ease;
 }
 .dashboard-grid .react-grid-item.react-grid-placeholder {
-  background: hsl(var(--primary) / 0.1);
-  border: 2px dashed hsl(var(--primary) / 0.3);
+  /* The library also sets an inline/base opacity of 0.2 on the placeholder,
+     which multiplied with the 10% tint made the landing slot invisible —
+     drags looked like they "didn't open a gap". Force it visible. */
+  background: hsl(var(--primary) / 0.12) !important;
+  border: 2px dashed hsl(var(--primary) / 0.55);
   border-radius: 0.5rem;
+  opacity: 1 !important;
 }
 .dashboard-grid .react-grid-item > .react-resizable-handle {
   width: 20px;

@@ -160,19 +160,46 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     //    SUMMARY only (kind / contact name / direction / date) — we
     //    deliberately don't return the email body / preview so the
     //    client view stays at headline level without leaking content.
+    // Two legs: interactions on a DEAL at this property, plus interactions
+    // with contacts at the property's client/landlord company. The hourly
+    // M365 sync links emails/meetings to CONTACTS (never deals), so the
+    // deal leg alone rendered "no activity" on accounts with daily traffic
+    // (the Landsec case). The company leg is limited to the property's
+    // assigned BGP agents so a busy landlord's every touchpoint firm-wide
+    // doesn't flood each of their properties; when nobody is assigned yet,
+    // any BGP user counts.
     const activityQ = await pool.query<any>(
-      `SELECT i.id, i.type, i.direction, i.interaction_date, i.bgp_user,
+      `SELECT i.id, i.type, i.direction, i.interaction_date,
+              COALESCE(bu.name, i.bgp_user) AS bgp_user,
               c.name AS contact_name,
               co.name AS company_name,
               d.id AS deal_id, d.name AS deal_name
          FROM crm_interactions i
+         LEFT JOIN users bu ON lower(bu.email) = lower(i.bgp_user)
          LEFT JOIN crm_contacts c ON c.id = i.contact_id
          LEFT JOIN crm_companies co ON co.id = c.company_id
          LEFT JOIN crm_deals d ON d.id = i.deal_id
          LEFT JOIN property_units pu ON pu.id = d.unit_id
          LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
-        WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
-          AND i.interaction_date > NOW() - INTERVAL '14 days'
+        WHERE i.interaction_date > NOW() - INTERVAL '14 days'
+          AND (
+            (d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1)
+            OR (
+              c.company_id IN (
+                SELECT p2.landlord_id FROM crm_properties p2 WHERE p2.id = $1 AND p2.landlord_id IS NOT NULL
+                UNION
+                SELECT cp.company_id FROM crm_company_properties cp WHERE cp.property_id = $1
+              )
+              AND (
+                NOT EXISTS (SELECT 1 FROM crm_property_agents pa WHERE pa.property_id = $1)
+                OR lower(coalesce(i.bgp_user, '')) IN (
+                  SELECT lower(u2.email) FROM crm_property_agents pa
+                    JOIN users u2 ON u2.id = pa.user_id
+                   WHERE pa.property_id = $1 AND u2.email IS NOT NULL
+                )
+              )
+            )
+          )
         ORDER BY i.interaction_date DESC
         LIMIT 30`,
       [propertyId]
@@ -203,13 +230,26 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     const lsuQ = await pool.query<any>(
       `SELECT u.id, u.unit_name, u.tenant_name, u.status, u.lease_expiry, u.lease_break,
               c.aml_pep_status, c.kyc_status,
-              EXISTS (
+              (EXISTS (
                 SELECT 1 FROM crm_deals d2
                  LEFT JOIN property_units pu2 ON pu2.id = d2.unit_id
                  WHERE (d2.property_id = $1 OR pu2.property_id = $1)
                    AND COALESCE(d2.status, '') NOT IN ('WIT', 'COM', 'INV')
-                   AND pu2.unit_name = u.unit_name
-              ) AS has_live_deal
+                   AND (
+                     pu2.unit_name = u.unit_name
+                     OR (u.tenancy_unit_id IS NOT NULL AND d2.tenancy_unit_id = u.tenancy_unit_id)
+                   )
+              ) OR EXISTS (
+                -- Deals reached via the Letting Tracker listing rather than a
+                -- unit FK — the common case for lettings promoted from AVA.
+                SELECT 1 FROM available_units au2
+                 WHERE au2.property_id = $1
+                   AND au2.deal_id IS NOT NULL
+                   AND (
+                     lower(trim(au2.unit_name)) = lower(trim(coalesce(u.unit_name, '')))
+                     OR (u.tenancy_unit_id IS NOT NULL AND au2.tenancy_unit_id = u.tenancy_unit_id)
+                   )
+              )) AS has_live_deal
          FROM leasing_schedule_units u
          -- Prefer the canonical FK; fall back to a normalised name
          -- match that strips legal-entity suffixes (Ltd/Plc/Group/UK
@@ -234,11 +274,22 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     ).catch((e: any) => { console.error("[asset-brief] sub-query failed:", e?.message); return { rows: [] as any[] }; });
     const horizonMs = 18 * 30 * 24 * 60 * 60 * 1000;
     const now = Date.now();
+    // Vacancies: one summary row, not one per unit — 20 identical amber
+    // rows drown the genuine expiry/covenant risks. Only units with NO
+    // live deal count as at-risk; vacant-but-under-offer is progress.
+    const vacantRows = lsuQ.rows.filter((u: any) => /vacant|available/.test(String(u.status || "").toLowerCase()));
+    const vacantNoDeal = vacantRows.filter((u: any) => !u.has_live_deal);
+    if (vacantNoDeal.length > 0) {
+      const names = vacantNoDeal.slice(0, 5).map((u: any) => u.unit_name || "Unit").join(", ");
+      const more = vacantNoDeal.length > 5 ? ` +${vacantNoDeal.length - 5} more` : "";
+      const withDeal = vacantRows.length - vacantNoDeal.length;
+      risks.push({
+        kind: "vacant",
+        severity: "med",
+        message: `${vacantNoDeal.length} unit${vacantNoDeal.length === 1 ? "" : "s"} vacant with no active deal (${names}${more})${withDeal > 0 ? ` — a further ${withDeal} vacant with live deals in play` : ""}`,
+      });
+    }
     for (const u of lsuQ.rows) {
-      const status = String(u.status || "").toLowerCase();
-      if (/vacant|available/.test(status)) {
-        risks.push({ kind: "vacant", severity: "med", message: `${u.unit_name || "Unit"} vacant — no active deal on file`, unit_id: u.id, unit_name: u.unit_name });
-      }
       const expiry = u.lease_expiry ? new Date(u.lease_expiry).getTime() : null;
       if (expiry && !u.has_live_deal && expiry > now && expiry - now < horizonMs) {
         const months = Math.round((expiry - now) / (30 * 86400000));
@@ -322,7 +373,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       activity,
       risks,
       performance,
-      commentary: p.notes || "",
+      commentary: briefScope ? "" : (p.notes || ""),
       bgp_commentary: commentaryText,
       bgp_commentary_at: commentaryAt,
     });
@@ -441,7 +492,10 @@ router.post("/api/properties/:id/bgp-commentary/regenerate", requireAuth, async 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const fmtMoney = (p: number | null | undefined) => p == null ? "—" : `£${Math.round(Number(p) / 100).toLocaleString()}`;
-    const dealLines = (brief.active_deals as any[]).slice(0, 15).map(d => `- ${d.tenant_name || d.name}${d.unit_name ? ` @ ${d.unit_name}` : ""} — ${d.stage_label} (${fmtMoney(d.fee_pence)} fee)`).join("\n") || "(none)";
+    // No fee figures in the prompt: the generated prose is stored on the
+    // property and served to client logins, so BGP fee amounts must never
+    // appear in it. Deal stage/tenant context is enough for commentary.
+    const dealLines = (brief.active_deals as any[]).slice(0, 15).map(d => `- ${d.tenant_name || d.name}${d.unit_name ? ` @ ${d.unit_name}` : ""} — ${d.stage_label}`).join("\n") || "(none)";
     const activityLines = (brief.activity as any[]).slice(0, 8).map(a => `- ${a.summary} (${new Date(a.date).toLocaleDateString("en-GB")})`).join("\n") || "(none in last 14 days)";
     const riskLines = (brief.risks as any[]).map(r => `- ${r.severity.toUpperCase()}: ${r.message}`).join("\n") || "(none flagged)";
     const focusLines = (brief.weekly_focus as any[]).map(f => `- ${f.text}`).join("\n") || "(none set)";
@@ -469,7 +523,7 @@ Write a 3-5 sentence operational paragraph for the asset owner reading this. Cov
 2. The risks worth flagging (vacancies / expiries / covenant).
 3. Where BGP's focus is this week + a forward-looking line.
 
-Rules: British English, partner-tone, no hype, no "I'm pleased to". Reference the actual tenants / units / £ figures above — don't generalise. No bullet points or headings, prose only. No preamble or "here is".`;
+Rules: British English, partner-tone, no hype, no "I'm pleased to". Reference the actual tenants / units / rent figures above — don't generalise. Never state BGP fees or commissions. No bullet points or headings, prose only. No preamble or "here is".`;
 
     const msg = await client.messages.create({
       model: "claude-sonnet-4-6",

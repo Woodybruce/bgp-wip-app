@@ -288,10 +288,14 @@ export function formatDate(val: string | Date | null | undefined): string {
 // as the user types — autocomplete without a custom popover. The Input's
 // `list="deal-po-suggestions"` attribute binds to this.
 function PoNumberDatalist() {
-  const { data: poNumbers = [] } = useQuery<string[]>({
+  const { data } = useQuery<string[]>({
     queryKey: ["/api/crm/deals/po-numbers"],
     staleTime: 60_000,
   });
+  // The endpoint returns {} for client logins (PO numbers are staff-only),
+  // so guard against a non-array before mapping — otherwise the whole create
+  // dialog crashes when a client opens it.
+  const poNumbers = Array.isArray(data) ? data : [];
   return (
     <datalist id="deal-po-suggestions">
       {poNumbers.map(po => <option key={po} value={po} />)}
@@ -1053,13 +1057,31 @@ function PropertyUnitCell({
 // underneath. Popover lets the team set both without touching two
 // columns.
 function FeeCombinedCell({
-  deal, onSave,
+  deal, onSave, readOnly = false,
 }: {
   deal: any;
   onSave: (field: string, value: number | string | null) => void;
+  readOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const feeStr = deal.fee != null ? `£${Number(deal.fee).toLocaleString("en-GB")}` : null;
+
+  // Clients (and client-view mode) see the fee they're paying, read-only —
+  // no edit popover, and no "Add fee" placeholder when it's unset.
+  if (readOnly) {
+    return (
+      <div className="flex flex-col gap-0.5 px-1 py-0.5 text-xs min-w-[100px]" data-testid={`fee-combined-cell-${deal.id}`}>
+        {feeStr
+          ? <span className="font-mono text-xs font-medium">{feeStr}</span>
+          : <span className="text-muted-foreground text-[11px]">—</span>}
+        {deal.feeAgreement && (
+          <Badge variant="secondary" className={`text-[9px] px-1 py-0 leading-tight w-fit ${DEAL_FEE_AGREEMENT_COLORS[deal.feeAgreement] || ""}`}>
+            FA {deal.feeAgreement}
+          </Badge>
+        )}
+      </div>
+    );
+  }
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -1443,7 +1465,7 @@ function ConsultantCreateBody({
 function SimplifiedCreateBody({
   form, set, properties, propertyUnits, companies, users, toggleAgent, setForm,
   feeRows, setFeeRows, feeAllocType, setFeeAllocType,
-  nameAutoFilled, setNameAutoFilled,
+  nameAutoFilled, setNameAutoFilled, hideFees = false,
 }: {
   form: any;
   set: (k: any, v: any) => void;
@@ -1459,6 +1481,7 @@ function SimplifiedCreateBody({
   users: { id: number; name: string }[];
   toggleAgent: (name: string) => void;
   setForm: any;
+  hideFees?: boolean;
 }) {
   // Counterparty picker contextual label + filter — driven by deal type.
   // Tenant Acquisition + New Letting + Sub-Letting + Consultancy + Secondment
@@ -1922,13 +1945,14 @@ function SimplifiedCreateBody({
       <div className="border-t pt-3 space-y-3">
         <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Financials & timing</div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className={`grid grid-cols-1 gap-3 ${hideFees ? "" : "sm:grid-cols-3"}`}>
           <div>
             <Label htmlFor="deal-rent-pa" className="text-xs">Headline Rent (£ p.a.)</Label>
             <Input id="deal-rent-pa" type="number" value={form.rentPa}
               onChange={(e) => set("rentPa", e.target.value)}
               placeholder="e.g. 175000" />
           </div>
+          {!hideFees && (<>
           <div>
             <Label htmlFor="deal-fee-pct" className="text-xs">% Agency fee</Label>
             <Input id="deal-fee-pct" type="number" step="0.01" value={form.feePercentage}
@@ -1949,8 +1973,10 @@ function SimplifiedCreateBody({
               onChange={(e) => set("fee", e.target.value)}
               placeholder="auto from rent × %" />
           </div>
+          </>)}
         </div>
 
+        {!hideFees && (
         <div>
           <Label className="text-xs">BGP fee split</Label>
           <div className="border rounded-md p-2.5 bg-muted/30">
@@ -1964,6 +1990,7 @@ function SimplifiedCreateBody({
             />
           </div>
         </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
@@ -2094,9 +2121,13 @@ export function DealFormDialog({
   const isApprovalStatus = statusChanged && formStatusCode !== null && APPROVAL_STATUS_CODES.includes(formStatusCode);
   const isCompletingNow = statusChanged && formStatusCode === "COM";
 
-  const { data: currentUser } = useQuery<{ isAdmin?: boolean; email?: string }>({
+  const { data: currentUser } = useQuery<{ isAdmin?: boolean; email?: string; role?: string; companyScopeId?: string }>({
     queryKey: ["/api/auth/me"],
   });
+  // Clients can create deals but never set fees — the server strips every
+  // fee field regardless, and here we hide the fee-exposing paths (Consultant
+  // fee-only body + "Show all fields") so they only see the fee-less form.
+  const isClientCreate = currentUser?.role === "Client" || !!currentUser?.companyScopeId;
   const SENIOR_EMAILS = new Set([
     "woody@brucegillinghampollard.com",
     "charlotte@brucegillinghampollard.com",
@@ -2131,12 +2162,13 @@ export function DealFormDialog({
       } else {
         const res = await apiRequest("POST", "/api/crm/deals", payload);
         const created = await res.json();
-        // Persist fee allocations alongside the new deal. Only fires when
-        // the user actually entered any rows — empty array = "no split set"
-        // (deal still saves, allocations can be added later on the deal
-        // detail page). PUT /fee-allocations replaces the existing set;
-        // for a new deal that's empty anyway.
-        if (created?.id && feeRows.length > 0) {
+        // Persist fee allocations alongside the new deal. The fee-split editor
+        // auto-seeds a BGP House 15% row, so feeRows is rarely empty — but a
+        // lone BGP House row (no agents) is just the placeholder, not a real
+        // split, and PUTting it 400s the "must sum to 100%" check. Only fire
+        // when the user actually added at least one agent row. Everything else
+        // is set later on the deal board.
+        if (created?.id && feeRows.some(r => !r.isBgpHouse && r.agentName)) {
           const allocations = feeRows
             .filter(r => (r.isBgpHouse || r.agentName))
             .map(r => ({
@@ -2274,8 +2306,10 @@ export function DealFormDialog({
               AML) lives behind a "Show all fields" toggle and can
               also be filled in later on the actual deal board. The
               EDIT path always renders the full form. */}
-          {!isEdit && !showAllFields ? (
-            form.dealType === "Consultant" ? (
+          {!isEdit && (!showAllFields || isClientCreate) ? (
+            // Clients always get the fee-less simplified body — never the
+            // Consultant fee-only body, never the full form.
+            (form.dealType === "Consultant" && !isClientCreate) ? (
             <ConsultantCreateBody
               form={form}
               set={set}
@@ -2297,6 +2331,7 @@ export function DealFormDialog({
               users={users}
               toggleAgent={toggleAgent}
               setForm={setForm}
+              hideFees={isClientCreate}
               feeRows={feeRows}
               setFeeRows={setFeeRows}
               feeAllocType={feeAllocType}
@@ -2844,7 +2879,7 @@ export function DealFormDialog({
           )}
 
           <DialogFooter className="flex items-center gap-2">
-            {!isEdit && (
+            {!isEdit && !isClientCreate && (
               <Button
                 type="button"
                 variant="ghost"
@@ -5013,7 +5048,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   // Client logins (e.g. Landsec) are already scoped to their company by the
   // API, and their deals aren't tagged with a BGP team — so never apply the
   // activeTeam column filter for them (it would hide everything).
-  const isClientDeals = (currentUserForViews as any)?.role === "Client";
+  const isClientDeals = (currentUserForViews as any)?.role === "Client" || !!(currentUserForViews as any)?.companyScopeId;
 
   useEffect(() => {
     if (!teamFilterInitialised) {
@@ -5158,6 +5193,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   const { data: propertyUnits = [] } = useQuery<PropertyUnit[]>({
     queryKey: ["/api/property-units"],
+    // Staff-only master-unit cache (403s for clients); clients read units via
+    // the tenancy/leasing schedules instead.
+    enabled: !isClientDeals && !!currentUserForViews,
   });
 
   const { data: users = [] } = useQuery<{ id: number; name: string; email: string }[]>({
@@ -5707,7 +5745,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             : `${deals.length} deal${deals.length !== 1 ? "s" : ""} in the CRM`}
       actions={!isCompsMode ? (
         <>
-          {!isMobile && (<>
+          {!isMobile && !isClientDeals && (<>
           <Button
             variant="outline"
             size="sm"
@@ -6085,7 +6123,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
                     {visibleColumns.feeCombined && <TableHead className="min-w-[110px]">Fee</TableHead>}
                     {visibleColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
-                    {visibleColumns.feeAlloc && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
+                    {visibleColumns.feeAlloc && !isClientDeals && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
                     {visibleColumns.agent && <SortableTableHead sortKey="agent" sort={dealsSort} className="min-w-[80px]">BGP Contact</SortableTableHead>}
                     {visibleColumns.assetClass && (
                       <TableHead className="min-w-[80px]">
@@ -6297,19 +6335,26 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           <FeeCombinedCell
                             deal={deal}
                             onSave={(field, value) => handleInlineSave(deal.id, field, value)}
+                            readOnly={isClientDeals}
                           />
                         </TableCell>
                       )}
                       {visibleColumns.fee && (
                         <TableCell className="px-1.5 py-1">
-                          <InlineNumber
-                            value={deal.fee}
-                            onSave={(v) => handleInlineSave(deal.id, "fee", v)}
-                            prefix="£"
-                          />
+                          {isClientDeals ? (
+                            <span className="font-mono text-xs">{deal.fee != null ? `£${Number(deal.fee).toLocaleString("en-GB")}` : "—"}</span>
+                          ) : (
+                            <InlineNumber
+                              value={deal.fee}
+                              onSave={(v) => handleInlineSave(deal.id, "fee", v)}
+                              prefix="£"
+                            />
+                          )}
                         </TableCell>
                       )}
-                      {visibleColumns.feeAlloc && (
+                      {/* Fee Split is the internal per-BGP-agent breakdown —
+                          staff-only, never shown to a client/client-view. */}
+                      {visibleColumns.feeAlloc && !isClientDeals && (
                         <TableCell className="px-1.5 py-1">
                           <FeeAllocCell dealId={deal.id} dealFee={deal.fee} allAllocations={allFeeAllocations} colorMap={userColorMap2} teams={deal.team} onClick={() => setFeeAllocEditDeal(deal)} />
                         </TableCell>

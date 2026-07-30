@@ -144,6 +144,14 @@ const AI_SUGGESTIONS = [
   "Search CRM contacts",
 ];
 
+// Client logins get landlord-voiced prompts — no BGP calendar, no CRM jargon.
+const CLIENT_AI_SUGGESTIONS = [
+  "Which of my leases expire in the next 12 months?",
+  "What's happening on my vacant units?",
+  "Create a targeting brief for one of my units",
+  "What's the latest news on brands we're targeting?",
+];
+
 const NAME_COLORS = [
   "text-rose-600", "text-blue-600", "text-emerald-600", "text-purple-600",
   "text-orange-600", "text-teal-600", "text-pink-600", "text-indigo-600",
@@ -1154,7 +1162,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   });
   // Team chat is BGP-internal — client logins use ChatBGP (AI) only, so skip
   // the team-thread/notification polling that would otherwise 403.
-  const chatIsClient = (currentUser as any)?.role === "Client";
+  const chatIsClient = (currentUser as any)?.role === "Client" || !!(currentUser as any)?.companyScopeId;
 
   const { data: status } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/chatbgp/status"],
@@ -1237,6 +1245,22 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       emitMarkSeen(activeThreadId);
     }
   }, [activeThreadId, view]);
+
+  // The saved thread id lives in localStorage, which is shared across
+  // logins on the same browser — if a different user signs in, drop the
+  // previous user's thread instead of 403ing on every send.
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    try {
+      const owner = localStorage.getItem("chatbgp:threadOwner");
+      if (owner && owner !== currentUser.id) {
+        setActiveThreadId(null);
+        setMessages([]);
+      }
+      localStorage.setItem("chatbgp:threadOwner", currentUser.id);
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id]);
 
   const isActiveThreadAi = activeThread?.isAiChat ?? true;
 
@@ -1479,24 +1503,44 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
         return { role: m.role, content };
       });
 
-      let currentThreadId = threadId;
-      if (!currentThreadId) {
+      const createFreshThread = async (): Promise<string> => {
         const firstMsg = newMessages[0]?.content || "New conversation";
         const title = firstMsg.length > 50 ? firstMsg.slice(0, 50) + "..." : firstMsg;
         const res = await apiRequest("POST", "/api/chat/threads", { title, isAiChat: true });
         const thread = await res.json();
-        currentThreadId = thread.id;
-        setActiveThreadId(currentThreadId);
+        setActiveThreadId(thread.id);
         queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
-      }
+        return thread.id;
+      };
+
+      let currentThreadId = threadId;
+      if (!currentThreadId) currentThreadId = await createFreshThread();
 
       const lastUserMsg = newMessages[newMessages.length - 1];
-      await saveMessageMutation.mutateAsync({
-        threadId: currentThreadId!,
-        role: "user",
-        content: lastUserMsg.content,
-        attachments: lastUserMsg.attachments,
-      });
+      try {
+        await saveMessageMutation.mutateAsync({
+          threadId: currentThreadId!,
+          role: "user",
+          content: lastUserMsg.content,
+          attachments: lastUserMsg.attachments,
+        });
+      } catch (e: any) {
+        // Stale thread — the saved id can outlive its thread (deleted, or
+        // left over from a different login on this browser). Rather than
+        // dead-ending with "not a member", start fresh and carry the
+        // message across.
+        if (/not a member|403|404|not found/i.test(String(e?.message || ""))) {
+          currentThreadId = await createFreshThread();
+          await saveMessageMutation.mutateAsync({
+            threadId: currentThreadId!,
+            role: "user",
+            content: lastUserMsg.content,
+            attachments: lastUserMsg.attachments,
+          });
+        } else {
+          throw e;
+        }
+      }
 
       // Shared SSE reader: live progress → status label, token deltas → the
       // streaming draft bubble, final {reply}/{error} → resolved result.
@@ -2570,7 +2614,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
           </div>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
-          {view === "chat" && !activeThreadId && (
+          {view === "chat" && !activeThreadId && !chatIsClient && (
             <Button
               variant="ghost"
               size="icon"
@@ -2655,7 +2699,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                 data-testid="sidebar-chatbgp-home"
               >
                 <Sparkles className="w-4 h-4 shrink-0" />
-                <span className="truncate">Chat BGP</span>
+                <span className="truncate">ChatBGP</span>
               </button>
             </div>
             <div className="h-px bg-border mx-3 shrink-0" />
@@ -2721,7 +2765,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       ) : (
         <>
           <div className="flex-1 overflow-y-auto p-3" ref={scrollRef}>
-            {messages.length === 0 && isActiveThreadAi && !activeThreadId ? (
+            {messages.length === 0 && isActiveThreadAi ? (
               <div className="flex flex-col items-center justify-center h-full text-center px-4">
                 <div className="w-14 h-14 rounded-2xl bg-gray-900 text-white flex items-center justify-center mb-4">
                   <Sparkles className="w-7 h-7" />
@@ -2731,7 +2775,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                   Ask questions, run models, or generate documents.
                 </p>
                 <div className="grid grid-cols-1 gap-2 w-full">
-                  {AI_SUGGESTIONS.map((s, i) => (
+                  {(chatIsClient ? CLIENT_AI_SUGGESTIONS : AI_SUGGESTIONS).map((s, i) => (
                     <button
                       key={i}
                       onClick={() => handleSuggestion(s)}

@@ -18,10 +18,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2,
+  Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown, ExternalLink, AlertTriangle, FileBadge,
+  ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target,
 } from "lucide-react";
+import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -233,7 +234,7 @@ function formToPayload(f: UnitFormState) {
   };
 }
 
-function unitToForm(u: AvailableUnit, dealType?: string | null): UnitFormState {
+function unitToForm(u: AvailableUnit, dealType?: string | null, landlord?: { id: string; name: string } | null): UnitFormState {
   return {
     unitName: u.unitName || "",
     propertyId: u.propertyId || "",
@@ -255,8 +256,8 @@ function unitToForm(u: AvailableUnit, dealType?: string | null): UnitFormState {
     feePercentage: "",
     marketingStartDate: u.marketingStartDate || "",
     agentUserIds: Array.isArray(u.agentUserIds) ? u.agentUserIds : [],
-    landlordId: (u as any).landlordId || "",
-    landlordName: "",
+    landlordId: (u as any).landlordId || landlord?.id || "",
+    landlordName: landlord?.name || "",
   };
 }
 
@@ -302,6 +303,8 @@ export default function AvailableUnitsPage() {
   const [propertyFilter, setPropertyFilter] = useState("all");
   const [assetClassFilter, setAssetClassFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
+  const [bgpTeamFilter, setBgpTeamFilter] = useState("all");
+  const [agentFilter, setAgentFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [unifiedAddOpen, setUnifiedAddOpen] = useState(false);
   const [editItem, setEditItem] = useState<AvailableUnit | null>(null);
@@ -319,6 +322,7 @@ export default function AvailableUnitsPage() {
   // Start Date, Restrictions) collapse behind it.
   const [showAllUnitFields, setShowAllUnitFields] = useState(false);
   const [filesUnit, setFilesUnit] = useState<AvailableUnit | null>(null);
+  const [briefUnit, setBriefUnit] = useState<AvailableUnit | null>(null);
   const [viewingsUnit, setViewingsUnit] = useState<AvailableUnit | null>(null);
   const [offersUnit, setOffersUnit] = useState<AvailableUnit | null>(null);
   const [addViewingOpen, setAddViewingOpen] = useState(false);
@@ -376,13 +380,14 @@ export default function AvailableUnitsPage() {
 
   const { data: propertyUnits = [] } = useQuery<PropertyUnit[]>({
     queryKey: ["/api/property-units"],
+    enabled: !isClientTracker, // staff-only master-unit cache; 403s for clients
   });
 
   const { data: deals = [] } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
   });
 
-  const { data: bgpUsers = [] } = useQuery<{ id: string; name: string; team?: string }[]>({
+  const { data: bgpUsers = [] } = useQuery<{ id: string; name: string; team?: string; additionalTeams?: string[] }[]>({
     queryKey: ["/api/users"],
   });
 
@@ -536,6 +541,15 @@ export default function AvailableUnitsPage() {
     for (const d of deals) m[d.id] = d;
     return m;
   }, [deals]);
+
+  // Landlord for the Edit Unit dialog: the unit row doesn't carry one, so
+  // fall back to the linked deal's landlord, then the property's.
+  const landlordPrefillFor = (u: AvailableUnit): { id: string; name: string } | null => {
+    const deal = u.dealId ? dealMap[u.dealId] : null;
+    const id = (deal as any)?.landlordId || (propertyMap[u.propertyId] as any)?.landlordId || "";
+    if (!id) return null;
+    return { id, name: crmCompanies.find(c => c.id === id)?.name || "" };
+  };
 
   const unitsByProperty = useMemo(() => {
     const m: Record<string, PropertyUnit[]> = {};
@@ -950,6 +964,15 @@ export default function AvailableUnitsPage() {
     if (propertyFilter !== "all") result = result.filter(u => u.propertyId === propertyFilter);
     if (assetClassFilter !== "all") result = result.filter(u => u.useClass === assetClassFilter);
     if (locationFilter !== "all") result = result.filter(u => u.location === locationFilter);
+    if (bgpTeamFilter !== "all") {
+      const teamUserIds = new Set(
+        bgpUsers
+          .filter(bu => bu.team === bgpTeamFilter || (bu.additionalTeams || []).includes(bgpTeamFilter))
+          .map(bu => bu.id)
+      );
+      result = result.filter(u => Array.isArray(u.agentUserIds) && u.agentUserIds.some(id => teamUserIds.has(id)));
+    }
+    if (agentFilter !== "all") result = result.filter(u => Array.isArray(u.agentUserIds) && u.agentUserIds.includes(agentFilter));
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(u => {
@@ -968,7 +991,7 @@ export default function AvailableUnitsPage() {
       });
     }
     return result;
-  }, [teamUnits, statusFilter, propertyFilter, assetClassFilter, locationFilter, search, propertyMap, dealMap, crmCompanies]);
+  }, [teamUnits, statusFilter, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies]);
 
   const stats = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -989,6 +1012,21 @@ export default function AvailableUnitsPage() {
   const agentOptions = useMemo(() => {
     return bgpUsers.map(u => ({ value: u.id, label: u.name }));
   }, [bgpUsers]);
+
+  const activeAgents = useMemo(() => {
+    const ids = new Set<string>();
+    for (const u of teamUnits) for (const id of (Array.isArray(u.agentUserIds) ? u.agentUserIds : [])) ids.add(id);
+    return bgpUsers.filter(u => ids.has(u.id)).sort((a, b) => a.name.localeCompare(b.name));
+  }, [teamUnits, bgpUsers]);
+
+  const activeBgpTeams = useMemo(() => {
+    const teams = new Set<string>();
+    for (const u of activeAgents) {
+      if (u.team) teams.add(u.team);
+      for (const t of u.additionalTeams || []) teams.add(t);
+    }
+    return [...teams].sort();
+  }, [activeAgents]);
 
   const FY_MONTHS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
   const FY_MONTH_NUMS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3];
@@ -1148,6 +1186,28 @@ export default function AvailableUnitsPage() {
             already act as filter buttons (same setStatusFilter call)
             and carry counts too, so this row was duplicated UI. The
             cards now own status filtering on this page. */}
+        <Select value={bgpTeamFilter} onValueChange={setBgpTeamFilter}>
+          <SelectTrigger className="w-[170px]" data-testid="select-team-filter">
+            <SelectValue placeholder="All Teams" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Teams</SelectItem>
+            {activeBgpTeams.map(t => (
+              <SelectItem key={t} value={t}>{t}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={agentFilter} onValueChange={setAgentFilter}>
+          <SelectTrigger className="w-[170px]" data-testid="select-agent-filter">
+            <SelectValue placeholder="All Agents" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Agents</SelectItem>
+            {activeAgents.map(u => (
+              <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         {activeAssetClasses.length > 0 && (
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-xs text-muted-foreground mr-0.5">Class:</span>
@@ -1311,7 +1371,7 @@ export default function AvailableUnitsPage() {
                     <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setOffersUnit(u); setAddOfferOpen(true); }} data-testid={`unit-interest-${u.id}`}>
                       <HandCoins className="w-3.5 h-3.5" /> Interest{oCount ? ` (${oCount})` : ""}
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null)); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
+                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
                       <Pencil className="w-3.5 h-3.5" /> Edit
                     </Button>
                   </div>
@@ -1352,13 +1412,14 @@ export default function AvailableUnitsPage() {
                 <TableHead className="text-center min-w-[100px]">Activity</TableHead>
                 <TableHead className="min-w-[120px]">Fee &amp; FA</TableHead>
                 <TableHead>Files</TableHead>
+                <TableHead>Brief</TableHead>
                 <TableHead className="w-[100px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={15} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={16} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1708,6 +1769,18 @@ export default function AvailableUnitsPage() {
                           Files
                         </Button>
                       </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs gap-1"
+                          onClick={() => setBriefUnit(u)}
+                          data-testid={`button-brief-${u.id}`}
+                        >
+                          <Target className="h-3.5 w-3.5" />
+                          Brief
+                        </Button>
+                      </TableCell>
                       <TableCell className={`sticky right-0 z-10 border-l ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
                         <div className="flex gap-1">
                           <Button
@@ -1724,7 +1797,7 @@ export default function AvailableUnitsPage() {
                             variant="ghost"
                             size="sm"
                             className="h-7 w-7 p-0"
-                            onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null)); setEditItem(u); }}
+                            onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }}
                             data-testid={`button-edit-${u.id}`}
                           >
                             <Pencil className="h-3.5 w-3.5" />
@@ -1755,6 +1828,12 @@ export default function AvailableUnitsPage() {
         open={unifiedAddOpen}
         onOpenChange={setUnifiedAddOpen}
         mode="tracker"
+      />
+
+      <UnitBriefDialog
+        unit={briefUnit}
+        open={!!briefUnit}
+        onClose={() => setBriefUnit(null)}
       />
 
       <UnitFormDialog
@@ -2247,8 +2326,13 @@ export default function AvailableUnitsPage() {
               {viewingsForUnit.map(v => (
                 <div key={v.id} className="border rounded-lg p-3 text-sm space-y-1">
                   <div className="flex items-center justify-between">
-                    <div className="font-medium">
+                    <div className="font-medium flex items-center gap-2">
                       {v.companyId ? <a href={`/contacts?company=${v.companyId}`} className="text-blue-600 hover:underline dark:text-blue-400">{v.companyName}</a> : (v.companyName || v.contactName || "Unknown")}
+                      {v.source === "diary" && (
+                        <Badge variant="outline" className="text-[10px] gap-1 border-sky-400 text-sky-700 dark:text-sky-400">
+                          <CalendarDays className="w-2.5 h-2.5" /> Diary
+                        </Badge>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">{v.viewingDate}{v.viewingTime ? ` at ${v.viewingTime}` : ""}</span>
@@ -2361,6 +2445,11 @@ export default function AvailableUnitsPage() {
                       {o.contactName && <span className="text-xs text-muted-foreground ml-2">({o.contactId ? <a href={`/contacts?contact=${o.contactId}`} className="text-blue-600 hover:underline dark:text-blue-400">{o.contactName}</a> : o.contactName})</span>}
                     </div>
                     <div className="flex items-center gap-2">
+                      {o.source === "email" && (
+                        <Badge variant="outline" className="text-[10px] gap-1 border-amber-400 text-amber-700 dark:text-amber-400">
+                          <Mail className="w-2.5 h-2.5" /> From email — confirm figures
+                        </Badge>
+                      )}
                       <Badge variant="outline" className={o.status === "Accepted" ? "bg-emerald-100 text-emerald-800" : o.status === "Rejected" ? "bg-red-100 text-red-800" : ""}>{o.status || "Pending"}</Badge>
                       <span className="text-xs text-muted-foreground">{o.offerDate}</span>
                       <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive" onClick={() => deleteOfferMutation.mutate(o.id)}>
@@ -2818,6 +2907,9 @@ function UnitFormDialog({
     pu => pu.name.trim().toLowerCase() === (form.unitName || "").trim().toLowerCase()
   );
 
+  const updSel = (field: keyof UnitFormState, value: string) => setForm({ ...form, [field]: value === "__none__" ? "" : value });
+  const noneItem = <SelectItem value="__none__"><span className="text-muted-foreground">— None —</span></SelectItem>;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[700px] max-h-[85vh] overflow-y-auto">
@@ -2986,9 +3078,10 @@ function UnitFormDialog({
           </div>
           <div>
             <Label>Floor</Label>
-            <Select value={form.floor} onValueChange={v => upd("floor", v)}>
+            <Select value={form.floor} onValueChange={v => updSel("floor", v)}>
               <SelectTrigger><SelectValue placeholder="Select floor..." /></SelectTrigger>
               <SelectContent>
+                {noneItem}
                 {FLOORS.map(f => <SelectItem key={f} value={f}>{f}</SelectItem>)}
               </SelectContent>
             </Select>

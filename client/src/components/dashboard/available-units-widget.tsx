@@ -11,6 +11,8 @@ export function AvailableUnitsWidget() {
   const { data: units = [] } = useQuery<any[]>({ queryKey: ["/api/available-units"] });
   const { data: properties = [] } = useQuery<CrmProperty[]>({ queryKey: ["/api/crm/properties"] });
   const { data: favoriteIds = [] } = useQuery<string[]>({ queryKey: ["/api/favorite-instructions"] });
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = viewer?.role === "Client" || !!viewer?.companyScopeId;
 
   const propMap = useMemo(() => {
     const m: Record<string, string> = {};
@@ -23,13 +25,21 @@ export function AvailableUnitsWidget() {
     return units.filter(u => favoriteIds.includes(u.propertyId));
   }, [units, favoriteIds]);
 
+  // The headline counts live instructions — Let/Withdrawn rows would make
+  // the "total" disagree with the status chips beneath it.
+  const liveUnits = useMemo(
+    () => filteredUnits.filter(u => u.marketingStatus !== "Let" && u.marketingStatus !== "Withdrawn"),
+    [filteredUnits]
+  );
+
   const statusCounts = useMemo(() => {
     const c: Record<string, number> = { Reporting: 0, Available: 0, Negotiating: 0, "Under Offer": 0 };
-    for (const u of filteredUnits) c[u.marketingStatus || "Available"] = (c[u.marketingStatus || "Available"] || 0) + 1;
+    for (const u of liveUnits) c[u.marketingStatus || "Available"] = (c[u.marketingStatus || "Available"] || 0) + 1;
     return c;
-  }, [filteredUnits]);
+  }, [liveUnits]);
 
-  const activeUnits = useMemo(() => filteredUnits.slice(0, 12), [filteredUnits]);
+  const letCount = filteredUnits.length - liveUnits.length;
+  const activeUnits = useMemo(() => liveUnits.slice(0, 12), [liveUnits]);
 
   const statusColors: Record<string, string> = {
     Reporting: "bg-violet-500",
@@ -42,19 +52,24 @@ export function AvailableUnitsWidget() {
 
   return (
     <Card className="h-full flex flex-col">
-      <CardHeader className="flex flex-row items-center justify-between pb-3 shrink-0">
+      <CardHeader className="flex flex-row items-center justify-between p-3 pb-2 shrink-0">
         <div className="flex items-center gap-2">
           <Store className="w-4 h-4 text-muted-foreground" />
           <CardTitle className="text-sm font-semibold">Letting Tracker</CardTitle>
-          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{filteredUnits.length} total</Badge>
+          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+            {liveUnits.length} live{letCount > 0 ? ` · ${letCount} let` : ""}
+          </Badge>
         </div>
-        <Link href="/available">
-          <Button variant="ghost" size="sm" className="h-7 text-xs" data-testid="button-view-all-units">
-            View All <ChevronRight className="w-3 h-3 ml-1" />
-          </Button>
-        </Link>
+        {!isClientViewer && (
+          <Link href="/available">
+            <Button variant="ghost" size="sm" className="h-7 text-xs" data-testid="button-view-all-units">
+              View All <ChevronRight className="w-3 h-3 ml-1" />
+            </Button>
+          </Link>
+        )}
       </CardHeader>
-      <CardContent className="pt-0 space-y-4 flex-1 overflow-auto">
+      <CardContent className="p-3 pt-0 space-y-4 flex-1 overflow-auto">
+        <p className="text-[10px] text-muted-foreground -mt-1">Units being marketed across the portfolio and where each one is in the letting process.</p>
         <div className="flex gap-4">
           {Object.entries(statusCounts).filter(([k]) => k !== "Let").map(([status, count]) => (
             <div key={status} className="flex items-center gap-1.5">
@@ -67,12 +82,16 @@ export function AvailableUnitsWidget() {
         {activeUnits.length === 0 ? (
           <div className="text-center py-6 text-muted-foreground">
             <Store className="w-8 h-8 mx-auto mb-2 opacity-30" />
-            <p className="text-xs">{favoriteIds.length === 0 ? "Star instructions to see their units here" : "No available units for your starred instructions"}</p>
+            <p className="text-xs">
+              {isClientViewer
+                ? "No units currently being marketed across your portfolio."
+                : favoriteIds.length === 0 ? "Star instructions to see their units here" : "No available units for your starred instructions"}
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-            {activeUnits.map(u => (
-              <Link key={u.id} href="/available">
+            {activeUnits.map(u => {
+              const row = (
                 <div className="flex items-center gap-2 py-1.5 px-2 rounded-md border hover:bg-muted/50 transition-colors cursor-pointer" data-testid={`widget-unit-${u.id}`}>
                   <div className={`w-2 h-2 rounded-full shrink-0 ${statusColors[u.marketingStatus] || "bg-neutral-400"}`} />
                   <div className="min-w-0 flex-1">
@@ -80,12 +99,15 @@ export function AvailableUnitsWidget() {
                     <p className="text-[10px] text-muted-foreground truncate">{propMap[u.propertyId] || ""}</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    {u.sqft && <span className="text-[10px] text-muted-foreground">{u.sqft.toLocaleString()} sf</span>}
-                    {u.askingRent && <span className="text-[10px] font-medium">£{u.askingRent.toLocaleString()}</span>}
+                    {u.sqft && <span className="text-[10px] text-muted-foreground">{u.sqft.toLocaleString()} sq ft</span>}
+                    {u.askingRent && <span className="text-[10px] font-medium">£{u.askingRent.toLocaleString()} pa</span>}
                   </div>
                 </div>
-              </Link>
-            ))}
+              );
+              return isClientViewer
+                ? <div key={u.id}>{row}</div>
+                : <Link key={u.id} href="/available">{row}</Link>;
+            })}
           </div>
         )}
       </CardContent>

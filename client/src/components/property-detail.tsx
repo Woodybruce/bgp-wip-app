@@ -81,12 +81,9 @@ import {
   formatAddress,
   InlineEngagement,
   InlineAgents,
-  InlineLandlord,
   InlineOwnerLink,
   InlineCompetitorAgent,
   InlineBillingEntity,
-  InlineDeals,
-  InlineTenants,
   SetUpFoldersDialog,
   PropertyFoldersPanel,
   PropertySharepointLink,
@@ -265,7 +262,11 @@ export function PropertyDetail({ id }: { id: string }) {
   // Client logins (e.g. Landsec) get a read-only view — no BGP staff tools
   // (Image Studio, doc gen, folders, delete, KYC/risk/data-linkage panels).
   const { data: pdViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isClientViewer = pdViewer?.role === "Client";
+  // Fail CLOSED while /api/auth/me loads, and match the server's wider
+  // definition of a client (any non-BGP login gets companyScopeId) —
+  // role === "Client" alone let mis-provisioned external users see the
+  // full internal shell with every panel in a 403 error state.
+  const isClientViewer = !pdViewer || pdViewer.role === "Client" || !!pdViewer.companyScopeId;
   const { data: property, isLoading } = useQuery<CrmProperty>({
     queryKey: ["/api/crm/properties", id],
     refetchInterval: (query) => {
@@ -292,16 +293,6 @@ export function PropertyDetail({ id }: { id: string }) {
       if (!res.ok) throw new Error("Failed to load companies");
       return res.json();
     },
-  });
-  const { data: tenantLinks = [] } = useQuery<{ propertyId: string; companyId: string }[]>({
-    queryKey: ["/api/crm/property-tenants"],
-  });
-  const { data: dealLinks = [] } = useQuery<DealLink[]>({
-    queryKey: ["/api/crm/property-deal-links"],
-  });
-  const { data: allDealsForDetail = [] } = useQuery<DealLink[]>({
-    queryKey: ["/api/crm/deals"],
-    select: (data: any[]) => data.map((d: any) => ({ id: d.id, name: d.name, propertyId: d.propertyId, status: d.status, groupName: d.groupName })),
   });
   useEffect(() => {
     if (property) {
@@ -361,6 +352,8 @@ export function PropertyDetail({ id }: { id: string }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", id, "asset-brief"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties", id, "linkage-audit"] });
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -510,9 +503,9 @@ export function PropertyDetail({ id }: { id: string }) {
                     const ageMs = Date.now() - new Date(property.createdAt).getTime();
                     const isRecent = ageMs < 5 * 60 * 1000;
                     const hasEnrichmentData = !!(property.proprietorName || property.landlordId || property.titleNumber);
-                    if (isRecent && !hasEnrichmentData && property.address) {
+                    if (isRecent && !hasEnrichmentData && property.address && !isClientViewer) {
                       return (
-                        <Badge variant="outline" className="text-[10px] border-purple-300 text-purple-600 bg-purple-50 animate-pulse gap-1" data-testid="badge-enriching">
+                        <Badge variant="outline" className="text-[10px] border-purple-300 text-purple-600 bg-purple-50 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800 animate-pulse gap-1" data-testid="badge-enriching">
                           <Loader2 className="w-2.5 h-2.5 animate-spin" />
                           Auto-enriching...
                         </Badge>
@@ -574,11 +567,13 @@ export function PropertyDetail({ id }: { id: string }) {
               <Card>
                 <CardContent className="p-3 space-y-2">
                   {/* Property covering strip — Asset Owner + Asset
-                      Lead + Last activity packed into a single tight
-                      row at the top of the card. */}
+                      Lead + Last activity. BGP-internal coverage (and it
+                      fires the staff-only linkage-audit), so staff-only. */}
+                  {!isClientViewer && (
                   <div className="pb-2 border-b">
                     <PropertyCoveringStrip propertyId={property.id} />
                   </div>
+                  )}
 
                   {/* Top strip — 4 cells, one field each. Tenure
                       removed. Sq Ft + Competitor Agent moved to a
@@ -595,19 +590,19 @@ export function PropertyDetail({ id }: { id: string }) {
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2 min-w-0">
                     <div className="min-w-0">
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Status</p>
-                      <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />
+                      {isClientViewer ? <span className="text-sm">{property.status || "—"}</span> : <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />}
                     </div>
                     <div className="min-w-0">
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Asset Class</p>
-                      <InlineLabelSelect value={Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />
+                      {isClientViewer ? <span className="text-sm">{(Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass) || "—"}</span> : <InlineLabelSelect value={Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />}
                     </div>
                     <div className="min-w-0">
-                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Team</p>
-                      <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />
+                      <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">BGP Team</p>
+                      {isClientViewer ? <span className="text-sm">{Array.isArray(property.bgpEngagement) ? property.bgpEngagement.join(", ") : (property.bgpEngagement || "—")}</span> : <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />}
                     </div>
                     <div className="min-w-0">
                       <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Website</p>
-                      <InlineText value={property.website || ""} onSave={(val) => inlineUpdate("website", val)} placeholder="Set website" className="text-sm truncate block" />
+                      {isClientViewer ? <span className="text-sm truncate block">{property.website || "—"}</span> : <InlineText value={property.website || ""} onSave={(val) => inlineUpdate("website", val)} placeholder="Set website" className="text-sm truncate block" />}
                     </div>
                   </div>
 
@@ -658,15 +653,23 @@ export function PropertyDetail({ id }: { id: string }) {
                         // leaving only ~30px for the value column after
                         // the 130px label. Stack instead.
                         <div className="grid grid-cols-1 gap-y-1 text-[11px]">
+                          {/* Clients see names only — the pickers depend on
+                              the full company list (scope-limited for them)
+                              and every save 403s, so editing renders as
+                              broken "+ Add owner" affordances. */}
                           {filled.map(row => (
                             <div key={row.field} className="grid grid-cols-[130px,1fr] items-center gap-2">
                               <span className="text-muted-foreground leading-tight truncate" title={row.label}>{row.label}</span>
                               <div className="min-w-0">
-                                <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} />
+                                {isClientViewer ? (
+                                  <span className="truncate block">{allCompanies.find(c => c.id === row.id)?.name || "—"}</span>
+                                ) : (
+                                  <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} />
+                                )}
                               </div>
                             </div>
                           ))}
-                          {empty.length > 0 && (
+                          {empty.length > 0 && !isClientViewer && (
                             <div className="grid grid-cols-[130px,1fr] items-center gap-2">
                               <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
                               <div className="min-w-0">
@@ -688,8 +691,10 @@ export function PropertyDetail({ id }: { id: string }) {
                 <div className="border-t pt-2 grid grid-cols-2 gap-x-4 gap-y-1">
                   <div>
                     <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Area</p>
-                    <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />
+                    {isClientViewer ? <span className="text-sm font-mono font-medium">{property.sqft ? `${Number(property.sqft).toLocaleString()} sq ft` : "—"}</span> : <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />}
                   </div>
+                  {/* Competitor intel is BGP-internal — never shown to clients. */}
+                  {!isClientViewer && (
                   <div>
                     <div className="flex items-center gap-1 mb-0.5">
                       <p className="text-[10px] text-muted-foreground leading-tight">Competitor Agent</p>
@@ -706,6 +711,7 @@ export function PropertyDetail({ id }: { id: string }) {
                       allCompanies={allCompanies}
                     />
                   </div>
+                  )}
                 </div>
 
                 </CardContent>
@@ -714,11 +720,16 @@ export function PropertyDetail({ id }: { id: string }) {
                   makes the card stretch to fill the leftover vertical
                   space in the column, so the right-hand News card
                   never has a white void beneath it. */}
+              {/* Hidden for clients: the tasks GET is blocked for client
+                  accounts, so the card showed empty while still accepting
+                  input that silently vanished. */}
+              {!isClientViewer && (
               <ErrorBoundary compact name="Weekly focus">
                 <div className="flex-1 flex flex-col min-h-0 [&>div]:flex-1 [&>div]:flex [&>div]:flex-col">
                   <WeeklyFocusCard propertyId={property.id} />
                 </div>
               </ErrorBoundary>
+              )}
               </div>
 
               {/* Right column stack: News + Risk Register. Risk
@@ -750,20 +761,26 @@ export function PropertyDetail({ id }: { id: string }) {
                 slot; Risk Register went up so the operational watch
                 list reads alongside the news ticker. */}
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+              {!isClientViewer && (
               <ErrorBoundary compact name="Property brochures">
                 <PropertyBrochuresPanel propertyId={property.id} />
               </ErrorBoundary>
+              )}
               {/* Property Decks panel hidden for the Monday demo —
                   feature not yet ready for the firm. See PRESENTATION_BACKLOG.md.
               <ErrorBoundary compact name="Property decks">
                 <PropertyDecksPanel propertyId={property.id} />
               </ErrorBoundary>
               */}
+              {/* Brand Gap is a staff analysis (fires /brand-gaps, which is
+                  staff-only) — never render it for a client viewer. */}
+              {!isClientViewer && (
               <ErrorBoundary compact name="Brand gap">
                 <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
                   <BrandGapPanel propertyId={property.id} />
                 </CollapsibleCard>
               </ErrorBoundary>
+              )}
             </div>
 
             {/* Pipeline + Performance combined — single 'how's the
@@ -799,19 +816,23 @@ export function PropertyDetail({ id }: { id: string }) {
                 on the brand profile's brand_analysis. */}
             <BgpCommentaryWrapper propertyId={property.id} />
 
-            {streetViewExpanded ? (
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+            {isClientViewer ? null : streetViewExpanded ? (
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-stretch">
                 <StreetViewSection
                   address={formatAddress(property.address) || property.name}
                   propertyId={property.id}
                   onClose={() => setStreetViewExpanded(false)}
                 />
-                <div className="rounded-lg border bg-card p-3">
+                {/* h-full + flex so the card stretches to match the (taller)
+                    Street View capture instead of leaving a dead gap. */}
+                <div className="rounded-lg border bg-card p-3 h-full flex flex-col">
                   <div className="flex items-center gap-2 mb-2">
                     <ImageIcon className="h-4 w-4 text-muted-foreground" />
                     <span className="text-sm font-semibold">Images</span>
                   </div>
-                  <EntityImagesPanel entityType="property" entityId={property.id} />
+                  <div className="flex-1 min-h-0">
+                    <EntityImagesPanel entityType="property" entityId={property.id} />
+                  </div>
                   <BrandPipelineImagesLink propertyId={property.id} propertyName={property.name} />
                 </div>
               </div>
@@ -828,11 +849,15 @@ export function PropertyDetail({ id }: { id: string }) {
                 The deal-CRM letting-tracker function it sourced from
                 (available_units) is untouched. */}
 
+            {/* Plans GET is client-blocked — the panel rendered an empty
+                card with a dead Upload button for clients. */}
+            {!isClientViewer && (
             <ErrorBoundary compact name="Property plans">
               <CollapsibleCard open={mainSections.plans} onToggle={() => toggleMain("plans")} icon={MapIcon} title="Plans" testId="toggle-plans">
                 <PropertyPlansPanel propertyId={property.id} />
               </CollapsibleCard>
             </ErrorBoundary>
+            )}
 
             {/* Schedule — unified view (Lettings / Tenancy lens toggle)
                 rendered for every property. Bluewater was the rollout
@@ -853,6 +878,7 @@ export function PropertyDetail({ id }: { id: string }) {
               </CollapsibleCard>
             </ErrorBoundary>
 
+            {!isClientViewer && (
             <ErrorBoundary compact name="Pathway intel strip">
               <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway Intel" testId="toggle-pathway">
                 <PathwayIntelStrip
@@ -862,6 +888,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 />
               </CollapsibleCard>
             </ErrorBoundary>
+            )}
 
             {/* KYC panel removed from the main column — it lives in
                 the right sidebar's Compliance & KYC dropdown so the
@@ -899,6 +926,10 @@ export function PropertyDetail({ id }: { id: string }) {
               column itself is sticky so it stays visible as you scroll
               through the (longer) left column. */}
           <aside className="space-y-3 lg:sticky lg:top-4 self-start">
+              {/* SharePoint is fully sealed for client accounts — the
+                  panel could only ever render dead Upload/Delete buttons
+                  over a 403, so it's staff-only. */}
+              {!isClientViewer && (
               <ReferenceSection
                 title="Files"
                 icon={FolderOpen}
@@ -909,6 +940,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} />
                 <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
               </ReferenceSection>
+              )}
 
               {!isClientViewer && (
               <ReferenceSection
@@ -961,6 +993,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} />
               </ReferenceSection>
 
+              {!isClientViewer && (
               <ReferenceSection
                 title="Client Board"
                 icon={Users}
@@ -970,6 +1003,7 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <ClientBoardPanel propertyId={property.id} landlordId={property.landlordId} allCompanies={allCompanies} />
               </ReferenceSection>
+              )}
 
               <ReferenceSection
                 title="Linked Contacts"
@@ -998,9 +1032,10 @@ export function PropertyDetail({ id }: { id: string }) {
                 onToggle={() => toggleSection("availableUnits")}
                 testId="toggle-available-units-section"
               >
-                <AvailableUnitsPanel propertyId={property.id} />
+                <AvailableUnitsPanel propertyId={property.id} readOnly={isClientViewer} />
               </ReferenceSection>
 
+              {!isClientViewer && (
               <ReferenceSection
                 title="Land Registry"
                 icon={Landmark}
@@ -1010,6 +1045,7 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <LinkedLandRegistryPanel propertyId={property.id} />
               </ReferenceSection>
+              )}
           </aside>
         </div>
 
@@ -1030,7 +1066,7 @@ interface AvailableUnitRow {
   dealId: string | null;
   dealRef: string | null;
 }
-function AvailableUnitsPanel({ propertyId }: { propertyId: string }) {
+function AvailableUnitsPanel({ propertyId, readOnly }: { propertyId: string; readOnly?: boolean }) {
   const { data: units = [], isLoading } = useQuery<AvailableUnitRow[]>({
     queryKey: ["/api/available-units", { propertyId }],
     queryFn: async () => {
@@ -1047,10 +1083,12 @@ function AvailableUnitsPanel({ propertyId }: { propertyId: string }) {
     return (
       <div className="text-center py-4">
         <Store className="w-7 h-7 mx-auto mb-1.5 text-muted-foreground/30" />
-        <p className="text-xs text-muted-foreground">No units on the Letting Tracker yet</p>
-        <a href={`/deals/letting?propertyId=${propertyId}`} className="text-[11px] text-blue-600 hover:underline mt-1 inline-block">
-          Add unit →
-        </a>
+        <p className="text-xs text-muted-foreground">{readOnly ? "No units currently being marketed here." : "No units on the Letting Tracker yet"}</p>
+        {!readOnly && (
+          <a href={`/deals/letting?propertyId=${propertyId}`} className="text-[11px] text-blue-600 hover:underline mt-1 inline-block">
+            Add unit →
+          </a>
+        )}
       </div>
     );
   }
@@ -1077,9 +1115,11 @@ function AvailableUnitsPanel({ propertyId }: { propertyId: string }) {
           )}
         </div>
       ))}
-      <a href={`/deals/letting?propertyId=${propertyId}`} className="text-[11px] text-blue-600 hover:underline block pt-1">
-        Open in Letting Tracker →
-      </a>
+      {!readOnly && (
+        <a href={`/deals/letting?propertyId=${propertyId}`} className="text-[11px] text-blue-600 hover:underline block pt-1">
+          Open in Letting Tracker →
+        </a>
+      )}
     </div>
   );
 }

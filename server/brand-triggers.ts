@@ -92,7 +92,7 @@ async function getLastSnapshot(brandId: string): Promise<{
 }> {
   const { rows } = await pool.query(
     `SELECT hunter_score, covenant_score, covenant_red_flags FROM brand_score_history
-      WHERE brand_company_id = $1 ORDER BY recorded_at DESC LIMIT 1`,
+      WHERE brand_company_id = $1 ORDER BY checked_at DESC LIMIT 1`,
     [brandId]
   );
   const row = rows[0];
@@ -398,9 +398,13 @@ export async function runDailyBrandTriggers(): Promise<{ events: number; sent: n
         const { subject, body } = renderDigestEmail(recipientEvents);
         await sendSharedMailboxEmail({ to, subject, body });
         sent++;
-      } catch {}
+      } catch (e: any) {
+        // Never swallow silently — a mail-transport failure (e.g. an expired
+        // Azure client secret) is exactly how these alerts went dark before.
+        console.error(`[brand-triggers] digest email to ${to} failed:`, e?.message);
+      }
     }
-    console.log(`[brand-triggers] ${events.length} alerts → ${sent} digest emails sent`);
+    console.log(`[brand-triggers] ${events.length} alerts → ${sent}/${byRecipient.size} digest emails sent`);
     return { events: events.length, sent };
   } catch (err: any) {
     console.error("[brand-triggers] daily run failed:", err?.message);

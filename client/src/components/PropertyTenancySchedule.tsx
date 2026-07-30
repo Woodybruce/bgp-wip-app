@@ -444,7 +444,7 @@ const LETTINGS_HIDDEN_FIELDS = new Set([
   "underwriting_comments",   // tenancy view
 ]);
 
-export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: string; lens?: "lettings" | "tenancy" }) {
+export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { propertyId: string; lens?: "lettings" | "tenancy"; readOnly?: boolean }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [location] = useLocation();
@@ -527,7 +527,9 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
       if (!r.ok) return { deals: [], lettingUnits: [] };
       return r.json();
     },
-    enabled: !!propertyId,
+    // The links endpoint is client-blocked; read-only viewers don't get
+    // the WIP/LT badges anyway, so skip the guaranteed 403.
+    enabled: !!propertyId && !readOnly,
   });
 
   const updateMutation = useMutation({
@@ -564,6 +566,27 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
       toast({ title: "Added to schedule", description: "Vacant units are now editable rows." });
     },
     onError: (err: any) => { toast({ title: "Couldn't add to schedule", description: err.message, variant: "destructive" }); },
+  });
+
+  // Tenancy → Letting Tracker: one click on a vacant tenancy row creates
+  // the available_units listing (the POST stamps tenancy_unit_id by name
+  // match and auto-creates the linked deal), so marketing can start
+  // without re-typing the unit in Add Unit.
+  const sendToTrackerMutation = useMutation({
+    mutationFn: (unit: TenancyUnit) => apiRequest("POST", "/api/available-units", {
+      propertyId,
+      unitName: unit.unit_number || unit.premises || "Unit",
+      sqft: unit.nia_sqft || unit.gia_sqft || undefined,
+      useClass: unit.permitted_use || undefined,
+      askingRent: unit.erv_pa || undefined,
+      marketingStatus: "AVA",
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId, "links"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      toast({ title: "On the Letting Tracker", description: "Listing created and linked back to this tenancy row." });
+    },
+    onError: (err: any) => { toast({ title: "Couldn't add to tracker", description: err.message, variant: "destructive" }); },
   });
 
   // Re-sync the status mirror across all four boards for this property.
@@ -682,8 +705,10 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
   // Occupied + Trading both count as "in possession" for the headline
   // KPI. Vacant + In Negotiation + Under Offer + Lease Event all count
   // as "actionable" — surfaced as their own buckets below if non-zero.
-  const occupied = units.filter(u => u.status === "Occupied" || u.status === "Trading").length;
-  const vacant = units.filter(u => u.status === "Vacant").length;
+  const occupied = units.filter(u => u.status === "Occupied" || u.status === "Trading" || u.status === "Let").length;
+  // Void/Available/AVA are vacancy statuses too (dashboard counts them as
+  // vacant; synthetic tracker rows arrive as their marketing status).
+  const vacant = units.filter(u => ["Vacant", "Void", "Available", "AVA"].includes(u.status || "")).length;
   const inNeg = units.filter(u => u.status === "In Negotiation").length;
   const underOffer = units.filter(u => u.status === "Under Offer").length;
   const leaseEvent = units.filter(u => u.status === "Lease Event").length;
@@ -691,9 +716,27 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
   const totalRent = units.reduce((s, u) => s + Number(u.passing_rent_pa || 0), 0);
   const totalSC = units.reduce((s, u) => s + Number(u.service_charge || 0), 0);
   const avgERV = units.length ? units.reduce((s, u) => s + Number(u.blended_erv || 0), 0) / units.length : 0;
-  const avgWAULT = units.filter(u => Number(u.unexpired_term) > 0).length
-    ? units.filter(u => Number(u.unexpired_term) > 0).reduce((s, u) => s + Number(u.unexpired_term), 0) / units.filter(u => Number(u.unexpired_term) > 0).length
-    : 0;
+  // WAULT is rent-weighted (Σ rent × term ÷ Σ rent), not a simple mean —
+  // otherwise one 999-year ground lease at a peppercorn drags the figure
+  // to absurdity. Falls back to the unweighted mean when no rents exist.
+  // Term comes from lease_expiry directly: the imported unexpired_term
+  // column mixes units (years from BGP sheets, months from the Landsec
+  // feed), which made the displayed "yrs" figure meaningless.
+  const yearsToExpiry = (u: TenancyUnit): number => {
+    if (u.lease_expiry) {
+      const yrs = (new Date(u.lease_expiry).getTime() - Date.now()) / (365.25 * 24 * 3600 * 1000);
+      return yrs > 0 ? yrs : 0;
+    }
+    return 0;
+  };
+  const waultUnits = units.filter(u => yearsToExpiry(u) > 0);
+  const waultRentedUnits = waultUnits.filter(u => Number(u.passing_rent_pa) > 0);
+  const waultRentTotal = waultRentedUnits.reduce((s, u) => s + Number(u.passing_rent_pa), 0);
+  const avgWAULT = waultRentTotal > 0
+    ? waultRentedUnits.reduce((s, u) => s + yearsToExpiry(u) * Number(u.passing_rent_pa), 0) / waultRentTotal
+    : waultUnits.length
+      ? waultUnits.reduce((s, u) => s + yearsToExpiry(u), 0) / waultUnits.length
+      : 0;
 
   const matchDeal = (unit: TenancyUnit): DealLink | undefined => {
     if (unit.deal_id) return links?.deals.find(d => d.id === unit.deal_id);
@@ -757,12 +800,15 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." className="h-7 text-xs pl-7 w-40" data-testid="tenancy-search" />
           </div>
           <input type="file" ref={fileInputRef} accept=".xlsx,.xls" onChange={handleImport} className="hidden" />
+          {!readOnly && (
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fileInputRef.current?.click()} disabled={importing} data-testid="btn-import-tenancy">
             {importing ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Upload className="w-3 h-3 mr-1" />}Import
           </Button>
+          )}
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleExport} data-testid="btn-export-tenancy">
             <Download className="w-3 h-3 mr-1" />Excel
           </Button>
+          {!readOnly && (<>
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => UNIFIED_ADD_UNIT_ENABLED ? setUnifiedAddOpen(true) : setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
             <Plus className="w-3 h-3 mr-1" />Add
           </Button>
@@ -777,6 +823,7 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
           >
             {resyncMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}Re-sync (all)
           </Button>
+          </>)}
           <Popover>
             <PopoverTrigger asChild>
               <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="btn-tenancy-columns">
@@ -828,7 +875,7 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
               })()}
             </PopoverContent>
           </Popover>
-          {!onFullBoard && (
+          {!onFullBoard && !readOnly && (
             <Link href={`/tenancy-schedule/${propertyId}`}>
               <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer ml-1" data-testid="link-tenancy-full-board">
                 <ExternalLink className="w-3 h-3" />Full Board
@@ -942,7 +989,7 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
               <th className="text-center p-2 font-medium" style={{ minWidth: 80 }}>Links</th>
               {/* Sticky right so the delete button is always visible
                   without horizontal scrolling to the end of the table. */}
-              <th className="text-center p-2 font-medium w-10 sticky right-0 bg-slate-800 z-10"></th>
+              <th className="text-center p-2 font-medium w-10 sticky right-0 bg-gray-100 dark:bg-gray-800 border-l z-10"></th>
             </tr>
           </thead>
           <tbody>
@@ -950,7 +997,7 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
                 ("Bluewater Welcome Hall · £1.2m total rent") were doubling up
                 the visual line count without adding info. Floor is now its
                 own column so groups remain visible at a glance. */}
-            {filtered.map(unit => {
+            {filtered.filter(unit => !(readOnly && unit.is_vacant)).map(unit => {
               const isExpanded = true;
               return (
                 <UnitRow
@@ -959,8 +1006,11 @@ export function PropertyTenancySchedule({ propertyId, lens }: { propertyId: stri
                   columns={visibleColumns}
                   onUpdate={inlineUpdate}
                   onDelete={() => deleteMutation.mutate(unit.id)}
-                  onPromote={() => promoteMutation.mutate()}
+                  onPromote={readOnly ? undefined : () => promoteMutation.mutate()}
                   promoting={promoteMutation.isPending}
+                  onSendToTracker={readOnly ? undefined : () => sendToTrackerMutation.mutate(unit)}
+                  sendingToTracker={sendToTrackerMutation.isPending}
+                  readOnly={readOnly}
                   deal={matchDeal(unit)}
                   letting={matchLetting(unit)}
                 />
@@ -1061,13 +1111,16 @@ function TenantBrandPicker({
   );
 }
 
-function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, deal, letting }: {
+function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSendToTracker, sendingToTracker, readOnly, deal, letting }: {
   unit: TenancyUnit;
   columns: Col[];
   onUpdate: (id: string | number, field: string, val: string) => void;
   onDelete: () => void;
   onPromote?: () => void;
   promoting?: boolean;
+  onSendToTracker?: () => void;
+  sendingToTracker?: boolean;
+  readOnly?: boolean;
   deal?: DealLink; letting?: LettingLink;
 }) {
   const isVacant = unit.status === "Vacant" || unit.is_vacant;
@@ -1236,7 +1289,10 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, deal
                       {displayVal}
                     </span>
                   </Link>
-                  {c.field === "tenant_name" && <CovenantBadgeByCompany companyId={linkedId} />}
+                  {/* Covenant/credit score is staff-only (the by-crm endpoint
+                      is blocked for clients) — hide the badge in read-only
+                      (client) mode. */}
+                  {c.field === "tenant_name" && !readOnly && <CovenantBadgeByCompany companyId={linkedId} />}
                   <InlineEdit
                     value={displayVal}
                     field={c.field as string}
@@ -1290,6 +1346,17 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, deal
               <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-green-50"><ExternalLink className="w-2.5 h-2.5" />LT</Badge>
             </a>
           )}
+          {!letting && unit.status === "Vacant" && !unit.is_vacant && onSendToTracker && (
+            <button
+              onClick={onSendToTracker}
+              disabled={sendingToTracker}
+              className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+              title="Create a Letting Tracker listing for this vacant unit"
+              data-testid={`tenancy-to-tracker-${unit.id}`}
+            >
+              <Plus className="w-2.5 h-2.5" />{sendingToTracker ? "Adding…" : "Tracker"}
+            </button>
+          )}
           {/* View this unit on the plan — sets the URL hash so the
               PropertyPlansPanel pulses the matching polygon and scrolls
               into view. Falls back gracefully when no polygon exists. */}
@@ -1314,6 +1381,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, deal
         </div>
       </td>
       <td className="p-1 text-center sticky right-0 bg-background border-l shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.1)] z-[5]">
+        {readOnly ? <span className="text-muted-foreground">—</span> : (
         <button
           onClick={() => {
             const label = unit.unit_number || unit.tenant_name || "this unit";
@@ -1325,6 +1393,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, deal
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
+        )}
       </td>
     </tr>
   );

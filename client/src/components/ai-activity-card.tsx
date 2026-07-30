@@ -20,6 +20,7 @@
  *   - Hunter row drill-downs
  */
 import { useEffect, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -71,6 +72,7 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
   const [loading, setLoading] = useState(true);
   const [curating, setCurating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [forbidden, setForbidden] = useState(false);
   const [openEmail, setOpenEmail] = useState<{ msgId: string; mailboxEmail: string } | null>(null);
   const [openMeeting, setOpenMeeting] = useState<{ eventId: string; mailboxEmail: string } | null>(null);
   const { toast } = useToast();
@@ -86,6 +88,9 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
           headers: getAuthHeaders(),
           credentials: "include",
         });
+        // 403 = viewer isn't allowed this feed (client accounts) — the card
+        // simply doesn't apply, so render nothing rather than an error.
+        if (r.status === 403) { if (!cancelled) setForbidden(true); return; }
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const d = await r.json();
         if (!cancelled) setData(d);
@@ -164,6 +169,8 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
 
   const lastTouchPill = data?.latestActivityDate ? <LastTouchBadge iso={data.latestActivityDate} /> : null;
   const hasContent = !!data?.markdown?.trim();
+
+  if (forbidden) return null;
 
   return (
     <>
@@ -592,6 +599,10 @@ export function AIActivityTrigger({
   title?: string;
   variant?: "ghost" | "outline" | "default";
 }) {
+  // Client accounts can't read activity feeds (403) — the card inside the
+  // sheet would render nothing, so don't offer the empty sheet at all.
+  const { data: atViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  if (atViewer?.role === "Client" || atViewer?.companyScopeId) return null;
   return (
     <Sheet>
       <SheetTrigger asChild>

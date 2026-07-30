@@ -45,6 +45,7 @@ async function buildDeckPptxFromArgs(fnArgs: any): Promise<{ buffer: Buffer; saf
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 import type { CrmProperty, CrmDeal, CrmCompany, CrmContact } from "@shared/schema";
+import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
 
 const CHATBGP_MODEL = "claude-sonnet-4-6";      // Lightweight sub-tasks only — the main chat defaults to Fable 5 via chatbgp-model-router.
 const CHATBGP_OPUS_MODEL = "claude-opus-4-8";   // Heavy reasoning fallback tier.
@@ -527,6 +528,11 @@ function getToolProgressLabel(toolName: string): string {
     create_requirement: "Logging requirement...",
     create_available_unit: "Creating unit...",
     update_available_unit: "Updating unit...",
+    create_targeting_brief: "Creating targeting brief...",
+    find_duplicate_properties: "Scanning for duplicates...",
+    merge_properties: "Merging properties...",
+    reconcile_tenancy_rows: "Reconciling tenancy rows...",
+    run_brand_enrichment_backfill: "Enriching brands from logo.dev...",
     create_investment_tracker: "Adding to tracker...",
     update_investment_tracker: "Updating tracker...",
     send_email: "Sending email...",
@@ -1815,6 +1821,198 @@ export async function clientChatGuard(req: any): Promise<{ isClient: boolean; co
   }
 }
 
+// ---- Client scope (external logins, e.g. Landsec) ----
+// External client users get: a restricted tool allowlist, a CRM context
+// scoped to their own properties/units/deals/tenants, and none of the
+// firm-wide knowledge base, business learnings, or pipeline data.
+
+// Woody, 2026-07: "release chat to fully access the app, no restrictions
+// other than BGP SharePoint." So this is a BLOCKlist, not an allowlist — a
+// client's ChatBGP can drive the app the same way an agent's can (boards,
+// letting tracker, units, viewings/offers, deals, briefs, documents, decks,
+// images, tasks, comps, requirements, pathway), and new app tools are
+// available to clients by default instead of silently missing.
+//
+// What stays blocked, and why:
+//  1. BGP's own systems — SharePoint / OneDrive / Dropbox / BGP mailboxes /
+//     BGP diaries / WhatsApp. This is the carve-out Woody asked for; filing
+//     to SharePoint stays a BGP-team action.
+//  2. Raw database, codebase and destructive/firm-wide operations. These
+//     aren't app features, they're admin — and they're the one route by which
+//     a client session (or a prompt injection inside one) could read or wreck
+//     ANOTHER client's data or the app itself.
+//  3. BGP's money and internal memory — WIP, Xero, the firm knowledge base,
+//     saved learnings, other people's chat history.
+export const CLIENT_BLOCKED_TOOLS = new Set([
+  // 1. BGP systems (the SharePoint carve-out)
+  "browse_sharepoint_folder", "create_sharepoint_folder", "move_sharepoint_item",
+  "read_sharepoint_file", "upload_to_sharepoint", "copy_dropbox_to_sharepoint",
+  "browse_dropbox", "download_email_attachment", "get_email_attachments",
+  "search_emails", "reply_email", "send_email", "send_whatsapp",
+  "query_calendar", "search_calendar",
+  // 2. Raw DB / codebase / destructive / firm-wide
+  "sql_query", "sql_write", "add_database_column", "describe_schema",
+  "delete_record", "wipe_crm_deals", "bulk_update_crm", "merge_properties",
+  "scan_duplicates", "find_duplicate_properties", "delete_document_template",
+  "run_shell_command", "restart_application", "git_diff", "git_status",
+  "grep_codebase", "read_source_file", "edit_source_file", "list_project_files",
+  "list_chatbgp_branches", "merge_chatbgp_branch", "revert_chatbgp_commit",
+  "trigger_archivist_crawl", "run_brand_enrichment_backfill", "import_wip_excel",
+  // 3. BGP money + internal memory
+  "query_wip", "query_xero", "search_knowledge_base", "save_learning",
+  "search_chat_history",
+]);
+
+export function isToolAllowedForClient(name: string): boolean {
+  return !!name && !CLIENT_BLOCKED_TOOLS.has(name);
+}
+
+// Kept as a named export for the two hard gates below; `.has()` now means
+// "allowed for a client", so the gate logic reads the same as before.
+export const CLIENT_SAFE_TOOLS = { has: (name: string) => isToolAllowedForClient(name) };
+
+export function filterToolsForClientScope(tools: any[]): any[] {
+  return tools.filter(t => isToolAllowedForClient(t?.function?.name));
+}
+
+export const CLIENT_SYSTEM_PROMPT = `You are ChatBGP, the AI assistant of Bruce Gillingham Pollard (BGP), currently speaking with a CLIENT of BGP — not a BGP staff member.
+
+Strict rules:
+- You may only discuss this client's own properties, units, deals and the tenants on them. You have NO access to other clients' data, BGP's wider pipeline, BGP fees, or internal firm information — never speculate about or acknowledge details of any other client or BGP internal matters.
+- Use search_crm to look up the client's properties, available units, deals and tenants. Results are already filtered to their portfolio.
+- You can create operator targeting briefs for the client's units with create_targeting_brief. Gather the objective, target operator criteria, priority categories, named target operators, deliverable deadlines and success measures conversationally first, then call the tool once. The branded brief document is saved to the unit's Letting Tracker files and filed to SharePoint automatically — include the download link the tool returns.
+- **You can drive the app on their behalf, not just answer questions.** You have the same app tooling an agent has for their portfolio: update properties and units, maintain the tenancy/leasing schedule, log viewings and offers, create and update deals, requirements, comps, companies and contacts, run the Property Pathway, generate documents/decks/PDFs/Word/Excel, create and edit images and file them to a building, manage tasks and diary entries, run KYC/covenant checks and look up market data. If a request maps to a tool, DO IT rather than telling them to ask their BGP team.
+- Two things you genuinely cannot do: (a) anything in BGP's own systems — SharePoint/OneDrive filing, BGP mailboxes, BGP diaries; and (b) raw database, bulk/merge/delete or app-administration operations. For those, say plainly that it's a BGP-team action and offer to do the in-app equivalent (e.g. attach the document to the property/unit record instead of a SharePoint folder).
+- Never reveal or infer anything about another client, another landlord's portfolio, BGP's internal fees/WIP or the firm's pipeline. Every tool call you make must concern THIS client's own properties, units, deals and tenants. If a request would require reaching outside their portfolio, decline that part.
+- Be professional and concise. Use UK English and UK date/number formats.`;
+
+export async function getClientCrmContext(scopeCompanyId: string): Promise<string> {
+  const cacheKey = `crmContext:client:${scopeCompanyId}`;
+  const cached = getCached<string>(cacheKey);
+  if (cached) return cached;
+  try {
+    const propsQ = await pool.query(
+      `SELECT p.id, p.name, p.address::text AS address
+       FROM crm_properties p
+       WHERE p.landlord_id = $1
+          OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+       ORDER BY p.name LIMIT 50`,
+      [scopeCompanyId]
+    );
+    const propIds = propsQ.rows.map(r => r.id);
+    let unitsQ: { rows: any[] } = { rows: [] };
+    let dealsQ: { rows: any[] } = { rows: [] };
+    if (propIds.length > 0) {
+      [unitsQ, dealsQ] = await Promise.all([
+        pool.query(
+          `SELECT au.unit_name, au.use_class, au.sqft, au.asking_rent, au.marketing_status, p.name AS property_name
+           FROM available_units au JOIN crm_properties p ON p.id = au.property_id
+           WHERE au.property_id = ANY($1) ORDER BY p.name, au.unit_name LIMIT 60`,
+          [propIds]
+        ).catch(() => ({ rows: [] })),
+        pool.query(
+          `SELECT d.name, d.status, d.deal_type, p.name AS property_name,
+                  (SELECT name FROM crm_companies WHERE id = d.tenant_id) AS tenant_name
+           FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
+           WHERE (d.property_id = ANY($1) OR d.landlord_id = $2)
+             AND d.status NOT IN ('Dead','Withdrawn')
+           ORDER BY d.updated_at DESC LIMIT 40`,
+          [propIds, scopeCompanyId]
+        ).catch(() => ({ rows: [] })),
+      ]);
+    }
+
+    let ctx = "\n\n## Your Portfolio (all data below is limited to your own instructions)\n";
+    if (propsQ.rows.length === 0) {
+      ctx += "No properties are currently linked to your account. Ask your BGP team to link your instructions.\n";
+    } else {
+      ctx += `\n### Properties (${propsQ.rows.length})\n`;
+      for (const p of propsQ.rows) {
+        let addr = "";
+        try { const a = JSON.parse(p.address); addr = a?.formatted || a?.address || ""; } catch { addr = p.address || ""; }
+        ctx += `- ${p.name}${addr ? " — " + addr : ""}\n`;
+      }
+      if (unitsQ.rows.length > 0) {
+        ctx += `\n### Units\n`;
+        for (const u of unitsQ.rows) {
+          ctx += `- ${u.unit_name} at ${u.property_name} — ${u.use_class || ""}${u.sqft ? ", " + Number(u.sqft).toLocaleString() + " sq ft" : ""}${u.asking_rent ? ", £" + Number(u.asking_rent).toLocaleString() + " pa asking" : ""} [${u.marketing_status || "Available"}]\n`;
+        }
+      }
+      if (dealsQ.rows.length > 0) {
+        ctx += `\n### Active deals on your properties\n`;
+        for (const d of dealsQ.rows) {
+          ctx += `- ${d.name}${d.property_name ? " at " + d.property_name : ""} | ${d.deal_type || ""} | ${d.status || ""}${d.tenant_name ? " | Tenant: " + d.tenant_name : ""}\n`;
+        }
+      }
+    }
+    setCache(cacheKey, ctx, 2 * 60 * 1000);
+    return ctx;
+  } catch (err) {
+    console.error("Failed to load client CRM context:", err);
+    return "";
+  }
+}
+
+// Scoped replacement for search_crm when the requester is a client login.
+// Searches ONLY the client's own properties, units on them, deals on them,
+// and the tenant companies on those deals. No contacts, no fees, no
+// investment pipeline, no comps, no requirements.
+export async function clientScopedCrmSearch(scopeCompanyId: string, rawQuery: string): Promise<any> {
+  const q = `%${rawQuery.trim()}%`;
+  const words = rawQuery.trim().split(/\s+/).filter(w => w.length >= 2).map(w => `%${w}%`);
+  const patterns = [q, ...words];
+  const like = (col: string, startIdx: number) => patterns.map((_, i) => `${col} ILIKE $${startIdx + i}`).join(" OR ");
+
+  const results: any = {};
+  const scopedPropsSql = `SELECT p.id FROM crm_properties p WHERE p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)`;
+
+  const props = await pool.query(
+    `SELECT p.id, p.name, p.status, p.address::text AS address FROM crm_properties p
+     WHERE p.id IN (${scopedPropsSql})
+       AND (${like("p.name", 2)} OR ${like("p.address::text", 2 + patterns.length)})
+     LIMIT 15`,
+    [scopeCompanyId, ...patterns, ...patterns]
+  ).catch(() => ({ rows: [] }));
+  results.properties = props.rows;
+
+  const units = await pool.query(
+    `SELECT au.id, au.unit_name AS "unitName", au.marketing_status AS "marketingStatus", au.property_id AS "propertyId", p.name AS "propertyName"
+     FROM available_units au JOIN crm_properties p ON p.id = au.property_id
+     WHERE au.property_id IN (${scopedPropsSql})
+       AND (${like("au.unit_name", 2)} OR ${like("p.name", 2 + patterns.length)})
+     LIMIT 15`,
+    [scopeCompanyId, ...patterns, ...patterns]
+  ).catch(() => ({ rows: [] }));
+  results.availableUnits = units.rows;
+
+  const deals = await pool.query(
+    `SELECT d.id, d.name, d.status, d.deal_type AS "dealType", p.name AS "propertyName",
+            (SELECT name FROM crm_companies WHERE id = d.tenant_id) AS "tenantName"
+     FROM crm_deals d LEFT JOIN crm_properties p ON p.id = d.property_id
+     WHERE (d.property_id IN (${scopedPropsSql}) OR d.landlord_id = $1)
+       AND d.status NOT IN ('Dead','Withdrawn')
+       AND (${like("d.name", 2)} OR ${like("p.name", 2 + patterns.length)})
+     LIMIT 15`,
+    [scopeCompanyId, ...patterns, ...patterns]
+  ).catch(() => ({ rows: [] }));
+  results.deals = deals.rows;
+
+  const tenants = await pool.query(
+    `SELECT DISTINCT c.id, c.name FROM crm_companies c
+     WHERE (c.id = $1 OR c.id IN (
+        SELECT d.tenant_id FROM crm_deals d
+        WHERE d.tenant_id IS NOT NULL AND (d.property_id IN (${scopedPropsSql}) OR d.landlord_id = $1)
+     ))
+       AND (${like("c.name", 2)})
+     LIMIT 15`,
+    [scopeCompanyId, ...patterns]
+  ).catch(() => ({ rows: [] }));
+  results.companies = tenants.rows;
+
+  const totalFound = Object.values(results).reduce((sum: number, arr: any) => sum + (arr?.length || 0), 0);
+  return { success: true, query: rawQuery, totalFound, results, note: "Results are limited to your own portfolio." };
+}
+
 const SYSTEM_PROMPT_FALLBACK = "You are ChatBGP, an AI assistant for Bruce Gillingham Pollard (BGP). You are powered by Claude Fable. IMPORTANT: If deep_investigate returns report.property.ambiguous === true, present the options as a numbered list and ask the user to pick the correct property. Do NOT guess or proceed with unverified property data.";
 
 export async function getAvailableTools(): Promise<{
@@ -2951,6 +3149,110 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           fee: { type: "number", description: "Fee percentage" },
         },
         required: ["propertyId", "unitName"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "find_duplicate_properties",
+      description: "Find duplicate property records (same normalised name) with counts of linked deals, tenancy units and files on each, so the right keeper can be chosen before merging. Use before merge_properties.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Optional name filter, e.g. 'Bluewater'. Omit to scan the whole CRM." },
+        },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "merge_properties",
+      description: "Merge a duplicate property into the canonical one. Re-points every linked record (deals, units, schedules, files, briefs, threads, etc.) to the keeper, fills any blank fields on the keeper from the duplicate, then deletes the duplicate. IRREVERSIBLE — always run find_duplicate_properties first, tell the user which record will be kept and which removed (with their linked-record counts), and get their explicit confirmation before calling this.",
+      parameters: {
+        type: "object",
+        properties: {
+          keepPropertyId: { type: "string", description: "Property ID to KEEP (usually the one with more linked data)" },
+          mergePropertyId: { type: "string", description: "Duplicate property ID to merge in and delete" },
+        },
+        required: ["keepPropertyId", "mergePropertyId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "run_brand_enrichment_backfill",
+      description: "Run the logo.dev Brand API backfill over the brand book: fills BLANK description, Instagram/TikTok/X handles and LinkedIn on brand records that have a website domain (never overwrites existing data; skips brands with nothing missing). Costs ~1p per brand that needs filling, so confirm the run size with the user first. hospitalityOnly=true limits it to the client-visible hospitality/F&B slice (e.g. 'all Landsec brands').",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max brands to process this run (default 100, cap 500)." },
+          hospitalityOnly: { type: "boolean", description: "true = only the hospitality/F&B client slice (Landsec's brands)." },
+        },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "reconcile_tenancy_rows",
+      description: "Fix split tenancy-schedule rows — where one import put the passing rent on one row and another import put the lease dates on a parallel row for the same unit, so almost no row has both (breaking rent coverage, WAULT weighting and expiry-vs-income analysis). Dry run (default) returns the full merge plan: which rows merge, which groups are ambiguous, and what rent+expiry coverage becomes. Only call with apply=true AFTER showing the user the dry-run numbers and getting their explicit confirmation — applying merges rows and deletes the duplicates (references are re-pointed first). Conflicting rows (different tenant/rent/expiry) are never auto-merged; they come back in the 'ambiguous' list for human review.",
+      parameters: {
+        type: "object",
+        properties: {
+          propertyId: { type: "string", description: "Optional: limit to one property. Omit to reconcile the whole tenancy schedule." },
+          apply: { type: "boolean", description: "false/omitted = dry run (report only). true = execute the merge plan — requires the user's explicit confirmation of the dry-run numbers first." },
+        },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "create_targeting_brief",
+      description: "Create an operator targeting brief for a letting tracker unit and generate the branded brief document (PDF). Use when a client (e.g. Landsec) or agent describes a leasing instruction for a specific unit: the letting objective, what kind of operator they want, priority categories, named target operators, deliverable deadlines and success measures. Ask for the property and unit first (search available units to find the unit ID), then gather the brief content conversationally before calling this tool. The generated document is saved against the unit in the Letting Tracker and filed to the scheme's SharePoint folder.",
+      parameters: {
+        type: "object",
+        properties: {
+          unitId: { type: "string", description: "Available unit ID the brief is for. Search available units first to get the ID." },
+          title: { type: "string", description: "Brief title, e.g. 'Operator Targeting Brief – 145A Queen Street, Westgate (L29A)'" },
+          clientCompany: { type: "string", description: "Instructing client / landlord, e.g. 'Landsec'. Defaults to the current user's client company if they are a client user." },
+          objective: { type: "string", description: "The letting objective" },
+          locationContext: { type: "string", description: "Location, adjacencies, categories already represented nearby" },
+          targetCriteria: { type: "string", description: "What the preferred operator should demonstrate" },
+          priorityCategories: { type: "string", description: "Priority categories, keeping category names and example operators together" },
+          agentInstruction: { type: "string", description: "Instruction to the agent (emphasis, constraints)" },
+          successMeasures: { type: "string", description: "How success will be measured" },
+          instructedDate: { type: "string", description: "YYYY-MM-DD instruction date (default today)" },
+          deadline1Date: { type: "string", description: "YYYY-MM-DD first deliverable deadline (e.g. +14 days)" },
+          deadline1Deliverables: { type: "string", description: "What is due at the first deadline" },
+          deadline2Date: { type: "string", description: "YYYY-MM-DD second deliverable deadline (e.g. +30 days)" },
+          deadline2Deliverables: { type: "string", description: "What is due at the second deadline" },
+          minTargets: { type: "number", description: "Minimum number of target operators required (default 5)" },
+          priorityTargets: { type: "number", description: "Number of priority targets required (default 2)" },
+          targets: {
+            type: "array",
+            description: "Named target operators from the instruction",
+            items: {
+              type: "object",
+              properties: {
+                operatorName: { type: "string" },
+                category: { type: "string" },
+                priority: { type: "string", description: "A or B" },
+                rationale: { type: "string" },
+              },
+              required: ["operatorName"],
+            },
+          },
+        },
+        required: ["unitId", "objective"],
       },
     },
   });
@@ -5522,6 +5824,12 @@ export async function executeCrmToolRaw(
   const { pool } = await import("./db");
 
   if (fnName === "search_crm") {
+    const searchScope = req ? await resolveCompanyScope(req).catch(() => null) : null;
+    if (searchScope) {
+      const rawQ = (fnArgs.query as string || "").trim();
+      if (rawQ.length < 2) return { data: { error: "Search term too short", results: {} } };
+      return { data: await clientScopedCrmSearch(searchScope, rawQ) };
+    }
     const { crmDeals, crmContacts, crmCompanies, crmProperties, investmentTracker, availableUnits } = await import("@shared/schema");
     const { ilike, or } = await import("drizzle-orm");
     const rawQuery = (fnArgs.query as string || "").trim();
@@ -5565,7 +5873,13 @@ export async function executeCrmToolRaw(
       results.investmentTracker = await db.select({ id: investmentTracker.id, assetName: investmentTracker.assetName, address: investmentTracker.address, status: investmentTracker.status, boardType: investmentTracker.boardType, client: investmentTracker.client }).from(investmentTracker).where(buildOr([investmentTracker.assetName, investmentTracker.address, investmentTracker.client, investmentTracker.vendor])).limit(100);
     }
     if (entityType === "all" || entityType === "units") {
-      results.availableUnits = await db.select({ id: availableUnits.id, unitName: availableUnits.unitName, marketingStatus: availableUnits.marketingStatus, propertyId: availableUnits.propertyId }).from(availableUnits).where(buildOr([availableUnits.unitName])).limit(100);
+      const { eq: eqUnits } = await import("drizzle-orm");
+      results.availableUnits = await db
+        .select({ id: availableUnits.id, unitName: availableUnits.unitName, marketingStatus: availableUnits.marketingStatus, propertyId: availableUnits.propertyId, propertyName: crmProperties.name })
+        .from(availableUnits)
+        .leftJoin(crmProperties, eqUnits(availableUnits.propertyId, crmProperties.id))
+        .where(buildOr([availableUnits.unitName, crmProperties.name]))
+        .limit(100);
     }
     if (entityType === "all" || entityType === "requirements") {
       const reqConds = [exactQ, ...wordPatterns].map((p, i) => `(company_name ILIKE $${i+1} OR contact_name ILIKE $${i+1} OR location ILIKE $${i+1} OR notes ILIKE $${i+1})`);
@@ -5865,6 +6179,167 @@ export async function executeCrmToolRaw(
       epcRating: fnArgs.epcRating, notes: fnArgs.notes, fee: fnArgs.fee,
     }).returning();
     return { data: { success: true, action: "created", entity: "available unit", id: created.id, name: created.unitName }, action: { type: "crm_created", entityType: "unit", id: created.id } };
+  }
+
+  if (fnName === "find_duplicate_properties") {
+    const { findDuplicateProperties } = await import("./property-merge");
+    const groups = await findDuplicateProperties(fnArgs.name || undefined);
+    if (groups.length === 0) {
+      return { data: { success: true, duplicates: [], note: fnArgs.name ? `No duplicate properties matching "${fnArgs.name}"` : "No duplicate properties found" } };
+    }
+    return { data: { success: true, duplicates: groups, instruction: "Present each group to the user with the linked-record counts (deals/units/files) per record, recommend which to keep (usually the one with more linked data), and get explicit confirmation before calling merge_properties." } };
+  }
+
+  if (fnName === "merge_properties") {
+    const { mergeProperties } = await import("./property-merge");
+    try {
+      const result = await mergeProperties(String(fnArgs.keepPropertyId || ""), String(fnArgs.mergePropertyId || ""));
+      return {
+        data: { success: true, ...result },
+        action: { type: "crm_updated", entityType: "property", id: result.keptId },
+      };
+    } catch (e: any) {
+      return { data: { success: false, error: e?.message || "Merge failed" } };
+    }
+  }
+
+  if (fnName === "run_brand_enrichment_backfill") {
+    const { runLogoDevBackfill, isLogoDevBrandConfigured } = await import("./logo-dev-brand");
+    if (!isLogoDevBrandConfigured()) {
+      return { data: { success: false, error: "LOGO_DEV_SECRET_KEY isn't configured on this environment yet — add it to the deployment's variables first." } };
+    }
+    try {
+      const stats = await runLogoDevBackfill(
+        Number(fnArgs.limit ?? 100),
+        fnArgs.hospitalityOnly === true
+      );
+      return {
+        data: {
+          success: true, ...stats,
+          instruction: "Report: how many brands were candidates, how many got fields filled, and that re-running later picks up brands logo.dev hadn't indexed yet.",
+        },
+      };
+    } catch (e: any) {
+      return { data: { success: false, error: e?.message || "Backfill failed" } };
+    }
+  }
+
+  if (fnName === "reconcile_tenancy_rows") {
+    const { reconcileTenancyRows } = await import("./tenancy-reconcile");
+    try {
+      const report = await reconcileTenancyRows({
+        propertyId: fnArgs.propertyId ? String(fnArgs.propertyId) : null,
+        apply: fnArgs.apply === true,
+      });
+      // Keep the tool payload compact for big books — the model summarises,
+      // the user doesn't need 1,000 raw merge rows in context.
+      const sample = report.merges.slice(0, 25);
+      return {
+        data: {
+          success: true,
+          applied: report.applied,
+          rowsScanned: report.rowsScanned,
+          duplicateGroups: report.duplicateGroups,
+          mergeCount: report.merges.length,
+          mergesSample: sample,
+          ambiguousCount: report.ambiguous.length,
+          ambiguous: report.ambiguous.slice(0, 25),
+          coverage: report.coverage,
+          instruction: report.applied
+            ? "Report what was merged and the new rent+expiry coverage."
+            : "Summarise for the user: how many rows would merge, projected rent+expiry coverage before → after, and list the ambiguous groups needing a human decision. Ask for explicit confirmation before calling again with apply=true.",
+        },
+      };
+    } catch (e: any) {
+      return { data: { success: false, error: e?.message || "Reconcile failed" } };
+    }
+  }
+
+  if (fnName === "create_targeting_brief") {
+    const { availableUnits, unitBriefs, unitTargetOperators } = await import("@shared/schema");
+    const { eq } = await import("drizzle-orm");
+    const [unit] = await db.select().from(availableUnits).where(eq(availableUnits.id, fnArgs.unitId)).limit(1);
+    if (!unit) return { data: { success: false, error: `No available unit found with ID "${fnArgs.unitId}". Search available units first.` } };
+
+    const briefScope = req ? await resolveCompanyScope(req).catch(() => null) : null;
+    if (briefScope && !(await isPropertyInScope(briefScope, unit.propertyId))) {
+      return { data: { success: false, error: "That unit is not part of your portfolio, so a brief can't be created for it from this account." } };
+    }
+
+    const userId = (req as any)?.session?.userId || (req as any)?.tokenUserId || null;
+    let userName: string | null = null;
+    let clientCompany: string | null = fnArgs.clientCompany || null;
+    if (userId) {
+      const user = await storage.getUser(userId);
+      userName = user?.name || null;
+      if (!clientCompany && user?.email && !user.email.toLowerCase().endsWith("@brucegillinghampollard.com")) {
+        clientCompany = user.team || null;
+      }
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const [brief] = await db.insert(unitBriefs).values({
+      unitId: unit.id,
+      propertyId: unit.propertyId,
+      clientCompany,
+      title: fnArgs.title || `Operator Targeting Brief — ${unit.unitName}`,
+      objective: fnArgs.objective,
+      locationContext: fnArgs.locationContext,
+      targetCriteria: fnArgs.targetCriteria,
+      priorityCategories: fnArgs.priorityCategories,
+      agentInstruction: fnArgs.agentInstruction,
+      successMeasures: fnArgs.successMeasures,
+      instructedDate: fnArgs.instructedDate || today,
+      deadline1Date: fnArgs.deadline1Date,
+      deadline1Deliverables: fnArgs.deadline1Deliverables,
+      deadline2Date: fnArgs.deadline2Date,
+      deadline2Deliverables: fnArgs.deadline2Deliverables,
+      minTargets: fnArgs.minTargets ?? 5,
+      priorityTargets: fnArgs.priorityTargets ?? 2,
+      createdByUserId: userId,
+      createdByName: userName,
+    }).returning();
+
+    const targetsIn: any[] = Array.isArray(fnArgs.targets) ? fnArgs.targets : [];
+    for (let i = 0; i < targetsIn.length; i++) {
+      const t = targetsIn[i];
+      if (!t?.operatorName) continue;
+      await db.insert(unitTargetOperators).values({
+        briefId: brief.id,
+        operatorName: t.operatorName,
+        category: t.category || null,
+        priority: t.priority === "A" ? "A" : "B",
+        rationale: t.rationale || null,
+        sortOrder: i,
+      });
+    }
+
+    let docResult: any = null;
+    try {
+      const { generateBriefDocument } = await import("./unit-brief-doc");
+      docResult = await generateBriefDocument(brief.id);
+    } catch (err: any) {
+      console.warn("[chatbgp] Brief document generation failed:", err?.message);
+    }
+
+    return {
+      data: {
+        success: true,
+        action: "created",
+        entity: "targeting brief",
+        id: brief.id,
+        unit: unit.unitName,
+        targetsAdded: targetsIn.length,
+        ...(docResult ? {
+          downloadUrl: docResult.downloadUrl,
+          filename: docResult.fileName,
+          sharepointUrl: docResult.sharepointUrl || null,
+          downloadMarkdown: `[Download ${docResult.fileName}](${docResult.downloadUrl})`,
+          instruction: "IMPORTANT: Include the downloadMarkdown text EXACTLY as-is in your response so the user can download the brief document. Mention it is also saved on the unit's Letting Tracker files" + (docResult.sharepointUrl ? " and filed in the scheme's SharePoint folder." : "."),
+        } : { documentNote: "Brief saved, but document generation failed — it can be regenerated from the Letting Tracker." }),
+      },
+      action: { type: "crm_created", entityType: "unit_brief", id: brief.id },
+    };
   }
 
   if (fnName === "update_available_unit") {
@@ -10837,6 +11312,13 @@ export async function handleCrmToolCall(
 ): Promise<{ handled: boolean; response?: any }> {
   const { db } = await import("./db");
 
+  try {
+    const gateScope = await resolveCompanyScope(req);
+    if (gateScope && !CLIENT_SAFE_TOOLS.has(fnName)) {
+      return { handled: true, response: { reply: "That capability isn't available on client accounts — your account covers your own portfolio only. Contact your BGP team for anything further." } };
+    }
+  } catch {}
+
   const summaryHelper = async (toolResult: any) => {
     const summaryMessages = [
       ...completionOptions.messages,
@@ -10965,6 +11447,12 @@ export async function handleCrmToolCall(
     const rawQuery = (fnArgs.query as string || "").trim();
     if (rawQuery.length < 2) {
       return { handled: true, response: { reply: "Please provide a longer search term (at least 2 characters)." } };
+    }
+    const legacySearchScope = req ? await resolveCompanyScope(req).catch(() => null) : null;
+    if (legacySearchScope) {
+      const scoped = await clientScopedCrmSearch(legacySearchScope, rawQuery);
+      const reply = await summaryHelper(scoped);
+      return { handled: true, response: { reply: reply || JSON.stringify(scoped) } };
     }
     const entityType = fnArgs.entityType || "all";
     const results: any = {};
@@ -12424,7 +12912,18 @@ export function setupChatBGPRoutes(app: Express) {
       }
 
       let tools: any[] = [];
-      try { ({ tools } = await getAvailableTools()); if ((await clientChatGuard(req)).isClient) tools = []; } catch (e: any) {
+      let fileIsClient = false;
+      let fileScopeCompanyId: string | null = null;
+      try {
+        ({ tools } = await getAvailableTools());
+        fileIsClient = (await clientChatGuard(req)).isClient;
+        if (fileIsClient) {
+          // Client login: scoped tool allowlist when we can resolve their
+          // company, no tools at all when we can't (fail closed).
+          fileScopeCompanyId = await resolveCompanyScope(req).catch(() => null);
+          tools = fileScopeCompanyId ? filterToolsForClientScope(tools) : [];
+        }
+      } catch (e: any) {
         console.error("[ChatBGP file-chat] getAvailableTools failed:", e?.message);
       }
 
@@ -12434,10 +12933,15 @@ export function setupChatBGPRoutes(app: Express) {
       // demand via tools, so we skip building them here.
       const personalisation = await withTimeout(getUserPersonalisationContext(fileUserId), 2000, "");
       let systemPrompt: string;
-      try {
-        systemPrompt = await buildSystemPrompt();
-      } catch {
-        systemPrompt = SYSTEM_PROMPT_FALLBACK;
+      if (fileIsClient) {
+        systemPrompt = CLIENT_SYSTEM_PROMPT
+          + (fileScopeCompanyId ? await withTimeout(getClientCrmContext(fileScopeCompanyId), 5000, "") : "");
+      } else {
+        try {
+          systemPrompt = await buildSystemPrompt();
+        } catch {
+          systemPrompt = SYSTEM_PROMPT_FALLBACK;
+        }
       }
       // Lean context (see main chat handler) — keep only who you're talking to;
       // fetch knowledge / CRM / email on demand via tools rather than force-feeding.
@@ -12613,6 +13117,14 @@ export function setupChatBGPRoutes(app: Express) {
     req: Request,
     msToken: string | null
   ): Promise<{ data: any; action?: any }> {
+    // Hard gate: external client logins (e.g. Landsec) may only run the
+    // client-safe allowlist, regardless of what the model asked for.
+    try {
+      const gateScope = await resolveCompanyScope(req);
+      if (gateScope && !CLIENT_SAFE_TOOLS.has(tcName)) {
+        return { data: { success: false, error: "This capability is not available on client accounts. Your account covers your own portfolio only — contact your BGP team for anything further." } };
+      }
+    } catch {}
     // SharePoint tools
     if (tcName === "browse_sharepoint_folder") {
       if (!msToken) return { data: { error: "Microsoft 365 not connected. Please connect via the SharePoint page." } };
@@ -13430,7 +13942,13 @@ export function setupChatBGPRoutes(app: Express) {
     try {
       let { tools } = await getAvailableTools();
       const chatGuard = await clientChatGuard(req);
-      if (chatGuard.isClient) tools = [];
+      let sseScopeCompanyId: string | null = null;
+      if (chatGuard.isClient) {
+        // Client login: scoped tool allowlist when we can resolve their
+        // company, no tools at all when we can't (fail closed).
+        sseScopeCompanyId = await resolveCompanyScope(req).catch(() => null);
+        tools = sseScopeCompanyId ? filterToolsForClientScope(tools) : [];
+      }
       const userId = req.session.userId!;
       // Lean mode: the firm-wide context builders (memory, learnings, CRM
       // summary, knowledge bank, and a live email/calendar Graph fetch) used to
@@ -13446,9 +13964,13 @@ export function setupChatBGPRoutes(app: Express) {
           currentUserContext = `\n\n## Current User\nYou are speaking with **${currentUser.name}**${currentUser.department ? " (" + currentUser.department + " team)" : ""}${currentUser.role ? " — " + currentUser.role : ""}. Personalise your responses accordingly — use their name occasionally, and prioritise information relevant to their team.\n`;
         }
       } catch {}
-      if (chatGuard.isClient) currentUserContext += chatGuard.constraint;
+      if (chatGuard.isClient) {
+        currentUserContext += sseScopeCompanyId
+          ? await withTimeout(getClientCrmContext(sseScopeCompanyId), 5000, "")
+          : chatGuard.constraint;
+      }
 
-      if (verifiedThreadId) {
+      if (verifiedThreadId && !sseScopeCompanyId) {
         try {
           const thread = await storage.getChatThread(verifiedThreadId);
           if (thread?.propertyId) {
@@ -13519,10 +14041,14 @@ export function setupChatBGPRoutes(app: Express) {
       }
 
       let systemPrompt2: string;
-      try {
-        systemPrompt2 = await buildSystemPrompt();
-      } catch {
-        systemPrompt2 = SYSTEM_PROMPT_FALLBACK;
+      if (chatGuard.isClient) {
+        systemPrompt2 = CLIENT_SYSTEM_PROMPT;
+      } else {
+        try {
+          systemPrompt2 = await buildSystemPrompt();
+        } catch {
+          systemPrompt2 = SYSTEM_PROMPT_FALLBACK;
+        }
       }
       // Split system prompt: static (cacheable) vs dynamic (per-request)
       // Lean context: only the cheap, targeted bits — who you're talking to and
@@ -13980,9 +14506,14 @@ export function setupChatBGPRoutes(app: Express) {
       // Lean mode: skip the firm-wide context builders (fetched on demand via
       // tools); the Excel add-in only needs its task-specific excelSupplement.
       const userId = req.session.userId!;
+      const excelScopeCompanyId = await resolveCompanyScope(req).catch(() => null);
 
       let baseSystemPrompt: string;
-      try { baseSystemPrompt = await buildSystemPrompt(); } catch { baseSystemPrompt = SYSTEM_PROMPT_FALLBACK; }
+      if (excelScopeCompanyId) {
+        baseSystemPrompt = CLIENT_SYSTEM_PROMPT;
+      } else {
+        try { baseSystemPrompt = await buildSystemPrompt(); } catch { baseSystemPrompt = SYSTEM_PROMPT_FALLBACK; }
+      }
 
       const excelSupplement = `
 
@@ -14032,7 +14563,9 @@ ${safeExcelContext ? `**Workbook Data (read live from the user's open Excel work
 
       // Load all the tools the main ChatBGP has
       let { tools } = await getAvailableTools();
-      if ((await clientChatGuard(req)).isClient) tools = [];
+      if ((await clientChatGuard(req)).isClient) {
+        tools = excelScopeCompanyId ? filterToolsForClientScope(tools) : [];
+      }
       let msToken: string | null = null;
       try { msToken = await getValidMsToken(req); } catch {}
 

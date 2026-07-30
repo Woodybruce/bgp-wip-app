@@ -11,8 +11,7 @@ import { InteractionsBoard } from "@/components/interactions-board";
 import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
 import { CompanyPropertiesBoard } from "@/components/CompanyPropertiesBoard";
 import { useToast } from "@/hooks/use-toast";
-import { InlineMultiSelect } from "@/components/inline-edit";
-import { buildUserColorMap } from "@/lib/agent-colors";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -426,6 +425,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   // admin-only (work-in-progress) so it's hidden from the team.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isAdmin = !!currentUser?.isAdmin;
+  // Client viewers (e.g. Landsec) read the profile but can't fire the
+  // research/enrichment POSTs (all 403 server-side) — fail closed until
+  // the viewer is known so we never auto-fire on a client's first paint.
+  const isClientViewer = !currentUser || currentUser.role === "Client" || !!currentUser.companyScopeId;
   // 'BGP portfolio — potential pitches' is parked as a WIP — removed from the
   // brand profile for now (the £0pa rows aren't ready). The data + code stay;
   // flip this to true (or move it to a dedicated admin page) when it's ready.
@@ -444,7 +447,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   });
 
   useEffect(() => {
-    if (!data || autoContactsRan.current) return;
+    if (!data || isClientViewer || autoContactsRan.current) return;
     autoContactsRan.current = true;
     // Auto-discover a RocketReach property contact when the brand has none
     // yet. "Property contact" = role mentions property / real estate /
@@ -456,13 +459,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     });
     if (!hasPropertyContact) runContactDiscovery();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, currentUser]);
 
   // Auto-fire RocketReach brand intel on first profile load — sweeps the
   // industry_str and auto-fills BGP industry / company_type when blank.
   // Cheap (uses unlimited searchCompany credits, no person reveal).
   useEffect(() => {
-    if (!data || autoBrandIntelRan.current) return;
+    if (!data || isClientViewer || autoBrandIntelRan.current) return;
     autoBrandIntelRan.current = true;
     const hasCategory = !!(data.company.industry && String(data.company.industry).trim());
     const hasGoodType = !!(data.company.company_type && !["Tenant", "Tenant - Other", "Tenant - Retail", "Tenant - Unknown"].includes(String(data.company.company_type).trim()));
@@ -476,7 +479,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       })
       .catch(() => { /* silent — not critical */ });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, currentUser]);
 
   // Auto-fire the Companies House KYC sweep on first load if we have
   // a CH number but no officers/PSCs cached yet. Brands had this
@@ -486,7 +489,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   // like Land Sec where the data is one CH call away. Gated on having
   // a CH number so we don't kick off a no-op for brands without one.
   useEffect(() => {
-    if (!data || autoKycRan.current) return;
+    if (!data || isClientViewer || autoKycRan.current) return;
     const hasCh = !!data.company?.companies_house_number;
     const chData: any = data.company?.companies_house_data || {};
     const hasOfficers = Array.isArray(chData?.officers) && chData.officers.length > 0;
@@ -498,17 +501,17 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
         .catch(() => { /* failure surfaces in the compliance board's row state */ });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, currentUser]);
 
   const autoStoresRan = useRef(false);
   useEffect(() => {
-    if (!data || autoStoresRan.current) return;
+    if (!data || isClientViewer || autoStoresRan.current) return;
     autoStoresRan.current = true;
     if ((data.stores?.length || 0) === 0 && !researchStoresMutation.isPending) {
       researchStoresMutation.mutate("uk");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, currentUser]);
 
   // Auto-fire the UK trading-entity scraper on first brand load when we
   // don't have one stored yet. UK law (Companies Act 2006) requires brands
@@ -518,13 +521,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   // known, AML/KYC checks downstream can't run against the right CH row.
   const autoUkEntityRan = useRef(false);
   useEffect(() => {
-    if (!data || autoUkEntityRan.current) return;
+    if (!data || isClientViewer || autoUkEntityRan.current) return;
     if (data.company?.uk_entity_name) return; // already set — don't re-scrape
     if (!(data.company?.domain || data.company?.domain_url)) return; // no website to scrape
     autoUkEntityRan.current = true;
     findUkEntityMutation.mutate();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [data, currentUser]);
 
   const patchMutation = useMutation({
     mutationFn: async (body: Partial<BrandProfile["company"]>) => {
@@ -1092,6 +1095,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
           >
             <Download className="w-3.5 h-3.5" />
           </Button>
+          {!isClientViewer && (<>
           <Button
             variant="ghost"
             size="sm"
@@ -1105,6 +1109,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
           <Button variant="ghost" size="sm" onClick={editing ? () => setEditing(false) : startEdit} data-testid="button-brand-edit">
             {editing ? <X className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
           </Button>
+          </>)}
         </div>
       </CardHeader>
 
@@ -1448,7 +1453,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   <Phone className="w-3 h-3" /> Email
                 </a>
               )}
-              {currentUser?.role !== "Client" && (
+              {!isClientViewer && (
               <button
                 type="button"
                 onClick={() => runContactDiscovery()}
@@ -1492,7 +1497,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             {/* Single BGP AI take + Ask ChatBGP question runner — sits above all zones */}
             <div className="mt-2 order-2 space-y-3">
               {currentUser?.role !== "Client" && <BgpTakeStrip companyId={companyId} tab="brand" />}
-              <AskChatBGPInline brandName={c.name} />
+              {currentUser?.role !== "Client" && <AskChatBGPInline brandName={c.name} />}
             </div>
 
             {/* Properties board — for landlords it sits directly under Ask ChatBGP
@@ -1680,6 +1685,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                                   ) : (
                                     <>
                                       <span className="font-medium">{b.name}</span>
+                                      {!isClientViewer && (
                                       <button
                                         type="button"
                                         onClick={() => createBackerMutation.mutate({ name: b.name, type: b.type, description: b.description })}
@@ -1688,6 +1694,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                                       >
                                         {createBackerMutation.isPending && createBackerMutation.variables?.name === b.name ? "Creating…" : "+ Create"}
                                       </button>
+                                      )}
                                     </>
                                   )}
                                   {b.type && <Badge variant="outline" className="ml-1.5 text-[10px] py-0">{b.type.replace(/_/g, " ")}</Badge>}
@@ -1825,6 +1832,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
                       UK stores ({visible.length})
                     </span>
+                    {!isClientViewer && (
                     <button
                       onClick={() => researchStoresMutation.mutate("uk")}
                       disabled={researchStoresMutation.isPending}
@@ -1833,6 +1841,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     >
                       {researchStoresMutation.isPending ? "Researching…" : "Re-scan UK"}
                     </button>
+                    )}
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-[1fr,320px] gap-3">
                     <BrandPortfolioMap stores={visible as any} height={380} />
@@ -1880,22 +1889,24 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
             {/* ── Zone 4: BGP Relationship ──────────────────── */}
             <div className="border-t border-border/40 mt-3 pt-2 order-6">
+            {!isClientViewer && (
             <div className="flex items-center gap-1.5 mb-2">
               <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
               <span className="text-xs font-semibold uppercase tracking-wider text-foreground">BGP Relationship</span>
             </div>
+            )}
             <div className="space-y-2.5">
+            {!isClientViewer && (<>
             {/* BGP coverage — who covers this brand internally, plus
                 a click-to-edit role per person so we can label
                 Charlotte = Investment lead, Harriette = Leasing. */}
-            {data.coverers && data.coverers.length > 0 && (
-              <div className="flex items-center gap-2 flex-wrap border-t pt-2">
-                <span className="text-[10px] text-muted-foreground font-medium">Coverage:</span>
-                {data.coverers.map((cov: any) => (
-                  <CovererChip key={cov.id} cov={cov} companyId={companyId} />
-                ))}
-              </div>
-            )}
+            <div className="flex items-center gap-2 flex-wrap border-t pt-2">
+              <span className="text-[10px] text-muted-foreground font-medium">Coverage:</span>
+              {(data.coverers || []).map((cov: any) => (
+                <CovererChip key={cov.id} cov={cov} companyId={companyId} />
+              ))}
+              <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />
+            </div>
 
             {/* Relationship strip — lead broker, last touchpoint, active contacts */}
             {(c.bgp_contact_crm || data.contacts.length > 0) && (() => {
@@ -1977,6 +1988,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 <InteractionsBoard scope="company" contextId={companyId} />
               </div>
             </details>
+            </>)}
 
             {/* Lease-expiry radar — tenant's upcoming lease events on our schedule */}
             {leaseEvents.length > 0 && (
@@ -2247,6 +2259,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     </Badge>
                   )}
                   {c.hunter_flag && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">Watch</Badge>}
+                  {!isClientViewer && (
                   <Link
                     href={`/hunter?companyId=${companyId}`}
                     className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
@@ -2254,7 +2267,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   >
                     Open in Hunter <ExternalLink className="w-2.5 h-2.5" />
                   </Link>
+                  )}
                 </div>
+                {!isClientViewer && (
                 <div className="flex items-center gap-1 shrink-0">
                   <Button
                     size="sm"
@@ -2290,6 +2305,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     {scrapeWebsiteMutation.isPending ? "Scraping…" : "Scrape"}
                   </Button>
                 </div>
+                )}
               </div>
               <div className="space-y-2.5">
                 {c.brand_analysis ? (
@@ -2373,12 +2389,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             <div>
               <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
                 <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Signals ({data.signals.length})</span>
+                {!isClientViewer && (
                 <button
                   onClick={() => setAddSignalOpen(v => !v)}
                   className="text-[10px] text-primary hover:underline flex items-center gap-0.5"
                 >
                   <Plus className="w-2.5 h-2.5" /> Log intel
                 </button>
+                )}
               </div>
               {addSignalOpen && (
                 <div className="mb-2 p-2 rounded-md border border-dashed border-border bg-muted/30 space-y-1.5">
@@ -2467,6 +2485,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                           )}
                           {s.signal_date && <span className="text-[10px] text-muted-foreground">{new Date(s.signal_date).toLocaleDateString("en-GB")}</span>}
                         </div>
+                        {!isClientViewer && (
                         <button
                           onClick={() => deleteSignalMutation.mutate(s.id)}
                           className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0 mt-0.5"
@@ -2474,6 +2493,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                         >
                           <X className="w-3 h-3" />
                         </button>
+                        )}
                       </div>
                     );
                   })}
@@ -2494,9 +2514,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               <div>
                 <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
                   <span className="flex items-center gap-1"><Handshake className="w-3 h-3" /> Represented by</span>
+                  {!isClientViewer && (
                   <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px]" onClick={() => { setAddRep("agent"); setRepForm({ ...EMPTY_REP_FORM, agent_type: "tenant_rep" }); }} data-testid="button-add-agent">
                     <Plus className="w-3 h-3 mr-0.5" /> Add agent
                   </Button>
+                  )}
                 </div>
                 <div className="space-y-1">
                   {data.representedBy.map((r: any) => (
@@ -2505,6 +2527,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                       <Link href={`/companies/${r.agent_company_id}`} className="text-primary hover:underline font-medium">{r.agent_name}</Link>
                       {r.region && <span className="text-muted-foreground">({r.region.replace(/_/g, " ")})</span>}
                       {r.contact_name && <span className="text-muted-foreground">· {r.contact_name}</span>}
+                      {!isClientViewer && (
                       <button
                         type="button"
                         onClick={() => { if (confirm(`End representation by ${r.agent_name}?`)) endRepMutation.mutate(r.id); }}
@@ -2513,6 +2536,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                       >
                         <X className="w-3 h-3" />
                       </button>
+                      )}
                     </div>
                   ))}
                   {data.representedBy.length === 0 && <div className="text-xs text-muted-foreground italic">No agents currently retained.</div>}
@@ -2525,9 +2549,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               <div>
                 <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
                   <span className="flex items-center gap-1"><Users className="w-3 h-3" /> Currently representing ({data.representing.length})</span>
+                  {!isClientViewer && (
                   <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px]" onClick={() => { setAddRep("brand"); setRepForm({ ...EMPTY_REP_FORM, agent_type: c.agent_type || "tenant_rep" }); }} data-testid="button-add-brand">
                     <Plus className="w-3 h-3 mr-0.5" /> Add brand
                   </Button>
+                  )}
                 </div>
                 <div className="flex flex-wrap gap-1">
                   {data.representing.slice(0, 12).map((r: any) => (
@@ -2538,6 +2564,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                           {r.region && <span className="ml-1 text-muted-foreground">· {r.region.replace(/_/g, " ")}</span>}
                         </Badge>
                       </Link>
+                      {!isClientViewer && (
                       <button
                         type="button"
                         onClick={() => { if (confirm(`End representation of ${r.brand_name}?`)) endRepMutation.mutate(r.id); }}
@@ -2546,6 +2573,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                       >
                         <X className="w-3 h-3" />
                       </button>
+                      )}
                     </span>
                   ))}
                   {data.representing.length === 0 && <span className="text-xs text-muted-foreground italic">No brands currently represented.</span>}
@@ -2774,16 +2802,19 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
 
   // Auto-trigger research the first time we land on a brand that has no
   // competitor set yet — saves the user a click and means the panel is
-  // populated by the time they scroll to it.
+  // populated by the time they scroll to it. Client viewers can't fire
+  // research POSTs (403 server-side), so don't auto-fire for them.
+  const { data: cpViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const cpIsClient = !cpViewer || cpViewer.role === "Client" || !!cpViewer.companyScopeId;
   const autoTriggered = useRef(false);
   useEffect(() => {
-    if (autoTriggered.current) return;
+    if (autoTriggered.current || cpIsClient) return;
     if (competitors.length > 0 || generatedAt) return;
     if (research.isPending) return;
     autoTriggered.current = true;
     research.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId, competitors.length, generatedAt]);
+  }, [companyId, competitors.length, generatedAt, cpViewer]);
 
   // Lookup by name: returns the CRM row (with id + domain) if we already
   // track this competitor, else undefined. Used to wire the "View in CRM"
@@ -2813,6 +2844,7 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
         {generatedAt && (
           <span className="text-[10px] ml-1">· {new Date(generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
         )}
+        {!cpIsClient && (
         <button
           onClick={() => research.mutate()}
           disabled={research.isPending}
@@ -2820,9 +2852,10 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
         >
           {research.isPending ? "Researching…" : competitors.length > 0 ? "Refresh" : "Research"}
         </button>
+        )}
       </div>
       {competitors.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground italic">No AI competitors yet — click Research.</p>
+        <p className="text-[11px] text-muted-foreground italic">{cpIsClient ? "No competitor set yet." : "No AI competitors yet — click Research."}</p>
       ) : (
         <div>
           {/* Button row — bigger, colour-coded by segment */}
@@ -2954,7 +2987,7 @@ function AskChatBGPInline({ brandName }: { brandName: string }) {
         credentials: "include",
         signal: controller.signal,
       });
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok || !res.body) throw new Error("Couldn't get an answer — try again.");
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";
@@ -3080,6 +3113,8 @@ function MenuIntelCard({
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { data: miViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const miIsClient = !miViewer || miViewer.role === "Client" || !!miViewer.companyScopeId;
 
   const isFood = ((): boolean => {
     const blob = `${companyType || ""} ${industry || ""}`.toLowerCase();
@@ -3116,6 +3151,7 @@ function MenuIntelCard({
             </span>
           )}
         </CardTitle>
+        {!miIsClient && (
         <button
           onClick={() => refresh.mutate()}
           disabled={refresh.isPending}
@@ -3124,6 +3160,7 @@ function MenuIntelCard({
         >
           {refresh.isPending ? "Fetching…" : items.length > 0 ? "Refresh" : "Fetch"}
         </button>
+        )}
       </CardHeader>
       <CardContent className="p-3 pt-0">
         {items.length === 0 ? (
@@ -3223,6 +3260,8 @@ function CreateCompetitorInCrmButton({ name, onCreated }: { name: string; onCrea
 function RocketReachIntelCard({ companyId, companyName }: { companyId: string; companyName: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { data: rrViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const rrIsClient = !rrViewer || rrViewer.role === "Client" || !!rrViewer.companyScopeId;
   const { data, isLoading } = useQuery<{ configured: boolean; payload: any | null; fetched_at: string | null }>({
     queryKey: ["/api/brand", companyId, "rocketreach-company"],
     queryFn: async () => {
@@ -3268,6 +3307,7 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
         {data?.fetched_at && (
           <span className="text-[10px] text-muted-foreground ml-1">· {new Date(data.fetched_at).toLocaleDateString("en-GB")}</span>
         )}
+        {!rrIsClient && (
         <button
           onClick={() => refresh.mutate()}
           disabled={refresh.isPending || !configured}
@@ -3275,6 +3315,7 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
         >
           {refresh.isPending ? "Fetching…" : p ? "Refresh" : "Fetch"}
         </button>
+        )}
       </div>
 
       {!configured || !p ? null : (
@@ -3606,6 +3647,8 @@ function KeyContactRow({ contact, companyId }: { contact: any; companyId: string
 function PendingSendersList({ data, companyId }: { data: BrandProfile; companyId: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { data: psViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const psIsClient = !psViewer || psViewer.role === "Client" || !!psViewer.companyScopeId;
   const suggestions = data.pendingContactSuggestions || [];
   const promote = useMutation({
     mutationFn: async (email: string) => {
@@ -3630,6 +3673,7 @@ function PendingSendersList({ data, companyId }: { data: BrandProfile; companyId
             <Mail className="w-2.5 h-2.5 text-muted-foreground shrink-0" />
             <span className="truncate flex-1 font-mono text-[10px]">{s.email}</span>
             <span className="text-[9px] text-muted-foreground shrink-0">{s.touches}{s.last_touch ? ` · ${formatRelativeShort(s.last_touch)}` : ""}</span>
+            {!psIsClient && (
             <button
               onClick={() => promote.mutate(s.email)}
               disabled={promote.isPending}
@@ -3638,6 +3682,7 @@ function PendingSendersList({ data, companyId }: { data: BrandProfile; companyId
             >
               <Plus className="w-2.5 h-2.5 inline" /> Add
             </button>
+            )}
           </div>
         ))}
       </div>
@@ -3649,9 +3694,61 @@ function PendingSendersList({ data, companyId }: { data: BrandProfile; companyId
 // crm_company_bgp_roles via POST /api/brand/:id/bgp-role. Empty role
 // clears the row. Same inline-edit pattern as KeyContactRow so the
 // behaviour is consistent.
+// Add/remove people on the BGP team (coverage) — the only edit point for
+// bgpContactUserIds now the sidebar relationship card is gone. CovererChip
+// alongside handles the per-person role label.
+function BgpTeamMenu({ companyId, coverers }: { companyId: string; coverers: Array<{ id: string; name: string }> }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data: allUsers } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ["/api/users"],
+    staleTime: 5 * 60_000,
+  });
+  const currentIds = (coverers || []).map(u => u.id);
+  const save = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await apiRequest("PUT", `/api/crm/companies/${companyId}`, {
+        bgpContactUserIds: ids.length > 0 ? ids : null,
+        bgpContactCrm: null,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
+    },
+    onError: (e: any) => toast({ title: "Couldn't save BGP team", description: e?.message, variant: "destructive" }),
+  });
+  const toggle = (id: string) => {
+    const next = currentIds.includes(id) ? currentIds.filter(v => v !== id) : [...currentIds, id];
+    save.mutate(next);
+  };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className="text-[10px] text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-0.5" data-testid={`bgp-team-edit-${companyId}`}>
+          <Plus className="w-3 h-3" />
+          {currentIds.length > 0 ? "Edit team" : "Set BGP team"}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-56 max-h-64 overflow-y-auto">
+        {(allUsers || []).slice().sort((a, b) => a.name.localeCompare(b.name)).map(u => (
+          <DropdownMenuItem key={u.id} onSelect={e => { e.preventDefault(); toggle(u.id); }}>
+            <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${currentIds.includes(u.id) ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
+              {currentIds.includes(u.id) && <Check className="h-2 w-2 text-primary-foreground" />}
+            </div>
+            {u.name}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role: string | null }; companyId: string }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { data: ccViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const ccIsClient = !ccViewer || ccViewer.role === "Client" || !!ccViewer.companyScopeId;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(cov.role || "");
 
@@ -3687,6 +3784,8 @@ function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role
           placeholder="role…"
           className="text-[10px] w-24 border-0 bg-transparent focus:outline-none focus:bg-white dark:focus:bg-purple-900/50 rounded px-1"
         />
+      ) : ccIsClient ? (
+        cov.role ? <span className="text-[10px] text-purple-600">{cov.role}</span> : null
       ) : (
         <button
           onClick={() => setEditing(true)}
@@ -3716,6 +3815,8 @@ function formatRelativeShort(iso: string): string {
 function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId: string; topContacts: any[] }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { data: kcViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const kcIsClient = !kcViewer || kcViewer.role === "Client" || !!kcViewer.companyScopeId;
   const [showAll, setShowAll] = useState(false);
 
   // Property-relevant roles only by default. Most of what RocketReach imports
@@ -3758,6 +3859,7 @@ function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId
           <Users className="w-3.5 h-3.5" /> Key contacts
           <Badge variant="outline" className="text-[10px]">{visible.length}{!showAll && allContacts.length > propertyContacts.length ? ` / ${allContacts.length}` : ""}</Badge>
         </CardTitle>
+        {!kcIsClient && (
         <button
           onClick={() => refresh.mutate()}
           disabled={refresh.isPending}
@@ -3766,6 +3868,7 @@ function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId
         >
           {refresh.isPending ? "Searching…" : "Refresh"}
         </button>
+        )}
       </CardHeader>
       <CardContent className="p-3 pt-0">
         {visible.length === 0 ? (
@@ -3821,6 +3924,8 @@ export function BrandComplianceCard({
 }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { data: bcViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const bcIsClient = !bcViewer || bcViewer.role === "Client" || !!bcViewer.companyScopeId;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(company.uk_entity_name || "");
 
@@ -3929,6 +4034,7 @@ export function BrandComplianceCard({
               >
                 <Pencil className="w-3 h-3" />
               </button>
+              {!bcIsClient && (
               <button
                 onClick={() => rescrape.mutate()}
                 disabled={rescrape.isPending}
@@ -3937,6 +4043,7 @@ export function BrandComplianceCard({
               >
                 {rescrape.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "↻"}
               </button>
+              )}
             </div>
           ) : (
             <div className="space-y-1.5">
@@ -4027,7 +4134,7 @@ export function BrandComplianceCard({
                         <ExternalLink className="w-2.5 h-2.5" /> PDF
                       </a>
                     )}
-                    {company.companies_house_number && (
+                    {company.companies_house_number && !bcIsClient && (
                       <button
                         onClick={() => fetchAccounts.mutate()}
                         disabled={fetchAccounts.isPending}
@@ -4073,6 +4180,7 @@ export function BrandComplianceCard({
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
             <ShieldCheck className="w-3.5 h-3.5" /> Compliance &amp; KYC
           </CardTitle>
+          {!bcIsClient && (
           <Link
             href={`/kyc-clouseau?company=${companyId}`}
             className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
@@ -4080,6 +4188,7 @@ export function BrandComplianceCard({
           >
             KYC Hub <ChevronRight className="w-2.5 h-2.5" />
           </Link>
+          )}
         </div>
       </CardHeader>
       <CardContent className="p-3 pt-0">{inner}</CardContent>
@@ -4103,7 +4212,32 @@ function LandlordSidebarBlock({
   sharepointFolderUrl: string | null | undefined;
 }) {
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [clientFoldersBusy, setClientFoldersBusy] = useState(false);
+  const { toast: sbToast } = useToast();
+  const { data: sbUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  // SharePoint folder creation is a BGP-staff action (M365 is sealed for
+  // clients), so only staff see the "{Client} property tree" button.
+  const sbIsStaff = !!sbUser && sbUser.role !== "Client" && !sbUser.companyScopeId;
   const [, navigate] = useLocation();
+  // Create a top-level "{Client}" folder in the BGP share drive with a
+  // per-property subfolder tree for every property this client owns. Runs
+  // against live SharePoint, so it needs an M365-connected session.
+  const setUpClientFolders = async () => {
+    if (!window.confirm(`Create a "${companyName}" folder in the BGP share drive with a folder tree for each of their properties?`)) return;
+    setClientFoldersBusy(true);
+    try {
+      const res = await apiRequest("POST", "/api/microsoft/client-folders", { companyId });
+      const data = await res.json();
+      sbToast({
+        title: "Folders created",
+        description: `${companyName}: ${data.properties} propert${data.properties === 1 ? "y" : "ies"}, ${data.created} folders created${data.errors ? `, ${data.errors} errors` : ""}.`,
+      });
+    } catch (e: any) {
+      sbToast({ title: "Folder setup failed", description: e?.message || "Not connected to Microsoft 365?", variant: "destructive" });
+    } finally {
+      setClientFoldersBusy(false);
+    }
+  };
   // Open (or reuse — the backend dedupes one AI thread per entity) a chat
   // scoped to this landlord, so ChatBGP actually knows who we're talking
   // about instead of landing on an empty generic chat.
@@ -4142,14 +4276,29 @@ function LandlordSidebarBlock({
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
             <FileText className="w-3.5 h-3.5" /> Files
           </CardTitle>
-          <button
-            type="button"
-            onClick={() => setFolderDialogOpen(true)}
-            className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
-            data-testid="button-setup-landlord-folders"
-          >
-            <FolderTree className="w-3 h-3" /> Set Up Folders
-          </button>
+          <div className="flex items-center gap-1.5">
+            {sbIsStaff && (
+            <button
+              type="button"
+              onClick={setUpClientFolders}
+              disabled={clientFoldersBusy}
+              className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1 disabled:opacity-60"
+              title={`Create a ${companyName} folder tree for every property`}
+              data-testid="button-setup-client-property-folders"
+            >
+              {clientFoldersBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <FolderTree className="w-3 h-3" />}
+              {companyName} property tree
+            </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setFolderDialogOpen(true)}
+              className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+              data-testid="button-setup-landlord-folders"
+            >
+              <FolderTree className="w-3 h-3" /> Set Up Folders
+            </button>
+          </div>
         </CardHeader>
         <CardContent className="p-3 pt-0">
           <PropertyFoldersPanel
@@ -4188,9 +4337,11 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   // target, a refresh fires in the background and the gallery updates
   // when it finishes.
   const [lightboxImg, setLightboxImg] = useState<any | null>(null);
+  const { data: sbViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const sbIsClient = !sbViewer || sbViewer.role === "Client" || !!sbViewer.companyScopeId;
   const autoImageRefreshRan = useRef(false);
   useEffect(() => {
-    if (autoImageRefreshRan.current) return;
+    if (autoImageRefreshRan.current || sbIsClient) return;
     // Heuristic for "needs refresh": 0-4 images for a landlord row, 0
     // images for any other row. Avoids the 5-min round-trip cost when
     // we already have a decent gallery.
@@ -4221,7 +4372,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         setTimeout(poll, 5000);
       } catch { /* silent — the buttons are gone, but the user can still hit Image Studio */ }
     })();
-  }, [companyId, isLandlord, data.images?.length]);
+  }, [companyId, isLandlord, data.images?.length, sbViewer]);
 
   const deleteImageMutation = useMutation({
     mutationFn: async (imageId: string) => {
@@ -4264,30 +4415,6 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
     onError: (e: any) => toast({ title: "Couldn't update", description: e?.message, variant: "destructive" }),
   });
 
-  const { data: allUsers } = useQuery<{ id: string; name: string }[]>({
-    queryKey: ["/api/users"],
-    staleTime: 5 * 60_000,
-  });
-  const userColorMap = useMemo(() => buildUserColorMap(allUsers || []), [allUsers]);
-  const userOptions = useMemo(
-    () => (allUsers || []).map(u => ({ label: u.name, value: u.name })).sort((a, b) => a.label.localeCompare(b.label)),
-    [allUsers]
-  );
-  const currentBgpContacts = (data.coverers || []).map((u: any) => u.name).filter(Boolean);
-  const saveBgpContacts = async (names: string[]) => {
-    const nameToId = new Map((allUsers || []).map(u => [u.name, u.id]));
-    const ids = names.map(n => nameToId.get(n)).filter(Boolean) as string[];
-    try {
-      await apiRequest("PUT", `/api/crm/companies/${companyId}`, {
-        bgpContactUserIds: ids.length > 0 ? ids : null,
-        bgpContactCrm: null,
-      });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
-    } catch (e: any) {
-      toast({ title: "Couldn't save BGP contacts", description: e?.message, variant: "destructive" });
-    }
-  };
   const runCreditCheck = async () => {
     try {
       const r = await fetch(`/api/brand/${companyId}/credit-check`, { method: "POST", credentials: "include" });
@@ -4309,10 +4436,6 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       : cov?.trafficLight === "red"
         ? "bg-rose-500"
         : "bg-zinc-300";
-  const activeDeals = data.activeDeals?.length || 0;
-  const completedDeals = data.completedDeals?.length || 0;
-  const totalFee = [...(data.activeDeals || []), ...(data.completedDeals || [])]
-    .reduce((s: number, d: any) => s + (Number(d.fee) || 0), 0);
   const topContacts = (data.contacts || []).slice(0, 5);
 
   return (
@@ -4353,54 +4476,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       {/* Key contacts */}
       <SidebarKeyContacts data={data} companyId={companyId} topContacts={topContacts} />
 
-      {/* BGP relationship */}
-      <Card>
-        <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-            <Briefcase className="w-3.5 h-3.5" /> BGP relationship
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-3 pt-0 text-sm space-y-1.5">
-          {/* Key contacts at the brand — clickable through to each CRM record,
-              so the relationship card connects to "who" we actually deal with. */}
-          {topContacts.length > 0 && (
-            <div>
-              <div className="text-[10px] text-muted-foreground mb-1">Key contacts ({topContacts.length})</div>
-              <div className="flex flex-wrap gap-1">
-                {topContacts.map((ct: any) => (
-                  <Link
-                    key={ct.id}
-                    href={`/contacts/${ct.id}`}
-                    className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full border bg-card hover:bg-muted transition-colors"
-                    title={ct.role || ct.email || ct.name}
-                  >
-                    <span className="font-medium truncate max-w-[120px]">{ct.name}</span>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
-          <div>
-            <div className="text-[10px] text-muted-foreground mb-1">BGP team</div>
-            <InlineMultiSelect
-              value={currentBgpContacts}
-              options={userOptions}
-              colorMap={userColorMap}
-              placeholder="Set BGP team"
-              onSave={saveBgpContacts}
-              testId={`sidebar-bgp-contacts-${companyId}`}
-            />
-          </div>
-          <div className="flex justify-between pt-1 border-t"><span className="text-muted-foreground">Active deals</span><span className="font-medium tabular-nums">{activeDeals}</span></div>
-          <div className="flex justify-between"><span className="text-muted-foreground">Completed deals</span><span className="font-medium tabular-nums">{completedDeals}</span></div>
-          {totalFee > 0 && (
-            <div className="flex justify-between"><span className="text-muted-foreground">Total fees</span><span className="font-medium tabular-nums">£{Math.round(totalFee).toLocaleString()}</span></div>
-          )}
-          {!!c.is_tracked_brand && (
-            <div className="flex justify-between pt-1 border-t"><span className="text-muted-foreground">Tracked brand</span><span className="text-emerald-600 text-xs">✓</span></div>
-          )}
-        </CardContent>
-      </Card>
+      {/* BGP relationship card removed — it duplicated the Key contacts card
+          above, the Deal ledger zone and the header's Tracked-brand badge.
+          Team membership is now edited in Zone 4's Coverage row (BgpTeamMenu). */}
 
       {/* News & Media */}
       {data.news && data.news.length > 0 && (() => {
@@ -4683,6 +4761,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               {/* Image Studio is the full library + enhance / retag /
                   upload UI — deep-link with the brand name so it lands
                   pre-filtered. */}
+              {!sbIsClient && (
               <Link
                 href={`/image-studio?brand=${encodeURIComponent(c.name)}`}
                 className="text-[10px] text-muted-foreground hover:text-foreground underline flex items-center gap-0.5"
@@ -4690,6 +4769,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               >
                 Open in Image Studio <ExternalLinkIcon className="w-2.5 h-2.5" />
               </Link>
+              )}
             </div>
             {data.images.length > 0 && (
               // Scrollable grid — show every image, capped at a sensible
@@ -4793,6 +4873,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                           {isHero ? "Unpin from banner" : (heroCount >= 2 ? "Banner full (2 of 2)" : "Pin to banner")}
                         </Button>
                         <div className="flex items-center gap-2">
+                          {!sbIsClient && (
                           <Link
                             href={`/image-studio?brand=${encodeURIComponent(c.name)}&imageId=${lightboxImg.id}`}
                             className="text-xs text-muted-foreground hover:text-foreground underline flex items-center gap-1"
@@ -4800,6 +4881,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
                           >
                             Open in Image Studio <ExternalLinkIcon className="w-3 h-3" />
                           </Link>
+                          )}
                           <Button
                             variant="destructive"
                             size="sm"

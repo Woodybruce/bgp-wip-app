@@ -1828,6 +1828,8 @@ export const unitViewings = pgTable("unit_viewings", {
   attendees: text("attendees"),
   notes: text("notes"),
   outcome: text("outcome"),
+  source: text("source"), // 'diary' when auto-synced from an Outlook calendar event; null = manual
+  calendarEventId: text("calendar_event_id"), // Graph iCalUId — idempotent upsert key for synced viewings
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1852,6 +1854,8 @@ export const unitOffers = pgTable("unit_offers", {
   fittingOutContribution: real("fitting_out_contribution"),
   status: text("status").default("Pending"),
   comments: text("comments"),
+  source: text("source"), // 'email' when auto-detected from a synced inbox; null = manual
+  emailConversationId: text("email_conversation_id"), // Graph conversationId — dedupe key so one offer thread = one row
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1873,6 +1877,61 @@ export const unitMarketingFiles = pgTable("unit_marketing_files", {
 export const insertUnitMarketingFileSchema = createInsertSchema(unitMarketingFiles).omit({ id: true, createdAt: true });
 export type InsertUnitMarketingFile = z.infer<typeof insertUnitMarketingFileSchema>;
 export type UnitMarketingFile = typeof unitMarketingFiles.$inferSelect;
+
+export const unitBriefs = pgTable("unit_briefs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  unitId: varchar("unit_id").notNull(), // → available_units.id
+  propertyId: varchar("property_id").notNull(),
+  clientCompany: text("client_company"), // e.g. "Landsec"
+  clientCompanyId: varchar("client_company_id"),
+  title: text("title"),
+  objective: text("objective"),
+  locationContext: text("location_context"),
+  targetCriteria: text("target_criteria"),
+  priorityCategories: text("priority_categories"),
+  agentInstruction: text("agent_instruction"),
+  successMeasures: text("success_measures"),
+  instructedDate: text("instructed_date"),
+  deadline1Date: text("deadline1_date"),
+  deadline1Deliverables: text("deadline1_deliverables"),
+  deadline2Date: text("deadline2_date"),
+  deadline2Deliverables: text("deadline2_deliverables"),
+  minTargets: integer("min_targets").default(5),
+  priorityTargets: integer("priority_targets").default(2),
+  status: text("status").default("Active"), // Active | Complete | Withdrawn
+  sourceFileId: varchar("source_file_id"), // → unit_marketing_files.id (uploaded brief PDF)
+  documentFileId: varchar("document_file_id"), // → unit_marketing_files.id (generated brief doc)
+  createdByUserId: varchar("created_by_user_id"),
+  createdByName: text("created_by_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertUnitBriefSchema = createInsertSchema(unitBriefs).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertUnitBrief = z.infer<typeof insertUnitBriefSchema>;
+export type UnitBrief = typeof unitBriefs.$inferSelect;
+
+export const BRIEF_TARGET_STATUSES = ["Identified", "Approached", "Meeting Held", "Inspection Done", "Offer", "Let", "Passed"] as const;
+
+export const unitTargetOperators = pgTable("unit_target_operators", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  briefId: varchar("brief_id").notNull(), // → unit_briefs.id
+  operatorName: text("operator_name").notNull(),
+  companyId: varchar("company_id"), // → crm_companies.id when matched
+  category: text("category"),
+  priority: text("priority"), // A | B
+  rationale: text("rationale"),
+  existingRelationship: text("existing_relationship"),
+  feedback: text("feedback"),
+  status: text("status").default("Identified"),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertUnitTargetOperatorSchema = createInsertSchema(unitTargetOperators).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertUnitTargetOperator = z.infer<typeof insertUnitTargetOperatorSchema>;
+export type UnitTargetOperator = typeof unitTargetOperators.$inferSelect;
 
 export const investmentTracker = pgTable("investment_tracker", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

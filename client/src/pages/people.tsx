@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useTeam } from "@/lib/team-context";
@@ -14,7 +16,7 @@ import type { User } from "@shared/schema";
 import {
   Building2, Users, Crown, Search, Globe, MapPin,
   ChevronRight, ChevronDown, Building, Briefcase,
-  Phone, Mail, X, TrendingUp, Trash2,
+  Phone, Mail, X, TrendingUp, Trash2, Pencil, Plus, Target,
   Handshake, ClipboardList, Landmark,
 } from "lucide-react";
 import { ViewToggle } from "@/components/mobile-card-view";
@@ -1024,7 +1026,7 @@ export default function PeoplePage() {
   // food / café / fitness slice. The staff hub (landlords, agents,
   // lenders) is BGP-internal.
   if (userLoading) return <PageLoader />;
-  if (user?.role === "Client") return <ClientCrmHub />;
+  if (user?.role === "Client" || !!(user as any)?.companyScopeId) return <ClientCrmHub />;
 
   return <PeopleHub />;
 }
@@ -1045,28 +1047,63 @@ interface DirectoryBrand {
   companyType: string | null;
   domain: string | null;
   contacts: { id: string; name: string; role: string | null; email: string | null; phone: string | null }[];
+  isExistingTenant?: boolean;
+  targetedAt?: { propertyId: string; propertyName: string; unitName: string | null }[];
+}
+
+const CLIENT_REL_FILTERS = [
+  { key: "all", label: "All" },
+  { key: "tenant", label: "Existing tenants" },
+  { key: "targeted", label: "Being targeted" },
+  { key: "contact", label: "With contacts" },
+] as const;
+
+interface DirectoryAgent {
+  id: string;
+  name: string;
+  domain: string | null;
+  companyType: string | null;
+  contacts: { id: string; name: string; role: string | null; email: string | null; phone: string | null; specialty: string | null }[];
+  represents: { brandId: string; brandName: string; region: string | null }[];
 }
 
 function ClientCrmHub() {
-  const [tab, setTab] = useState<"brands" | "contacts">("brands");
+  const [tab, setTab] = useState<"brands" | "agents" | "contacts">("brands");
   const [search, setSearch] = useState("");
   const [cat, setCat] = useState("all");
+  const [rel, setRel] = useState<string>("all");
+  const [propFilter, setPropFilter] = useState<string>("all");
+  const [contactDialog, setContactDialog] = useState<{ companyId: string; companyName: string; contact?: any } | null>(null);
 
+  const { data: hubUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const { data: brands = [], isLoading: brandsLoading } = useQuery<DirectoryBrand[]>({
     queryKey: ["/api/client/brand-directory"],
   });
   const { data: myContacts = [] } = useQuery<CrmContact[]>({ queryKey: ["/api/crm/contacts"] });
+  const { data: agents = [] } = useQuery<DirectoryAgent[]>({ queryKey: ["/api/client/agent-directory"] });
+
+  // Properties this client is actively targeting brands at — drives the
+  // "targeting at" dropdown without another fetch.
+  const targetProperties = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const b of brands) for (const t of b.targetedAt || []) m.set(t.propertyId, t.propertyName);
+    return [...m.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [brands]);
 
   const filteredBrands = useMemo(() => {
     const catRe = CLIENT_BRAND_CATS.find(c => c.key === cat)?.re || null;
     const q = search.trim().toLowerCase();
     return brands.filter(b => {
       if (catRe && !catRe.test(b.companyType || "")) return false;
+      if (rel === "tenant" && !b.isExistingTenant) return false;
+      if (rel === "targeted" && !(b.targetedAt || []).length) return false;
+      if (rel === "contact" && b.contacts.length === 0) return false;
+      if (propFilter !== "all" && !(b.targetedAt || []).some(t => t.propertyId === propFilter)) return false;
       if (!q) return true;
       if (b.name.toLowerCase().includes(q)) return true;
       return b.contacts.some(c => c.name?.toLowerCase().includes(q));
     });
-  }, [brands, cat, search]);
+  }, [brands, cat, rel, propFilter, search]);
 
   const typeLabel = (t: string | null) => (t || "").replace(/^Tenant - /, "");
 
@@ -1075,12 +1112,12 @@ function ClientCrmHub() {
       <div>
         <h1 className="text-2xl font-bold">CRM</h1>
         <p className="text-sm text-muted-foreground">
-          {brands.length.toLocaleString()} brands · {myContacts.length.toLocaleString()} of your contacts
+          {brands.length.toLocaleString()} brands · {agents.length.toLocaleString()} tenant rep agents · {myContacts.length.toLocaleString()} of your contacts
         </p>
       </div>
 
       <div className="flex gap-1 border-b">
-        {([["brands", "Brand Directory"], ["contacts", "My Contacts"]] as const).map(([key, label]) => (
+        {([["brands", "Brand Directory"], ["agents", "Agents"], ["contacts", `${hubUser?.team || "Your"} Contacts`]] as const).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -1120,6 +1157,36 @@ function ClientCrmHub() {
             <span className="text-xs text-muted-foreground ml-auto">{filteredBrands.length} brands</span>
           </div>
 
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex gap-1.5 flex-wrap">
+              {CLIENT_REL_FILTERS.map(f => (
+                <button
+                  key={f.key}
+                  onClick={() => setRel(f.key)}
+                  className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                    rel === f.key ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"
+                  }`}
+                  data-testid={`client-rel-${f.key}`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+            {targetProperties.length > 0 && (
+              <select
+                value={propFilter}
+                onChange={e => setPropFilter(e.target.value)}
+                className="h-7 rounded-full border bg-background px-2.5 text-xs text-muted-foreground"
+                data-testid="client-prop-filter"
+              >
+                <option value="all">Targeted at: any property</option>
+                {targetProperties.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+
           {brandsLoading ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {[1, 2, 3, 4, 5, 6].map(i => <Skeleton key={i} className="h-28" />)}
@@ -1138,25 +1205,71 @@ function ClientCrmHub() {
                         {b.companyType && <Badge variant="secondary" className="text-[9px]">{typeLabel(b.companyType)}</Badge>}
                       </div>
                     </div>
+                    {(b.isExistingTenant || (b.targetedAt || []).length > 0) && (
+                      <div className="flex gap-1 flex-wrap">
+                        {b.isExistingTenant && (
+                          <Badge className="text-[9px] bg-emerald-100 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                            Existing tenant
+                          </Badge>
+                        )}
+                        {(b.targetedAt || []).map((t, i) => (
+                          <Badge
+                            key={`${t.propertyId}-${t.unitName || i}`}
+                            variant="outline"
+                            className="text-[9px] gap-1 max-w-full border-amber-400 text-amber-700 dark:text-amber-400"
+                            title={`${t.unitName ? `${t.unitName} · ` : ""}${t.propertyName}`}
+                          >
+                            <Target className="w-2.5 h-2.5 shrink-0" />
+                            <span className="truncate">{t.unitName ? `${t.unitName} · ` : ""}{t.propertyName}</span>
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
                     {b.contacts.length > 0 ? (
                       <div className="space-y-1 pt-1 border-t">
                         {b.contacts.slice(0, 3).map(c => (
-                          <div key={c.id} className="text-xs flex items-baseline gap-2 min-w-0">
+                          <div key={c.id} className="text-xs flex items-baseline gap-2 min-w-0 group">
                             <Link href={`/contacts/${c.id}`}>
                               <span className="font-medium hover:underline cursor-pointer whitespace-nowrap">{c.name}</span>
                             </Link>
                             {c.role && <span className="text-muted-foreground truncate">{c.role}</span>}
-                            {c.email && (
-                              <a href={`mailto:${c.email}`} className="text-blue-600 dark:text-blue-400 hover:underline ml-auto shrink-0">email</a>
-                            )}
+                            <span className="ml-auto shrink-0 flex items-center gap-2">
+                              {c.email && (
+                                <a href={`mailto:${c.email}`} className="text-blue-600 dark:text-blue-400 hover:underline">email</a>
+                              )}
+                              <button
+                                onClick={() => setContactDialog({ companyId: b.id, companyName: b.name, contact: c })}
+                                className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+                                title="Edit contact"
+                                data-testid={`client-edit-contact-${c.id}`}
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                            </span>
                           </div>
                         ))}
                         {b.contacts.length > 3 && (
                           <p className="text-[10px] text-muted-foreground">+{b.contacts.length - 3} more</p>
                         )}
+                        <button
+                          onClick={() => setContactDialog({ companyId: b.id, companyName: b.name })}
+                          className="text-[11px] text-primary hover:underline flex items-center gap-0.5"
+                          data-testid={`client-add-contact-${b.id}`}
+                        >
+                          <Plus className="w-3 h-3" /> Add contact
+                        </button>
                       </div>
                     ) : (
-                      <p className="text-[11px] text-muted-foreground pt-1 border-t">No contacts on file — ask your BGP team.</p>
+                      <div className="pt-1 border-t flex items-center justify-between gap-2">
+                        <p className="text-[11px] text-muted-foreground">No contacts on file.</p>
+                        <button
+                          onClick={() => setContactDialog({ companyId: b.id, companyName: b.name })}
+                          className="text-[11px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
+                          data-testid={`client-add-contact-${b.id}`}
+                        >
+                          <Plus className="w-3 h-3" /> Add contact
+                        </button>
+                      </div>
                     )}
                   </CardContent>
                 </Card>
@@ -1167,28 +1280,208 @@ function ClientCrmHub() {
             </div>
           )}
         </>
+      ) : tab === "agents" ? (
+        <>
+          <div className="flex items-center gap-3 flex-wrap">
+            <Input
+              placeholder="Search agents, people or brands…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="max-w-xs"
+              data-testid="client-agent-search"
+            />
+            <span className="text-xs text-muted-foreground ml-auto">{agents.length} tenant rep agents</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {agents
+              .filter(a => {
+                const q = search.trim().toLowerCase();
+                if (!q) return true;
+                if (a.name.toLowerCase().includes(q)) return true;
+                if (a.contacts.some(c => c.name?.toLowerCase().includes(q))) return true;
+                return a.represents.some(r => r.brandName?.toLowerCase().includes(q));
+              })
+              .map(a => (
+                <Card key={a.id} className="overflow-hidden" data-testid={`client-agent-${a.id}`}>
+                  <CardContent className="p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <CompanyLogo company={{ id: a.id, name: a.name, domain: a.domain } as CrmCompany} size="sm" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold truncate">{a.name}</p>
+                        <Badge variant="secondary" className="text-[9px]">Tenant Rep</Badge>
+                      </div>
+                    </div>
+                    {a.represents.length > 0 && (
+                      <div className="flex gap-1 flex-wrap">
+                        {a.represents.slice(0, 6).map(r => (
+                          <Link key={r.brandId} href={`/companies/${r.brandId}`}>
+                            <Badge variant="outline" className="text-[9px] max-w-full cursor-pointer hover:bg-muted" title={`${r.brandName}${r.region ? ` · ${r.region}` : ""}`}>
+                              <span className="truncate">{r.brandName}{r.region ? ` · ${r.region}` : ""}</span>
+                            </Badge>
+                          </Link>
+                        ))}
+                        {a.represents.length > 6 && (
+                          <span className="text-[10px] text-muted-foreground">+{a.represents.length - 6} more</span>
+                        )}
+                      </div>
+                    )}
+                    {a.contacts.length > 0 ? (
+                      <div className="space-y-1 pt-1 border-t">
+                        {a.contacts.slice(0, 3).map(c => (
+                          <div key={c.id} className="text-xs flex items-baseline gap-2 min-w-0">
+                            <span className="font-medium whitespace-nowrap">{c.name}</span>
+                            {c.role && <span className="text-muted-foreground truncate">{c.role}</span>}
+                            {c.email && (
+                              <a href={`mailto:${c.email}`} className="text-blue-600 dark:text-blue-400 hover:underline ml-auto shrink-0">email</a>
+                            )}
+                          </div>
+                        ))}
+                        {a.contacts.length > 3 && (
+                          <p className="text-[10px] text-muted-foreground">+{a.contacts.length - 3} more</p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground pt-1 border-t">No contacts on file — ask your BGP team.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            {agents.length === 0 && (
+              <p className="text-sm text-muted-foreground col-span-full py-8 text-center">No tenant rep agents on file yet.</p>
+            )}
+          </div>
+        </>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {myContacts.map((c: any) => (
-            <Card key={c.id} data-testid={`client-contact-${c.id}`}>
-              <CardContent className="p-3">
-                <Link href={`/contacts/${c.id}`}>
-                  <p className="text-sm font-semibold hover:underline cursor-pointer">{c.name}</p>
-                </Link>
-                {c.role && <p className="text-xs text-muted-foreground">{c.role}</p>}
-                <div className="flex gap-3 mt-1 text-xs">
-                  {c.email && <a href={`mailto:${c.email}`} className="text-blue-600 dark:text-blue-400 hover:underline">{c.email}</a>}
-                  {(c.phoneMobile || c.phone) && <span className="text-muted-foreground">{c.phoneMobile || c.phone}</span>}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-          {myContacts.length === 0 && (
-            <p className="text-sm text-muted-foreground col-span-full py-8 text-center">No contacts yet.</p>
+        <>
+          {hubUser?.companyScopeId && (
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setContactDialog({ companyId: hubUser.companyScopeId, companyName: hubUser.team || "Your company" })}
+                data-testid="client-add-own-contact"
+              >
+                <Plus className="w-3.5 h-3.5 mr-1" /> Add contact
+              </Button>
+            </div>
           )}
-        </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {myContacts.map((c: any) => (
+              <Card key={c.id} className="group" data-testid={`client-contact-${c.id}`}>
+                <CardContent className="p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <Link href={`/contacts/${c.id}`}>
+                      <p className="text-sm font-semibold hover:underline cursor-pointer">{c.name}</p>
+                    </Link>
+                    <button
+                      onClick={() => setContactDialog({ companyId: c.companyId, companyName: hubUser?.team || "Your company", contact: c })}
+                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity shrink-0"
+                      title="Edit contact"
+                      data-testid={`client-edit-own-contact-${c.id}`}
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  {c.role && <p className="text-xs text-muted-foreground">{c.role}</p>}
+                  <div className="flex gap-3 mt-1 text-xs">
+                    {c.email && <a href={`mailto:${c.email}`} className="text-blue-600 dark:text-blue-400 hover:underline">{c.email}</a>}
+                    {(c.phoneMobile || c.phone) && <span className="text-muted-foreground">{c.phoneMobile || c.phone}</span>}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+            {myContacts.length === 0 && (
+              <p className="text-sm text-muted-foreground col-span-full py-8 text-center">No contacts yet.</p>
+            )}
+          </div>
+        </>
+      )}
+
+      {contactDialog && (
+        <ContactQuickDialog
+          companyId={contactDialog.companyId}
+          companyName={contactDialog.companyName}
+          contact={contactDialog.contact}
+          onClose={() => setContactDialog(null)}
+        />
       )}
     </div>
+  );
+}
+
+function ContactQuickDialog({ companyId, companyName, contact, onClose }: {
+  companyId: string;
+  companyName: string;
+  contact?: any;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [name, setName] = useState(contact?.name || "");
+  const [role, setRole] = useState(contact?.role || "");
+  const [email, setEmail] = useState(contact?.email || "");
+  const [phone, setPhone] = useState(contact?.phoneMobile || contact?.phone || "");
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const body = {
+        name: name.trim(),
+        role: role.trim() || null,
+        email: email.trim() || null,
+        phoneMobile: phone.trim() || null,
+        companyId,
+      };
+      if (contact?.id) {
+        return apiRequest("PUT", `/api/crm/contacts/${contact.id}`, body);
+      }
+      return apiRequest("POST", "/api/crm/contacts", body);
+    },
+    onSuccess: () => {
+      toast({ title: contact?.id ? "Contact updated" : "Contact added" });
+      queryClient.invalidateQueries({ queryKey: ["/api/client/brand-directory"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      onClose();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Save failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <Dialog open onOpenChange={open => { if (!open) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{contact?.id ? "Edit contact" : "Add contact"} — {companyName}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="cq-name">Name</Label>
+            <Input id="cq-name" value={name} onChange={e => setName(e.target.value)} placeholder="Full name" data-testid="contact-dialog-name" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="cq-role">Role</Label>
+            <Input id="cq-role" value={role} onChange={e => setRole(e.target.value)} placeholder="e.g. Head of Acquisitions" data-testid="contact-dialog-role" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="cq-email">Email</Label>
+            <Input id="cq-email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="name@company.com" data-testid="contact-dialog-email" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="cq-phone">Phone</Label>
+            <Input id="cq-phone" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+44…" data-testid="contact-dialog-phone" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button
+            onClick={() => saveMutation.mutate()}
+            disabled={!name.trim() || saveMutation.isPending}
+            data-testid="contact-dialog-save"
+          >
+            {saveMutation.isPending ? "Saving…" : contact?.id ? "Save changes" : "Add contact"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

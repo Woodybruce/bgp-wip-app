@@ -28,6 +28,7 @@ interface TeamMember {
   cv_specialisms: string[] | null;
   bio: string | null;
   property_count: number;
+  properties?: string[] | null;
 }
 
 interface Candidate {
@@ -106,7 +107,7 @@ function MemberCard({ member, onClick, onDragStart, isLead, onDragOver, onDrop, 
       onDragOver={readOnly ? undefined : onDragOver}
       onDrop={readOnly ? undefined : onDrop}
       onClick={readOnly ? undefined : onClick}
-      className={`group relative w-full text-left bg-card border rounded-lg shadow-sm transition-all px-2.5 py-2 ${readOnly ? "cursor-default" : "hover:shadow-md hover:border-primary/40"} ${isLead ? "ring-2 ring-amber-400/70 border-amber-300" : ""}`}
+      className={`group relative w-full text-left bg-card border rounded-lg shadow-sm transition-all px-2.5 py-2 ${readOnly ? "cursor-default" : "hover:shadow-md hover:border-primary/40"} ${isLead ? "border-amber-300/70 dark:border-amber-700/60" : ""}`}
       data-testid={`team-member-card-${member.id}`}
     >
       {isLead && (
@@ -133,6 +134,15 @@ function MemberCard({ member, onClick, onDragStart, isLead, onDragOver, onDrop, 
           {member.role && (
             <div className="text-[10px] text-indigo-600 dark:text-indigo-400 truncate mt-0.5" title={member.role}>{member.role}</div>
           )}
+          {Array.isArray(member.properties) && member.properties.length > 0 && (
+            <div
+              className="text-[10px] text-muted-foreground truncate mt-0.5"
+              title={member.properties.join(", ")}
+            >
+              {member.properties.slice(0, 2).join(", ")}
+              {member.properties.length > 2 ? ` +${member.properties.length - 2}` : ""}
+            </div>
+          )}
         </div>
       </div>
     </button>
@@ -154,7 +164,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   // Client logins get a read-only "Your BGP team" view — no editing, no
   // drag/drop, and internal-only columns (e.g. "On the Bench") hidden.
   const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const readOnly = viewer?.role === "Client";
+  const readOnly = viewer?.role === "Client" || !!viewer?.companyScopeId;
 
   const { data: members = [], isLoading } = useQuery<TeamMember[]>({
     queryKey: ["/api/client-teams", clientCompanyId],
@@ -180,10 +190,12 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   // a freshly added member or a deleted-column orphan is never invisible.
   const columnList = useMemo<ColumnDef[]>(() => {
     let base = [...columns].sort((a, b) => a.sort_order - b.sort_order);
-    // Hide internal-only columns from clients (bench = people not on the
-    // account). Unassigned is a staff catch-all, also hidden from clients.
+    // Hide internal-only columns from clients (bench = people deliberately
+    // parked off the account). Unassigned members still render for clients
+    // — under a neutral "Team" heading (relabelled below) — so the chart
+    // never silently loses people ("12 team members" showing 8).
     if (readOnly) base = base.filter(c => !/bench|unassigned/i.test(c.name));
-    if (!readOnly && !base.find(c => c.name === "Unassigned")) {
+    if (!base.find(c => c.name === "Unassigned")) {
       base.push({ name: "Unassigned", sort_order: 999, color_key: "slate" });
     }
     return base;
@@ -196,10 +208,9 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     const map: Record<string, TeamMember[]> = {};
     for (const c of columnList) map[c.name] = [];
     for (const m of members) {
+      // Clients never see bench members — that's the one intentional hide.
+      if (readOnly && m.team_group && /bench/i.test(m.team_group)) continue;
       const key = m.team_group && valid.has(m.team_group) ? m.team_group : "Unassigned";
-      // In read-only (client) view the Unassigned/bench columns are hidden,
-      // so drop orphans rather than pushing into a bucket that doesn't exist.
-      if (!map[key]) { if (readOnly) continue; map[key] = []; }
       map[key].push(m);
     }
     for (const k of Object.keys(map)) {
@@ -207,6 +218,14 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     }
     return map;
   }, [members, columnList, readOnly]);
+
+  // Count what's actually rendered — the badge lied when hidden buckets
+  // dropped members ("12 team members" over 8 cards).
+  const visibleMemberCount = useMemo(() => {
+    const ids = new Set<string>();
+    for (const list of Object.values(byColumn)) for (const m of list) ids.add(m.user_id);
+    return ids.size;
+  }, [byColumn]);
 
   // Pinned lead wins; otherwise fall back to highest property_count as a
   // hint until the user nominates someone explicitly.
@@ -222,7 +241,11 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
 
   useEffect(() => {
     if (selected) {
-      const fresh = members.find(m => m.id === selected.id);
+      // Fall back to user_id — editing an auto-included "pa-…" row converts
+      // it to a curated row with a fresh id, and the sheet must re-bind to
+      // that row or every subsequent edit re-converts (duplicating them).
+      const fresh = members.find(m => m.id === selected.id)
+        || members.find(m => m.user_id === selected.user_id);
       if (fresh) setSelected(fresh);
     }
   }, [members]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -230,6 +253,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
   const reorderMutation = useMutation({
     mutationFn: (items: Array<{ id: string; team_group: string | null; sort_order: number }>) =>
       apiRequest("POST", `/api/client-teams/${clientCompanyId}/reorder`, { items }),
+    onError: (e: any) => toast({ title: "Move failed", description: e?.message || "Unknown error", variant: "destructive" }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["/api/client-teams", clientCompanyId] }),
   });
 
@@ -334,15 +358,15 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
     <div className="space-y-3" data-testid="client-team-orgchart">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
-          <Badge variant="secondary" className="text-xs">{members.length} team member{members.length === 1 ? "" : "s"}</Badge>
+          <Badge variant="secondary" className="text-xs">{visibleMemberCount} team member{visibleMemberCount === 1 ? "" : "s"}</Badge>
           {lead ? (
             <span className="text-[11px] text-muted-foreground flex items-center gap-1">
               <Star className="w-3 h-3 text-amber-500" fill="currentColor" />
               Lead: <span className="font-medium text-foreground">{lead.full_name || lead.username}</span>
-              {!lead.is_lead && <span className="text-[10px] text-muted-foreground/70">(auto)</span>}
+              {!lead.is_lead && !readOnly && <span className="text-[10px] text-muted-foreground/70">(auto)</span>}
             </span>
           ) : (
-            <span className="text-[11px] text-muted-foreground italic">No lead pinned</span>
+            <span className="text-[11px] text-muted-foreground italic">{readOnly ? "" : "No lead pinned"}</span>
           )}
         </div>
         {!readOnly && (
@@ -384,7 +408,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
         <div className="border rounded-lg py-12 flex flex-col items-center justify-center text-muted-foreground text-sm">
           <Building2 className="w-8 h-8 opacity-30 mb-2" />
           <div>No BGP team assigned yet</div>
-          <div className="text-xs mt-1">Click "Add to team" to get started</div>
+          <div className="text-xs mt-1">{readOnly ? "Your BGP team hasn't been set up yet — ask your BGP team." : 'Click "Add to team" to get started'}</div>
         </div>
       ) : (
         <div className="overflow-x-auto pb-2">
@@ -432,7 +456,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
                           data-testid={`input-rename-column-${col.name}`}
                         />
                       ) : (
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground truncate">{col.name}</span>
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground truncate">{readOnly && col.name === "Unassigned" ? "Team" : col.name}</span>
                       )}
                     </div>
                     <div className="flex items-center gap-1">
@@ -552,8 +576,22 @@ function MemberSheet({ member, allMembers, clientCompanyId, columnNames, onClose
   const photoUrl = `/api/hr/photo/${member.user_id}`;
   const displayName = member.full_name || member.username || "Unknown";
 
+  // "pa-…" rows are synthesized from property assignments — there's no
+  // board row to PATCH/DELETE, so edits convert them to a curated row first.
+  const isSynth = member.id.startsWith("pa-");
+
   const updateMutation = useMutation({
-    mutationFn: (patch: any) => apiRequest("PATCH", `/api/client-teams/member/${member.id}`, patch),
+    mutationFn: (patch: any) =>
+      isSynth
+        ? apiRequest("POST", `/api/client-teams/${clientCompanyId}/member`, {
+            user_id: member.user_id,
+            team_group: member.team_group,
+            role: member.role,
+            reports_to_user_id: member.reports_to_user_id,
+            sort_order: member.sort_order,
+            ...patch,
+          })
+        : apiRequest("PATCH", `/api/client-teams/member/${member.id}`, patch),
     onSuccess: () => { onChange(); toast({ title: "Updated" }); },
     onError: (e: any) => toast({ title: "Update failed", description: e.message, variant: "destructive" }),
   });
@@ -737,12 +775,26 @@ function MemberSheet({ member, allMembers, clientCompanyId, columnNames, onClose
               variant="destructive"
               size="sm"
               className="text-xs h-7"
-              onClick={() => { if (confirm(`Remove ${displayName} from this client's team?`)) removeMutation.mutate(); }}
+              onClick={() => {
+                if (isSynth) {
+                  toast({
+                    title: "Auto-included from property assignments",
+                    description: `${displayName} appears here because they're assigned to this client's properties. Untick their properties above to take them off the board.`,
+                  });
+                  return;
+                }
+                if (confirm(`Remove ${displayName} from this client's team?`)) removeMutation.mutate();
+              }}
               disabled={removeMutation.isPending}
               data-testid="btn-remove-member"
             >
               Remove from team
             </Button>
+            {isSynth && (
+              <div className="text-[10px] text-muted-foreground mt-1.5">
+                Auto-included via property assignments — remove their properties above to take them off the board.
+              </div>
+            )}
           </div>
         </div>
       </SheetContent>

@@ -8,6 +8,9 @@ import { pool } from "./db";
 
 const router = Router();
 
+// Brands whose gallery has had the duplicate-image healing sweep this boot.
+const dedupeSweepFired = new Set<string>();
+
 // Cheap ISO 3166-1 alpha-2 inference from Google Places formatted_address.
 // We only get formatted_address back from Text Search (no structured
 // components without an extra Place Details call), so we parse the tail.
@@ -154,11 +157,31 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
   try {
     const { companyId } = req.params;
 
+    // Heal galleries that picked up duplicate images before content dedupe
+    // existed (same photo imported twice across refresh runs). Once per
+    // brand per boot, fire-and-forget — the cleaned gallery shows on the
+    // next load.
+    const sweepId = String(companyId);
+    if (!dedupeSweepFired.has(sweepId)) {
+      dedupeSweepFired.add(sweepId);
+      import("./brand-images").then(m => m.dedupeBrandImageRows(sweepId)).catch(e =>
+        console.warn(`[brand-profile] image dedupe sweep failed: ${e?.message}`)
+      );
+    }
+
     // Clients may only read their OWN company's profile here. (Landsec audit.)
     const { resolveCompanyScope } = await import("./company-scope");
     const bpScope = await resolveCompanyScope(req as any);
     if (bpScope && bpScope !== companyId) {
-      return res.status(403).json({ error: "Not available for this account" });
+      // Clients get full Brand Intelligence on the hospitality/F&B brand
+      // slice (same predicate as GET /api/crm/companies — keep in sync
+      // with CLIENT_BRAND_TYPE_RE in crm.ts). Everything else stays 403.
+      const { pool } = await import("./db");
+      const t = await pool.query(`SELECT company_type FROM crm_companies WHERE id = $1`, [companyId]);
+      const bpBrandRe = /^tenant -.*(restaurant|dining|f&b|qsr|fast food|fast casual|food|bakery|patisserie|caf[ée]|coffee|bar|hospitality|hotel|leisure|cinema|entertainment|fitness|gym|yoga)/i;
+      if (!bpBrandRe.test(t.rows[0]?.company_type || "")) {
+        return res.status(403).json({ error: "Not available for this account" });
+      }
     }
 
     const companyQ = pool.query(
@@ -851,7 +874,11 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     res.json({
       company: c,
       signals: filteredSignals,
-      representedBy: repsForBrand.rows,
+      // Client accounts only see tenant-rep representation — landlord-side
+      // and investment agent relationships are BGP-internal.
+      representedBy: bpScope
+        ? repsForBrand.rows.filter((r: any) => r.agent_type === "tenant_rep")
+        : repsForBrand.rows,
       representing: brandsForAgent.rows,
       kyc: kyc.rows[0] || { doc_count: 0, last_uploaded_at: null },
       images: images.rows,

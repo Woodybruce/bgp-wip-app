@@ -80,6 +80,12 @@ export default function MobileImages() {
   const [uploading, setUploading] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
 
+  // Client logins (e.g. Landsec) get a read-only gallery of imagery filed
+  // against their own buildings — the server scopes the list; here we hide
+  // uploads, folders, AI editing and the phone-upload filter.
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = viewer?.role === "Client" || !!viewer?.companyScopeId;
+
   // Poll the gallery while ANY image is mid-edit so the Processing chip
   // disappears (and the new thumbnail appears) without the user having
   // to refresh. Once everything's settled, drop back to no polling.
@@ -170,6 +176,7 @@ export default function MobileImages() {
   // default grid showing only *unfiled* photos.
   const { data: filed } = useQuery<{ imageIds: string[] }>({
     queryKey: ["/api/image-studio/filed-image-ids"],
+    enabled: !isClientViewer,
   });
   const filedSet = useMemo(() => new Set(filed?.imageIds || []), [filed]);
 
@@ -180,8 +187,10 @@ export default function MobileImages() {
   // are also filtered here so soft-deleted ones vanish immediately. Photos
   // already filed into a folder drop out of this default view too.
   const filtered = useMemo(() => {
+    // Clients see everything the server returned (already scoped to their
+    // buildings) — the phone-upload filter is a staff convenience.
     const own = images.filter((i) =>
-      ((i.tags || []).includes("phone-upload") || i.category === "Phone Uploads")
+      (isClientViewer || (i.tags || []).includes("phone-upload") || i.category === "Phone Uploads")
       && !(i.tags || []).includes("trashed")
       && !filedSet.has(i.id)
     );
@@ -194,13 +203,14 @@ export default function MobileImages() {
       ].filter(Boolean).join(" ").toLowerCase();
       return hay.includes(q);
     });
-  }, [images, search, filedSet]);
+  }, [images, search, filedSet, isClientViewer]);
 
   // ─── Folders (shared Image Studio collections) ─────────────────────────
   // Only ad-hoc, user-made folders (kind === null) — pathway/property/brand
   // collections are auto-managed elsewhere and would just be noise here.
   const { data: allCollections = [] } = useQuery<Collection[]>({
     queryKey: ["/api/image-studio/collections"],
+    enabled: !isClientViewer, // admin-only endpoint; clients get no folders
   });
   const folders = useMemo(
     () => allCollections.filter(isUserFolder),
@@ -333,6 +343,7 @@ export default function MobileImages() {
   };
 
   const onTilePointerDown = (e: React.PointerEvent, img: StudioImage) => {
+    if (isClientViewer) return; // no drag-to-file for read-only client gallery
     if (e.pointerType === "mouse" && e.button !== 0) return;
     const { clientX, clientY, pointerId } = e;
     const target = e.currentTarget as HTMLElement;
@@ -430,7 +441,7 @@ export default function MobileImages() {
                 when triggered programmatically with .click(). Using a real
                 <label htmlFor> + sr-only input is the rock-solid pattern — iOS
                 treats the label tap as a direct user gesture on the input. */}
-            <label
+            {!isClientViewer && <label
               htmlFor="mobile-images-upload-input"
               aria-disabled={uploading}
               className={`inline-flex items-center gap-1.5 h-10 px-3 rounded-full bg-primary text-primary-foreground text-sm font-semibold active:scale-95 transition-transform cursor-pointer ${uploading ? "opacity-60 pointer-events-none" : ""}`}
@@ -442,7 +453,7 @@ export default function MobileImages() {
                 <Camera className="w-4 h-4" />
               )}
               {uploading ? "Uploading…" : "Add photos"}
-            </label>
+            </label>}
           </>
         )}
         {/* sr-only keeps the input in the DOM + accessible (so iOS treats it
@@ -566,12 +577,14 @@ export default function MobileImages() {
           <ImageIcon className="w-10 h-10 text-muted-foreground/40 mx-auto mb-2" />
           <p className="text-sm text-muted-foreground">
             {search
-              ? "No phone photos match that search"
-              : folders.length > 0
-                ? "All your photos are filed into folders"
-                : "No photos uploaded from your phone yet"}
+              ? (isClientViewer ? "No images match that search" : "No phone photos match that search")
+              : isClientViewer
+                ? "No imagery filed against your buildings yet"
+                : folders.length > 0
+                  ? "All your photos are filed into folders"
+                  : "No photos uploaded from your phone yet"}
           </p>
-          {!search && (
+          {!search && !isClientViewer && (
             <p className="text-[11px] text-muted-foreground/70 mt-1">
               {folders.length > 0
                 ? "Open a folder above to see them, or tap Add photos for more."
@@ -666,7 +679,7 @@ export default function MobileImages() {
         </div>
       )}
 
-      <ImageEditSheet image={selected} onClose={() => setSelected(null)} />
+      <ImageEditSheet image={selected} onClose={() => setSelected(null)} readOnly={isClientViewer} />
       <NameFolderSheet
         open={!!pendingGroup}
         count={pendingGroup?.length || 0}
@@ -857,7 +870,7 @@ function FolderPickerSheet({ open, onClose, imageId }: { open: boolean; onClose:
   );
 }
 
-function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose: () => void }) {
+function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioImage | null; onClose: () => void; readOnly?: boolean }) {
   const { toast } = useToast();
   const [prompt, setPrompt] = useState("");
   const [attachOpen, setAttachOpen] = useState(false);
@@ -1058,7 +1071,7 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
                   </div>
                 )}
 
-                <div className="space-y-2">
+                {!readOnly && <div className="space-y-2">
                   <label className="text-xs font-semibold flex items-center gap-1.5">
                     <Wand2 className="w-3.5 h-3.5 text-violet-600" />
                     Edit with AI
@@ -1084,7 +1097,7 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
                       </button>
                     ))}
                   </div>
-                </div>
+                </div>}
               </div>
             </div>
 
@@ -1097,12 +1110,14 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
                 variant="outline"
                 onClick={saveToDevice}
                 disabled={saving}
-                className="h-12"
+                className={readOnly ? "flex-1 h-12 gap-2" : "h-12"}
                 aria-label="Save to phone"
                 data-testid="mobile-image-save"
               >
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                {readOnly && (saving ? "Saving…" : "Download")}
               </Button>
+              {!readOnly && <>
               <Button
                 type="button"
                 variant="outline"
@@ -1163,6 +1178,7 @@ function ImageEditSheet({ image, onClose }: { image: StudioImage | null; onClose
                   <><Sparkles className="w-5 h-5" /> Apply with AI</>
                 )}
               </Button>
+              </>}
             </div>
             <AttachPickerSheet
               open={attachOpen}

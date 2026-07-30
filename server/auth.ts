@@ -7,7 +7,7 @@ import { pool } from "./db";
 import { storage } from "./storage";
 import { loginSchema } from "@shared/schema";
 import crypto from "crypto";
-import { resolveCompanyScope, getClientTeamInfo } from "./company-scope";
+import { resolveCompanyScope, getClientTeamInfo, getScopeCompanyName } from "./company-scope";
 
 export const ADMIN_EMAILS = new Set([
   "woody@brucegillinghampollard.com",
@@ -143,6 +143,10 @@ export function setupAuth(app: Express) {
       expires_at TIMESTAMPTZ NOT NULL
     );
     ALTER TABLE users ADD COLUMN IF NOT EXISTS client_view_mode BOOLEAN DEFAULT false;
+    -- Team currently selected in the sidebar picker. Persisted (not just
+    -- localStorage) so the SERVER knows when a staff member has switched to a
+    -- client team and must be scoped to that client's view.
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS active_team TEXT;
   `).catch((err: any) => console.error("[auth] Table bootstrap error:", err.message));
 
   app.set("trust proxy", 1);
@@ -324,6 +328,11 @@ export function setupAuth(app: Express) {
     if (isBgpStaff && user.team) {
       clientTeamInfo = await getClientTeamInfo(user.id);
     }
+    // The company actually being viewed — not the viewer's own team. Resolved
+    // before session.save so the callback stays synchronous.
+    const scopeCompanyName = scopeCompanyId
+      ? (await getScopeCompanyName(scopeCompanyId)) || user.team
+      : null;
     req.session.save((err) => {
       if (err) {
         console.error("Session save error:", err);
@@ -332,7 +341,7 @@ export function setupAuth(app: Express) {
       const response: any = { ...safeUser, token };
       if (scopeCompanyId) {
         response.companyScopeId = scopeCompanyId;
-        response.companyScopeName = user.team;
+        response.companyScopeName = scopeCompanyName;
       }
       if (clientTeamInfo) {
         response.canViewAsClient = true;
@@ -385,7 +394,7 @@ export function setupAuth(app: Express) {
     const scopeCompanyId = await resolveCompanyScope(req);
     if (scopeCompanyId) {
       (safeUser as any).companyScopeId = scopeCompanyId;
-      (safeUser as any).companyScopeName = user.team;
+      (safeUser as any).companyScopeName = (await getScopeCompanyName(scopeCompanyId)) || user.team;
     }
     const isBgpStaff = (user.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
     if (isBgpStaff && user.team) {
@@ -399,6 +408,22 @@ export function setupAuth(app: Express) {
       }
     }
     res.json(safeUser);
+  });
+
+  // Persist the sidebar team selection. The picker used to be localStorage-only,
+  // so switching to a client team (e.g. "Landsec") re-branded the UI but the
+  // server never knew — staff kept the full staff view and the switch looked
+  // like it did nothing. Storing it lets resolveCompanyScope put staff into
+  // that client's exact view.
+  app.post("/api/auth/active-team", requireAuth, async (req: Request, res: Response) => {
+    const userId = req.session.userId || req.tokenUserId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+    const raw = req.body?.team;
+    const team = typeof raw === "string" && raw.trim() && raw !== "all" ? raw.trim() : null;
+    await pool.query(`UPDATE users SET active_team = $1 WHERE id = $2`, [team, userId]);
+    const { getCompanyIdForClientTeam } = await import("./company-scope");
+    const scope = team ? await getCompanyIdForClientTeam(team) : null;
+    res.json({ activeTeam: team, viewingAsClient: !!scope, companyScopeId: scope });
   });
 
   app.post("/api/auth/client-view-mode", requireAuth, async (req: Request, res: Response) => {

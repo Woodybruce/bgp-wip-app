@@ -1751,6 +1751,11 @@ export function setupNewsFeedRoutes(app: Express) {
       const propertyId = req.params.id as string;
       const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId)).limit(1);
       if (!property) return res.status(404).json({ message: "Property not found" });
+      const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+      const newsScope = await resolveCompanyScope(req as any);
+      if (newsScope && !(await isPropertyInScope(newsScope, propertyId))) {
+        return res.status(403).json({ message: "Access denied" });
+      }
 
       const propertyName = property.name;
       const addr = property.address as any;

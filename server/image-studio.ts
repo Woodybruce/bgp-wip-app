@@ -1334,8 +1334,16 @@ export function registerImageStudioRoutes(app: Express) {
   });
 
   app.post("/api/image-studio/upload", requireAuth, uploadImagesMw, async (req: Request, res: Response) => {
-    if (await (await import("./company-scope")).isClientRequestUser(req as any)) {
-      return res.status(403).json({ error: "Read-only access for client accounts" });
+    // Clients may upload photos, but only filed against a property in their
+    // own scope — no orphan firm-wide uploads. (Client does as much as the
+    // agent; unit/scheme photo authoring.)
+    const { isClientRequestUser, resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    if (await isClientRequestUser(req as any)) {
+      const scope = await resolveCompanyScope(req as any);
+      const linkId = (req.body?.propertyId as string) || "";
+      if (!scope || !linkId || !(await isPropertyInScope(scope, linkId))) {
+        return res.status(403).json({ error: "Clients may only upload photos to their own buildings — select one of your properties first." });
+      }
     }
     const t0 = Date.now();
     try {

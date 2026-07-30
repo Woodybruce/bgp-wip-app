@@ -291,6 +291,10 @@ router.get("/api/brand/:companyId/ai-take/:tab", requireAuth, async (req: Reques
     const out = await generateTake(String(req.params.companyId), tab, force);
     res.json(out);
   } catch (err: any) {
+    // No AI credentials = environment state, not a server fault.
+    if (/api ?key|authentication|authToken/i.test(err.message || "")) {
+      return res.status(503).json({ error: "AI take unavailable — AI service is not configured" });
+    }
     res.status(500).json({ error: err.message });
   }
 });

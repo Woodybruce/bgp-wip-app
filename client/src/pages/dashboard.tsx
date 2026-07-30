@@ -8,6 +8,8 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useTeam } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
 import { DraggableGrid } from "@/components/draggable-grid";
+import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
+import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import {
   Building2,
   CalendarDays,
@@ -34,6 +36,7 @@ import {
   Landmark,
   Globe,
   MapPin,
+  Handshake,
   ShieldCheck,
   Pencil,
   Check,
@@ -497,6 +500,9 @@ export default function Dashboard() {
     try { return (localStorage.getItem("bgp_dashboard_view_mode") as "team" | "individual") || "team"; }
     catch { return "team"; }
   });
+  // Client logins AND staff in client-view mode — both are served the client
+  // dashboard, so the staff-only intelligence/stats calls would just 403.
+  const isClientViewer = user?.role === "Client" || !!(user as any)?.companyScopeId;
   const [diaryRange, setDiaryRange] = useState<"today" | "week">("week");
   const handleViewModeChange = useCallback((mode: "team" | "individual") => {
     setDashboardViewMode(mode);
@@ -504,6 +510,7 @@ export default function Dashboard() {
   }, []);
   const { isLoading: statsLoading } = useQuery<CrmStats>({
     queryKey: ["/api/crm/stats"],
+    enabled: !!user && !isClientViewer,
   });
   const { data: crmProperties } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
@@ -534,10 +541,11 @@ export default function Dashboard() {
       return res.json();
     },
     staleTime: 60_000,
+    enabled: !!user && !isClientViewer,
   });
   const { data: myCalEvents } = useQuery<CalendarEvent[]>({
     queryKey: ["/api/microsoft/calendar"],
-    enabled: user?.role !== "Client", // clients have no Microsoft 365 access
+    enabled: !!user && !isClientViewer, // clients (and client-view mode) have no M365 surface
   });
   const { data: msStatus } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/user-mail/status"],
@@ -798,7 +806,7 @@ export default function Dashboard() {
   // they've added from the vetted client-safe set. Every other standard
   // widget is BGP-ops (inbox, WIP, SharePoint, KPI fees, org alerts) and is
   // filtered out even if it somehow ends up saved.
-  const isClientUser = user?.role === "Client";
+  const isClientUser = user?.role === "Client" || !!(user as any)?.companyScopeId;
   // Migrate one renamed legacy id, then ensure the three always-on widgets are
   // present (staff only — clients fully control their own safe widget set).
   const requested = (user?.dashboardWidgets ?? (isClientUser ? [] : DEFAULT_WIDGETS))
@@ -816,6 +824,30 @@ export default function Dashboard() {
     WIDGET_REGISTRY.forEach(w => { map[w.id] = w.name; });
     return map;
   }, []);
+
+  const widgetDescriptionMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    WIDGET_REGISTRY.forEach(w => { if (w.description) map[w.id] = w.description; });
+    return map;
+  }, []);
+
+  // Board blurbs for the client-portfolio grid — shown in the edit-mode
+  // handle so each board says what it does.
+  const PORTFOLIO_DESCRIPTIONS: Record<string, string> = {
+    "portfolio-company": "Your landlord entity and account summary",
+    "portfolio-events": "Portfolio meetings, viewings and calls from the BGP account team's diaries",
+    "portfolio-kpis": "Headline metrics across your portfolio",
+    "portfolio-team": "The BGP people working across your portfolio and their properties",
+    "portfolio-properties": "Every property linked to your account",
+    "portfolio-map": "Your whole portfolio on a map — click a pin to open the property",
+    "portfolio-relationship": "Your account with BGP — coverage, contacts, last touch and live deals",
+    "portfolio-leasing": "Every unit — tenant, occupancy, rent and expiry",
+    "portfolio-activity": "The latest deal movements across your portfolio",
+    "portfolio-contacts": "Your key contacts on the account",
+    "portfolio-deals": "Live deals across your properties",
+    "portfolio-lease-expiry": "Units with leases expiring over the next five years, by quarter",
+    "portfolio-vacancy-pipeline": "Vacant units per property vs the letting deals working to fill them",
+  };
 
   const handleHideWidget = useCallback((widgetId: string) => {
     const currentWidgets = activeWidgets.filter(id => id !== widgetId);
@@ -856,7 +888,7 @@ export default function Dashboard() {
             </h1>
             <p className="text-sm text-muted-foreground">
               {isBrandLandsec ? (
-                <>{brand.footerText} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>
+                <>{brand.footerText}{!isClientUser && <> · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>}</>
               ) : (
                 <>{currentTeam} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>
               )}
@@ -967,8 +999,12 @@ export default function Dashboard() {
         ];
 
         const stats = portfolioData.stats || {};
-        const avgRentPerUnit = stats.totalUnits > 0 ? stats.totalPassingRent / stats.totalUnits : 0;
+        // Average over units that actually carry a rent — dividing by every
+        // unit understates it while rent coverage is partial.
+        const rentUnits = stats.rentRecordedUnits ?? 0;
+        const avgRentPerUnit = rentUnits > 0 ? stats.totalPassingRent / rentUnits : 0;
         const occupiedCount = stats.totalUnits - stats.vacantUnits;
+        const rentCoveragePct = occupiedCount > 0 ? Math.min(100, Math.round((rentUnits / occupiedCount) * 100)) : 0;
         const occupancyRate = stats.totalUnits > 0 ? ((occupiedCount / stats.totalUnits) * 100).toFixed(1) : "0";
 
         const portfolioGridItems = [
@@ -978,7 +1014,7 @@ export default function Dashboard() {
             defaultW: 6, defaultH: 12, minW: 4, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
-                <CardContent className="p-4 flex-1 overflow-hidden flex flex-col">
+                <CardContent className="p-3 flex-1 overflow-hidden flex flex-col">
                   <div className="flex items-start gap-3 mb-3">
                     <div className="w-12 h-12 rounded-lg bg-teal-50 dark:bg-teal-900/30 border flex items-center justify-center flex-shrink-0">
                       <Landmark className="w-6 h-6 text-teal-600 dark:text-teal-400" />
@@ -1010,7 +1046,10 @@ export default function Dashboard() {
                             </p>
                           </div>
                         )}
-                        {(companyInfo.kycStatus) && (
+                        {/* KYC/AML status + PSC ownership is BGP's own
+                            compliance record on the client — never show it
+                            back to the client themselves. */}
+                        {(companyInfo.kycStatus && !isClientUser) && (
                           <div>
                             <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider mb-0.5">KYC & Ownership</p>
                             <div className="flex items-center gap-2">
@@ -1072,7 +1111,7 @@ export default function Dashboard() {
                 <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <CalendarDays className="w-3.5 h-3.5 text-teal-500" />
-                    Upcoming Events ({portfolioData.events?.length || 0})
+                    Upcoming Events ({stats.upcomingEvents ?? portfolioData.events?.length ?? 0})
                   </h3>
                   <p className="text-[10px] text-muted-foreground -mt-1">Portfolio meetings, viewings and calls from the BGP account team's diaries.</p>
                   {portfolioData.events?.length > 0 ? (
@@ -1111,12 +1150,12 @@ export default function Dashboard() {
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 h-full">
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-800" data-testid="kpi-properties">
                       <p className="text-[10px] text-teal-600 dark:text-teal-400 font-medium uppercase tracking-wider">Properties</p>
-                      <p className="text-2xl font-bold text-teal-700 dark:text-teal-300">{stats.totalProperties}</p>
+                      <p className="text-2xl font-bold text-teal-700 dark:text-teal-300">{Number(stats.totalProperties || 0).toLocaleString("en-GB")}</p>
                     </div>
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800" data-testid="kpi-units">
                       <p className="text-[10px] text-blue-600 dark:text-blue-400 font-medium uppercase tracking-wider">Total Units</p>
-                      <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">{stats.totalUnits}</p>
-                      <p className="text-[10px] text-muted-foreground">{occupiedCount} occupied · {stats.vacantUnits} vacant</p>
+                      <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">{Number(stats.totalUnits || 0).toLocaleString("en-GB")}</p>
+                      <p className="text-[10px] text-muted-foreground">{occupiedCount.toLocaleString("en-GB")} occupied · {Number(stats.vacantUnits || 0).toLocaleString("en-GB")} vacant</p>
                     </div>
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800" data-testid="kpi-occupancy">
                       <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium uppercase tracking-wider">Occupancy</p>
@@ -1126,7 +1165,11 @@ export default function Dashboard() {
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800" data-testid="kpi-rent">
                       <p className="text-[10px] text-purple-600 dark:text-purple-400 font-medium uppercase tracking-wider">Passing Rent</p>
                       <p className="text-xl font-bold text-purple-700 dark:text-purple-300">£{(stats.totalPassingRent / 1000000).toFixed(1)}m</p>
-                      <p className="text-[10px] text-muted-foreground">£{avgRentPerUnit.toLocaleString("en-GB", { maximumFractionDigits: 0 })}/unit avg</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {rentUnits > 0 && rentCoveragePct < 95
+                          ? `across ${rentUnits.toLocaleString()} units with rent recorded (${rentCoveragePct}% of occupied)`
+                          : `£${avgRentPerUnit.toLocaleString("en-GB", { maximumFractionDigits: 0 })}/unit avg`}
+                      </p>
                     </div>
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800" data-testid="kpi-deals">
                       <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium uppercase tracking-wider">Active Deals</p>
@@ -1137,6 +1180,31 @@ export default function Dashboard() {
                       <p className="text-2xl font-bold text-rose-700 dark:text-rose-300">{expiringUnits}</p>
                       <p className="text-[10px] text-muted-foreground">leases expiring soon</p>
                     </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ),
+          },
+          {
+            id: "portfolio-team",
+            label: "Your BGP Team",
+            defaultW: 12, defaultH: 12, minW: 6, minH: 6,
+            content: (
+              <Card className="h-full flex flex-col">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
+                  <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-teal-500" />
+                    Your BGP Team
+                  </h3>
+                  <p className="text-[10px] text-muted-foreground -mt-1">
+                    The BGP people working across your portfolio — account leads, asset management and leasing.
+                  </p>
+                  {/* Plain overflow container, not ScrollArea — the team
+                      columns overflow HORIZONTALLY and radix ScrollArea only
+                      scrolls vertically, clipping the extra columns with no
+                      way to reach them. */}
+                  <div className="flex-1 overflow-auto pr-1">
+                    <ClientTeamOrgChart clientCompanyId={resolvedCompanyId!} />
                   </div>
                 </CardContent>
               </Card>
@@ -1179,6 +1247,114 @@ export default function Dashboard() {
               </Card>
             ),
           } : null,
+          // BGP Relationship — the client-facing half of the relationship zone
+          // on the landlord page: who covers the account, how many people and
+          // properties we're across, last touch and live deals.
+          {
+            id: "portfolio-relationship",
+            label: "BGP Relationship",
+            defaultW: 6, defaultH: 6, minW: 3, minH: 4,
+            content: (() => {
+              const evs = (portfolioData.events || []) as any[];
+              const past = evs
+                .map((e: any) => e.start_time)
+                .filter((t: any) => t && new Date(t).getTime() <= Date.now())
+                .sort()
+                .reverse();
+              const lastTouch = past[0] as string | undefined;
+              const daysSince = lastTouch
+                ? Math.floor((Date.now() - new Date(lastTouch).getTime()) / 864e5)
+                : null;
+              const bgpTeam: string[] = companyInfo?.bgpContacts || [];
+              return (
+                <Card className="h-full flex flex-col">
+                  <CardContent className="p-3 space-y-2 flex-1 overflow-auto">
+                    <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                      <Handshake className="w-3.5 h-3.5 text-teal-500" />
+                      BGP Relationship
+                    </h3>
+                    <p className="text-[10px] text-muted-foreground -mt-1">
+                      Your account with Bruce Gillingham Pollard at a glance.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Properties</div>
+                        <div className="font-medium font-mono">{Number(stats.totalProperties || 0).toLocaleString("en-GB")}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Live deals</div>
+                        <div className="font-medium font-mono">{Number(stats.activeDeals || 0).toLocaleString("en-GB")}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Your contacts</div>
+                        <div className="font-medium font-mono">{portfolioData.contacts?.length || 0}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Last touch</div>
+                        <div className={`font-medium ${
+                          daysSince == null ? "text-muted-foreground"
+                          : daysSince < 30 ? "text-emerald-700 dark:text-emerald-400"
+                          : daysSince < 90 ? "text-amber-600 dark:text-amber-400"
+                          : "text-red-600 dark:text-red-400"
+                        }`}>
+                          {daysSince == null ? "—" : daysSince === 0 ? "Today" : `${daysSince}d ago`}
+                        </div>
+                      </div>
+                    </div>
+                    {bgpTeam.length > 0 && (
+                      <div className="border-t pt-2">
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Your BGP contacts</div>
+                        <div className="flex flex-wrap gap-1">
+                          {bgpTeam.map((name: string, i: number) => (
+                            <Badge key={i} variant="outline" className="text-[10px] font-normal">{name}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })(),
+          },
+          // Portfolio map — the same map the landlord pages use, scoped to the
+          // client's own properties. Only offered when we have coordinates.
+          (portfolioData.properties || []).some((p: any) => p.lat != null && p.lng != null) ? {
+            id: "portfolio-map",
+            label: "Portfolio Map",
+            defaultW: 12, defaultH: 11, minW: 6, minH: 6,
+            content: (
+              <Card className="h-full flex flex-col">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
+                  <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-teal-500" />
+                    Portfolio Map
+                  </h3>
+                  <p className="text-[10px] text-muted-foreground -mt-1">
+                    Every property in your portfolio — click a pin to open the property.
+                  </p>
+                  <div className="flex-1 min-h-0 rounded-lg overflow-hidden border">
+                    <BrandPortfolioMap
+                      alwaysRender
+                      height={9999}
+                      stores={(portfolioData.properties || [])
+                        .filter((p: any) => p.lat != null && p.lng != null)
+                        .map((p: any) => ({
+                          id: `crm:${p.id}`,
+                          name: p.name,
+                          address: typeof p.address === "string" ? p.address : null,
+                          lat: Number(p.lat),
+                          lng: Number(p.lng),
+                          status: p.status ?? null,
+                          tone: "linked" as const,
+                          href: `/properties/${p.id}`,
+                        })) as any}
+                      onSelect={(s: any) => { if (s?.href) window.location.assign(s.href); }}
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+            ),
+          } : null,
           totalLeasingUnits > 0 ? {
             id: "portfolio-leasing",
             label: "Leasing Schedule",
@@ -1192,8 +1368,8 @@ export default function Dashboard() {
                       <Badge variant="secondary" className="text-[10px]">{totalLeasingUnits} units across {leasingByProperty.size} properties</Badge>
                     </h3>
                     <div className="flex items-center gap-3 text-[10px]">
-                      <span className="text-emerald-600">{occupiedUnits} occupied</span>
-                      {expiringUnits > 0 && <span className="text-amber-600">{expiringUnits} expiring</span>}
+                      <span className="text-emerald-600 dark:text-emerald-400">{occupiedUnits} occupied</span>
+                      {expiringUnits > 0 && <span className="text-amber-600 dark:text-amber-400">{expiringUnits} expiring</span>}
                       <Link href="/leasing-schedule">
                         <span className="text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-leasing-board">
                           <ExternalLink className="w-3 h-3" />Open Board
@@ -1238,6 +1414,7 @@ export default function Dashboard() {
                     <Clock className="w-3.5 h-3.5 text-teal-500" />
                     Recent Activity
                   </h3>
+                  <p className="text-[10px] text-muted-foreground -mt-1">The latest deal movements across your portfolio.</p>
                   {portfolioData.activity?.length > 0 ? (
                     <ScrollArea className="flex-1">
                       <div className="space-y-0.5 pr-2">
@@ -1274,6 +1451,7 @@ export default function Dashboard() {
                     <Users className="w-3.5 h-3.5 text-teal-500" />
                     Contacts ({portfolioData.contacts?.length || 0})
                   </h3>
+                  <p className="text-[10px] text-muted-foreground -mt-1">Your company's people on the account — click through for details.</p>
                   {portfolioData.contacts?.length > 0 ? (
                     <ScrollArea className="flex-1 overflow-y-auto">
                       <div className="space-y-0.5 pr-2">
@@ -1353,7 +1531,7 @@ export default function Dashboard() {
                       <div className="border rounded-lg overflow-hidden mt-2">
                         <div className="flex items-center gap-2 p-2 bg-muted/50">
                           <BarChart3 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                          <p className="text-xs font-medium">Other Deals (no property linked)</p>
+                          <p className="text-xs font-medium">Other Deals</p>
                           <Badge variant="outline" className="text-[10px] shrink-0 ml-auto">{unlinkedDeals.length}</Badge>
                         </div>
                         <div className="divide-y">
@@ -1453,9 +1631,9 @@ export default function Dashboard() {
                     <h3 className="font-semibold text-xs flex items-center gap-1.5 mb-2">
                       <CalendarDays className="w-3.5 h-3.5 text-teal-500" />
                       Lease Expiry Timeline
-                      <Badge variant="secondary" className="text-[10px]">{unitsWithExpiry.length} leases across {propertyNames.size} properties</Badge>
+                      <Badge variant="secondary" className="text-[10px]">{Array.from(quarterData.values()).reduce((s, q) => s + Object.values(q).reduce((a, v) => a + v.count, 0), 0)} expiring within 5 yrs across {propertyNames.size} properties</Badge>
                     </h3>
-                    <p className="text-[10px] text-muted-foreground -mt-1 mb-1">When leases expire over time — the income-at-risk view by month.</p>
+                    <p className="text-[10px] text-muted-foreground -mt-1 mb-1">Units with leases expiring, grouped by quarter over the next five years.</p>
                     <div className="flex-1 min-h-0">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
@@ -1511,6 +1689,10 @@ export default function Dashboard() {
               const st = (d.status || "").toLowerCase();
               const isActive = !st.includes("completed") && !st.includes("withdrawn") && !st.includes("closed") && !st.includes("fallen");
               if (!isActive) continue;
+              // Rent reviews / investment deals don't fill a void — only
+              // letting-type deals count towards vacancy coverage.
+              const dt = (d.deal_type || d.dealType || "").toLowerCase();
+              if (dt && !dt.includes("leas") && !dt.includes("lett")) continue;
               if (!propMap.has(d.property_id)) {
                 const prop = properties.find((p: any) => p.id === d.property_id);
                 propMap.set(d.property_id, { vacantUnits: 0, totalUnits: 0, activeDeals: 0, propName: prop?.name || d.property_name || "Unknown" });
@@ -1585,7 +1767,7 @@ export default function Dashboard() {
                     </ScrollArea>
                     <div className="border-t pt-2 mt-auto">
                       <p className="text-[10px] text-muted-foreground text-center">
-                        {totalVacant} total vacant unit{totalVacant !== 1 ? "s" : ""} across {propertiesWithVacancy} propert{propertiesWithVacancy !== 1 ? "ies" : "y"} · {totalActiveDeals} active deal{totalActiveDeals !== 1 ? "s" : ""} in progress
+                        {totalVacant} total vacant unit{totalVacant !== 1 ? "s" : ""} across {propertiesWithVacancy} propert{propertiesWithVacancy !== 1 ? "ies" : "y"} · {totalActiveDeals} letting deal{totalActiveDeals !== 1 ? "s" : ""} working the voids
                       </p>
                     </div>
                   </CardContent>
@@ -1777,7 +1959,7 @@ export default function Dashboard() {
               )}
             </div>
             <DraggableGrid
-              items={visiblePortfolioItems}
+              items={visiblePortfolioItems.map((i: any) => ({ ...i, description: i.description || PORTFOLIO_DESCRIPTIONS[i.id] }))}
               savedLayout={portfolioSavedLayout}
               onLayoutSave={handlePortfolioLayoutSave}
               onHideItem={handleHidePortfolioBoard}
@@ -2213,7 +2395,12 @@ export default function Dashboard() {
                   <Badge variant="secondary" className="text-[10px]">{filteredReqs.length}</Badge>
                 )}
               </div>
-              <Link href={`/requirements?type=${reqType}&team=${encodeURIComponent(reqTeam)}`}><Button variant="ghost" size="sm" className="text-xs h-7">View all <ArrowRight className="w-3 h-3 ml-1" /></Button></Link>
+              <div className="flex items-center gap-1">
+                {!isClientUser && (
+                  <Link href={`/requirements?type=${reqType}&team=${encodeURIComponent(reqTeam)}&new=1`}><Button variant="ghost" size="sm" className="text-xs h-7" data-testid="button-widget-add-requirement"><Plus className="w-3.5 h-3.5 mr-1" />Add</Button></Link>
+                )}
+                <Link href={`/requirements?type=${reqType}&team=${encodeURIComponent(reqTeam)}`}><Button variant="ghost" size="sm" className="text-xs h-7">View all <ArrowRight className="w-3 h-3 ml-1" /></Button></Link>
+              </div>
             </CardHeader>
             <CardContent className="pt-0 flex-1 overflow-hidden flex flex-col">
               {filteredReqs.length > 0 ? (
@@ -2234,6 +2421,14 @@ export default function Dashboard() {
                 <div className="text-center py-4 text-muted-foreground">
                   <ListPlus className="w-6 h-6 mx-auto mb-1.5 opacity-30" />
                   <p className="text-xs">No {reqLabel.toLowerCase()} requirements found</p>
+                  {!isClientUser && (
+                    <Link href={`/requirements?type=${reqType}&team=${encodeURIComponent(reqTeam)}&new=1`}>
+                      <Button variant="outline" size="sm" className="mt-2 text-xs h-7" data-testid="button-widget-add-requirement-empty">
+                        <Plus className="w-3.5 h-3.5 mr-1" />
+                        Add requirement
+                      </Button>
+                    </Link>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -2461,7 +2656,7 @@ export default function Dashboard() {
                       <div className="border rounded-lg overflow-hidden mt-2">
                         <div className="flex items-center gap-2 p-2 bg-muted/50">
                           <BarChart3 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                          <p className="text-xs font-medium">Other Deals (no property linked)</p>
+                          <p className="text-xs font-medium">Other Deals</p>
                           <Badge variant="outline" className="text-[10px] shrink-0 ml-auto">{unlinked.length}</Badge>
                         </div>
                         <div className="divide-y">
@@ -2511,6 +2706,7 @@ export default function Dashboard() {
           return {
             id: wid,
             label: widgetLabelMap[wid] || wid,
+            description: widgetDescriptionMap[wid],
             content: renderWidget(wid),
             defaultW: sizes.w,
             defaultH: sizes.h,

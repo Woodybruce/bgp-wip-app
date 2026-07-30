@@ -214,8 +214,18 @@ async function syncEmailsForUser(
   let count = 0;
 
   try {
-    const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=receivedDateTime ge ${since}&$select=id,subject,bodyPreview,from,toRecipients,ccRecipients,receivedDateTime&$top=100&$orderby=receivedDateTime desc`;
+    const url = `${GRAPH_BASE}/users/${userEmail}/messages?$filter=receivedDateTime ge ${since}&$select=id,conversationId,subject,bodyPreview,from,toRecipients,ccRecipients,receivedDateTime&$top=100&$orderby=receivedDateTime desc`;
     const messages = await graphGetPaged(token, url, 5);
+
+    // Email → offers check: offer-looking emails anchored to a tracker unit
+    // from a known external contact become unconfirmed unit_offers rows
+    // (one per thread; skipped when the offer is already logged).
+    try {
+      const { syncOfferEmails } = await import("./viewing-sync");
+      await syncOfferEmails(messages, userEmail);
+    } catch (e: any) {
+      console.error(`[offer-check] ${userEmail}:`, e?.message);
+    }
 
     for (const msg of messages) {
       const msId = `email_${msg.id}`;
@@ -307,8 +317,19 @@ async function syncCalendarForUser(
   let count = 0;
 
   try {
-    const url = `${GRAPH_BASE}/users/${userEmail}/calendarView?startDateTime=${start}&endDateTime=${end}&$select=id,subject,start,end,attendees,organizer,bodyPreview&$top=100&$orderby=start/dateTime&Prefer=outlook.timezone="UTC"`;
+    const url = `${GRAPH_BASE}/users/${userEmail}/calendarView?startDateTime=${start}&endDateTime=${end}&$select=id,iCalUId,subject,start,end,attendees,organizer,bodyPreview,location,categories,isCancelled&$top=100&$orderby=start/dateTime&Prefer=outlook.timezone="UTC"`;
     const events = await graphGetPaged(token, url, 3);
+
+    // Diary → Letting Tracker viewings: events that look like a viewing and
+    // anchor to a tracker unit become unit_viewings rows. Runs on every
+    // sweep (its own iCalUId dedupe, independent of the interaction dedupe
+    // below, so date changes to an existing booking still update).
+    try {
+      const { syncDiaryViewings } = await import("./viewing-sync");
+      await syncDiaryViewings(events, userEmail);
+    } catch (e: any) {
+      console.error(`[viewing-sync] ${userEmail}:`, e?.message);
+    }
 
     for (const event of events) {
       const msId = `cal_${event.id}`;

@@ -3163,6 +3163,138 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // --- Public leasing feed (bgp marketing website) ---
+  // Read-only, unauthenticated. Exposes only marketing-safe fields for units
+  // being publicly marketed, and skips properties with leasing privacy enabled.
+  const PUBLIC_MARKETING_STATUSES = ["Available", "Under Offer"];
+
+  app.use("/api/public", (req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.header("Access-Control-Allow-Headers", "Content-Type");
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+    next();
+  });
+
+  const publicListingColumns = () => import("@shared/schema").then(({ availableUnits, crmProperties }) => ({
+    id: availableUnits.id,
+    unitName: availableUnits.unitName,
+    floor: availableUnits.floor,
+    sqft: availableUnits.sqft,
+    askingRent: availableUnits.askingRent,
+    ratesPa: availableUnits.ratesPa,
+    serviceChargePa: availableUnits.serviceChargePa,
+    useClass: availableUnits.useClass,
+    condition: availableUnits.condition,
+    availableDate: availableUnits.availableDate,
+    marketingStatus: availableUnits.marketingStatus,
+    location: availableUnits.location,
+    epcRating: availableUnits.epcRating,
+    propertyName: crmProperties.name,
+    propertyAddress: crmProperties.address,
+    postcode: crmProperties.postcode,
+    latitude: crmProperties.latitude,
+    longitude: crmProperties.longitude,
+    assetClass: crmProperties.assetClass,
+  }));
+
+  app.get("/api/public/leasing-listings", async (_req, res) => {
+    try {
+      const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
+      const columns = await publicListingColumns();
+      const rows = await db
+        .select(columns)
+        .from(availableUnits)
+        .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
+        .where(and(
+          inArray(availableUnits.marketingStatus, PUBLIC_MARKETING_STATUSES),
+          or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
+        ))
+        .orderBy(desc(availableUnits.createdAt));
+      const unitIds = rows.map(r => r.id);
+      const files = unitIds.length
+        ? await db
+            .select({
+              id: unitMarketingFiles.id,
+              unitId: unitMarketingFiles.unitId,
+              fileName: unitMarketingFiles.fileName,
+              mimeType: unitMarketingFiles.mimeType,
+            })
+            .from(unitMarketingFiles)
+            .where(inArray(unitMarketingFiles.unitId, unitIds))
+        : [];
+      const byUnit: Record<string, typeof files> = {};
+      for (const f of files) (byUnit[f.unitId] ||= []).push(f);
+      res.json(rows.map(r => ({ ...r, files: byUnit[r.id] || [] })));
+    } catch (err: any) {
+      console.error("[routes] Public leasing listings error:", err?.message);
+      res.status(500).json({ message: "Failed to fetch listings" });
+    }
+  });
+
+  app.get("/api/public/leasing-listings/:id", async (req, res) => {
+    try {
+      const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
+      const columns = await publicListingColumns();
+      const [row] = await db
+        .select(columns)
+        .from(availableUnits)
+        .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
+        .where(and(
+          eq(availableUnits.id, req.params.id),
+          inArray(availableUnits.marketingStatus, PUBLIC_MARKETING_STATUSES),
+          or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
+        ));
+      if (!row) return res.status(404).json({ message: "Listing not found" });
+      const files = await db
+        .select({
+          id: unitMarketingFiles.id,
+          fileName: unitMarketingFiles.fileName,
+          mimeType: unitMarketingFiles.mimeType,
+        })
+        .from(unitMarketingFiles)
+        .where(eq(unitMarketingFiles.unitId, row.id));
+      res.json({ ...row, files });
+    } catch (err: any) {
+      console.error("[routes] Public leasing listing error:", err?.message);
+      res.status(500).json({ message: "Failed to fetch listing" });
+    }
+  });
+
+  app.get("/api/public/unit-files/:fileId", async (req, res) => {
+    try {
+      const { availableUnits, crmProperties, unitMarketingFiles } = await import("@shared/schema");
+      const [file] = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.id, req.params.fileId));
+      if (!file) return res.status(404).end();
+      const [unit] = await db
+        .select({ id: availableUnits.id })
+        .from(availableUnits)
+        .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
+        .where(and(
+          eq(availableUnits.id, file.unitId),
+          inArray(availableUnits.marketingStatus, PUBLIC_MARKETING_STATUSES),
+          or(eq(crmProperties.leasingPrivacyEnabled, false), sql`${crmProperties.leasingPrivacyEnabled} IS NULL`),
+        ));
+      if (!unit) return res.status(404).end();
+      const fileName = file.filePath.split("/").pop();
+      if (fileName) {
+        const stored = await getFile(`marketing-files/${fileName}`);
+        if (stored) {
+          res.setHeader("Content-Type", stored.contentType || file.mimeType || "application/octet-stream");
+          res.setHeader("Content-Disposition", `inline; filename="${file.fileName.replace(/"/g, "")}"`);
+          res.setHeader("Cache-Control", "public, max-age=3600");
+          return res.send(stored.data);
+        }
+      }
+      const diskPath = path.join(process.cwd(), file.filePath);
+      if (fs.existsSync(diskPath)) return res.sendFile(diskPath);
+      res.status(404).end();
+    } catch (err: any) {
+      console.error("[routes] Public unit file error:", err?.message);
+      res.status(500).end();
+    }
+  });
+
   app.get("/api/available-units", requireAuth, async (req, res) => {
     try {
       // Clients (e.g. Landsec) see the Letting Tracker for THEIR OWN
@@ -3201,6 +3333,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           COALESCE(pu.condition, au.condition) AS "condition",
           au.available_date AS "availableDate",
           au.marketing_status AS "marketingStatus",
+          au.location,
           COALESCE(pu.epc_rating, au.epc_rating) AS "epcRating",
           au.notes,
           au.restrictions,
@@ -3258,9 +3391,29 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Letting-activity aggregates for the tracker. These used to be blocked
+  // outright for clients (they were firm-wide), which meant a client's Letting
+  // Tracker silently lost its viewings/offers controls. They're now SCOPED
+  // instead: a client sees viewings/offers on their OWN units only, staff see
+  // everything. Landsec seeing activity on their vacant units is the point of
+  // the tracker.
+  async function clientUnitScopeSql(req: any) {
+    const scope = await resolveCompanyScope(req);
+    if (!scope) return null; // staff — unrestricted
+    return scope;
+  }
+
   app.get("/api/available-units/all-viewings-counts", requireAuth, async (req, res) => {
     try {
-      const rows = await db.execute(sql`SELECT unit_id, COUNT(*)::int as count FROM unit_viewings GROUP BY unit_id`);
+      const scope = await clientUnitScopeSql(req);
+      const rows = scope
+        ? await db.execute(sql`SELECT v.unit_id, COUNT(*)::int as count FROM unit_viewings v
+             JOIN available_units u ON u.id = v.unit_id
+             LEFT JOIN crm_properties p ON p.id = u.property_id
+             LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
+            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            GROUP BY v.unit_id`)
+        : await db.execute(sql`SELECT unit_id, COUNT(*)::int as count FROM unit_viewings GROUP BY unit_id`);
       const counts: Record<string, number> = {};
       for (const r of rows.rows as any[]) counts[r.unit_id] = r.count;
       res.json(counts);
@@ -3271,7 +3424,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/all-offers-counts", requireAuth, async (req, res) => {
     try {
-      const rows = await db.execute(sql`SELECT unit_id, COUNT(*)::int as count FROM unit_offers GROUP BY unit_id`);
+      const scope = await clientUnitScopeSql(req);
+      const rows = scope
+        ? await db.execute(sql`SELECT o.unit_id, COUNT(*)::int as count FROM unit_offers o
+             JOIN available_units u ON u.id = o.unit_id
+             LEFT JOIN crm_properties p ON p.id = u.property_id
+             LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
+            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            GROUP BY o.unit_id`)
+        : await db.execute(sql`SELECT unit_id, COUNT(*)::int as count FROM unit_offers GROUP BY unit_id`);
       const counts: Record<string, number> = {};
       for (const r of rows.rows as any[]) counts[r.unit_id] = r.count;
       res.json(counts);
@@ -3282,6 +3443,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/all-viewings", requireAuth, async (req, res) => {
     try {
+      const scope = await clientUnitScopeSql(req);
+      if (scope) {
+        const rows = await db.execute(sql`SELECT v.* FROM unit_viewings v
+             JOIN available_units u ON u.id = v.unit_id
+             LEFT JOIN crm_properties p ON p.id = u.property_id
+             LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
+            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            ORDER BY v.viewing_date`);
+        return res.json(rows.rows);
+      }
       const { unitViewings } = await import("@shared/schema");
       const rows = await db.select().from(unitViewings).orderBy(unitViewings.viewingDate);
       res.json(rows);
@@ -3292,6 +3463,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/all-offers", requireAuth, async (req, res) => {
     try {
+      const scope = await clientUnitScopeSql(req);
+      if (scope) {
+        const rows = await db.execute(sql`SELECT o.* FROM unit_offers o
+             JOIN available_units u ON u.id = o.unit_id
+             LEFT JOIN crm_properties p ON p.id = u.property_id
+             LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
+            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            ORDER BY o.offer_date`);
+        return res.json(rows.rows);
+      }
       const { unitOffers } = await import("@shared/schema");
       const rows = await db.select().from(unitOffers).orderBy(unitOffers.offerDate);
       res.json(rows);
@@ -3659,12 +3840,27 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         }
         if ("fee" in partial) dealPatch.fee = (partial as any).fee;
         if ("askingRent" in partial) dealPatch.rentPa = (partial as any).askingRent;
+        if ((req.body as any).landlordId) dealPatch.landlordId = (req.body as any).landlordId;
         if (Object.keys(dealPatch).length > 0) {
           try {
             await storage.updateCrmDeal(existing.dealId, dealPatch as any);
           } catch (e: any) {
             console.warn(`[available-units PATCH] deal sync failed for ${existing.dealId}:`, e?.message);
           }
+        }
+      }
+
+      // Landlord edited on the dialog: available_units doesn't carry a
+      // landlord column (Zod strips it above), so persist it by stamping
+      // the property when it has none — same semantics as the POST route.
+      if ((req.body as any).landlordId && existing.propertyId) {
+        try {
+          await pool.query(
+            `UPDATE crm_properties SET landlord_id = $1 WHERE id = $2 AND landlord_id IS NULL`,
+            [(req.body as any).landlordId, existing.propertyId]
+          );
+        } catch (e: any) {
+          console.warn("[available-units PATCH] property landlord backfill failed:", e?.message);
         }
       }
 
@@ -4177,6 +4373,210 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // removed. Both were tied to the Sage WIP import lifecycle (recovery
   // for orphan-archive false-positives after a Sage reload, and a wipe-
   // before-reimport admin tool). Sage imports are retired.
+
+  // ---- Operator targeting briefs (per letting tracker unit) ----
+
+  app.get("/api/unit-briefs", requireAuth, async (_req, res) => {
+    try {
+      const { unitBriefs, availableUnits, crmProperties } = await import("@shared/schema");
+      const rows = await db
+        .select({
+          brief: unitBriefs,
+          unitName: availableUnits.unitName,
+          propertyName: crmProperties.name,
+        })
+        .from(unitBriefs)
+        .leftJoin(availableUnits, eq(unitBriefs.unitId, availableUnits.id))
+        .leftJoin(crmProperties, eq(unitBriefs.propertyId, crmProperties.id))
+        .orderBy(desc(unitBriefs.createdAt));
+      res.json(rows.map(r => ({ ...r.brief, unitName: r.unitName, propertyName: r.propertyName })));
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch briefs" });
+    }
+  });
+
+  app.get("/api/available-units/:id/brief", requireAuth, async (req, res) => {
+    try {
+      const { unitBriefs, unitTargetOperators } = await import("@shared/schema");
+      const [brief] = await db.select().from(unitBriefs)
+        .where(eq(unitBriefs.unitId, String(req.params.id)))
+        .orderBy(desc(unitBriefs.createdAt))
+        .limit(1);
+      if (!brief) return res.json(null);
+      const targets = await db.select().from(unitTargetOperators)
+        .where(eq(unitTargetOperators.briefId, brief.id))
+        .orderBy(unitTargetOperators.sortOrder, unitTargetOperators.createdAt);
+      res.json({ ...brief, targets });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch brief" });
+    }
+  });
+
+  // Clients may author briefs only on their own units. Returns 403 when a
+  // client request targets a unit/property outside their scope; a no-op for
+  // BGP staff (null scope).
+  async function assertUnitInClientScope(req: any, propertyId: string | null | undefined): Promise<string | null> {
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req);
+    if (!scope) return null; // staff — unrestricted
+    if (!propertyId || !(await isPropertyInScope(scope, propertyId))) return "out-of-scope";
+    return null;
+  }
+  async function briefPropertyId(briefId: string): Promise<string | null> {
+    const r = await pool.query("SELECT property_id FROM unit_briefs WHERE id = $1", [briefId]);
+    return r.rows[0]?.property_id ?? null;
+  }
+  async function targetPropertyId(targetId: string): Promise<string | null> {
+    const r = await pool.query(
+      "SELECT b.property_id FROM unit_target_operators t JOIN unit_briefs b ON b.id = t.brief_id WHERE t.id = $1",
+      [targetId]
+    );
+    return r.rows[0]?.property_id ?? null;
+  }
+
+  app.post("/api/available-units/:id/brief", requireAuth, async (req: any, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(String(req.params.id));
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Not available for client accounts" });
+      }
+      const { unitBriefs, insertUnitBriefSchema } = await import("@shared/schema");
+      const userId = req.session?.userId || req.tokenUserId || null;
+      let userName: string | null = null;
+      if (userId) {
+        const r = await pool.query("SELECT name FROM users WHERE id = $1", [userId]);
+        userName = r.rows[0]?.name || null;
+      }
+      const parsed = insertUnitBriefSchema.parse({
+        ...req.body,
+        unitId: unit.id,
+        propertyId: unit.propertyId,
+        createdByUserId: userId,
+        createdByName: userName,
+      });
+      const [brief] = await db.insert(unitBriefs).values(parsed).returning();
+      res.json(brief);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to create brief" });
+    }
+  });
+
+  app.patch("/api/unit-briefs/:id", requireAuth, async (req: any, res) => {
+    try {
+      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
+        return res.status(403).json({ message: "Not available for client accounts" });
+      }
+      const { unitBriefs, insertUnitBriefSchema } = await import("@shared/schema");
+      const partial = insertUnitBriefSchema.partial().parse(req.body);
+      const [brief] = await db.update(unitBriefs)
+        .set({ ...partial, updatedAt: new Date() })
+        .where(eq(unitBriefs.id, String(req.params.id)))
+        .returning();
+      if (!brief) return res.status(404).json({ message: "Brief not found" });
+      res.json(brief);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to update brief" });
+    }
+  });
+
+  app.delete("/api/unit-briefs/:id", requireAuth, async (req: any, res) => {
+    try {
+      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
+        return res.status(403).json({ message: "Not available for client accounts" });
+      }
+      const { unitBriefs, unitTargetOperators } = await import("@shared/schema");
+      await db.delete(unitTargetOperators).where(eq(unitTargetOperators.briefId, String(req.params.id)));
+      await db.delete(unitBriefs).where(eq(unitBriefs.id, String(req.params.id)));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to delete brief" });
+    }
+  });
+
+  app.post("/api/unit-briefs/:id/targets", requireAuth, async (req: any, res) => {
+    try {
+      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
+        return res.status(403).json({ message: "Not available for client accounts" });
+      }
+      const { unitBriefs, unitTargetOperators, insertUnitTargetOperatorSchema } = await import("@shared/schema");
+      const [brief] = await db.select().from(unitBriefs).where(eq(unitBriefs.id, String(req.params.id)));
+      if (!brief) return res.status(404).json({ message: "Brief not found" });
+      const parsed = insertUnitTargetOperatorSchema.parse({ ...req.body, briefId: brief.id });
+      const [target] = await db.insert(unitTargetOperators).values(parsed).returning();
+      res.json(target);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to add target" });
+    }
+  });
+
+  app.patch("/api/unit-briefs/targets/:id", requireAuth, async (req: any, res) => {
+    try {
+      if (await assertUnitInClientScope(req, await targetPropertyId(String(req.params.id)))) {
+        return res.status(403).json({ message: "Not available for client accounts" });
+      }
+      const { unitTargetOperators, insertUnitTargetOperatorSchema } = await import("@shared/schema");
+      const partial = insertUnitTargetOperatorSchema.partial().parse(req.body);
+      const [target] = await db.update(unitTargetOperators)
+        .set({ ...partial, updatedAt: new Date() })
+        .where(eq(unitTargetOperators.id, String(req.params.id)))
+        .returning();
+      if (!target) return res.status(404).json({ message: "Target not found" });
+      res.json(target);
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to update target" });
+    }
+  });
+
+  app.delete("/api/unit-briefs/targets/:id", requireAuth, async (req: any, res) => {
+    try {
+      if (await assertUnitInClientScope(req, await targetPropertyId(String(req.params.id)))) {
+        return res.status(403).json({ message: "Not available for client accounts" });
+      }
+      const { unitTargetOperators } = await import("@shared/schema");
+      await db.delete(unitTargetOperators).where(eq(unitTargetOperators.id, String(req.params.id)));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to delete target" });
+    }
+  });
+
+  app.post("/api/unit-briefs/extract", requireAuth, marketingUpload.single("file"), async (req: any, res) => {
+    let tmpPath: string | null = null;
+    try {
+      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+      const ext = path.extname(req.file.originalname).toLowerCase();
+      tmpPath = path.join(MARKETING_FILES_DIR, `extract-${Date.now()}-${crypto.randomBytes(6).toString("hex")}${ext}`);
+      fs.writeFileSync(tmpPath, req.file.buffer);
+      const { extractTextFromFile } = await import("./chatbgp");
+      const text = await extractTextFromFile(tmpPath, req.file.originalname);
+      if (!text || text.trim().length < 40) return res.status(400).json({ message: "Could not read any text from that file" });
+      const { extractBriefFromText } = await import("./unit-brief-doc");
+      const extracted = await extractBriefFromText(text);
+      res.json(extracted);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to extract brief" });
+    } finally {
+      if (tmpPath) { try { fs.unlinkSync(tmpPath); } catch {} }
+    }
+  });
+
+  app.post("/api/unit-briefs/:id/generate-document", requireAuth, async (req: any, res) => {
+    try {
+      if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
+        return res.status(403).json({ message: "Not available for client accounts" });
+      }
+      const { generateBriefDocument } = await import("./unit-brief-doc");
+      const result = await generateBriefDocument(String(req.params.id));
+      res.json({ ...result, sharepoint: !!result.sharepointUrl });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to generate brief document" });
+    }
+  });
 
   app.post("/api/available-units/migrate-letting-deals", requireAuth, async (req, res) => {
     try {
@@ -5635,8 +6035,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // The client's portfolio = properties they own (landlord_id) PLUS any
       // explicitly linked to the company via crm_company_properties. Each row
       // appears once (OR-filter, no join), so no dedup needed.
+      // latitude/longitude included so the client dashboard can render the
+      // same portfolio map the landlord pages use.
       const propsResult = await pool.query(
-        `SELECT id, name, address, status, asset_class FROM crm_properties
+        `SELECT id, name, address, status, asset_class,
+                latitude AS lat, longitude AS lng
+           FROM crm_properties
          WHERE landlord_id = $1
             OR id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
          ORDER BY name`,
@@ -5648,21 +6052,27 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // client's name, not a specific property) surface on the events card.
       const cpCompanyName = (await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId])).rows[0]?.name || null;
 
-      let totalUnits = 0, vacantUnits = 0, totalPassingRent = 0;
+      let totalUnits = 0, vacantUnits = 0, totalPassingRent = 0, rentRecordedUnits = 0;
       if (propertyIds.length > 0) {
         // Portfolio-overview stats come from the TENANCY schedule — the master
         // rent roll (every unit). The leasing board is only strategy + live
         // deals now, so it must NOT drive whole-portfolio counts.
+        // rent_recorded = how many of those rows actually carry a rent — the
+        // headline £ is a partial sum until data onboarding completes, and
+        // the dashboard states that coverage rather than implying a total.
         const tenancyResult = await pool.query(
           `SELECT COUNT(*) as total,
                   COUNT(*) FILTER (WHERE status IN ('Vacant', 'Void', 'Available')) as vacant,
-                  COALESCE(SUM(CASE WHEN passing_rent_pa IS NOT NULL THEN passing_rent_pa ELSE 0 END), 0) as passing_rent
+                  COALESCE(SUM(CASE WHEN passing_rent_pa IS NOT NULL THEN passing_rent_pa ELSE 0 END), 0) as passing_rent,
+                  COUNT(*) FILTER (WHERE passing_rent_pa IS NOT NULL AND passing_rent_pa > 0
+                                     AND status NOT IN ('Vacant', 'Void', 'Available')) as rent_recorded
            FROM tenancy_schedule_units WHERE property_id = ANY($1)`,
           [propertyIds]
         );
         totalUnits = parseInt(tenancyResult.rows[0]?.total || "0");
         vacantUnits = parseInt(tenancyResult.rows[0]?.vacant || "0");
         totalPassingRent = parseFloat(tenancyResult.rows[0]?.passing_rent || "0");
+        rentRecordedUnits = parseInt(tenancyResult.rows[0]?.rent_recorded || "0");
       }
 
       const dealsResult = await pool.query(
@@ -5672,16 +6082,28 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         [companyId]
       );
 
+      // Distinct people, not raw rows — imports create duplicate contact
+      // rows and the CRM page dedupes by name, so this count must match it.
       const contactsResult = await pool.query(
-        "SELECT COUNT(*) as total FROM crm_contacts WHERE company_id = $1",
+        "SELECT COUNT(DISTINCT lower(trim(name))) as total FROM crm_contacts WHERE company_id = $1",
         [companyId]
       );
 
       let upcomingEvents = 0;
       if (propertyIds.length > 0) {
+        // Same filter + dedupe as the events list below, so the count on the
+        // stats strip matches the number of events actually shown.
         const eventsResult = await pool.query(
-          `SELECT COUNT(*) as total FROM team_events
-           WHERE (property_id = ANY($1) OR company_name = $2) AND start_time >= NOW()`,
+          `SELECT COUNT(*) as total FROM (
+             SELECT DISTINCT lower(regexp_replace(title, '^(FW:|RE:|FWD:)\\s*', '', 'i')), start_time
+             FROM team_events
+             WHERE (property_id = ANY($1) OR company_name = $2)
+               AND start_time >= NOW()
+               AND title NOT ILIKE 'cancelled:%'
+               AND title NOT ILIKE '%team meeting (%'
+               AND title NOT ILIKE '%weekly call%'
+               AND title NOT ILIKE '%padel%'
+           ) t`,
           [propertyIds, cpCompanyName]
         );
         upcomingEvents = parseInt(eventsResult.rows[0]?.total || "0");
@@ -5715,14 +6137,28 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       let upcomingEventsList: any[] = [];
       let calendarEvents: any[] = [];
       if (propertyIds.length > 0) {
+        // Client-facing events must be about the client's portfolio, not BGP's
+        // own diary. Drop cancelled meetings, BGP-internal team calls/socials,
+        // and de-duplicate the same meeting synced from several attendees'
+        // calendars (same title + start slot).
         const eventsListResult = await pool.query(
-          `SELECT id, title, start_time, end_time, event_type, location, property_id
+          `SELECT DISTINCT ON (lower(regexp_replace(title, '^(FW:|RE:|FWD:)\\s*', '', 'i')), start_time)
+                  id, regexp_replace(title, '^(FW:|RE:|FWD:)\\s*', '', 'i') AS title,
+                  start_time, end_time, event_type, location, property_id
            FROM team_events
-           WHERE (property_id = ANY($1) OR company_name = $2) AND start_time >= NOW()
-           ORDER BY start_time LIMIT 20`,
+           WHERE (property_id = ANY($1) OR company_name = $2)
+             AND start_time >= NOW()
+             AND title NOT ILIKE 'cancelled:%'
+             AND title NOT ILIKE '%team meeting (%'
+             AND title NOT ILIKE '%weekly call%'
+             AND title NOT ILIKE '%padel%'
+           ORDER BY lower(regexp_replace(title, '^(FW:|RE:|FWD:)\\s*', '', 'i')), start_time, id`,
           [propertyIds, cpCompanyName]
         );
-        upcomingEventsList = eventsListResult.rows;
+        // DISTINCT ON forces title ordering, so re-sort chronologically here.
+        upcomingEventsList = eventsListResult.rows
+          .sort((a: any, b: any) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+          .slice(0, 20);
 
         const calendarResult = await pool.query(
           `SELECT te.id, te.title, te.start_time, te.end_time, te.event_type, te.location, te.property_id, p.name as property_name
@@ -5802,6 +6238,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           vacantUnits,
           vacancyRate: totalUnits > 0 ? ((vacantUnits / totalUnits) * 100).toFixed(1) : "0",
           totalPassingRent,
+          rentRecordedUnits,
           activeDeals: parseInt(dealsResult.rows[0]?.active || "0"),
           totalContacts: parseInt(contactsResult.rows[0]?.total || "0"),
           upcomingEvents,
@@ -5812,12 +6249,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           description: company.description,
           address: company.head_office_address,
           companyType: company.company_type,
-          kycStatus: company.kyc_status,
-          kycCheckedAt: company.kyc_checked_at,
+          // KYC/AML status and PSC ownership are BGP's own compliance record
+          // ON this client — never send them back to the client themselves.
+          kycStatus: scopeCompanyId ? null : company.kyc_status,
+          kycCheckedAt: scopeCompanyId ? null : company.kyc_checked_at,
           bgpContacts: company.bgp_contact_user_ids || [],
           companiesHouseNumber: company.companies_house_number,
           parentCompanyName,
-          pscList,
+          pscList: scopeCompanyId ? [] : pscList,
           linkedinUrl: company.linkedin_url,
           phone: company.phone,
           industry: company.industry,
@@ -6352,6 +6791,11 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.json(result);
     } catch (e: any) {
       console.error("[ai-briefing] Error:", e.message);
+      // Missing/invalid AI credentials is an environment state, not a server
+      // fault — return 503 with a clean message instead of a raw SDK error.
+      if (/api ?key|authentication|authToken/i.test(e.message || "")) {
+        return res.status(503).json({ error: "AI briefing unavailable — AI service is not configured" });
+      }
       res.status(500).json({ error: e.message });
     }
   });

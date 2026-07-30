@@ -1078,7 +1078,7 @@ function CompanyDetail({ id }: { id: string }) {
   const [editOpen, setEditOpen] = useState(false);
   // Client logins get a read-only view — hide BGP staff editing controls.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const isClientViewer = currentUser?.role === "Client";
+  const isClientViewer = currentUser?.role === "Client" || !!(currentUser as any)?.companyScopeId;
   const { data: company, isLoading } = useQuery<CrmCompany>({
     queryKey: ["/api/crm/companies", id],
   });
@@ -1113,6 +1113,7 @@ function CompanyDetail({ id }: { id: string }) {
 
   const { data: companyDealLinksForDetailRaw } = useQuery<{ companyId: string; dealId: string }[]>({
     queryKey: ["/api/crm/company-deal-links"],
+    enabled: !isClientViewer, // firm-wide cross-company map — staff-only (403 for clients)
   });
   const companyDealLinksForDetail = Array.isArray(companyDealLinksForDetailRaw) ? companyDealLinksForDetailRaw : [];
 

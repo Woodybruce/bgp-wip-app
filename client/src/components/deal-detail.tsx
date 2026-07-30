@@ -197,6 +197,16 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     queryKey: ["/api/crm/deals", id],
   });
 
+  // Client logins (e.g. Landsec) see a trimmed deal page — no BGP-internal
+  // panels (AI activity feed of staff emails, KYC/AML, Xero billing,
+  // SharePoint folders). Those endpoints 403 for clients anyway; hiding the
+  // panels stops broken cards + console noise on the deal they open.
+  const { data: ddUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  // Treat the user as a client until auth/me resolves — on a hard page load
+  // the panels otherwise mount for a beat and fire their (403) queries
+  // before the role is known. Staff just see the panels pop in a tick later.
+  const isClientDeal = !ddUser || ddUser.role === "Client" || !!ddUser.companyScopeId;
+
   const { data: properties = [] } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
   });
@@ -221,6 +231,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     unitUprn?: string | null; unitAddressFreeText?: string | null;
   }>>({
     queryKey: ["/api/property-units"],
+    enabled: !isClientDeal,
   });
   const linkedUnit = (deal as any)?.unitId
     ? propertyUnits.find((u) => u.id === (deal as any).unitId)
@@ -476,7 +487,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       </div>
 
       <div className="flex-1 flex min-h-0">
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto cq-body">
           <div className="p-4 sm:p-5 space-y-2.5">
       <div className="flex items-center gap-2 flex-wrap">
         <Button
@@ -490,7 +501,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         >
           <ArrowLeft className="w-4 h-4" />
         </Button>
-        <div className="flex-1 min-w-0">
+        {/* min-w-[16rem], not min-w-0: with basis 0 the title block "fits" at
+            any width, so the wrap never triggered and a narrow window (chat
+            panel open) crushed the heading to one word per line — the action
+            buttons must wrap below instead. */}
+        <div className="flex-1 min-w-[16rem]">
           {(() => {
             // Investment (Sale/Purchase) deals are about the whole property —
             // heading = property name. Leasing deals are about a specific unit
@@ -645,7 +660,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       )}
 
       {/* Parties + Fee Allocation side by side to use the horizontal space. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5 items-start">
+      <div className="cq-two-up">
       <Card>
         <CardContent className="p-4 space-y-2">
           <div className="flex items-center gap-2 mb-1">
@@ -697,6 +712,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 placeholder="Link purchaser"
               />
             </div>
+            {!isClientDeal && (
             <div className="flex flex-col gap-1">
               <p className="text-[10px] text-muted-foreground leading-tight">Xero Contact</p>
               {(deal as any).xeroContactName ? (
@@ -710,13 +726,16 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 <span className="text-[11px] text-muted-foreground italic">Set via Edit · Xero Contact</span>
               )}
             </div>
+            )}
           </div>
         </CardContent>
       </Card>
 
       {/* Fee Allocation sits next to Parties. The allocated agents ARE the
           BGP contacts, so the separate BGP Contacts card was removed —
-          edit the agents via the Fee Allocation "Edit" button. */}
+          edit the agents via the Fee Allocation "Edit" button.
+          BGP fees are never shown to client logins. */}
+      {!isClientDeal ? (
       <FeeAllocationCard
         dealId={deal.id}
         dealFee={deal.fee}
@@ -724,6 +743,31 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         users={users.map(u => ({ id: String(u.id), name: u.name }))}
         colorMap={userColorMap}
       />
+      ) : (deal.fee != null || deal.feePercentage != null) ? (
+        // Client-facing fee view: the fee they're paying us. Headline rent
+        // already appears in the metrics card below, so it's not repeated
+        // here. The internal per-agent split (FeeAllocationCard) stays
+        // staff-only.
+        <Card>
+          <CardContent className="p-3">
+            <h3 className="text-[10px] text-muted-foreground font-medium uppercase tracking-widest mb-2">BGP Fee</h3>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+              {deal.fee != null && (
+                <div className="flex flex-col py-1">
+                  <p className="text-[10px] text-muted-foreground leading-tight">Total Fee</p>
+                  <p className="text-xs font-mono font-medium" data-testid="text-client-fee-total">{formatCurrency(deal.fee)}</p>
+                </div>
+              )}
+              {deal.feePercentage != null && (
+                <div className="flex flex-col py-1">
+                  <p className="text-[10px] text-muted-foreground leading-tight">Agency Fee</p>
+                  <p className="text-xs font-mono font-medium" data-testid="text-client-fee-pct">{deal.feePercentage}%</p>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
       </div>
 
       {(numericFields.some((f) => f.value != null) || [deal.gfAreaSqft, deal.ffAreaSqft, deal.basementAreaSqft, deal.itzaAreaSqft].some((v) => v != null)) && (
@@ -770,7 +814,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       </Card>
       )}
 
-      <XeroInvoiceSection dealId={deal.id} deal={deal} companies={companies} />
+      {!isClientDeal && <XeroInvoiceSection dealId={deal.id} deal={deal} companies={companies} />}
 
       <Dialog open={sharepointDialogOpen} onOpenChange={setSharepointDialogOpen}>
         <DialogContent className="max-w-md">
@@ -822,9 +866,12 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       </Dialog>
 
       {/* AI-curated activity — primary comms feed (emails + meetings), shown
-          above KYC. Raw sources live in "History & activity" in the rail. */}
-      <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />
+          above KYC. Raw sources live in "History & activity" in the rail.
+          Hidden for clients: it surfaces BGP staff emails/meetings. */}
+      {!isClientDeal && <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />}
 
+      {/* KYC/AML is BGP-internal compliance — never shown to clients. */}
+      {!isClientDeal && (
       <CollapsibleCard open={mainSections.kyc} onToggle={() => toggleMain("kyc")} icon={ShieldCheck} title="KYC" testId="toggle-deal-kyc">
         <div className="space-y-3">
           <DealKYCPanel deal={deal} companies={companies} />
@@ -834,6 +881,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           <DealAmlStatusCard dealId={id} />
         </div>
       </CollapsibleCard>
+      )}
 
       {[
         { company: linkedTenant, role: "Tenant" },
@@ -951,12 +999,14 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </DialogContent>
       </Dialog>
 
+      {!isClientDeal && (
       <div className="flex justify-start mt-6 pt-3 border-t">
         <Button variant="outline" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteOpen(true)} data-testid="button-delete-deal">
           <Trash2 className="w-4 h-4 mr-2" />
           Delete Deal
         </Button>
       </div>
+      )}
 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
@@ -993,14 +1043,17 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 {/* The deal's files live in its property's folder — render the
                     same unified Files panel (browse / upload / new folder /
                     rename / delete / share) instead of just a link. */}
-                {linkedProperty && (
+                {linkedProperty && !isClientDeal && (
                   <PropertyFoldersPanel
                     propertyName={linkedProperty.name}
                     folderTeams={(linkedProperty as any).folderTeams}
                     sharepointFolderUrl={(linkedProperty as any).sharepointFolderUrl}
                   />
                 )}
-                {!linkedProperty && (
+                {isClientDeal && (
+                  <p className="text-xs text-muted-foreground italic">Documents are managed by the BGP team.</p>
+                )}
+                {!linkedProperty && !isClientDeal && (
                   <p className="text-xs text-muted-foreground italic">Link this deal to a property to see its folders.</p>
                 )}
               </div>

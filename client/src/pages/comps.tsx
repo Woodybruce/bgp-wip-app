@@ -58,6 +58,20 @@ interface CompFile {
   createdAt: string;
 }
 
+// Server-computed net effective rent (rent-free + capital spread over term certain),
+// attached to every /api/crm/comps row.
+interface CompDevaluation {
+  netEffectiveRentPa: number;
+  netEffectiveRentPsf: number | null;
+  headlineRentPa: number;
+  termCertainYears: number;
+  rentFreeMonths: number;
+  capitalDeducted: number;
+  note: string;
+}
+
+const devaluationOf = (c: CrmComp): CompDevaluation | null => (c as any).devaluation || null;
+
 interface PdfTemplateConfig {
   headerTitle?: string;
   headerSubtitle?: string;
@@ -499,8 +513,8 @@ const UK_INDEX_FALLBACK: { year: number; rpi: number; cpi: number }[] = [
 // Inline-edit cell that stores raw numbers but displays them with thousands separators.
 // Editing exposes the raw digits; on save we strip non-numeric characters before persisting.
 function NumberCell({
-  value, onSave, suffix = "", className = "",
-}: { value: string | null | undefined; onSave: (v: string) => void; suffix?: string; className?: string }) {
+  value, onSave, suffix = "", className = "", readOnly = false,
+}: { value: string | null | undefined; onSave: (v: string) => void; suffix?: string; className?: string; readOnly?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -531,8 +545,8 @@ function NumberCell({
   }
   return (
     <span
-      onClick={() => { setDraft(n ? String(n) : ""); setEditing(true); }}
-      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
+      onClick={readOnly ? undefined : () => { setDraft(n ? String(n) : ""); setEditing(true); }}
+      className={`${readOnly ? "" : "cursor-pointer hover:bg-muted/60"} rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
       data-testid="number-cell-display"
     >
       {display || "—"}
@@ -540,10 +554,20 @@ function NumberCell({
   );
 }
 
+// Read-only stand-in for InlineLabelSelect on client-scoped views.
+function StaticLabel({ value, colorMap }: { value: string | null | undefined; colorMap?: Record<string, string> }) {
+  if (!value) return <span className="text-[11px] text-muted-foreground">—</span>;
+  return (
+    <span className={`${colorMap?.[value] || "bg-gray-500 text-white"} font-medium rounded-full whitespace-nowrap overflow-hidden text-ellipsis max-w-full inline-block align-middle text-[11px] px-2.5 py-1`}>
+      {value}
+    </span>
+  );
+}
+
 // Currency edit cell with £ + thousands separators. Stores raw number string.
 function CurrencyCell({
-  value, onSave, compact = false, className = "",
-}: { value: string | null | undefined; onSave: (v: string) => void; compact?: boolean; className?: string }) {
+  value, onSave, compact = false, className = "", readOnly = false,
+}: { value: string | null | undefined; onSave: (v: string) => void; compact?: boolean; className?: string; readOnly?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -574,8 +598,8 @@ function CurrencyCell({
   }
   return (
     <span
-      onClick={() => { setDraft(n ? String(n) : ""); setEditing(true); }}
-      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
+      onClick={readOnly ? undefined : () => { setDraft(n ? String(n) : ""); setEditing(true); }}
+      className={`${readOnly ? "" : "cursor-pointer hover:bg-muted/60"} rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
       data-testid="currency-cell-display"
     >
       {display || "—"}
@@ -586,8 +610,8 @@ function CurrencyCell({
 // Stepped headline rent cell — accepts "/"-delimited annual amounts (e.g. "100000/110000/120000").
 // Display compactly as "£100K → £110K → £120K".
 function SteppedRentCell({
-  value, onSave, className = "",
-}: { value: string | null | undefined; onSave: (v: string) => void; className?: string }) {
+  value, onSave, className = "", readOnly = false,
+}: { value: string | null | undefined; onSave: (v: string) => void; className?: string; readOnly?: boolean }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -626,8 +650,8 @@ function SteppedRentCell({
     <Tooltip>
       <TooltipTrigger asChild>
         <span
-          onClick={() => { setDraft(steps.length > 1 ? steps.join("/") : (steps[0] ? String(steps[0]) : "")); setEditing(true); }}
-          className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
+          onClick={readOnly ? undefined : () => { setDraft(steps.length > 1 ? steps.join("/") : (steps[0] ? String(steps[0]) : "")); setEditing(true); }}
+          className={`${readOnly ? "" : "cursor-pointer hover:bg-muted/60"} rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
           data-testid="stepped-rent-display"
         >
           {display || "—"}
@@ -1895,12 +1919,19 @@ export default function Comps() {
   const [includeFilesInPdf, setIncludeFilesInPdf] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Client logins (Landsec) get comps scoped to their schemes, read-only — staff writes 403 for them.
+  const { data: compsViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientComps = compsViewer?.role === "Client" || !!compsViewer?.companyScopeId;
+
   const { data: comps = [], isLoading } = useQuery<CrmComp[]>({
     queryKey: ["/api/crm/comps"],
   });
 
   const { data: pdfTemplate } = useQuery<PdfTemplateConfig>({
     queryKey: ["/api/comp-pdf-template"],
+    // staff-only PDF export config — wait for the viewer to resolve so a
+    // client's first paint doesn't fire it (403)
+    enabled: !!compsViewer && !isClientComps,
   });
 
   const { data: properties = [] } = useQuery<any[]>({
@@ -2372,7 +2403,7 @@ export default function Comps() {
                 )}
               </TabsTrigger>
               )}
-              {!isMobile && (<>
+              {!isMobile && !isClientComps && (<>
               <TabsTrigger value="lease-events" data-testid="tab-comps-lease-events">
                 <Bell className="w-3.5 h-3.5 mr-1.5" />
                 Lease Events
@@ -2387,6 +2418,7 @@ export default function Comps() {
           {activeTab === "table" && (
           <div className="flex items-center gap-2">
             {!isMobile && (<>
+            {!isClientComps && (
             <Button
               variant="outline"
               size="sm"
@@ -2415,6 +2447,7 @@ export default function Comps() {
               {scanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
               Scan All
             </Button>
+            )}
             <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={() => setCalcOpen(true)} data-testid="button-open-calculator">
               <Calculator className="w-3.5 h-3.5" />
               Net Rent Calc
@@ -2428,10 +2461,48 @@ export default function Comps() {
               Export
             </Button>
             </>)}
+            {!isClientComps && (
+            <label className="inline-flex">
+              <input
+                type="file"
+                accept=".xlsx"
+                className="hidden"
+                data-testid="input-import-dataset"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  toast({ title: "Importing dataset…", description: file.name });
+                  try {
+                    const fd = new FormData();
+                    fd.append("file", file);
+                    const res = await fetch("/api/admin/import-portfolio-comps", {
+                      method: "POST", credentials: "include", body: fd,
+                      headers: { Authorization: `Bearer ${localStorage.getItem("bgp_auth_token")}` },
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data?.error || `Server error ${res.status}`);
+                    queryClient.invalidateQueries({ queryKey: ["/api/crm/comps"] });
+                    toast({
+                      title: "Dataset imported",
+                      description: `${data.lettings} lettings across ${Object.keys(data.schemes || {}).length} schemes — ${data.inserted} new, ${data.updated} updated.`,
+                    });
+                  } catch (err: any) {
+                    toast({ title: "Import failed", description: err?.message, variant: "destructive" });
+                  }
+                }}
+              />
+              <Button size="sm" variant="outline" className="gap-1.5 h-8" asChild data-testid="button-import-dataset">
+                <span><Download className="w-3.5 h-3.5 rotate-180" /> Import Dataset</span>
+              </Button>
+            </label>
+            )}
+            {!isClientComps && (
             <Button size="sm" className="gap-1.5 h-8" onClick={() => { resetCreateForm(); setCreateOpen(true); }} data-testid="button-create-comp">
               <Plus className="w-3.5 h-3.5" />
               Add Comp
             </Button>
+            )}
           </div>
           )}
         </div>
@@ -2527,6 +2598,7 @@ export default function Comps() {
       {(activeTab === "table" || activeTab === "leads") && selectedIds.size > 0 && (
         <div className="flex items-center gap-3 px-4 py-2 bg-muted/50 border-b text-xs">
           <span className="font-medium">{selectedIds.size} selected</span>
+          {!isClientComps && (<>
           <Button
             variant="outline"
             size="sm"
@@ -2547,6 +2619,7 @@ export default function Comps() {
           >
             <X className="w-3 h-3" /> Unverify
           </Button>
+          </>)}
           <Button
             variant="outline"
             size="sm"
@@ -2561,9 +2634,11 @@ export default function Comps() {
             {pdfExporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileDown className="w-3 h-3" />}
             Export PDF
           </Button>
+          {!isClientComps && (
           <Button variant="destructive" size="sm" className="h-7 gap-1 text-xs" onClick={() => setBulkDeleteOpen(true)}>
             <Trash2 className="w-3 h-3" /> Discard
           </Button>
+          )}
           <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setSelectedIds(new Set())}>
             Clear
           </Button>
@@ -2579,11 +2654,17 @@ export default function Comps() {
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-center">
             <Scale className="w-12 h-12 text-muted-foreground/20 mb-3" />
-            <h3 className="text-sm font-semibold mb-1">{comps.length === 0 ? "No comps yet" : "No matching comps"}</h3>
+            <h3 className="text-sm font-semibold mb-1">
+              {comps.length > 0 ? "No matching comps"
+                : isClientComps ? "No comparable evidence recorded for your schemes yet"
+                : "No comps yet"}
+            </h3>
             <p className="text-xs text-muted-foreground mb-4">
-              {comps.length === 0 ? "Add your first comparable transaction or ask ChatBGP to extract from your OneDrive files" : "Try adjusting your filters"}
+              {comps.length > 0 ? "Try adjusting your filters"
+                : isClientComps ? "Your BGP team adds comps as deals complete."
+                : "Add your first comparable transaction or ask ChatBGP to extract from your OneDrive files"}
             </p>
-            {comps.length === 0 && (
+            {comps.length === 0 && !isClientComps && (
               <Button size="sm" onClick={() => { resetCreateForm(); setCreateOpen(true); }}>
                 <Plus className="w-4 h-4 mr-1.5" /> Add First Comp
               </Button>
@@ -2594,9 +2675,11 @@ export default function Comps() {
             {filtered.map(comp => {
               const addr = comp.address as any;
               const sub = comp.areaLocation || addr?.city || comp.postcode || undefined;
+              const dv = devaluationOf(comp);
               const rows = [
                 { label: "Headline rent", value: comp.headlineRent },
                 { label: "Zone A psf", value: comp.zoneARate },
+                { label: "Net effective", value: dv ? `£${dv.netEffectiveRentPa.toLocaleString()} pa${dv.netEffectiveRentPsf != null ? ` · £${dv.netEffectiveRentPsf} psf` : ""}` : null },
                 { label: "NIA", value: comp.niaSqft ? `${comp.niaSqft} sq ft` : null },
                 { label: "ITZA", value: comp.itzaSqft ? `${comp.itzaSqft} sq ft` : null },
                 { label: "Term", value: comp.term ? `${comp.term} yrs` : null },
@@ -2651,6 +2734,7 @@ export default function Comps() {
               <col style={{ width: 90 }} />
               <col style={{ width: 130 }} />
               <col style={{ width: 90 }} />
+              <col style={{ width: 120 }} />
               <col style={{ width: 90 }} />
               <col style={{ width: 110 }} />
               <col style={{ width: 90 }} />
@@ -2687,6 +2771,7 @@ export default function Comps() {
                 <SortHeader field="completionDate">Date</SortHeader>
                 <SortHeader field="headlineRent">Headline</SortHeader>
                 <SortHeader field="zoneARate">Zone A</SortHeader>
+                <th className="px-2 py-2.5 text-left text-sm font-semibold uppercase tracking-wider text-muted-foreground select-none whitespace-nowrap">Net Effective</th>
                 <SortHeader field="overallRate">Overall</SortHeader>
                 <SortHeader field="netEffectiveRent">Net Eff.</SortHeader>
                 <SortHeader field="effectiveRatePsf">Net psf</SortHeader>
@@ -2733,6 +2818,7 @@ export default function Comps() {
                       >
                         <Eye className="w-3.5 h-3.5 text-muted-foreground" />
                       </button>
+                    {!isClientComps && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button className="p-1 rounded hover:bg-muted transition-colors" data-testid={`comp-menu-${comp.id}`}>
@@ -2760,6 +2846,7 @@ export default function Comps() {
                         )}
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    )}
                     </div>
                   </td>
                   <td className="px-2 py-1.5 align-top">
@@ -2796,6 +2883,7 @@ export default function Comps() {
                           </Link>
                         );
                       })()}
+                      {!isClientComps && (
                       <InlineLinkSelect
                         value={comp.propertyId}
                         options={propertyOptions}
@@ -2820,6 +2908,7 @@ export default function Comps() {
                         }}
                         compact
                       />
+                      )}
                       {!comp.propertyId && !propertyByName.get(normName(comp.name || "")) && (
                         <a
                           href={buildGoogleMapsUrl((comp.address as any)?.formatted || comp.name) || "#"}
@@ -2848,8 +2937,10 @@ export default function Comps() {
                   </td>
                   <td className="px-2 py-1.5 truncate">
                     <div className="flex items-center gap-1">
-                      <InlineText value={comp.tenant || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "tenant", value: v })} className="block truncate" />
-                      {comp.tenant && (() => {
+                      {isClientComps
+                        ? <span className="block truncate text-xs px-1.5 py-0.5">{comp.tenant || "—"}</span>
+                        : <InlineText value={comp.tenant || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "tenant", value: v })} className="block truncate" />}
+                      {comp.tenant && !isClientComps && (() => {
                         const companyId = findCompanyId(comp.tenant);
                         if (companyId) {
                           return (
@@ -2878,29 +2969,37 @@ export default function Comps() {
                     </div>
                   </td>
                   <td className="px-2 py-1.5 truncate">
-                    <InlineText value={comp.areaLocation || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "areaLocation", value: v })} className="block truncate" />
+                    {isClientComps
+                      ? <span className="block truncate text-xs px-1.5 py-0.5">{comp.areaLocation || "—"}</span>
+                      : <InlineText value={comp.areaLocation || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "areaLocation", value: v })} className="block truncate" />}
                   </td>
                   <td className="px-2 py-1.5">
-                    <InlineLabelSelect
-                      value={comp.useClass || ""}
-                      options={USE_CLASS_OPTIONS}
-                      colorMap={USE_CLASS_COLORS}
-                      onSave={v => updateMutation.mutate({ id: comp.id, field: "useClass", value: v })}
-                    />
+                    {isClientComps
+                      ? <StaticLabel value={comp.useClass} colorMap={USE_CLASS_COLORS} />
+                      : <InlineLabelSelect
+                          value={comp.useClass || ""}
+                          options={USE_CLASS_OPTIONS}
+                          colorMap={USE_CLASS_COLORS}
+                          onSave={v => updateMutation.mutate({ id: comp.id, field: "useClass", value: v })}
+                        />}
                   </td>
                   <td className="px-2 py-1.5">
-                    <InlineLabelSelect
-                      value={comp.transactionType || ""}
-                      options={TRANSACTION_TYPE_OPTIONS}
-                      colorMap={TXN_TYPE_COLORS}
-                      onSave={v => updateMutation.mutate({ id: comp.id, field: "transactionType", value: v })}
-                    />
+                    {isClientComps
+                      ? <StaticLabel value={comp.transactionType} colorMap={TXN_TYPE_COLORS} />
+                      : <InlineLabelSelect
+                          value={comp.transactionType || ""}
+                          options={TRANSACTION_TYPE_OPTIONS}
+                          colorMap={TXN_TYPE_COLORS}
+                          onSave={v => updateMutation.mutate({ id: comp.id, field: "transactionType", value: v })}
+                        />}
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <InlineText value={comp.completionDate || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "completionDate", value: v })} />
+                    {isClientComps
+                      ? <span className="text-xs px-1.5 py-0.5">{comp.completionDate || "—"}</span>
+                      : <InlineText value={comp.completionDate || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "completionDate", value: v })} />}
                   </td>
                   <td className="px-2 py-1.5 font-semibold whitespace-nowrap">
-                    <SteppedRentCell value={comp.headlineRent || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "headlineRent", value: v })} />
+                    <SteppedRentCell value={comp.headlineRent || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "headlineRent", value: v })} readOnly={isClientComps} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-blue-600 font-semibold">
                     <FormulaCell
@@ -2915,7 +3014,22 @@ export default function Comps() {
                       formulaLabel="Zone A = Rent ÷ ITZA"
                       disabled={!parseNum(comp.headlineRent) || !parseNum(comp.itzaSqft)}
                       currency
+                      readOnly={isClientComps}
                     />
+                  </td>
+                  <td className="px-2 py-1.5 whitespace-nowrap text-green-700">
+                    {(() => {
+                      const dv = devaluationOf(comp);
+                      if (!dv) return <span className="text-muted-foreground">—</span>;
+                      return (
+                        <div title={dv.note}>
+                          <span className="font-semibold">£{dv.netEffectiveRentPa.toLocaleString()} pa</span>
+                          {dv.netEffectiveRentPsf != null && (
+                            <span className="block text-[10px] text-muted-foreground">£{dv.netEffectiveRentPsf} psf</span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
                     <FormulaCell
@@ -2931,6 +3045,7 @@ export default function Comps() {
                       formulaLabel={`Overall = Rent ÷ ${preferredAreaField(comp.useClass) === "giaSqft" ? "GIA" : "NIA"}${!parseNum(comp[preferredAreaField(comp.useClass)]) ? " (falling back to other area)" : ""}`}
                       disabled={!parseNum(comp.headlineRent) || (!parseNum(comp.niaSqft) && !parseNum(comp.giaSqft))}
                       currency
+                      readOnly={isClientComps}
                     />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-green-600 font-semibold">
@@ -2945,6 +3060,7 @@ export default function Comps() {
                       formulaLabel="Net Eff = Avg headline (across stepped rents) − (Rent free £ + Tenant incentive £) ÷ Term"
                       disabled={!parseNum(comp.headlineRent) || !parseYears(comp.term)}
                       currency
+                      readOnly={isClientComps}
                     />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-green-700 font-semibold">
@@ -2964,47 +3080,56 @@ export default function Comps() {
                         (!parseNum(comp.niaSqft) && !parseNum(comp.giaSqft))
                       }
                       currency
+                      readOnly={isClientComps}
                     />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <NumberCell value={comp.niaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "niaSqft", value: v })} />
+                    <NumberCell value={comp.niaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "niaSqft", value: v })} readOnly={isClientComps} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <NumberCell value={comp.giaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "giaSqft", value: v })} />
+                    <NumberCell value={comp.giaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "giaSqft", value: v })} readOnly={isClientComps} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <NumberCell value={comp.itzaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "itzaSqft", value: v })} />
+                    <NumberCell value={comp.itzaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "itzaSqft", value: v })} readOnly={isClientComps} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <NumberCell value={comp.term || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "term", value: v })} />
+                    <NumberCell value={comp.term || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "term", value: v })} readOnly={isClientComps} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <NumberCell value={comp.rentFreeMonths || comp.rentFree || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "rentFreeMonths", value: v })} />
+                    <NumberCell value={comp.rentFreeMonths || comp.rentFree || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "rentFreeMonths", value: v })} readOnly={isClientComps} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-amber-700">
-                    <CurrencyCell value={comp.fitoutContribution || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "fitoutContribution", value: v })} />
+                    <CurrencyCell value={comp.fitoutContribution || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "fitoutContribution", value: v })} readOnly={isClientComps} />
                   </td>
                   <td className="px-2 py-1.5">
-                    <InlineLabelSelect
-                      value={comp.ltActStatus || ""}
-                      options={LT_ACT_OPTIONS}
-                      colorMap={{
-                        "Inside L&T Act": "bg-green-600 text-white",
-                        "Outside L&T Act": "bg-red-600 text-white",
-                        "Contracted Out": "bg-amber-600 text-white",
-                      }}
-                      onSave={v => updateMutation.mutate({ id: comp.id, field: "ltActStatus", value: v })}
-                    />
+                    {isClientComps
+                      ? <StaticLabel value={comp.ltActStatus} colorMap={{
+                          "Inside L&T Act": "bg-green-600 text-white",
+                          "Outside L&T Act": "bg-red-600 text-white",
+                          "Contracted Out": "bg-amber-600 text-white",
+                        }} />
+                      : <InlineLabelSelect
+                          value={comp.ltActStatus || ""}
+                          options={LT_ACT_OPTIONS}
+                          colorMap={{
+                            "Inside L&T Act": "bg-green-600 text-white",
+                            "Outside L&T Act": "bg-red-600 text-white",
+                            "Contracted Out": "bg-amber-600 text-white",
+                          }}
+                          onSave={v => updateMutation.mutate({ id: comp.id, field: "ltActStatus", value: v })}
+                        />}
                   </td>
                   {/* Source column */}
                   <td className="px-2 py-1.5">
                     <div className="flex flex-col gap-0.5">
-                      <InlineLabelSelect
-                        value={normaliseSource(comp.sourceEvidence) || comp.sourceEvidence || ""}
-                        options={SOURCE_LIST as unknown as string[]}
-                        colorMap={SOURCE_LIST.reduce<Record<string, string>>((m, k) => { m[k] = SOURCE_TYPES[k].badgeClass; return m; }, {})}
-                        onSave={v => updateMutation.mutate({ id: comp.id, field: "sourceEvidence", value: v })}
-                      />
+                      {isClientComps
+                        ? <span className="text-[11px] truncate block">{normaliseSource(comp.sourceEvidence) || comp.sourceEvidence || "—"}</span>
+                        : <InlineLabelSelect
+                            value={normaliseSource(comp.sourceEvidence) || comp.sourceEvidence || ""}
+                            options={SOURCE_LIST as unknown as string[]}
+                            colorMap={SOURCE_LIST.reduce<Record<string, string>>((m, k) => { m[k] = SOURCE_TYPES[k].badgeClass; return m; }, {})}
+                            onSave={v => updateMutation.mutate({ id: comp.id, field: "sourceEvidence", value: v })}
+                          />}
                       {(comp as any).sourceUrl && (
                         <a
                           href={(comp as any).sourceUrl}
@@ -3041,7 +3166,7 @@ export default function Comps() {
                             )}
                           </div>
                         </div>
-                      ) : (
+                      ) : isClientComps ? null : (
                         <InlineLinkSelect
                           value={(comp as any).sourceContactId || ""}
                           options={contactOptions}
@@ -3072,7 +3197,7 @@ export default function Comps() {
                           <ExternalLink className="w-3 h-3 shrink-0" />
                           <span className="truncate text-[11px]">Link</span>
                         </a>
-                      ) : (
+                      ) : isClientComps ? null : (
                         <InlineText value="" placeholder="Add URL" onSave={v => updateMutation.mutate({ id: comp.id, field: "sourceUrl", value: v })} className="text-[11px] truncate" />
                       )}
                     </div>
@@ -3089,7 +3214,7 @@ export default function Comps() {
                             <span className="text-[11px] font-medium truncate">{comp.contactName}</span>
                           )}
                         </div>
-                      ) : (
+                      ) : isClientComps ? null : (
                         <InlineText value="" placeholder="Name" onSave={v => updateMutation.mutate({ id: comp.id, field: "contactName", value: v })} className="text-[11px]" />
                       )}
                       {comp.contactCompany && <span className="text-[10px] text-muted-foreground truncate">{comp.contactCompany}</span>}
@@ -3102,6 +3227,9 @@ export default function Comps() {
                     </div>
                   </td>
                   <td className="px-2 py-1.5">
+                    {isClientComps ? (
+                      <span className="text-[11px] truncate block">{(comp.dealId && dealById.get(comp.dealId)?.name) || "—"}</span>
+                    ) : (
                     <DealCell
                       value={comp.dealId || ""}
                       deals={deals}
@@ -3113,10 +3241,12 @@ export default function Comps() {
                         }
                       }}
                     />
+                    )}
                   </td>
                   <td className="px-2 py-1.5 text-center">
                     <button
                       onClick={() => updateMutation.mutate({ id: comp.id, field: "verified", value: !comp.verified })}
+                      disabled={isClientComps}
                       className="transition-colors"
                       data-testid={`toggle-verified-${comp.id}`}
                     >
@@ -3128,13 +3258,15 @@ export default function Comps() {
                     </button>
                   </td>
                   <td className="px-2 py-1.5 align-top">
-                    <InlineText
-                      value={comp.comments || ""}
-                      onSave={v => updateMutation.mutate({ id: comp.id, field: "comments", value: v })}
-                      multiline
-                      maxLines={2}
-                      className="block max-w-[230px] whitespace-normal"
-                    />
+                    {isClientComps
+                      ? <span className="block max-w-[230px] whitespace-normal text-xs px-1.5 py-0.5">{comp.comments || "—"}</span>
+                      : <InlineText
+                          value={comp.comments || ""}
+                          onSave={v => updateMutation.mutate({ id: comp.id, field: "comments", value: v })}
+                          multiline
+                          maxLines={2}
+                          className="block max-w-[230px] whitespace-normal"
+                        />}
                   </td>
                 </tr>
               ))}
@@ -3151,9 +3283,11 @@ export default function Comps() {
       </TabsContent>
 
       <TabsContent value="lease-events" className="flex-1 mt-0 data-[state=inactive]:hidden overflow-hidden">
+        {!isClientComps && (
         <ErrorBoundary name="Lease Events">
           <LeaseEventsPage embedded />
         </ErrorBoundary>
+        )}
       </TabsContent>
 
       <TabsContent value="leads" className="flex-1 overflow-auto mt-0 p-4">
@@ -3341,6 +3475,7 @@ export default function Comps() {
       </TabsContent>
 
       <TabsContent value="pdf-template" className="flex-1 overflow-auto mt-0 p-6 space-y-6">
+        {!isClientComps && (<>
         <DealCompPackPanel
           deals={deals}
           comps={comps}
@@ -3376,6 +3511,7 @@ export default function Comps() {
             <CompPdfTemplateEditor scope="investment" />
           </TabsContent>
         </Tabs>
+        </>)}
       </TabsContent>
 
       <Dialog open={!!selectedComp} onOpenChange={(open) => { if (!open) setSelectedComp(null); }}>
@@ -3904,6 +4040,7 @@ function FormulaCell({
   formulaLabel,
   disabled,
   currency,
+  readOnly = false,
 }: {
   value: string;
   onSave: (v: string) => void;
@@ -3911,12 +4048,18 @@ function FormulaCell({
   formulaLabel: string;
   disabled?: boolean;
   currency?: boolean;
+  readOnly?: boolean;
 }) {
   const handleCompute = (e: React.MouseEvent) => {
     e.stopPropagation();
     const next = compute();
     if (next != null) onSave(next);
   };
+  if (readOnly) {
+    return currency
+      ? <CurrencyCell value={value} onSave={onSave} readOnly />
+      : <span className="text-xs px-1.5 py-0.5 inline-block">{value || "—"}</span>;
+  }
   return (
     <div className="flex items-center gap-1 group">
       {currency ? (

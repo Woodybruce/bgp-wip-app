@@ -16,6 +16,21 @@ async function getUserId(req: Request): Promise<string | null> {
   return (req.session as any)?.userId || (req as any).tokenUserId || null;
 }
 
+// The board can hang off a duplicate company row (a second "Landsec"
+// record), so writes have to match rows on any same-named unmerged sibling
+// — the same set the GET reads across.
+async function boardCompanyIds(pool: any, clientCompanyId: string): Promise<string[]> {
+  const r = await pool.query(`
+    SELECT id FROM crm_companies WHERE id = $1
+    UNION
+    SELECT c2.id FROM crm_companies c1
+      JOIN crm_companies c2
+        ON lower(trim(c2.name)) = lower(trim(c1.name)) AND c2.id <> c1.id
+     WHERE c1.id = $1 AND c2.merged_into_id IS NULL
+  `, [clientCompanyId]);
+  return r.rows.map((x: any) => x.id);
+}
+
 // GET /api/client-teams/:clientCompanyId — list every BGP staff member on
 // this client's team, joined onto HR (staff_profiles) for CV summary and
 // onto crm_property_agents (filtered to properties owned by the client) so
@@ -31,15 +46,64 @@ router.get("/api/client-teams/:clientCompanyId", requireAuth, async (req, res) =
     if (scopeCompanyId && scopeCompanyId !== clientCompanyId) {
       return res.status(403).json({ error: "Access denied" });
     }
+    // Two sources, unioned: the curated org chart (crm_client_team_members)
+    // PLUS everyone assigned to one of the client's properties via
+    // crm_property_agents — otherwise the board reads "no team" while the
+    // property pages show a full BGP Contacts strip. Each row also carries
+    // the list of the client's properties that person covers, so the board
+    // can show who is on what.
     const rows = await pool.query(`
-      SELECT m.id,
-             m.client_company_id,
-             m.user_id,
-             m.team_group,
-             m.role,
-             m.reports_to_user_id,
-             m.sort_order,
-             COALESCE(m.is_lead, false) AS is_lead,
+      WITH board_companies AS (
+        -- The BGP-maintained board is the source of truth, but it can hang
+        -- off a duplicate company row (a second "Landsec" record). Read the
+        -- board across every same-named, unmerged sibling so the client card
+        -- always reflects what BGP configured.
+        SELECT id FROM crm_companies WHERE id = $1
+        UNION
+        SELECT c2.id FROM crm_companies c1
+          JOIN crm_companies c2
+            ON lower(trim(c2.name)) = lower(trim(c1.name)) AND c2.id <> c1.id
+         WHERE c1.id = $1 AND c2.merged_into_id IS NULL
+      ),
+      scoped_props AS (
+        SELECT id, name FROM crm_properties
+         WHERE landlord_id IN (SELECT id FROM board_companies)
+        UNION
+        SELECT p.id, p.name FROM crm_company_properties cp
+          JOIN crm_properties p ON p.id = cp.property_id
+         WHERE cp.company_id IN (SELECT id FROM board_companies)
+      ),
+      agent_props AS (
+        SELECT pa.user_id, pa.role, s.id AS property_id, s.name AS property_name
+          FROM crm_property_agents pa
+          JOIN scoped_props s ON s.id = pa.property_id
+      ),
+      members AS (
+        SELECT m.id, m.user_id, m.team_group, m.role, m.reports_to_user_id,
+               m.sort_order, COALESCE(m.is_lead, false) AS is_lead
+          FROM crm_client_team_members m
+         WHERE m.client_company_id IN (SELECT id FROM board_companies)
+        UNION ALL
+        SELECT 'pa-' || ap.user_id, ap.user_id, 'Property Team',
+               MIN(ap.role), NULL, 999, bool_or(ap.role = 'Lead')
+          FROM agent_props ap
+         -- NOT EXISTS, not NOT IN: one NULL user_id on the curated board
+         -- made NOT IN drop EVERY property agent from the card.
+         WHERE NOT EXISTS (
+                 SELECT 1 FROM crm_client_team_members m2
+                  WHERE m2.client_company_id IN (SELECT id FROM board_companies)
+                    AND m2.user_id = ap.user_id
+               )
+         GROUP BY ap.user_id
+      )
+      SELECT mem.id,
+             $1 AS client_company_id,
+             mem.user_id,
+             mem.team_group,
+             mem.role,
+             mem.reports_to_user_id,
+             mem.sort_order,
+             mem.is_lead,
              u.username,
              u.name AS full_name,
              u.email,
@@ -47,15 +111,14 @@ router.get("/api/client-teams/:clientCompanyId", requireAuth, async (req, res) =
              sp.cv_summary,
              sp.cv_specialisms,
              sp.bio,
-             (SELECT COUNT(*)::int FROM crm_property_agents pa
-                JOIN crm_properties p ON p.id = pa.property_id
-               WHERE pa.user_id = m.user_id
-                 AND p.landlord_id = m.client_company_id) AS property_count
-      FROM crm_client_team_members m
-      LEFT JOIN users u ON u.id = m.user_id
-      LEFT JOIN staff_profiles sp ON sp.user_id = m.user_id
-      WHERE m.client_company_id = $1
-      ORDER BY m.sort_order, COALESCE(m.team_group, ''), u.name
+             (SELECT COUNT(DISTINCT ap.property_id)::int FROM agent_props ap
+               WHERE ap.user_id = mem.user_id) AS property_count,
+             (SELECT array_agg(DISTINCT ap.property_name) FROM agent_props ap
+               WHERE ap.user_id = mem.user_id) AS properties
+      FROM members mem
+      LEFT JOIN users u ON u.id = mem.user_id
+      LEFT JOIN staff_profiles sp ON sp.user_id = mem.user_id
+      ORDER BY mem.sort_order, COALESCE(mem.team_group, ''), u.name
     `, [clientCompanyId]);
     res.json(rows.rows);
   } catch (e: any) {
@@ -70,17 +133,24 @@ router.post("/api/client-teams/:clientCompanyId/member", requireAuth, async (req
   try {
     const pool = await getPool();
     const { clientCompanyId } = req.params;
-    const { user_id, team_group, role, reports_to_user_id, sort_order } = req.body || {};
+    const { user_id, team_group, role, reports_to_user_id, sort_order, is_lead } = req.body || {};
     if (!user_id) return res.status(400).json({ error: "user_id is required" });
     // No ON CONFLICT — the UNIQUE constraint was dropped on boot so the
     // same person can sit in multiple columns on a client (e.g. Investment
     // + Lease Advisory). Each row is its own slot.
+    if (is_lead === true) {
+      const boardIds = await boardCompanyIds(pool, String(clientCompanyId));
+      await pool.query(
+        "UPDATE crm_client_team_members SET is_lead = false WHERE client_company_id = ANY($1)",
+        [boardIds]
+      );
+    }
     const ins = await pool.query(`
       INSERT INTO crm_client_team_members
-        (client_company_id, user_id, team_group, role, reports_to_user_id, sort_order)
-      VALUES ($1, $2, $3, $4, $5, COALESCE($6, 0))
+        (client_company_id, user_id, team_group, role, reports_to_user_id, sort_order, is_lead)
+      VALUES ($1, $2, $3, $4, $5, COALESCE($6, 0), COALESCE($7, false))
       RETURNING *
-    `, [clientCompanyId, user_id, team_group || null, role || null, reports_to_user_id || null, sort_order]);
+    `, [clientCompanyId, user_id, (team_group === "Unassigned" ? null : team_group) || null, role || null, reports_to_user_id || null, sort_order, is_lead === true]);
     res.json(ins.rows[0]);
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -109,12 +179,19 @@ router.patch("/api/client-teams/member/:id", requireAuth, async (req, res) => {
     // same client so there's only ever one pinned lead at a time. Done in
     // a single statement to avoid races between concurrent toggles.
     if (req.body && req.body.is_lead === true) {
-      await pool.query(`
-        UPDATE crm_client_team_members SET is_lead = false
-         WHERE id <> $1 AND client_company_id = (
-           SELECT client_company_id FROM crm_client_team_members WHERE id = $1
-         )
-      `, [req.params.id]);
+      const owner = await pool.query(
+        "SELECT client_company_id FROM crm_client_team_members WHERE id = $1",
+        [req.params.id]
+      );
+      if (owner.rows[0]) {
+        // Clear the pin across same-named sibling company records too — the
+        // board reads across them, so two pins would both render starred.
+        const boardIds = await boardCompanyIds(pool, owner.rows[0].client_company_id);
+        await pool.query(
+          "UPDATE crm_client_team_members SET is_lead = false WHERE id <> $1 AND client_company_id = ANY($2)",
+          [req.params.id, boardIds]
+        );
+      }
     }
     const r = await pool.query(
       `UPDATE crm_client_team_members SET ${sets.join(", ")} WHERE id = $${i} RETURNING *`,
@@ -138,17 +215,39 @@ router.post("/api/client-teams/:clientCompanyId/reorder", requireAuth, async (re
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "items array required" });
     }
+    // Curated rows can live on a same-named duplicate company record, and
+    // "pa-<user_id>" rows are synthesized from property assignments (no row
+    // in crm_client_team_members at all) — both silently no-op'd on the old
+    // exact-match UPDATE, which is why drags snapped back.
+    const boardIds = await boardCompanyIds(pool, String(req.params.clientCompanyId));
     for (const it of items) {
       const tg = it.team_group === "Unassigned" ? null : (it.team_group ?? undefined);
-      if (tg === undefined) {
+      if (typeof it.id === "string" && it.id.startsWith("pa-")) {
+        const userId = it.id.slice(3);
+        const existing = await pool.query(
+          "SELECT id FROM crm_client_team_members WHERE client_company_id = ANY($1) AND user_id = $2 ORDER BY created_at LIMIT 1",
+          [boardIds, userId]
+        );
+        if (existing.rows[0]) {
+          await pool.query(
+            "UPDATE crm_client_team_members SET sort_order = $1, team_group = $2 WHERE id = $3",
+            [it.sort_order, tg ?? null, existing.rows[0].id]
+          );
+        } else {
+          await pool.query(
+            "INSERT INTO crm_client_team_members (client_company_id, user_id, team_group, sort_order) VALUES ($1, $2, $3, $4)",
+            [req.params.clientCompanyId, userId, tg ?? "Property Team", it.sort_order]
+          );
+        }
+      } else if (tg === undefined) {
         await pool.query(
-          "UPDATE crm_client_team_members SET sort_order = $1 WHERE id = $2 AND client_company_id = $3",
-          [it.sort_order, it.id, req.params.clientCompanyId]
+          "UPDATE crm_client_team_members SET sort_order = $1 WHERE id = $2 AND client_company_id = ANY($3)",
+          [it.sort_order, it.id, boardIds]
         );
       } else {
         await pool.query(
-          "UPDATE crm_client_team_members SET sort_order = $1, team_group = $2 WHERE id = $3 AND client_company_id = $4",
-          [it.sort_order, tg, it.id, req.params.clientCompanyId]
+          "UPDATE crm_client_team_members SET sort_order = $1, team_group = $2 WHERE id = $3 AND client_company_id = ANY($4)",
+          [it.sort_order, tg, it.id, boardIds]
         );
       }
     }
@@ -161,7 +260,14 @@ router.post("/api/client-teams/:clientCompanyId/reorder", requireAuth, async (re
 router.delete("/api/client-teams/member/:id", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
-    await pool.query("DELETE FROM crm_client_team_members WHERE id = $1", [req.params.id]);
+    const r = await pool.query("DELETE FROM crm_client_team_members WHERE id = $1", [req.params.id]);
+    // A synthesized "pa-…" id (auto-included via property assignments) has no
+    // row here — the old blanket {ok:true} made "Remove" look like it worked.
+    if (r.rowCount === 0) {
+      return res.status(404).json({
+        error: "This person is on the board automatically via property assignments — remove their properties instead.",
+      });
+    }
     res.json({ ok: true });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
@@ -192,6 +298,7 @@ router.get("/api/client-teams/:clientCompanyId/member/:userId/properties", requi
              ) AS assigned
       FROM crm_properties p
       WHERE p.landlord_id = $1
+         OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
       ORDER BY p.name
     `, [clientCompanyId, userId]);
     res.json(rows.rows);
@@ -220,7 +327,9 @@ router.post("/api/client-teams/:clientCompanyId/member/:userId/properties", requ
       await pool.query(`
         INSERT INTO crm_property_agents (property_id, user_id)
         SELECT $1, $2 WHERE EXISTS (
-          SELECT 1 FROM crm_properties WHERE id = $1 AND landlord_id = $3
+          SELECT 1 FROM crm_properties p WHERE p.id = $1
+             AND (p.landlord_id = $3
+                  OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $3))
         )
       `, [pid, userId, clientCompanyId]);
     }
@@ -229,7 +338,9 @@ router.post("/api/client-teams/:clientCompanyId/member/:userId/properties", requ
         DELETE FROM crm_property_agents pa
          USING crm_properties p
          WHERE pa.property_id = $1 AND pa.user_id = $2
-           AND p.id = pa.property_id AND p.landlord_id = $3
+           AND p.id = pa.property_id
+           AND (p.landlord_id = $3
+                OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $3))
       `, [pid, userId, clientCompanyId]);
     }
     res.json({ ok: true, added: add.length, removed: remove.length });

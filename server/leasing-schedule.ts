@@ -79,10 +79,10 @@ router.get("/api/leasing-schedule/properties", requireAuth, async (req, res) => 
       const scoped = await pool.query(`
         SELECT p.id, p.name, p.address, p.asset_class, p.bgp_engagement, p.leasing_privacy_enabled,
           c.name as landlord_name, c.id as landlord_id,
-          COUNT(CASE WHEN u.status != 'Archived' THEN 1 END)::int as unit_count,
+          COUNT(CASE WHEN COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as unit_count,
           COUNT(CASE WHEN u.status = 'Occupied' THEN 1 END)::int as occupied_count,
           COUNT(CASE WHEN u.status = 'Vacant' THEN 1 END)::int as vacant_count,
-          COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND u.status != 'Archived' THEN 1 END)::int as expiring_soon
+          COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as expiring_soon
         FROM crm_properties p
         JOIN leasing_schedule_units u ON u.property_id = p.id
         LEFT JOIN crm_companies c ON p.landlord_id = c.id
@@ -96,10 +96,10 @@ router.get("/api/leasing-schedule/properties", requireAuth, async (req, res) => 
       SELECT p.id, p.name, p.address, p.asset_class, p.bgp_engagement,
         p.leasing_privacy_enabled,
         c.name as landlord_name, c.id as landlord_id,
-        COUNT(CASE WHEN u.status != 'Archived' THEN 1 END)::int as unit_count,
+        COUNT(CASE WHEN COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as unit_count,
         COUNT(CASE WHEN u.status = 'Occupied' THEN 1 END)::int as occupied_count,
         COUNT(CASE WHEN u.status = 'Vacant' THEN 1 END)::int as vacant_count,
-        COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND u.status != 'Archived' THEN 1 END)::int as expiring_soon
+        COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND COALESCE(u.status, '') <> 'Archived' THEN 1 END)::int as expiring_soon
       FROM crm_properties p
       JOIN leasing_schedule_units u ON u.property_id = p.id
       LEFT JOIN crm_companies c ON p.landlord_id = c.id
@@ -170,10 +170,26 @@ router.get("/api/leasing-schedule/property/:propertyId", requireAuth, async (req
 
 router.get("/api/leasing-schedule/company/:companyId", requireAuth, async (req, res) => {
   try {
-    const { resolveCompanyScope: rcs } = await import("./company-scope");
+    const { resolveCompanyScope: rcs, isClientVisibleBrand } = await import("./company-scope");
     const lsScope = await rcs(req as any);
     if (lsScope && lsScope !== req.params.companyId) {
-      return res.status(403).json({ error: "Not available for this account" });
+      // Client viewing a brand profile: show that brand's footprint across
+      // the CLIENT'S schemes only (tenant of, or targeted at, a unit on a
+      // property they own) — never other landlords' schedules.
+      if (!(await isClientVisibleBrand(String(req.params.companyId)))) {
+        return res.status(403).json({ error: "Not available for this account" });
+      }
+      const scopedPool = await getPool();
+      const scoped = await scopedPool.query(
+        `SELECT u.*, p.name as property_name
+           FROM leasing_schedule_units u
+           JOIN crm_properties p ON u.property_id = p.id
+          WHERE p.landlord_id = $1
+            AND (u.tenant_company_id = $2 OR $2 = ANY(COALESCE(u.target_company_ids, '{}')))
+          ORDER BY p.name, u.sort_order, u.zone, u.unit_name`,
+        [lsScope, req.params.companyId]
+      );
+      return res.json(scoped.rows);
     }
     const pool = await getPool();
     const user = await getUserInfo(pool, req);

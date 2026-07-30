@@ -1109,11 +1109,13 @@ export function setupCrmRoutes(app: Express) {
   // Keep in sync with CLIENT_BRAND_TYPE_PATTERNS (the SQL ILIKE variant).
   const CLIENT_BRAND_TYPE_RE = /^tenant -.*(restaurant|dining|f&b|qsr|fast food|fast casual|food|bakery|patisserie|caf[ée]|coffee|bar|hospitality|hotel|leisure|cinema|entertainment|fitness|gym|yoga)/i;
 
-  // BGP's fee/commission on a deal is internal — never send any of it to a
-  // client login. One helper so every deal response strips the same fields.
+  // Clients now see the fee they're paying us — total fee, agency %, and the
+  // fee-agreement label (Woody, 2026-07: "client should see fees anywhere").
+  // Still stripped: the internal fee NOTES, the signed FA document link, and
+  // the raw commission field. The per-BGP-agent split lives on a separate
+  // staff-gated endpoint (deal_fee_allocations), so it never rides along here.
   const stripDealFees = <T extends Record<string, any>>(d: T): T => ({
-    ...d, fee: null, feeNotes: null, feePercentage: null,
-    feeAgreement: null, feeAgreementUrl: null, commission: null,
+    ...d, feeNotes: null, feeAgreementUrl: null, commission: null,
   });
   // Ensure new comp columns exist (safe to re-run)
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS fee_agreement_url TEXT`).catch(() => {});
@@ -1402,8 +1404,19 @@ export function setupCrmRoutes(app: Express) {
   app.use("/api/crm", requireAuth);
   // Client logins are read-only across the whole CRM surface — a client
   // must never create/edit/delete/merge BGP records. (Landsec audit.)
+  // Exception: adding/amending contacts, which the contact routes scope to
+  // the client's own company or the hospitality-brand slice
+  // (clientCanTouchCompany); deletes stay staff-only.
   app.use("/api/crm", async (req: any, res: any, next: any) => {
     if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+    if (
+      (req.method === "POST" && req.path === "/contacts") ||
+      (req.method === "PUT" && /^\/contacts\/[^/]+$/.test(req.path)) ||
+      // Clients may create + edit deals on their own portfolio (scoped +
+      // fee-stripped inside the handlers). DELETE stays staff-only.
+      (req.method === "POST" && req.path === "/deals") ||
+      (req.method === "PUT" && /^\/deals\/[^/]+$/.test(req.path))
+    ) return next();
     try {
       if (await isClientRequestUser(req)) {
         return res.status(403).json({ error: "Read-only access for client accounts" });
@@ -1696,7 +1709,15 @@ export function setupCrmRoutes(app: Express) {
         const ct = String(company.companyType || "");
         const isAllowedBrand = /^Tenant - /.test(ct) &&
           /(restaurant|dining|f&b|qsr|fast|food|bakery|patisserie|caf|coffee|bar|leisure|cinema|entertainment|fitness|gym|yoga|hotel|hospitality)/i.test(ct);
-        if (!isAllowedBrand) return res.status(403).json({ error: "Access denied" });
+        // Tenant-rep agents are in the client agent directory and linked
+        // from brand profiles ("Represented by") — readable too.
+        const isTenantRepAgent = company.agentType === "tenant_rep" ||
+          (await pool.query(
+            `SELECT 1 FROM brand_agent_representations
+              WHERE agent_company_id = $1 AND end_date IS NULL AND agent_type = 'tenant_rep' LIMIT 1`,
+            [req.params.id]
+          )).rows.length > 0;
+        if (!isAllowedBrand && !isTenantRepAgent) return res.status(403).json({ error: "Access denied" });
         // Strip BGP-internal + KYC/AML/PEP fields for client viewers.
         const {
           kycStatus, kycCheckedAt, kycApprovedBy, kycExpiresAt,
@@ -1932,30 +1953,61 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if (!contact) return res.status(404).json({ error: "Not found" });
       const scopeCompanyId = await resolveCompanyScope(req);
       if (scopeCompanyId && !(await isContactInScope(scopeCompanyId, req.params.id))) {
-        return res.status(403).json({ error: "Access denied" });
+        // The client brand directory links to hospitality-brand contacts —
+        // those are readable, same rule as adding/amending them.
+        const ok = await clientCanTouchCompany(scopeCompanyId, (contact as any).companyId);
+        if (!ok) return res.status(403).json({ error: "Access denied" });
       }
       res.json(contact);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.post("/api/crm/contacts", async (req, res) => {
+  // Client accounts (e.g. Landsec) may create/amend contacts, but only at
+  // their own company or at brands in the hospitality slice — the same set
+  // they can see. Staff are unrestricted.
+  const clientCanTouchCompany = async (scopeCompanyId: string, companyId: string | null | undefined): Promise<boolean> => {
+    if (!companyId) return false;
+    if (companyId === scopeCompanyId) return true;
+    const r = await pool.query(`SELECT company_type FROM crm_companies WHERE id = $1`, [companyId]);
+    return CLIENT_BRAND_TYPE_RE.test(r.rows[0]?.company_type || "");
+  };
+
+  app.post("/api/crm/contacts", requireAuth, async (req, res) => {
     try {
       const parsed = insertCrmContactSchema.parse(req.body);
+      const scopeCompanyId = await resolveCompanyScope(req);
+      if (scopeCompanyId && !(await clientCanTouchCompany(scopeCompanyId, (parsed as any).companyId))) {
+        return res.status(403).json({ error: "Contacts can only be added to your company or to brands in your directory" });
+      }
       const contact = await storage.createCrmContact(parsed);
       res.status(201).json(contact);
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
 
-  app.put("/api/crm/contacts/:id", async (req, res) => {
+  app.put("/api/crm/contacts/:id", requireAuth, async (req, res) => {
     try {
-      const contact = await storage.updateCrmContact(req.params.id, req.body);
+      const scopeCompanyId = await resolveCompanyScope(req);
+      if (scopeCompanyId) {
+        const existing = await pool.query(`SELECT company_id FROM crm_contacts WHERE id = $1`, [req.params.id]);
+        if (!existing.rows.length) return res.status(404).json({ error: "Not found" });
+        if (!(await clientCanTouchCompany(scopeCompanyId, existing.rows[0].company_id))) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+        if ((req.body as any).companyId && !(await clientCanTouchCompany(scopeCompanyId, (req.body as any).companyId))) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
+      const contact = await storage.updateCrmContact(String(req.params.id), req.body);
       res.json(contact);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.delete("/api/crm/contacts/:id", async (req, res) => {
+  app.delete("/api/crm/contacts/:id", requireAuth, async (req, res) => {
     try {
-      await storage.deleteCrmContact(req.params.id);
+      if (await resolveCompanyScope(req)) {
+        return res.status(403).json({ error: "Deleting contacts is managed by your BGP team" });
+      }
+      await storage.deleteCrmContact(String(req.params.id));
       res.json({ ok: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -2142,12 +2194,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     }
   });
 
-  app.get("/api/crm/properties/:id", async (req, res) => {
+  app.get("/api/crm/properties/:id", requireAuth, async (req, res) => {
     try {
-      const property = await storage.getCrmProperty(req.params.id);
+      const property = await storage.getCrmProperty(String(req.params.id));
       if (!property) return res.status(404).json({ error: "Not found" });
       const scopeCompanyId = await resolveCompanyScope(req);
-      if (scopeCompanyId && !(await isPropertyInScope(scopeCompanyId, req.params.id))) {
+      if (scopeCompanyId && !(await isPropertyInScope(scopeCompanyId, String(req.params.id)))) {
         return res.status(403).json({ error: "Access denied" });
       }
       res.json(property);
@@ -2162,8 +2214,12 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
 
-  app.put("/api/crm/properties/:id", async (req, res) => {
+  app.put("/api/crm/properties/:id", requireAuth, async (req, res) => {
     try {
+      const scopeCompanyId = await resolveCompanyScope(req);
+      if (scopeCompanyId && !(await isPropertyInScope(scopeCompanyId, String(req.params.id)))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const updates = { ...req.body };
       const dateFields = ["titleSearchDate", "createdAt", "updatedAt", "kycCheckedAt"];
       for (const f of dateFields) {
@@ -2171,15 +2227,94 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           updates[f] = new Date(updates[f]);
         }
       }
-      const property = await storage.updateCrmProperty(req.params.id, updates);
+      const property = await storage.updateCrmProperty(String(req.params.id), updates);
       res.json(property);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  app.delete("/api/crm/properties/:id", async (req, res) => {
+  app.delete("/api/crm/properties/:id", requireAuth, async (req, res) => {
     try {
-      await storage.deleteCrmProperty(req.params.id);
+      const scopeCompanyId = await resolveCompanyScope(req);
+      if (scopeCompanyId) {
+        return res.status(403).json({ error: "Read-only access for client accounts" });
+      }
+      await storage.deleteCrmProperty(String(req.params.id));
       res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get("/api/admin/duplicate-properties", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { findDuplicateProperties } = await import("./property-merge");
+      const groups = await findDuplicateProperties((req.query.name as string) || undefined);
+      res.json({ groups });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/admin/merge-properties", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { keepId, mergeId } = req.body || {};
+      const { mergeProperties } = await import("./property-merge");
+      const result = await mergeProperties(String(keepId || ""), String(mergeId || ""));
+      res.json(result);
+    } catch (e: any) { res.status(400).json({ error: e.message }); }
+  });
+
+  // Portfolio dataset → comps import. Staff upload the client's raw unit/
+  // letting workbook; every letting becomes a comp on its scheme, deduped
+  // on unit+contract so newer cuts update in place. Devaluation happens on
+  // read in /api/crm/comps.
+  const compsImportUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 25 * 1024 * 1024 },
+  });
+  app.post("/api/admin/import-portfolio-comps", requireAuth, compsImportUpload.single("file"), async (req: any, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      if (!req.file?.buffer) return res.status(400).json({ error: "Upload the portfolio .xlsx as 'file'" });
+      const { importPortfolioComps } = await import("./comps-import");
+      const result = await importPortfolioComps(req.file.buffer);
+      res.json(result);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // logo.dev Brand API backfill — fills blank socials/description across the
+  // brand book (fill-blanks only, ~1¢ per brand that needs it). Staff only.
+  app.post("/api/admin/logo-dev-backfill", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { runLogoDevBackfill } = await import("./logo-dev-brand");
+      const stats = await runLogoDevBackfill(Number(req.body?.limit ?? 100), req.body?.hospitalityOnly === true);
+      res.json(stats);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Tenancy split-row reconcile (rent on one row, expiry on its shadow).
+  // GET = dry run: full merge plan + projected coverage, touches nothing.
+  // POST /apply = execute the same plan transactionally.
+  app.get("/api/admin/tenancy-reconcile", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { reconcileTenancyRows } = await import("./tenancy-reconcile");
+      const report = await reconcileTenancyRows({
+        propertyId: req.query.propertyId ? String(req.query.propertyId) : null,
+        apply: false,
+      });
+      res.json(report);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post("/api/admin/tenancy-reconcile/apply", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) return res.status(403).json({ error: "Not available for client accounts" });
+      const { reconcileTenancyRows } = await import("./tenancy-reconcile");
+      const report = await reconcileTenancyRows({
+        propertyId: req.body?.propertyId ? String(req.body.propertyId) : null,
+        apply: true,
+      });
+      res.json(report);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -2190,7 +2325,17 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const allowedFields = ["bgpEngagement", "status", "assetClass", "tenure"];
       if (!allowedFields.includes(field)) return res.status(400).json({ error: `Field '${field}' not allowed for bulk update` });
       for (const id of ids) {
-        await storage.updateCrmProperty(id, { [field]: value });
+        // Bulk "Assign Team" is ADDITIVE, matching the single-row inline
+        // editor — replacing the whole array silently wiped every other
+        // team from 40 rows at once.
+        if (field === "bgpEngagement" && Array.isArray(value)) {
+          const current = await storage.getCrmProperty(id);
+          const existing = Array.isArray((current as any)?.bgpEngagement) ? (current as any).bgpEngagement : [];
+          const merged = [...new Set([...existing, ...value])];
+          await storage.updateCrmProperty(id, { bgpEngagement: merged });
+        } else {
+          await storage.updateCrmProperty(id, { [field]: value });
+        }
       }
       res.json({ ok: true, updated: ids.length });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2831,6 +2976,18 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.post("/api/crm/deals", async (req, res) => {
     try {
+      // A client creating a deal: pin it to their own company as landlord and
+      // strip every fee field — clients can make deals but never set BGP's
+      // fee. (Woody, 2026-07: "client can make a deal, just hide the fee.")
+      const dealScope = await resolveCompanyScope(req);
+      if (dealScope) {
+        req.body = {
+          ...req.body,
+          landlordId: dealScope,
+          fee: null, feePercentage: null, feeNotes: null,
+          feeAgreement: null, feeAgreementUrl: null, commission: null,
+        };
+      }
       // Resolve a "__tenancy__<id>" unitId picked from the tenancy
       // schedule directly. Finds (or creates) a matching property_units
       // row on the same property, then swaps the token for the real
@@ -2961,6 +3118,21 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   app.put("/api/crm/deals/:id", async (req, res) => {
     try {
       const oldDeal = await storage.getCrmDeal(req.params.id);
+      // Client editing: must be a deal on their own portfolio, and they can
+      // never touch any fee field. Scope check mirrors the deals-list filter.
+      const editScope = await resolveCompanyScope(req);
+      if (editScope) {
+        const inScope = oldDeal && (
+          (oldDeal as any).landlordId === editScope ||
+          (oldDeal as any).tenantId === editScope ||
+          (oldDeal as any).vendorId === editScope ||
+          (oldDeal as any).purchaserId === editScope
+        );
+        if (!inScope) return res.status(403).json({ error: "Not available for client accounts" });
+        for (const f of ["fee", "feePercentage", "feeNotes", "feeAgreement", "feeAgreementUrl", "commission"]) {
+          delete (req.body as any)[f];
+        }
+      }
       // Populated when a best-effort cross-board mirror fails — returned on
       // the response so the client can surface a sync warning instead of
       // the drift staying invisible in server logs.
@@ -4477,20 +4649,116 @@ Return a JSON object with these fields (use null for any field you cannot find):
   // Brand directory for client CRM lookup — brand companies in the allowed
   // categories with their contacts inlined. Available to all logged-in
   // users; the category whitelist is what makes it client-safe.
-  app.get("/api/client/brand-directory", requireAuth, async (_req, res) => {
+  app.get("/api/client/brand-directory", requireAuth, async (req, res) => {
+    try {
+      // Relationship flags are computed against the requesting client's own
+      // portfolio (scope company). Staff previewing the directory get the
+      // Landsec-style flags for whichever company `?companyId=` names.
+      const scopeCompanyId = await resolveCompanyScope(req)
+        || ((req.query as any).companyId ? String((req.query as any).companyId) : null);
+      const rows = await pool.query(
+        `WITH scoped_props AS (
+           SELECT p.id, p.name FROM crm_properties p
+            WHERE $2::varchar IS NOT NULL
+              AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))
+         )
+         SELECT c.id, c.name, c.company_type AS "companyType", c.domain,
+                c.instagram_handle AS "instagramHandle",
+                COALESCE((
+                  SELECT json_agg(json_build_object(
+                    'id', dct.id, 'name', dct.name, 'role', dct.role,
+                    'email', dct.email, 'phone', COALESCE(dct.phone_mobile, dct.phone)
+                  ) ORDER BY dct.name)
+                  FROM (
+                    -- one row per person — imports duplicate contact rows,
+                    -- keep the most recently updated per name
+                    SELECT DISTINCT ON (lower(trim(ct2.name))) ct2.*
+                      FROM crm_contacts ct2
+                     WHERE ct2.company_id = c.id
+                     ORDER BY lower(trim(ct2.name)), ct2.updated_at DESC NULLS LAST
+                  ) dct
+                ), '[]') AS contacts,
+                EXISTS (
+                  SELECT 1 FROM tenancy_schedule_units t JOIN scoped_props sp ON sp.id = t.property_id
+                   WHERE t.tenant_company_id = c.id
+                  UNION ALL
+                  SELECT 1 FROM crm_deals d WHERE d.tenant_id = c.id AND d.landlord_id = $2
+                ) AS "isExistingTenant",
+                (
+                  SELECT COALESCE(json_agg(json_build_object('propertyId', tg.property_id, 'propertyName', tg.property_name, 'unitName', tg.unit_name)), '[]')
+                  FROM (
+                    SELECT sp.id AS property_id, sp.name AS property_name, u.unit_name
+                      FROM leasing_schedule_units u JOIN scoped_props sp ON sp.id = u.property_id
+                     WHERE u.target_company_ids @> ARRAY[c.id::text]::text[]
+                    UNION
+                    SELECT sp.id, sp.name, u2.unit_name
+                      FROM target_tenants tt
+                      JOIN leasing_schedule_units u2 ON u2.id = tt.unit_id
+                      JOIN scoped_props sp ON sp.id = u2.property_id
+                     WHERE tt.company_id = c.id AND COALESCE(tt.status, '') <> 'rejected'
+                    UNION
+                    SELECT sp.id, sp.name, au.unit_name
+                      FROM unit_target_operators uto
+                      JOIN unit_briefs ub ON ub.id = uto.brief_id
+                      JOIN available_units au ON au.id = ub.unit_id
+                      JOIN scoped_props sp ON sp.id = au.property_id
+                     WHERE uto.company_id = c.id AND COALESCE(uto.status, '') NOT IN ('Passed')
+                    LIMIT 8
+                  ) tg
+                ) AS "targetedAt"
+         FROM crm_companies c
+         WHERE c.company_type ILIKE ANY($1) AND c.merged_into_id IS NULL
+         ORDER BY c.name`,
+        [CLIENT_BRAND_TYPE_PATTERNS, scopeCompanyId]
+      );
+      res.json(rows.rows);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Agent directory for client CRM lookup — TENANT REP agents only (the
+  // agents chasing sites for brands, i.e. who a landlord wants to reach).
+  // Landlord-side and investment agents stay out of client view. An agent
+  // qualifies via an active tenant_rep representation, a company-level
+  // agent_type of tenant_rep, or a Tenant Rep specialty contact. The
+  // "represents" list is limited to brands in the client brand slice.
+  app.get("/api/client/agent-directory", requireAuth, async (_req, res) => {
     try {
       const rows = await pool.query(
-        `SELECT c.id, c.name, c.company_type AS "companyType", c.domain,
-                c.instagram_handle AS "instagramHandle",
-                COALESCE(json_agg(json_build_object(
-                  'id', ct.id, 'name', ct.name, 'role', ct.role,
-                  'email', ct.email, 'phone', COALESCE(ct.phone_mobile, ct.phone)
-                ) ORDER BY ct.name) FILTER (WHERE ct.id IS NOT NULL), '[]') AS contacts
-         FROM crm_companies c
-         LEFT JOIN crm_contacts ct ON ct.company_id = c.id
-         WHERE c.company_type ILIKE ANY($1) AND c.merged_into_id IS NULL
-         GROUP BY c.id
-         ORDER BY c.name`,
+        `WITH slice_brands AS (
+           SELECT id, name FROM crm_companies
+            WHERE company_type ILIKE ANY($1) AND merged_into_id IS NULL
+         )
+         SELECT a.id, a.name, a.domain, a.company_type AS "companyType",
+                COALESCE((
+                  SELECT json_agg(json_build_object(
+                    'id', ct.id, 'name', ct.name, 'role', ct.role,
+                    'email', ct.email, 'phone', COALESCE(ct.phone_mobile, ct.phone),
+                    'specialty', ct.agent_specialty
+                  ) ORDER BY ct.name)
+                  FROM crm_contacts ct WHERE ct.company_id = a.id
+                ), '[]') AS contacts,
+                COALESCE((
+                  SELECT json_agg(json_build_object(
+                    'brandId', b.id, 'brandName', b.name, 'region', r.region
+                  ) ORDER BY b.name)
+                  FROM brand_agent_representations r
+                  JOIN slice_brands b ON b.id = r.brand_company_id
+                 WHERE r.agent_company_id = a.id AND r.end_date IS NULL
+                   AND r.agent_type = 'tenant_rep'
+                ), '[]') AS represents
+           FROM crm_companies a
+          WHERE a.merged_into_id IS NULL
+            AND (
+              EXISTS (SELECT 1 FROM brand_agent_representations r2
+                       WHERE r2.agent_company_id = a.id AND r2.end_date IS NULL
+                         AND r2.agent_type = 'tenant_rep')
+              OR a.agent_type = 'tenant_rep'
+              OR (lower(COALESCE(a.company_type, '')) = 'agent'
+                  AND EXISTS (SELECT 1 FROM crm_contacts c2
+                               WHERE c2.company_id = a.id
+                                 AND lower(COALESCE(c2.agent_specialty, '')) = 'tenant rep'))
+            )
+          ORDER BY a.name`,
         [CLIENT_BRAND_TYPE_PATTERNS]
       );
       res.json(rows.rows);
@@ -4499,14 +4767,40 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   app.get("/api/crm/comps", requireAuth, async (req, res) => {
     try {
-      if (await isClientRequest(req)) return res.json([]);
       const filters = {
         search: req.query.search as string | undefined,
         groupName: req.query.groupName as string | undefined,
         dealType: req.query.dealType as string | undefined,
       };
-      const comps = await storage.getCrmComps(filters);
-      res.json(comps);
+      let comps = await storage.getCrmComps(filters);
+
+      // Clients see the comp evidence on THEIR schemes only: comps linked
+      // to a property in their portfolio, or where they're the landlord.
+      const compsScope = await resolveCompanyScope(req);
+      if (compsScope) {
+        const propRows = await pool.query(
+          `SELECT id, name FROM crm_properties
+            WHERE landlord_id = $1
+               OR id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)`,
+          [compsScope]
+        );
+        const propIds = new Set(propRows.rows.map((r: any) => r.id));
+        const propNames = propRows.rows
+          .map((r: any) => String(r.name || "").toLowerCase().replace(/,.*$/, "").trim())
+          .filter((n: string) => n.length >= 5);
+        comps = comps.filter((c: any) => {
+          if (c.propertyId && propIds.has(c.propertyId)) return true;
+          if (c.landlordCompanyId === compsScope) return true;
+          // Legacy comps carry the scheme only as free text in name/address.
+          const hay = `${c.name || ""} ${JSON.stringify(c.address || "")}`.toLowerCase();
+          return propNames.some(n => hay.includes(n));
+        });
+      }
+
+      // Devalue every deal — headline package → net effective rent,
+      // computed fresh on read since the underlying fields are free text.
+      const { devalueComp } = await import("./comp-devalue");
+      res.json(comps.map((c: any) => ({ ...c, devaluation: devalueComp(c) })));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -4525,9 +4819,16 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   app.get("/api/crm/comps/:id", async (req, res) => {
     try {
-      const comp = await storage.getCrmComp(req.params.id);
+      const comp: any = await storage.getCrmComp(req.params.id);
       if (!comp) return res.status(404).json({ error: "Not found" });
-      res.json(comp);
+      const compScope = await resolveCompanyScope(req);
+      if (compScope) {
+        const inScope = comp.landlordCompanyId === compScope ||
+          (comp.propertyId && (await isPropertyInScope(compScope, comp.propertyId)));
+        if (!inScope) return res.status(403).json({ error: "Access denied" });
+      }
+      const { devalueComp } = await import("./comp-devalue");
+      res.json({ ...comp, devaluation: devalueComp(comp) });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -7003,15 +7304,71 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
+  // ── Brand Explorer relationship flags (staff only) ──────────────────
+  // Firm-wide per-brand flags for the explorer's filter pills: tenant
+  // anywhere in the book, targeted on any leasing schedule (with the
+  // property/unit list), has contacts, hunter-flagged, tracked, and live
+  // leasing requirement. Keyed by company id so the explorer merges them
+  // onto its existing companies list. Cross-landlord targeting data —
+  // stays BGP-internal (clients get the scoped /api/client/brand-directory).
+  app.get("/api/brands/explorer-flags", requireAuth, async (req, res) => {
+    try {
+      if (await resolveCompanyScope(req)) {
+        return res.status(403).json({ error: "Not available for client accounts" });
+      }
+      const rows = await pool.query(
+        `SELECT c.id,
+                (EXISTS (SELECT 1 FROM tenancy_schedule_units t WHERE t.tenant_company_id = c.id)
+                 OR EXISTS (SELECT 1 FROM crm_deals d WHERE d.tenant_id = c.id AND d.status = 'COM')) AS "isTenant",
+                (
+                  SELECT COALESCE(json_agg(json_build_object('propertyId', tg.property_id, 'propertyName', tg.property_name, 'unitName', tg.unit_name)), '[]')
+                  FROM (
+                    SELECT p.id AS property_id, p.name AS property_name, u.unit_name
+                      FROM leasing_schedule_units u JOIN crm_properties p ON p.id = u.property_id
+                     WHERE u.target_company_ids @> ARRAY[c.id::text]::text[]
+                    UNION
+                    SELECT p.id, p.name, u2.unit_name
+                      FROM target_tenants tt
+                      JOIN leasing_schedule_units u2 ON u2.id = tt.unit_id
+                      JOIN crm_properties p ON p.id = u2.property_id
+                     WHERE tt.company_id = c.id AND COALESCE(tt.status, '') <> 'rejected'
+                    UNION
+                    SELECT p.id, p.name, au.unit_name
+                      FROM unit_target_operators uto
+                      JOIN unit_briefs ub ON ub.id = uto.brief_id
+                      JOIN available_units au ON au.id = ub.unit_id
+                      JOIN crm_properties p ON p.id = au.property_id
+                     WHERE uto.company_id = c.id AND COALESCE(uto.status, '') NOT IN ('Passed')
+                    LIMIT 8
+                  ) tg
+                ) AS "targetedAt",
+                EXISTS (SELECT 1 FROM crm_contacts ct WHERE ct.company_id = c.id) AS "hasContacts",
+                (COALESCE(c.hunter_flag, false) OR COALESCE(c.letting_hunter_flag, false) OR COALESCE(c.investment_hunter_flag, false)) AS "hunterFlag",
+                COALESCE(c.is_tracked_brand, false) AS "isTracked",
+                EXISTS (SELECT 1 FROM crm_requirements_leasing rl
+                         WHERE rl.company_id = c.id AND LOWER(COALESCE(rl.status, '')) = 'active') AS "liveRequirement"
+           FROM crm_companies c
+          WHERE c.company_type ILIKE 'Tenant%' AND c.merged_into_id IS NULL`
+      );
+      const map: Record<string, any> = {};
+      for (const r of rows.rows) { const { id, ...flags } = r; map[id] = flags; }
+      res.json(map);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // ── Brands Hub aggregated data ───────────────────────────────────────
   app.get("/api/brands/hub", requireAuth, async (req, res) => {
     try {
       // Client logins only see the hospitality / food / café / fitness
       // slice — same whitelist as the client brand directory.
       const clientScoped = await isClientRequest(req);
-      const tenantFilter = clientScoped
+      // merged_into_id IS NULL is part of the filter itself — otherwise the
+      // Overview tiles count merged duplicates that Brand Explorer (which
+      // reads /api/crm/companies, correctly filtered) no longer shows, and
+      // the same page displays two different brand totals.
+      const tenantFilter = (clientScoped
         ? `company_type ILIKE ANY(ARRAY[${CLIENT_BRAND_TYPE_PATTERNS.map(p => `'${p}'`).join(",")}])`
-        : `company_type ILIKE 'Tenant -%'`;
+        : `company_type ILIKE 'Tenant -%'`) + ` AND merged_into_id IS NULL`;
 
       // Category counts
       const catRows = await pool.query(
@@ -7061,7 +7418,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           c.company_type, c.domain
         FROM turnover_data t
         LEFT JOIN crm_companies c ON c.id = t.company_id
-        WHERE t.turnover IS NOT NULL
+        WHERE t.turnover IS NOT NULL AND (c.id IS NULL OR c.merged_into_id IS NULL)
         ORDER BY t.company_id, t.period DESC, t.turnover DESC
       `).then(r => r.rows);
 
@@ -7111,9 +7468,17 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
   });
 
   // ── Brand Hunter — ranked list of brands most likely to expand into UK ──
-  app.get("/api/brands/hunter", requireAuth, async (_req, res) => {
+  app.get("/api/brands/hunter", requireAuth, async (req, res) => {
     try {
       const { getStockSnapshots } = await import("./stock-price");
+
+      // Client logins get the hospitality slice only — the full tracked
+      // universe (luxury/fashion/retail) is BGP intel, and its rows link to
+      // brand profiles a client can't open anyway.
+      const hunterClientScoped = await isClientRequest(req);
+      const hunterSliceFilter = hunterClientScoped
+        ? ` AND c.company_type ILIKE ANY(ARRAY[${CLIENT_BRAND_TYPE_PATTERNS.map(p => `'${p}'`).join(",")}])`
+        : "";
 
       // Fetch all tracked brands + any manually hunter-flagged brands
       const brands = await pool.query(`
@@ -7127,7 +7492,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           c.created_at
         FROM crm_companies c
         WHERE (c.is_tracked_brand = true OR c.hunter_flag = true)
-          AND c.merged_into_id IS NULL
+          AND c.merged_into_id IS NULL${hunterSliceFilter}
         ORDER BY c.name
       `).then(r => r.rows);
 
