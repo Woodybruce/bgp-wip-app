@@ -1102,6 +1102,12 @@ router.get("/api/tenancy-schedule/property/:propertyId/links", requireAuth, asyn
   try {
     const pool = await getPool();
     const { propertyId } = req.params;
+    // Clients may only read the link map for their OWN properties.
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const linkScope = await resolveCompanyScope(req as any);
+    if (linkScope && !(await isPropertyInScope(linkScope, String(propertyId)))) {
+      return res.status(403).json({ error: "Access denied" });
+    }
 
     const deals = await pool.query(
       "SELECT id, name, status, tenant_id, rent_pa FROM crm_deals WHERE property_id = $1",

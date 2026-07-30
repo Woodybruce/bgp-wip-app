@@ -3374,6 +3374,9 @@ app.use("/api/branding/assets", express.static(
     // Both singular (/unit/:id PUT) and plural (/units/:id/archive PATCH) —
     // the archive button 403'd while the delete beside it worked.
     "/api/tenancy-schedule/unit", "/api/leasing-schedule/unit", "/api/leasing-schedule/units",
+    // One-click "+ Tracker" from the tenancy schedule — scope-checked in the
+    // handler (checkPropertyAccess), so a client can only list their own units.
+    "/api/leasing-schedule/promote-from-tenancy",
     // Clients may manage their OWN tasks (every task endpoint is scoped to
     // user_id); the My Tasks dashboard widget needs create/complete/reorder.
     "/api/tasks",
@@ -3415,7 +3418,9 @@ app.use("/api/branding/assets", express.static(
     /^\/api\/available-units\/(all-files|matches)\b/,
     /^\/api\/leasing-schedule\/export-excel/,           // firm-wide export; per-property /property/:id/export stays scoped
     /^\/api\/leasing-schedule\/property\/[^/]+\/privacy/,
-    /^\/api\/tenancy-schedule\/property\/[^/]+\/links/,
+    // tenancy-schedule /links is no longer blocked: the client unified
+    // schedule (editable since the Tenancy→Tracker parity work) needs the
+    // deal/letting link map, and the handler now scope-checks the property.
     /^\/api\/properties\/[^/]+\/(360|brochures|tasks|orphan-deals|instructions|project-files|duplicate-units|plan-pickable-units|plans|unresolved-tenants|linkage-audit)\b/,
     /^\/api\/image-studio\/orphans/,
   ];

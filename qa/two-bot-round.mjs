@@ -729,6 +729,7 @@ async function markRound(page, cross) {
         ['POST',   '/api/crm/deals/bulk-rent-analysis'],
         ['POST',   '/api/crm/wipe-deals'],
         ['POST',   '/api/image-studio/bulk-assign-property'],
+        ['POST',   '/api/admin/letting-tracker-focus'],
       ];
       const out = [];
       for (const [method, url] of probes) {
@@ -781,6 +782,34 @@ async function markRound(page, cross) {
     if (!targetRows && !addAffordance) {
       throw new Error('no target-operator rows or add affordance on the client Letting Tracker');
     }
+  });
+
+  // Tenancy → Tracker for the client (JOGQK): a client can one-click list a
+  // tenancy unit on the Letting Tracker; scope checks gate the write. Promote,
+  // verify the tracker row landed, then delete it to leave no residue.
+  await step(page, p, 'client-tenancy-to-tracker', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const props = await (await fetch('/api/crm/properties?excludeComps=true', { headers: auth })).json();
+      const list = Array.isArray(props) ? props : (props?.data || []);
+      if (!list[0]) return { skip: true };
+      const ten = await (await fetch(`/api/tenancy-schedule/property/${list[0].id}`, { headers: auth })).json();
+      const rows = Array.isArray(ten) ? ten : (ten?.units || ten?.data || []);
+      // Pick a row not already linked to a tracker unit.
+      const cand = rows.find((u) => !u.leasing_unit_id && !u.tracker_unit_id) || rows[0];
+      if (!cand?.id) return { skip: true };
+      const promote = await fetch('/api/leasing-schedule/promote-from-tenancy', {
+        method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ tenancyUnitId: cand.id }),
+      });
+      if (!promote.ok) return { ok: false, why: `promote ${promote.status}` };
+      const made = await promote.json();
+      const del = await fetch(`/api/leasing-schedule/unit/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      return { ok: true, delOk: del.ok, delStatus: del.status };
+    });
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`client tenancy→tracker promote failed (${r.why})`);
+    if (!r.delOk) throw new Error(`cleanup delete of the promoted tracker row failed (${r.delStatus})`);
   });
 
   // Client dashboard on a phone-width viewport must not overflow horizontally
