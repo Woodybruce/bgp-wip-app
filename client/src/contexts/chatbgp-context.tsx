@@ -60,7 +60,18 @@ export function ChatBGPProvider({ children }: { children: ReactNode }) {
   const [queueLength, setQueueLength] = useState(0);
   const [progressLabel, setProgressLabel] = useState("");
   const [activeProjectView, setActiveProjectView] = useState<any>(null);
-  const [panelOpen, setPanelOpen] = useState(true);
+  // Start collapsed — the rail took a third of the screen on every load.
+  // Remember the user's last choice so re-opening it sticks across visits.
+  const [panelOpen, _setPanelOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem("chatbgp:panelOpen") === "1"; } catch { return false; }
+  });
+  const setPanelOpen: React.Dispatch<React.SetStateAction<boolean>> = useCallback((value) => {
+    _setPanelOpen(prev => {
+      const next = typeof value === "function" ? (value as (p: boolean) => boolean)(prev) : value;
+      try { localStorage.setItem("chatbgp:panelOpen", next ? "1" : "0"); } catch {}
+      return next;
+    });
+  }, []);
 
   const setActiveThreadId = useCallback((id: string | null) => {
     activeThreadIdRef.current = id;
