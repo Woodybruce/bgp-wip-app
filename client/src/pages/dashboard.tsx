@@ -9,6 +9,7 @@ import { useTeam } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
 import { DraggableGrid } from "@/components/draggable-grid";
 import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
+import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import {
   Building2,
   CalendarDays,
@@ -35,6 +36,7 @@ import {
   Landmark,
   Globe,
   MapPin,
+  Handshake,
   ShieldCheck,
   Pencil,
   Check,
@@ -837,6 +839,8 @@ export default function Dashboard() {
     "portfolio-kpis": "Headline metrics across your portfolio",
     "portfolio-team": "The BGP people working across your portfolio and their properties",
     "portfolio-properties": "Every property linked to your account",
+    "portfolio-map": "Your whole portfolio on a map — click a pin to open the property",
+    "portfolio-relationship": "Your account with BGP — coverage, contacts, last touch and live deals",
     "portfolio-leasing": "Every unit — tenant, occupancy, rent and expiry",
     "portfolio-activity": "The latest deal movements across your portfolio",
     "portfolio-contacts": "Your key contacts on the account",
@@ -1239,6 +1243,114 @@ export default function Dashboard() {
                       })}
                     </div>
                   </ScrollArea>
+                </CardContent>
+              </Card>
+            ),
+          } : null,
+          // BGP Relationship — the client-facing half of the relationship zone
+          // on the landlord page: who covers the account, how many people and
+          // properties we're across, last touch and live deals.
+          {
+            id: "portfolio-relationship",
+            label: "BGP Relationship",
+            defaultW: 6, defaultH: 6, minW: 3, minH: 4,
+            content: (() => {
+              const evs = (portfolioData.events || []) as any[];
+              const past = evs
+                .map((e: any) => e.start_time)
+                .filter((t: any) => t && new Date(t).getTime() <= Date.now())
+                .sort()
+                .reverse();
+              const lastTouch = past[0] as string | undefined;
+              const daysSince = lastTouch
+                ? Math.floor((Date.now() - new Date(lastTouch).getTime()) / 864e5)
+                : null;
+              const bgpTeam: string[] = companyInfo?.bgpContacts || [];
+              return (
+                <Card className="h-full flex flex-col">
+                  <CardContent className="p-3 space-y-2 flex-1 overflow-auto">
+                    <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                      <Handshake className="w-3.5 h-3.5 text-teal-500" />
+                      BGP Relationship
+                    </h3>
+                    <p className="text-[10px] text-muted-foreground -mt-1">
+                      Your account with Bruce Gillingham Pollard at a glance.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Properties</div>
+                        <div className="font-medium font-mono">{Number(stats.totalProperties || 0).toLocaleString("en-GB")}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Live deals</div>
+                        <div className="font-medium font-mono">{Number(stats.activeDeals || 0).toLocaleString("en-GB")}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Your contacts</div>
+                        <div className="font-medium font-mono">{portfolioData.contacts?.length || 0}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Last touch</div>
+                        <div className={`font-medium ${
+                          daysSince == null ? "text-muted-foreground"
+                          : daysSince < 30 ? "text-emerald-700 dark:text-emerald-400"
+                          : daysSince < 90 ? "text-amber-600 dark:text-amber-400"
+                          : "text-red-600 dark:text-red-400"
+                        }`}>
+                          {daysSince == null ? "—" : daysSince === 0 ? "Today" : `${daysSince}d ago`}
+                        </div>
+                      </div>
+                    </div>
+                    {bgpTeam.length > 0 && (
+                      <div className="border-t pt-2">
+                        <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Your BGP contacts</div>
+                        <div className="flex flex-wrap gap-1">
+                          {bgpTeam.map((name: string, i: number) => (
+                            <Badge key={i} variant="outline" className="text-[10px] font-normal">{name}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })(),
+          },
+          // Portfolio map — the same map the landlord pages use, scoped to the
+          // client's own properties. Only offered when we have coordinates.
+          (portfolioData.properties || []).some((p: any) => p.lat != null && p.lng != null) ? {
+            id: "portfolio-map",
+            label: "Portfolio Map",
+            defaultW: 12, defaultH: 11, minW: 6, minH: 6,
+            content: (
+              <Card className="h-full flex flex-col">
+                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
+                  <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-teal-500" />
+                    Portfolio Map
+                  </h3>
+                  <p className="text-[10px] text-muted-foreground -mt-1">
+                    Every property in your portfolio — click a pin to open the property.
+                  </p>
+                  <div className="flex-1 min-h-0 rounded-lg overflow-hidden border">
+                    <BrandPortfolioMap
+                      alwaysRender
+                      height={9999}
+                      stores={(portfolioData.properties || [])
+                        .filter((p: any) => p.lat != null && p.lng != null)
+                        .map((p: any) => ({
+                          id: `crm:${p.id}`,
+                          name: p.name,
+                          address: typeof p.address === "string" ? p.address : null,
+                          lat: Number(p.lat),
+                          lng: Number(p.lng),
+                          status: p.status ?? null,
+                          tone: "linked" as const,
+                          href: `/properties/${p.id}`,
+                        })) as any}
+                      onSelect={(s: any) => { if (s?.href) window.location.assign(s.href); }}
+                    />
+                  </div>
                 </CardContent>
               </Card>
             ),

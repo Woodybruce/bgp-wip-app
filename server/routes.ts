@@ -5987,8 +5987,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       // The client's portfolio = properties they own (landlord_id) PLUS any
       // explicitly linked to the company via crm_company_properties. Each row
       // appears once (OR-filter, no join), so no dedup needed.
+      // latitude/longitude included so the client dashboard can render the
+      // same portfolio map the landlord pages use.
       const propsResult = await pool.query(
-        `SELECT id, name, address, status, asset_class FROM crm_properties
+        `SELECT id, name, address, status, asset_class,
+                latitude AS lat, longitude AS lng
+           FROM crm_properties
          WHERE landlord_id = $1
             OR id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
          ORDER BY name`,

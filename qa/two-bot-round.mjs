@@ -434,6 +434,30 @@ async function markRound(page, cross) {
     if (body.length < 40) throw new Error('brand profile rendered blank for client');
   });
 
+  // Client dashboard carries the Portfolio Map (same map as the landlord
+  // pages) and the BGP Relationship card, and the portfolio payload supplies
+  // coordinates for the pins.
+  await step(page, p, 'client-dashboard-map-and-relationship', async () => {
+    await page.goto(`${BASE}/`);
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(3000);
+    if (!(await page.getByText('BGP Relationship', { exact: false }).count()))
+      throw new Error('BGP Relationship card missing from client dashboard');
+    if (!(await page.getByText('Portfolio Map', { exact: false }).count()))
+      throw new Error('Portfolio Map widget missing from client dashboard');
+    if (!(await page.locator('.leaflet-container').count()))
+      throw new Error('portfolio map did not initialise (no leaflet container)');
+    const coords = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      const cid = me.companyScopeId;
+      if (!cid) return { n: 0 };
+      const d = await (await fetch(`/api/company-portfolio/${cid}`, { headers: auth })).json();
+      return { n: (d.properties || []).filter((x) => x.lat != null && x.lng != null).length };
+    });
+    if (!coords.n) throw new Error('portfolio payload returned no property coordinates for the map');
+  });
+
   // Client dashboard on a phone-width viewport must not overflow horizontally
   // (the app hit body-scroll bugs before; container queries fixed them). Use
   // a fresh 390px page so the desktop context isn't reused.
@@ -446,8 +470,9 @@ async function markRound(page, cross) {
         localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
       }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
       await mob.goto(`${BASE}/`);
-      await mob.waitForLoadState('networkidle');
-      await mob.waitForTimeout(2000);
+      // Dashboard widgets poll (news/map), so networkidle can't settle here.
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(3000);
       const { scrollW, clientW } = await mob.evaluate(() => ({
         scrollW: document.documentElement.scrollWidth,
         clientW: document.documentElement.clientWidth,
