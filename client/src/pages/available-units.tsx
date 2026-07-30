@@ -30,7 +30,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useState, useMemo, useRef, useCallback } from "react";
+import { Fragment, useState, useMemo, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
@@ -41,6 +41,7 @@ import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiS
 import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer, PropertyUnit } from "@shared/schema";
 import { BRIEF_TARGET_STATUSES } from "@shared/schema";
 import { BrandSearchInput, type BrandPick } from "@/components/brand-search-input";
+import { TargetOperatorsTable } from "@/components/target-operators-table";
 import { useTeam } from "@/lib/team-context";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { DEAL_TYPE_COLORS, DEAL_TEAM_COLORS } from "@/pages/deals";
@@ -343,6 +344,7 @@ export default function AvailableUnitsPage() {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [targetStatusFilter, setTargetStatusFilter] = useState("all");
+  const [expandedTargets, setExpandedTargets] = useState<Set<string>>(new Set());
   const [propertyFilter, setPropertyFilter] = useState("all");
   const [assetClassFilter, setAssetClassFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
@@ -1002,13 +1004,15 @@ export default function AvailableUnitsPage() {
     queryClient.invalidateQueries({ queryKey: ["/api/unit-briefs"] });
     if (unitId) queryClient.invalidateQueries({ queryKey: ["/api/available-units", unitId, "brief"] });
   };
+  const ensureBriefFor = async (u: { id: string; unitName: string }): Promise<string> => {
+    const existingId = briefByUnit[u.id]?.id;
+    if (existingId) return existingId;
+    const r = await apiRequest("POST", `/api/available-units/${u.id}/brief`, { title: `Operator Targeting — ${u.unitName}` });
+    return (await r.json()).id;
+  };
   const addUnitTarget = async (u: { id: string; unitName: string }, pick: BrandPick) => {
     try {
-      let briefId = briefByUnit[u.id]?.id;
-      if (!briefId) {
-        const r = await apiRequest("POST", `/api/available-units/${u.id}/brief`, { title: `Operator Targeting — ${u.unitName}` });
-        briefId = (await r.json()).id;
-      }
+      const briefId = await ensureBriefFor(u);
       await apiRequest("POST", `/api/unit-briefs/${briefId}/targets`, {
         operatorName: pick.name,
         companyId: pick.companyId,
@@ -1509,20 +1513,20 @@ export default function AvailableUnitsPage() {
                     data-testid="checkbox-select-all-units"
                   />
                 </TableHead>
-                <TableHead className="w-[50px]">Ref</TableHead>
-                <TableHead className="min-w-[200px]">Property / Unit</TableHead>
-                <TableHead className="w-[120px]">Deal Type</TableHead>
-                <TableHead className="w-[140px]">Client</TableHead>
-                <TableHead className="w-[140px]">Tenant</TableHead>
-                <TableHead className="w-[160px]">Team / BGP</TableHead>
-                <TableHead className="min-w-[140px]">Floor Areas</TableHead>
-                <TableHead className="min-w-[120px] text-right">Costs</TableHead>
-                <TableHead className="min-w-[110px]">Class / Cond</TableHead>
-                <TableHead>Deal Status</TableHead>
-                <TableHead className="text-center min-w-[100px]">Activity</TableHead>
-                {!isClientTracker && <TableHead className="min-w-[120px]">Fee &amp; FA</TableHead>}
-                <TableHead>Files</TableHead>
-                <TableHead>Brief</TableHead>
+                <TableHead className="w-[56px]">Ref</TableHead>
+                <TableHead className="min-w-[220px]">Property / Unit</TableHead>
+                <TableHead className="w-[130px] min-w-[130px]">Deal Type</TableHead>
+                <TableHead className="w-[150px] min-w-[150px]">Client</TableHead>
+                <TableHead className="w-[180px] min-w-[180px]">Tenant</TableHead>
+                <TableHead className="w-[150px] min-w-[150px]">Team / BGP</TableHead>
+                <TableHead className="w-[130px] min-w-[130px]">Floor Areas</TableHead>
+                <TableHead className="w-[130px] min-w-[130px] text-right">Costs</TableHead>
+                <TableHead className="w-[110px] min-w-[110px]">Class / Cond</TableHead>
+                <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>
+                <TableHead className="w-[100px] min-w-[100px] text-center">Activity</TableHead>
+                {!isClientTracker && <TableHead className="w-[130px] min-w-[130px]">Fee &amp; FA</TableHead>}
+                <TableHead className="w-[90px] min-w-[90px]">Files</TableHead>
+                <TableHead className="w-[90px] min-w-[90px]">Brief</TableHead>
                 <TableHead className="w-[100px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -1539,7 +1543,8 @@ export default function AvailableUnitsPage() {
                   const prop = propertyMap[u.propertyId];
                   const deal = u.dealId ? dealMap[u.dealId] : null;
                   return (
-                    <TableRow key={u.id} className={selectedIds.has(u.id) ? "bg-primary/5" : ""} data-testid={`row-unit-${u.id}`}>
+                    <Fragment key={u.id}>
+                    <TableRow className={selectedIds.has(u.id) ? "bg-primary/5" : ""} data-testid={`row-unit-${u.id}`}>
                       <TableCell className="px-2">
                         <Checkbox
                           checked={selectedIds.has(u.id)}
@@ -1702,6 +1707,19 @@ export default function AvailableUnitsPage() {
                                 onPick={p => addUnitTarget(u, p)}
                                 testId={`add-target-${u.id}`}
                               />
+                              <button
+                                type="button"
+                                className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+                                onClick={() => setExpandedTargets(prev => {
+                                  const next = new Set(prev);
+                                  if (next.has(u.id)) next.delete(u.id); else next.add(u.id);
+                                  return next;
+                                })}
+                                data-testid={`toggle-targets-${u.id}`}
+                              >
+                                <ChevronDown className={`w-3 h-3 transition-transform ${expandedTargets.has(u.id) ? "rotate-180" : ""}`} />
+                                Targets table
+                              </button>
                             </div>
                           );
                         })()}
@@ -1981,6 +1999,19 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                     </TableRow>
+                    {expandedTargets.has(u.id) && (
+                      <TableRow className="bg-muted/20 hover:bg-muted/20">
+                        <TableCell colSpan={isClientTracker ? 15 : 16} className="p-3">
+                          <TargetOperatorsTable
+                            targets={briefByUnit[u.id]?.targets || []}
+                            clientCompanyId={briefByUnit[u.id]?.clientCompanyId || null}
+                            ensureBriefId={() => ensureBriefFor(u)}
+                            onChanged={() => invalidateBriefs(u.id)}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    </Fragment>
                   );
                 })
               )}
