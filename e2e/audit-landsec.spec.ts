@@ -12,6 +12,8 @@ const PAGES = [
   ["letting-tracker", "/available-units"],
   ["sharepoint", "/sharepoint"],
   ["calendar", "/calendar"],
+  ["prop-intel", "/property-intelligence"],
+  ["deals-properties", "/deals/properties"],
   ["chatbgp", "/chatbgp"],
   ["image-studio", "/image-studio"],
 ];

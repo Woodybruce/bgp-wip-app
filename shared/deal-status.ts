@@ -2,6 +2,7 @@
 // WIP Schedule, and the Deal page. `crm_deals.status` is the source of truth.
 
 export const DEAL_STATUS_CODES = [
+  "OPP",  // Opportunity — earliest pipeline stage, pre-reporting
   "REP",  // Reporting
   "SPEC", // Speculative
   "LIVE", // Live
@@ -17,6 +18,7 @@ export const DEAL_STATUS_CODES = [
 export type DealStatusCode = typeof DEAL_STATUS_CODES[number];
 
 export const DEAL_STATUS_LABELS: Record<DealStatusCode, string> = {
+  OPP: "Opportunity",
   REP: "Reporting",
   SPEC: "Speculative",
   LIVE: "Live",
@@ -31,6 +33,7 @@ export const DEAL_STATUS_LABELS: Record<DealStatusCode, string> = {
 
 // Tailwind colour classes per status — used by chips/dots across the app
 export const DEAL_STATUS_COLORS: Record<DealStatusCode, string> = {
+  OPP: "bg-teal-100 text-teal-800",
   REP: "bg-slate-100 text-slate-700",
   SPEC: "bg-zinc-100 text-zinc-700",
   LIVE: "bg-blue-100 text-blue-800",
@@ -44,7 +47,7 @@ export const DEAL_STATUS_COLORS: Record<DealStatusCode, string> = {
 };
 
 // Per-tracker subsets — which codes each view's dropdown should offer
-export const LETTING_STATUSES: DealStatusCode[]    = ["REP", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"];
+export const LETTING_STATUSES: DealStatusCode[]    = ["OPP", "REP", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"];
 export const INVESTMENT_STATUSES: DealStatusCode[] = ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"];
 // WIP report covers every fee-bearing stage including pre-deal pipeline.
 // REP + AVA + NEG live on the Letting Tracker side; SOL+ live on the
@@ -81,6 +84,8 @@ const LEGACY_MAP: Record<string, DealStatusCode> = {
   "billed": "INV",
   "inv": "INV",
   // marketing lifecycle
+  "opportunity": "OPP",
+  "opp": "OPP",
   "reporting": "REP",
   "rep": "REP",
   "targeting": "REP",

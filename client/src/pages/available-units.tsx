@@ -303,6 +303,15 @@ export default function AvailableUnitsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
+  // Header sort — Property/Unit and Client columns, A→Z / Z→A toggle.
+  const [sortBy, setSortBy] = useState<"none" | "property" | "client">("none");
+  const [sortDir, setSortDir] = useState<1 | -1>(1);
+  const toggleSort = (key: "property" | "client") => {
+    if (sortBy === key) {
+      if (sortDir === 1) setSortDir(-1);
+      else { setSortBy("none"); setSortDir(1); }
+    } else { setSortBy(key); setSortDir(1); }
+  };
   const [targetStatusFilter, setTargetStatusFilter] = useState("all");
   const [propertyFilter, setPropertyFilter] = useState("all");
   const [assetClassFilter, setAssetClassFilter] = useState("all");
@@ -540,6 +549,15 @@ export default function AvailableUnitsPage() {
     if (!teamFilteredPropertyIds) return units;
     return units.filter(u => teamFilteredPropertyIds.has(u.propertyId));
   }, [units, teamFilteredPropertyIds]);
+
+  // Hide the Client column whenever the view is pinned to one client —
+  // client logins, staff viewing-as-client, the sidebar team switched to a
+  // client team (Landsec), or the toolbar team filter set to one: every
+  // row is that client, so the column says nothing.
+  const hideClientCol = isClientTracker
+    || !!(auUser as any)?.companyScopeId
+    || !!teamFilteredPropertyIds
+    || (bgpTeamFilter !== "all" && !(INTERNAL_BGP_TEAMS as Set<string>).has(bgpTeamFilter));
 
   const dealMap = useMemo(() => {
     const m: Record<string, CrmDeal> = {};
@@ -1038,15 +1056,28 @@ export default function AvailableUnitsPage() {
     // unit moves to Solicitors it lives on the Deals board; we hide SOL+ from
     // the default view here so the tracker stays focused. Users can still
     // click an SOL/EXC/COM lozenge to drill back in.
-    const PRE_SOL_CODES = new Set(["REP", "SPEC", "LIVE", "AVA", "NEG"]);
-    if (statusFilter !== "all") {
-      return toolbarFiltered.filter(u => legacyToCode(u.marketingStatus) === statusFilter);
+    const PRE_SOL_CODES = new Set(["OPP", "REP", "SPEC", "LIVE", "AVA", "NEG"]);
+    let result = statusFilter !== "all"
+      ? toolbarFiltered.filter(u => legacyToCode(u.marketingStatus) === statusFilter)
+      : toolbarFiltered.filter(u => {
+          const code = legacyToCode(u.marketingStatus) || "AVA";
+          return PRE_SOL_CODES.has(code);
+        });
+    if (sortBy !== "none") {
+      const clientNameFor = (u: AvailableUnit) => {
+        const d = u.dealId ? dealMap[u.dealId] : null;
+        const id = d
+          ? ((d.dealType || "").toLowerCase().includes("tenant rep") ? d.tenantId : d.landlordId)
+          : (propertyMap[u.propertyId] as any)?.landlordId;
+        return id ? (crmCompanies.find(c => c.id === id)?.name || "") : "";
+      };
+      const keyFor = (u: AvailableUnit) => sortBy === "property"
+        ? `${propertyMap[u.propertyId]?.name || ""} ${u.unitName || ""}`
+        : clientNameFor(u);
+      result = [...result].sort((a, b) => sortDir * keyFor(a).localeCompare(keyFor(b), "en-GB", { sensitivity: "base" }));
     }
-    return toolbarFiltered.filter(u => {
-      const code = legacyToCode(u.marketingStatus) || "AVA";
-      return PRE_SOL_CODES.has(code);
-    });
-  }, [toolbarFiltered, statusFilter]);
+    return result;
+  }, [toolbarFiltered, statusFilter, sortBy, sortDir, propertyMap, dealMap, crmCompanies]);
 
   const stats = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1494,9 +1525,15 @@ export default function AvailableUnitsPage() {
                   />
                 </TableHead>
                 <TableHead className="w-[56px]">Ref</TableHead>
-                <TableHead className="w-[200px] min-w-[180px]">Property / Unit</TableHead>
+                <TableHead className="w-[200px] min-w-[180px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("property")} data-testid="sort-property">
+                  Property / Unit{sortBy === "property" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
+                </TableHead>
                 <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>
-                {!isClientTracker && <TableHead className="w-[150px] min-w-[150px]">Client</TableHead>}
+                {!hideClientCol && (
+                  <TableHead className="w-[150px] min-w-[150px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
+                    Client{sortBy === "client" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
+                  </TableHead>
+                )}
                 <TableHead className="w-[170px] min-w-[170px]">Operator</TableHead>
                 <TableHead className="w-[150px] min-w-[150px]">Category</TableHead>
                 <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>
@@ -1516,7 +1553,7 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isClientTracker ? 18 : 19} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={hideClientCol ? 18 : 19} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1611,7 +1648,7 @@ export default function AvailableUnitsPage() {
                           allowClear={false}
                         />
                       </TableCell>
-                      {!isClientTracker && (
+                      {!hideClientCol && (
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[140px]">
                         {deal ? (() => {
                           const isTenantRep = (deal.dealType || "").toLowerCase().includes("tenant rep");
@@ -1627,7 +1664,19 @@ export default function AvailableUnitsPage() {
                               placeholder="Link client"
                             />
                           );
-                        })() : <span className="text-xs text-muted-foreground">—</span>}
+                        })() : (
+                          /* No deal yet — fall back to the property's
+                             landlord, editable: the unit PATCH stamps the
+                             property / mirrors once a deal exists. */
+                          <InlineLinkSelect
+                            value={(propertyMap[u.propertyId] as any)?.landlordId || null}
+                            options={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                            href={(propertyMap[u.propertyId] as any)?.landlordId ? `/companies/${(propertyMap[u.propertyId] as any).landlordId}` : undefined}
+                            onSave={(v) => { if (v) inlineUpdate(u.id, "landlordId", v); }}
+                            onCreate={async (name) => { const c = await createCompany(name); inlineUpdate(u.id, "landlordId", c.id); }}
+                            placeholder="Link client"
+                          />
+                        )}
                       </TableCell>
                       )}
                       {unitTargets.length === 0 ? (
@@ -1801,14 +1850,18 @@ export default function AvailableUnitsPage() {
                         </Popover>
                       </TableCell>
                       <TableCell rowSpan={unitRowSpan}>
-                        {deal ? (
-                          <InlineLabelSelect
-                            value={deal.dealType}
-                            options={CRM_OPTIONS.dealType}
-                            colorMap={DEAL_TYPE_COLORS}
-                            onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "dealType", value: v || null })}
-                          />
-                        ) : <span className="text-xs text-muted-foreground">—</span>}
+                        {/* No backing deal yet → still editable: the unit
+                            PATCH auto-creates the deal when a type is set,
+                            so this cell can never be a dead dash. */}
+                        <InlineLabelSelect
+                          value={deal?.dealType || null}
+                          options={CRM_OPTIONS.dealType}
+                          colorMap={DEAL_TYPE_COLORS}
+                          onSave={(v) => {
+                            if (deal) dealInlineUpdate.mutate({ id: deal.id, field: "dealType", value: v || null });
+                            else if (v) inlineUpdate(u.id, "dealType", v);
+                          }}
+                        />
                       </TableCell>
                       <TableCell rowSpan={unitRowSpan} className="text-center">
                         <div className="flex items-center justify-center gap-1">

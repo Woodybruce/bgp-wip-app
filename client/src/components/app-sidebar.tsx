@@ -397,11 +397,12 @@ export function AppSidebar() {
         <NavSection
           label="AI Tools"
           items={aiNav
-            // Clients don't get the Property Intelligence map (every layer
-            // 403s → blank grey map) or CAD Measure — staff tools. (Landsec
-            // audit + visual QA.) Image Studio stays: the server scopes the
-            // gallery to the client's own buildings.
-            .filter(i => !(isClientUser && ["/property-intelligence", "/cad-measure"].includes(i.url)))
+            // CAD Measure stays staff-only. Property Intelligence is client-
+            // visible again — its layer endpoints (land-registry, VOA, map
+            // layers, OS data, Edozo) are on the client read allowlist now.
+            // Image Studio stays: the server scopes the gallery to the
+            // client's own buildings.
+            .filter(i => !(isClientUser && ["/cad-measure"].includes(i.url)))
             .map(i =>
               // The full /image-studio page is admin-only (it calls admin
               // endpoints). Non-admins (e.g. CGI partners like Luke) and
@@ -618,7 +619,7 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
   // Parity with desktop: Reporting hidden everywhere now, and client logins
   // also lose the BGP-internal items (People & HR, My Card, WIP).
   const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
-  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/mail", "/property-intelligence", "/cad-measure"];
+  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/mail", "/cad-measure"];
   const items = (user?.role === "Client" || !!(user as any)?.companyScopeId)
     ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
     : filteredByAdmin.filter(i => i.url !== "/reporting" || isLandsec);
