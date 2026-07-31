@@ -294,11 +294,14 @@ async function victoriaRound(page, cross) {
     const mine = `QA-CAL-MINE-R${ROUND}`, other = `QA-CAL-OTHER-R${ROUND}`;
     await page.evaluate(async ([a, bb]) => {
       const h = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      // Pin to noon today: "now + 2h" crossed midnight on late rounds and
+      // the event fell off the visible month board (round-64 false alarm).
+      const noon = new Date(); noon.setHours(12, 0, 0, 0);
       for (const [title, company] of [[a, 'Landsec'], [bb, 'Hammerson']]) {
         await fetch('/api/team-events', { method: 'POST', credentials: 'include', headers: h,
           body: JSON.stringify({ title, event_type: 'Meetings', company_name: company,
-            start_time: new Date(Date.now() + 2 * 36e5).toISOString(),
-            end_time: new Date(Date.now() + 3 * 36e5).toISOString() }) }).catch(() => {});
+            start_time: noon.toISOString(),
+            end_time: new Date(noon.getTime() + 36e5).toISOString() }) }).catch(() => {});
       }
     }, [mine, other]);
     await page.goto(`${BASE}/calendar`);
