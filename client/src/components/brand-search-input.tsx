@@ -108,14 +108,18 @@ export function BrandSearchInput({ value, companyId, onPick, placeholder = "Sear
           </button>
         )}
       </PopoverTrigger>
-      <PopoverContent className="p-0 w-[320px]" align="start">
+      {/* Kept short (list capped at 240px) so the panel fits below the
+          trigger on laptop heights — a taller list made Radix flip it above
+          the row, where it sprawled over the toolbar and read as a broken
+          "bleed" (Woody, 2026-07-31). */}
+      <PopoverContent className="p-0 w-[320px]" align="start" side="bottom" collisionPadding={8}>
         <Command shouldFilter={false}>
           <CommandInput
             placeholder={placeholder}
             value={query}
             onValueChange={setQuery}
           />
-          <CommandList>
+          <CommandList className="max-h-[240px]">
             <CommandEmpty>No brands match.</CommandEmpty>
             {filtered.length > 0 && (
               <CommandGroup heading="Brand list">

@@ -29,6 +29,7 @@ export const LEASING_STATUSES = ["Vacant", "In Negotiation", "Under Offer", "Occ
 export type LeasingStatus = typeof LEASING_STATUSES[number];
 
 const CODE_TO_LEASING: Record<DealStatusCode, LeasingStatus> = {
+  OPP:  "Vacant",
   REP:  "Vacant",
   SPEC: "Vacant",
   LIVE: "Vacant",
@@ -89,6 +90,7 @@ export const TENANCY_STATES = ["Occupied", "Vacant"] as const;
 export type TenancyStatus = typeof TENANCY_STATES[number];
 
 const CODE_TO_TENANCY: Record<DealStatusCode, TenancyStatus> = {
+  OPP:  "Vacant",
   REP:  "Vacant",
   SPEC: "Vacant",
   LIVE: "Vacant",
