@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1015,6 +1015,24 @@ async function markRound(page, cross) {
       return { seen: JSON.stringify(v).includes(marker) };
     }, cross.viewingStamp);
     if (!r.seen) throw new Error("agent-logged viewing not visible on the client's letting activity");
+  });
+
+  // Locks in the terminal-side audit fix: a client reading ANOTHER
+  // landlord's unit files/viewings/offers BY ID must be refused (was a
+  // confirmed live cross-tenant leak). Uses the seeded Hammerson unit.
+  await step(page, p, 'client-foreign-unit-guards', async () => {
+    const foreign = '99999999-3333-3333-3333-333333333333'; // Hammerson unit
+    const r = await page.evaluate(async (uid) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const out = [];
+      for (const ep of ['files', 'viewings', 'offers']) {
+        const res = await fetch(`/api/available-units/${uid}/${ep}`, { headers: auth }).catch(() => ({ status: 0, ok: false }));
+        out.push({ ep, status: res.status, ok: res.ok });
+      }
+      return out;
+    }, foreign);
+    const leaked = r.filter((x) => x.ok);
+    if (leaked.length) throw new Error(`client can read a foreign unit's ${leaked.map((x) => x.ep).join(', ')} (cross-tenant leak regressed)`);
   });
 
   // Client dashboard on a phone-width viewport must not overflow horizontally
