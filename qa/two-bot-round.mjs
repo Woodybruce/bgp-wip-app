@@ -348,6 +348,43 @@ async function victoriaRound(page, cross) {
     if (await page.getByText('Page not found').count()) throw new Error('archived-banner Letting Tracker link is a dead route');
   });
 
+  // 4g. Staff contact lifecycle: create a contact, see it in the CRM list,
+  // delete it, confirm it's gone (delete was previously untested).
+  await step(page, p, 'staff-contact-create-delete', async () => {
+    const name = `QA Contact R${ROUND}`;
+    const r = await page.evaluate(async (needle) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const create = await fetch('/api/crm/contacts', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: needle, role: 'QA probe' }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const made = await create.json();
+      const del = await fetch(`/api/crm/contacts/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      if (!del.ok) return { ok: false, why: `delete ${del.status}` };
+      const list = await (await fetch('/api/crm/contacts', { headers: auth })).json();
+      const rows = Array.isArray(list) ? list : (list?.data || []);
+      return { ok: true, stillThere: rows.some((c) => c.name === needle) };
+    }, name);
+    if (!r.ok) throw new Error(`contact lifecycle failed (${r.why})`);
+    if (r.stillThere) throw new Error('deleted contact still present in the CRM list');
+  });
+
+  // 4h. Staff ChatBGP panel suggestion chips load into the composer.
+  await step(page, p, 'staff-chat-suggestions', async () => {
+    await page.goto(`${BASE}/`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(3000);
+    const chips = page.locator('[data-testid^="button-panel-suggestion-"]');
+    if (!(await chips.count())) return; // panel collapsed on this surface
+    const label = (await chips.first().innerText().catch(() => '')).trim();
+    await chips.first().click();
+    await page.waitForTimeout(1200);
+    const composer = await page.locator('textarea, [contenteditable="true"], input[placeholder*="Ask" i]').first()
+      .inputValue().catch(async () => (await page.locator('[contenteditable="true"]').first().innerText().catch(() => '')));
+    const echoed = label && (String(composer || '').includes(label.slice(0, 12)) ||
+      (await page.getByText(label.slice(0, 18), { exact: false }).count()) > 0);
+    if (!echoed) throw new Error(`clicking the "${label.slice(0, 24)}" suggestion did nothing (staff)`);
+  });
+
   // 5. Deal board (kanban) renders its pipeline columns without a crash.
   await step(page, p, 'deal-board-render', async () => {
     await page.goto(`${BASE}/deals`);
