@@ -385,6 +385,40 @@ async function victoriaRound(page, cross) {
     if (!echoed) throw new Error(`clicking the "${label.slice(0, 24)}" suggestion did nothing (staff)`);
   });
 
+  // 4i. Requirement EDIT: create, update the status, verify, delete.
+  await step(page, p, 'agent-edit-requirement', async () => {
+    const stamp = `QA-REQEDIT-R${ROUND}`;
+    const r = await page.evaluate(async (needle) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const create = await fetch('/api/crm/requirements-leasing', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: needle, status: 'Active' }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const made = await create.json();
+      const put = await fetch(`/api/crm/requirements-leasing/${made.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: needle, status: 'On Hold' }) });
+      if (!put.ok) return { ok: false, why: `edit ${put.status}` };
+      const got = await (await fetch(`/api/crm/requirements-leasing/${made.id}`, { headers: auth })).json();
+      const del = await fetch(`/api/crm/requirements-leasing/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      return { ok: true, status: got?.status, delOk: del.ok };
+    }, stamp);
+    if (!r.ok) throw new Error(`requirement edit lifecycle failed (${r.why})`);
+    if (r.status !== 'On Hold') throw new Error(`requirement edit did not persist (status: ${r.status})`);
+    if (!r.delOk) throw new Error('requirement cleanup delete failed');
+  });
+
+  // 4j. Staff brand profile renders its main sections without any error
+  // boundary tripping (Honi Poke fixture).
+  await step(page, p, 'staff-brand-profile-sections', async () => {
+    await page.goto(`${BASE}/companies/77777777-7777-7777-7777-777777777777`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(3500);
+    if (await page.getByText('Page not found').count()) throw new Error('brand profile is a dead route for staff');
+    const tripped = await page.getByText('something went wrong', { exact: false }).count();
+    if (tripped) throw new Error(`${tripped} error boundary(ies) tripped on the staff brand profile`);
+    const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
+    if (body.length < 100) throw new Error('staff brand profile rendered nearly blank');
+  });
+
   // 5. Deal board (kanban) renders its pipeline columns without a crash.
   await step(page, p, 'deal-board-render', async () => {
     await page.goto(`${BASE}/deals`);
