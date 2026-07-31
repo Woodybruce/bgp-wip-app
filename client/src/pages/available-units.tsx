@@ -992,21 +992,12 @@ export default function AvailableUnitsPage() {
     return properties.filter(p => ids.has(p.id));
   }, [teamUnits, properties]);
 
-  const filtered = useMemo(() => {
+  // Toolbar filters only (team / property / location / agent / target /
+  // search) — WITHOUT the status pill. The KPI lozenges count from this
+  // set so they always mirror the toolbar; the status pill then applies
+  // on top for the table.
+  const toolbarFiltered = useMemo(() => {
     let result = teamUnits;
-    // The Letting Tracker is the marketing pipeline (REP / AVA / NEG). Once a
-    // unit moves to Solicitors it lives on the Deals board; we hide SOL+ from
-    // the default view here so the tracker stays focused. Users can still
-    // click an SOL/EXC/COM pill to drill back in.
-    const PRE_SOL_CODES = new Set(["REP", "SPEC", "LIVE", "AVA", "NEG"]);
-    if (statusFilter !== "all") {
-      result = result.filter(u => legacyToCode(u.marketingStatus) === statusFilter);
-    } else {
-      result = result.filter(u => {
-        const code = legacyToCode(u.marketingStatus) || "AVA";
-        return PRE_SOL_CODES.has(code);
-      });
-    }
     if (propertyFilter !== "all") result = result.filter(u => u.propertyId === propertyFilter);
     if (assetClassFilter !== "all") result = result.filter(u => u.useClass === assetClassFilter);
     if (locationFilter !== "all") result = result.filter(u => u.location === locationFilter);
@@ -1040,7 +1031,22 @@ export default function AvailableUnitsPage() {
       });
     }
     return result;
-  }, [teamUnits, statusFilter, targetStatusFilter, briefByUnit, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies]);
+  }, [teamUnits, targetStatusFilter, briefByUnit, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies]);
+
+  const filtered = useMemo(() => {
+    // The Letting Tracker is the marketing pipeline (REP / AVA / NEG). Once a
+    // unit moves to Solicitors it lives on the Deals board; we hide SOL+ from
+    // the default view here so the tracker stays focused. Users can still
+    // click an SOL/EXC/COM lozenge to drill back in.
+    const PRE_SOL_CODES = new Set(["REP", "SPEC", "LIVE", "AVA", "NEG"]);
+    if (statusFilter !== "all") {
+      return toolbarFiltered.filter(u => legacyToCode(u.marketingStatus) === statusFilter);
+    }
+    return toolbarFiltered.filter(u => {
+      const code = legacyToCode(u.marketingStatus) || "AVA";
+      return PRE_SOL_CODES.has(code);
+    });
+  }, [toolbarFiltered, statusFilter]);
 
   const stats = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1321,7 +1327,7 @@ export default function AvailableUnitsPage() {
       {isMobile ? (
         <div className="flex flex-wrap gap-1.5">
           {MARKETING_STATUSES.map(s => {
-            const count = teamUnits.filter(u => legacyToCode(u.marketingStatus) === s).length;
+            const count = toolbarFiltered.filter(u => legacyToCode(u.marketingStatus) === s).length;
             return (
               <button
                 key={s}
@@ -1340,7 +1346,7 @@ export default function AvailableUnitsPage() {
       <ScrollArea className="w-full">
         <div className="flex items-center gap-3 pb-1">
           {MARKETING_STATUSES.map(s => {
-            const count = teamUnits.filter(u => legacyToCode(u.marketingStatus) === s).length;
+            const count = toolbarFiltered.filter(u => legacyToCode(u.marketingStatus) === s).length;
             return (
               <Card
                 key={s}
@@ -1711,7 +1717,7 @@ export default function AvailableUnitsPage() {
                                 { label: "SC",    value: u.serviceChargePa },
                               ].filter(r => r.value != null).length === 0 ? (
                                 <span className="text-muted-foreground text-[11px] flex items-center gap-1 justify-end">
-                                  <Plus className="w-3 h-3" /> Add costs
+                                  <Plus className="w-3 h-3" /> Costs / details
                                 </span>
                               ) : (
                                 [
@@ -1727,7 +1733,7 @@ export default function AvailableUnitsPage() {
                               )}
                             </button>
                           </PopoverTrigger>
-                          <PopoverContent className="w-[280px] p-3 space-y-2.5" align="end">
+                          <PopoverContent className="w-[320px] p-3 space-y-2.5 max-h-[70vh] overflow-y-auto" align="end">
                             <p className="text-xs font-semibold">Costs</p>
                             <div className="grid grid-cols-[100px_1fr] items-center gap-2">
                               <Label className="text-xs text-muted-foreground">Quoting Rent</Label>
@@ -1740,6 +1746,56 @@ export default function AvailableUnitsPage() {
                             <div className="grid grid-cols-[100px_1fr] items-center gap-2">
                               <Label className="text-xs text-muted-foreground">SC p.a.</Label>
                               <InlineNumber value={u.serviceChargePa} onSave={v => inlineUpdate(u.id, "serviceChargePa", v)} prefix="£" />
+                            </div>
+                            {/* Full unit details — every Edit Unit form field is
+                                editable here too, writing through the same PATCH
+                                so the table and the form mirror each other. */}
+                            <p className="text-xs font-semibold border-t pt-2">Details</p>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Floor</Label>
+                              <InlineText value={u.floor} onSave={v => inlineUpdate(u.id, "floor", v || null)} placeholder="—" className="text-xs" />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Use class</Label>
+                              <InlineText value={u.useClass} onSave={v => inlineUpdate(u.id, "useClass", v || null)} placeholder="—" className="text-xs" />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Condition</Label>
+                              <InlineText value={u.condition} onSave={v => inlineUpdate(u.id, "condition", v || null)} placeholder="—" className="text-xs" />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">EPC</Label>
+                              <InlineText value={u.epcRating} onSave={v => inlineUpdate(u.id, "epcRating", v || null)} placeholder="—" className="text-xs" />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Available from</Label>
+                              <input
+                                type="date"
+                                className="h-7 text-xs border rounded px-1.5 bg-background"
+                                defaultValue={u.availableDate ? String(u.availableDate).slice(0, 10) : ""}
+                                onBlur={e => { const v = e.target.value || null; if (v !== (u.availableDate ? String(u.availableDate).slice(0, 10) : null)) inlineUpdate(u.id, "availableDate", v); }}
+                              />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Marketing start</Label>
+                              <input
+                                type="date"
+                                className="h-7 text-xs border rounded px-1.5 bg-background"
+                                defaultValue={u.marketingStartDate ? String(u.marketingStartDate).slice(0, 10) : ""}
+                                onBlur={e => { const v = e.target.value || null; if (v !== (u.marketingStartDate ? String(u.marketingStartDate).slice(0, 10) : null)) inlineUpdate(u.id, "marketingStartDate", v); }}
+                              />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Location</Label>
+                              <InlineText value={u.location} onSave={v => inlineUpdate(u.id, "location", v || null)} placeholder="—" className="text-xs" />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs text-muted-foreground">Notes</Label>
+                              <InlineText value={u.notes} onSave={v => inlineUpdate(u.id, "notes", v || null)} placeholder="Add notes…" className="text-xs" />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs text-muted-foreground">Restrictions</Label>
+                              <InlineText value={u.restrictions} onSave={v => inlineUpdate(u.id, "restrictions", v || null)} placeholder="—" className="text-xs" />
                             </div>
                           </PopoverContent>
                         </Popover>
