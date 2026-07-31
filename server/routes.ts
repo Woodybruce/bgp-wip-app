@@ -5660,6 +5660,9 @@ These terms are indicative only and do not constitute a binding agreement.`;
     try {
       const unit = await storage.getAvailableUnit(req.params.id as string);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       const { unitMarketingFiles } = await import("@shared/schema");
       const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, req.params.id as string)).orderBy(unitMarketingFiles.createdAt);
       res.json(files);
@@ -5745,6 +5748,10 @@ These terms are indicative only and do not constitute a binding agreement.`;
   // --- Unit Viewings ---
   app.get("/api/available-units/:id/viewings", requireAuth, async (req, res) => {
     try {
+      const vUnit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, vUnit?.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       const { unitViewings } = await import("@shared/schema");
       const rows = await db.select().from(unitViewings).where(eq(unitViewings.unitId, req.params.id as string)).orderBy(unitViewings.viewingDate);
       res.json(rows);
@@ -5789,6 +5796,10 @@ These terms are indicative only and do not constitute a binding agreement.`;
   // --- Unit Offers ---
   app.get("/api/available-units/:id/offers", requireAuth, async (req, res) => {
     try {
+      const oUnit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, oUnit?.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       const { unitOffers } = await import("@shared/schema");
       const rows = await db.select().from(unitOffers).where(eq(unitOffers.unitId, req.params.id as string)).orderBy(unitOffers.offerDate);
       res.json(rows);

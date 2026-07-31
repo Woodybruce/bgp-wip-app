@@ -1903,6 +1903,8 @@ function SimplifiedCreateBody({
         />
       </div>
 
+      {/* BGP internal coverage — the client doesn't assign BGP staff. */}
+      {!hideFees && (
       <div>
         <Label>BGP Contact</Label>
         <DropdownMenu>
@@ -1937,6 +1939,7 @@ function SimplifiedCreateBody({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      )}
 
       {/* WIP-template fields — these mirror what Layla fills in via the
           shared spreadsheet so creating a deal here captures everything
@@ -2006,15 +2009,18 @@ function SimplifiedCreateBody({
               className={!form.targetDate ? "border-rose-300" : ""}
             />
             {!form.targetDate && (
-              <p className="text-[10px] text-rose-600 mt-0.5">Required — drives the WIP report bucket.</p>
+              <p className="text-[10px] text-rose-600 mt-0.5">{hideFees ? "Required." : "Required — drives the WIP report bucket."}</p>
             )}
           </div>
+          {/* Invoicing contact is a BGP billing concern — hidden from clients. */}
+          {!hideFees && (
           <div>
             <Label htmlFor="deal-invoicing-email" className="text-xs">Invoicing email / contact</Label>
             <Input id="deal-invoicing-email" type="email" value={form.invoicingEmail}
               onChange={(e) => set("invoicingEmail", e.target.value)}
               placeholder="e.g. accounts@client.com" />
           </div>
+          )}
         </div>
 
         {/* AML completion is no longer a self-attest checkbox — the
@@ -2024,6 +2030,8 @@ function SimplifiedCreateBody({
             PEP screen, UBO, ID verification, address verification). The
             stage-transition handler blocks moves to SOL+ when AML
             status is not complete for all parties. */}
+        {/* PO number is a BGP billing field — hidden from clients. */}
+        {!hideFees && (
         <div>
           <Label htmlFor="deal-po-number" className="text-xs">PO number (if known)</Label>
           {/* Native <datalist> autocomplete sourced from every PO already
@@ -2039,17 +2047,20 @@ function SimplifiedCreateBody({
           />
           <PoNumberDatalist />
         </div>
+        )}
 
         <div>
-          <Label htmlFor="deal-comments" className="text-xs">Comments / specific wording</Label>
+          <Label htmlFor="deal-comments" className="text-xs">Comments{!hideFees ? " / specific wording" : ""}</Label>
           <Textarea id="deal-comments" rows={3} value={form.comments}
             onChange={(e) => set("comments", e.target.value)}
-            placeholder="Anything finance needs to know — special wording, PO process, billing quirks…" />
+            placeholder={hideFees ? "Any context or notes on this deal…" : "Anything finance needs to know — special wording, PO process, billing quirks…"} />
         </div>
       </div>
 
       <p className="text-[11px] text-muted-foreground border-t pt-3">
-        Anything not here (yield, areas, individual dates, Xero billing address) is editable on the deal board after creation. Click <span className="font-medium text-foreground">Show all fields</span> below if you need the full form now.
+        {hideFees
+          ? <>Extra detail (areas, individual dates) is editable on the deal after creation.</>
+          : <>Anything not here (yield, areas, individual dates, Xero billing address) is editable on the deal board after creation. Click <span className="font-medium text-foreground">Show all fields</span> below if you need the full form now.</>}
       </p>
     </div>
   );
@@ -5143,6 +5154,26 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     lastInteraction: true,
   });
 
+  // Client logins never see BGP's commercial columns — fee, fee split, fee
+  // agreement, pricing/yield and the Xero billing cell are BGP's side of the
+  // ledger. The server already strips the values; this removes the columns
+  // (and their column-picker entries) entirely so a client never sees an
+  // empty "Fee" header either. (Landsec audit — FCA: clients never see fees.)
+  const CLIENT_HIDDEN_COLS = new Set([
+    "feeCombined", "fee", "feeAlloc", "feeAgreement",
+    "pricingCombined", "pricing", "pricePsf", "priceItza", "yield",
+    "clientXero", "xeroContact",
+  ]);
+  const effectiveColumns = useMemo(() => {
+    if (!isClientDeals) return visibleColumns;
+    const out: Record<string, boolean> = { ...visibleColumns };
+    for (const k of CLIENT_HIDDEN_COLS) out[k] = false;
+    // Client (landlord) was folded into the hidden Client/Billing cell — turn
+    // the standalone Client column back on so clients still see the party.
+    out.landlord = true;
+    return out;
+  }, [isClientDeals, visibleColumns]);
+
   // Always hide pre-SOL tracker-backed deals from the Deals CRM. They
   // live on the Letting Tracker until they get promoted to SOL+, at
   // which point the server-side filter lets them through naturally
@@ -5898,7 +5929,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
               <span className="font-medium">{Object.values(visibleColumns).every(v => v) ? "Hide All" : "Show All"}</span>
             </DropdownMenuItem>
             <div className="h-px bg-border my-1" />
-            {Object.entries(COLUMN_LABELS).map(([key, label]) => (
+            {Object.entries(COLUMN_LABELS).filter(([key]) => !(isClientDeals && CLIENT_HIDDEN_COLS.has(key))).map(([key, label]) => (
               <DropdownMenuItem
                 key={key}
                 onClick={() => toggleColumn(key)}
@@ -6076,10 +6107,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     </TableHead>
                     <SortableTableHead sortKey="ref" sort={dealsSort} className="w-[60px]">Ref</SortableTableHead>
                     <SortableTableHead sortKey="property" sort={dealsSort} className="min-w-[200px]">Property / Unit</SortableTableHead>
-                    {visibleColumns.unit && <SortableTableHead sortKey="unit" sort={dealsSort} className="min-w-[100px]">Unit</SortableTableHead>}
-                    {visibleColumns.clientXero && <TableHead className="min-w-[160px]">Client / Billing</TableHead>}
-                    {visibleColumns.landlord && <SortableTableHead sortKey="landlord" sort={dealsSort} className="min-w-[120px] px-1.5">Client</SortableTableHead>}
-                    {visibleColumns.type && (
+                    {effectiveColumns.unit && <SortableTableHead sortKey="unit" sort={dealsSort} className="min-w-[100px]">Unit</SortableTableHead>}
+                    {effectiveColumns.clientXero && <TableHead className="min-w-[160px]">Client / Billing</TableHead>}
+                    {effectiveColumns.landlord && <SortableTableHead sortKey="landlord" sort={dealsSort} className="min-w-[120px] px-1.5">Client</SortableTableHead>}
+                    {effectiveColumns.type && (
                       <TableHead className="min-w-[120px]">
                         <div className="flex items-center gap-1">
                           <ColumnFilterPopover
@@ -6094,7 +6125,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         </div>
                       </TableHead>
                     )}
-                    {visibleColumns.status && (
+                    {effectiveColumns.status && (
                       <TableHead className="min-w-[120px]">
                         <div className="flex items-center gap-1">
                           <ColumnFilterPopover
@@ -6109,7 +6140,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         </div>
                       </TableHead>
                     )}
-                    {visibleColumns.team && (
+                    {effectiveColumns.team && (
                       <TableHead className="min-w-[80px]">
                         <ColumnFilterPopover
                           label="Team"
@@ -6119,13 +6150,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="min-w-[120px]">Tenant</SortableTableHead>}
-                    {visibleColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
-                    {visibleColumns.feeCombined && <TableHead className="min-w-[110px]">Fee</TableHead>}
-                    {visibleColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
-                    {visibleColumns.feeAlloc && !isClientDeals && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
-                    {visibleColumns.agent && <SortableTableHead sortKey="agent" sort={dealsSort} className="min-w-[80px]">BGP Contact</SortableTableHead>}
-                    {visibleColumns.assetClass && (
+                    {effectiveColumns.tenant && <SortableTableHead sortKey="tenant" sort={dealsSort} className="min-w-[120px]">Tenant</SortableTableHead>}
+                    {effectiveColumns.parties && <TableHead className="min-w-[180px]">Parties</TableHead>}
+                    {effectiveColumns.feeCombined && <TableHead className="min-w-[110px]">Fee</TableHead>}
+                    {effectiveColumns.fee && <SortableTableHead sortKey="fee" sort={dealsSort} align="right" className="min-w-[80px]">Fee</SortableTableHead>}
+                    {effectiveColumns.feeAlloc && !isClientDeals && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
+                    {effectiveColumns.agent && <SortableTableHead sortKey="agent" sort={dealsSort} className="min-w-[80px]">BGP Contact</SortableTableHead>}
+                    {effectiveColumns.assetClass && (
                       <TableHead className="min-w-[80px]">
                         <ColumnFilterPopover
                           label="Asset Class"
@@ -6135,37 +6166,37 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.clientContact && <SortableTableHead sortKey="clientContact" sort={dealsSort} className="min-w-[120px]">Client Contact</SortableTableHead>}
-                    {visibleColumns.vendor && <SortableTableHead sortKey="vendor" sort={dealsSort} className="min-w-[120px]">Vendor</SortableTableHead>}
-                    {visibleColumns.purchaser && <SortableTableHead sortKey="purchaser" sort={dealsSort} className="min-w-[120px]">Purchaser</SortableTableHead>}
-                    {visibleColumns.vendorAgent && <SortableTableHead sortKey="vendorAgent" sort={dealsSort} className="min-w-[120px]">Vendor Agent</SortableTableHead>}
-                    {visibleColumns.acquisitionAgent && <SortableTableHead sortKey="acquisitionAgent" sort={dealsSort} className="min-w-[120px]">Acquisition Agent</SortableTableHead>}
-                    {visibleColumns.purchaserAgent && <SortableTableHead sortKey="purchaserAgent" sort={dealsSort} className="min-w-[120px]">Purchaser Agent</SortableTableHead>}
-                    {visibleColumns.leasingAgent && <SortableTableHead sortKey="leasingAgent" sort={dealsSort} className="min-w-[120px]">Leasing Agent</SortableTableHead>}
-                    {visibleColumns.pricingCombined && <TableHead className="min-w-[130px]">Pricing</TableHead>}
-                    {visibleColumns.pricing && <SortableTableHead sortKey="pricing" sort={dealsSort} align="right" className="min-w-[100px]">Pricing</SortableTableHead>}
-                    {visibleColumns.yield && <SortableTableHead sortKey="yield" sort={dealsSort} align="right" className="min-w-[80px]">Yield %</SortableTableHead>}
-                    {visibleColumns.feeAgreement && <SortableTableHead sortKey="feeAgreement" sort={dealsSort} className="min-w-[100px]">Fee Agreement</SortableTableHead>}
-                    {visibleColumns.xeroContact && <SortableTableHead sortKey="xeroContact" sort={dealsSort} className="min-w-[180px]">Xero Contact</SortableTableHead>}
-                    {visibleColumns.floorAreas && <TableHead className="min-w-[140px]">Floor Areas</TableHead>}
-                    {visibleColumns.pricePsf && <TableHead className="min-w-[80px] text-right">Price PSF</TableHead>}
-                    {visibleColumns.priceItza && <TableHead className="min-w-[80px] text-right">Price ITZA</TableHead>}
-                    {visibleColumns.leaseTerms && <TableHead className="min-w-[160px]">Lease Terms</TableHead>}
-                    {visibleColumns.rentPa && <SortableTableHead sortKey="rentPa" sort={dealsSort} align="right" className="min-w-[100px]">Rent PA</SortableTableHead>}
-                    {visibleColumns.capitalContribution && <SortableTableHead sortKey="capitalContribution" sort={dealsSort} align="right" className="min-w-[100px]">Capital Contribution</SortableTableHead>}
-                    {visibleColumns.rentFree && <SortableTableHead sortKey="rentFree" sort={dealsSort} align="right" className="min-w-[80px]">Rent Free</SortableTableHead>}
-                    {visibleColumns.leaseLength && <SortableTableHead sortKey="leaseLength" sort={dealsSort} align="right" className="min-w-[80px]">Lease Length</SortableTableHead>}
-                    {visibleColumns.breakOption && <SortableTableHead sortKey="breakOption" sort={dealsSort} align="right" className="min-w-[80px]">Break Option</SortableTableHead>}
-                    {visibleColumns.datesCombined && <TableHead className="min-w-[140px]">Dates</TableHead>}
-                    {visibleColumns.dateAdded && <SortableTableHead sortKey="dateAdded" sort={dealsSort} className="min-w-[110px]">Date Added</SortableTableHead>}
-                    {visibleColumns.instructedAt && <SortableTableHead sortKey="instructedAt" sort={dealsSort} className="min-w-[110px]">Instructed</SortableTableHead>}
-                    {visibleColumns.targetDate && <SortableTableHead sortKey="targetDate" sort={dealsSort} className="min-w-[120px]">Target Date</SortableTableHead>}
-                    {visibleColumns.exchangedAt && <SortableTableHead sortKey="exchangedAt" sort={dealsSort} className="min-w-[110px]">Exchanged</SortableTableHead>}
-                    {visibleColumns.completedAt && <SortableTableHead sortKey="completedAt" sort={dealsSort} className="min-w-[110px]">Completed</SortableTableHead>}
-                    {visibleColumns.invoicedAt && <SortableTableHead sortKey="invoicedAt" sort={dealsSort} className="min-w-[110px]">Invoiced</SortableTableHead>}
-                    {visibleColumns.rentAnalysis && <TableHead className="min-w-[100px] text-right">Rent Analysis</TableHead>}
-                    {visibleColumns.sharepoint && <TableHead className="min-w-[140px]">SharePoint Files</TableHead>}
-                    {visibleColumns.lastInteraction && <SortableTableHead sortKey="lastInteraction" sort={dealsSort} className="min-w-[100px]">Last Touch</SortableTableHead>}
+                    {effectiveColumns.clientContact && <SortableTableHead sortKey="clientContact" sort={dealsSort} className="min-w-[120px]">Client Contact</SortableTableHead>}
+                    {effectiveColumns.vendor && <SortableTableHead sortKey="vendor" sort={dealsSort} className="min-w-[120px]">Vendor</SortableTableHead>}
+                    {effectiveColumns.purchaser && <SortableTableHead sortKey="purchaser" sort={dealsSort} className="min-w-[120px]">Purchaser</SortableTableHead>}
+                    {effectiveColumns.vendorAgent && <SortableTableHead sortKey="vendorAgent" sort={dealsSort} className="min-w-[120px]">Vendor Agent</SortableTableHead>}
+                    {effectiveColumns.acquisitionAgent && <SortableTableHead sortKey="acquisitionAgent" sort={dealsSort} className="min-w-[120px]">Acquisition Agent</SortableTableHead>}
+                    {effectiveColumns.purchaserAgent && <SortableTableHead sortKey="purchaserAgent" sort={dealsSort} className="min-w-[120px]">Purchaser Agent</SortableTableHead>}
+                    {effectiveColumns.leasingAgent && <SortableTableHead sortKey="leasingAgent" sort={dealsSort} className="min-w-[120px]">Leasing Agent</SortableTableHead>}
+                    {effectiveColumns.pricingCombined && <TableHead className="min-w-[130px]">Pricing</TableHead>}
+                    {effectiveColumns.pricing && <SortableTableHead sortKey="pricing" sort={dealsSort} align="right" className="min-w-[100px]">Pricing</SortableTableHead>}
+                    {effectiveColumns.yield && <SortableTableHead sortKey="yield" sort={dealsSort} align="right" className="min-w-[80px]">Yield %</SortableTableHead>}
+                    {effectiveColumns.feeAgreement && <SortableTableHead sortKey="feeAgreement" sort={dealsSort} className="min-w-[100px]">Fee Agreement</SortableTableHead>}
+                    {effectiveColumns.xeroContact && <SortableTableHead sortKey="xeroContact" sort={dealsSort} className="min-w-[180px]">Xero Contact</SortableTableHead>}
+                    {effectiveColumns.floorAreas && <TableHead className="min-w-[140px]">Floor Areas</TableHead>}
+                    {effectiveColumns.pricePsf && <TableHead className="min-w-[80px] text-right">Price PSF</TableHead>}
+                    {effectiveColumns.priceItza && <TableHead className="min-w-[80px] text-right">Price ITZA</TableHead>}
+                    {effectiveColumns.leaseTerms && <TableHead className="min-w-[160px]">Lease Terms</TableHead>}
+                    {effectiveColumns.rentPa && <SortableTableHead sortKey="rentPa" sort={dealsSort} align="right" className="min-w-[100px]">Rent PA</SortableTableHead>}
+                    {effectiveColumns.capitalContribution && <SortableTableHead sortKey="capitalContribution" sort={dealsSort} align="right" className="min-w-[100px]">Capital Contribution</SortableTableHead>}
+                    {effectiveColumns.rentFree && <SortableTableHead sortKey="rentFree" sort={dealsSort} align="right" className="min-w-[80px]">Rent Free</SortableTableHead>}
+                    {effectiveColumns.leaseLength && <SortableTableHead sortKey="leaseLength" sort={dealsSort} align="right" className="min-w-[80px]">Lease Length</SortableTableHead>}
+                    {effectiveColumns.breakOption && <SortableTableHead sortKey="breakOption" sort={dealsSort} align="right" className="min-w-[80px]">Break Option</SortableTableHead>}
+                    {effectiveColumns.datesCombined && <TableHead className="min-w-[140px]">Dates</TableHead>}
+                    {effectiveColumns.dateAdded && <SortableTableHead sortKey="dateAdded" sort={dealsSort} className="min-w-[110px]">Date Added</SortableTableHead>}
+                    {effectiveColumns.instructedAt && <SortableTableHead sortKey="instructedAt" sort={dealsSort} className="min-w-[110px]">Instructed</SortableTableHead>}
+                    {effectiveColumns.targetDate && <SortableTableHead sortKey="targetDate" sort={dealsSort} className="min-w-[120px]">Target Date</SortableTableHead>}
+                    {effectiveColumns.exchangedAt && <SortableTableHead sortKey="exchangedAt" sort={dealsSort} className="min-w-[110px]">Exchanged</SortableTableHead>}
+                    {effectiveColumns.completedAt && <SortableTableHead sortKey="completedAt" sort={dealsSort} className="min-w-[110px]">Completed</SortableTableHead>}
+                    {effectiveColumns.invoicedAt && <SortableTableHead sortKey="invoicedAt" sort={dealsSort} className="min-w-[110px]">Invoiced</SortableTableHead>}
+                    {effectiveColumns.rentAnalysis && <TableHead className="min-w-[100px] text-right">Rent Analysis</TableHead>}
+                    {effectiveColumns.sharepoint && <TableHead className="min-w-[140px]">SharePoint Files</TableHead>}
+                    {effectiveColumns.lastInteraction && <SortableTableHead sortKey="lastInteraction" sort={dealsSort} className="min-w-[100px]">Last Touch</SortableTableHead>}
                     <TableHead className="w-[40px]"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -6221,12 +6252,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           onUnitCreated={() => invalidateDealCaches()}
                         />
                       </TableCell>
-                      {visibleColumns.unit && (
+                      {effectiveColumns.unit && (
                         <TableCell className="px-1.5 py-1 text-sm text-muted-foreground max-w-[120px] truncate">
                           {deal.unitId ? (unitMap.get(deal.unitId) || "—") : "—"}
                         </TableCell>
                       )}
-                      {visibleColumns.clientXero && (
+                      {effectiveColumns.clientXero && (
                         <TableCell className="px-1.5 py-1 w-[200px] max-w-[200px] overflow-hidden">
                           <ClientXeroCell
                             deal={deal}
@@ -6257,7 +6288,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.landlord && (
+                      {effectiveColumns.landlord && (
                         <TableCell className="px-1.5 py-1 max-w-[120px]">
                           <InlineLinkSelect
                             value={deal.landlordId}
@@ -6269,7 +6300,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.type && (
+                      {effectiveColumns.type && (
                         <TableCell className="px-1.5 py-1">
                           <InlineLabelSelect
                             value={deal.dealType}
@@ -6280,7 +6311,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.status && (
+                      {effectiveColumns.status && (
                         <TableCell className="px-1.5 py-1">
                           <InlineLabelSelect
                             value={legacyToCode(deal.status) || deal.status}
@@ -6292,7 +6323,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.team && (
+                      {effectiveColumns.team && (
                         <TableCell className="px-1.5 py-1">
                           <InlineMultiSelect
                             value={deal.team}
@@ -6304,7 +6335,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.tenant && (
+                      {effectiveColumns.tenant && (
                         <TableCell className="px-1.5 py-1">
                           <div className="w-[110px] overflow-hidden">
                             <InlineLinkSelect
@@ -6318,7 +6349,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           </div>
                         </TableCell>
                       )}
-                      {visibleColumns.parties && (
+                      {effectiveColumns.parties && (
                         <TableCell className="px-1.5 py-1">
                           <PartiesCell
                             deal={deal}
@@ -6330,7 +6361,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.feeCombined && (
+                      {effectiveColumns.feeCombined && (
                         <TableCell className="px-1.5 py-1">
                           <FeeCombinedCell
                             deal={deal}
@@ -6339,7 +6370,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.fee && (
+                      {effectiveColumns.fee && (
                         <TableCell className="px-1.5 py-1">
                           {isClientDeals ? (
                             <span className="font-mono text-xs">{deal.fee != null ? `£${Number(deal.fee).toLocaleString("en-GB")}` : "—"}</span>
@@ -6354,12 +6385,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {/* Fee Split is the internal per-BGP-agent breakdown —
                           staff-only, never shown to a client/client-view. */}
-                      {visibleColumns.feeAlloc && !isClientDeals && (
+                      {effectiveColumns.feeAlloc && !isClientDeals && (
                         <TableCell className="px-1.5 py-1">
                           <FeeAllocCell dealId={deal.id} dealFee={deal.fee} allAllocations={allFeeAllocations} colorMap={userColorMap2} teams={deal.team} onClick={() => setFeeAllocEditDeal(deal)} />
                         </TableCell>
                       )}
-                      {visibleColumns.agent && (
+                      {effectiveColumns.agent && (
                         <TableCell className="px-1.5 py-1">
                           <InlineMultiSelect
                             value={deal.internalAgent}
@@ -6370,7 +6401,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.assetClass && (
+                      {effectiveColumns.assetClass && (
                         <TableCell className="px-1.5 py-1">
                           <InlineLabelSelect
                             value={deal.assetClass}
@@ -6380,7 +6411,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.clientContact && (
+                      {effectiveColumns.clientContact && (
                         <TableCell className="px-1.5 py-1 max-w-[120px]">
                           <InlineLinkSelect
                             value={deal.clientContactId}
@@ -6392,7 +6423,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.vendor && (
+                      {effectiveColumns.vendor && (
                         <TableCell className="px-1.5 py-1">
                           <div className="w-[110px] overflow-hidden">
                             <InlineLinkSelect
@@ -6406,7 +6437,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           </div>
                         </TableCell>
                       )}
-                      {visibleColumns.purchaser && (
+                      {effectiveColumns.purchaser && (
                         <TableCell className="px-1.5 py-1">
                           <div className="w-[110px] overflow-hidden">
                             <InlineLinkSelect
@@ -6420,7 +6451,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           </div>
                         </TableCell>
                       )}
-                      {visibleColumns.vendorAgent && (
+                      {effectiveColumns.vendorAgent && (
                         <TableCell className="px-1.5 py-1">
                           <div className="w-[110px] overflow-hidden">
                             <InlineLinkSelect
@@ -6434,7 +6465,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           </div>
                         </TableCell>
                       )}
-                      {visibleColumns.acquisitionAgent && (
+                      {effectiveColumns.acquisitionAgent && (
                         <TableCell className="px-1.5 py-1">
                           <div className="w-[110px] overflow-hidden">
                             <InlineLinkSelect
@@ -6448,7 +6479,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           </div>
                         </TableCell>
                       )}
-                      {visibleColumns.purchaserAgent && (
+                      {effectiveColumns.purchaserAgent && (
                         <TableCell className="px-1.5 py-1">
                           <div className="w-[110px] overflow-hidden">
                             <InlineLinkSelect
@@ -6462,7 +6493,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           </div>
                         </TableCell>
                       )}
-                      {visibleColumns.leasingAgent && (
+                      {effectiveColumns.leasingAgent && (
                         <TableCell className="px-1.5 py-1">
                           <div className="w-[110px] overflow-hidden">
                             <InlineLinkSelect
@@ -6476,7 +6507,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           </div>
                         </TableCell>
                       )}
-                      {visibleColumns.pricingCombined && (
+                      {effectiveColumns.pricingCombined && (
                         <TableCell className="px-1.5 py-1">
                           <PricingCell
                             deal={deal}
@@ -6484,7 +6515,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.pricing && (
+                      {effectiveColumns.pricing && (
                         <TableCell className="px-1.5 py-1">
                           <InlineNumber
                             value={deal.pricing}
@@ -6493,7 +6524,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.yield && (
+                      {effectiveColumns.yield && (
                         <TableCell className="px-1.5 py-1">
                           <InlineNumber
                             value={deal.yieldPercent}
@@ -6502,7 +6533,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.feeAgreement && (
+                      {effectiveColumns.feeAgreement && (
                         <TableCell className="px-1.5 py-1">
                           <InlineLabelSelect
                             value={deal.feeAgreement}
@@ -6512,7 +6543,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.xeroContact && (
+                      {effectiveColumns.xeroContact && (
                         <TableCell className="px-1.5 py-1">
                           {(deal as any).xeroContactName ? (
                             <div className="flex flex-col">
@@ -6526,7 +6557,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           )}
                         </TableCell>
                       )}
-                      {visibleColumns.floorAreas && (
+                      {effectiveColumns.floorAreas && (
                         <TableCell className="px-1.5 py-1">
                           <div className="space-y-0.5">
                             {[
@@ -6549,7 +6580,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           </div>
                         </TableCell>
                       )}
-                      {visibleColumns.pricePsf && (
+                      {effectiveColumns.pricePsf && (
                         <TableCell className="px-1.5 py-1">
                           <InlineNumber
                             value={deal.pricePsf}
@@ -6558,7 +6589,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.priceItza && (
+                      {effectiveColumns.priceItza && (
                         <TableCell className="px-1.5 py-1">
                           <InlineNumber
                             value={deal.priceItza}
@@ -6567,7 +6598,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.leaseTerms && (
+                      {effectiveColumns.leaseTerms && (
                         <TableCell className="px-1.5 py-1">
                           <LeaseTermsCell
                             deal={deal}
@@ -6575,7 +6606,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.rentPa && (
+                      {effectiveColumns.rentPa && (
                         <TableCell className="px-1.5 py-1">
                           <InlineNumber
                             value={deal.rentPa}
@@ -6584,7 +6615,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.capitalContribution && (
+                      {effectiveColumns.capitalContribution && (
                         <TableCell className="px-1.5 py-1">
                           <InlineNumber
                             value={deal.capitalContribution}
@@ -6593,7 +6624,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.rentFree && (
+                      {effectiveColumns.rentFree && (
                         <TableCell className="px-1.5 py-1">
                           <InlineNumber
                             value={deal.rentFree}
@@ -6602,7 +6633,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.leaseLength && (
+                      {effectiveColumns.leaseLength && (
                         <TableCell className="px-1.5 py-1">
                           <InlineNumber
                             value={deal.leaseLength}
@@ -6611,7 +6642,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.breakOption && (
+                      {effectiveColumns.breakOption && (
                         <TableCell className="px-1.5 py-1">
                           <InlineNumber
                             value={deal.breakOption}
@@ -6620,7 +6651,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.datesCombined && (
+                      {effectiveColumns.datesCombined && (
                         <TableCell className="px-1.5 py-1">
                           <DatesCell
                             deal={deal}
@@ -6628,17 +6659,17 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.dateAdded && (
+                      {effectiveColumns.dateAdded && (
                         <TableCell className="px-1.5 py-1">
                           {deal.createdAt ? formatDate(deal.createdAt) : "—"}
                         </TableCell>
                       )}
-                      {visibleColumns.instructedAt && (
+                      {effectiveColumns.instructedAt && (
                         <TableCell className="px-1.5 py-1">
                           {deal.instructedAt ? formatDate(deal.instructedAt) : "—"}
                         </TableCell>
                       )}
-                      {visibleColumns.targetDate && (
+                      {effectiveColumns.targetDate && (
                         <TableCell className="px-1.5 py-1">
                           <input
                             type="date"
@@ -6648,22 +6679,22 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.exchangedAt && (
+                      {effectiveColumns.exchangedAt && (
                         <TableCell className="px-1.5 py-1">
                           {deal.exchangedAt ? formatDate(deal.exchangedAt) : "—"}
                         </TableCell>
                       )}
-                      {visibleColumns.completedAt && (
+                      {effectiveColumns.completedAt && (
                         <TableCell className="px-1.5 py-1">
                           {deal.completedAt ? formatDate(deal.completedAt) : "—"}
                         </TableCell>
                       )}
-                      {visibleColumns.invoicedAt && (
+                      {effectiveColumns.invoicedAt && (
                         <TableCell className="px-1.5 py-1">
                           {deal.invoicedAt ? formatDate(deal.invoicedAt) : "—"}
                         </TableCell>
                       )}
-                      {visibleColumns.rentAnalysis && (
+                      {effectiveColumns.rentAnalysis && (
                         <TableCell className="px-1.5 py-1">
                           <InlineNumber
                             value={deal.rentAnalysis}
@@ -6672,7 +6703,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.sharepoint && (
+                      {effectiveColumns.sharepoint && (
                         <TableCell className="px-1.5 py-1 max-w-[140px]">
                           <div className="space-y-0.5">
                             {deal.sharepointLink && (
@@ -6699,7 +6730,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           </div>
                         </TableCell>
                       )}
-                      {visibleColumns.lastInteraction && (
+                      {effectiveColumns.lastInteraction && (
                         <TableCell className="px-1.5 py-1">
                           <LastTouchCell iso={deal.lastInteraction} />
                         </TableCell>
