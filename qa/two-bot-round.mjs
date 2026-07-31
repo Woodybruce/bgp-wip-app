@@ -440,6 +440,31 @@ async function victoriaRound(page, cross) {
     cross.viewingId = r.viewingId;
   });
 
+  // 4l. Tracker inline-detail PATCH (new Costs-popover Details section):
+  // write a detail field through the same PATCH the popover uses and verify
+  // it persists, then restore the prior value.
+  await step(page, p, 'staff-tracker-inline-patch', async () => {
+    const marker = `QA-COND-R${ROUND}`;
+    const r = await page.evaluate(async (val) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = Array.isArray(units) ? units[0] : null;
+      if (!unit) return { skip: true };
+      const before = unit.condition ?? null;
+      const patch = await fetch(`/api/available-units/${unit.id}`, { method: 'PATCH', credentials: 'include', headers: auth,
+        body: JSON.stringify({ condition: val }) });
+      if (!patch.ok) return { ok: false, why: `PATCH ${patch.status}` };
+      const after = await (await fetch(`/api/available-units/${unit.id}`, { headers: auth })).json();
+      const persisted = after?.condition === val;
+      await fetch(`/api/available-units/${unit.id}`, { method: 'PATCH', credentials: 'include', headers: auth,
+        body: JSON.stringify({ condition: before }) }).catch(() => {});
+      return { ok: true, persisted };
+    }, marker);
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`tracker inline PATCH failed (${r.why})`);
+    if (!r.persisted) throw new Error('tracker inline PATCH did not persist the detail field');
+  });
+
   // 5. Deal board (kanban) renders its pipeline columns without a crash.
   await step(page, p, 'deal-board-render', async () => {
     await page.goto(`${BASE}/deals`);

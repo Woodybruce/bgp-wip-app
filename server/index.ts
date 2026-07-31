@@ -3143,6 +3143,10 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => {
+    // Dev/QA runs everything from one IP (two harness personas + HMR), so the
+    // per-IP bucket trips on ordinary page loads. The limiter is a prod
+    // protection; skip it entirely outside production.
+    if (process.env.NODE_ENV !== "production") return true;
     const p = req.originalUrl || req.path;
     return (
       p.startsWith("/api/chat") ||
