@@ -419,6 +419,27 @@ async function victoriaRound(page, cross) {
     if (body.length < 100) throw new Error('staff brand profile rendered nearly blank');
   });
 
+  // 4k. Agent logs a viewing on a Landsec unit — the client round then checks
+  // it shows up on THEIR letting activity (true cross-persona visibility).
+  await step(page, p, 'agent-log-viewing', async () => {
+    const stamp = `QA-VIEWING-R${ROUND}`;
+    const r = await page.evaluate(async (marker) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = (Array.isArray(units) ? units : []).find((u) => u.propertyId === '22222222-2222-2222-2222-222222222222') || (Array.isArray(units) ? units[0] : null);
+      if (!unit) return { skip: true };
+      const post = await fetch(`/api/available-units/${unit.id}/viewings`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ viewingDate: new Date().toISOString().slice(0, 10), attendees: marker }) });
+      if (!post.ok) return { ok: false, why: `viewing POST ${post.status}` };
+      const made = await post.json();
+      return { ok: true, viewingId: made.id, unitId: unit.id };
+    }, stamp);
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`agent could not log a viewing (${r.why})`);
+    cross.viewingStamp = stamp;
+    cross.viewingId = r.viewingId;
+  });
+
   // 5. Deal board (kanban) renders its pipeline columns without a crash.
   await step(page, p, 'deal-board-render', async () => {
     await page.goto(`${BASE}/deals`);
@@ -957,6 +978,18 @@ async function markRound(page, cross) {
     if (!r.ok) throw new Error(`client HOTs flow failed (${r.why})`);
     if (!r.persisted) throw new Error('client HOTs edit did not persist');
     if (r.tplStatus >= 200 && r.tplStatus < 300) throw new Error('client was allowed to edit the staff-only HOTs template');
+  });
+
+  // The viewing Victoria just logged must be visible to the client (their
+  // unit, their letting activity) — cross-persona visibility, then cleanup.
+  await step(page, p, 'client-sees-agent-viewing', async () => {
+    if (!cross.viewingStamp) return;
+    const r = await page.evaluate(async (marker) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const v = await (await fetch('/api/available-units/all-viewings', { headers: auth })).json();
+      return { seen: JSON.stringify(v).includes(marker) };
+    }, cross.viewingStamp);
+    if (!r.seen) throw new Error("agent-logged viewing not visible on the client's letting activity");
   });
 
   // Client dashboard on a phone-width viewport must not overflow horizontally
