@@ -292,18 +292,21 @@ async function victoriaRound(page, cross) {
   // client team matches, so clicking "Landsec" did nothing / emptied it.
   await step(page, p, 'calendar-client-team-filter', async () => {
     const mine = `QA-CAL-MINE-R${ROUND}`, other = `QA-CAL-OTHER-R${ROUND}`;
-    await page.evaluate(async ([a, bb]) => {
+    // The event must be in the FUTURE (GET /api/team-events only returns
+    // start_time >= now) AND still on today's visible board (a "+2h" event
+    // crossed midnight on a late round and vanished). now+2min satisfies
+    // both — except in the 2-minute window before midnight, where no valid
+    // slot exists at all: skip the round then.
+    const soon = new Date(Date.now() + 2 * 60e3);
+    if (soon.getUTCDate() !== new Date().getUTCDate()) return;
+    await page.evaluate(async ([a, bb, startIso, endIso]) => {
       const h = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      // Pin to noon today: "now + 2h" crossed midnight on late rounds and
-      // the event fell off the visible month board (round-64 false alarm).
-      const noon = new Date(); noon.setHours(12, 0, 0, 0);
       for (const [title, company] of [[a, 'Landsec'], [bb, 'Hammerson']]) {
         await fetch('/api/team-events', { method: 'POST', credentials: 'include', headers: h,
           body: JSON.stringify({ title, event_type: 'Meetings', company_name: company,
-            start_time: noon.toISOString(),
-            end_time: new Date(noon.getTime() + 36e5).toISOString() }) }).catch(() => {});
+            start_time: startIso, end_time: endIso }) }).catch(() => {});
       }
-    }, [mine, other]);
+    }, [mine, other, soon.toISOString(), new Date(soon.getTime() + 36e5).toISOString()]);
     await page.goto(`${BASE}/calendar`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(4000);
