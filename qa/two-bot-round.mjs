@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1218,6 +1218,37 @@ async function markRound(page, cross) {
     if (r.skip) return;
     if (!r.ok) throw new Error(`client viewing delete lifecycle failed (${r.why})`);
     if (r.stillThere) throw new Error('deleted viewing still visible in letting activity');
+  });
+
+  // Staff-only deal operations that ride under the allowed /api/crm/deals
+  // prefix must refuse clients: single + bulk delete, bulk field edits, the
+  // internal per-agent fee split, and the firm-wide rent-analysis AI op.
+  // (Round 64: every one of these was reachable — a client login could have
+  // deleted the entire deal book.) The deal must survive the attempts.
+  await step(page, p, 'client-staff-deal-ops-guards', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      const deal = (Array.isArray(deals) ? deals : []).find((d) => /bluewater/i.test(d.name || ''));
+      if (!deal) return { skip: true };
+      const attempts = [
+        ['DELETE deal', await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth })],
+        ['bulk-delete', await fetch('/api/crm/deals/bulk-delete', { method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ ids: [deal.id] }) })],
+        ['bulk-update', await fetch('/api/crm/deals/bulk-update', { method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ ids: [deal.id], field: 'team', value: 'QA-PROBE' }) })],
+        ['fee-allocations PUT', await fetch(`/api/crm/deals/${deal.id}/fee-allocations`, { method: 'PUT', credentials: 'include', headers: auth,
+          body: JSON.stringify({ allocations: [{ agentName: 'QA Probe (BGP House)', allocationType: 'percentage', percentage: 100, isBgpHouse: true }] }) })],
+        ['bulk-rent-analysis', await fetch('/api/crm/deals/bulk-rent-analysis', { method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({}) })],
+      ];
+      const leaks = attempts.filter(([, res]) => res.ok).map(([label]) => label);
+      const still = await fetch(`/api/crm/deals/${deal.id}`, { headers: auth });
+      return { ok: true, leaks, dealSurvived: still.ok };
+    });
+    if (r.skip) return;
+    if (r.leaks.length) throw new Error(`staff-only deal ops accepted a client call: ${r.leaks.join(', ')}`);
+    if (!r.dealSurvived) throw new Error('fixture deal GONE after guarded delete attempts');
   });
 
   // Client dashboard on a phone-width viewport must not overflow horizontally

@@ -3455,6 +3455,16 @@ app.use("/api/branding/assets", express.static(
         if (CLIENT_BLOCKED_SUBPATHS.some(re => re.test(p))) {
           return res.status(403).json({ error: "Not available for client accounts" });
         }
+        // Staff-only deal operations riding under the allowed /api/crm/deals
+        // prefix — none of their handlers client-check, so the gateway must:
+        // single + bulk delete, bulk field edits, the internal per-agent fee
+        // split, and the firm-wide rent-analysis / HOTs-parse AI ops. Deal
+        // create + edit stay open (scope-checked + fee-stripped in crm.ts).
+        if (/^\/api\/crm\/deals\/(bulk-update|bulk-delete|bulk-rent-analysis)$/.test(p) ||
+            /^\/api\/crm\/deals\/[^/]+\/(fee-allocations|parse-hots)$/.test(p) ||
+            (req.method === "DELETE" && /^\/api\/crm\/deals\/[^/]+$/.test(p))) {
+          return res.status(403).json({ error: "Not available for client accounts" });
+        }
         // Authoring an Operator Targeting Brief on one of their own units —
         // the create route hangs off /api/available-units/:id/brief; the
         // handler verifies the unit's property is in the client's scope.
