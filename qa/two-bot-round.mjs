@@ -1035,6 +1035,25 @@ async function markRound(page, cross) {
     if (leaked.length) throw new Error(`client can read a foreign unit's ${leaked.map((x) => x.ep).join(', ')} (cross-tenant leak regressed)`);
   });
 
+  // Client creates a ChatBGP thread (no AI key needed for the thread itself)
+  // and it lands in their thread list — the panel's first step before any
+  // AI reply, previously untested.
+  await step(page, p, 'client-chat-thread-create', async () => {
+    const title = `QA Thread R${ROUND}`;
+    const r = await page.evaluate(async (needle) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const create = await fetch('/api/chat/threads', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ isAiChat: true, name: needle }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const made = await create.json();
+      const list = await (await fetch('/api/chat/threads', { headers: auth })).json().catch(() => []);
+      const rows = Array.isArray(list) ? list : (list?.threads || []);
+      return { ok: true, id: made?.id, found: rows.some((t) => t.id === made?.id) };
+    }, title);
+    if (!r.ok) throw new Error(`client chat thread create failed (${r.why})`);
+    if (!r.found) throw new Error('created chat thread absent from the client thread list');
+  });
+
   // Client dashboard on a phone-width viewport must not overflow horizontally
   // (the app hit body-scroll bugs before; container queries fixed them). Use
   // a fresh 390px page so the desktop context isn't reused.
