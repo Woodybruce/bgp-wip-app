@@ -1144,6 +1144,29 @@ async function markRound(page, cross) {
     if (!r.ok) throw new Error(`news dismiss failed (${r.status})`);
   });
 
+  // Client logs then DELETES their own viewing (delete path untested for
+  // clients); the viewing must be gone from the letting activity after.
+  await step(page, p, 'client-viewing-delete', async () => {
+    const stamp = `QA-VDEL-R${ROUND}`;
+    const r = await page.evaluate(async (marker) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = Array.isArray(units) ? units[0] : null;
+      if (!unit) return { skip: true };
+      const post = await fetch(`/api/available-units/${unit.id}/viewings`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ viewingDate: new Date().toISOString().slice(0, 10), attendees: marker }) });
+      if (!post.ok) return { ok: false, why: `POST ${post.status}` };
+      const made = await post.json();
+      const del = await fetch(`/api/available-units/viewings/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      if (!del.ok) return { ok: false, why: `DELETE ${del.status}` };
+      const all = await (await fetch('/api/available-units/all-viewings', { headers: auth })).json();
+      return { ok: true, stillThere: JSON.stringify(all).includes(marker) };
+    }, stamp);
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`client viewing delete lifecycle failed (${r.why})`);
+    if (r.stillThere) throw new Error('deleted viewing still visible in letting activity');
+  });
+
   // Client dashboard on a phone-width viewport must not overflow horizontally
   // (the app hit body-scroll bugs before; container queries fixed them). Use
   // a fresh 390px page so the desktop context isn't reused.
