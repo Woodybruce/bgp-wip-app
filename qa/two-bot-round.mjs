@@ -1047,6 +1047,99 @@ async function markRound(page, cross) {
   });
 }
 
+// ─── Additional personas ──────────────────────────────────────────────────
+// Woody (admin), Nick (Investment staff) and Sam Cole (Hammerson — a SECOND
+// client) extend coverage to the admin estate, the investment surfaces and
+// bidirectional client-vs-client isolation.
+
+const ADMIN_USER = 'woody@brucegillinghampollard.com';
+const INVESTMENT_USER = 'nick@brucegillinghampollard.com';
+const RIVAL_CLIENT_USER = 'sam.cole@hammerson.com';
+
+async function woodyRound(page, cross) {
+  const p = 'woody';
+  // The admin + "Unfinished" estate nobody else can reach. visit() flags dead
+  // routes / blank pages; collectors catch console errors and 4xx/5xx.
+  for (const path of [
+    '/finance', '/expenses', '/news', '/subscriptions', '/addins', '/settings',
+    '/portfolios', '/kyc-clouseau?tab=board', '/tenant-rep',
+    '/hunters/letting', '/hunters/investment', '/landlords', '/pla/matters',
+    '/westminster-restaurants', '/models', '/document-studio',
+    '/document-briefs', '/reporting', '/board-report', '/leads', '/enrichment',
+  ]) {
+    await visit(page, p, path);
+  }
+  // No error boundary anywhere on the heavy admin boards.
+  await step(page, p, 'admin-kyc-board-render', async () => {
+    await page.goto(`${BASE}/kyc-clouseau?tab=board`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(3000);
+    const tripped = await page.getByText('something went wrong', { exact: false }).count();
+    if (tripped) throw new Error(`${tripped} error boundary(ies) tripped on the AML board`);
+  });
+}
+
+async function nickRound(page, cross) {
+  const p = 'nick';
+  for (const path of ['/investment-tracker', '/comps', '/deals']) {
+    await visit(page, p, path);
+  }
+  // Investment tracker renders content (not a dead tab for the team that
+  // lives in it).
+  await step(page, p, 'investment-tracker-render', async () => {
+    await page.goto(`${BASE}/investment-tracker`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(3000);
+    if (await page.getByText('Page not found').count()) throw new Error('investment tracker is a dead route');
+    const tripped = await page.getByText('something went wrong', { exact: false }).count();
+    if (tripped) throw new Error(`${tripped} error boundary(ies) tripped on the investment tracker`);
+  });
+}
+
+async function samRound(page, cross) {
+  const p = 'sam';
+  // Rival client sanity: their own scoped app works…
+  await step(page, p, 'rival-client-dashboard', async () => {
+    await page.goto(`${BASE}/`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(3500);
+    const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
+    if (body.length < 40) throw new Error('rival client dashboard rendered blank');
+    if (!/Hammerson/i.test(body)) throw new Error('rival client dashboard shows no Hammerson branding/scope');
+  });
+  // …and NOTHING of Landsec leaks into it — deals, briefs, or the viewing
+  // Victoria logged on a Landsec unit this round. This is the first REAL
+  // client-vs-client isolation test (two genuine logins, both directions).
+  await step(page, p, 'rival-client-isolation', async () => {
+    const r = await page.evaluate(async (viewingStamp) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const out = {};
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json().catch(() => []);
+      out.landsecDeals = JSON.stringify(deals).includes('Bluewater');
+      const briefs = await (await fetch('/api/unit-briefs', { headers: auth })).json().catch(() => []);
+      out.landsecBriefs = JSON.stringify(briefs).toLowerCase().includes('bluewater');
+      const viewings = await (await fetch('/api/available-units/all-viewings', { headers: auth })).json().catch(() => []);
+      out.landsecViewing = viewingStamp ? JSON.stringify(viewings).includes(viewingStamp) : false;
+      const props = await (await fetch('/api/crm/properties?excludeComps=true', { headers: auth })).json().catch(() => []);
+      const list = Array.isArray(props) ? props : (props?.data || []);
+      out.landsecProperty = list.some((x) => /bluewater|o2 centre/i.test(x.name || ''));
+      return out;
+    }, cross.viewingStamp || '');
+    const leaks = Object.entries(r).filter(([, v]) => v).map(([k]) => k);
+    if (leaks.length) throw new Error(`Landsec data leaked to the rival client: ${leaks.join(', ')}`);
+  });
+  // Sam can still work their OWN portfolio (scoping isn't just "sees nothing").
+  await step(page, p, 'rival-client-own-portfolio', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const props = await (await fetch('/api/crm/properties?excludeComps=true', { headers: auth })).json().catch(() => []);
+      const list = Array.isArray(props) ? props : (props?.data || []);
+      return { hasOwn: list.some((x) => /brent cross/i.test(x.name || '')) };
+    });
+    if (!r.hasOwn) throw new Error("rival client can't see their own property (over-scoped)");
+  });
+}
+
 // ─── Run ──────────────────────────────────────────────────────────────────
 
 const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
@@ -1062,6 +1155,24 @@ attachCollectors(mPage, 'mark');
 const cross = { dealStamp: null };
 await victoriaRound(vPage, cross).catch((e) => logIssue('victoria', 'round', 'harness-crash', e.message));
 await markRound(mPage, cross).catch((e) => logIssue('mark', 'round', 'harness-crash', e.message));
+
+// Extended personas — each with its own context so sessions never bleed.
+for (const [name, user, fn] of [
+  ['woody', ADMIN_USER, woodyRound],
+  ['nick', INVESTMENT_USER, nickRound],
+  ['sam', RIVAL_CLIENT_USER, samRound],
+]) {
+  currentScenario[name] = 'startup';
+  try {
+    const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
+    const pg = await login(ctx, user);
+    attachCollectors(pg, name);
+    await fn(pg, cross).catch((e) => logIssue(name, 'round', 'harness-crash', e.message));
+    await ctx.close();
+  } catch (e) {
+    logIssue(name, 'login', 'harness-crash', e.message);
+  }
+}
 
 await browser.close();
 

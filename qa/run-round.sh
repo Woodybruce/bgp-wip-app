@@ -16,6 +16,9 @@ if ! curl -s -o /dev/null --max-time 3 http://localhost:5000/api/auth/me; then
   exit 2
 fi
 
+# 1b. Seed the multi-persona fixtures (idempotent — Hammerson rival client).
+psql -U bgp -h localhost bgp -f qa/seed-personas.sql >/dev/null 2>&1 || echo "[qa] (persona seed skipped)"
+
 # 2. Purge test rows from the previous round so data doesn't pile up.
 psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM crm_deals    WHERE name LIKE 'QA-R%' OR name LIKE '%PROBE%';

@@ -1119,6 +1119,9 @@ export function setupCrmRoutes(app: Express) {
   });
   // Ensure new comp columns exist (safe to re-run)
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS fee_agreement_url TEXT`).catch(() => {});
+  // Landlord board reads c.last_interaction_at; the column was only ever
+  // added manually in prod, so /api/crm/landlords 500'd on fresh databases.
+  pool.query(`ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_interaction_at TIMESTAMP`).catch(() => {});
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS area_basis TEXT`).catch(() => {});
   // Activity curator cache — see server/ai-activity-curator.ts. One row per
   // (subject_type, subject_id). Each curate call costs ~30s and 50k+ tokens

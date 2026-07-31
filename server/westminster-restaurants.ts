@@ -108,6 +108,11 @@ function joinAddress(e: FhrsEstablishment): string {
     .join(", ");
 }
 
+// drizzle's sql tag binds a JS array as a record, so `= ANY(${arr})` throws
+// "op ANY/ALL (array) requires array on right side". Bind each element and
+// build a real text[] literal instead.
+const textArray = (vals: string[]) => sql`ARRAY[${sql.join(vals.map((v) => sql`${v}`), sql`, `)}]::text[]`;
+
 async function resolveCrmCrossRef(rows: RestaurantRow[]): Promise<RestaurantRow[]> {
   // Three sources to cross-reference, all in one pass:
   //   1. crm_properties — the canonical building (resolver-anchored)
@@ -130,7 +135,7 @@ async function resolveCrmCrossRef(rows: RestaurantRow[]): Promise<RestaurantRow[
       postcode: crmProperties.postcode,
     })
     .from(crmProperties)
-    .where(sql`UPPER(REPLACE(COALESCE(${crmProperties.postcode}, ''), ' ', '')) = ANY(${postcodes})`);
+    .where(sql`UPPER(REPLACE(COALESCE(${crmProperties.postcode}, ''), ' ', '')) = ANY(${textArray(postcodes)})`);
 
   // 2. brand_stores by postcode (extracted from the address tail)
   const stores = await db
@@ -141,7 +146,7 @@ async function resolveCrmCrossRef(rows: RestaurantRow[]): Promise<RestaurantRow[
       address: brandStores.address,
     })
     .from(brandStores)
-    .where(sql`UPPER(REPLACE(COALESCE(SPLIT_PART(${brandStores.address}, ',', -1), ''), ' ', '')) = ANY(${postcodes})`);
+    .where(sql`UPPER(REPLACE(COALESCE(SPLIT_PART(${brandStores.address}, ',', -1), ''), ' ', '')) = ANY(${textArray(postcodes)})`);
 
   // 3. crm_companies — pull all companies once, match by name. Cheap-ish
   //    given it's a one-time per-page scan, and brand names are short.
@@ -150,7 +155,7 @@ async function resolveCrmCrossRef(rows: RestaurantRow[]): Promise<RestaurantRow[
     ? await db
         .select({ id: crmCompanies.id, name: crmCompanies.name })
         .from(crmCompanies)
-        .where(sql`LOWER(${crmCompanies.name}) = ANY(${lowerNames}) OR LOWER(${crmCompanies.name}) LIKE ANY(${lowerNames.map((n) => `%${n}%`)})`)
+        .where(sql`LOWER(${crmCompanies.name}) = ANY(${textArray(lowerNames)}) OR LOWER(${crmCompanies.name}) LIKE ANY(${textArray(lowerNames.map((n) => `%${n}%`))})`)
         .limit(500)
         .catch(() => [])
     : [];
