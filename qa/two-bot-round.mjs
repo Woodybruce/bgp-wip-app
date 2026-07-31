@@ -1054,6 +1054,50 @@ async function markRound(page, cross) {
     if (!r.found) throw new Error('created chat thread absent from the client thread list');
   });
 
+  // Client logs an OFFER (interest) on their own unit and it appears in the
+  // letting activity, then cleans up — the offers write path was untested.
+  await step(page, p, 'client-log-offer', async () => {
+    const stamp = `QA-OFFER-R${ROUND}`;
+    const r = await page.evaluate(async (marker) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = Array.isArray(units) ? units[0] : null;
+      if (!unit) return { skip: true };
+      const post = await fetch(`/api/available-units/${unit.id}/offers`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ companyName: marker, offerDate: new Date().toISOString().slice(0, 10) }) });
+      if (!post.ok) return { ok: false, why: `offer POST ${post.status}` };
+      const made = await post.json();
+      const all = await (await fetch('/api/available-units/all-offers', { headers: auth })).json();
+      const seen = JSON.stringify(all).includes(marker);
+      const del = await fetch(`/api/available-units/offers/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => ({ ok: false }));
+      return { ok: true, seen, cleaned: del.ok };
+    }, stamp);
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`client offer log failed (${r.why})`);
+    if (!r.seen) throw new Error('logged offer absent from the client letting activity');
+  });
+
+  // Client edits a task through the full edit dialog fields (title PATCH).
+  await step(page, p, 'client-task-edit', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const create = await fetch('/api/tasks', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ title: 'QA Task edit-me' }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const made = await create.json();
+      const patch = await fetch(`/api/tasks/${made.id}`, { method: 'PATCH', credentials: 'include', headers: auth,
+        body: JSON.stringify({ title: 'QA Task edited' }) });
+      if (!patch.ok) return { ok: false, why: `patch ${patch.status}` };
+      const list = await (await fetch('/api/tasks', { headers: auth })).json();
+      const rows = Array.isArray(list) ? list : (list?.tasks || []);
+      const edited = rows.some((t) => t.title === 'QA Task edited');
+      await fetch(`/api/tasks/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, edited };
+    });
+    if (!r.ok) throw new Error(`task edit lifecycle failed (${r.why})`);
+    if (!r.edited) throw new Error('task title edit did not persist');
+  });
+
   // Client dashboard on a phone-width viewport must not overflow horizontally
   // (the app hit body-scroll bugs before; container queries fixed them). Use
   // a fresh 390px page so the desktop context isn't reused.
