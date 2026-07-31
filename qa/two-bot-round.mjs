@@ -495,6 +495,30 @@ async function victoriaRound(page, cross) {
     if (!r.persisted) throw new Error('deal comment did not persist');
   });
 
+  // 4n. Deal stage move: the board drag between pipeline columns fires
+  // PUT {stage} — exercise it directly on the Bluewater deal, then restore.
+  await step(page, p, 'staff-deal-stage-move', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      const deal = (Array.isArray(deals) ? deals : []).find((d) => /bluewater/i.test(d.name || ''));
+      if (!deal) return { skip: true };
+      const before = deal.stage ?? null;
+      const target = before === 'viewings' ? 'offers' : 'viewings';
+      const put = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ stage: target }) });
+      if (!put.ok) return { ok: false, why: `PUT ${put.status}` };
+      const fresh = await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json();
+      const persisted = fresh?.stage === target;
+      await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ stage: before }) }).catch(() => {});
+      return { ok: true, persisted };
+    });
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`deal stage move failed (${r.why})`);
+    if (!r.persisted) throw new Error('deal stage move did not persist');
+  });
+
   // 5. Deal board (kanban) renders its pipeline columns without a crash.
   await step(page, p, 'deal-board-render', async () => {
     await page.goto(`${BASE}/deals`);
@@ -592,6 +616,35 @@ async function markRound(page, cross) {
     if (await page.getByText('BGP fee split', { exact: false }).count()) throw new Error('BGP fee split visible to client');
     if (await page.locator('[data-testid="button-toggle-all-fields"]').count()) throw new Error('"Show all fields" (exposes fees) visible to client');
     await page.keyboard.press('Escape');
+  });
+
+  // Client edits a deal comment; any fee fields smuggled into the same PUT
+  // must be dropped server-side (clients see fees, they never set them).
+  // woodyRound's admin-fee-injection-audit confirms the staff-only fields
+  // (feeNotes/commission — stripped from client responses) stayed clean.
+  await step(page, p, 'client-deal-fee-injection-guard', async () => {
+    const marker = `QA client edit R${ROUND}`;
+    const r = await page.evaluate(async (m) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      const deal = (Array.isArray(deals) ? deals : []).find((d) => /bluewater/i.test(d.name || ''));
+      if (!deal) return { skip: true };
+      const beforeFee = deal.fee ?? null;
+      const beforeComments = deal.comments ?? null;
+      const put = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ comments: m, fee: 999999, feePercentage: 99, feeNotes: 'QA-FEE-INJECT', commission: 999999 }) });
+      if (!put.ok) return { ok: false, why: `PUT ${put.status}` };
+      const fresh = await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json();
+      const commentsPersisted = (fresh?.comments || '').includes(m);
+      const feeUntouched = (fresh?.fee ?? null) === beforeFee;
+      await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ comments: beforeComments }) }).catch(() => {});
+      return { ok: true, commentsPersisted, feeUntouched };
+    }, marker);
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`client deal edit failed (${r.why})`);
+    if (!r.commentsPersisted) throw new Error('client comment edit did not persist');
+    if (!r.feeUntouched) throw new Error('client PUT changed the deal fee — injection not stripped');
   });
 
   // Client authors an Operator Targeting Brief on one of their own units
@@ -1226,6 +1279,19 @@ async function woodyRound(page, cross) {
     await page.waitForTimeout(3000);
     const tripped = await page.getByText('something went wrong', { exact: false }).count();
     if (tripped) throw new Error(`${tripped} error boundary(ies) tripped on the AML board`);
+  });
+
+  // Companion to mark's client-deal-fee-injection-guard: as admin (who sees
+  // the unstripped fields), confirm the injected markers never hit the DB.
+  await step(page, p, 'admin-fee-injection-audit', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      const hit = (Array.isArray(deals) ? deals : []).find((d) =>
+        (d.feeNotes || '').includes('QA-FEE-INJECT') || Number(d.commission) === 999999);
+      return { leaked: !!hit, name: hit?.name };
+    });
+    if (r.leaked) throw new Error(`client fee injection landed in the database (deal "${r.name}")`);
   });
 }
 
