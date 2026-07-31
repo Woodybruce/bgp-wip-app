@@ -58,12 +58,16 @@ export default function PropertyIntelligence() {
   // Client logins (e.g. Landsec) don't get Pathway (BGP's internal pitch
   // pipeline) or Imagery (firm-wide image studio picker). (Landsec audit.)
   const { data: piUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const piIsClient = piUser?.role === "Client";
+  const piIsClient = piUser?.role === "Client" || !!(piUser as any)?.companyScopeId;
   const visibleTabs = piIsClient ? TABS.filter(t => t.id !== "pathway" && t.id !== "imagery") : TABS;
   // wouter's search string updates on every query-string change (including the
   // 'Open in Map' links from the Pathway tab, which only change ?tab/?address).
   const search = useSearch();
   const [tab, setTab] = useState<TabId>(readTabFromUrl());
+  // Clients land on Map — the default (Pathway) is a hidden staff tab for them.
+  useEffect(() => {
+    if (piIsClient && (tab === "pathway" || tab === "imagery")) setTab("map");
+  }, [piIsClient, tab]);
 
   const handleTabChange = (next: string) => {
     const nextTab = next as TabId;
@@ -150,7 +154,10 @@ export default function PropertyIntelligence() {
           <Suspense fallback={<TabLoader />}>
             {/* forceMount keeps Pathway alive when user flips to Map/Investigator
                 etc. so an in-flight background run keeps polling + state
-                survives. Radix toggles data-state; we hide with display:none. */}
+                survives. Radix toggles data-state; we hide with display:none.
+                Not mounted at all for clients — the tab is hidden for them and
+                forceMount would fire staff-only pathway calls (403 noise). */}
+            {!piIsClient && (
             <TabsContent
               value="pathway"
               forceMount
@@ -158,6 +165,7 @@ export default function PropertyIntelligence() {
             >
               <PropertyPathway />
             </TabsContent>
+            )}
             <TabsContent value="map" className="m-0 h-full">
               <EdozoMap
                 initialSearch={pendingSearch}
