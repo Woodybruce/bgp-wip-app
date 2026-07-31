@@ -82,7 +82,11 @@ async function login(context, username) {
 
 async function visit(page, persona, path, label) {
   currentScenario[persona] = `visit ${path}`;
-  await page.goto(`${BASE}${path}`);
+  // Hub routes (e.g. /investment-tracker) client-side-redirect on mount,
+  // which aborts the original navigation — not an app failure.
+  await page.goto(`${BASE}${path}`).catch((e) => {
+    if (!/ERR_ABORTED/.test(String(e))) throw e;
+  });
   await page.waitForLoadState('networkidle').catch(() => {});
   await page.waitForTimeout(1000);
   const notFound = await page.getByText('Page not found').count();
@@ -463,6 +467,30 @@ async function victoriaRound(page, cross) {
     if (r.skip) return;
     if (!r.ok) throw new Error(`tracker inline PATCH failed (${r.why})`);
     if (!r.persisted) throw new Error('tracker inline PATCH did not persist the detail field');
+  });
+
+  // 4m. Deal comments round-trip: Victoria writes a comment on the Bluewater
+  // deal and reads it back (the sidebar Comments widget rides this field).
+  await step(page, p, 'staff-deal-comment', async () => {
+    const note = `QA comment R${ROUND}`;
+    const r = await page.evaluate(async (marker) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      const deal = (Array.isArray(deals) ? deals : []).find((d) => /bluewater/i.test(d.name || ''));
+      if (!deal) return { skip: true };
+      const before = deal.comments ?? null;
+      const put = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ comments: marker }) });
+      if (!put.ok) return { ok: false, why: `PUT ${put.status}` };
+      const fresh = await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json();
+      const persisted = (fresh?.comments || '').includes(marker);
+      await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ comments: before }) }).catch(() => {});
+      return { ok: true, persisted };
+    }, note);
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`deal comment write failed (${r.why})`);
+    if (!r.persisted) throw new Error('deal comment did not persist');
   });
 
   // 5. Deal board (kanban) renders its pipeline columns without a crash.
@@ -1098,6 +1126,22 @@ async function markRound(page, cross) {
     if (!r.edited) throw new Error('task title edit did not persist');
   });
 
+  // Client dismisses a news article via the engage endpoint (save was
+  // covered; dismiss wasn't).
+  await step(page, p, 'client-news-dismiss', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const feed = await (await fetch('/api/news-feed/articles', { headers: auth })).json().catch(() => []);
+      const arts = Array.isArray(feed) ? feed : (feed?.articles || feed?.data || []);
+      if (!arts[0]?.id) return { skip: true };
+      const res = await fetch('/api/news-feed/engage', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ articleId: arts[0].id, action: 'dismiss' }) });
+      return { ok: res.ok, status: res.status };
+    });
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`news dismiss failed (${r.status})`);
+  });
+
   // Client dashboard on a phone-width viewport must not overflow horizontally
   // (the app hit body-scroll bugs before; container queries fixed them). Use
   // a fresh 390px page so the desktop context isn't reused.
@@ -1168,7 +1212,9 @@ async function nickRound(page, cross) {
   // Investment tracker renders content (not a dead tab for the team that
   // lives in it).
   await step(page, p, 'investment-tracker-render', async () => {
-    await page.goto(`${BASE}/investment-tracker`);
+    await page.goto(`${BASE}/investment-tracker`).catch((e) => {
+      if (!/ERR_ABORTED/.test(String(e))) throw e;
+    });
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(3000);
     if (await page.getByText('Page not found').count()) throw new Error('investment tracker is a dead route');
