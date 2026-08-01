@@ -1149,6 +1149,23 @@ async function markRound(page, cross) {
       return { count: Array.isArray(arr) ? arr.length : 0 };
     });
     if (subs.count > 0) throw new Error(`client can read a foreign company's ${subs.count} sub-entity(ies) with AML/KYC data (cross-tenant leak)`);
+
+    // Foreign CONTACT sub-resource reads: the parent contact GET 403s, but
+    // /properties, /deals, /requirements bypassed the gate (round 71) — a
+    // Landsec client read a Hammerson contact's linked property. The seeded
+    // Hammerson contact is linked to Brent Cross; all three must refuse.
+    const foreignContact = '99999999-6666-6666-6666-666666666666';
+    const cr = await page.evaluate(async (cid) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const out = [];
+      for (const ep of ['properties', 'deals', 'requirements', 'investment-tracker']) {
+        const res = await fetch(`/api/crm/contacts/${cid}/${ep}`, { headers: auth }).catch(() => ({ status: 0, ok: false }));
+        out.push({ ep: `contact/${ep}`, status: res.status, ok: res.ok });
+      }
+      return out;
+    }, foreignContact);
+    const cleaked = cr.filter((x) => x.ok);
+    if (cleaked.length) throw new Error(`client can read a foreign ${cleaked.map((x) => x.ep).join(', ')} (cross-tenant leak)`);
   });
 
   // Client creates a ChatBGP thread (no AI key needed for the thread itself)

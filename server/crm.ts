@@ -1975,6 +1975,19 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     return CLIENT_BRAND_TYPE_RE.test(r.rows[0]?.company_type || "");
   };
 
+  // Gate for a contact's sub-resource reads (linked properties/deals/
+  // requirements/investment-tracker). Mirrors the contact GET: a client may
+  // read the links of a contact they can read — own portfolio or a
+  // client-visible brand — never a foreign landlord/occupier's. Returns true
+  // when the request must be REFUSED. Staff (null scope) always pass.
+  const forbidsContactRead = async (req: any, contactId: string): Promise<boolean> => {
+    const scopeCompanyId = await resolveCompanyScope(req);
+    if (!scopeCompanyId) return false;
+    if (await isContactInScope(scopeCompanyId, contactId)) return false;
+    const contact = await storage.getCrmContact(contactId);
+    return !(await clientCanTouchCompany(scopeCompanyId, (contact as any)?.companyId));
+  };
+
   app.post("/api/crm/contacts", requireAuth, async (req, res) => {
     try {
       const parsed = insertCrmContactSchema.parse(req.body);
@@ -5058,6 +5071,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
   });
   app.get("/api/crm/contacts/:id/properties", async (req, res) => {
     try {
+      if (await forbidsContactRead(req, req.params.id)) return res.status(403).json({ error: "Access denied" });
       const links = await db.select().from(crmContactProperties).where(eq(crmContactProperties.contactId, req.params.id));
       if (links.length === 0) return res.json([]);
       const propertyIds = links.map(l => l.propertyId);
@@ -5088,6 +5102,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
   });
   app.get("/api/crm/contacts/:id/deals", async (req, res) => {
     try {
+      if (await forbidsContactRead(req, req.params.id)) return res.status(403).json({ error: "Access denied" });
       const contactId = req.params.id;
       const links = await db.select().from(crmContactDeals).where(eq(crmContactDeals.contactId, contactId));
       const results: any[] = [];
@@ -5137,6 +5152,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
 
   app.get("/api/crm/contacts/:id/investment-tracker", async (req, res) => {
     try {
+      if (await forbidsContactRead(req, req.params.id)) return res.status(403).json({ error: "Access denied" });
       const contactId = req.params.id;
       const items = await db.select().from(investmentTracker).where(
         or(
@@ -5163,6 +5179,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
   });
   app.get("/api/crm/contacts/:id/requirements", async (req, res) => {
     try {
+      if (await forbidsContactRead(req, req.params.id)) return res.status(403).json({ error: "Access denied" });
       const contactId = req.params.id;
       const links = await db.select().from(crmContactRequirements).where(eq(crmContactRequirements.contactId, contactId));
       const leasingIds = links.filter(l => l.requirementType === "leasing").map(l => l.requirementId);

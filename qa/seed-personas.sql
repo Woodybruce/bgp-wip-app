@@ -29,3 +29,14 @@ INSERT INTO crm_companies (id, name, company_type, parent_company_id, kyc_status
 VALUES ('99999999-5555-5555-5555-555555555555', 'Hammerson SubCo Ltd', 'Landlord',
         '99999999-1111-1111-1111-111111111111', 'verified', 'high')
 ON CONFLICT (id) DO NOTHING;
+
+-- A Hammerson contact linked to Hammerson's property, so the contact
+-- sub-resource read guard (contacts/:id/properties|deals|requirements) is
+-- testable: a Landsec client must not read a foreign contact's links.
+INSERT INTO crm_contacts (id, name, company_id, role)
+VALUES ('99999999-6666-6666-6666-666666666666', 'Hammerson Head of Leasing',
+        '99999999-1111-1111-1111-111111111111', 'Leasing')
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO crm_contact_properties (contact_id, property_id)
+VALUES ('99999999-6666-6666-6666-666666666666', '99999999-2222-2222-2222-222222222222')
+ON CONFLICT DO NOTHING;
