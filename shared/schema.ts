@@ -482,6 +482,11 @@ export const crmCompanies = pgTable("crm_companies", {
   isTrackedBrand: boolean("is_tracked_brand").default(false),
   trackingReason: text("tracking_reason"),
   brandGroupId: varchar("brand_group_id"), // parent brand group (e.g. Inditex for Zara)
+  // Brand theme (from logo.dev Brand API) — drives the client-app skin so a
+  // landlord client sees their own logo + colours ("their version of the app").
+  logoUrl: text("logo_url"),
+  brandPrimaryColor: text("brand_primary_color"), // hex
+  brandSecondaryColor: text("brand_secondary_color"), // hex
   conceptPitch: text("concept_pitch"),
   storeCount: integer("store_count"),
   rolloutStatus: text("rollout_status"), // scaling | stable | contracting | entering_uk | rumoured

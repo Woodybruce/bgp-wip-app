@@ -38,6 +38,10 @@ import { pool } from "./db";
 // first error, which is how compliance_board/training tables went missing.
 (async () => {
   const MIGRATIONS: string[] = [
+    // Client brand theme (logo.dev) — logo + colours for the client-app skin.
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS logo_url TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_primary_color TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_secondary_color TEXT`,
     // Targeting brief: images attached from Image Studio.
     `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS image_ids TEXT[]`,
     // Heads of Terms: each property carries a standard HOTs template;

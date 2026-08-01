@@ -4684,6 +4684,53 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Client-app brand theme — the caller's OWN company logo + colours (from
+  // logo.dev), so a landlord client's app skins itself in their brand.
+  // Client-allowed (under /api/client/); staff get their active client team's.
+  app.get("/api/client/brand-theme", requireAuth, async (req: any, res) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      const scope = await resolveCompanyScope(req);
+      if (!scope) return res.json({ scoped: false });
+      const q = await pool.query(
+        `SELECT name, logo_url, brand_primary_color, brand_secondary_color FROM crm_companies WHERE id = $1`,
+        [scope]
+      );
+      const c = q.rows[0];
+      if (!c) return res.json({ scoped: false });
+      // Lazy fetch: if we have a key but no theme yet, populate it in the
+      // background so the next load is branded (doesn't block this response).
+      if (!c.logo_url || !c.brand_primary_color) {
+        import("./logo-dev-brand").then(m => m.fetchBrandThemeForCompany(scope)).catch(() => {});
+      }
+      res.json({
+        scoped: true,
+        companyId: scope,
+        name: c.name,
+        logoUrl: c.logo_url || null,
+        primaryColor: c.brand_primary_color || null,
+        secondaryColor: c.brand_secondary_color || null,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to load brand theme" });
+    }
+  });
+
+  // Staff refresh of a company's brand theme from logo.dev (company page).
+  app.post("/api/crm/companies/:id/fetch-brand-theme", requireAuth, async (req: any, res) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      if (await resolveCompanyScope(req)) return res.status(403).json({ message: "Staff only" });
+      const { fetchBrandThemeForCompany, isLogoDevBrandConfigured } = await import("./logo-dev-brand");
+      if (!isLogoDevBrandConfigured()) return res.status(503).json({ message: "logo.dev Brand API not configured (LOGO_DEV_SECRET_KEY)" });
+      const theme = await fetchBrandThemeForCompany(String(req.params.id), { force: true });
+      if (!theme) return res.status(404).json({ message: "No brand found — the company needs a domain, or logo.dev had no match." });
+      res.json(theme);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch brand theme" });
+    }
+  });
+
   // AI-draft a targeting brief from scratch for a unit: gathers the unit,
   // its property, the categories already in the scheme, the client and the
   // firm's taxonomy, and asks Claude to propose the brief fields + a
