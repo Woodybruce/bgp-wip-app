@@ -482,6 +482,11 @@ export const crmCompanies = pgTable("crm_companies", {
   isTrackedBrand: boolean("is_tracked_brand").default(false),
   trackingReason: text("tracking_reason"),
   brandGroupId: varchar("brand_group_id"), // parent brand group (e.g. Inditex for Zara)
+  // Brand theme (from logo.dev Brand API) — drives the client-app skin so a
+  // landlord client sees their own logo + colours ("their version of the app").
+  logoUrl: text("logo_url"),
+  brandPrimaryColor: text("brand_primary_color"), // hex
+  brandSecondaryColor: text("brand_secondary_color"), // hex
   conceptPitch: text("concept_pitch"),
   storeCount: integer("store_count"),
   rolloutStatus: text("rollout_status"), // scaling | stable | contracting | entering_uk | rumoured
@@ -1901,6 +1906,7 @@ export const unitBriefs = pgTable("unit_briefs", {
   status: text("status").default("Active"), // Active | Complete | Withdrawn
   sourceFileId: varchar("source_file_id"), // → unit_marketing_files.id (uploaded brief PDF)
   documentFileId: varchar("document_file_id"), // → unit_marketing_files.id (generated brief doc)
+  imageIds: text("image_ids").array(), // → image_studio_images.id — images attached to the brief
   createdByUserId: varchar("created_by_user_id"),
   createdByName: text("created_by_name"),
   createdAt: timestamp("created_at").defaultNow(),

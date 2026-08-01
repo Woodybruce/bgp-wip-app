@@ -38,6 +38,12 @@ import { pool } from "./db";
 // first error, which is how compliance_board/training tables went missing.
 (async () => {
   const MIGRATIONS: string[] = [
+    // Client brand theme (logo.dev) — logo + colours for the client-app skin.
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS logo_url TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_primary_color TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_secondary_color TEXT`,
+    // Targeting brief: images attached from Image Studio.
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS image_ids TEXT[]`,
     // Heads of Terms: each property carries a standard HOTs template;
     // each tracker unit carries its negotiated instance.
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS hots_template TEXT`,
@@ -3478,6 +3484,9 @@ app.use("/api/branding/assets", express.static(
         // handler verifies the unit's property is in the client's scope.
         // (We don't open all of /api/available-units, only the brief POST.)
         if (req.method === "POST" && /^\/api\/available-units\/[^/]+\/brief$/.test(p)) return next();
+        // AI-draft a brief for one of their own units (read-only draft, the
+        // handler scope-checks the unit); the client reviews before saving.
+        if (req.method === "POST" && /^\/api\/available-units\/[^/]+\/brief\/draft-ai$/.test(p)) return next();
         // Leasing strategy board writes on the client's OWN property — the
         // strategic-principles key block, AI target generation and target-
         // tenant rows ("Save failed — read-only" on the Landsec board).

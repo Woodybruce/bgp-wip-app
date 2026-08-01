@@ -264,3 +264,63 @@ export async function extractBriefFromText(documentText: string): Promise<any> {
   const content = response.content[0]?.type === "text" ? response.content[0].text : "{}";
   return safeParseJSON(content);
 }
+
+const BRIEF_DRAFT_PROMPT = `You are a senior retail-leasing agent at Bruce Gillingham Pollard drafting an Operator Targeting Brief for a specific unit on behalf of a landlord client (e.g. Landsec). You are given the unit, its property, the client, the categories already represented in the scheme, and the firm's category taxonomy. Draft a considered, specific brief — not generic filler. Ground every choice in the unit's size, position and the gaps in the scheme's current mix.
+
+Return ONLY a valid JSON object in this shape (use null where you genuinely cannot judge):
+{
+  "title": "Operator Targeting Brief — <unit> at <property>",
+  "objective": "1-2 sentences: what a good letting here achieves for the client (mix, footfall, rent tone).",
+  "locationContext": "The unit's position and the categories already represented nearby — call out what's missing / over-represented.",
+  "targetCriteria": "What a preferred operator must demonstrate for THIS unit (covenant, format fit, fit-out, trading style, extract needs).",
+  "priorityCategories": ["Category from the taxonomy", "Second priority category", "..."],
+  "agentInstruction": "Emphasis and constraints for the agent working this unit.",
+  "successMeasures": "How the client will judge progress against this brief.",
+  "minTargets": 5,
+  "priorityTargets": 2,
+  "targets": [
+    { "operatorName": "A real, plausible operator that fits", "category": "Its taxonomy category", "priority": "A or B", "rationale": "One line: why it fits this unit / fills a gap" }
+  ]
+}
+
+Rules:
+- "priorityCategories" MUST be an array of category names drawn from the provided taxonomy (choose the 2-4 best-fit categories for this unit and the scheme's gaps).
+- For "targets": suggest 5-8 named operators that realistically fit the unit and the priority categories. Prefer operators NOT already in the scheme. Mark the 2 strongest as priority "A", the rest "B". Give each a one-line rationale. These are suggestions for the agent to approve — be specific and credible, but do not fabricate operators that plainly don't exist.
+- Keep prose tight and professional. Return ONLY the JSON object, no markdown.`;
+
+export async function draftBriefFromContext(ctx: {
+  unitName?: string | null;
+  floor?: string | null;
+  sqft?: number | null;
+  askingRent?: number | null;
+  propertyName?: string | null;
+  address?: string | null;
+  clientCompany?: string | null;
+  currentTenants?: string[];
+  taxonomy?: string[];
+}): Promise<any> {
+  const { getAnthropicClient, safeParseJSON } = await import("./utils/anthropic-client");
+  const anthropic = getAnthropicClient();
+  const userMsg = [
+    `Unit: ${ctx.unitName || "—"}${ctx.floor ? ` (${ctx.floor})` : ""}${ctx.sqft ? `, ${ctx.sqft.toLocaleString()} sq ft` : ""}${ctx.askingRent ? `, quoting £${ctx.askingRent.toLocaleString()} pa` : ""}`,
+    `Property: ${ctx.propertyName || "—"}${ctx.address ? `, ${ctx.address}` : ""}`,
+    `Client / landlord: ${ctx.clientCompany || "—"}`,
+    `Categories / operators already represented in the scheme: ${(ctx.currentTenants || []).length ? (ctx.currentTenants || []).join(", ") : "unknown"}`,
+    `Category taxonomy to choose priorityCategories and target categories from:\n${(ctx.taxonomy || []).join(", ")}`,
+  ].join("\n\n");
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 4096,
+    system: BRIEF_DRAFT_PROMPT,
+    messages: [{ role: "user", content: userMsg }],
+  });
+  const content = response.content[0]?.type === "text" ? response.content[0].text : "{}";
+  const parsed = safeParseJSON(content);
+  // priorityCategories may come back as an array — normalise to the text
+  // column shape the brief stores, but keep the array for the client picker.
+  if (Array.isArray(parsed?.priorityCategories)) {
+    parsed.priorityCategoriesList = parsed.priorityCategories;
+    parsed.priorityCategories = parsed.priorityCategories.join(", ");
+  }
+  return parsed;
+}

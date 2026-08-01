@@ -377,7 +377,14 @@ export function AppSidebar() {
         <Link href="/">
           {isLandsec ? (
             <div className="cursor-pointer flex flex-col items-center justify-center h-16 gap-1">
-              <img src={landsecLogo} alt="Landsec" className="h-11 w-auto object-contain dark:invert" />
+              {/* Real client logo from logo.dev when we have it; else the
+                  bundled Landsec mark. object-contain keeps any aspect ratio. */}
+              <img
+                src={brand.logoUrl || landsecLogo}
+                alt={brand.name || "Landsec"}
+                className={`h-11 w-auto max-w-[150px] object-contain ${brand.logoUrl ? "" : "dark:invert"}`}
+                onError={(e) => { if (brand.logoUrl) (e.currentTarget as HTMLImageElement).src = landsecLogo; }}
+              />
               <span className="text-[10px] text-sidebar-foreground/50">Powered by BGP</span>
             </div>
           ) : (
