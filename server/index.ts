@@ -3465,6 +3465,14 @@ app.use("/api/branding/assets", express.static(
             (req.method === "DELETE" && /^\/api\/crm\/deals\/[^/]+$/.test(p))) {
           return res.status(403).json({ error: "Not available for client accounts" });
         }
+        // Contact-graph link writes ride under the allowed /api/crm/contacts
+        // prefix but have no scope check — a client could wire ANY contact
+        // onto ANY deal / property / requirement (including other tenants').
+        // Client contact parity is add/amend of the contact RECORD only, not
+        // the relationship graph, so block these link writes entirely.
+        if (/^\/api\/crm\/contacts\/[^/]+\/(properties|deals|requirements)(\/|$)/.test(p)) {
+          return res.status(403).json({ error: "Not available for client accounts" });
+        }
         // Authoring an Operator Targeting Brief on one of their own units —
         // the create route hangs off /api/available-units/:id/brief; the
         // handler verifies the unit's property is in the client's scope.

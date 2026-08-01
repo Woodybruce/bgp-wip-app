@@ -967,6 +967,8 @@ async function markRound(page, cross) {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
       const deals = await (await fetch('/api/crm/deals', { headers: auth })).json().catch(() => []);
       const dealId = Array.isArray(deals) && deals[0] ? deals[0].id : '00000000-0000-0000-0000-000000000000';
+      const contacts = await (await fetch('/api/crm/contacts', { headers: auth })).json().catch(() => []);
+      const contactId = Array.isArray(contacts) && contacts[0] ? contacts[0].id : '00000000-0000-0000-0000-000000000000';
       const probes = [
         ['DELETE', `/api/crm/deals/${dealId}`],
         ['DELETE', `/api/crm/companies/11111111-1111-1111-1111-111111111111`],
@@ -974,6 +976,11 @@ async function markRound(page, cross) {
         ['POST',   '/api/crm/wipe-deals'],
         ['POST',   '/api/image-studio/bulk-assign-property'],
         ['POST',   '/api/admin/letting-tracker-focus'],
+        // Contact-graph link writes (no scope check in the handler) — wiring
+        // a contact onto a deal/property/requirement must be staff-only.
+        ['POST',   `/api/crm/contacts/${contactId}/deals`],
+        ['POST',   `/api/crm/contacts/${contactId}/properties`],
+        ['POST',   `/api/crm/contacts/${contactId}/requirements`],
       ];
       const out = [];
       for (const [method, url] of probes) {
