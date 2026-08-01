@@ -20,7 +20,10 @@ import {
   Flower2, Clapperboard, Tv, Gamepad2, Baby, Palette, PartyPopper,
   HeartPulse, Bath, Dumbbell, Tag, Wrench, Watch, Gem, Footprints,
   ShoppingCart, Crosshair, TrendingDown, Eye, Lightbulb, Target, ClipboardList,
+  Plus, Check, Loader2,
 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { getAuthHeaders } from "@/lib/queryClient";
 
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const BrandHunterBoard = lazy(() => import("@/components/brand-hunter-board"));
@@ -232,11 +235,14 @@ export default function BrandsHub() {
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">{isClientHub ? "Brands across your portfolio and the wider hospitality market" : "Live view of every brand across the Hub"}</p>
         </div>
-        <Link href="/companies?tab=tenants">
-          <Button variant="outline" size="sm">
-            All Brands <ChevronRight className="w-3 h-3 ml-1" />
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          {isClientHub && <ClientAddBrandButton />}
+          <Link href="/companies?tab=tenants">
+            <Button variant="outline" size="sm">
+              All Brands <ChevronRight className="w-3 h-3 ml-1" />
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* ── Tabs ───────────────────────────────────────────────────── */}
@@ -1359,5 +1365,86 @@ function TurnoverResearchPanel({ onResearch, researchingId }: { onResearch: (id:
         </p>
       )}
     </div>
+  );
+}
+
+// Client-only: pull a brand from the global directory into this client's CRM.
+// Their CRM auto-shows the hospitality/F&B/leisure/fitness slice; this adds
+// anything else (fashion, beauty, etc.) they want to track.
+function ClientAddBrandButton() {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [addingId, setAddingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || q.trim().length < 2) { setResults([]); return; }
+    let cancelled = false;
+    setLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/client/crm/global-brands?search=${encodeURIComponent(q.trim())}`, { credentials: "include", headers: getAuthHeaders() });
+        const d = await r.json();
+        if (!cancelled) setResults(Array.isArray(d) ? d : []);
+      } catch { if (!cancelled) setResults([]); }
+      finally { if (!cancelled) setLoading(false); }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [q, open]);
+
+  const add = async (id: string) => {
+    setAddingId(id);
+    try {
+      await apiRequest("POST", "/api/client/crm/add-brand", { brandId: id });
+      setResults(prev => prev.map(b => b.id === id ? { ...b, added: true } : b));
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brands/hub"] });
+      toast({ title: "Brand added to your CRM" });
+    } catch (e: any) {
+      toast({ title: "Couldn't add brand", description: e.message, variant: "destructive" });
+    } finally { setAddingId(null); }
+  };
+
+  return (
+    <>
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)} data-testid="client-add-brand">
+        <Plus className="w-3 h-3 mr-1" /> Add brand
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add a brand to your CRM</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">Your CRM shows hospitality, F&amp;B, leisure and fitness brands automatically. Search the wider directory to add any other brand you want to track.</p>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search all brands…" className="pl-8 h-9 text-sm" data-testid="client-add-brand-search" />
+            </div>
+            <div className="max-h-[320px] overflow-y-auto space-y-1">
+              {loading && <p className="text-xs text-muted-foreground py-2 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Searching…</p>}
+              {!loading && q.trim().length >= 2 && results.length === 0 && <p className="text-xs text-muted-foreground py-2">No brands match.</p>}
+              {results.map(b => (
+                <div key={b.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded border bg-card">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium truncate">{b.name}</div>
+                    <div className="text-[10px] text-muted-foreground">{(b.companyType || "").replace(/^Tenant - /, "")}{b.inSlice ? " · already in your CRM" : ""}</div>
+                  </div>
+                  {b.added || b.inSlice ? (
+                    <Badge variant="outline" className="text-[10px] gap-1 shrink-0"><Check className="w-3 h-3" /> {b.inSlice ? "In CRM" : "Added"}</Badge>
+                  ) : (
+                    <Button size="sm" variant="secondary" className="h-7 text-xs shrink-0" disabled={addingId === b.id} onClick={() => add(b.id)}>
+                      {addingId === b.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Plus className="w-3 h-3 mr-1" /> Add</>}
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

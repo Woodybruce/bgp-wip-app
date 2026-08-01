@@ -749,7 +749,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   });
 
   const addRepMutation = useMutation({
-    mutationFn: async (vars: { brandCompanyId: string; agentCompanyId: string; agentType: string; region?: string; primaryContactId?: string }) => {
+    mutationFn: async (vars: { brandCompanyId: string; agentCompanyId?: string; agentType: string; region?: string; primaryContactId?: string }) => {
       const res = await apiRequest("POST", `/api/brand/representations`, vars);
       return res.json();
     },
@@ -2650,9 +2650,12 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                       {/* Fall-through: company picker. Used for the brand-search
                           case, AND as a fallback when the agent search returns
                           nothing (so user can still pick by company name). */}
+                      {/* Any company can be the agent firm — previously gated on
+                          agent_type being set, which hid every agent firm whose
+                          sub-type was blank (the common case). The server
+                          self-heals agent_type on save. */}
                       {allCompaniesForPicker
                         .filter(co => co.id !== companyId && co.name.toLowerCase().includes(repSearch.toLowerCase()))
-                        .filter(co => addRep === "agent" ? !!co.agent_type : true)
                         .slice(0, 10)
                         .map(co => (
                           <button
@@ -2687,12 +2690,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   />
                 </div>
                 <div className="flex items-center gap-2">
+                  {/* Enable when an agent firm OR an agent contact is chosen —
+                      the server resolves the firm from the contact (creating a
+                      lightweight Agent company if the person has none). */}
                   <Button
                     size="sm"
-                    disabled={!repForm.otherCompanyId || addRepMutation.isPending}
+                    disabled={(!repForm.otherCompanyId && !(addRep === "agent" && repForm.contactId)) || addRepMutation.isPending}
                     onClick={() => {
                       const vars = addRep === "agent"
-                        ? { brandCompanyId: companyId, agentCompanyId: repForm.otherCompanyId, agentType: repForm.agent_type, region: repForm.region || undefined, primaryContactId: repForm.contactId || undefined }
+                        ? { brandCompanyId: companyId, agentCompanyId: repForm.otherCompanyId || undefined, agentType: repForm.agent_type, region: repForm.region || undefined, primaryContactId: repForm.contactId || undefined }
                         : { brandCompanyId: repForm.otherCompanyId, agentCompanyId: companyId, agentType: repForm.agent_type, region: repForm.region || undefined };
                       addRepMutation.mutate(vars);
                     }}

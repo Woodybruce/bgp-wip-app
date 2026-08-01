@@ -4716,6 +4716,71 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // ── Client CRM: add brands from the global directory ─────────────────
+  // A client's CRM auto-shows the hospitality/F&B/leisure/fitness slice; these
+  // let them pull ANY other brand from the global directory into their CRM
+  // (stored on their own company's crm_extra_brand_ids).
+  app.get("/api/client/crm/global-brands", requireAuth, async (req: any, res) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      const scope = await resolveCompanyScope(req);
+      if (!scope) return res.status(403).json({ message: "Client accounts only" });
+      const search = String(req.query.search || "").trim();
+      if (search.length < 2) return res.json([]);
+      // Search the whole tenant directory (any category) so the client can add
+      // brands outside their auto slice; exclude what they already see.
+      const { isClientCrmCategory } = await import("@shared/tenant-categories");
+      const { getClientExtraBrandIds } = await import("./company-scope");
+      const extra = await getClientExtraBrandIds(scope);
+      const q = await pool.query(
+        `SELECT id, name, company_type FROM crm_companies
+          WHERE merged_into_id IS NULL AND company_type ILIKE 'Tenant -%'
+            AND name ILIKE $1
+          ORDER BY is_tracked_brand DESC NULLS LAST, name LIMIT 25`,
+        [`%${search}%`]
+      );
+      res.json(q.rows.map((r: any) => ({
+        id: r.id, name: r.name, companyType: r.company_type,
+        inSlice: isClientCrmCategory(r.company_type),
+        added: extra.has(r.id),
+      })));
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Search failed" }); }
+  });
+
+  app.post("/api/client/crm/add-brand", requireAuth, async (req: any, res) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      const scope = await resolveCompanyScope(req);
+      if (!scope) return res.status(403).json({ message: "Client accounts only" });
+      const brandId = String(req.body?.brandId || "");
+      if (!/^[0-9a-f-]{36}$/i.test(brandId)) return res.status(400).json({ message: "brandId required" });
+      const chk = await pool.query(`SELECT company_type FROM crm_companies WHERE id = $1`, [brandId]);
+      if (!chk.rows[0] || !/^tenant -/i.test(chk.rows[0].company_type || "")) {
+        return res.status(400).json({ message: "Only tenant brands can be added" });
+      }
+      await pool.query(
+        `UPDATE crm_companies
+            SET crm_extra_brand_ids = (SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(crm_extra_brand_ids, '{}') || $1::text)))
+          WHERE id = $2`,
+        [brandId, scope]
+      );
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed to add brand" }); }
+  });
+
+  app.delete("/api/client/crm/add-brand/:brandId", requireAuth, async (req: any, res) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      const scope = await resolveCompanyScope(req);
+      if (!scope) return res.status(403).json({ message: "Client accounts only" });
+      await pool.query(
+        `UPDATE crm_companies SET crm_extra_brand_ids = array_remove(crm_extra_brand_ids, $1) WHERE id = $2`,
+        [String(req.params.brandId), scope]
+      );
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed to remove brand" }); }
+  });
+
   // Staff refresh of a company's brand theme from logo.dev (company page).
   app.post("/api/crm/companies/:id/fetch-brand-theme", requireAuth, async (req: any, res) => {
     try {

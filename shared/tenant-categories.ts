@@ -52,3 +52,25 @@ export const TENANT_CATEGORIES = [
   "Tenant - Wellness",
   "Tenant - Yoga",
 ] as const;
+
+// The hospitality / F&B / leisure / fitness slice a landlord client's CRM is
+// scoped to (Landsec, 2026-08). Restaurants & cafés + leisure & entertainment
+// + fitness & wellness — no fashion/beauty/luxury/retail. A client can still
+// add any other brand from the global directory via their extra-brands list.
+export const CLIENT_CRM_CATEGORIES = [
+  // Restaurants & cafés
+  "Tenant - Fine Dining", "Tenant - Casual Dining", "Tenant - Restaurant",
+  "Tenant - Quick Service", "Tenant - Café", "Tenant - Bar", "Tenant - Bakery",
+  // Leisure & entertainment
+  "Tenant - Cinema", "Tenant - Experiential", "Tenant - Immersive Experience",
+  "Tenant - Gaming", "Tenant - Family Entertainment", "Tenant - Leisure",
+  // Fitness & wellness
+  "Tenant - Gym", "Tenant - Wellness", "Tenant - Yoga",
+] as const;
+
+// Case-insensitive membership test for a company_type string.
+export function isClientCrmCategory(companyType: string | null | undefined): boolean {
+  if (!companyType) return false;
+  const t = companyType.trim().toLowerCase();
+  return (CLIENT_CRM_CATEGORIES as readonly string[]).some(c => c.toLowerCase() === t);
+}

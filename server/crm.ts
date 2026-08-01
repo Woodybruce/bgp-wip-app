@@ -1686,13 +1686,15 @@ export function setupCrmRoutes(app: Express) {
       };
       const result = await storage.getCrmCompanies(filters);
       if (scopeCompanyId) {
-        // Clients get their own company plus the curated brand directory
-        // (hospitality / F&B / café / fitness tenants) — the same slice the
-        // brand hub and client CRM expose. Other landlords, offices and
-        // BGP-side companies stay hidden.
+        // Clients get their own company + EVERY tenant brand in the directory
+        // (Woody, 2026-08: "open up all brands for the Landsec account"), PLUS
+        // any brand pulled in from the global directory. Everything else
+        // (other clients, landlords, offices) stays hidden.
+        const { getClientExtraBrandIds } = await import("./company-scope");
+        const extra = await getClientExtraBrandIds(scopeCompanyId);
         const arr = Array.isArray(result) ? result : result.data;
         res.json(arr.filter((c: any) =>
-          c.id === scopeCompanyId || CLIENT_BRAND_TYPE_RE.test(c.companyType || "")
+          c.id === scopeCompanyId || CLIENT_BRAND_TYPE_RE.test(String(c.companyType || "")) || extra.has(c.id)
         ));
       } else {
         res.json(result);
@@ -1708,10 +1710,13 @@ export function setupCrmRoutes(app: Express) {
       if (scopeCompanyId && req.params.id !== scopeCompanyId) {
         // Clients may open ANY brand in the tenant directory (opened up to
         // the whole directory — Woody, 2026-08: "open up all brands for the
-        // Landsec account"), but nothing else: other clients, landlords and
+        // Landsec account"), plus any brand explicitly pulled in from the
+        // global directory — but nothing else: other clients, landlords and
         // office occupiers stay blocked. Mirrors CLIENT_BRAND_TYPE_RE.
         const ct = String(company.companyType || "");
-        const isAllowedBrand = CLIENT_BRAND_TYPE_RE.test(ct);
+        const { getClientExtraBrandIds } = await import("./company-scope");
+        const extraIds = await getClientExtraBrandIds(scopeCompanyId);
+        const isAllowedBrand = CLIENT_BRAND_TYPE_RE.test(ct) || extraIds.has(req.params.id);
         // Tenant-rep agents are in the client agent directory and linked
         // from brand profiles ("Represented by") — readable too.
         const isTenantRepAgent = company.agentType === "tenant_rep" ||

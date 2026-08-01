@@ -38,6 +38,9 @@ import { pool } from "./db";
 // first error, which is how compliance_board/training tables went missing.
 (async () => {
   const MIGRATIONS: string[] = [
+    // Per-client CRM: extra brands added from the global directory beyond
+    // the client's auto category slice.
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS crm_extra_brand_ids TEXT[]`,
     // Client brand theme (logo.dev) — logo + colours for the client-app skin.
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS logo_url TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_primary_color TEXT`,
@@ -3375,6 +3378,9 @@ app.use("/api/branding/assets", express.static(
     // Landsec may add/amend CRM contacts — POST/PUT scope-checked in crm.ts
     // (own company or the hospitality-brand slice only).
     "/api/crm/contacts",
+    // Client pulls brands into their own CRM from the global directory
+    // (crm_extra_brand_ids on their company) — scope-checked per handler.
+    "/api/client/crm/",
     // Clients may create + edit deals on their OWN portfolio (Woody, 2026-07:
     // "client needs to be able to do as much as the agent"). The handler
     // forces the deal onto the client's own company and strips every fee
@@ -3514,7 +3520,7 @@ app.use("/api/branding/assets", express.static(
       if (brandRead) {
         const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
         const scope = await resolveCompanyScope(req);
-        if (brandRead[1] === scope || (await isClientVisibleBrand(brandRead[1]))) return next();
+        if (brandRead[1] === scope || (await isClientVisibleBrand(brandRead[1], scope))) return next();
       }
       // AI activity commentary (AIActivityCard) on the client's OWN company —
       // the dashboard BGP Relationship board mirrors the internal page
