@@ -379,10 +379,14 @@ export function AppSidebar() {
             <div className="cursor-pointer flex flex-col items-center justify-center h-16 gap-1">
               {/* Real client logo from logo.dev when we have it; else the
                   bundled Landsec mark. object-contain keeps any aspect ratio. */}
+              {/* The sidebar surface is dark navy in every theme, so a dark
+                  wordmark (the bundled Landsec mark, and Landsec's own dark
+                  logo) has to render white to read. brightness-0 invert
+                  forces a clean white silhouette on the navy. */}
               <img
                 src={brand.logoUrl || landsecLogo}
                 alt={brand.name || "Landsec"}
-                className={`h-11 w-auto max-w-[150px] object-contain ${brand.logoUrl ? "" : "dark:invert"}`}
+                className="h-11 w-auto max-w-[150px] object-contain brightness-0 invert"
                 onError={(e) => { if (brand.logoUrl) (e.currentTarget as HTMLImageElement).src = landsecLogo; }}
               />
               <span className="text-[10px] text-sidebar-foreground/50">Powered by BGP</span>
