@@ -1137,6 +1137,18 @@ async function markRound(page, cross) {
     }, [foreign, foreignProp]);
     const leaked = r.filter((x) => x.ok);
     if (leaked.length) throw new Error(`client can read a foreign ${leaked.map((x) => x.ep).join(', ')} (cross-tenant leak regressed)`);
+
+    // Company sub-entities scope to [] rather than 403 (the client legitimately
+    // views their own + visible-brand trees), so assert EMPTINESS, not status.
+    // Hammerson has a seeded sub-entity (AML high) a Landsec client must not see.
+    const subs = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/crm/companies/99999999-1111-1111-1111-111111111111/sub-companies', { headers: auth }).catch(() => null);
+      if (!res || !res.ok) return { count: 0 };
+      const arr = await res.json().catch(() => []);
+      return { count: Array.isArray(arr) ? arr.length : 0 };
+    });
+    if (subs.count > 0) throw new Error(`client can read a foreign company's ${subs.count} sub-entity(ies) with AML/KYC data (cross-tenant leak)`);
   });
 
   // Client creates a ChatBGP thread (no AI key needed for the thread itself)

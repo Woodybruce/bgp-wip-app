@@ -22,3 +22,10 @@ SELECT '99999999-4444-4444-4444-444444444444', 'sam.cole@hammerson.com', u.passw
        'Sam Cole', 'sam.cole@hammerson.com', 'Client', 'Hammerson', true
 FROM users u WHERE u.email = 'mark.warne@landsec.com'
 ON CONFLICT (id) DO NOTHING;
+
+-- A Hammerson sub-entity so the sub-companies cross-tenant read guard is
+-- actually testable (carries AML/KYC data a rival client must never see).
+INSERT INTO crm_companies (id, name, company_type, parent_company_id, kyc_status, aml_risk_level)
+VALUES ('99999999-5555-5555-5555-555555555555', 'Hammerson SubCo Ltd', 'Landlord',
+        '99999999-1111-1111-1111-111111111111', 'verified', 'high')
+ON CONFLICT (id) DO NOTHING;

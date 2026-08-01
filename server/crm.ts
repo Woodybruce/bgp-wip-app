@@ -6,7 +6,7 @@ import { storage } from "./storage";
 import { requireAuth } from "./auth";
 import { db, pool } from "./db";
 import { saveFile, getFile, deleteFile as deleteStoredFile } from "./file-storage";
-import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientRequestUser } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientRequestUser, isClientVisibleBrand } from "./company-scope";
 
 const LANDLORD_PACKS_DIR = path.join(process.cwd(), "ChatBGP", "landlord-packs");
 if (!fs.existsSync(LANDLORD_PACKS_DIR)) fs.mkdirSync(LANDLORD_PACKS_DIR, { recursive: true });
@@ -2624,6 +2624,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.get("/api/crm/companies/:id/sub-companies", async (req, res) => {
     try {
+      // Sub-entities carry kyc_status / aml_risk_level / CH number — a client
+      // may only read the corporate tree of their OWN company or a
+      // client-visible brand, never another landlord/occupier's. (/properties
+      // and /deals beside this were already scoped; this one leaked.)
+      const scScope = await resolveCompanyScope(req);
+      if (scScope && scScope !== req.params.id && !(await isClientVisibleBrand(req.params.id))) {
+        return res.json([]);
+      }
       const { rows } = await pool.query(
         `SELECT id, name, company_type, kyc_status, aml_risk_level, companies_house_number, domain_url, domain
          FROM crm_companies WHERE parent_company_id = $1 ORDER BY name`,
