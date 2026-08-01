@@ -682,6 +682,36 @@ async function markRound(page, cross) {
     }, r.briefId);
   });
 
+  // The per-unit brief was enriched (terminal side) with a priority-categories
+  // taxonomy and attached image_ids. A client editing their own brief must be
+  // able to set BOTH and have them persist (new columns, client-scoped PATCH).
+  await step(page, p, 'client-brief-enriched-fields', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = Array.isArray(units) ? units[0] : null;
+      if (!unit) return { skip: true };
+      const mk = await fetch(`/api/available-units/${unit.id}/brief`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ title: 'QA Brief — enriched fields' }) });
+      if (!mk.ok) return { ok: false, why: `create ${mk.status}` };
+      const brief = await mk.json();
+      const cats = 'Tenant - Wellness, Tenant - Café';
+      const imgIds = ['qa-img-1', 'qa-img-2'];
+      const patch = await fetch(`/api/unit-briefs/${brief.id}`, { method: 'PATCH', credentials: 'include', headers: auth,
+        body: JSON.stringify({ priorityCategories: cats, imageIds: imgIds }) });
+      if (!patch.ok) return { ok: false, why: `patch ${patch.status}` };
+      const back = await patch.json();
+      const catsOk = (back.priorityCategories || '') === cats;
+      const imgOk = JSON.stringify(back.imageIds || []) === JSON.stringify(imgIds);
+      await fetch(`/api/unit-briefs/${brief.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, catsOk, imgOk };
+    });
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`enriched brief edit failed (${r.why})`);
+    if (!r.catsOk) throw new Error('brief priorityCategories did not persist');
+    if (!r.imgOk) throw new Error('brief imageIds did not persist');
+  });
+
   // Client manages their own tasks: add via quick-add, mark complete, remove.
   // (My Tasks widget + page; every task endpoint is user-scoped.)
   await step(page, p, 'client-task-create-complete', async () => {
