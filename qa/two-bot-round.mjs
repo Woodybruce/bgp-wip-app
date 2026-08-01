@@ -858,18 +858,22 @@ async function markRound(page, cross) {
   await step(page, p, 'client-contact-scope-guards', async () => {
     const r = await page.evaluate(async () => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const foreignLandlordContact = '99999999-6666-6666-6666-666666666666'; // Hammerson
-      const retailBrand = '88888888-1111-1111-1111-111111111111';            // QA Retail Brand
+      const foreignLandlordContact = '99999999-6666-6666-6666-666666666666'; // Hammerson (landlord — never touchable)
+      const inSliceBrand = '77777777-7777-7777-7777-777777777777';           // Honi Poke (Tenant - Restaurant, in slice)
+      const outOfSliceBrand = '88888888-1111-1111-1111-111111111111';        // QA Retail Brand (out of slice, not self-added)
       const editForeign = (await fetch(`/api/crm/contacts/${foreignLandlordContact}`, { method: 'PUT', credentials: 'include', headers: auth,
         body: JSON.stringify({ name: 'QA-CONTACT-HIJACK' }) }).catch(() => ({ status: 0 }))).status;
-      const addBrand = await fetch('/api/crm/contacts', { method: 'POST', credentials: 'include', headers: auth,
-        body: JSON.stringify({ name: 'QA Contact brand-scope', companyId: retailBrand }) }).catch(() => ({ ok: false, status: 0 }));
-      let addBrandStatus = addBrand.status;
-      if (addBrand.ok) { const c = await addBrand.json(); await fetch(`/api/crm/contacts/${c.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {}); }
-      return { editForeign, addBrandStatus };
+      const addInSlice = await fetch('/api/crm/contacts', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: 'QA Contact slice-brand', companyId: inSliceBrand }) }).catch(() => ({ ok: false, status: 0 }));
+      let addInSliceStatus = addInSlice.status;
+      if (addInSlice.ok) { const c = await addInSlice.json(); await fetch(`/api/crm/contacts/${c.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {}); }
+      const addOutStatus = (await fetch('/api/crm/contacts', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: 'QA Contact out-of-slice', companyId: outOfSliceBrand }) }).catch(() => ({ status: 0 }))).status;
+      return { editForeign, addInSliceStatus, addOutStatus };
     });
     if (r.editForeign !== 403) throw new Error(`client edited a foreign landlord's contact (expected 403, got ${r.editForeign})`);
-    if (!(r.addBrandStatus >= 200 && r.addBrandStatus < 300)) throw new Error(`client blocked from adding a brand contact (all-brands regressed: ${r.addBrandStatus})`);
+    if (!(r.addInSliceStatus >= 200 && r.addInSliceStatus < 300)) throw new Error(`client blocked from adding an in-slice brand contact (${r.addInSliceStatus})`);
+    if (r.addOutStatus !== 403) throw new Error(`client added a contact to an out-of-slice brand (expected 403, got ${r.addOutStatus})`);
   });
 
   // Client opens a hospitality brand profile (in their visible slice) — the
