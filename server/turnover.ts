@@ -67,12 +67,12 @@ router.get("/api/turnover", requireAuth, async (req: Request, res: Response) => 
     const params: any[] = [];
     let idx = 1;
 
-    // Client accounts read the board, sliced to the hospitality brand set
+    // Client accounts read the board, sliced to the client-visible brand set
     // (same rule as /api/brands/hub) — the full turnover book is BGP intel.
-    const { resolveCompanyScope, CLIENT_VISIBLE_BRAND_RE } = await import("./company-scope");
-    if (await resolveCompanyScope(req as any)) {
-      sql += ` AND (company_id IN (SELECT id FROM crm_companies WHERE company_type ~* $${idx} AND merged_into_id IS NULL))`;
-      params.push(CLIENT_VISIBLE_BRAND_RE.source); idx++;
+    const { resolveCompanyScope, clientBrandSliceSql } = await import("./company-scope");
+    const turnoverScope = await resolveCompanyScope(req as any);
+    if (turnoverScope) {
+      sql += ` AND (company_id IN (SELECT id FROM crm_companies WHERE ${await clientBrandSliceSql(turnoverScope)} AND merged_into_id IS NULL))`;
     }
 
     if (company_id) { sql += ` AND company_id = $${idx}`; params.push(company_id); idx++; }

@@ -6,7 +6,7 @@ import { storage } from "./storage";
 import { requireAuth } from "./auth";
 import { db, pool } from "./db";
 import { saveFile, getFile, deleteFile as deleteStoredFile } from "./file-storage";
-import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientRequestUser, isClientVisibleBrand } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientRequestUser, isClientVisibleBrand, getClientExtraBrandIds, clientBrandSliceSql } from "./company-scope";
 
 const LANDLORD_PACKS_DIR = path.join(process.cwd(), "ChatBGP", "landlord-packs");
 if (!fs.existsSync(LANDLORD_PACKS_DIR)) fs.mkdirSync(LANDLORD_PACKS_DIR, { recursive: true });
@@ -29,6 +29,7 @@ import {
   type CrmCompany, type CrmContact,
 } from "@shared/schema";
 import { isInvoicedStatus, legacyToCode, WIP_STATUSES, deriveStageFromStatus } from "@shared/deal-status";
+import { isClientCrmCategory } from "@shared/tenant-categories";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { contentDispositionFor } from "./utils/http-headers";
@@ -1104,10 +1105,9 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
 }
 
 export function setupCrmRoutes(app: Express) {
-  // Company types a client login may browse in the brand directory / hub /
-  // explorer — hospitality, F&B, café, leisure and fitness tenants only.
-  // Keep in sync with CLIENT_BRAND_TYPE_PATTERNS (the SQL ILIKE variant).
-  const CLIENT_BRAND_TYPE_RE = /^tenant -/i;
+  // Client brand visibility is centralised in company-scope.ts:
+  // isClientVisibleBrand (per-row) and clientBrandSliceSql (SQL fragment),
+  // both built from CLIENT_CRM_CATEGORIES + the client's crm_extra_brand_ids.
 
   // Clients now see the fee they're paying us — total fee, agency %, and the
   // fee-agreement label (Woody, 2026-07: "client should see fees anywhere").
@@ -1976,8 +1976,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   const clientCanTouchCompany = async (scopeCompanyId: string, companyId: string | null | undefined): Promise<boolean> => {
     if (!companyId) return false;
     if (companyId === scopeCompanyId) return true;
-    const r = await pool.query(`SELECT company_type FROM crm_companies WHERE id = $1`, [companyId]);
-    return CLIENT_BRAND_TYPE_RE.test(r.rows[0]?.company_type || "");
+    return isClientVisibleBrand(companyId, scopeCompanyId);
   };
 
   // Gate for a contact's sub-resource reads (linked properties/deals/
@@ -2647,7 +2646,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // client-visible brand, never another landlord/occupier's. (/properties
       // and /deals beside this were already scoped; this one leaked.)
       const scScope = await resolveCompanyScope(req);
-      if (scScope && scScope !== req.params.id && !(await isClientVisibleBrand(req.params.id))) {
+      if (scScope && scScope !== req.params.id && !(await isClientVisibleBrand(req.params.id, scScope))) {
         return res.json([]);
       }
       const { rows } = await pool.query(
@@ -4687,17 +4686,10 @@ Return a JSON object with these fields (use null for any field you cannot find):
     return r.rows[0]?.role === "Client";
   }
 
-  // Brand slice a client (e.g. Landsec) is allowed to browse: hospitality,
-  // food & dining, cafés and fitness only — matched against the
-  // 'Tenant - <Category>' company_type values. Retail/fashion/office and
-  // everything else in BGP's book stays out of client view for now.
-  // SQL ILIKE variant of CLIENT_BRAND_TYPE_RE — the whole tenant directory is
-  // open to clients now, so one pattern covers it.
-  const CLIENT_BRAND_TYPE_PATTERNS = ["Tenant -%"];
-
   // Brand directory for client CRM lookup — brand companies in the allowed
-  // categories with their contacts inlined. Available to all logged-in
-  // users; the category whitelist is what makes it client-safe.
+  // categories (clientBrandSliceSql: hospitality/leisure/fitness slice + the
+  // client's own extras) with their contacts inlined. Available to all
+  // logged-in users; the category whitelist is what makes it client-safe.
   app.get("/api/client/brand-directory", requireAuth, async (req, res) => {
     try {
       // Relationship flags are computed against the requesting client's own
@@ -4705,11 +4697,12 @@ Return a JSON object with these fields (use null for any field you cannot find):
       // Landsec-style flags for whichever company `?companyId=` names.
       const scopeCompanyId = await resolveCompanyScope(req)
         || ((req.query as any).companyId ? String((req.query as any).companyId) : null);
+      const dirSliceSql = await clientBrandSliceSql(scopeCompanyId, "c.id");
       const rows = await pool.query(
         `WITH scoped_props AS (
            SELECT p.id, p.name FROM crm_properties p
-            WHERE $2::varchar IS NOT NULL
-              AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))
+            WHERE $1::varchar IS NOT NULL
+              AND (p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
          )
          SELECT c.id, c.name, c.company_type AS "companyType", c.domain,
                 c.instagram_handle AS "instagramHandle",
@@ -4731,7 +4724,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
                   SELECT 1 FROM tenancy_schedule_units t JOIN scoped_props sp ON sp.id = t.property_id
                    WHERE t.tenant_company_id = c.id
                   UNION ALL
-                  SELECT 1 FROM crm_deals d WHERE d.tenant_id = c.id AND d.landlord_id = $2
+                  SELECT 1 FROM crm_deals d WHERE d.tenant_id = c.id AND d.landlord_id = $1
                 ) AS "isExistingTenant",
                 (
                   SELECT COALESCE(json_agg(json_build_object('propertyId', tg.property_id, 'propertyName', tg.property_name, 'unitName', tg.unit_name)), '[]')
@@ -4756,9 +4749,9 @@ Return a JSON object with these fields (use null for any field you cannot find):
                   ) tg
                 ) AS "targetedAt"
          FROM crm_companies c
-         WHERE c.company_type ILIKE ANY($1) AND c.merged_into_id IS NULL
+         WHERE ${dirSliceSql} AND c.merged_into_id IS NULL
          ORDER BY c.name`,
-        [CLIENT_BRAND_TYPE_PATTERNS, scopeCompanyId]
+        [scopeCompanyId]
       );
       res.json(rows.rows);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -4770,12 +4763,14 @@ Return a JSON object with these fields (use null for any field you cannot find):
   // qualifies via an active tenant_rep representation, a company-level
   // agent_type of tenant_rep, or a Tenant Rep specialty contact. The
   // "represents" list is limited to brands in the client brand slice.
-  app.get("/api/client/agent-directory", requireAuth, async (_req, res) => {
+  app.get("/api/client/agent-directory", requireAuth, async (req, res) => {
     try {
+      const agentDirScope = await resolveCompanyScope(req);
+      const agentDirSliceSql = await clientBrandSliceSql(agentDirScope);
       const rows = await pool.query(
         `WITH slice_brands AS (
            SELECT id, name FROM crm_companies
-            WHERE company_type ILIKE ANY($1) AND merged_into_id IS NULL
+            WHERE ${agentDirSliceSql} AND merged_into_id IS NULL
          )
          SELECT a.id, a.name, a.domain, a.company_type AS "companyType",
                 COALESCE((
@@ -4807,8 +4802,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
                                WHERE c2.company_id = a.id
                                  AND lower(COALESCE(c2.agent_specialty, '')) = 'tenant rep'))
             )
-          ORDER BY a.name`,
-        [CLIENT_BRAND_TYPE_PATTERNS]
+          ORDER BY a.name`
       );
       res.json(rows.rows);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -7415,17 +7409,21 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       // Client logins only see the hospitality / food / café / fitness
       // slice — same whitelist as the client brand directory.
       const clientScoped = await isClientRequest(req);
+      const hubScope = clientScoped ? await resolveCompanyScope(req) : null;
+      const hubSliceSql = clientScoped ? await clientBrandSliceSql(hubScope, "__ID__") : "";
       // merged_into_id IS NULL is part of the filter itself — otherwise the
       // Overview tiles count merged duplicates that Brand Explorer (which
       // reads /api/crm/companies, correctly filtered) no longer shows, and
-      // the same page displays two different brand totals.
-      const tenantFilter = (clientScoped
-        ? `company_type ILIKE ANY(ARRAY[${CLIENT_BRAND_TYPE_PATTERNS.map(p => `'${p}'`).join(",")}])`
+      // the same page displays two different brand totals. The id column
+      // reference differs per query (bare vs c.id), hence the placeholder.
+      const tenantFilterFor = (idCol: string) => (clientScoped
+        ? hubSliceSql.replaceAll("__ID__", idCol)
         : `company_type ILIKE 'Tenant -%'`) + ` AND merged_into_id IS NULL`;
+      const tenantFilter = tenantFilterFor("c.id");
 
       // Category counts
       const catRows = await pool.query(
-        `SELECT company_type, COUNT(*) as count FROM crm_companies WHERE ${tenantFilter} GROUP BY company_type`
+        `SELECT company_type, COUNT(*) as count FROM crm_companies WHERE ${tenantFilterFor("id")} GROUP BY company_type`
       ).then(r => r.rows);
 
       // Who's hot — most recently active brands (deals, requirements, contacts updated last 60 days)
@@ -7475,8 +7473,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         ORDER BY t.company_id, t.period DESC, t.turnover DESC
       `).then(r => r.rows);
 
+      const hubExtraIds = clientScoped ? await getClientExtraBrandIds(hubScope) : new Set<string>();
       const turnoverScoped = clientScoped
-        ? turnoverRows.filter((r: any) => CLIENT_BRAND_TYPE_RE.test(r.company_type || ""))
+        ? turnoverRows.filter((r: any) => isClientCrmCategory(r.company_type) || hubExtraIds.has(r.company_id))
         : turnoverRows;
       const topTurnover = [...turnoverScoped].sort((a: any, b: any) => (b.turnover || 0) - (a.turnover || 0)).slice(0, 20);
 
@@ -7496,11 +7495,12 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       `).then(r => r.rows);
 
       // Total stats
+      const statsFilter = tenantFilterFor("id");
       const stats = await pool.query(`
         SELECT
-          COUNT(*) FILTER (WHERE ${tenantFilter}) AS total_brands,
-          COUNT(*) FILTER (WHERE ${tenantFilter} AND id IN (SELECT DISTINCT company_id FROM turnover_data WHERE company_id IS NOT NULL)) AS brands_with_turnover,
-          COUNT(*) FILTER (WHERE ${tenantFilter} AND id IN (SELECT DISTINCT company_id FROM crm_requirements_leasing WHERE status = 'Active' AND company_id IS NOT NULL)) AS brands_active_req
+          COUNT(*) FILTER (WHERE ${statsFilter}) AS total_brands,
+          COUNT(*) FILTER (WHERE ${statsFilter} AND id IN (SELECT DISTINCT company_id FROM turnover_data WHERE company_id IS NOT NULL)) AS brands_with_turnover,
+          COUNT(*) FILTER (WHERE ${statsFilter} AND id IN (SELECT DISTINCT company_id FROM crm_requirements_leasing WHERE status = 'Active' AND company_id IS NOT NULL)) AS brands_active_req
         FROM crm_companies
       `).then(r => r.rows[0]);
 
@@ -7529,7 +7529,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       // brand profiles a client can't open anyway.
       const hunterClientScoped = await isClientRequest(req);
       const hunterSliceFilter = hunterClientScoped
-        ? ` AND c.company_type ILIKE ANY(ARRAY[${CLIENT_BRAND_TYPE_PATTERNS.map(p => `'${p}'`).join(",")}])`
+        ? ` AND ${await clientBrandSliceSql(await resolveCompanyScope(req), "c.id")}`
         : "";
 
       // Fetch all tracked brands + any manually hunter-flagged brands

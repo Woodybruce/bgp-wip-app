@@ -200,11 +200,11 @@ export async function runLogoDevBackfill(limit = 100, hospitalityOnly = false): 
   configured: boolean; candidates: number; processed: number; filled: number; fieldsFilled: number;
 }> {
   // hospitalityOnly = the client-visible (Landsec) brand slice only.
-  const sliceFilter = hospitalityOnly ? `AND company_type ~* $2` : "";
+  let sliceFilter = "";
   const params: any[] = [Math.min(limit, 500)];
   if (hospitalityOnly) {
-    const { CLIENT_VISIBLE_BRAND_RE } = await import("./company-scope");
-    params.push(CLIENT_VISIBLE_BRAND_RE.source);
+    const { clientBrandSliceSql } = await import("./company-scope");
+    sliceFilter = `AND ${await clientBrandSliceSql(null)}`;
   }
   const candidatesQ = await pool.query(
     `SELECT id FROM crm_companies

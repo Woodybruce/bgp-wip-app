@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { pool } from "./db";
+import { CLIENT_CRM_CATEGORIES, isClientCrmCategory } from "@shared/tenant-categories";
 
 const BGP_EMAIL_DOMAIN = "@brucegillinghampollard.com";
 
@@ -77,23 +78,29 @@ export async function resolveCompanyScope(req: Request): Promise<string | null> 
   return (req as any)._companyScope;
 }
 
-// Brands visible to client accounts. Opened from the original hospitality/F&B
-// slice to the WHOLE tenant directory (Woody, 2026-08: "we agreed we would
-// open up all brands for the Landsec account") — a landlord client researches
-// retail, wellness and leisure occupiers too, not just food. Still a brand-only
-// gate: other landlords, clients and BGP's own records never match.
-// Keep in sync with CLIENT_BRAND_TYPE_RE in crm.ts, CLIENT_BRAND_TYPE_PATTERNS
-// (the SQL ILIKE variant) and bpBrandRe in brand-profile.ts.
-export const CLIENT_VISIBLE_BRAND_RE = /^tenant -/i;
-
 // The brands a landlord client's CRM shows: the hospitality/F&B/leisure/fitness
 // category slice (Landsec, 2026-08 — narrowed back from all-tenants) PLUS any
 // brand the client has pulled in from the global directory (crm_extra_brand_ids
-// on their own company). Pass the client's scope company id to honour those.
+// on their own company). CLIENT_CRM_CATEGORIES in shared/tenant-categories.ts
+// is the single source of truth for the slice; every client-facing brand
+// filter goes through isClientVisibleBrand (per-row) or clientBrandSliceSql
+// (SQL fragment) below — don't hand-roll another regex.
 export async function getClientExtraBrandIds(scopeCompanyId: string | null | undefined): Promise<Set<string>> {
   if (!scopeCompanyId) return new Set();
   const r = await pool.query(`SELECT crm_extra_brand_ids FROM crm_companies WHERE id = $1`, [scopeCompanyId]);
   return new Set<string>(((r.rows[0]?.crm_extra_brand_ids as string[]) || []).filter(Boolean));
+}
+
+// SQL fragment for "this crm_companies row is a client-visible brand":
+// slice categories + the client's own extras. Safe to inline — category
+// names are our own constants, extra ids are validated as uuids. Pass the
+// id column reference used by the surrounding query (e.g. "c.id") when the
+// table is aliased or joined.
+export async function clientBrandSliceSql(scopeCompanyId: string | null | undefined, idCol = "id"): Promise<string> {
+  const names = CLIENT_CRM_CATEGORIES.map(n => `'${n.replace(/'/g, "''")}'`).join(",");
+  const extras = [...(await getClientExtraBrandIds(scopeCompanyId))].filter(id => /^[0-9a-f-]{36}$/i.test(id));
+  const extraSql = extras.length ? ` OR ${idCol} IN (${extras.map(id => `'${id}'`).join(",")})` : "";
+  return `(company_type ILIKE ANY(ARRAY[${names}])${extraSql})`;
 }
 
 export async function isClientVisibleBrand(companyId: string, scopeCompanyId?: string | null): Promise<boolean> {
