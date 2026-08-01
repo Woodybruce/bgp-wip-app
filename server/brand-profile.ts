@@ -1033,14 +1033,41 @@ router.patch("/api/brand/:companyId", requireAuth, async (req: Request, res: Res
 // ─── Agent representations CRUD ─────────────────────────────────────────
 router.post("/api/brand/representations", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { brandCompanyId, agentCompanyId, agentType, region, primaryContactId, startDate, notes } = req.body || {};
-    if (!brandCompanyId || !agentCompanyId || !agentType) {
-      return res.status(400).json({ error: "brandCompanyId, agentCompanyId, agentType required" });
+    const { brandCompanyId, agentType, region, primaryContactId, startDate, notes } = req.body || {};
+    let { agentCompanyId } = req.body || {};
+    if (!brandCompanyId || !agentType) {
+      return res.status(400).json({ error: "brandCompanyId and agentType required" });
+    }
+    // Resolve the agent FIRM from the picked agent CONTACT when no company was
+    // chosen — the representation table is keyed on the agent company, but the
+    // user often just picks the agent person. Use the contact's own company;
+    // if they have none, mint a lightweight Agent company from their name and
+    // link it, so "add this agent to the brand" always lands.
+    if (!agentCompanyId && primaryContactId) {
+      const ct = await pool.query(`SELECT company_id, name FROM crm_contacts WHERE id = $1`, [primaryContactId]);
+      agentCompanyId = ct.rows[0]?.company_id || null;
+      if (!agentCompanyId && ct.rows[0]?.name) {
+        const created = await pool.query(
+          `INSERT INTO crm_companies (name, company_type, agent_type) VALUES ($1, 'Agent', $2) RETURNING id`,
+          [`${ct.rows[0].name} (Agent)`, agentType]
+        );
+        agentCompanyId = created.rows[0].id;
+        await pool.query(`UPDATE crm_contacts SET company_id = $1 WHERE id = $2 AND company_id IS NULL`, [agentCompanyId, primaryContactId]);
+      }
+    }
+    if (!agentCompanyId) {
+      return res.status(400).json({ error: "Pick an agent firm or an agent contact." });
     }
     const r = await pool.query(
       `INSERT INTO brand_agent_representations (brand_company_id, agent_company_id, agent_type, region, primary_contact_id, start_date, notes)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
       [brandCompanyId, agentCompanyId, agentType, region || null, primaryContactId || null, startDate || null, notes || null]
+    );
+    // Self-heal: stamp the sub-type on the agent company so it shows in the
+    // agent pickers next time (the blank agent_type is what hid it before).
+    await pool.query(
+      `UPDATE crm_companies SET agent_type = $1 WHERE id = $2 AND (agent_type IS NULL OR agent_type = '')`,
+      [agentType, agentCompanyId]
     );
     res.json(r.rows[0]);
   } catch (err: any) {

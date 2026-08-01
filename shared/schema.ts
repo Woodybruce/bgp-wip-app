@@ -487,6 +487,10 @@ export const crmCompanies = pgTable("crm_companies", {
   logoUrl: text("logo_url"),
   brandPrimaryColor: text("brand_primary_color"), // hex
   brandSecondaryColor: text("brand_secondary_color"), // hex
+  // On a CLIENT company (Landsec): brand company ids this client has pulled
+  // into their CRM from the global directory, beyond their auto category
+  // slice (F&B/leisure/fitness). Their CRM shows category-in-slice OR these.
+  crmExtraBrandIds: text("crm_extra_brand_ids").array(),
   conceptPitch: text("concept_pitch"),
   storeCount: integer("store_count"),
   rolloutStatus: text("rollout_status"), // scaling | stable | contracting | entering_uk | rumoured

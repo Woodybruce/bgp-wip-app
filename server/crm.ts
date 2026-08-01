@@ -1686,13 +1686,15 @@ export function setupCrmRoutes(app: Express) {
       };
       const result = await storage.getCrmCompanies(filters);
       if (scopeCompanyId) {
-        // Clients get their own company plus the curated brand directory
-        // (hospitality / F&B / café / fitness tenants) — the same slice the
-        // brand hub and client CRM expose. Other landlords, offices and
-        // BGP-side companies stay hidden.
+        // Clients get their own company + the hospitality/F&B/leisure/fitness
+        // category slice, PLUS any brand they've pulled in from the global
+        // directory (crm_extra_brand_ids). Everything else stays hidden.
+        const { isClientCrmCategory } = await import("@shared/tenant-categories");
+        const { getClientExtraBrandIds } = await import("./company-scope");
+        const extra = await getClientExtraBrandIds(scopeCompanyId);
         const arr = Array.isArray(result) ? result : result.data;
         res.json(arr.filter((c: any) =>
-          c.id === scopeCompanyId || CLIENT_BRAND_TYPE_RE.test(c.companyType || "")
+          c.id === scopeCompanyId || isClientCrmCategory(c.companyType) || extra.has(c.id)
         ));
       } else {
         res.json(result);
@@ -1706,12 +1708,13 @@ export function setupCrmRoutes(app: Express) {
       if (!company) return res.status(404).json({ error: "Not found" });
       const scopeCompanyId = await resolveCompanyScope(req);
       if (scopeCompanyId && req.params.id !== scopeCompanyId) {
-        // Clients may also open a brand in the allowed hospitality/food/
-        // café/fitness slice (the CRM directory links to these) — but nothing
-        // else (other clients, landlords, office occupiers). (Landsec audit.)
-        const ct = String(company.companyType || "");
-        const isAllowedBrand = /^Tenant - /.test(ct) &&
-          /(restaurant|dining|f&b|qsr|fast|food|bakery|patisserie|caf|coffee|bar|leisure|cinema|entertainment|fitness|gym|yoga|hotel|hospitality)/i.test(ct);
+        // Clients may open a brand in their category slice (hospitality/F&B/
+        // leisure/fitness) OR any brand they've added from the global
+        // directory — but nothing else (other clients, landlords, offices).
+        const { isClientCrmCategory } = await import("@shared/tenant-categories");
+        const { getClientExtraBrandIds } = await import("./company-scope");
+        const extraIds = await getClientExtraBrandIds(scopeCompanyId);
+        const isAllowedBrand = isClientCrmCategory(company.companyType) || extraIds.has(req.params.id);
         // Tenant-rep agents are in the client agent directory and linked
         // from brand profiles ("Represented by") — readable too.
         const isTenantRepAgent = company.agentType === "tenant_rep" ||

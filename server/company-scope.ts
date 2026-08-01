@@ -86,10 +86,26 @@ export async function resolveCompanyScope(req: Request): Promise<string | null> 
 // (the SQL ILIKE variant) and bpBrandRe in brand-profile.ts.
 export const CLIENT_VISIBLE_BRAND_RE = /^tenant -/i;
 
-export async function isClientVisibleBrand(companyId: string): Promise<boolean> {
+// The brands a landlord client's CRM shows: the hospitality/F&B/leisure/fitness
+// category slice (Landsec, 2026-08 — narrowed back from all-tenants) PLUS any
+// brand the client has pulled in from the global directory (crm_extra_brand_ids
+// on their own company). Pass the client's scope company id to honour those.
+export async function getClientExtraBrandIds(scopeCompanyId: string | null | undefined): Promise<Set<string>> {
+  if (!scopeCompanyId) return new Set();
+  const r = await pool.query(`SELECT crm_extra_brand_ids FROM crm_companies WHERE id = $1`, [scopeCompanyId]);
+  return new Set<string>(((r.rows[0]?.crm_extra_brand_ids as string[]) || []).filter(Boolean));
+}
+
+export async function isClientVisibleBrand(companyId: string, scopeCompanyId?: string | null): Promise<boolean> {
   if (!companyId || !/^[0-9a-f-]{36}$/i.test(companyId)) return false;
+  const { isClientCrmCategory } = await import("@shared/tenant-categories");
   const r = await pool.query(`SELECT company_type FROM crm_companies WHERE id = $1`, [companyId]);
-  return CLIENT_VISIBLE_BRAND_RE.test(r.rows[0]?.company_type || "");
+  if (isClientCrmCategory(r.rows[0]?.company_type)) return true;
+  if (scopeCompanyId) {
+    const extra = await getClientExtraBrandIds(scopeCompanyId);
+    if (extra.has(companyId)) return true;
+  }
+  return false;
 }
 
 // True when the requesting user is an external client (role='Client' or a
