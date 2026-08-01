@@ -907,6 +907,27 @@ async function markRound(page, cross) {
     if (r.brandTheme !== 200) throw new Error(`client brand-theme route not serving (${r.brandTheme})`);
   });
 
+  // The client "add brand from the global directory" endpoints (terminal
+  // side): search returns tenant brands, add writes crm_extra_brand_ids,
+  // remove clears it. Client-scoped (staff get 403). Under all-brands these
+  // are a bonus, but must still round-trip and not error.
+  await step(page, p, 'client-add-brand-from-directory', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const retail = '88888888-1111-1111-1111-111111111111';
+      const search = await fetch('/api/client/crm/global-brands?search=qa', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const searchOk = search.ok;
+      const searchArr = searchOk ? await search.json().catch(() => []) : [];
+      const add = await fetch('/api/client/crm/add-brand', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ brandId: retail }) }).catch(() => ({ ok: false, status: 0 }));
+      const del = await fetch(`/api/client/crm/add-brand/${retail}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      return { searchOk, searchIsArray: Array.isArray(searchArr), addOk: add.ok, delOk: del.ok };
+    });
+    if (!r.searchOk || !r.searchIsArray) throw new Error('client global-brands search failed');
+    if (!r.addOk) throw new Error('client add-brand-from-directory failed');
+    if (!r.delOk) throw new Error('client remove-brand failed');
+  });
+
   // Client dashboard carries the Portfolio Map (same map as the landlord
   // pages) and the BGP Relationship card, and the portfolio payload supplies
   // coordinates for the pins.

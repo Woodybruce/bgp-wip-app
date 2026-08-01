@@ -2124,14 +2124,21 @@ export function PropertySharepointLink({
 // Member-scoped server-side, so it only ever lists threads you belong to.
 export function TaggedConversationsPanel({ entityType, entityId }: { entityType: string; entityId: string }) {
   const [, navigate] = useLocation();
+  // Chat tagging is a staff feature (member-scoped BGP threads); a client
+  // viewer isn't in any of those threads, so firing this just 403s on every
+  // client property view. Skip it for client logins.
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"], staleTime: 5 * 60 * 1000 });
+  const isClientViewer = me?.role === "Client" || !!me?.companyScopeId;
   const { data } = useQuery<{ threads: Array<{ id: string; title: string | null; updatedAt: string; hasAiMember?: boolean; lastMessage: string | null }> }>({
     queryKey: ["/api/chat/threads-tagging", entityType, entityId],
+    enabled: !isClientViewer,
     queryFn: async () => {
       const res = await fetch(`/api/chat/threads-tagging?type=${entityType}&id=${entityId}`, { credentials: "include" });
       if (!res.ok) return { threads: [] };
       return res.json();
     },
   });
+  if (isClientViewer) return null;
   const threads = data?.threads || [];
   if (threads.length === 0) return null;
 
