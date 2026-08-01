@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-all-brands-open']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -793,6 +793,30 @@ async function markRound(page, cross) {
     if (await page.getByText('Page not found').count()) throw new Error('brand profile is a dead route for client');
     const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
     if (body.length < 40) throw new Error('brand profile rendered blank for client');
+  });
+
+  // The brand gate was opened from the F&B slice to the WHOLE tenant directory
+  // (Woody, 2026-08: "open up all brands for the Landsec account"). A
+  // non-hospitality brand (seeded Retail) must now be readable — company GET
+  // AND full Brand Intelligence — while a rival LANDLORD stays 403. Also
+  // sanity-checks the /api/client/brand-theme route serves the caller's theme.
+  await step(page, p, 'client-all-brands-open', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const retail = '88888888-1111-1111-1111-111111111111';   // QA Retail Brand
+      const landlord = '99999999-1111-1111-1111-111111111111'; // Hammerson
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return {
+        retailCompany: await g(`/api/crm/companies/${retail}`),
+        retailProfile: await g(`/api/brand/${retail}/profile`),
+        rivalLandlord: await g(`/api/crm/companies/${landlord}`),
+        brandTheme: await g('/api/client/brand-theme'),
+      };
+    });
+    if (r.retailCompany !== 200) throw new Error(`non-hospitality brand still gated (company ${r.retailCompany})`);
+    if (r.retailProfile !== 200) throw new Error(`non-hospitality brand profile still gated (profile ${r.retailProfile})`);
+    if (r.rivalLandlord !== 403) throw new Error(`rival landlord readable by client (expected 403, got ${r.rivalLandlord})`);
+    if (r.brandTheme !== 200) throw new Error(`client brand-theme route not serving (${r.brandTheme})`);
   });
 
   // Client dashboard carries the Portfolio Map (same map as the landlord

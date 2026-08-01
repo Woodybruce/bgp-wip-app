@@ -1706,12 +1706,12 @@ export function setupCrmRoutes(app: Express) {
       if (!company) return res.status(404).json({ error: "Not found" });
       const scopeCompanyId = await resolveCompanyScope(req);
       if (scopeCompanyId && req.params.id !== scopeCompanyId) {
-        // Clients may also open a brand in the allowed hospitality/food/
-        // café/fitness slice (the CRM directory links to these) — but nothing
-        // else (other clients, landlords, office occupiers). (Landsec audit.)
+        // Clients may open ANY brand in the tenant directory (opened up to
+        // the whole directory — Woody, 2026-08: "open up all brands for the
+        // Landsec account"), but nothing else: other clients, landlords and
+        // office occupiers stay blocked. Mirrors CLIENT_BRAND_TYPE_RE.
         const ct = String(company.companyType || "");
-        const isAllowedBrand = /^Tenant - /.test(ct) &&
-          /(restaurant|dining|f&b|qsr|fast|food|bakery|patisserie|caf|coffee|bar|leisure|cinema|entertainment|fitness|gym|yoga|hotel|hospitality)/i.test(ct);
+        const isAllowedBrand = CLIENT_BRAND_TYPE_RE.test(ct);
         // Tenant-rep agents are in the client agent directory and linked
         // from brand profiles ("Represented by") — readable too.
         const isTenantRepAgent = company.agentType === "tenant_rep" ||
@@ -7470,9 +7470,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         ORDER BY t.company_id, t.period DESC, t.turnover DESC
       `).then(r => r.rows);
 
-      const clientTypeRe = /^tenant -.*(restaurant|dining|f&b|qsr|fast food|fast casual|food|bakery|patisserie|caf[ée]|coffee|bar|hospitality|hotel|leisure|cinema|entertainment|fitness|gym|yoga)/i;
       const turnoverScoped = clientScoped
-        ? turnoverRows.filter((r: any) => clientTypeRe.test(r.company_type || ""))
+        ? turnoverRows.filter((r: any) => CLIENT_BRAND_TYPE_RE.test(r.company_type || ""))
         : turnoverRows;
       const topTurnover = [...turnoverScoped].sort((a: any, b: any) => (b.turnover || 0) - (a.turnover || 0)).slice(0, 20);
 
