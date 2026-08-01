@@ -2974,7 +2974,8 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                               o.type === "company" ? "Brands & companies" :
                               o.type === "property" ? "Properties" :
                               o.type === "deal" ? "Deals" :
-                              o.type === "unit" ? "Letting tracker" : "Contacts";
+                              o.type === "unit" ? "Letting tracker" :
+              o.type === "folder" ? "Folders" : "Contacts";
                             const group = groupOf(opt);
                             const showHeader = i === 0 || groupOf(mentionOptions[i - 1]) !== group;
                             const optKey = opt.kind === "chatbgp" ? "chatbgp" : `${opt.kind === "entity" ? opt.type : "user"}-${opt.id}`;

@@ -87,7 +87,7 @@ import {
   SetUpFoldersDialog,
   PropertyFoldersPanel,
   PropertySharepointLink,
-  LinkedDealsPanel,
+  LinkedDealsPanel, TaggedConversationsPanel,
   ClientBoardPanel,
   LinkedContactsPanel,
   PropertyIntelligencePanel,
@@ -1014,6 +1014,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 testId="toggle-deals-section"
               >
                 <LinkedDealsPanel propertyId={property.id} />
+                <TaggedConversationsPanel entityType="property" entityId={property.id} />
               </ReferenceSection>
 
               <ReferenceSection

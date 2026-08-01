@@ -122,7 +122,7 @@ const GROUP_CHAT_TOOLS = [
 // The client renders them as clickable chips; here they (a) trigger the
 // AI auto-join when the tag is the AI itself and (b) get resolved into
 // real CRM context for the group AI responder.
-const TAG_TOKEN_REGEX = /@\[([^\]]+)\]\(tag:(user|company|property|deal|unit|contact)\/([^)\s]+)\)/g;
+const TAG_TOKEN_REGEX = /@\[([^\]]+)\]\(tag:(user|company|property|deal|unit|contact|folder)\/([^)\s]+)\)/g;
 
 // One regex for "the user summoned the AI", shared by the auto-join in the
 // message handler and the must-respond rule in triggerAiGroupResponse.
@@ -190,6 +190,9 @@ async function buildTaggedEntityContext(messages: Array<{ content: string }>): P
            FROM available_units au LEFT JOIN crm_properties p ON au.property_id = p.id WHERE au.id = $1`, [id]);
         const u = r.rows[0];
         if (u) lines.push(`- Letting-tracker unit **${u.unit_name}**${u.property_name ? ` at ${u.property_name}` : ""} (id ${id}) — ${u.sqft ? Number(u.sqft).toLocaleString() + " sqft, " : ""}${u.asking_rent ? "£" + u.asking_rent + " psf, " : ""}status ${u.marketing_status || "unknown"}`);
+      } else if (type === "folder") {
+        lines.push(`- SharePoint folder **${name}** was linked in the chat — that's where the relevant documents live. You cannot open folders yourself; acknowledge the pointer rather than asking for uploads.`);
+        continue;
       } else if (type === "contact") {
         const r = await pool.query(`SELECT c.name, c.email, co.name as company_name FROM crm_contacts c LEFT JOIN crm_companies co ON c.company_id = co.id WHERE c.id = $1`, [id]);
         const c = r.rows[0];
@@ -312,7 +315,13 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     let claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
     let currentMessage = claudeResponse.choices?.[0]?.message;
     let loopCount = 0;
-    const maxLoops = 5;
+    const maxLoops = 6;
+    // Multi-hop: each handled tool's summarised outcome is fed back as a tool
+    // result so the model can chain lookups (search → detail → answer) instead
+    // of the first tool's summary being posted as the final reply. lastHandled*
+    // is the safety net if the model goes quiet after tools or hits the cap.
+    let lastAction: any = null;
+    let lastHandledReply: string | null = null;
 
     while (currentMessage?.tool_calls && currentMessage.tool_calls.length > 0 && loopCount < maxLoops) {
       loopCount++;
@@ -333,21 +342,17 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       try {
         const result = await chatbgp.handleCrmToolCall(fnName, fnArgs, req, completionOptions, currentMessage, toolCall);
         if (result?.handled && result.response) {
-          const replyText = result.response.reply;
-          if (replyText && replyText.trim() !== "__SKIP__") {
-            const saved = await storage.createChatMessage({
-              threadId,
-              role: "assistant",
-              content: replyText,
-              userId: null,
-              actionData: result.response.action ? JSON.stringify(result.response.action) : null,
-              attachments: null,
-            });
-            emitNewMessage(threadId, saved, "ChatBGP");
-          }
-          if (io) io.to(`thread:${threadId}`).emit("stop_typing", { threadId, userId: "__chatbgp__" });
-          console.log(`[ai-group] Responded in ${Date.now() - startTime}ms (${loopCount} tool calls)`);
-          return;
+          lastAction = result.response.action || lastAction;
+          lastHandledReply = result.response.reply || lastHandledReply;
+          completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
+          completionOptions.messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({ result: result.response.reply || "done", action: result.response.action || null }),
+          });
+          claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
+          currentMessage = claudeResponse.choices?.[0]?.message;
+          continue;
         }
 
         completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
@@ -366,6 +371,11 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     if (io) io.to(`thread:${threadId}`).emit("stop_typing", { threadId, userId: "__chatbgp__" });
 
     let replyText = currentMessage?.content;
+    if ((!replyText || !replyText.trim() || replyText.trim() === "__SKIP__") && lastHandledReply) {
+      // Model went quiet after its tool run (or hit the hop cap) — post the
+      // last tool summary rather than dropping the work on the floor.
+      replyText = lastHandledReply;
+    }
     if (!replyText || replyText.trim() === "__SKIP__") {
       if (mentionsChatBGP) {
         replyText = "I'm here! How can I help?";
@@ -381,11 +391,11 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       role: "assistant",
       content: replyText,
       userId: null,
-      actionData: null,
+      actionData: lastAction ? JSON.stringify(lastAction) : null,
       attachments: null,
     });
     emitNewMessage(threadId, saved, "ChatBGP");
-    console.log(`[ai-group] Responded in ${Date.now() - startTime}ms`);
+    console.log(`[ai-group] Responded in ${Date.now() - startTime}ms (${loopCount} tool hops)`);
   } catch (err: any) {
     console.error("[ai-group] AI response failed:", err?.message);
     if (io) io.to(`thread:${threadId}`).emit("stop_typing", { threadId, userId: "__chatbgp__" });
@@ -1735,12 +1745,78 @@ export async function registerRoutes(
             subtitle: u.marketing_status || undefined,
           });
         }
+
+        // SharePoint folders come from the archivist's knowledge-base index —
+        // no live Graph call, so the picker stays fast and degrades to nothing
+        // when the index is empty. Folder ids carry the URL base64url-encoded
+        // (URLs contain characters the tag token grammar forbids).
+        try {
+          const folderRows = await pool.query(
+            `SELECT folder_path, MAX(folder_url) as folder_url, COUNT(*) as files FROM (
+               SELECT regexp_replace(file_path, '/[^/]*$', '') AS folder_path, folder_url
+               FROM knowledge_base WHERE folder_url IS NOT NULL AND file_path IS NOT NULL
+             ) t
+             WHERE folder_path ILIKE $1 AND folder_path <> ''
+             GROUP BY folder_path ORDER BY length(folder_path) ASC LIMIT 4`,
+            [like]
+          );
+          for (const f of folderRows.rows) {
+            const segs = String(f.folder_path).split("/").filter(Boolean);
+            const name = segs[segs.length - 1] || f.folder_path;
+            results.push({
+              type: "folder",
+              id: Buffer.from(String(f.folder_url)).toString("base64url"),
+              name,
+              subtitle: `${segs.slice(0, -1).join(" / ")}${segs.length > 1 ? " · " : ""}${f.files} files`,
+            });
+          }
+        } catch {}
       }
 
       res.json({ results });
     } catch (err: any) {
       console.error("[tag-search] Error:", err?.message);
       res.json({ results: [] });
+    }
+  });
+
+  // Conversations that tag a given record — powers the "Conversations" card
+  // on entity pages. Member-scoped: you only see threads you belong to, same
+  // visibility rule as the chat list itself.
+  app.get("/api/chat/threads-tagging", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const type = String(req.query.type || "");
+      const id = String(req.query.id || "");
+      if (!/^(company|property|deal|unit|contact)$/.test(type) || !id) {
+        return res.status(400).json({ message: "type and id required" });
+      }
+      const tagFragment = `(tag:${type}/${id})`;
+      const rows = await pool.query(
+        `SELECT DISTINCT ON (t.id) t.id, t.title, t.updated_at, t.has_ai_member,
+                (SELECT m2.content FROM chat_messages m2 WHERE m2.thread_id = t.id ORDER BY m2.created_at DESC LIMIT 1) as last_message
+         FROM chat_threads t
+         JOIN chat_messages m ON m.thread_id = t.id
+         LEFT JOIN chat_thread_members mem ON mem.thread_id = t.id AND mem.user_id = $2
+         WHERE position($1 in m.content) > 0
+           AND (t.created_by = $2 OR mem.user_id IS NOT NULL)
+         ORDER BY t.id, t.updated_at DESC`,
+        [tagFragment, userId]
+      );
+      const threads = rows.rows
+        .sort((a: any, b: any) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+        .slice(0, 10)
+        .map((r: any) => ({
+          id: r.id,
+          title: r.title,
+          updatedAt: r.updated_at,
+          hasAiMember: r.has_ai_member,
+          lastMessage: r.last_message ? String(r.last_message).replace(/@\[([^\]]+)\]\(tag:[^)]+\)/g, "@$1").slice(0, 90) : null,
+        }));
+      res.json({ threads });
+    } catch (err: any) {
+      console.error("[threads-tagging] Error:", err?.message);
+      res.json({ threads: [] });
     }
   });
 

@@ -2119,6 +2119,53 @@ export function PropertySharepointLink({
   );
 }
 
+// Conversations that @-tagged this record in chat — the flip side of smart
+// tags: from the entity page back to every discussion that mentioned it.
+// Member-scoped server-side, so it only ever lists threads you belong to.
+export function TaggedConversationsPanel({ entityType, entityId }: { entityType: string; entityId: string }) {
+  const [, navigate] = useLocation();
+  const { data } = useQuery<{ threads: Array<{ id: string; title: string | null; updatedAt: string; hasAiMember?: boolean; lastMessage: string | null }> }>({
+    queryKey: ["/api/chat/threads-tagging", entityType, entityId],
+    queryFn: async () => {
+      const res = await fetch(`/api/chat/threads-tagging?type=${entityType}&id=${entityId}`, { credentials: "include" });
+      if (!res.ok) return { threads: [] };
+      return res.json();
+    },
+  });
+  const threads = data?.threads || [];
+  if (threads.length === 0) return null;
+
+  return (
+    <Card data-testid="tagged-conversations-panel">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <MessageSquare className="w-4 h-4" />
+          <h3 className="text-sm font-semibold">Conversations</h3>
+          <Badge variant="secondary" className="text-[10px]">{threads.length}</Badge>
+        </div>
+        <div className="space-y-2">
+          {threads.map((t) => (
+            <div
+              key={t.id}
+              className="block p-3 rounded-md border hover-elevate transition-colors cursor-pointer"
+              onClick={() => navigate(`/chatbgp?thread=${t.id}`)}
+              data-testid={`tagged-thread-${t.id}`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium truncate">{t.title || "Conversation"}</span>
+                {t.hasAiMember && <Sparkles className="w-3 h-3 shrink-0 text-muted-foreground" />}
+              </div>
+              {t.lastMessage && (
+                <p className="text-xs text-muted-foreground truncate mt-1">{t.lastMessage}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function LinkedDealsPanel({ propertyId }: { propertyId: string }) {
   const { data: deals, isLoading } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/properties", propertyId, "deals"],
