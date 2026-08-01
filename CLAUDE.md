@@ -61,6 +61,21 @@ explicit permission.
   (`shared/schema.ts`, migrations).
 - For UI changes, say explicitly when you haven't verified in a browser.
 
+## Landsec client brand access (DECIDED — do not re-litigate in merges)
+
+Client logins see the **hospitality / leisure / fitness category slice**
+(`CLIENT_CRM_CATEGORIES` in `shared/tenant-categories.ts`) **plus any brand
+they self-add** from the global directory (`crm_extra_brand_ids` on their
+company row; add/remove via `/api/client/crm/add-brand`). Woody decided this
+on 2026-08-01 ("landsec only want CRM on the hospitality fitness restaurants
+leisure cafes", confirmed as category slice + self-adds) — it **supersedes**
+the earlier "open up all brands for the Landsec account" note. When merging,
+keep the slice: the canonical gates are `isClientVisibleBrand` and
+`clientBrandSliceSql` in `server/company-scope.ts` — don't reintroduce the
+`/^tenant -/i` all-brands regexes. Also decided 2026-08-01: the Compliance &
+KYC panel STAYS visible on client brand profiles (landlords need tenant
+AML/financial standing); staff-only action buttons are hidden for clients.
+
 ## Document design preferences (the "house style" pattern)
 
 For Claude-driven document generation (Why Buy decks initially, Document

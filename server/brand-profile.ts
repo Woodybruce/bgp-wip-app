@@ -170,16 +170,14 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     }
 
     // Clients may only read their OWN company's profile here. (Landsec audit.)
-    const { resolveCompanyScope } = await import("./company-scope");
+    const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
     const bpScope = await resolveCompanyScope(req as any);
     if (bpScope && bpScope !== companyId) {
-      // Clients get full Brand Intelligence on ANY brand in the tenant
-      // directory (same predicate as GET /api/crm/companies — keep in sync
-      // with CLIENT_BRAND_TYPE_RE in crm.ts). Everything else stays 403.
-      const { pool } = await import("./db");
-      const t = await pool.query(`SELECT company_type FROM crm_companies WHERE id = $1`, [companyId]);
-      const bpBrandRe = /^tenant -/i;
-      if (!bpBrandRe.test(t.rows[0]?.company_type || "")) {
+      // Clients get full Brand Intelligence on any brand they can see in
+      // their CRM — the hospitality/leisure/fitness slice plus their own
+      // added brands (same predicate as GET /api/crm/companies). Everything
+      // else stays 403.
+      if (!(await isClientVisibleBrand(String(companyId), bpScope))) {
         return res.status(403).json({ error: "Not available for this account" });
       }
     }

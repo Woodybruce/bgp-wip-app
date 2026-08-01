@@ -41,9 +41,10 @@ INSERT INTO crm_contact_properties (contact_id, property_id)
 VALUES ('99999999-6666-6666-6666-666666666666', '99999999-2222-2222-2222-222222222222')
 ON CONFLICT DO NOTHING;
 
--- A NON-hospitality tenant brand (Retail), so the "open all brands to the
--- client" widening is testable — this used to 403 under the old F&B-only
--- gate and must now be readable by a Landsec login.
+-- A NON-hospitality tenant brand (Retail), OUTSIDE the client CRM category
+-- slice — used to test that a Landsec login gets 403 by default, can pull
+-- the brand in from the global directory (add-brand), and loses access
+-- again once it's removed.
 INSERT INTO crm_companies (id, name, company_type)
 VALUES ('88888888-1111-1111-1111-111111111111', 'QA Retail Brand', 'Tenant - Retail')
 ON CONFLICT (id) DO NOTHING;
