@@ -378,7 +378,7 @@ export function AppSidebar() {
   const logoBoxRef = useRef<HTMLDivElement>(null);
   const [darkSidebar, setDarkSidebar] = useState(true);
   useEffect(() => {
-    const raf = requestAnimationFrame(() => {
+    const measure = () => {
       let el: Element | null = logoBoxRef.current;
       while (el) {
         const bg = getComputedStyle(el).backgroundColor;
@@ -390,8 +390,13 @@ export function AppSidebar() {
         }
         el = el.parentElement;
       }
-    });
-    return () => cancelAnimationFrame(raf);
+    };
+    // The scheme class and the injected brand CSS vars can land AFTER first
+    // paint (theme fetch, style effects), so a single measurement races them
+    // — re-measure a few times until the surface colour has settled.
+    const raf = requestAnimationFrame(measure);
+    const timers = [300, 1000, 2500].map((ms) => setTimeout(measure, ms));
+    return () => { cancelAnimationFrame(raf); timers.forEach(clearTimeout); };
   }, [colorScheme, brand.logoUrl, brand.primaryColor]);
 
   return (
