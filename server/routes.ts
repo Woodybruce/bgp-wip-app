@@ -4684,6 +4684,57 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // AI-draft a targeting brief from scratch for a unit: gathers the unit,
+  // its property, the categories already in the scheme, the client and the
+  // firm's taxonomy, and asks Claude to propose the brief fields + a
+  // suggested target-operator list. Returns the draft for review — nothing
+  // is saved. Scope-checked so a client can only draft on their own units.
+  app.post("/api/available-units/:id/brief/draft-ai", requireAuth, async (req: any, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+      let clientCompany: string | null = null;
+      if ((property as any)?.landlordId) {
+        const co = await storage.getCrmCompany((property as any).landlordId).catch(() => null);
+        clientCompany = (co as any)?.name || null;
+      }
+      // Categories / operators already represented in the scheme — from the
+      // tenancy schedule (occupied units carry a tenant/trading name).
+      const tenantsQ = await pool.query(
+        `SELECT DISTINCT COALESCE(trading_name, tenant_name) AS n
+           FROM tenancy_schedule_units
+          WHERE property_id = $1 AND COALESCE(trading_name, tenant_name) IS NOT NULL
+          LIMIT 60`,
+        [unit.propertyId]
+      ).catch(() => ({ rows: [] as any[] }));
+      const currentTenants = tenantsQ.rows.map((r: any) => String(r.n)).filter(Boolean);
+      const { TENANT_CATEGORIES } = await import("@shared/tenant-categories");
+      const taxonomy: string[] = [...TENANT_CATEGORIES];
+      const { draftBriefFromContext } = await import("./unit-brief-doc");
+      const draft = await draftBriefFromContext({
+        unitName: (unit as any).unitName,
+        floor: (unit as any).floor,
+        sqft: (unit as any).sqft,
+        askingRent: (unit as any).askingRent,
+        propertyName: property?.name,
+        address: (property as any)?.address,
+        clientCompany,
+        currentTenants,
+        taxonomy,
+      });
+      res.json(draft);
+    } catch (err: any) {
+      if (/api ?key|authentication|not configured/i.test(err?.message || "")) {
+        return res.status(503).json({ message: "AI drafting unavailable — AI service is not configured" });
+      }
+      res.status(500).json({ message: err?.message || "Failed to draft brief" });
+    }
+  });
+
   app.post("/api/unit-briefs/:id/generate-document", requireAuth, async (req: any, res) => {
     try {
       if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {

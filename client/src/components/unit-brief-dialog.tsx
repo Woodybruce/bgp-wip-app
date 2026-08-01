@@ -1,16 +1,21 @@
 import { useState, useRef } from "react";
+import { Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Target, Upload, FileDown, Loader2, Sparkles } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Target, Upload, FileDown, Loader2, Sparkles, Wand2, X, Map as MapIcon, ImagePlus, Plus } from "lucide-react";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { TargetOperatorsTable } from "@/components/target-operators-table";
 import { useToast } from "@/hooks/use-toast";
+import { TENANT_CATEGORIES } from "@shared/tenant-categories";
 import type { AvailableUnit, UnitBrief, UnitTargetOperator } from "@shared/schema";
 
 type BriefWithTargets = UnitBrief & { targets: UnitTargetOperator[] };
@@ -60,6 +65,7 @@ export function UnitBriefDialog({ unit, open, onClose }: {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [extracting, setExtracting] = useState(false);
+  const [drafting, setDrafting] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({});
   const [dirty, setDirty] = useState(false);
@@ -154,6 +160,38 @@ export function UnitBriefDialog({ unit, open, onClose }: {
     }
   };
 
+  const handleDraftAi = async () => {
+    if (!unit) return;
+    setDrafting(true);
+    try {
+      const res = await fetch(`/api/available-units/${unit.id}/brief/draft-ai`, {
+        method: "POST", credentials: "include", headers: getAuthHeaders(),
+      });
+      if (!res.ok) throw new Error((await res.json())?.message || "Drafting failed");
+      const data = await res.json();
+      const fields = ["title", "objective", "locationContext", "targetCriteria", "priorityCategories", "agentInstruction", "successMeasures"];
+      const next: Record<string, string> = {};
+      for (const k of fields) if (data[k]) next[k] = data[k];
+      setForm(p => ({ ...p, ...next }));
+      setDirty(true);
+      // Suggested operators — queue for review; if a brief exists, add them
+      // so the user can edit/approve in the table, else hold as pending.
+      if (Array.isArray(data.targets) && data.targets.length > 0) {
+        if (brief) {
+          for (const t of data.targets) { try { await apiRequest("POST", `/api/unit-briefs/${brief.id}/targets`, t); } catch {} }
+          invalidate();
+        } else {
+          setPendingTargets(data.targets);
+        }
+      }
+      toast({ title: "Draft ready", description: "AI drafted the brief and suggested operators — review, edit, then save." });
+    } catch (e: any) {
+      toast({ title: "Drafting failed", description: e.message, variant: "destructive" });
+    } finally {
+      setDrafting(false);
+    }
+  };
+
   const handleGenerateDoc = async () => {
     if (!brief) return;
     setGenerating(true);
@@ -206,6 +244,10 @@ export function UnitBriefDialog({ unit, open, onClose }: {
                 className="hidden"
                 onChange={e => { const file = e.target.files?.[0]; if (file) handleExtract(file); }}
               />
+              <Button variant="default" size="sm" onClick={handleDraftAi} disabled={drafting} data-testid="button-draft-brief-ai">
+                {drafting ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Wand2 className="h-3.5 w-3.5 mr-1" />}
+                {drafting ? "Drafting…" : "Draft with AI"}
+              </Button>
               <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={extracting} data-testid="button-extract-brief">
                 {extracting ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Sparkles className="h-3.5 w-3.5 mr-1" />}
                 {extracting ? "Extracting…" : "Upload client brief (AI extract)"}
@@ -248,7 +290,19 @@ export function UnitBriefDialog({ unit, open, onClose }: {
                 <Textarea rows={2} value={f("objective")} onChange={e => setF("objective", e.target.value)} placeholder="What the client wants this letting to achieve…" />
               </div>
               <div className="col-span-2">
-                <Label className="text-xs">Location / adjacency context</Label>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">Location / adjacency context</Label>
+                  {unit?.propertyId && unit?.unitName && (
+                    <Link
+                      href={`/properties/${unit.propertyId}#plan-unit-${encodeURIComponent(unit.unitName)}`}
+                      className="text-[11px] text-primary hover:underline inline-flex items-center gap-1"
+                      onClick={onClose}
+                      data-testid="brief-view-plan"
+                    >
+                      <MapIcon className="h-3 w-3" /> View on plan
+                    </Link>
+                  )}
+                </div>
                 <Textarea rows={2} value={f("locationContext")} onChange={e => setF("locationContext", e.target.value)} placeholder="Surrounding operators, categories already represented…" />
               </div>
               <div>
@@ -257,7 +311,7 @@ export function UnitBriefDialog({ unit, open, onClose }: {
               </div>
               <div>
                 <Label className="text-xs">Priority categories</Label>
-                <Textarea rows={3} value={f("priorityCategories")} onChange={e => setF("priorityCategories", e.target.value)} placeholder="e.g. Fresh food-to-go; premium sandwiches; handheld global…" />
+                <CategoryMultiSelect value={f("priorityCategories")} onChange={v => setF("priorityCategories", v)} />
               </div>
               <div>
                 <Label className="text-xs">Agent instruction</Label>
@@ -292,12 +346,38 @@ export function UnitBriefDialog({ unit, open, onClose }: {
             </div>
 
             {brief && (
+              <BriefImages
+                briefId={brief.id}
+                propertyId={unit?.propertyId || null}
+                imageIds={((brief as any).imageIds as string[]) || []}
+                onChanged={invalidate}
+              />
+            )}
+
+            {brief && (
               <TargetOperatorsTable
                 targets={targets}
                 clientCompanyId={briefClientCompanyId}
                 ensureBriefId={async () => brief.id}
                 onChanged={invalidate}
               />
+            )}
+
+            {!brief && pendingTargets.length > 0 && (
+              <div className="border rounded-lg p-3 bg-muted/30">
+                <p className="text-xs font-medium mb-1.5">Suggested target operators ({pendingTargets.length}) — saved with the brief</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {pendingTargets.map((t, i) => (
+                    <Badge key={i} variant="secondary" className="text-[11px] gap-1">
+                      {t.priority === "A" && <span className="text-amber-600 font-bold">A</span>}
+                      {t.operatorName}
+                      {t.category ? <span className="text-muted-foreground">· {String(t.category).replace(/^Tenant - /, "")}</span> : null}
+                      <button onClick={() => setPendingTargets(prev => prev.filter((_, j) => j !== i))} className="hover:text-destructive"><X className="h-3 w-3" /></button>
+                    </Badge>
+                  ))}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-1.5">Create the brief to add these to the editable table, then refine.</p>
+              </div>
             )}
 
             {!brief && !dirty && (
@@ -309,5 +389,128 @@ export function UnitBriefDialog({ unit, open, onClose }: {
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// Priority categories as a searchable multiselect over the Landsec/BGP
+// tenant taxonomy, with free-add for anything not on the list. Stored as a
+// comma-separated string (the column is text) so it stays compatible with
+// the AI extract/draft output and the generated PDF.
+function CategoryMultiSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const selected = value.split(",").map(s => s.trim()).filter(Boolean);
+  const set = (next: string[]) => onChange(Array.from(new Set(next)).join(", "));
+  const toggle = (cat: string) => selected.includes(cat) ? set(selected.filter(c => c !== cat)) : set([...selected, cat]);
+  const short = (c: string) => c.replace(/^Tenant - /, "");
+  const matches = TENANT_CATEGORIES.filter(c => c.toLowerCase().includes(query.toLowerCase()));
+  const canAdd = query.trim() && !TENANT_CATEGORIES.some(c => c.toLowerCase() === query.trim().toLowerCase()) && !selected.some(s => s.toLowerCase() === query.trim().toLowerCase());
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap gap-1 min-h-[28px]">
+        {selected.length === 0 && <span className="text-[11px] text-muted-foreground italic py-1">No categories yet — pick from the taxonomy or add your own.</span>}
+        {selected.map(c => (
+          <Badge key={c} variant="secondary" className="text-[11px] gap-1">
+            {short(c)}
+            <button onClick={() => set(selected.filter(x => x !== c))} className="hover:text-destructive"><X className="h-3 w-3" /></button>
+          </Badge>
+        ))}
+      </div>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button variant="outline" size="sm" className="h-7 text-[11px] w-full justify-start border-dashed" data-testid="brief-category-add">
+            <Plus className="h-3 w-3 mr-1" /> Add category
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="p-0 w-[280px]" align="start" side="bottom">
+          <Command shouldFilter={false}>
+            <CommandInput placeholder="Search categories…" value={query} onValueChange={setQuery} />
+            <CommandList className="max-h-[240px]">
+              <CommandEmpty>No categories match.</CommandEmpty>
+              {matches.length > 0 && (
+                <CommandGroup heading="Taxonomy">
+                  {matches.map(c => (
+                    <CommandItem key={c} onSelect={() => toggle(c)}>
+                      <div className={`w-3 h-3 rounded-sm border mr-2 ${selected.includes(c) ? "bg-primary border-primary" : "border-muted-foreground/30"}`} />
+                      {short(c)}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+              {canAdd && (
+                <CommandGroup heading="Add">
+                  <CommandItem onSelect={() => { set([...selected, query.trim()]); setQuery(""); }}>
+                    <Plus className="h-3 w-3 mr-2" /> Add “{query.trim()}”
+                  </CommandItem>
+                </CommandGroup>
+              )}
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+}
+
+// Images attached to the brief — picked from the property's Image Studio
+// gallery (server-scoped to the client's own buildings) and stored as
+// image_ids on the brief. Thumbnails link through to the full image.
+function BriefImages({ briefId, propertyId, imageIds, onChanged }: {
+  briefId: string; propertyId: string | null; imageIds: string[]; onChanged: () => void;
+}) {
+  const { toast } = useToast();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const { data: gallery = [] } = useQuery<any[]>({
+    queryKey: ["/api/image-studio"],
+    queryFn: () => fetch("/api/image-studio", { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
+    enabled: pickerOpen,
+  });
+  const propImages = (gallery || []).filter((i: any) => !propertyId || i.propertyId === propertyId);
+  const save = async (ids: string[]) => {
+    try {
+      await apiRequest("PATCH", `/api/unit-briefs/${briefId}`, { imageIds: ids });
+      onChanged();
+    } catch (e: any) { toast({ title: "Couldn't update images", description: e.message, variant: "destructive" }); }
+  };
+  const remove = (id: string) => save(imageIds.filter(x => x !== id));
+  const add = (id: string) => { if (!imageIds.includes(id)) save([...imageIds, id]); };
+  return (
+    <div className="border rounded-lg p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs flex items-center gap-1.5"><ImagePlus className="h-3.5 w-3.5" /> Images ({imageIds.length})</Label>
+        <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm" className="h-7 text-[11px]" data-testid="brief-add-image">
+              <Plus className="h-3 w-3 mr-1" /> Add from Image Studio
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[420px] p-2" align="end">
+            {propImages.length === 0 ? (
+              <p className="text-xs text-muted-foreground p-2">No images filed against this property yet. Upload in Image Studio, or add a photo on the unit's Files.</p>
+            ) : (
+              <div className="grid grid-cols-4 gap-1.5 max-h-[280px] overflow-y-auto">
+                {propImages.map((img: any) => (
+                  <button key={img.id} onClick={() => add(img.id)} className={`relative rounded overflow-hidden border ${imageIds.includes(img.id) ? "ring-2 ring-primary" : "hover:border-primary"}`} title={img.fileName}>
+                    <img src={`/api/image-studio/${img.id}/thumb`} alt="" className="w-full h-16 object-cover" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </PopoverContent>
+        </Popover>
+      </div>
+      {imageIds.length > 0 && (
+        <div className="grid grid-cols-6 gap-1.5">
+          {imageIds.map(id => (
+            <div key={id} className="relative rounded overflow-hidden border group">
+              <img src={`/api/image-studio/${id}/thumb`} alt="" className="w-full h-16 object-cover" />
+              <button onClick={() => remove(id)} className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded p-0.5 opacity-0 group-hover:opacity-100 transition-opacity" title="Remove">
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

@@ -1901,6 +1901,7 @@ export const unitBriefs = pgTable("unit_briefs", {
   status: text("status").default("Active"), // Active | Complete | Withdrawn
   sourceFileId: varchar("source_file_id"), // → unit_marketing_files.id (uploaded brief PDF)
   documentFileId: varchar("document_file_id"), // → unit_marketing_files.id (generated brief doc)
+  imageIds: text("image_ids").array(), // → image_studio_images.id — images attached to the brief
   createdByUserId: varchar("created_by_user_id"),
   createdByName: text("created_by_name"),
   createdAt: timestamp("created_at").defaultNow(),
