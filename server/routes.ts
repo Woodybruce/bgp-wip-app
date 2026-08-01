@@ -109,14 +109,102 @@ const chatMediaUpload = multer({
 const GROUP_CHAT_TOOLS = [
   "search_crm", "search_news", "query_wip", "create_deal", "update_deal",
   "create_contact", "update_contact", "create_company", "update_company",
-  "create_property", "upsert_tenancy_schedule", "add_property_imagery",
-  "create_available_unit", "update_available_unit",
+  "create_property", "create_available_unit", "update_available_unit",
   "update_investment_tracker", "create_investment_tracker",
   "log_viewing", "log_offer", "create_requirement", "create_diary_entry",
   "delete_record", "web_search", "ingest_url", "property_lookup", "property_data_lookup",
   "tfl_nearby", "search_green_street", "query_xero", "scan_duplicates",
-  "navigate_to", "send_email",
+  "navigate_to", "send_email", "query_leasing_schedule",
 ];
+
+// ── Smart tags ──────────────────────────────────────────────────────────
+// Chat messages carry entity tags as inline tokens: @[Name](tag:type/id).
+// The client renders them as clickable chips; here they (a) trigger the
+// AI auto-join when the tag is the AI itself and (b) get resolved into
+// real CRM context for the group AI responder.
+const TAG_TOKEN_REGEX = /@\[([^\]]+)\]\(tag:(user|company|property|deal|unit|contact)\/([^)\s]+)\)/g;
+
+// One regex for "the user summoned the AI", shared by the auto-join in the
+// message handler and the must-respond rule in triggerAiGroupResponse.
+// Covers @ChatBGP / "chat bgp" / bare "@chat" / an AI user-tag token.
+const AI_MENTION_REGEX = /@?chat\s*(bgp|pave|landsec)\b|@chat\b|\(tag:user\/__chatbgp__\)/i;
+
+function stripTagTokens(text: string): string {
+  return text.replace(TAG_TOKEN_REGEX, "@$1");
+}
+
+// Resolve the entities tagged in a conversation into a compact context
+// block for the group AI, so "@[Bluewater](tag:property/…) what's vacant?"
+// answers from the actual record instead of a cold search.
+async function buildTaggedEntityContext(messages: Array<{ content: string }>): Promise<string> {
+  const seen = new Map<string, { type: string; id: string; name: string }>();
+  for (const m of messages) {
+    for (const match of (m.content || "").matchAll(TAG_TOKEN_REGEX)) {
+      const [, name, type, id] = match;
+      if (type !== "user" && seen.size < 8) seen.set(`${type}/${id}`, { type, id, name });
+    }
+  }
+  if (seen.size === 0) return "";
+  const lines: string[] = [];
+  for (const { type, id, name } of seen.values()) {
+    try {
+      if (type === "property") {
+        const r = await pool.query(
+          `SELECT p.name, p.status, p.asset_class,
+            (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id) as unit_count,
+            (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND au.marketing_status = 'Available') as available_count
+           FROM crm_properties p WHERE p.id = $1`, [id]);
+        const p = r.rows[0];
+        if (p) {
+          lines.push(`- Property **${p.name}** (id ${id}) — ${p.asset_class || "unknown class"}, status ${p.status || "unknown"}, ${p.unit_count} units (${p.available_count} available)`);
+          // Inline the unit schedule so "which units are free at X?" answers
+          // straight from context — the group loop only gets a few tool hops.
+          const units = await pool.query(
+            `SELECT unit_name, sqft, asking_rent, marketing_status FROM available_units
+             WHERE property_id = $1 ORDER BY unit_name LIMIT 15`, [id]);
+          for (const u of units.rows) {
+            lines.push(`  - ${u.unit_name}: ${u.sqft ? Number(u.sqft).toLocaleString() + " sqft" : "size TBC"}${u.asking_rent ? ", £" + u.asking_rent + " psf" : ""} — ${u.marketing_status || "status unknown"}`);
+          }
+          const ls = await pool.query(
+            `SELECT COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE status ILIKE 'vacant%' OR status ILIKE 'available%') as vacant,
+                    COALESCE(SUM(rent_pa), 0) as rent
+             FROM leasing_schedule_units WHERE property_id = $1`, [id]);
+          if (Number(ls.rows[0]?.total) > 0) {
+            lines.push(`  - Leasing schedule: ${ls.rows[0].total} units, ${ls.rows[0].vacant} vacant, £${Number(ls.rows[0].rent).toLocaleString()} passing rent pa`);
+          }
+        }
+      } else if (type === "deal") {
+        const r = await pool.query(
+          `SELECT d.name, d.status, d.deal_type, d.team, p.name as property_name FROM crm_deals d
+           LEFT JOIN crm_properties p ON d.property_id = p.id WHERE d.id = $1`, [id]);
+        const d = r.rows[0];
+        if (d) lines.push(`- Deal **${d.name}** (id ${id}) — ${d.deal_type || "deal"}, status ${d.status || "unknown"}${d.property_name ? `, property ${d.property_name}` : ""}${d.team ? `, team ${d.team}` : ""}`);
+      } else if (type === "company") {
+        const r = await pool.query(`SELECT name, company_type FROM crm_companies WHERE id = $1`, [id]);
+        const c = r.rows[0];
+        if (c) lines.push(`- Company/brand **${c.name}** (id ${id})${c.company_type ? ` — ${c.company_type}` : ""}`);
+      } else if (type === "unit") {
+        const r = await pool.query(
+          `SELECT au.unit_name, au.sqft, au.asking_rent, au.marketing_status, p.name as property_name
+           FROM available_units au LEFT JOIN crm_properties p ON au.property_id = p.id WHERE au.id = $1`, [id]);
+        const u = r.rows[0];
+        if (u) lines.push(`- Letting-tracker unit **${u.unit_name}**${u.property_name ? ` at ${u.property_name}` : ""} (id ${id}) — ${u.sqft ? Number(u.sqft).toLocaleString() + " sqft, " : ""}${u.asking_rent ? "£" + u.asking_rent + " psf, " : ""}status ${u.marketing_status || "unknown"}`);
+      } else if (type === "contact") {
+        const r = await pool.query(`SELECT c.name, c.email, co.name as company_name FROM crm_contacts c LEFT JOIN crm_companies co ON c.company_id = co.id WHERE c.id = $1`, [id]);
+        const c = r.rows[0];
+        if (c) lines.push(`- Contact **${c.name}** (id ${id})${c.company_name ? ` — ${c.company_name}` : ""}${c.email ? `, ${c.email}` : ""}`);
+      }
+      if (!lines.length || !lines[lines.length - 1].includes(`(id ${id})`)) {
+        // Entity was deleted since it was tagged — keep the AI honest about it.
+        lines.push(`- Tagged "${name}" (${type} ${id}) — no longer found in the CRM`);
+      }
+    } catch {
+      lines.push(`- Tagged "${name}" (${type} ${id}) — lookup failed`);
+    }
+  }
+  return `\n\n## TAGGED IN THIS CONVERSATION\nThese records were tagged with @ in the chat. Questions near a tag are almost certainly about that record — use these ids directly with your tools instead of searching by name:\n${lines.join("\n")}\n`;
+}
 
 // available_units / investment_tracker store agent user IDs (text[] of
 // user.id), but crm_deals.internal_agent stores display NAMES (the
@@ -176,9 +264,10 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     ) || []);
 
     const lastUserMsg = recentMessages.filter(m => m.role === "user").pop()?.content || "";
-    const mentionsChatBGP = /chat\s*bgp|@chat\s*bgp|@chat\b/i.test(lastUserMsg);
+    const mentionsChatBGP = AI_MENTION_REGEX.test(lastUserMsg);
+    const taggedContext = await buildTaggedEntityContext(recentMessages).catch(() => "");
 
-    const groupSystemPrompt = systemPrompt + learnings + calendarContext +
+    const groupSystemPrompt = systemPrompt + learnings + calendarContext + taggedContext +
       `\n\nIMPORTANT: You are participating in a GROUP CHAT with multiple team members. ` +
       `The most recent message was sent by ${senderName}. ` +
       `CRITICAL RULES FOR GROUP CHAT:\n` +
@@ -194,6 +283,7 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       `   - Share relevant context you know about similar requirements or properties\n` +
       `7. When someone asks to check their diary/calendar, look at the calendar context provided to you and summarise their upcoming schedule.\n` +
       `8. NEVER respond with raw error messages or technical details. If a tool fails, apologise briefly and try a different approach.\n` +
+      `8b. FINISH YOUR ANSWER IN THIS TURN. After a tool result comes back, your next message IS the final answer the team sees — include the actual findings (names, numbers, statuses). NEVER end with "Let me pull/check/look up..." or a sentence that trails off with a colon: there is no further lookup after you reply. If the tool returned nothing useful, say what you tried and what you'd need.\n` +
       (mentionsChatBGP
         ? `9. The user mentioned you by name — you MUST respond. Do NOT skip.`
         : `9. Only respond with exactly __SKIP__ if the conversation is clearly a private side-conversation between team members that has nothing to do with work, property, or anything you could help with. When in doubt, respond — it's better to be helpful than silent.`);
@@ -204,7 +294,9 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       model: "claude-sonnet-4-6",
       messages: [
         { role: "system", content: groupSystemPrompt },
-        ...recentMessages,
+        // Tag tokens read as line noise to the model — send plain @Name;
+        // the resolved records are already in TAGGED IN THIS CONVERSATION.
+        ...recentMessages.map(m => ({ ...m, content: stripTagTokens(m.content) })),
       ],
       max_completion_tokens: 2048,
       tools: groupTools.length > 0 ? groupTools : undefined,
@@ -1600,6 +1692,59 @@ export async function registerRoutes(
   });
 
 
+  // Smart-tag picker behind the chat @ menu: people, brands/companies,
+  // properties, deals and letting-tracker units in one grouped payload.
+  app.get("/api/chat/tag-search", requireAuth, async (req, res) => {
+    try {
+      const q = (req.query.q as string || "").trim();
+      const results: Array<{ type: string; id: string; name: string; subtitle?: string }> = [];
+
+      const like = `%${escapeLike(q)}%`;
+      const userRows = await pool.query(
+        `SELECT id, name, department FROM users WHERE ($1 = '' OR name ILIKE $2) ORDER BY name LIMIT 6`,
+        [q, like]
+      );
+      for (const u of userRows.rows) {
+        results.push({ type: "user", id: u.id, name: u.name, subtitle: u.department || undefined });
+      }
+
+      if (q.length >= 2) {
+        const [crmResults, unitRows] = await Promise.all([
+          storage.crmSearchAll(q).catch(() => []),
+          pool.query(
+            `SELECT au.id, au.unit_name, au.marketing_status, p.name as property_name
+             FROM available_units au LEFT JOIN crm_properties p ON au.property_id = p.id
+             WHERE au.unit_name ILIKE $1 OR p.name ILIKE $1
+             ORDER BY au.unit_name LIMIT 5`,
+            [like]
+          ).catch(() => ({ rows: [] as any[] })),
+        ]);
+        const caps: Record<string, number> = { company: 5, property: 5, deal: 5, contact: 4 };
+        const counts: Record<string, number> = {};
+        for (const r of crmResults) {
+          if (!(r.type in caps)) continue;
+          counts[r.type] = (counts[r.type] || 0) + 1;
+          if (counts[r.type] > caps[r.type]) continue;
+          results.push({ type: r.type, id: r.id, name: r.name, subtitle: r.detail });
+        }
+        for (const u of unitRows.rows) {
+          results.push({
+            type: "unit",
+            id: u.id,
+            name: u.property_name ? `${u.unit_name} · ${u.property_name}` : u.unit_name,
+            subtitle: u.marketing_status || undefined,
+          });
+        }
+      }
+
+      res.json({ results });
+    } catch (err: any) {
+      console.error("[tag-search] Error:", err?.message);
+      res.json({ results: [] });
+    }
+  });
+
+
   app.get("/api/chat/threads", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
@@ -1668,6 +1813,7 @@ export async function registerRoutes(
           linkedId: row.linked_id,
           linkedName: row.linked_name,
           isAiChat: row.is_ai_chat,
+          hasAiMember: row.has_ai_member,
           groupPicUrl: row.group_pic_url,
           createdAt: row.created_at,
           updatedAt: row.updated_at,
@@ -1941,6 +2087,18 @@ export async function registerRoutes(
           }).catch(() => {});
         }
 
+        // Summoning the AI by name pulls it into the conversation for good —
+        // the WhatsApp mental model: mention someone and they're in the group.
+        if (!thread.hasAiMember && !thread.isAiChat && typeof content === "string" && AI_MENTION_REGEX.test(content)) {
+          try {
+            await storage.updateChatThread(thread.id, { hasAiMember: true });
+            (thread as any).hasAiMember = true;
+            emitMemberAdded(thread.id, "__chatbgp__", "ChatBGP");
+          } catch (e: any) {
+            console.error("[ai-group] Failed to auto-join AI on mention:", e?.message);
+          }
+        }
+
         if (thread.hasAiMember && !thread.isAiChat) {
           triggerAiGroupResponse(thread.id, userId, req).catch(async (err) => {
             console.error("[ai-group] Error triggering AI response:", err?.message);
@@ -1973,6 +2131,13 @@ export async function registerRoutes(
       if (!thread) return res.status(404).json({ message: "Thread not found" });
       const { userId } = req.body;
       if (!userId) return res.status(400).json({ message: "userId required" });
+      if (userId === "__chatbgp__") {
+        // The AI joins via the thread flag, not a member row — same mechanism
+        // as the create-time toggle, so the group responder picks it up.
+        await storage.updateChatThread(thread.id, { hasAiMember: true });
+        emitMemberAdded(thread.id, "__chatbgp__", "ChatBGP");
+        return res.json({ threadId: thread.id, userId: "__chatbgp__" });
+      }
       const member = await storage.addChatThreadMember({
         threadId: thread.id,
         userId,
@@ -1991,6 +2156,11 @@ export async function registerRoutes(
     try {
       const id = req.params.id as string;
       const memberId = req.params.userId as string;
+      if (memberId === "__chatbgp__") {
+        await storage.updateChatThread(id, { hasAiMember: false });
+        emitMemberRemoved(id, "__chatbgp__");
+        return res.json({ success: true });
+      }
       await storage.removeChatThreadMember(id, memberId);
       emitMemberRemoved(id, memberId);
       res.json({ success: true });
@@ -6737,10 +6907,18 @@ These terms are indicative only and do not constitute a binding agreement.`;
         rentRecordedUnits = parseInt(tenancyResult.rows[0]?.rent_recorded || "0");
       }
 
+      // Deals belong to the client when the deal's landlord is the company,
+      // OR it sits on one of the company's properties, OR its group carries
+      // the client name — landlord_id alone missed nearly everything and the
+      // portfolio showed "0 active deals" while the Deals board was full.
       const dealsResult = await pool.query(
-        `SELECT COUNT(*) as total,
-                COUNT(*) FILTER (WHERE status NOT IN ('WIT', 'COM', 'INV')) as active
-         FROM crm_deals WHERE landlord_id = $1`,
+        `SELECT COUNT(DISTINCT d.id) as total,
+                COUNT(DISTINCT d.id) FILTER (WHERE d.status NOT IN ('WIT', 'COM', 'INV')) as active
+         FROM crm_deals d
+         LEFT JOIN crm_properties p ON d.property_id = p.id
+         WHERE d.landlord_id = $1
+            OR p.landlord_id = $1
+            OR d.group_name ILIKE '%' || (SELECT name FROM crm_companies WHERE id = $1) || '%'`,
         [companyId]
       );
 

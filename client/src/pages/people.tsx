@@ -185,7 +185,11 @@ function LandlordsTab({
         <div className="cursor-pointer" onClick={() => setLandlordFilter(landlordFilter === "non-clients" ? "all" : "non-clients")} data-testid="stat-non-clients">
           <StatCard label="Non-Clients" value={nonClientLandlords.length} icon={Building} color={landlordFilter === "non-clients" ? "bg-slate-700 ring-2 ring-slate-400" : "bg-slate-500"} />
         </div>
-        <StatCard label="Total Contacts" value={contacts.filter(c => landlords.find(l => l.id === c.companyId)).length} icon={Users} color="bg-blue-600" />
+        {/* Same definition as the page-header count: contacts at landlord OR
+            agent companies (brand/tenant contacts live in Brands Hub). The
+            two previously counted different sets and showed different totals
+            on the same screen. */}
+        <StatCard label="Total Contacts" value={contacts.filter(c => c.companyId && (landlords.some(l => l.id === c.companyId) || companies.some(co => co.id === c.companyId && (co.companyType || "").toLowerCase().trim() === "agent"))).length} icon={Users} color="bg-blue-600" />
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
