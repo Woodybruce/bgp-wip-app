@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-all-brands-open', 'client-requirements-write-guards', 'client-contact-scope-guards']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -867,26 +867,38 @@ async function markRound(page, cross) {
     if (body.length < 40) throw new Error('brand profile rendered blank for client');
   });
 
-  // The brand gate was opened from the F&B slice to the WHOLE tenant directory
-  // (Woody, 2026-08: "open up all brands for the Landsec account"). A
-  // non-hospitality brand (seeded Retail) must now be readable — company GET
-  // AND full Brand Intelligence — while a rival LANDLORD stays 403. Also
-  // sanity-checks the /api/client/brand-theme route serves the caller's theme.
-  await step(page, p, 'client-all-brands-open', async () => {
+  // The client CRM shows the hospitality/leisure/fitness category slice
+  // (Woody, 2026-08-01: "landsec only want CRM on the hospitality fitness
+  // restaurants leisure cafes"), and the client can pull ANY other brand in
+  // from the global directory (crm_extra_brand_ids). A non-hospitality brand
+  // (seeded Retail) must be gated by default, become readable once added,
+  // and gate again once removed — while a rival LANDLORD stays 403 always.
+  // Also sanity-checks /api/client/brand-theme serves the caller's theme.
+  await step(page, p, 'client-brand-slice-and-extras', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const json = { ...auth, 'Content-Type': 'application/json' };
       const retail = '88888888-1111-1111-1111-111111111111';   // QA Retail Brand
       const landlord = '99999999-1111-1111-1111-111111111111'; // Hammerson
       const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      const before = await g(`/api/crm/companies/${retail}`);
+      const add = (await fetch('/api/client/crm/add-brand', { method: 'POST', headers: json, body: JSON.stringify({ brandId: retail }) }).catch(() => ({ status: 0 }))).status;
+      const afterAdd = await g(`/api/crm/companies/${retail}`);
+      const profileAfterAdd = await g(`/api/brand/${retail}/profile`);
+      const remove = (await fetch(`/api/client/crm/add-brand/${retail}`, { method: 'DELETE', headers: auth }).catch(() => ({ status: 0 }))).status;
+      const afterRemove = await g(`/api/crm/companies/${retail}`);
       return {
-        retailCompany: await g(`/api/crm/companies/${retail}`),
-        retailProfile: await g(`/api/brand/${retail}/profile`),
+        before, add, afterAdd, profileAfterAdd, remove, afterRemove,
         rivalLandlord: await g(`/api/crm/companies/${landlord}`),
         brandTheme: await g('/api/client/brand-theme'),
       };
     });
-    if (r.retailCompany !== 200) throw new Error(`non-hospitality brand still gated (company ${r.retailCompany})`);
-    if (r.retailProfile !== 200) throw new Error(`non-hospitality brand profile still gated (profile ${r.retailProfile})`);
+    if (r.before !== 403) throw new Error(`out-of-slice brand readable before add (expected 403, got ${r.before})`);
+    if (r.add !== 200) throw new Error(`add-from-global failed (${r.add})`);
+    if (r.afterAdd !== 200) throw new Error(`added brand still gated (company ${r.afterAdd})`);
+    if (r.profileAfterAdd !== 200) throw new Error(`added brand profile still gated (${r.profileAfterAdd})`);
+    if (r.remove !== 200) throw new Error(`remove-extra failed (${r.remove})`);
+    if (r.afterRemove !== 403) throw new Error(`removed brand still readable (expected 403, got ${r.afterRemove})`);
     if (r.rivalLandlord !== 403) throw new Error(`rival landlord readable by client (expected 403, got ${r.rivalLandlord})`);
     if (r.brandTheme !== 200) throw new Error(`client brand-theme route not serving (${r.brandTheme})`);
   });

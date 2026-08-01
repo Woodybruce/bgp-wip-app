@@ -106,9 +106,10 @@ export async function clientBrandSliceSql(scopeCompanyId: string | null | undefi
 export async function isClientVisibleBrand(companyId: string, scopeCompanyId?: string | null): Promise<boolean> {
   if (!companyId || !/^[0-9a-f-]{36}$/i.test(companyId)) return false;
   const r = await pool.query(`SELECT company_type FROM crm_companies WHERE id = $1`, [companyId]);
-  // All brands open to clients (Woody, 2026-08) — any tenant brand, plus any
-  // brand explicitly pulled in from the global directory. Non-brands stay out.
-  if (CLIENT_VISIBLE_BRAND_RE.test(r.rows[0]?.company_type || "")) return true;
+  // Slice categories (Woody, 2026-08-01: "landsec only want CRM on the
+  // hospitality fitness restaurants leisure cafes") plus any brand the client
+  // explicitly pulled in from the global directory. Non-brands stay out.
+  if (isClientCrmCategory(r.rows[0]?.company_type)) return true;
   if (scopeCompanyId) {
     const extra = await getClientExtraBrandIds(scopeCompanyId);
     if (extra.has(companyId)) return true;

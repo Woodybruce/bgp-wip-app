@@ -1686,15 +1686,16 @@ export function setupCrmRoutes(app: Express) {
       };
       const result = await storage.getCrmCompanies(filters);
       if (scopeCompanyId) {
-        // Clients get their own company + EVERY tenant brand in the directory
-        // (Woody, 2026-08: "open up all brands for the Landsec account"), PLUS
-        // any brand pulled in from the global directory. Everything else
-        // (other clients, landlords, offices) stays hidden.
+        // Clients get their own company + the hospitality/leisure/fitness
+        // brand slice (Woody, 2026-08-01: "landsec only want CRM on the
+        // hospitality fitness restaurants leisure cafes"), PLUS any brand
+        // pulled in from the global directory. Everything else (other
+        // clients, landlords, offices) stays hidden.
         const { getClientExtraBrandIds } = await import("./company-scope");
         const extra = await getClientExtraBrandIds(scopeCompanyId);
         const arr = Array.isArray(result) ? result : result.data;
         res.json(arr.filter((c: any) =>
-          c.id === scopeCompanyId || CLIENT_BRAND_TYPE_RE.test(String(c.companyType || "")) || extra.has(c.id)
+          c.id === scopeCompanyId || isClientCrmCategory(String(c.companyType || "")) || extra.has(c.id)
         ));
       } else {
         res.json(result);
@@ -1708,15 +1709,14 @@ export function setupCrmRoutes(app: Express) {
       if (!company) return res.status(404).json({ error: "Not found" });
       const scopeCompanyId = await resolveCompanyScope(req);
       if (scopeCompanyId && req.params.id !== scopeCompanyId) {
-        // Clients may open ANY brand in the tenant directory (opened up to
-        // the whole directory — Woody, 2026-08: "open up all brands for the
-        // Landsec account"), plus any brand explicitly pulled in from the
-        // global directory — but nothing else: other clients, landlords and
-        // office occupiers stay blocked. Mirrors CLIENT_BRAND_TYPE_RE.
+        // Clients may open any brand in the hospitality/leisure/fitness
+        // slice, plus any brand explicitly pulled in from the global
+        // directory — but nothing else: other clients, landlords and office
+        // occupiers stay blocked. Mirrors isClientVisibleBrand.
         const ct = String(company.companyType || "");
         const { getClientExtraBrandIds } = await import("./company-scope");
         const extraIds = await getClientExtraBrandIds(scopeCompanyId);
-        const isAllowedBrand = CLIENT_BRAND_TYPE_RE.test(ct) || extraIds.has(req.params.id);
+        const isAllowedBrand = isClientCrmCategory(ct) || extraIds.has(req.params.id);
         // Tenant-rep agents are in the client agent directory and linked
         // from brand profiles ("Represented by") — readable too.
         const isTenantRepAgent = company.agentType === "tenant_rep" ||
