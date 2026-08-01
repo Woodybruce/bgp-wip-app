@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-all-brands-open']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-all-brands-open', 'client-requirements-write-guards']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -879,6 +879,30 @@ async function markRound(page, cross) {
     await page.waitForTimeout(2500);
     const leaked = await page.getByText(cross.reqStamp, { exact: false }).count();
     if (leaked) throw new Error(`agent-only requirement "${cross.reqStamp}" visible to client`);
+  });
+
+  // Requirements are READ-ONLY for clients: they see the demand side but must
+  // never author or edit it (the pipeline is BGP-owned). Every write path —
+  // leasing create/edit/delete and investment create — must be refused, while
+  // the GET stays open (covered by client-requirements above).
+  await step(page, p, 'client-requirements-write-guards', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const rl = await (await fetch('/api/crm/requirements-leasing', { headers: auth })).json().catch(() => []);
+      const anyId = Array.isArray(rl) && rl[0] ? rl[0].id : '00000000-0000-0000-0000-000000000000';
+      const probe = async (method, url, body) =>
+        (await fetch(url, { method, credentials: 'include', headers: auth, body: body ? JSON.stringify(body) : undefined }).catch(() => ({ status: 0 }))).status;
+      return {
+        readOk: Array.isArray(rl),
+        createLeasing: await probe('POST', '/api/crm/requirements-leasing', { name: 'QA-REQ-PROBE' }),
+        editLeasing: await probe('PUT', `/api/crm/requirements-leasing/${anyId}`, { name: 'QA-REQ-HIJACK' }),
+        deleteLeasing: await probe('DELETE', `/api/crm/requirements-leasing/${anyId}`),
+        createInvestment: await probe('POST', '/api/crm/requirements-investment', { name: 'QA-REQ-PROBE' }),
+      };
+    });
+    if (!r.readOk) throw new Error('client cannot read the requirements list (over-scoped)');
+    const leaked = Object.entries(r).filter(([k, v]) => k !== 'readOk' && v >= 200 && v < 300).map(([k]) => k);
+    if (leaked.length) throw new Error(`client allowed a requirements write: ${leaked.join(', ')}`);
   });
 
   // Client team board: the badge count must match the cards actually rendered
