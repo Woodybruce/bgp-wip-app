@@ -15,6 +15,7 @@ import * as voiceRecovery from "@/lib/voice-recovery";
 import { AuthDownloadLink } from "@/components/chatbgp-markdown";
 import { useLocation } from "wouter";
 import { useTeam } from "@/lib/team-context";
+import { TagChip, TAG_TOKEN_SOURCE, type TagType } from "@/components/chat-tags";
 import type { User as UserType } from "@shared/schema";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -252,14 +253,19 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
   // Without this branch the relative link doesn't match the http(s)
   // alternation and falls through as plain text — what you're seeing
   // when downloads aren't tappable on the phone.
-  const tokenRegex = /!\[([^\]]*)\]\(([^)]+)\)|\[([^\]]+)\]\((https?:\/\/[^)]+)\)|\[([^\]]+)\]\((\/api\/chat-media\/[^)]+)\)|\*\*(.+?)\*\*|(https?:\/\/[^\s<>)\]]+)/g;
+  const tokenRegex = new RegExp(
+    `!\\[([^\\]]*)\\]\\(([^)]+)\\)|\\[([^\\]]+)\\]\\((https?:\\/\\/[^)]+)\\)|\\[([^\\]]+)\\]\\((\\/api\\/chat-media\\/[^)]+)\\)|\\*\\*(.+?)\\*\\*|(https?:\\/\\/[^\\s<>)\\]]+)|${TAG_TOKEN_SOURCE}`,
+    "g"
+  );
   const result: (string | JSX.Element)[] = [];
   let lastIndex = 0;
   let match;
   let key = 0;
   while ((match = tokenRegex.exec(text)) !== null) {
     if (match.index > lastIndex) result.push(text.slice(lastIndex, match.index));
-    if (match[1] !== undefined && match[2]) {
+    if (match[9] && match[10] && match[11]) {
+      result.push(<TagChip key={key++} type={match[10] as TagType} id={match[11]} name={match[9]} />);
+    } else if (match[1] !== undefined && match[2]) {
       if (isSafeUrl(match[2])) {
         result.push(
           <a key={key++} href={match[2]} target="_blank" rel="noopener noreferrer" className="block my-1">
@@ -718,7 +724,7 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
   const isDm = !isAi && otherMembers.length === 1;
   const dmName = isDm ? otherMembers[0].name : null;
   const dmInitials = dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
-  const displayTitle = isDm ? dmName : (thread.title || "New conversation");
+  const displayTitle = thread.title || dmName || "New conversation";
   const dmPic = isDm && otherMembers[0] ? userPics?.[otherMembers[0].id] : null;
 
   const timeStr = (() => {
@@ -3151,9 +3157,13 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     const other: ThreadData[] = [];
     for (const t of (threads || [])) {
       if (t.isAiChat) ai.push(t);
-      else if (t.members.length > 0) {
+      else {
+        // Show every conversation the user belongs to — the old "2+ other
+        // members" rule hid 1:1 threads from the mobile list entirely. Only
+        // your own empty, member-less drafts stay hidden.
         const otherMembers = t.members.filter(m => m.id !== currentUser?.id);
-        if (otherMembers.length > 1) team.push(t);
+        if (otherMembers.length === 0 && t.createdBy === currentUser?.id && !t.lastMessage) continue;
+        team.push(t);
       }
     }
     return { teamThreads: team, aiThreads: ai, otherThreads: other };

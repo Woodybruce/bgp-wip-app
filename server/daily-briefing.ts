@@ -73,15 +73,34 @@ export async function generateBriefing(userId: string, msToken: string | null): 
     [userId]
   );
 
-  const teamDeals = await pool.query(
-    `SELECT d.id, d.name, d.status, p.name as property_name, tc.name as tenant_name, d.updated_at
-     FROM crm_deals d
-     LEFT JOIN crm_properties p ON d.property_id = p.id
-     LEFT JOIN crm_companies tc ON d.tenant_id = tc.id
-     WHERE d.team @> ARRAY[$1]::text[] AND d.status NOT IN ('WIT')
-     ORDER BY d.updated_at DESC LIMIT 15`,
-    [userTeam]
-  );
+  // Staff briefings scope deals by working team. Client briefings must scope
+  // by the CLIENT relationship — Landsec deals are worked by London Retail /
+  // National Leasing etc. and carry the client on group_name or the property's
+  // landlord, so the team-array filter alone always found zero for clients.
+  const teamDeals = isClient
+    ? await pool.query(
+        `SELECT DISTINCT d.id, d.name, d.status, p.name as property_name, tc.name as tenant_name, d.updated_at
+         FROM crm_deals d
+         LEFT JOIN crm_properties p ON d.property_id = p.id
+         LEFT JOIN crm_companies tc ON d.tenant_id = tc.id
+         LEFT JOIN crm_companies lc ON p.landlord_id = lc.id
+         WHERE d.status NOT IN ('WIT', 'COM', 'INV')
+           AND (d.group_name ILIKE '%' || $1 || '%'
+                OR d.team @> ARRAY[$1]::text[]
+                OR lc.name ILIKE $1
+                OR (d.landlord_id IS NOT NULL AND d.landlord_id IN (SELECT id FROM crm_companies WHERE name ILIKE $1)))
+         ORDER BY d.updated_at DESC LIMIT 15`,
+        [userTeam]
+      )
+    : await pool.query(
+        `SELECT d.id, d.name, d.status, p.name as property_name, tc.name as tenant_name, d.updated_at
+         FROM crm_deals d
+         LEFT JOIN crm_properties p ON d.property_id = p.id
+         LEFT JOIN crm_companies tc ON d.tenant_id = tc.id
+         WHERE d.team @> ARRAY[$1]::text[] AND d.status NOT IN ('WIT')
+         ORDER BY d.updated_at DESC LIMIT 15`,
+        [userTeam]
+      );
 
   let calendarContext = "";
   let emailContext = "";
