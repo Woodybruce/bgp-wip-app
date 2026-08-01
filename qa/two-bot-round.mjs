@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-all-brands-open', 'client-requirements-write-guards']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-all-brands-open', 'client-requirements-write-guards', 'client-contact-scope-guards']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -834,6 +834,26 @@ async function markRound(page, cross) {
     await page.locator('[data-testid="contact-dialog-save"]').click();
     await page.waitForTimeout(1200);
     if (await page.getByText(/failed|error/i).count()) throw new Error('error toast after editing contact');
+  });
+
+  // Contact-edit scope: a client may add/edit contacts on their own company
+  // or on any brand in the (now-open) tenant directory, but must NOT edit a
+  // contact belonging to another LANDLORD. Uses the seeded Hammerson contact.
+  await step(page, p, 'client-contact-scope-guards', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const foreignLandlordContact = '99999999-6666-6666-6666-666666666666'; // Hammerson
+      const retailBrand = '88888888-1111-1111-1111-111111111111';            // QA Retail Brand
+      const editForeign = (await fetch(`/api/crm/contacts/${foreignLandlordContact}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: 'QA-CONTACT-HIJACK' }) }).catch(() => ({ status: 0 }))).status;
+      const addBrand = await fetch('/api/crm/contacts', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: 'QA Contact brand-scope', companyId: retailBrand }) }).catch(() => ({ ok: false, status: 0 }));
+      let addBrandStatus = addBrand.status;
+      if (addBrand.ok) { const c = await addBrand.json(); await fetch(`/api/crm/contacts/${c.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {}); }
+      return { editForeign, addBrandStatus };
+    });
+    if (r.editForeign !== 403) throw new Error(`client edited a foreign landlord's contact (expected 403, got ${r.editForeign})`);
+    if (!(r.addBrandStatus >= 200 && r.addBrandStatus < 300)) throw new Error(`client blocked from adding a brand contact (all-brands regressed: ${r.addBrandStatus})`);
   });
 
   // Client opens a hospitality brand profile (in their visible slice) — the
