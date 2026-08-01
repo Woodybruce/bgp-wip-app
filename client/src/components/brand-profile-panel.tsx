@@ -1370,6 +1370,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   >
                     <Globe className="w-3 h-3" /> Website
                   </a>
+                  {!isClientViewer && (
                   <button
                     onClick={() => {
                       setDomainInput((c.domain || (c.domain_url || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "")) || "");
@@ -1381,8 +1382,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   >
                     <Pencil className="w-3 h-3" />
                   </button>
+                  )}
                 </div>
-              ) : (
+              ) : !isClientViewer ? (
                 <button
                   onClick={() => { setDomainInput(""); setEditingDomain(true); }}
                   className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-dashed border-border/60 bg-background hover:bg-muted/50 text-xs font-medium text-muted-foreground transition-colors"
@@ -1390,7 +1392,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 >
                   <Globe className="w-3 h-3" /> Add website
                 </button>
-              )}
+              ) : null}
               {c.linkedin_url && (
                 <a
                   href={c.linkedin_url}
@@ -1796,7 +1798,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 <div className="col-span-2">
                   <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />
                 </div>
-              ) : c.is_tracked_brand ? (
+              ) : c.is_tracked_brand && !isClientViewer ? (
                 <div className="col-span-2">
                   <TickerSuggestPicker
                     companyId={c.id}
@@ -2337,6 +2339,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 ) : (
                   <div className="rounded-md border border-dashed border-muted-foreground/30 p-3 text-center">
                     <p className="text-xs text-muted-foreground mb-2">No brand expansion narrative yet</p>
+                    {!isClientViewer && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -2347,6 +2350,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                       <Sparkles className={`w-3 h-3 mr-1 text-purple-500 ${enrichMutation.isPending ? "animate-pulse" : ""}`} />
                       {enrichMutation.isPending ? "Generating…" : "Auto-generate summary"}
                     </Button>
+                    )}
                   </div>
                 )}
             {/* Expansion flags */}
@@ -2397,7 +2401,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
             {/* Pipnet requirements — external feed of what the brand is asking
                 the wider market for. Lazy-fetched, cached server-side 1h. */}
-            <PipnetRequirementsRow companyId={companyId} brandName={c.name} />
+            <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} />
 
             {/* Signals feed — same shape as the old Hunter Intel zone */}
             <div>
@@ -2744,7 +2748,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   );
 }
 
-function PipnetRequirementsRow({ companyId, brandName }: { companyId: string; brandName: string }) {
+function PipnetRequirementsRow({ companyId, brandName, isClient }: { companyId: string; brandName: string; isClient?: boolean }) {
   const { data, isLoading, refetch, isFetching } = useQuery<{ rows: any[]; fetched_at: string | null; cached?: boolean; error?: string }>({
     queryKey: ["/api/brand", companyId, "pipnet-requirements"],
     queryFn: async () => {
@@ -2767,6 +2771,7 @@ function PipnetRequirementsRow({ companyId, brandName }: { companyId: string; br
             <span className="text-[10px] ml-1">· {new Date(data.fetched_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
           )}
         </span>
+        {!isClient && (
         <button
           onClick={() => fetch(`/api/brand/${companyId}/pipnet-requirements?refresh=1`, { credentials: "include" }).then(() => refetch())}
           disabled={isFetching}
@@ -2774,6 +2779,7 @@ function PipnetRequirementsRow({ companyId, brandName }: { companyId: string; br
         >
           {isFetching ? "Searching…" : "Refresh"}
         </button>
+        )}
       </div>
       {isLoading ? (
         <p className="text-[11px] text-muted-foreground italic">Loading…</p>
@@ -4047,6 +4053,7 @@ export function BrandComplianceCard({
                   </a>
                 )}
               </div>
+              {!bcIsClient && (
               <button
                 onClick={() => { setDraft(entity); setEditing(true); }}
                 className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted"
@@ -4054,6 +4061,7 @@ export function BrandComplianceCard({
               >
                 <Pencil className="w-3 h-3" />
               </button>
+              )}
               {!bcIsClient && (
               <button
                 onClick={() => rescrape.mutate()}
