@@ -77,9 +77,14 @@ export async function resolveCompanyScope(req: Request): Promise<string | null> 
   return (req as any)._companyScope;
 }
 
-// Hospitality / F&B brand slice visible to client accounts. Keep in sync
-// with CLIENT_BRAND_TYPE_RE in crm.ts and bpBrandRe in brand-profile.ts.
-export const CLIENT_VISIBLE_BRAND_RE = /^tenant -.*(restaurant|dining|f&b|qsr|fast food|fast casual|food|bakery|patisserie|caf[ée]|coffee|bar|hospitality|hotel|leisure|cinema|entertainment|fitness|gym|yoga)/i;
+// Brands visible to client accounts. Opened from the original hospitality/F&B
+// slice to the WHOLE tenant directory (Woody, 2026-08: "we agreed we would
+// open up all brands for the Landsec account") — a landlord client researches
+// retail, wellness and leisure occupiers too, not just food. Still a brand-only
+// gate: other landlords, clients and BGP's own records never match.
+// Keep in sync with CLIENT_BRAND_TYPE_RE in crm.ts, CLIENT_BRAND_TYPE_PATTERNS
+// (the SQL ILIKE variant) and bpBrandRe in brand-profile.ts.
+export const CLIENT_VISIBLE_BRAND_RE = /^tenant -/i;
 
 export async function isClientVisibleBrand(companyId: string): Promise<boolean> {
   if (!companyId || !/^[0-9a-f-]{36}$/i.test(companyId)) return false;

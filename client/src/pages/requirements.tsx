@@ -1994,7 +1994,7 @@ function LeasingSection({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="min-w-[120px] sticky left-0 bg-background z-10">Name</TableHead>
+                  <TableHead className="min-w-[130px] w-[180px] max-w-[180px] sticky left-0 bg-background z-10">Name</TableHead>
                   <TableHead className="min-w-[100px]">Date</TableHead>
                   <TableHead className="min-w-[100px]">
                     {filterOptions && onToggleFilter ? (
@@ -2059,7 +2059,7 @@ function LeasingSection({
               <TableBody>
                 {items.map((item) => (
                   <TableRow key={item.id} className={`text-xs ${isArchived ? "opacity-60" : ""}`} data-testid={`row-leasing-${item.id}`}>
-                    <TableCell className="px-1.5 py-1 font-medium text-sm sticky left-0 bg-background z-10">
+                    <TableCell className="px-1.5 py-1 font-medium text-sm w-[180px] max-w-[180px] truncate sticky left-0 bg-background z-10">
                       <InlineCompanyPicker
                         companies={companies}
                         currentCompanyId={item.companyId}
@@ -3737,9 +3737,15 @@ export default function Requirements() {
   const companyIdParam = urlParams.get("companyId");
   const newParam = urlParams.get("new");
   const effectiveTeam = activeTeam === "all" ? userTeam : activeTeam;
+  // Investment requirements are BGP's own acquisition mandates — not relevant
+  // to a landlord client, so the toggle is hidden and the view forced to
+  // Leasing for client logins (Woody, 2026-08).
+  const { data: pageUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientView = pageUser?.role === "Client";
   const defaultIsInvestment = effectiveTeam === "Investment";
   const initialView = typeParam ? typeParam === "investment" : defaultIsInvestment;
   const [isInvestmentView, setIsInvestmentView] = useState(initialView);
+  const showInvestment = isInvestmentView && !isClientView;
   // ?new=1 (dashboard widget "Add") opens the create dialog for the view we
   // landed on; strip it from the URL so a refresh doesn't reopen the dialog.
   const [autoCreateView] = useState(newParam ? (initialView ? "investment" : "leasing") : null);
@@ -3760,12 +3766,13 @@ export default function Requirements() {
           <div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>
             <p className="text-sm text-muted-foreground">
-              {isInvestmentView ? "Investment requirements" : "Leasing requirements"}
+              {showInvestment ? "Investment requirements" : "Leasing requirements"}
               {teamParam ? ` · Filtered by ${teamParam} team` : ""}
               {companyIdParam ? " · Filtered by company" : ""}
             </p>
           </div>
         </div>
+        {!isClientView && (
         <div className="flex items-center gap-1 bg-muted rounded-lg p-1 w-full sm:w-auto shrink-0" data-testid="view-toggle">
           <button
             onClick={() => setIsInvestmentView(false)}
@@ -3782,9 +3789,10 @@ export default function Requirements() {
             Investment
           </button>
         </div>
+        )}
       </div>
 
-      {isInvestmentView ? <InvestmentTable teamFilter={teamParam} autoCreate={autoCreateView === "investment"} /> : <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreateView === "leasing"} />}
+      {showInvestment ? <InvestmentTable teamFilter={teamParam} autoCreate={autoCreateView === "investment"} /> : <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreateView === "leasing"} />}
     </div>
   );
 }

@@ -138,6 +138,13 @@ thead th {
   background: hsl(var(--card));
   border-bottom: 1px solid hsl(var(--border));
 }
+/* The frozen first column carries `sticky left-0 z-10` on BOTH its header cell
+   and its body cells. On a z-index tie the later DOM node wins, so the name
+   cells scrolled over the header row. Class-level specificity is needed here —
+   a bare `thead th` rule loses to Tailwind's .z-10 utility. */
+thead th.sticky {
+  z-index: 30;
+}
 
 .sync-scroll-bottom {
   overflow-x: auto;

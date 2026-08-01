@@ -1107,7 +1107,7 @@ export function setupCrmRoutes(app: Express) {
   // Company types a client login may browse in the brand directory / hub /
   // explorer — hospitality, F&B, café, leisure and fitness tenants only.
   // Keep in sync with CLIENT_BRAND_TYPE_PATTERNS (the SQL ILIKE variant).
-  const CLIENT_BRAND_TYPE_RE = /^tenant -.*(restaurant|dining|f&b|qsr|fast food|fast casual|food|bakery|patisserie|caf[ée]|coffee|bar|hospitality|hotel|leisure|cinema|entertainment|fitness|gym|yoga)/i;
+  const CLIENT_BRAND_TYPE_RE = /^tenant -/i;
 
   // Clients now see the fee they're paying us — total fee, agency %, and the
   // fee-agreement label (Woody, 2026-07: "client should see fees anywhere").
@@ -4686,15 +4686,9 @@ Return a JSON object with these fields (use null for any field you cannot find):
   // food & dining, cafés and fitness only — matched against the
   // 'Tenant - <Category>' company_type values. Retail/fashion/office and
   // everything else in BGP's book stays out of client view for now.
-  const CLIENT_BRAND_TYPE_PATTERNS = [
-    "Tenant -%Restaurant%", "Tenant -%Dining%", "Tenant -%F&B%", "Tenant -%QSR%",
-    "Tenant -%Fast Food%", "Tenant -%Fast Casual%", "Tenant -%Food%",
-    "Tenant -%Bakery%", "Tenant -%Patisserie%",
-    "Tenant -%Café%", "Tenant -%Cafe%", "Tenant -%Coffee%",
-    "Tenant -%Bar%", "Tenant -%Hospitality%", "Tenant -%Hotel%",
-    "Tenant -%Leisure%", "Tenant -%Cinema%", "Tenant -%Entertainment%",
-    "Tenant -%Fitness%", "Tenant -%Gym%", "Tenant -%Yoga%",
-  ];
+  // SQL ILIKE variant of CLIENT_BRAND_TYPE_RE — the whole tenant directory is
+  // open to clients now, so one pattern covers it.
+  const CLIENT_BRAND_TYPE_PATTERNS = ["Tenant -%"];
 
   // Brand directory for client CRM lookup — brand companies in the allowed
   // categories with their contacts inlined. Available to all logged-in
