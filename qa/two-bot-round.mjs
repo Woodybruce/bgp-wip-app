@@ -380,6 +380,22 @@ async function victoriaRound(page, cross) {
     if (r.stillThere) throw new Error('deleted contact still present in the CRM list');
   });
 
+  // Agent adds a contact ON the Landsec company — the client must then see it
+  // in their own CRM (agent→client contact parity). Persisted (swept by the
+  // round cleanup's 'QA Contact%' purge); the client-side check runs later.
+  await step(page, p, 'agent-add-client-contact', async () => {
+    const name = `QA Contact LS R${ROUND}`;
+    const r = await page.evaluate(async (needle) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const create = await fetch('/api/crm/contacts', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: needle, role: 'Landsec-side probe', companyId: '11111111-1111-1111-1111-111111111111' }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      return { ok: true };
+    }, name);
+    if (!r.ok) throw new Error(`agent could not add a Landsec contact (${r.why})`);
+    cross.contactStamp = name;
+  });
+
   // 4h. Staff ChatBGP panel suggestion chips load into the composer.
   await step(page, p, 'staff-chat-suggestions', async () => {
     await page.goto(`${BASE}/`);
@@ -1231,6 +1247,19 @@ async function markRound(page, cross) {
       return { seen: JSON.stringify(v).includes(marker) };
     }, cross.viewingStamp);
     if (!r.seen) throw new Error("agent-logged viewing not visible on the client's letting activity");
+  });
+
+  // Parity for contacts: a contact the agent added on the Landsec company
+  // must appear in the client's own CRM contact list.
+  await step(page, p, 'client-sees-agent-contact', async () => {
+    if (!cross.contactStamp) return;
+    const r = await page.evaluate(async (needle) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = await (await fetch('/api/crm/contacts', { headers: auth })).json().catch(() => []);
+      const rows = Array.isArray(list) ? list : (list?.data || []);
+      return { seen: rows.some((c) => c.name === needle) };
+    }, cross.contactStamp);
+    if (!r.seen) throw new Error("agent-added Landsec contact not visible in the client's CRM");
   });
 
   // Parity for offers: the offer Victoria logged on a Landsec unit must show
