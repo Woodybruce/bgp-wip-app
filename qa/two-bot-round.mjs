@@ -1087,6 +1087,21 @@ async function markRound(page, cross) {
     if (!r.persisted) throw new Error('client tenancy edit returned OK but did not persist');
   });
 
+  // The unified tenancy schedule's deal/letting link-map on the client's OWN
+  // property must load (drives the tenancy view's linked-deal chips). It's
+  // scope-checked; the foreign case is covered in client-foreign-unit-guards.
+  await step(page, p, 'client-tenancy-links', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/tenancy-schedule/property/22222222-2222-2222-2222-222222222222/links', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const d = await res.json().catch(() => null);
+      return { ok: true, shape: !!d && Array.isArray(d.deals) && Array.isArray(d.lettingUnits) };
+    });
+    if (!r.ok) throw new Error(`client own tenancy links rejected (${r.status})`);
+    if (!r.shape) throw new Error('tenancy links payload missing deals/lettingUnits arrays');
+  });
+
   // Client comps: the scheme-scoped table must render rows AND the devaluation
   // figures (price psf / ITZA) the client is there to read — a comps table with
   // blank devaluation columns is the failure mode worth guarding.
@@ -1332,6 +1347,10 @@ async function markRound(page, cross) {
         const res = await fetch(`/api/crm/properties/${pid}/${ep}`, { headers: auth }).catch(() => ({ status: 0, ok: false }));
         out.push({ ep: `property/${ep}`, status: res.status, ok: res.ok });
       }
+      // Unified tenancy schedule link-map on a foreign property must refuse too
+      // (drives the client's tenancy view; leaked another landlord's deals).
+      const tl = await fetch(`/api/tenancy-schedule/property/${pid}/links`, { headers: auth }).catch(() => ({ status: 0, ok: false }));
+      out.push({ ep: 'tenancy-links', status: tl.status, ok: tl.ok });
       return out;
     }, [foreign, foreignProp]);
     const leaked = r.filter((x) => x.ok);
