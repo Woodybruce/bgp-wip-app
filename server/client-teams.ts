@@ -31,6 +31,21 @@ async function boardCompanyIds(pool: any, clientCompanyId: string): Promise<stri
   return r.rows.map((x: any) => x.id);
 }
 
+// A client login may only touch its OWN team board. Staff (null scope) pass.
+// The board can span same-named sibling company records, so the caller's
+// scope is expanded to that set before comparing. Returns true when the
+// request must be REFUSED (so callers do `if (await forbidsClientScope(...)) return 403`).
+async function forbidsClientScope(req: Request, targetCompanyId: string | null | undefined): Promise<boolean> {
+  const { resolveCompanyScope } = await import("./company-scope");
+  const scopeCompanyId = await resolveCompanyScope(req);
+  if (!scopeCompanyId) return false; // BGP staff — unrestricted
+  if (!targetCompanyId) return true;
+  if (scopeCompanyId === targetCompanyId) return false;
+  const pool = await getPool();
+  const boardIds = await boardCompanyIds(pool, scopeCompanyId);
+  return !boardIds.includes(targetCompanyId);
+}
+
 // GET /api/client-teams/:clientCompanyId — list every BGP staff member on
 // this client's team, joined onto HR (staff_profiles) for CV summary and
 // onto crm_property_agents (filtered to properties owned by the client) so
@@ -133,6 +148,7 @@ router.post("/api/client-teams/:clientCompanyId/member", requireAuth, async (req
   try {
     const pool = await getPool();
     const { clientCompanyId } = req.params;
+    if (await forbidsClientScope(req, String(clientCompanyId))) return res.status(403).json({ error: "Not available for client accounts" });
     const { user_id, team_group, role, reports_to_user_id, sort_order, is_lead } = req.body || {};
     if (!user_id) return res.status(400).json({ error: "user_id is required" });
     // No ON CONFLICT — the UNIQUE constraint was dropped on boot so the
@@ -163,6 +179,8 @@ router.post("/api/client-teams/:clientCompanyId/member", requireAuth, async (req
 router.patch("/api/client-teams/member/:id", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
+    const ownerRow = await pool.query("SELECT client_company_id FROM crm_client_team_members WHERE id = $1", [req.params.id]);
+    if (await forbidsClientScope(req, ownerRow.rows[0]?.client_company_id)) return res.status(403).json({ error: "Not available for client accounts" });
     const allowed = ["team_group", "role", "reports_to_user_id", "sort_order", "is_lead"];
     const sets: string[] = [];
     const vals: any[] = [];
@@ -210,6 +228,7 @@ router.patch("/api/client-teams/member/:id", requireAuth, async (req, res) => {
 router.post("/api/client-teams/:clientCompanyId/reorder", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
+    if (await forbidsClientScope(req, String(req.params.clientCompanyId))) return res.status(403).json({ error: "Not available for client accounts" });
     const items: Array<{ id: string; team_group?: string | null; sort_order: number }> =
       req.body?.items || [];
     if (!Array.isArray(items) || items.length === 0) {
@@ -274,6 +293,7 @@ router.delete("/api/client-teams/member/:id", requireAuth, async (req, res) => {
       if (!clientCompanyId) {
         return res.status(400).json({ error: "clientCompanyId is required to remove an auto-included member" });
       }
+      if (await forbidsClientScope(req, clientCompanyId)) return res.status(403).json({ error: "Not available for client accounts" });
       const del = await pool.query(`
         WITH board_companies AS (
           SELECT id FROM crm_companies WHERE id = $2
@@ -297,6 +317,10 @@ router.delete("/api/client-teams/member/:id", requireAuth, async (req, res) => {
       return res.json({ ok: true, removedPropertyAssignments: del.rowCount });
     }
 
+    const ownerRow = await pool.query("SELECT client_company_id FROM crm_client_team_members WHERE id = $1", [id]);
+    if (ownerRow.rows[0] && await forbidsClientScope(req, ownerRow.rows[0].client_company_id)) {
+      return res.status(403).json({ error: "Not available for client accounts" });
+    }
     const r = await pool.query("DELETE FROM crm_client_team_members WHERE id = $1", [id]);
     if (r.rowCount === 0) return res.status(404).json({ error: "Team member not found" });
     res.json({ ok: true });
@@ -345,6 +369,7 @@ router.post("/api/client-teams/:clientCompanyId/member/:userId/properties", requ
   try {
     const pool = await getPool();
     const { clientCompanyId, userId } = req.params;
+    if (await forbidsClientScope(req, String(clientCompanyId))) return res.status(403).json({ error: "Not available for client accounts" });
     const { add = [], remove = [] } = (req.body || {}) as { add?: string[]; remove?: string[] };
     for (const pid of add) {
       // Guard against duplicate links — crm_property_agents doesn't carry
@@ -442,6 +467,7 @@ router.get("/api/client-teams/:clientCompanyId/columns", requireAuth, async (req
 router.post("/api/client-teams/:clientCompanyId/columns", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
+    if (await forbidsClientScope(req, req.params.clientCompanyId as string)) return res.status(403).json({ error: "Not available for client accounts" });
     const { name, sort_order, color_key } = req.body || {};
     if (!name || typeof name !== "string") return res.status(400).json({ error: "name required" });
     // First time a client edits columns, materialise the defaults so the
@@ -489,6 +515,7 @@ router.post("/api/client-teams/:clientCompanyId/columns", requireAuth, async (re
 router.patch("/api/client-teams/:clientCompanyId/columns/:oldName", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
+    if (await forbidsClientScope(req, req.params.clientCompanyId as string)) return res.status(403).json({ error: "Not available for client accounts" });
     const { name } = req.body || {};
     if (!name || typeof name !== "string") return res.status(400).json({ error: "name required" });
     const oldName = decodeURIComponent(req.params.oldName as string);
@@ -514,6 +541,7 @@ router.patch("/api/client-teams/:clientCompanyId/columns/:oldName", requireAuth,
 router.delete("/api/client-teams/:clientCompanyId/columns/:name", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
+    if (await forbidsClientScope(req, req.params.clientCompanyId as string)) return res.status(403).json({ error: "Not available for client accounts" });
     const name = decodeURIComponent(req.params.name as string);
     await materialiseDefaultColumnsIfEmpty(pool, req.params.clientCompanyId as string);
     await pool.query(
@@ -535,6 +563,7 @@ router.delete("/api/client-teams/:clientCompanyId/columns/:name", requireAuth, a
 router.post("/api/client-teams/:clientCompanyId/columns/reorder", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
+    if (await forbidsClientScope(req, req.params.clientCompanyId as string)) return res.status(403).json({ error: "Not available for client accounts" });
     const names: string[] = req.body?.names || [];
     if (!Array.isArray(names)) return res.status(400).json({ error: "names array required" });
     await materialiseDefaultColumnsIfEmpty(pool, req.params.clientCompanyId as string);

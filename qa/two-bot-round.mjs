@@ -1409,10 +1409,18 @@ async function samRound(page, cross) {
       await tryReq('hots', 'PUT', `/api/available-units/${foreign}/hots`, { content: 'QA-RIVAL-WRITE' });
       await tryReq('unit-patch', 'PATCH', `/api/available-units/${foreign}`, { condition: 'QA-RIVAL-WRITE' });
       await tryReq('brief', 'POST', `/api/available-units/${foreign}/brief`, { title: 'QA-RIVAL-WRITE' });
+      // Cross-tenant client-team board writes: the /api/client-teams/ prefix
+      // is client-writable, but the handlers must reject a board that isn't
+      // the caller's own. Sam (Hammerson) aims every write at the LANDSEC id.
+      const LANDSEC = '11111111-1111-1111-1111-111111111111';
+      await tryReq('team-member-add', 'POST', `/api/client-teams/${LANDSEC}/member`, { user_id: '99999999-4444-4444-4444-444444444444', team_group: 'QA-RIVAL' });
+      await tryReq('team-column-add', 'POST', `/api/client-teams/${LANDSEC}/columns`, { name: 'QA-RIVAL-COL' });
+      await tryReq('team-column-del', 'DELETE', `/api/client-teams/${LANDSEC}/columns/Investment`, null);
+      await tryReq('team-reorder', 'POST', `/api/client-teams/${LANDSEC}/reorder`, { items: [{ id: 'x', sort_order: 0 }] });
       return out;
     });
     const allowed = probes.filter((x) => x.ok);
-    if (allowed.length) throw new Error(`rival client wrote to a Landsec unit: ${allowed.map((x) => x.label).join(', ')}`);
+    if (allowed.length) throw new Error(`rival client wrote to a Landsec resource: ${allowed.map((x) => x.label).join(', ')}`);
   });
 
   // Sam can still work their OWN portfolio (scoping isn't just "sees nothing").
