@@ -1118,17 +1118,25 @@ async function markRound(page, cross) {
   // confirmed live cross-tenant leak). Uses the seeded Hammerson unit.
   await step(page, p, 'client-foreign-unit-guards', async () => {
     const foreign = '99999999-3333-3333-3333-333333333333'; // Hammerson unit
-    const r = await page.evaluate(async (uid) => {
+    const foreignProp = '99999999-2222-2222-2222-222222222222'; // Hammerson Brent Cross
+    const r = await page.evaluate(async ([uid, pid]) => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const out = [];
       for (const ep of ['files', 'viewings', 'offers']) {
         const res = await fetch(`/api/available-units/${uid}/${ep}`, { headers: auth }).catch(() => ({ status: 0, ok: false }));
         out.push({ ep, status: res.status, ok: res.ok });
       }
+      // Property detail sub-resources by foreign id: tenants + clients leaked
+      // a foreign property's tenant companies + client contacts (round 69);
+      // deals + agents were already scoped. All four must refuse.
+      for (const ep of ['tenants', 'clients', 'deals', 'agents']) {
+        const res = await fetch(`/api/crm/properties/${pid}/${ep}`, { headers: auth }).catch(() => ({ status: 0, ok: false }));
+        out.push({ ep: `property/${ep}`, status: res.status, ok: res.ok });
+      }
       return out;
-    }, foreign);
+    }, [foreign, foreignProp]);
     const leaked = r.filter((x) => x.ok);
-    if (leaked.length) throw new Error(`client can read a foreign unit's ${leaked.map((x) => x.ep).join(', ')} (cross-tenant leak regressed)`);
+    if (leaked.length) throw new Error(`client can read a foreign ${leaked.map((x) => x.ep).join(', ')} (cross-tenant leak regressed)`);
   });
 
   // Client creates a ChatBGP thread (no AI key needed for the thread itself)

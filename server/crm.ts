@@ -2802,6 +2802,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.get("/api/crm/properties/:id/tenants", async (req, res) => {
     try {
+      const ptScope = await resolveCompanyScope(req);
+      if (ptScope && !(await isPropertyInScope(ptScope, req.params.id))) {
+        return res.status(403).json({ error: "Not available for this account" });
+      }
       const links = await db.select().from(crmPropertyTenants).where(eq(crmPropertyTenants.propertyId, req.params.id));
       const companyIds = links.map(l => l.companyId).filter(Boolean);
       if (companyIds.length === 0) return res.json([]);
@@ -2830,6 +2834,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
 
   app.get("/api/crm/properties/:id/clients", async (req, res) => {
     try {
+      const pcScope = await resolveCompanyScope(req);
+      if (pcScope && !(await isPropertyInScope(pcScope, req.params.id))) {
+        return res.status(403).json({ error: "Not available for this account" });
+      }
       const links = await db.select().from(crmPropertyClients).where(eq(crmPropertyClients.propertyId, req.params.id));
       const contactIds = links.map(l => l.contactId);
       let contacts: any[] = [];
