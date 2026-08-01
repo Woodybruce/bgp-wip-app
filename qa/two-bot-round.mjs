@@ -452,6 +452,28 @@ async function victoriaRound(page, cross) {
     cross.viewingId = r.viewingId;
   });
 
+  // Agent logs an OFFER on a Landsec unit — the client must then see it on
+  // their own letting activity (parity with the viewing cross-check; exercises
+  // the client-scoped all-offers read from the agent-write side).
+  await step(page, p, 'agent-log-offer', async () => {
+    const stamp = `QA-AOFFER-R${ROUND}`;
+    const r = await page.evaluate(async (marker) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = (Array.isArray(units) ? units : []).find((u) => u.propertyId === '22222222-2222-2222-2222-222222222222') || (Array.isArray(units) ? units[0] : null);
+      if (!unit) return { skip: true };
+      const post = await fetch(`/api/available-units/${unit.id}/offers`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ companyName: marker, offerDate: new Date().toISOString().slice(0, 10) }) });
+      if (!post.ok) return { ok: false, why: `offer POST ${post.status}` };
+      const made = await post.json();
+      return { ok: true, offerId: made.id };
+    }, stamp);
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`agent could not log an offer (${r.why})`);
+    cross.offerStamp = stamp;
+    cross.offerId = r.offerId;
+  });
+
   // 4l. Tracker inline-detail PATCH (new Costs-popover Details section):
   // write a detail field through the same PATCH the popover uses and verify
   // it persists, then restore the prior value.
@@ -1189,6 +1211,18 @@ async function markRound(page, cross) {
       return { seen: JSON.stringify(v).includes(marker) };
     }, cross.viewingStamp);
     if (!r.seen) throw new Error("agent-logged viewing not visible on the client's letting activity");
+  });
+
+  // Parity for offers: the offer Victoria logged on a Landsec unit must show
+  // on the client's own letting activity (scoped all-offers).
+  await step(page, p, 'client-sees-agent-offer', async () => {
+    if (!cross.offerStamp) return;
+    const r = await page.evaluate(async (marker) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const o = await (await fetch('/api/available-units/all-offers', { headers: auth })).json();
+      return { seen: JSON.stringify(o).includes(marker) };
+    }, cross.offerStamp);
+    if (!r.seen) throw new Error("agent-logged offer not visible on the client's letting activity");
   });
 
   // Locks in the terminal-side audit fix: a client reading ANOTHER
