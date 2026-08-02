@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -928,6 +928,30 @@ async function markRound(page, cross) {
     if (r.editForeign !== 403) throw new Error(`client edited a foreign landlord's contact (expected 403, got ${r.editForeign})`);
     if (!(r.addInSliceStatus >= 200 && r.addInSliceStatus < 300)) throw new Error(`client blocked from adding an in-slice brand contact (${r.addInSliceStatus})`);
     if (r.addOutStatus !== 403) throw new Error(`client added a contact to an out-of-slice brand (expected 403, got ${r.addOutStatus})`);
+  });
+
+  // Client contact management asymmetry: a client MAY edit a contact on their
+  // own account (task-12 feature) but MUST NOT delete it ("managed by your
+  // BGP team"). Create on own company, edit ok, delete refused, survives.
+  await step(page, p, 'client-contact-edit-not-delete', async () => {
+    const name = `QA Contact EditNotDel R${ROUND}`;
+    const r = await page.evaluate(async (needle) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const ownCompany = '11111111-1111-1111-1111-111111111111'; // Landsec (client's own)
+      const create = await fetch('/api/crm/contacts', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: needle, companyId: ownCompany }) }).catch(() => ({ ok: false, status: 0 }));
+      if (!create.ok) return { createStatus: create.status };
+      const made = await create.json();
+      const edit = (await fetch(`/api/crm/contacts/${made.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ role: 'QA client-edited' }) }).catch(() => ({ status: 0 }))).status;
+      const del = (await fetch(`/api/crm/contacts/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => ({ status: 0 }))).status;
+      const still = (await fetch(`/api/crm/contacts/${made.id}`, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { createStatus: create.status, edit, del, still };
+    }, name);
+    if (!(r.createStatus >= 200 && r.createStatus < 300)) throw new Error(`client blocked from creating an own-account contact (${r.createStatus})`);
+    if (!(r.edit >= 200 && r.edit < 300)) throw new Error(`client blocked from editing an own-account contact (${r.edit})`);
+    if (r.del !== 403) throw new Error(`client deleted an own-account contact (expected 403, got ${r.del})`);
+    if (!(r.still >= 200 && r.still < 300)) throw new Error(`contact vanished after a refused client delete (${r.still})`);
   });
 
   // Client opens a hospitality brand profile (in their visible slice) — the
