@@ -1115,7 +1115,9 @@ export function setupCrmRoutes(app: Express) {
   // the raw commission field. The per-BGP-agent split lives on a separate
   // staff-gated endpoint (deal_fee_allocations), so it never rides along here.
   const stripDealFees = <T extends Record<string, any>>(d: T): T => ({
-    ...d, feeNotes: null, feeAgreementUrl: null, commission: null,
+    ...d, fee: null, feePercentage: null, feeAgreement: null,
+    feeNotes: null, feeAgreementUrl: null, commission: null,
+    poNumber: null, invoicedAt: null,
   });
   // Ensure new comp columns exist (safe to re-run)
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS fee_agreement_url TEXT`).catch(() => {});
