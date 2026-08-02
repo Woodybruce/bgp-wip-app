@@ -406,15 +406,23 @@ async function victoriaRound(page, cross) {
   // round cleanup's 'QA Contact%' purge); the client-side check runs later.
   await step(page, p, 'agent-add-client-contact', async () => {
     const name = `QA Contact LS R${ROUND}`;
-    const r = await page.evaluate(async (needle) => {
+    const editedRole = `Landsec-side edited R${ROUND}`;
+    const r = await page.evaluate(async (args) => {
+      const [needle, role] = args;
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
       const create = await fetch('/api/crm/contacts', { method: 'POST', credentials: 'include', headers: auth,
         body: JSON.stringify({ name: needle, role: 'Landsec-side probe', companyId: '11111111-1111-1111-1111-111111111111' }) });
       if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const made = await create.json();
+      // Edit the role too, so the client-side parity check covers agent edits.
+      const edit = await fetch(`/api/crm/contacts/${made.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ role }) });
+      if (!edit.ok) return { ok: false, why: `edit ${edit.status}` };
       return { ok: true };
-    }, name);
-    if (!r.ok) throw new Error(`agent could not add a Landsec contact (${r.why})`);
+    }, [name, editedRole]);
+    if (!r.ok) throw new Error(`agent could not add/edit a Landsec contact (${r.why})`);
     cross.contactStamp = name;
+    cross.contactRole = editedRole;
   });
 
   // 4h. Staff ChatBGP panel suggestion chips load into the composer.
@@ -1370,13 +1378,16 @@ async function markRound(page, cross) {
   // must appear in the client's own CRM contact list.
   await step(page, p, 'client-sees-agent-contact', async () => {
     if (!cross.contactStamp) return;
-    const r = await page.evaluate(async (needle) => {
+    const r = await page.evaluate(async (args) => {
+      const [needle, role] = args;
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const list = await (await fetch('/api/crm/contacts', { headers: auth })).json().catch(() => []);
       const rows = Array.isArray(list) ? list : (list?.data || []);
-      return { seen: rows.some((c) => c.name === needle) };
-    }, cross.contactStamp);
+      const found = rows.find((c) => c.name === needle);
+      return { seen: !!found, roleMatches: !!found && found.role === role };
+    }, [cross.contactStamp, cross.contactRole]);
     if (!r.seen) throw new Error("agent-added Landsec contact not visible in the client's CRM");
+    if (cross.contactRole && !r.roleMatches) throw new Error("agent's contact edit (role) not reflected in the client's CRM");
   });
 
   // Parity for offers: the offer Victoria logged on a Landsec unit must show
