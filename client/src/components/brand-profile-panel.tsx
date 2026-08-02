@@ -15,7 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CovenantBadge } from "@/components/covenant-badge";
+import { CovenantBadge, CovenantCommentary } from "@/components/covenant-badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -4672,13 +4672,14 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
             <CovenantBadge companyNumber={(c as any).companies_house_number} />
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-3 pt-0">
+        <CardContent className="p-3 pt-0 space-y-2">
+          <CovenantCommentary companyNumber={(c as any).companies_house_number} />
           <Button
             size="sm"
             variant="outline"
             className="w-full h-7 text-xs"
             onClick={runCreditCheck}
-            title="Re-run the house covenant check (Companies House + The Gazette + filed accounts) and add this brand to the nightly watch"
+            title="Re-run the house covenant check (Companies House + The Gazette + filed accounts + director track record + market signals) and add this brand to the nightly watch"
           >
             Refresh covenant check
           </Button>
