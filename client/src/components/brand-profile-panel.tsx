@@ -4267,6 +4267,124 @@ export function BrandComplianceCard({
 // (with Set Up Folders dialog), mirroring the property page layout.
 // Brand profiles never render this — it lives under the isLandlord
 // branch in BrandProfileSidebar.
+// Embedded, scrollable chat about this company — lives on the profile so a
+// conversation doesn't mean losing the page. Reuses the group-chat machinery:
+// one thread per company (linked_id), ChatBGP as a member, so plain message
+// POSTs get a real Fable answer server-side and we just poll the thread.
+function CompanyMiniChat({ companyId, companyName }: { companyId: string; companyName: string }) {
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [, navigate] = useLocation();
+
+  // Find (or lazily create on first send) the company's discussion thread.
+  const { data: threads = [] } = useQuery<any[]>({ queryKey: ["/api/chat/threads"] });
+  useEffect(() => {
+    if (threadId) return;
+    const existing = (Array.isArray(threads) ? threads : []).find(
+      (t: any) => t.linkedId === companyId && !t.isAiChat && t.hasAiMember
+    );
+    if (existing) setThreadId(existing.id);
+  }, [threads, companyId, threadId]);
+
+  const { data: thread } = useQuery<any>({
+    queryKey: ["/api/chat/threads", threadId],
+    queryFn: async () => {
+      const res = await fetch(`/api/chat/threads/${threadId}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!threadId,
+    refetchInterval: 5000,
+  });
+  const messages: any[] = thread?.messages || [];
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages.length]);
+
+  const send = async () => {
+    const text = draft.trim();
+    if (!text || sending) return;
+    setSending(true);
+    try {
+      let tid = threadId;
+      if (!tid) {
+        const res = await apiRequest("POST", "/api/chat/threads", {
+          title: `${companyName} — discussion`,
+          memberIds: ["__chatbgp__"],
+          isAiChat: false,
+          linkedType: "company",
+          linkedId: companyId,
+          linkedName: companyName,
+        });
+        const created = await res.json();
+        tid = created.id;
+        setThreadId(tid);
+      }
+      await apiRequest("POST", `/api/chat/threads/${tid}/messages`, { content: text });
+      setDraft("");
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", tid] });
+    } catch { /* surfaced by global toast */ }
+    finally { setSending(false); }
+  };
+
+  const stripTags = (s: string) => (s || "").replace(/@\[([^\]]+)\]\(tag:[^)]+\)/g, "@$1");
+
+  return (
+    <Card>
+      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <MessageSquare className="w-3.5 h-3.5" /> Chat — {companyName}
+        </CardTitle>
+        {threadId && (
+          <button
+            type="button"
+            className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted"
+            onClick={() => navigate(`/chatbgp?thread=${threadId}`)}
+            data-testid="button-minichat-open-full"
+          >
+            Open full
+          </button>
+        )}
+      </CardHeader>
+      <CardContent className="p-3 pt-0 space-y-2">
+        <div ref={scrollRef} className="max-h-[280px] overflow-y-auto space-y-2 pr-1" data-testid="minichat-messages">
+          {messages.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">
+              Ask anything about {companyName} — ChatBGP answers here, and teammates can join from the chat panel.
+            </p>
+          ) : (
+            messages.map((m: any) => (
+              <div key={m.id} className={`text-xs rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${
+                m.role === "assistant" ? "bg-muted/60" : "bg-primary/10 ml-6"
+              }`}>
+                {m.role === "assistant" && <span className="font-semibold text-[10px] block text-muted-foreground">ChatBGP</span>}
+                {stripTags(m.content)}
+              </div>
+            ))
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <input
+            className="flex-1 h-8 rounded-md border bg-background px-2.5 text-xs outline-none focus:ring-1 focus:ring-ring"
+            placeholder={`Message about ${companyName}…`}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+            data-testid="input-minichat"
+          />
+          <Button size="sm" className="h-8 px-3 text-xs" onClick={send} disabled={sending || !draft.trim()} data-testid="button-minichat-send">
+            {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Send"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function LandlordSidebarBlock({
   companyId,
   companyName,
@@ -4285,7 +4403,6 @@ function LandlordSidebarBlock({
   // SharePoint folder creation is a BGP-staff action (M365 is sealed for
   // clients), so only staff see the "{Client} property tree" button.
   const sbIsStaff = !!sbUser && sbUser.role !== "Client" && !sbUser.companyScopeId;
-  const [, navigate] = useLocation();
   // Create a top-level "{Client}" folder in the BGP share drive with a
   // per-property subfolder tree for every property this client owns. Runs
   // against live SharePoint, so it needs an M365-connected session.
@@ -4331,18 +4448,6 @@ function LandlordSidebarBlock({
       sbToast({ title: "Folder setup failed", description: e?.message || "Not connected to Microsoft 365?", variant: "destructive" });
     }
   };
-  // Open (or reuse — the backend dedupes one AI thread per entity) a chat
-  // scoped to this landlord, so ChatBGP actually knows who we're talking
-  // about instead of landing on an empty generic chat.
-  const openLandlordChat = async () => {
-    try {
-      const res = await apiRequest("POST", "/api/chat/threads", { isAiChat: true, linkedType: "company", linkedId: companyId, linkedName: companyName });
-      const thread = await res.json();
-      navigate(`/chatbgp?thread=${thread.id}`);
-    } catch {
-      navigate("/chatbgp");
-    }
-  };
   return (
     <>
       <SetUpFoldersDialog
@@ -4354,15 +4459,7 @@ function LandlordSidebarBlock({
         entityType="landlord"
       />
 
-      <button
-        type="button"
-        onClick={openLandlordChat}
-        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity justify-center w-full"
-        data-testid="button-open-landlord-chat"
-      >
-        <MessageSquare className="w-3.5 h-3.5" />
-        Chat about {companyName}
-      </button>
+      <CompanyMiniChat companyId={companyId} companyName={companyName} />
 
       <Card>
         <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2">
@@ -4394,11 +4491,15 @@ function LandlordSidebarBlock({
           </div>
         </CardHeader>
         <CardContent className="p-3 pt-0">
-          <PropertyFoldersPanel
-            propertyName={companyName}
-            folderTeams={folderTeams && folderTeams.length > 0 ? folderTeams : ["Investment"]}
-            sharepointFolderUrl={sharepointFolderUrl || null}
-          />
+          {/* Long folder trees (Landsec has 100+ property folders) scroll
+              inside the card instead of stretching the whole page. */}
+          <div className="max-h-[420px] overflow-y-auto pr-1">
+            <PropertyFoldersPanel
+              propertyName={companyName}
+              folderTeams={folderTeams && folderTeams.length > 0 ? folderTeams : ["Investment"]}
+              sharepointFolderUrl={sharepointFolderUrl || null}
+            />
+          </div>
         </CardContent>
       </Card>
     </>
@@ -4542,7 +4643,13 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
     <aside className={(isLandlord || isBrand)
       ? "w-full shrink-0 space-y-3 self-start"
       : "w-full md:w-[420px] lg:w-[480px] shrink-0 space-y-3 md:sticky md:top-3 self-start"}>
+      {/* Two balanced columns: the tall Compliance board + Key contacts on
+          the left; the compact Covenant card, the embedded scrollable chat
+          and the (internally scrolling) Files tree on the right. Replaces
+          the old pairing where Covenant sat alone beside Compliance and
+          left most of a column empty (Woody, 2026-08-02). */}
       <div className={pairCls}>
+      <div className="space-y-3">
       {/* Compliance / AML board — gates every downstream check on knowing
           the brand's actual UK trading entity. Scraper auto-fires on
           first load (from the parent useEffect); the user can overwrite
@@ -4550,6 +4657,11 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           checks (CH details, PSC, accounts, Red Flag, AML PEP) stay parked. */}
       <BrandComplianceCard companyId={companyId} company={c} />
 
+      {/* Key contacts */}
+      <SidebarKeyContacts data={data} companyId={companyId} topContacts={topContacts} />
+      </div>
+
+      <div className="space-y-3">
       {/* Covenant — live house engine (Companies House + The Gazette + filed
           accounts). Replaced the old Red Flag/Experian placeholder card. */}
       {(c as any)?.companies_house_number && (
@@ -4573,22 +4685,14 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         </CardContent>
       </Card>
       )}
-      </div>
 
-      <div className={pairCls}>
-      {/* Key contacts */}
-      <SidebarKeyContacts data={data} companyId={companyId} topContacts={topContacts} />
-
-      {/* Files / Folders + scoped chat (moved up to pair with Key
-          contacts). Wrapped so the block's button + card stay one
-          grid cell. */}
-      <div className="space-y-3">
-        <LandlordSidebarBlock
-          companyId={companyId}
-          companyName={c.name}
-          folderTeams={c.folder_teams}
-          sharepointFolderUrl={c.sharepoint_folder_url}
-        />
+      {/* Embedded chat + Files tree */}
+      <LandlordSidebarBlock
+        companyId={companyId}
+        companyName={c.name}
+        folderTeams={c.folder_teams}
+        sharepointFolderUrl={c.sharepoint_folder_url}
+      />
       </div>
       </div>
 
