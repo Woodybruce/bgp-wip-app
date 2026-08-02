@@ -7388,6 +7388,12 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const unitRows = await pool.query(`SELECT * FROM available_units WHERE id = $1`, [unitId]);
       const unit = unitRows.rows[0];
       if (!unit) return res.json([]);
+      // Clients get requirement matches for units on their OWN properties
+      // only, and only for brands they can see (slice + their extras) —
+      // the rest of the requirements book is BGP intel.
+      if (await assertUnitInClientScope(req, unit.property_id ?? unit.propertyId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
 
       const conditions: string[] = [];
       const params: any[] = [];
@@ -7407,14 +7413,19 @@ These terms are indicative only and do not constitute a binding agreement.`;
 
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
       const query = `
-        SELECT r.*, c.name as company_name 
+        SELECT r.*, c.name as company_name, c.company_type as company_type
         FROM crm_requirements_leasing r
         LEFT JOIN crm_companies c ON r.company_id = c.id
         ${whereClause}
         ORDER BY r.created_at DESC LIMIT 20
       `;
       const matches = await pool.query(query, params);
-      res.json(matches.rows);
+      const { resolveCompanyScope, getClientExtraBrandIds } = await import("./company-scope");
+      const matchScope = await resolveCompanyScope(req);
+      if (!matchScope) return res.json(matches.rows);
+      const { isClientCrmCategory } = await import("@shared/tenant-categories");
+      const matchExtras = await getClientExtraBrandIds(matchScope);
+      res.json(matches.rows.filter((r: any) => isClientCrmCategory(r.company_type) || matchExtras.has(r.company_id)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

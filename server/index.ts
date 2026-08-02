@@ -3441,9 +3441,11 @@ app.use("/api/branding/assets", express.static(
     /^\/api\/crm\/properties\/[^/]+\/agents/,
     // all-viewings / all-offers (+counts) are now SCOPED per caller in
     // routes.ts, so clients get letting activity on their OWN units — the
-    // tracker's viewings/offers controls need them to render. all-files and
-    // matches are still firm-wide, so they stay blocked.
-    /^\/api\/available-units\/(all-files|matches)\b/,
+    // tracker's viewings/offers controls need them to render. matches is
+    // now scoped in routes.ts too (own unit only, results filtered to
+    // client-visible brands) — the brief dialog needs it. all-files stays
+    // firm-wide and blocked.
+    /^\/api\/available-units\/all-files\b/,
     /^\/api\/leasing-schedule\/export-excel/,           // firm-wide export; per-property /property/:id/export stays scoped
     /^\/api\/leasing-schedule\/property\/[^/]+\/privacy/,
     // tenancy-schedule /links is no longer blocked: the client unified
