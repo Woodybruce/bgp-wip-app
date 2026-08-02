@@ -1966,7 +1966,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         // are market-facing (not another client's private data).
         const slice = await clientBrandSliceSql(scopeCompanyId);
         const allowedRows = await pool.query(
-          `SELECT id FROM crm_companies WHERE id = $1 OR company_type = 'Agent' OR ${slice}`,
+          `SELECT id FROM crm_companies WHERE id = $1 OR company_type ILIKE 'Agent%' OR ${slice}`,
           [scopeCompanyId]
         );
         const allowedCompanyIds = new Set(allowedRows.rows.map((r: any) => r.id));
