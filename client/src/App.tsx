@@ -522,7 +522,11 @@ function AuthenticatedApp() {
   if (isChatBGP) {
     return (
       <div className="h-screen w-screen max-w-[100vw] overflow-hidden flex flex-col">
-        <header className="flex items-center justify-between gap-2 px-3 py-2 border-b h-12 shrink-0">
+        {/* Client logins carry the app's client skin through to the chat
+            page — navy header with the client name — instead of dropping
+            back to BGP-white. Staff keep the BGP header. The sidebar vars
+            pair fg/bg, so the text stays readable under any scheme. */}
+        <header className={`flex items-center justify-between gap-2 px-3 py-2 border-b h-12 shrink-0 ${(currentUser as any)?.companyScopeName || currentUser?.role === "Client" ? "bg-sidebar text-sidebar-foreground border-sidebar-border" : ""}`}>
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
@@ -538,8 +542,17 @@ function AuthenticatedApp() {
             >
               <ArrowLeft className="h-4 w-4" />
             </button>
-            <img src={bgpLogoDark} alt="BGP" className="h-5 dark:hidden" />
-            <img src={bgpLogoLight} alt="BGP" className="h-5 hidden dark:block" />
+            {(currentUser as any)?.companyScopeName || currentUser?.role === "Client" ? (
+              <span className="text-sm font-semibold tracking-tight">
+                {(currentUser as any)?.companyScopeName || "Client"}
+                <span className="opacity-60 font-normal"> · ChatBGP</span>
+              </span>
+            ) : (
+              <>
+                <img src={bgpLogoDark} alt="BGP" className="h-5 dark:hidden" />
+                <img src={bgpLogoLight} alt="BGP" className="h-5 hidden dark:block" />
+              </>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <ColorSchemeSelector />

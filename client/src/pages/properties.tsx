@@ -847,12 +847,14 @@ export function InlineOwnerLink({
   fieldName,
   label,
   allCompanies,
+  readOnly,
 }: {
   propertyId: string;
   companyId: string | null | undefined;
   fieldName: string;
   label: string;
   allCompanies: CrmCompany[];
+  readOnly?: boolean;
 }) {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
@@ -880,20 +882,28 @@ export function InlineOwnerLink({
     return (
       <div className="flex items-center gap-1 min-w-0 max-w-full">
         <Link href={`/companies/${company.id}`} className="min-w-0 max-w-full">
-          <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted max-w-full inline-flex items-center" title={company.name}>
+          {/* Role label on the chip — the same company often fills several
+              roles (Landsec as Landlord AND Freeholder), and unlabelled
+              chips read as duplicates. */}
+          <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted max-w-full inline-flex items-center" title={`${label}: ${company.name}`}>
             <Building2 className="w-3 h-3 mr-1 text-muted-foreground shrink-0" />
+            <span className="text-muted-foreground mr-1 shrink-0">{label} ·</span>
             <span className="truncate">{company.name}</span>
           </Badge>
         </Link>
+        {!readOnly && (
         <button
           className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center shrink-0"
           onClick={() => updateMutation.mutate(null)}
         >
           <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
         </button>
+        )}
       </div>
     );
   }
+
+  if (readOnly) return null;
 
   return (
     <DropdownMenu>
@@ -5063,6 +5073,11 @@ function PropertiesList({
 
   const { activeTeam } = useTeam();
   const isLandsecView = activeTeam === "Landsec";
+  // Client logins get a read-oriented table: the inline ownership editors,
+  // status/class/team setters and the header's Import / New Property /
+  // Landlord Health are staff tools (their writes are server-blocked anyway).
+  const { data: propsViewer } = useQuery<any>({ queryKey: ["/api/auth/me"], staleTime: 5 * 60 * 1000 });
+  const isClientViewer = propsViewer?.role === "Client" || !!propsViewer?.companyScopeId;
 
   const landsecCompanyIds = useMemo(() => {
     if (!isLandsecView || !allCompanies) return null;
@@ -5274,6 +5289,7 @@ function PropertiesList({
       fullHeight
       subtitle={`${items.length} properties in the CRM${isLandsecView ? " · Landsec portfolio" : teamFilter ? ` · Filtered by ${teamFilter} team` : ""}`}
       actions={
+        isClientViewer ? undefined : (
         <>
           {/* On mobile keep just the primary action — Landlord Health and
               Import are desktop tools and bled off the right edge on a phone. */}
@@ -5306,6 +5322,7 @@ function PropertiesList({
             New Property
           </Button>
         </>
+        )
       }
       className="space-y-6"
       testId="properties-page"
@@ -5671,6 +5688,7 @@ function PropertiesList({
                               fieldName="landlordId"
                               label="Client / Landlord"
                               allCompanies={allCompanies}
+                              readOnly={isClientViewer}
                             />
                             <InlineOwnerLink
                               propertyId={item.id}
@@ -5678,6 +5696,7 @@ function PropertiesList({
                               fieldName="freeholderId"
                               label="Freeholder"
                               allCompanies={allCompanies}
+                              readOnly={isClientViewer}
                             />
                             <InlineOwnerLink
                               propertyId={item.id}
@@ -5685,6 +5704,7 @@ function PropertiesList({
                               fieldName="longLeaseholderId"
                               label="Long Leaseholder"
                               allCompanies={allCompanies}
+                              readOnly={isClientViewer}
                             />
                             <InlineOwnerLink
                               propertyId={item.id}
@@ -5692,6 +5712,7 @@ function PropertiesList({
                               fieldName="seniorLenderId"
                               label="Senior Lender"
                               allCompanies={allCompanies}
+                              readOnly={isClientViewer}
                             />
                             <InlineOwnerLink
                               propertyId={item.id}
@@ -5699,12 +5720,16 @@ function PropertiesList({
                               fieldName="juniorLenderId"
                               label="Junior Lender"
                               allCompanies={allCompanies}
+                              readOnly={isClientViewer}
                             />
                           </div>
                         </TableCell>
                       )}
                       {visibleColumns.status && (
                         <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                          {isClientViewer ? (
+                            <span className="text-xs">{item.status || "—"}</span>
+                          ) : (
                           <InlineLabelSelect
                             value={item.status}
                             options={STATUS_OPTIONS}
@@ -5713,10 +5738,14 @@ function PropertiesList({
                             placeholder="Set status"
                             compact
                           />
+                          )}
                         </TableCell>
                       )}
                       {visibleColumns.assetClass && (
                         <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                          {isClientViewer ? (
+                            <span className="text-xs">{(Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass) || "—"}</span>
+                          ) : (
                           <InlineLabelSelect
                             value={Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass}
                             options={ASSET_CLASS_OPTIONS}
@@ -5724,16 +5753,21 @@ function PropertiesList({
                             onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "assetClass", value: val })}
                             placeholder="Set class"
                           />
+                          )}
                         </TableCell>
                       )}
                       {visibleColumns.engagement && (
                         <TableCell className="px-1.5 py-1 w-[140px] max-w-[140px]" onClick={(e) => e.stopPropagation()}>
+                          {isClientViewer ? (
+                            <span className="text-xs">{Array.isArray(item.bgpEngagement) ? item.bgpEngagement.join(", ") : (item.bgpEngagement || "—")}</span>
+                          ) : (
                           <InlineEngagement
                             value={item.bgpEngagement}
                             options={TEAM_OPTIONS}
                             colorMap={TEAM_COLORS}
                             onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "bgpEngagement", value: val })}
                           />
+                          )}
                         </TableCell>
                       )}
                       {visibleColumns.deals && (

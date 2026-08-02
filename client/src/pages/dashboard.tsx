@@ -205,7 +205,7 @@ function ActivityFeedWidget() {
 
 function MyTasksWidget() {
   const { data: tasksData = [], isLoading: tasksLoading } = useQuery<any[]>({ queryKey: ["/api/tasks"] });
-  const { data: briefingData, isLoading: briefingLoading } = useQuery<any>({
+  const { data: briefingData, isLoading: briefingLoading, refetch: refetchBriefing } = useQuery<any>({
     queryKey: ["/api/ai-briefing"],
     staleTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -289,7 +289,23 @@ function MyTasksWidget() {
                   {briefingData.briefing.split("\n").map(renderBriefingLine)}
                 </div>
               ) : (
-                <p className="text-[11px] text-muted-foreground py-2">Briefing will appear shortly...</p>
+                /* AI unavailable or briefing not generated — show a static
+                   digest so the panel always earns its space, with a retry
+                   instead of an open-ended promise. */
+                <div className="py-2 space-y-1">
+                  <p className="text-[11px] leading-snug">
+                    {activeTasks.length === 0
+                      ? "No open tasks — all clear for today."
+                      : `${activeTasks.length} open task${activeTasks.length === 1 ? "" : "s"}${overdueTasks.length > 0 ? `, ${overdueTasks.length} overdue` : ""}.`}
+                  </p>
+                  <button
+                    onClick={() => refetchBriefing()}
+                    className="text-[10px] text-primary hover:underline flex items-center gap-1"
+                    data-testid="button-retry-briefing"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" /> Try AI briefing again
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -1058,6 +1074,26 @@ export default function Dashboard() {
                       {companyInfo.companyType && (
                         <Badge className="text-[10px] bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-800">{companyInfo.companyType}</Badge>
                       )}
+                    </div>
+                  </div>
+                  {/* Headline KPI strip — the first screen should carry the
+                      portfolio numbers, not just the company name. */}
+                  <div className="grid grid-cols-4 gap-2 mb-3">
+                    <div className="rounded-lg border bg-muted/30 px-2 py-1.5 text-center">
+                      <p className="text-base font-bold tabular-nums leading-tight">{(portfolioData.properties || []).length}</p>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Properties</p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/30 px-2 py-1.5 text-center">
+                      <p className="text-base font-bold tabular-nums leading-tight">{occupancyRate}%</p>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Occupancy</p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/30 px-2 py-1.5 text-center">
+                      <p className="text-base font-bold tabular-nums leading-tight">{stats.vacantUnits ?? 0}</p>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Vacant units</p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/30 px-2 py-1.5 text-center">
+                      <p className="text-base font-bold tabular-nums leading-tight">{expiringUnits}</p>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Expiring soon</p>
                     </div>
                   </div>
                   <ScrollArea className="flex-1">

@@ -20,8 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target,
-} from "lucide-react";
+  ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -1938,6 +1937,20 @@ export default function AvailableUnitsPage() {
                             title="Find matching requirements"
                           >
                             <Sparkles className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            onClick={() => {
+                              const pName = propertyMap[u.propertyId]?.name || "the property";
+                              const prompt = `Tell me about unit ${u.unitName || u.id} at ${pName} — current letting status, targeting and anything relevant from the CRM.`;
+                              window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt } }));
+                            }}
+                            data-testid={`button-ask-ai-${u.id}`}
+                            title="Ask ChatBGP about this unit"
+                          >
+                            <MessageSquare className="h-3.5 w-3.5" />
                           </Button>
                           <Button
                             variant="ghost"

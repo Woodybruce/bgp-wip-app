@@ -1322,7 +1322,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               );
             })()}
             {/* Outreach strip — quick-action buttons */}
-            <div className="flex items-center gap-1.5 flex-wrap mb-2 order-1">
+            <div className="flex items-center gap-1.5 flex-wrap mb-2 order-1 empty:hidden">
               {editingDomain ? (
                 <div className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background text-xs">
                   <Globe className="w-3 h-3 text-muted-foreground" />
@@ -1497,7 +1497,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             </div>
 
             {/* Single BGP AI take + Ask ChatBGP question runner — sits above all zones */}
-            <div className="mt-2 order-2 space-y-3">
+            <div className="mt-2 order-2 space-y-3 empty:hidden">
               {currentUser?.role !== "Client" && <BgpTakeStrip companyId={companyId} tab="brand" />}
               {currentUser?.role !== "Client" && <AskChatBGPInline brandName={c.name} />}
             </div>
@@ -1613,7 +1613,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             )}
 
             {/* Key facts row */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm empty:hidden">
               {c.store_count != null && (
                 <div>
                   <div className="text-xs text-muted-foreground flex items-center gap-1">
@@ -4039,7 +4039,7 @@ export function BrandComplianceCard({
                   <div className="text-sm font-semibold leading-tight truncate" title={entity}>{entity}</div>
                 ) : (
                   <div className="text-xs italic text-muted-foreground">
-                    {rescrape.isPending ? "Scraping the brand's T&Cs page…" : "Not found — enter manually or re-run scraper."}
+                    {rescrape.isPending ? "Scraping the brand's T&Cs page…" : bcIsClient ? "Not confirmed yet — BGP is identifying the UK trading entity." : "Not found — enter manually or re-run scraper."}
                   </div>
                 )}
                 {company.companies_house_number && (
@@ -4193,7 +4193,9 @@ export function BrandComplianceCard({
           </div>
           {!hasEntity && (
             <p className="text-[10px] text-muted-foreground italic mt-2 leading-snug">
-              Confirm the UK trading entity above, then we'll work out which APIs to pull (CH, Red Flag, AML PEP) against the right registered name.
+              {bcIsClient
+                ? "BGP is compiling these checks — covenant, accounts and AML screening appear here as they complete."
+                : "Confirm the UK trading entity above, then we'll work out which APIs to pull (CH, Red Flag, AML PEP) against the right registered name."}
             </p>
           )}
         </div>
