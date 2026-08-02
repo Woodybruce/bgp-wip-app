@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-brand-kyc-visible-actions-blocked']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -986,6 +986,28 @@ async function markRound(page, cross) {
     if (await page.getByText('Page not found').count()) throw new Error('brand profile is a dead route for client');
     const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
     if (body.length < 40) throw new Error('brand profile rendered blank for client');
+  });
+
+  // CLAUDE.md decision (2026-08-01): the Compliance & KYC panel STAYS visible
+  // on client brand profiles (landlords need tenant AML/financial standing),
+  // but the staff-only KYC ACTION buttons (run checks) are refused. Assert
+  // both halves on an in-slice brand.
+  await step(page, p, 'client-brand-kyc-visible-actions-blocked', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const honi = '77777777-7777-7777-7777-777777777777';
+      const prof = await fetch(`/api/brand/${honi}/profile`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const kycVisible = prof.ok ? ((await prof.json().catch(() => ({}))).kyc !== undefined) : false;
+      const runChecks = (await fetch('/api/kyc/run-all-checks', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ companyId: honi }) }).catch(() => ({ status: 0 }))).status;
+      const autoKyc = (await fetch(`/api/companies-house/auto-kyc/${honi}`, { method: 'POST', credentials: 'include', headers: auth,
+        body: '{}' }).catch(() => ({ status: 0 }))).status;
+      return { profileOk: prof.ok, kycVisible, runChecks, autoKyc };
+    });
+    if (!r.profileOk) throw new Error('client cannot load an in-slice brand profile');
+    if (!r.kycVisible) throw new Error('KYC/compliance panel data missing from the client brand profile (decision regressed)');
+    if (r.runChecks !== 403) throw new Error(`client ran a staff KYC check (expected 403, got ${r.runChecks})`);
+    if (r.autoKyc !== 403) throw new Error(`client triggered staff auto-KYC (expected 403, got ${r.autoKyc})`);
   });
 
   // The client CRM shows the hospitality/leisure/fitness category slice
