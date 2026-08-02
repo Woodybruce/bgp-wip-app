@@ -1544,6 +1544,8 @@ async function markRound(page, cross) {
       if (!deal) return { skip: true };
       const attempts = [
         ['DELETE deal', await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth })],
+        ['stage-move PUT', await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+          body: JSON.stringify({ status: 'COMPLETED' }) })],
         ['bulk-delete', await fetch('/api/crm/deals/bulk-delete', { method: 'POST', credentials: 'include', headers: auth,
           body: JSON.stringify({ ids: [deal.id] }) })],
         ['bulk-update', await fetch('/api/crm/deals/bulk-update', { method: 'POST', credentials: 'include', headers: auth,
