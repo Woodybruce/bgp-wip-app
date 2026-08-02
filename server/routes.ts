@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { pool } from "./db";
 import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
-import { resolveCompanyScope } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds } from "./company-scope";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -136,7 +136,7 @@ function stripTagTokens(text: string): string {
 // Resolve the entities tagged in a conversation into a compact context
 // block for the group AI, so "@[Bluewater](tag:property/…) what's vacant?"
 // answers from the actual record instead of a cold search.
-async function buildTaggedEntityContext(messages: Array<{ content: string }>): Promise<string> {
+async function buildTaggedEntityContext(messages: Array<{ content: string }>, scopeCompanyId?: string | null): Promise<string> {
   const seen = new Map<string, { type: string; id: string; name: string }>();
   for (const m of messages) {
     for (const match of (m.content || "").matchAll(TAG_TOKEN_REGEX)) {
@@ -145,6 +145,25 @@ async function buildTaggedEntityContext(messages: Array<{ content: string }>): P
     }
   }
   if (seen.size === 0) return "";
+  // Defense-in-depth for client scope: even if a staff member tagged an
+  // out-of-portfolio entity in a shared thread, a client's AI turn must not
+  // get that record's details injected. Drop anything out of scope before we
+  // resolve it. Null scope = internal staff, no filtering.
+  if (scopeCompanyId) {
+    for (const [key, { type, id }] of [...seen.entries()]) {
+      let ok = true;
+      if (type === "property") ok = await isPropertyInScope(scopeCompanyId, id).catch(() => false);
+      else if (type === "deal") ok = await isDealInScope(scopeCompanyId, id).catch(() => false);
+      else if (type === "contact") ok = await isContactInScope(scopeCompanyId, id).catch(() => false);
+      else if (type === "company") ok = id === scopeCompanyId || await isClientVisibleBrand(id, scopeCompanyId).catch(() => false);
+      else if (type === "unit") {
+        const r = await pool.query(`SELECT property_id FROM available_units WHERE id = $1`, [id]).catch(() => ({ rows: [] as any[] }));
+        ok = !!r.rows[0]?.property_id && await isPropertyInScope(scopeCompanyId, r.rows[0].property_id).catch(() => false);
+      }
+      if (!ok) seen.delete(key);
+    }
+    if (seen.size === 0) return "";
+  }
   const lines: string[] = [];
   for (const { type, id, name } of seen.values()) {
     try {
@@ -268,7 +287,8 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
 
     const lastUserMsg = recentMessages.filter(m => m.role === "user").pop()?.content || "";
     const mentionsChatBGP = AI_MENTION_REGEX.test(lastUserMsg);
-    const taggedContext = await buildTaggedEntityContext(recentMessages).catch(() => "");
+    const taggedScope = await resolveCompanyScope(req).catch(() => null);
+    const taggedContext = await buildTaggedEntityContext(recentMessages, taggedScope).catch(() => "");
 
     const groupSystemPrompt = systemPrompt + learnings + calendarContext + taggedContext +
       `\n\nIMPORTANT: You are participating in a GROUP CHAT with multiple team members. ` +
@@ -1709,6 +1729,14 @@ export async function registerRoutes(
       const q = (req.query.q as string || "").trim();
       const results: Array<{ type: string; id: string; name: string; subtitle?: string }> = [];
 
+      // Client accounts (and staff in client-view) only tag entities inside
+      // their own portfolio — the picker must honour the same data segregation
+      // the CRM does, or a landlord client would see other clients' property,
+      // deal and company names in the @ menu. Null scope = internal staff, no
+      // filter. Reuses the canonical scope checks from company-scope.ts.
+      const scopeCompanyId = await resolveCompanyScope(req);
+      const clientExtraBrands = scopeCompanyId ? await getClientExtraBrandIds(scopeCompanyId) : new Set<string>();
+
       const like = `%${escapeLike(q)}%`;
       const userRows = await pool.query(
         `SELECT id, name, department FROM users WHERE ($1 = '' OR name ILIKE $2) ORDER BY name LIMIT 6`,
@@ -1722,10 +1750,10 @@ export async function registerRoutes(
         const [crmResults, unitRows] = await Promise.all([
           storage.crmSearchAll(q).catch(() => []),
           pool.query(
-            `SELECT au.id, au.unit_name, au.marketing_status, p.name as property_name
+            `SELECT au.id, au.unit_name, au.marketing_status, au.property_id, p.name as property_name
              FROM available_units au LEFT JOIN crm_properties p ON au.property_id = p.id
              WHERE au.unit_name ILIKE $1 OR p.name ILIKE $1
-             ORDER BY au.unit_name LIMIT 5`,
+             ORDER BY au.unit_name LIMIT 10`,
             [like]
           ).catch(() => ({ rows: [] as any[] })),
         ]);
@@ -1733,11 +1761,25 @@ export async function registerRoutes(
         const counts: Record<string, number> = {};
         for (const r of crmResults) {
           if (!(r.type in caps)) continue;
+          // Data segregation for client scope: only surface entities the
+          // client is actually allowed to see (their portfolio + client-
+          // visible brands). Internal staff (null scope) skip every check.
+          if (scopeCompanyId) {
+            if (r.type === "property" && !(await isPropertyInScope(scopeCompanyId, r.id))) continue;
+            if (r.type === "deal" && !(await isDealInScope(scopeCompanyId, r.id))) continue;
+            if (r.type === "contact" && !(await isContactInScope(scopeCompanyId, r.id))) continue;
+            if (r.type === "company" && r.id !== scopeCompanyId
+                && !clientExtraBrands.has(r.id)
+                && !(await isClientVisibleBrand(r.id, scopeCompanyId))) continue;
+          }
           counts[r.type] = (counts[r.type] || 0) + 1;
           if (counts[r.type] > caps[r.type]) continue;
           results.push({ type: r.type, id: r.id, name: r.name, subtitle: r.detail });
         }
+        let unitCount = 0;
         for (const u of unitRows.rows) {
+          if (scopeCompanyId && !(u.property_id && await isPropertyInScope(scopeCompanyId, u.property_id))) continue;
+          if (++unitCount > 5) break;
           results.push({
             type: "unit",
             id: u.id,
@@ -1749,26 +1791,34 @@ export async function registerRoutes(
         // SharePoint folders come from the archivist's knowledge-base index —
         // no live Graph call, so the picker stays fast and degrades to nothing
         // when the index is empty. Folder ids carry the URL base64url-encoded
-        // (URLs contain characters the tag token grammar forbids).
+        // (URLs contain characters the tag token grammar forbids). Client
+        // accounts only see folders whose path names their own company — the
+        // index isn't row-level segregated, so fail closed for scoped users.
         try {
-          const folderRows = await pool.query(
-            `SELECT folder_path, MAX(folder_url) as folder_url, COUNT(*) as files FROM (
-               SELECT regexp_replace(file_path, '/[^/]*$', '') AS folder_path, folder_url
-               FROM knowledge_base WHERE folder_url IS NOT NULL AND file_path IS NOT NULL
-             ) t
-             WHERE folder_path ILIKE $1 AND folder_path <> ''
-             GROUP BY folder_path ORDER BY length(folder_path) ASC LIMIT 4`,
-            [like]
-          );
-          for (const f of folderRows.rows) {
-            const segs = String(f.folder_path).split("/").filter(Boolean);
-            const name = segs[segs.length - 1] || f.folder_path;
-            results.push({
-              type: "folder",
-              id: Buffer.from(String(f.folder_url)).toString("base64url"),
-              name,
-              subtitle: `${segs.slice(0, -1).join(" / ")}${segs.length > 1 ? " · " : ""}${f.files} files`,
-            });
+          const folderScope = scopeCompanyId
+            ? await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [scopeCompanyId]).then(r => r.rows[0]?.name || null).catch(() => null)
+            : null;
+          if (!scopeCompanyId || folderScope) {
+            const folderRows = await pool.query(
+              `SELECT folder_path, MAX(folder_url) as folder_url, COUNT(*) as files FROM (
+                 SELECT regexp_replace(file_path, '/[^/]*$', '') AS folder_path, folder_url
+                 FROM knowledge_base WHERE folder_url IS NOT NULL AND file_path IS NOT NULL
+               ) t
+               WHERE folder_path ILIKE $1 AND folder_path <> ''
+                 AND ($2::text IS NULL OR folder_path ILIKE '%' || $2 || '%')
+               GROUP BY folder_path ORDER BY length(folder_path) ASC LIMIT 4`,
+              [like, folderScope]
+            );
+            for (const f of folderRows.rows) {
+              const segs = String(f.folder_path).split("/").filter(Boolean);
+              const name = segs[segs.length - 1] || f.folder_path;
+              results.push({
+                type: "folder",
+                id: Buffer.from(String(f.folder_url)).toString("base64url"),
+                name,
+                subtitle: `${segs.slice(0, -1).join(" / ")}${segs.length > 1 ? " · " : ""}${f.files} files`,
+              });
+            }
           }
         } catch {}
       }

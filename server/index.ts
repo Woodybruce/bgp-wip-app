@@ -3340,6 +3340,11 @@ app.use("/api/branding/assets", express.static(
     "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",
     "/api/available-units", "/api/tasks",
     "/api/chat/threads", "/api/chat-media/", "/api/brand-logo/",
+    // Smart-tag picker + "conversations about X" — both company-scoped for
+    // clients server-side (tag-search filters to the caller's own portfolio;
+    // threads-tagging is member-scoped), so a Landsec login only ever sees
+    // its own entities and its own threads.
+    "/api/chat/tag-search", "/api/chat/threads-tagging",
     // Harmless infra reads every logged-in browser makes: the public web-push
     // VAPID key (push writes are already client-allowed) and aggregate logo
     // cache stats used by the shared company-logo helper.
