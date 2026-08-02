@@ -23,6 +23,7 @@ psql -U bgp -h localhost bgp -f qa/seed-personas.sql >/dev/null 2>&1 || echo "[q
 psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM crm_deals    WHERE name LIKE 'QA-R%' OR name LIKE '%PROBE%';
   DELETE FROM crm_contacts WHERE name LIKE 'QA Contact%';
+  DELETE FROM user_tasks   WHERE title LIKE 'QA-PROBE task%';
   DELETE FROM unit_target_operators WHERE brief_id IN (SELECT id FROM unit_briefs WHERE title LIKE 'QA Brief%');
   DELETE FROM unit_briefs WHERE title LIKE 'QA Brief%';
   DELETE FROM image_studio_images WHERE file_name = 'qa-unit-photo.jpg';

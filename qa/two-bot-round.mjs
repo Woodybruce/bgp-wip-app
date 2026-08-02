@@ -380,6 +380,27 @@ async function victoriaRound(page, cross) {
     if (r.stillThere) throw new Error('deleted contact still present in the CRM list');
   });
 
+  // Staff task board: create → complete (PATCH) → delete round-trips, and the
+  // task is user-scoped (a completed then deleted task leaves no residue).
+  await step(page, p, 'staff-task-lifecycle', async () => {
+    const title = `QA-PROBE task R${ROUND}`;
+    const r = await page.evaluate(async (needle) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const create = await fetch('/api/tasks', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ title: needle }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const made = await create.json();
+      const done = await fetch(`/api/tasks/${made.id}`, { method: 'PATCH', credentials: 'include', headers: auth, body: JSON.stringify({ completed: true }) });
+      if (!done.ok) return { ok: false, why: `complete ${done.status}` };
+      const del = await fetch(`/api/tasks/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      if (!del.ok) return { ok: false, why: `delete ${del.status}` };
+      const list = await (await fetch('/api/tasks', { headers: auth })).json();
+      const rows = Array.isArray(list) ? list : (list?.data || []);
+      return { ok: true, residue: rows.some((t) => t.title === needle) };
+    }, title);
+    if (!r.ok) throw new Error(`staff task lifecycle failed (${r.why})`);
+    if (r.residue) throw new Error('deleted task still present in the task list');
+  });
+
   // Agent adds a contact ON the Landsec company — the client must then see it
   // in their own CRM (agent→client contact parity). Persisted (swept by the
   // round cleanup's 'QA Contact%' purge); the client-side check runs later.
