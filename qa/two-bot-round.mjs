@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -972,6 +972,24 @@ async function markRound(page, cross) {
   // Client opens the viewings + offers panels on one of their own units — the
   // leasing-activity surfaces they'd actually check. Must return data (not
   // 4xx) for a unit in their scope.
+  // Requirement matches on the client's OWN unit are readable (terminal side
+  // opened these — slice-filtered), but a foreign unit's matches must refuse.
+  await step(page, p, 'client-unit-matches', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = Array.isArray(units) ? units[0] : null;
+      if (!unit) return { skip: true };
+      const own = await fetch(`/api/available-units/matches/${unit.id}`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const ownArray = own.ok ? Array.isArray(await own.json().catch(() => null)) : false;
+      const foreign = await fetch('/api/available-units/matches/99999999-3333-3333-3333-333333333333', { headers: auth }).catch(() => ({ status: 0, ok: false }));
+      return { ownOk: own.ok, ownArray, foreignStatus: foreign.status };
+    });
+    if (r.skip) return;
+    if (!r.ownOk || !r.ownArray) throw new Error('client cannot read requirement matches on their own unit');
+    if (r.foreignStatus !== 403) throw new Error(`client read matches on a foreign unit (expected 403, got ${r.foreignStatus})`);
+  });
+
   await step(page, p, 'client-viewings-offers', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
