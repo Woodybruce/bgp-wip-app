@@ -91,6 +91,35 @@ export async function getClientExtraBrandIds(scopeCompanyId: string | null | und
   return new Set<string>(((r.rows[0]?.crm_extra_brand_ids as string[]) || []).filter(Boolean));
 }
 
+// The people a client account may see and message — NOT the whole BGP staff
+// directory. Three sources, unioned: the BGP team assigned to this client on
+// the org chart (crm_client_team_members), agents linked to the client's
+// properties, and anyone on the client's own team (fellow client logins and
+// staff share users.team with the client team name). Fails closed: unknown
+// scope → empty set (the caller still lets the requester see themself).
+export async function getClientVisibleUserIds(scopeCompanyId: string | null | undefined): Promise<Set<string>> {
+  const ids = new Set<string>();
+  if (!scopeCompanyId) return ids;
+  try {
+    const r = await pool.query(
+      `SELECT user_id FROM crm_client_team_members WHERE client_company_id = $1
+       UNION
+       SELECT user_id FROM crm_property_agents WHERE property_id IN (
+         SELECT id FROM crm_properties WHERE landlord_id = $1
+         UNION
+         SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+       UNION
+       SELECT u.id FROM users u
+         JOIN crm_companies c ON c.id = $1
+        WHERE LOWER(u.team) = LOWER(c.name)
+           OR c.name ILIKE ANY(COALESCE(u.additional_teams, '{}'))`,
+      [scopeCompanyId]
+    );
+    for (const row of r.rows) if (row.user_id) ids.add(row.user_id);
+  } catch {}
+  return ids;
+}
+
 // SQL fragment for "this crm_companies row is a client-visible brand":
 // slice categories + the client's own extras. Safe to inline — category
 // names are our own constants, extra ids are validated as uuids. Pass the

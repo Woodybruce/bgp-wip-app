@@ -1990,7 +1990,7 @@ function LeasingSection({
             ))}
           </div>
         ) : (
-          <ScrollableTable minWidth={2400}>
+          <ScrollableTable minWidth={2580}>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -2016,7 +2016,7 @@ function LeasingSection({
                       />
                     ) : "Use"}
                   </TableHead>
-                  <TableHead className="min-w-[100px]">
+                  <TableHead className="min-w-[150px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Requirement Type"
@@ -2036,7 +2036,7 @@ function LeasingSection({
                       />
                     ) : "Size"}
                   </TableHead>
-                  <TableHead className="min-w-[150px]">
+                  <TableHead className="min-w-[280px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Req. Locations"

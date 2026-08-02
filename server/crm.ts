@@ -1944,13 +1944,34 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const filters = {
         search: req.query.search as string | undefined,
         groupName: req.query.groupName as string | undefined,
-        companyId: scopeCompanyId || (req.query.companyId as string | undefined),
+        // Scoped users don't get the companyId narrowing here — their
+        // visibility is the wider own-company + brand-slice set, applied below.
+        companyId: scopeCompanyId ? undefined : (req.query.companyId as string | undefined),
         contactType: req.query.contactType as string | undefined,
         bgpAllocation: req.query.bgpAllocation as string | undefined,
         page,
         limit,
       };
       const contacts = await storage.getCrmContacts(filters);
+      if (scopeCompanyId) {
+        // A client sees contacts at their own company AND at client-visible
+        // brands (hospitality slice + self-added) — the same set the contact
+        // detail GET and create/amend writes allow. Without the slice, the
+        // Requirements board's Principal/Agent Contact columns render "—"
+        // for every brand contact.
+        // Agent-company contacts are included too: the requirements board a
+        // client sees names the acquiring agent per requirement, and agents
+        // are market-facing (not another client's private data).
+        const slice = await clientBrandSliceSql(scopeCompanyId);
+        const allowedRows = await pool.query(
+          `SELECT id FROM crm_companies WHERE id = $1 OR company_type = 'Agent' OR ${slice}`,
+          [scopeCompanyId]
+        );
+        const allowedCompanyIds = new Set(allowedRows.rows.map((r: any) => r.id));
+        const arr = Array.isArray(contacts) ? contacts : contacts.data;
+        const filtered = arr.filter((c: any) => c.companyId && allowedCompanyIds.has(c.companyId));
+        return res.json(Array.isArray(contacts) ? filtered : { ...contacts, data: filtered });
+      }
       res.json(contacts);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -2924,6 +2945,28 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         limit,
       };
       const result = await storage.getCrmDeals(filters);
+      // "Last Touch" fallback: last_interaction is only written when the AI
+      // activity curator runs on a deal's page, so most rows would show "—".
+      // Overlay the latest deal event (stage changes, HoTs, docs — real
+      // actions), then updated_at, so the board shows genuine recency for
+      // every deal without waiting for a curation pass.
+      try {
+        const eventRows = await pool.query(
+          `SELECT deal_id, MAX(occurred_at) AS latest FROM deal_events GROUP BY deal_id`
+        );
+        const latestEvent = new Map<string, string>(
+          eventRows.rows.map((r: any) => [r.deal_id, r.latest?.toISOString?.() || String(r.latest)])
+        );
+        const overlay = (d: any) => {
+          if (!d.lastInteraction) {
+            d.lastInteraction = latestEvent.get(d.id)
+              || (d.updatedAt ? new Date(d.updatedAt).toISOString() : null);
+          }
+          return d;
+        };
+        const arr0 = Array.isArray(result) ? result : result.data;
+        arr0.forEach(overlay);
+      } catch {}
       if (scopeCompanyId) {
         const linkedResult = await pool.query(
           `SELECT deal_id FROM crm_company_deals WHERE company_id = $1`,

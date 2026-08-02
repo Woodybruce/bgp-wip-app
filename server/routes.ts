@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { pool } from "./db";
 import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
-import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds } from "./company-scope";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -1077,10 +1077,16 @@ export async function registerRoutes(
   app.get("/api/users", requireAuth, async (req, res) => {
     try {
       const allUsers = await storage.getAllUsers();
-      // Client logins only need id+name (agent chips/colors on their boards) —
-      // not the staff directory with emails/teams. (Landsec audit.)
-      if (await (await import("./company-scope")).isClientRequestUser(req)) {
-        return res.json(allUsers.filter(u => u.isActive !== false).map(u => ({ id: u.id, name: u.name })));
+      // Client logins (and staff in client-view) see only the people working
+      // on their account — assigned client team, property agents, own team —
+      // not the whole BGP staff directory. id+name only, no emails/teams.
+      const usersScope = await resolveCompanyScope(req);
+      if (usersScope) {
+        const visible = await getClientVisibleUserIds(usersScope);
+        const me = req.session.userId || (req as any).tokenUserId;
+        return res.json(allUsers
+          .filter(u => u.isActive !== false && (u.id === me || visible.has(u.id)))
+          .map(u => ({ id: u.id, name: u.name })));
       }
       res.json(allUsers.map(u => ({ id: u.id, name: u.name, username: u.username, email: u.email, role: u.role, department: u.department, team: u.team, additionalTeams: u.additionalTeams || [], profilePicUrl: u.profilePicUrl || null, isActive: u.isActive !== false })));
     } catch (err: any) {
@@ -1754,10 +1760,20 @@ export async function registerRoutes(
       const clientExtraBrands = scopeCompanyId ? await getClientExtraBrandIds(scopeCompanyId) : new Set<string>();
 
       const like = `%${escapeLike(q)}%`;
-      const userRows = await pool.query(
-        `SELECT id, name, department FROM users WHERE ($1 = '' OR name ILIKE $2) ORDER BY name LIMIT 6`,
-        [q, like]
-      );
+      // Scoped accounts only tag people working on their account (assigned
+      // client team, property agents, own team) — same rule as /api/users.
+      const taggableUserIds = scopeCompanyId
+        ? [...(await getClientVisibleUserIds(scopeCompanyId)), req.session.userId || (req as any).tokenUserId].filter(Boolean)
+        : null;
+      const userRows = taggableUserIds
+        ? await pool.query(
+            `SELECT id, name, department FROM users WHERE ($1 = '' OR name ILIKE $2) AND id = ANY($3) ORDER BY name LIMIT 6`,
+            [q, like, taggableUserIds]
+          )
+        : await pool.query(
+            `SELECT id, name, department FROM users WHERE ($1 = '' OR name ILIKE $2) ORDER BY name LIMIT 6`,
+            [q, like]
+          );
       for (const u of userRows.rows) {
         results.push({ type: "user", id: u.id, name: u.name, subtitle: u.department || undefined });
       }
