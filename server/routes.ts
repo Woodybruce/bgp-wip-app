@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { pool } from "./db";
 import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
-import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds } from "./company-scope";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -1077,10 +1077,16 @@ export async function registerRoutes(
   app.get("/api/users", requireAuth, async (req, res) => {
     try {
       const allUsers = await storage.getAllUsers();
-      // Client logins only need id+name (agent chips/colors on their boards) —
-      // not the staff directory with emails/teams. (Landsec audit.)
-      if (await (await import("./company-scope")).isClientRequestUser(req)) {
-        return res.json(allUsers.filter(u => u.isActive !== false).map(u => ({ id: u.id, name: u.name })));
+      // Client logins (and staff in client-view) see only the people working
+      // on their account — assigned client team, property agents, own team —
+      // not the whole BGP staff directory. id+name only, no emails/teams.
+      const usersScope = await resolveCompanyScope(req);
+      if (usersScope) {
+        const visible = await getClientVisibleUserIds(usersScope);
+        const me = req.session.userId || (req as any).tokenUserId;
+        return res.json(allUsers
+          .filter(u => u.isActive !== false && (u.id === me || visible.has(u.id)))
+          .map(u => ({ id: u.id, name: u.name })));
       }
       res.json(allUsers.map(u => ({ id: u.id, name: u.name, username: u.username, email: u.email, role: u.role, department: u.department, team: u.team, additionalTeams: u.additionalTeams || [], profilePicUrl: u.profilePicUrl || null, isActive: u.isActive !== false })));
     } catch (err: any) {
@@ -1757,10 +1763,20 @@ export async function registerRoutes(
       const clientExtraBrands = scopeCompanyId ? await getClientExtraBrandIds(scopeCompanyId) : new Set<string>();
 
       const like = `%${escapeLike(q)}%`;
-      const userRows = await pool.query(
-        `SELECT id, name, department FROM users WHERE ($1 = '' OR name ILIKE $2) ORDER BY name LIMIT 6`,
-        [q, like]
-      );
+      // Scoped accounts only tag people working on their account (assigned
+      // client team, property agents, own team) — same rule as /api/users.
+      const taggableUserIds = scopeCompanyId
+        ? [...(await getClientVisibleUserIds(scopeCompanyId)), req.session.userId || (req as any).tokenUserId].filter(Boolean)
+        : null;
+      const userRows = taggableUserIds
+        ? await pool.query(
+            `SELECT id, name, department FROM users WHERE ($1 = '' OR name ILIKE $2) AND id = ANY($3) ORDER BY name LIMIT 6`,
+            [q, like, taggableUserIds]
+          )
+        : await pool.query(
+            `SELECT id, name, department FROM users WHERE ($1 = '' OR name ILIKE $2) ORDER BY name LIMIT 6`,
+            [q, like]
+          );
       for (const u of userRows.rows) {
         results.push({ type: "user", id: u.id, name: u.name, subtitle: u.department || undefined });
       }
@@ -4847,9 +4863,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     return r.rows[0]?.property_id ?? null;
   }
 
-  app.post("/api/available-units/:id/brief", requireAuth, async (req: any, res) => {
+  // Shared by the unit page route and the requirements-board "Fits" flow
+  // (clients reach it via POST /api/unit-briefs, which is on their write
+  // allowlist; the scope check inside rejects units outside their portfolio).
+  const createBriefForUnit = async (req: any, res: any, unitId: string) => {
     try {
-      const unit = await storage.getAvailableUnit(String(req.params.id));
+      const unit = await storage.getAvailableUnit(unitId);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
       if (await assertUnitInClientScope(req, unit.propertyId)) {
         return res.status(403).json({ message: "Not available for client accounts" });
@@ -4889,6 +4908,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to create brief" });
     }
+  };
+  app.post("/api/available-units/:id/brief", requireAuth, (req: any, res) =>
+    createBriefForUnit(req, res, String(req.params.id)));
+  app.post("/api/unit-briefs", requireAuth, (req: any, res) => {
+    if (!req.body?.unitId) return res.status(400).json({ message: "unitId is required" });
+    return createBriefForUnit(req, res, String(req.body.unitId));
   });
 
   app.patch("/api/unit-briefs/:id", requireAuth, async (req: any, res) => {
