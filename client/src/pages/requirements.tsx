@@ -2678,7 +2678,6 @@ function LeasingFormDialog({
     size: Array.isArray(defaultValues?.size) ? defaultValues.size : defaultValues?.size ? [defaultValues.size as string] : [],
     requirementLocations: Array.isArray(defaultValues?.requirementLocations) ? defaultValues.requirementLocations : defaultValues?.requirementLocations ? [defaultValues.requirementLocations as string] : [],
     locationData: defaultValues?.locationData || null,
-    extract: defaultValues?.extract || "",
     comments: defaultValues?.comments || "",
   });
 
@@ -2897,36 +2896,13 @@ function LeasingFormDialog({
               onChange={(data) => setForm({ ...form, locationData: data })}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>Extract</Label>
-              <Select value={form.extract || undefined} onValueChange={(v) => setForm({ ...form, extract: v === "__clear__" ? "" : v })}>
-                <SelectTrigger data-testid="select-leasing-extract">
-                  <SelectValue placeholder="Select" />
-                </SelectTrigger>
-                <SelectContent>
-                  {CRM_OPTIONS.reqLeasingExtract.map((e) => (
-                    <SelectItem key={e} value={e}>
-                      <div className="flex items-center gap-2">
-                        <div className={`w-2 h-2 rounded-full ${CRM_OPTIONS.reqLeasingExtractColors[e] || "bg-gray-400"}`} />
-                        {e}
-                      </div>
-                    </SelectItem>
-                  ))}
-                  <SelectItem value="__clear__">
-                    <span className="text-muted-foreground">Clear</span>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Comments</Label>
-              <Textarea
-                value={form.comments}
-                onChange={(e) => setForm({ ...form, comments: e.target.value })}
-                data-testid="input-leasing-comments"
-              />
-            </div>
+          <div className="space-y-2">
+            <Label>Comments</Label>
+            <Textarea
+              value={form.comments}
+              onChange={(e) => setForm({ ...form, comments: e.target.value })}
+              data-testid="input-leasing-comments"
+            />
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -3122,8 +3098,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
         return (
           item.name.toLowerCase().includes(s) ||
           (Array.isArray(item.use) ? item.use.join(" ") : (item.use || "")).toLowerCase().includes(s) ||
-          item.locations?.toLowerCase().includes(s) ||
-          item.extract?.toLowerCase().includes(s)
+          item.locations?.toLowerCase().includes(s)
         );
       }
       return true;
@@ -3589,7 +3564,6 @@ function InvestmentFormDialog({
     requirementType: Array.isArray(defaultValues?.requirementType) ? defaultValues.requirementType.join(", ") : (defaultValues?.requirementType || ""),
     size: Array.isArray(defaultValues?.size) ? defaultValues.size.join(", ") : (defaultValues?.size || ""),
     locations: defaultValues?.locations || "",
-    extract: defaultValues?.extract || "",
     contactName: defaultValues?.contactName || "",
     contactEmail: defaultValues?.contactEmail || "",
     contactMobile: defaultValues?.contactMobile || "",
@@ -3697,14 +3671,6 @@ function InvestmentFormDialog({
               value={form.locations}
               onChange={(e) => setForm({ ...form, locations: e.target.value })}
               data-testid="input-invest-locations"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Extract</Label>
-            <Textarea
-              value={form.extract}
-              onChange={(e) => setForm({ ...form, extract: e.target.value })}
-              data-testid="input-invest-extract"
             />
           </div>
           <DialogFooter>
