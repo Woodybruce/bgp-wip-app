@@ -1280,7 +1280,8 @@ function IntelligenceFooter({ connected }: { connected: boolean }) {
     queryKey: ["/api/microsoft/calendar/insights"],
     staleTime: 5 * 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
-    enabled: !ifIsClient,
+    // Client viewers get the company-scoped insights variant server-side —
+    // the endpoint is no longer staff-only, so don't gate the query.
   });
 
   const insights = insightsData?.insights || [];
