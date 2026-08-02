@@ -278,12 +278,21 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       chatbgp.getEmailAndCalendarContext(req).catch(() => ""),
     ]);
 
-    // Client logins get NO tools in the group-AI path either — this loop is
-    // separate from the main chat handler's clientChatGuard. (Landsec audit.)
-    const groupIsClient = await (await import("./company-scope")).isClientRequestUser(req).catch(() => true);
-    const groupTools = groupIsClient ? [] : ((allTools as any).tools?.filter((t: any) =>
-      GROUP_CHAT_TOOLS.includes(t.function?.name)
-    ) || []);
+    // Client logins get the SAME agentic reach in group chat as they do in the
+    // main ChatBGP window — they can drive their own CRM (search, create/update
+    // their deals, contacts, companies, properties, viewings, requirements,
+    // navigate) — just filtered through isToolAllowedForClient so BGP-internal
+    // tools (SharePoint, email, raw SQL, WIP/Xero, destructive ops) stay off.
+    // Cross-client data stays segregated at the query layer (resolveCompanyScope).
+    const { isClientRequestUser } = await import("./company-scope");
+    const { isToolAllowedForClient } = await import("./chatbgp");
+    const groupIsClient = await isClientRequestUser(req).catch(() => true);
+    const groupTools = ((allTools as any).tools?.filter((t: any) => {
+      const name = t.function?.name;
+      if (!GROUP_CHAT_TOOLS.includes(name)) return false;
+      if (groupIsClient && !isToolAllowedForClient(name)) return false;
+      return true;
+    }) || []);
 
     const lastUserMsg = recentMessages.filter(m => m.role === "user").pop()?.content || "";
     const mentionsChatBGP = AI_MENTION_REGEX.test(lastUserMsg);
@@ -311,10 +320,16 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
         ? `9. The user mentioned you by name — you MUST respond. Do NOT skip.`
         : `9. Only respond with exactly __SKIP__ if the conversation is clearly a private side-conversation between team members that has nothing to do with work, property, or anything you could help with. When in doubt, respond — it's better to be helpful than silent.`);
 
-    console.log(`[ai-group] Prepared in ${Date.now() - startTime}ms (${groupTools.length} tools, mention=${mentionsChatBGP})`);
+    // Group chat answers on Fable 5 by default (same as the main ChatBGP
+    // window), honouring any per-thread /opus or /sonnet preference. callClaude
+    // applies the Fable safety-classifier params + Opus fallback automatically.
+    const { resolveChatModel } = await import("./chatbgp-model-router");
+    const { model: groupModel } = await resolveChatModel({ threadId }).catch(() => ({ model: "claude-fable-5" }));
+
+    console.log(`[ai-group] Prepared in ${Date.now() - startTime}ms (${groupTools.length} tools, mention=${mentionsChatBGP}, model=${groupModel})`);
 
     const completionOptions: any = {
-      model: "claude-sonnet-4-6",
+      model: groupModel,
       messages: [
         { role: "system", content: groupSystemPrompt },
         // Tag tokens read as line noise to the model — send plain @Name;
