@@ -624,7 +624,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
         const ids = item.bgpContactUserIds || (item.bgpContactUserId ? [item.bgpContactUserId] : []);
         if (ids.length > 0 && !ids.some(id => teamUserIds.has(id))) return false;
       }
-      if (groupFilter !== "all" && item.groupName !== groupFilter) return false;
+      if (groupFilter !== "all" && (item.groupName || "Ungrouped") !== groupFilter) return false;
       if (columnFilters.status?.length && !columnFilters.status.includes(item.status || "")) return false;
       if (columnFilters.use?.length) {
         const vals = Array.isArray(item.use) ? item.use : [];
@@ -685,7 +685,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
-        {Object.entries(groupCounts).map(([group, count]) => {
+        {Object.entries(groupCounts).filter(([group]) => group !== "Ungrouped").map(([group, count]) => {
           const groupColor = group === "Active" ? "bg-emerald-500" :
             group === "Prospect" ? "bg-blue-500" :
             group === "Target" ? "bg-amber-500" :
@@ -3109,7 +3109,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
         const ids = (item as any).bgpContactUserIds || [];
         if (ids.length > 0 && !ids.some((id: string) => teamUserIds.has(id))) return false;
       }
-      if (groupFilter !== "all" && item.groupName !== groupFilter) return false;
+      if (groupFilter !== "all" && (item.groupName || "Ungrouped") !== groupFilter) return false;
       if (columnFilters.group?.length && !columnFilters.group.includes(item.groupName || "")) return false;
       if (columnFilters.use?.length) {
         const vals = Array.isArray(item.use) ? item.use : [];
@@ -3164,7 +3164,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
-        {Object.entries(groupCounts).map(([group, count]) => {
+        {Object.entries(groupCounts).filter(([group]) => group !== "Ungrouped").map(([group, count]) => {
           const badgeColor = group === "Institutional" ? "bg-indigo-500" :
             group === "Active Buyers" ? "bg-emerald-500" :
             group === "Target Buyers" ? "bg-amber-500" :
