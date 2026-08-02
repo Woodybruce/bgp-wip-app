@@ -423,6 +423,31 @@ async function victoriaRound(page, cross) {
     cross.contactRole = editedRole;
   });
 
+  // Agent authors an operator-targeting brief (+ a target) on a Landsec unit;
+  // the client round must then see the same brief on their own unit
+  // (agent->client brief parity). Kept alive; swept by 'QA Brief%' cleanup.
+  await step(page, p, 'agent-create-unit-brief', async () => {
+    const title = `QA Brief AgentParity R${ROUND}`;
+    const r = await page.evaluate(async (needle) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const bluewater = '22222222-2222-2222-2222-222222222222';
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = (Array.isArray(units) ? units : []).find((u) => String(u.propertyId) === bluewater);
+      if (!unit) return { ok: false, why: 'no Landsec unit found' };
+      const briefRes = await fetch(`/api/available-units/${unit.id}/brief`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ title: needle, brief: 'Agent-authored targeting brief' }) });
+      if (!briefRes.ok) return { ok: false, why: `brief create ${briefRes.status}` };
+      const brief = await briefRes.json();
+      await fetch(`/api/unit-briefs/${brief.id}/targets`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ operatorName: 'QA Target Operator', rationale: 'fits the pitch' }) }).catch(() => {});
+      return { ok: true, unitId: unit.id, briefId: brief.id };
+    }, title);
+    if (!r.ok) throw new Error(`agent could not author a unit brief (${r.why})`);
+    cross.briefUnitId = r.unitId;
+    cross.briefStamp = title;
+    cross.briefId = r.briefId;
+  });
+
   // 4h. Staff ChatBGP panel suggestion chips load into the composer.
   await step(page, p, 'staff-chat-suggestions', async () => {
     await page.goto(`${BASE}/`);
@@ -1424,6 +1449,22 @@ async function markRound(page, cross) {
     }, [cross.contactStamp, cross.contactRole]);
     if (!r.seen) throw new Error("agent-added Landsec contact not visible in the client's CRM");
     if (cross.contactRole && !r.roleMatches) throw new Error("agent's contact edit (role) not reflected in the client's CRM");
+  });
+
+  // Parity for briefs: the operator-targeting brief Victoria authored on a
+  // Landsec unit must be readable by the client on that same unit.
+  await step(page, p, 'client-sees-agent-brief', async () => {
+    if (!cross.briefId || !cross.briefUnitId) return;
+    const r = await page.evaluate(async (args) => {
+      const [unitId, briefId, stamp] = args;
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch(`/api/available-units/${unitId}/brief`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const b = await res.json().catch(() => null);
+      return { ok: true, matches: !!b && (b.id === briefId || JSON.stringify(b).includes(stamp)) };
+    }, [cross.briefUnitId, cross.briefId, cross.briefStamp]);
+    if (!r.ok) throw new Error(`client cannot read the agent's brief on their own unit (${r.status})`);
+    if (!r.matches) throw new Error("agent-authored brief not visible on the client's unit");
   });
 
   // Parity for offers: the offer Victoria logged on a Landsec unit must show
