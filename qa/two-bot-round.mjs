@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -279,12 +279,10 @@ async function victoriaRound(page, cross) {
     if (!r.ok) throw new Error(r.why);
     if (!r.found) throw new Error('created requirement absent from the requirements board');
     cross.reqStamp = stamp;
-    if (r.id) {
-      await page.evaluate(async (id) => {
-        await fetch(`/api/crm/requirements-leasing/${id}`, { method: 'DELETE', credentials: 'include',
-          headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
-      }, r.id);
-    }
+    // Keep the requirement ALIVE so the client round can prove API-level
+    // gating against a live row (not one already deleted). Swept next round
+    // by the run-round.sh 'QA-REQ%' cleanup.
+    cross.reqId = r.id || null;
   });
 
   // 4d. Calendar team pills: picking a CLIENT team must filter the board to
@@ -1096,6 +1094,20 @@ async function markRound(page, cross) {
   // brand unless it's theirs — guards requirements-board scoping.
   await step(page, p, 'client-requirement-scoping', async () => {
     if (!cross.reqStamp) return; // agent step didn't run
+    // API-level: the live requirement must be absent from the client's list
+    // AND unreadable by id (the requirements book is BGP intel).
+    const api = await page.evaluate(async (args) => {
+      const [stamp, id] = args;
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = await (await fetch('/api/crm/requirements-leasing', { headers: auth })).json().catch(() => []);
+      const rows = Array.isArray(list) ? list : (list?.data || []);
+      const inList = rows.some((r) => JSON.stringify(r).includes(stamp));
+      const byId = id ? (await fetch(`/api/crm/requirements-leasing/${id}`, { headers: auth }).catch(() => ({ status: 0 }))).status : null;
+      return { inList, byId };
+    }, [cross.reqStamp, cross.reqId]);
+    if (api.inList) throw new Error(`agent-only requirement "${cross.reqStamp}" leaked into the client's requirements list`);
+    if (cross.reqId && api.byId !== 404 && api.byId !== 403) throw new Error(`client read a BGP-intel requirement by id (expected 404/403, got ${api.byId})`);
+    // UI: the stamp must not render on the client's requirements page either.
     await page.goto(`${BASE}/requirements`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2500);
