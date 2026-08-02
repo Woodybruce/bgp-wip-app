@@ -284,10 +284,11 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     // navigate) — just filtered through isToolAllowedForClient so BGP-internal
     // tools (SharePoint, email, raw SQL, WIP/Xero, destructive ops) stay off.
     // Cross-client data stays segregated at the query layer (resolveCompanyScope).
-    const { isClientRequestUser } = await import("./company-scope");
+    const { isClientRequestUser, resolveCompanyScope: resolveGroupScope } = await import("./company-scope");
     const { isToolAllowedForClient } = await import("./chatbgp");
     const groupIsClient = await isClientRequestUser(req).catch(() => true);
-    const groupTools = ((allTools as any).tools?.filter((t: any) => {
+    const groupClientScope = groupIsClient ? await resolveGroupScope(req).catch(() => null) : null;
+    const groupTools = (groupIsClient && !groupClientScope) ? [] : ((allTools as any).tools?.filter((t: any) => {
       const name = t.function?.name;
       if (!GROUP_CHAT_TOOLS.includes(name)) return false;
       if (groupIsClient && !isToolAllowedForClient(name)) return false;
