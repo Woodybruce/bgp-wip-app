@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -821,6 +821,31 @@ async function markRound(page, cross) {
     // client-allowed engage endpoint).
     const save = page.locator('[data-testid^="button-save-"]').first();
     if (await save.count()) { await save.click().catch(() => {}); await page.waitForTimeout(600); }
+  });
+
+  // News is READ + per-user engage for clients, but the feed MANAGEMENT
+  // (tags, sources, retag, brand-feed generation, scrape trigger) is BGP
+  // intel and must stay staff-only. engage stays allowed.
+  await step(page, p, 'client-news-write-guards', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const probe = async (url) => (await fetch(url, { method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status;
+      // engage needs a valid payload; the staff writes 403 at the gateway
+      // before any body validation, so an empty body is fine for those.
+      const engage = (await fetch('/api/news-feed/engage', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ articleId: 'qa-probe', action: 'dismiss' }) }).catch(() => ({ status: 0 }))).status;
+      const staffWrites = {
+        fetch: await probe('/api/news-feed/fetch'),
+        tags: await probe('/api/news-feed/tags'),
+        retag: await probe('/api/news-feed/retag'),
+        sources: await probe('/api/news-feed/sources'),
+        ensureBrandFeeds: await probe('/api/news-feed/ensure-brand-feeds'),
+      };
+      return { engage, staffWrites };
+    });
+    if (!(r.engage >= 200 && r.engage < 300)) throw new Error(`client news engage blocked (${r.engage})`);
+    const leaked = Object.entries(r.staffWrites).filter(([, v]) => v >= 200 && v < 300).map(([k]) => k);
+    if (leaked.length) throw new Error(`client allowed a staff-only news-feed write: ${leaked.join(', ')}`);
   });
 
   // Client requirements page renders without a dead route / blank / staff
