@@ -4860,9 +4860,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     return r.rows[0]?.property_id ?? null;
   }
 
-  app.post("/api/available-units/:id/brief", requireAuth, async (req: any, res) => {
+  // Shared by the unit page route and the requirements-board "Fits" flow
+  // (clients reach it via POST /api/unit-briefs, which is on their write
+  // allowlist; the scope check inside rejects units outside their portfolio).
+  const createBriefForUnit = async (req: any, res: any, unitId: string) => {
     try {
-      const unit = await storage.getAvailableUnit(String(req.params.id));
+      const unit = await storage.getAvailableUnit(unitId);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
       if (await assertUnitInClientScope(req, unit.propertyId)) {
         return res.status(403).json({ message: "Not available for client accounts" });
@@ -4902,6 +4905,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to create brief" });
     }
+  };
+  app.post("/api/available-units/:id/brief", requireAuth, (req: any, res) =>
+    createBriefForUnit(req, res, String(req.params.id)));
+  app.post("/api/unit-briefs", requireAuth, (req: any, res) => {
+    if (!req.body?.unitId) return res.status(400).json({ message: "unitId is required" });
+    return createBriefForUnit(req, res, String(req.body.unitId));
   });
 
   app.patch("/api/unit-briefs/:id", requireAuth, async (req: any, res) => {

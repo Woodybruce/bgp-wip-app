@@ -1747,6 +1747,16 @@ export function setupCrmRoutes(app: Express) {
   app.post("/api/crm/companies", async (req, res) => {
     try {
       const parsed = insertCrmCompanySchema.parse(req.body);
+      // Clients may create BRANDS only — company_type must sit in the client
+      // CRM category slice, so a client login can't mint landlord/agent rows.
+      const createScope = await resolveCompanyScope(req);
+      if (createScope) {
+        const { isClientCrmCategory } = await import("@shared/tenant-categories");
+        if (!isClientCrmCategory(parsed.companyType || "")) {
+          return res.status(403).json({ error: "Client accounts can only create tenant brands" });
+        }
+        (parsed as any).isTrackedBrand = true;
+      }
       const company = await storage.createCrmCompany(parsed);
       res.status(201).json(company);
     } catch (e: any) { res.status(400).json({ error: e.message }); }
@@ -1754,6 +1764,12 @@ export function setupCrmRoutes(app: Express) {
 
   app.put("/api/crm/companies/:id", async (req, res) => {
     try {
+      // Clients may only edit their own company row or a client-visible brand.
+      const updateScope = await resolveCompanyScope(req);
+      if (updateScope && req.params.id !== updateScope
+          && !(await isClientVisibleBrand(req.params.id, updateScope))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
       const company = await storage.updateCrmCompany(req.params.id, req.body);
       res.json(company);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -4338,6 +4354,75 @@ Return a JSON object with these fields (use null for any field you cannot find):
       console.error("[hots-parser] Error:", err.message);
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // ── Requirement → vacancy matching (the "Fits" column) ────────────────
+  // Cross active leasing requirements against marketable units. Size fit is
+  // required (units without sqft can't match honestly, so they're excluded);
+  // use-hints from the unit name / use class and location hits from the
+  // requirement's location chips rank the results. Scoped callers (Landsec)
+  // match against their own portfolio only; staff match every instructed unit.
+  const parseReqSize = (size: string[] | string | null): { min: number; max: number } | null => {
+    const raw = (Array.isArray(size) ? size.join(" ") : size || "").replace(/,/g, "");
+    const range = raw.match(/(\d+)\s*-\s*(\d+)/);
+    if (range) return { min: +range[1] * 0.8, max: +range[2] * 1.2 };
+    const open = raw.match(/(\d+)\s*-/);
+    if (open) return { min: +open[1] * 0.8, max: +open[1] * 5 };
+    const single = raw.match(/(\d{3,})/);
+    if (single) return { min: +single[1] * 0.6, max: +single[1] * 1.6 };
+    return null;
+  };
+  const USE_HINTS: Array<[RegExp, RegExp]> = [
+    [/restaurant|a1 food|f&b|caf/i, /f&b|rest|kiosk|caf|food|dining/i],
+    [/gym|wellness|fitness/i, /gym|fitness|studio|wellness|health/i],
+    [/leisure/i, /leisure|cinema|bowl|golf|padel/i],
+    [/retail/i, /retail|shop|store/i],
+  ];
+  app.get("/api/crm/requirements-leasing/matches", requireAuth, async (req, res) => {
+    try {
+      const scopeCompanyId = await resolveCompanyScope(req);
+      const unitRows = await pool.query(
+        `SELECT au.id, au.unit_name, au.sqft, au.use_class,
+                p.id AS property_id, p.name AS property_name, p.address::text AS address
+           FROM available_units au
+           JOIN crm_properties p ON p.id = au.property_id
+          WHERE au.marketing_status IN ('AVA','NEG') AND au.sqft IS NOT NULL
+            AND ($1::text IS NULL OR p.landlord_id = $1
+                 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))`,
+        [scopeCompanyId]
+      );
+      const reqRows = await pool.query(
+        `SELECT id, size, use, requirement_locations FROM crm_requirements_leasing
+          WHERE status IS NULL OR status = 'Active'`
+      );
+      const matches: Record<string, { count: number; top: any[] }> = {};
+      for (const r of reqRows.rows) {
+        const range = parseReqSize(r.size);
+        if (!range) continue;
+        const uses = (r.use || []).join(" ");
+        const locs = (r.requirement_locations || [])
+          .map((l: string) => l.toLowerCase())
+          .filter((l: string) => l.length > 2 && !/^(london|greater london|central london \(zone 1\))$/i.test(l));
+        const hits: any[] = [];
+        for (const u of unitRows.rows) {
+          const sqft = Number(u.sqft);
+          if (!(sqft >= range.min && sqft <= range.max)) continue;
+          const unitText = `${u.unit_name || ""} ${u.use_class || ""}`;
+          const useHint = USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(uses) && unitRe.test(unitText));
+          const propText = `${u.property_name || ""} ${u.address || ""}`.toLowerCase();
+          const locationHit = locs.some((l: string) => propText.includes(l));
+          hits.push({
+            unitId: u.id, unitName: u.unit_name, sqft,
+            propertyId: u.property_id, propertyName: u.property_name,
+            useHint, locationHit, score: 1 + (useHint ? 1 : 0) + (locationHit ? 1 : 0),
+          });
+        }
+        if (!hits.length) continue;
+        hits.sort((a, b) => b.score - a.score || a.sqft - b.sqft);
+        matches[r.id] = { count: hits.length, top: hits.slice(0, 5) };
+      }
+      res.json({ unitPool: unitRows.rows.length, matches });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   app.get("/api/crm/requirements-leasing", async (req, res) => {
