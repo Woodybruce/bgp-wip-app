@@ -1835,8 +1835,45 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                  block below instead. UK/Global toggle was rolled back
                  May 2026; backend + brand_stores.country schema kept in
                  place so we can re-enable later. */}
-            {!isLandlord && stores.length > 0 && (() => {
+            {/* Staff always see the section, even at 0 stores — the auto
+                research fires on first open, and when it comes back empty
+                (Places quota, rate limit, obscure brand) the section used
+                to vanish entirely, which read as "the location map is
+                gone". Clients still only see it once stores exist. */}
+            {!isLandlord && (stores.length > 0 || !isClientViewer) && (() => {
               const visible = stores.filter((s: any) => !s.country || s.country === "GB");
+              if (stores.length === 0) {
+                return (
+                  <div className="border-t border-border/40 mt-3 pt-2 order-5">
+                    <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                      <Store className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
+                        UK stores
+                      </span>
+                      {!researchStoresMutation.isPending && (
+                        <button
+                          onClick={() => researchStoresMutation.mutate("uk")}
+                          className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted"
+                          data-testid="btn-research-stores-uk"
+                        >
+                          Re-scan UK
+                        </button>
+                      )}
+                    </div>
+                    {researchStoresMutation.isPending ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground border border-dashed rounded-md px-3 py-6 justify-center">
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        Researching UK stores — the location map will appear here when the scan finishes…
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground border border-dashed rounded-md px-3 py-4">
+                        No stores found yet{storesDiagnostic ? ` — ${storesDiagnostic}` : ""}.
+                        {" "}Re-scan to retry, or add stores manually and the map will appear.
+                      </div>
+                    )}
+                  </div>
+                );
+              }
               return (
                 <div className="border-t border-border/40 mt-3 pt-2 order-5">
                   <div className="flex items-center gap-1.5 mb-2 flex-wrap">

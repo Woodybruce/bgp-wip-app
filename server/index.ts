@@ -1,5 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import dns from "node:dns";
 
 // Railway's default DNS result order prefers IPv6, which silently
@@ -2885,6 +2885,13 @@ import { setupWebSocket } from "./websocket";
 import { createServer } from "http";
 
 const app = express();
+// Railway terminates TLS at its edge proxy and forwards with X-Forwarded-For.
+// Without this, req.ip is the edge proxy's address for every user, so the
+// rate limiters below share ONE bucket across the whole userbase — ordinary
+// afternoon browsing 429'd the brand-profile auto-triggers (contacts / KYC /
+// store research never fired) and the login limiter could lock the entire
+// office out at 20 attempts per 15 min.
+app.set("trust proxy", 1);
 const httpServer = createServer(app);
 
 // Railway health check — unauthenticated, before all middleware
@@ -3151,6 +3158,13 @@ const apiLimiter = rateLimit({
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
+  // The whole office sits behind one NAT'd public IP, so per-IP buckets
+  // still pool every staff member together — a brand profile open fires
+  // ~30 calls, and five people browsing at once starved the auto-triggers.
+  // Key authenticated traffic by its bearer token instead; anonymous
+  // traffic falls back to the (IPv6-safe) IP key.
+  keyGenerator: (req) =>
+    req.headers.authorization || ipKeyGenerator(req.ip || ""),
   skip: (req) => {
     // Dev/QA runs everything from one IP (two harness personas + HMR), so the
     // per-IP bucket trips on ordinary page loads. The limiter is a prod

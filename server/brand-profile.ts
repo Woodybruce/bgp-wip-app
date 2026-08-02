@@ -1256,7 +1256,7 @@ export async function researchBrandStores(
   found: number; upserted: number; openCount: number; companyName: string;
   diagnostics: Array<{ step: string; outcome: string; detail?: string }>;
 }> {
-  const googleKey = process.env.GOOGLE_API_KEY;
+  const googleKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
   if (!googleKey) throw new Error("GOOGLE_API_KEY not configured");
   const scope = opts.scope === "global" ? "global" : "uk";
 
@@ -1508,7 +1508,7 @@ router.get("/api/brand/gallery-image/:imageId", requireAuth, async (req: Request
 // the panel banner stays sharp on retina displays.
 router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Request, res: Response) => {
   try {
-    const apiKey = process.env.GOOGLE_API_KEY;
+    const apiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
     const companyId = String(req.params.companyId);
 
     const sendImage = (buf: Buffer, mime: string = "image/jpeg") => {
