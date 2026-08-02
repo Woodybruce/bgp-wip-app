@@ -481,11 +481,13 @@ export function InlineAgents({
   allUsers,
   colorMap,
   landlordId,
+  readOnly,
 }: {
   propertyId: string;
   agentLinks: Array<{ propertyId: string; userId: string; role?: string | null }>;
   allUsers: User[];
   colorMap?: Record<string, string>;
+  readOnly?: boolean;
   // When set, the picker biases the unassigned list toward people already
   // on the landlord's client team (see crm_client_team_members). Falls
   // back to the full BGP staff list when omitted.
@@ -610,6 +612,7 @@ export function InlineAgents({
                     ))}
                   </div>
                 </div>
+                {!readOnly && (
                 <div className="border-t pt-2 flex justify-end">
                   <button
                     onClick={() => removeMutation.mutate(String(user.id))}
@@ -619,11 +622,13 @@ export function InlineAgents({
                     <X className="w-2.5 h-2.5" />Remove from property
                   </button>
                 </div>
+                )}
               </div>
             </PopoverContent>
           </Popover>
         );
       })}
+      {!readOnly && (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -679,6 +684,7 @@ export function InlineAgents({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
     </div>
   );
 }
@@ -1196,10 +1202,12 @@ export function InlineDeals({
   propertyId,
   dealLinks,
   allDeals,
+  readOnly,
 }: {
   propertyId: string;
   dealLinks: DealLink[];
   allDeals: DealLink[];
+  readOnly?: boolean;
 }) {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
@@ -1250,6 +1258,7 @@ export function InlineDeals({
                 <span className="truncate">{deal.name}</span>
               </Badge>
             </Link>
+            {!readOnly && (
             <button
               className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center shrink-0 opacity-0 group-hover/deal:opacity-100 transition-opacity"
               onClick={() => unlinkMutation.mutate(deal.id)}
@@ -1257,9 +1266,11 @@ export function InlineDeals({
             >
               <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
             </button>
+            )}
           </div>
         ))}
       </div>
+      {!readOnly && (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -1298,6 +1309,7 @@ export function InlineDeals({
           </div>
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
     </div>
   );
 }
@@ -1306,10 +1318,12 @@ export function InlineTenants({
   propertyId,
   tenantLinks,
   allCompanies,
+  readOnly,
 }: {
   propertyId: string;
   tenantLinks: { propertyId: string; companyId: string }[];
   allCompanies: CrmCompany[];
+  readOnly?: boolean;
 }) {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
@@ -1367,6 +1381,7 @@ export function InlineTenants({
               {company.name}
             </Badge>
           </Link>
+          {!readOnly && (
           <button
             className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center"
             onClick={() => removeMutation.mutate(company.id)}
@@ -1374,11 +1389,13 @@ export function InlineTenants({
           >
             <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
           </button>
+          )}
         </span>
       ))}
       {hiddenCount > 0 && (
         <Badge variant="secondary" className="text-[10px] px-1.5 py-0">+{hiddenCount} more</Badge>
       )}
+      {!readOnly && (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -1416,6 +1433,7 @@ export function InlineTenants({
           </div>
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
     </div>
   );
 }
@@ -5776,6 +5794,7 @@ function PropertiesList({
                             propertyId={item.id}
                             dealLinks={dealLinks}
                             allDeals={allDealsRaw}
+                            readOnly={isClientViewer}
                           />
                         </TableCell>
                       )}
@@ -5785,6 +5804,7 @@ function PropertiesList({
                             propertyId={item.id}
                             tenantLinks={tenantLinks}
                             allCompanies={allCompanies}
+                            readOnly={isClientViewer}
                           />
                         </TableCell>
                       )}
@@ -5796,6 +5816,7 @@ function PropertiesList({
                             allUsers={allUsers}
                             colorMap={userColorMap}
                             landlordId={item.landlordId}
+                            readOnly={isClientViewer}
                           />
                         </TableCell>
                       )}

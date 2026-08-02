@@ -654,7 +654,7 @@ export function PropertyDetail({ id }: { id: string }) {
                         <div className="grid grid-cols-[130px,1fr] items-center gap-2 text-[11px]">
                           <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
                           <div className="min-w-0">
-                            <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} />
+                            <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} readOnly={isClientViewer} />
                           </div>
                         </div>
                       ) : (
@@ -676,7 +676,7 @@ export function PropertyDetail({ id }: { id: string }) {
                                 {isClientViewer ? (
                                   <span className="truncate block">{allCompanies.find(c => c.id === row.id)?.name || "—"}</span>
                                 ) : (
-                                  <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} />
+                                  <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} readOnly={isClientViewer} />
                                 )}
                               </div>
                             </div>
@@ -685,7 +685,7 @@ export function PropertyDetail({ id }: { id: string }) {
                             <div className="grid grid-cols-[130px,1fr] items-center gap-2">
                               <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
                               <div className="min-w-0">
-                                <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} />
+                                <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} readOnly={isClientViewer} />
                               </div>
                             </div>
                           )}
@@ -1003,7 +1003,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 onToggle={() => toggleSection("team")}
                 testId="toggle-team-section"
               >
-                <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} />
+                <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={isClientViewer} />
               </ReferenceSection>
 
               {!isClientViewer && (
