@@ -860,6 +860,14 @@ async function markRound(page, cross) {
     if (!r.ok) throw new Error(`client calendar request failed (${r.status}) — team-events allowlist regressed?`);
     if (!r.mine) throw new Error("client calendar missing their own company's event (scoping regressed)");
     if (r.other) throw new Error("another client's event leaked into the client calendar");
+    // ROUTE check, not just API: ClientRouteGuard bounced /calendar to the
+    // dashboard because the route was missing from CLIENT_ALLOWED_ROUTES —
+    // the API worked while the click did nothing (live-site 2026-08-02).
+    await page.goto(`${BASE}/calendar`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(2500);
+    const calUrl = new URL(page.url());
+    if (calUrl.pathname !== '/calendar') throw new Error(`client bounced off /calendar to ${calUrl.pathname} (route guard)`);
   });
 
   // The client SharePoint browser (task-25 surface): the root endpoint must
@@ -875,6 +883,13 @@ async function markRound(page, cross) {
     });
     if (r.status === 401 || r.status === 403) throw new Error(`client SharePoint root refused (${r.status}) — gateway/allowlist regressed`);
     if (![200, 404].includes(r.status) && !/sharepoint/i.test(r.message)) throw new Error(`client SharePoint root unhealthy (${r.status}: ${r.message})`);
+    // ROUTE check — same guard bug as /calendar: the page must open, not
+    // bounce to the dashboard.
+    await page.goto(`${BASE}/sharepoint`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(2500);
+    const spUrl = new URL(page.url());
+    if (spUrl.pathname !== '/sharepoint') throw new Error(`client bounced off /sharepoint to ${spUrl.pathname} (route guard)`);
   });
 
   // Client adds a photo to one of their own units/schemes; the same upload to

@@ -200,6 +200,9 @@ const CLIENT_ALLOWED_ROUTES = [
   "/deals", "/tasks", "/today", "/leasing-schedule", "/land-registry",
   "/business-rates", "/m/images", "/cad-measure", "/settings/profile",
   "/news",
+  // Task-25 client surfaces — the nav showed these but this guard bounced
+  // the click back to the dashboard ("still bounces", 2026-08-02).
+  "/calendar", "/sharepoint",
 ];
 function ClientRouteGuard() {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
