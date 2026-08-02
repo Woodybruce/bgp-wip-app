@@ -1278,11 +1278,14 @@ export async function registerRoutes(
       // team event tagged with their company name. BGP's wider diary
       // never crosses over.
       const teScope = await resolveCompanyScope(req);
+      // Match the company name case/whitespace-insensitively — synced events
+      // can carry name variants ("LANDSEC", trailing space) and the exact
+      // string compare blanked the client calendar entirely.
       const result = teScope
         ? await pool.query(
             `SELECT * FROM team_events
               WHERE start_time >= $1 AND start_time <= $2
-                AND company_name = (SELECT name FROM crm_companies WHERE id = $3)
+                AND lower(trim(company_name)) = (SELECT lower(trim(name)) FROM crm_companies WHERE id = $3)
               ORDER BY start_time`,
             [now.toISOString(), end.toISOString(), teScope]
           )

@@ -44,7 +44,18 @@ async function resolveRoot(companyId: string): Promise<RootRef | null> {
   const cached = rootCache.get(companyId);
   if (cached && Date.now() - cached.resolvedAt < ROOT_TTL_MS) return cached;
 
-  const r = await pool.query(`SELECT sharepoint_folder_url FROM crm_companies WHERE id = $1`, [companyId]);
+  // The folder link can sit on a duplicate company row (a second "Landsec"
+  // record) — same hazard the team board handles. Prefer the scope row's own
+  // URL, fall back to any same-named unmerged sibling that has one.
+  const r = await pool.query(
+    `SELECT sharepoint_folder_url FROM crm_companies
+      WHERE (id = $1 OR (merged_into_id IS NULL AND lower(trim(name)) =
+              (SELECT lower(trim(name)) FROM crm_companies WHERE id = $1)))
+        AND sharepoint_folder_url IS NOT NULL
+      ORDER BY (id = $1) DESC
+      LIMIT 1`,
+    [companyId]
+  );
   const url: string | null = r.rows[0]?.sharepoint_folder_url || null;
   if (!url) return null;
 

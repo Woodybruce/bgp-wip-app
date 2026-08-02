@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-brand-kyc-visible-actions-blocked']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -292,10 +292,11 @@ async function victoriaRound(page, cross) {
     const mine = `QA-CAL-MINE-R${ROUND}`, other = `QA-CAL-OTHER-R${ROUND}`;
     // The event must be in the FUTURE (GET /api/team-events only returns
     // start_time >= now) AND still on today's visible board (a "+2h" event
-    // crossed midnight on a late round and vanished). now+2min satisfies
-    // both — except in the 2-minute window before midnight, where no valid
-    // slot exists at all: skip the round then.
-    const soon = new Date(Date.now() + 2 * 60e3);
+    // crossed midnight on a late round and vanished). It also has to STAY
+    // future until the client round cross-checks it minutes later — +2min
+    // expired before Mark's check and false-alarmed as a scoping regression.
+    // now+30min covers both; skip the round in the half-hour before midnight.
+    const soon = new Date(Date.now() + 30 * 60e3);
     if (soon.getUTCDate() !== new Date().getUTCDate()) return;
     await page.evaluate(async ([a, bb, startIso, endIso]) => {
       const h = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
@@ -305,6 +306,10 @@ async function victoriaRound(page, cross) {
             start_time: startIso, end_time: endIso }) }).catch(() => {});
       }
     }, [mine, other, soon.toISOString(), new Date(soon.getTime() + 36e5).toISOString()]);
+    // Stamp for the client round: Mark's calendar must show the Landsec
+    // event and never the Hammerson one (the surface Woody reported dead).
+    cross.calMine = mine;
+    cross.calOther = other;
     await page.goto(`${BASE}/calendar`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(4000);
@@ -834,6 +839,42 @@ async function markRound(page, cross) {
     if (await page.getByText('Page not found').count()) throw new Error('property detail is a dead route for client');
     const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
     if (body.length < 40) throw new Error('property detail rendered blank for client');
+  });
+
+  // The client team calendar (task-25 surface, reported dead 2026-08-02):
+  // Mark's /api/team-events must include the Landsec event Victoria created
+  // this round and must NEVER include the Hammerson one. Guards both the
+  // allowlist (a merge once dropped /api/team-events → blanket 403) and the
+  // company_name scoping (an exact-string compare once blanked the calendar).
+  await step(page, p, 'client-calendar-sees-own-events', async () => {
+    if (!cross.calMine) return; // staff step skipped (midnight window)
+    const r = await page.evaluate(async (args) => {
+      const [mine, other] = args;
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/team-events', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const events = await res.json().catch(() => []);
+      const titles = (Array.isArray(events) ? events : []).map((e) => e.title || '');
+      return { ok: true, mine: titles.some((t) => t.includes(mine)), other: titles.some((t) => t.includes(other)) };
+    }, [cross.calMine, cross.calOther]);
+    if (!r.ok) throw new Error(`client calendar request failed (${r.status}) — team-events allowlist regressed?`);
+    if (!r.mine) throw new Error("client calendar missing their own company's event (scoping regressed)");
+    if (r.other) throw new Error("another client's event leaked into the client calendar");
+  });
+
+  // The client SharePoint browser (task-25 surface): the root endpoint must
+  // never 401/403 for a client — 200 (folder linked) or the friendly 404
+  // (not linked yet) are the only healthy answers locally.
+  await step(page, p, 'client-sharepoint-surface', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/client/sharepoint/root', { headers: auth }).catch(() => ({ status: 0 }));
+      let message = '';
+      try { message = (await res.json()).message || ''; } catch {}
+      return { status: res.status, message };
+    });
+    if (r.status === 401 || r.status === 403) throw new Error(`client SharePoint root refused (${r.status}) — gateway/allowlist regressed`);
+    if (![200, 404].includes(r.status) && !/sharepoint/i.test(r.message)) throw new Error(`client SharePoint root unhealthy (${r.status}: ${r.message})`);
   });
 
   // Client adds a photo to one of their own units/schemes; the same upload to
