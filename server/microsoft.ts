@@ -954,41 +954,76 @@ export function setupMicrosoftRoutes(app: Express) {
     }
   });
 
-  app.get("/api/microsoft/calendar/insights", async (req: Request, res: Response) => {
+  app.get("/api/microsoft/calendar/insights", requireAuth, async (req: Request, res: Response) => {
     try {
       const insights: { type: string; title: string; detail: string; priority: number }[] = [];
+      // Client viewers get insights computed ONLY from their own company's
+      // deals/events/viewings/properties, with fees nulled out — the staff
+      // feed aggregates the whole BGP book and must not cross over.
+      const { resolveCompanyScope } = await import("./company-scope");
+      const insightsScope = await resolveCompanyScope(req);
 
-      const dealsResult = await pool.query(`
-        SELECT d.name, d.status, d.created_at, d.internal_agent, d.fee, d.rent_pa,
-               d.pricing, d.deal_type, p.name as property_name
-        FROM crm_deals d
-        LEFT JOIN crm_properties p ON d.property_id = p.id
-        WHERE d.status NOT IN ('WIT', 'COM', 'INV')
-        ORDER BY d.created_at DESC
-      `);
+      const dealsResult = insightsScope
+        ? await pool.query(`
+            SELECT d.name, d.status, d.created_at, d.internal_agent, NULL::text as fee, d.rent_pa,
+                   d.pricing, d.deal_type, p.name as property_name
+            FROM crm_deals d
+            LEFT JOIN crm_properties p ON d.property_id = p.id
+            WHERE d.status NOT IN ('WIT', 'COM', 'INV')
+              AND (d.tenant_id = $1 OR d.landlord_id = $1 OR d.purchaser_id = $1 OR d.vendor_id = $1
+                   OR d.property_id IN (SELECT id FROM crm_properties WHERE landlord_id = $1))
+            ORDER BY d.created_at DESC
+          `, [insightsScope])
+        : await pool.query(`
+            SELECT d.name, d.status, d.created_at, d.internal_agent, d.fee, d.rent_pa,
+                   d.pricing, d.deal_type, p.name as property_name
+            FROM crm_deals d
+            LEFT JOIN crm_properties p ON d.property_id = p.id
+            WHERE d.status NOT IN ('WIT', 'COM', 'INV')
+            ORDER BY d.created_at DESC
+          `);
       const activeDealRows = dealsResult.rows;
 
-      const eventsResult = await pool.query(`
-        SELECT te.title, te.event_type, te.start_time, te.property_name, te.company_name,
-               te.created_by, te.attendees
-        FROM team_events te
-        WHERE te.start_time >= NOW() - INTERVAL '30 days'
-        ORDER BY te.start_time DESC
-      `);
+      const eventsResult = insightsScope
+        ? await pool.query(`
+            SELECT te.title, te.event_type, te.start_time, te.property_name, te.company_name,
+                   te.created_by, te.attendees
+            FROM team_events te
+            WHERE te.start_time >= NOW() - INTERVAL '30 days'
+              AND lower(trim(te.company_name)) = (SELECT lower(trim(name)) FROM crm_companies WHERE id = $1)
+            ORDER BY te.start_time DESC
+          `, [insightsScope])
+        : await pool.query(`
+            SELECT te.title, te.event_type, te.start_time, te.property_name, te.company_name,
+                   te.created_by, te.attendees
+            FROM team_events te
+            WHERE te.start_time >= NOW() - INTERVAL '30 days'
+            ORDER BY te.start_time DESC
+          `);
       const recentEvents = eventsResult.rows;
 
       // Letting Tracker viewings (manual + diary-synced) — the canonical
       // viewing record. team_events only carries manually-tagged 'viewing'
       // rows, which in practice are rare, so without this the viewing
       // insights sit permanently empty.
-      const unitViewingsResult = await pool.query(`
-        SELECT uv.viewing_date, uv.viewing_time, uv.company_name, p.name AS property_name
-        FROM unit_viewings uv
-        JOIN available_units au ON au.id = uv.unit_id
-        JOIN crm_properties p ON p.id = au.property_id
-        WHERE uv.viewing_date ~ '^\\d{4}-\\d{2}-\\d{2}'
-          AND uv.viewing_date::date >= (NOW() - INTERVAL '30 days')::date
-      `);
+      const unitViewingsResult = insightsScope
+        ? await pool.query(`
+            SELECT uv.viewing_date, uv.viewing_time, uv.company_name, p.name AS property_name
+            FROM unit_viewings uv
+            JOIN available_units au ON au.id = uv.unit_id
+            JOIN crm_properties p ON p.id = au.property_id
+            WHERE uv.viewing_date ~ '^\\d{4}-\\d{2}-\\d{2}'
+              AND uv.viewing_date::date >= (NOW() - INTERVAL '30 days')::date
+              AND (p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
+          `, [insightsScope])
+        : await pool.query(`
+            SELECT uv.viewing_date, uv.viewing_time, uv.company_name, p.name AS property_name
+            FROM unit_viewings uv
+            JOIN available_units au ON au.id = uv.unit_id
+            JOIN crm_properties p ON p.id = au.property_id
+            WHERE uv.viewing_date ~ '^\\d{4}-\\d{2}-\\d{2}'
+              AND uv.viewing_date::date >= (NOW() - INTERVAL '30 days')::date
+          `);
       const eventsForInsights = [
         ...recentEvents,
         ...unitViewingsResult.rows.map((v: any) => ({
@@ -1002,11 +1037,18 @@ export function setupMicrosoftRoutes(app: Express) {
         })),
       ];
 
-      const propertiesResult = await pool.query(`
-        SELECT p.name, p.address, p.status, p.asset_class
-        FROM crm_properties p
-        ORDER BY p.created_at DESC
-      `);
+      const propertiesResult = insightsScope
+        ? await pool.query(`
+            SELECT p.name, p.address, p.status, p.asset_class
+            FROM crm_properties p
+            WHERE p.landlord_id = $1 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+            ORDER BY p.created_at DESC
+          `, [insightsScope])
+        : await pool.query(`
+            SELECT p.name, p.address, p.status, p.asset_class
+            FROM crm_properties p
+            ORDER BY p.created_at DESC
+          `);
 
       const viewingsByProp = new Map<string, number>();
       const viewingsByCompany = new Map<string, number>();
@@ -1168,12 +1210,14 @@ export function setupMicrosoftRoutes(app: Express) {
     }
   });
 
-  app.post("/api/microsoft/calendar/briefing", async (req: Request, res: Response) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Not authenticated" });
-    }
-
+  // requireAuth (not a raw session check): client logins authenticate with
+  // Bearer tokens, so the session-only gate made "Retry AI Briefing" fail
+  // unconditionally for Mark. Scoped callers get a company-jailed, fee-free
+  // context below.
+  app.post("/api/microsoft/calendar/briefing", requireAuth, async (req: Request, res: Response) => {
     try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      const briefingScope = await resolveCompanyScope(req);
       const { subject, attendees, propertyName, companyName, location, startTime, endTime, bodyPreview, eventType } = req.body;
 
       if (!subject) {
@@ -1187,13 +1231,17 @@ export function setupMicrosoftRoutes(app: Express) {
       const bgpEmails = attendeeEmails.filter((e: string) => e.includes("brucegillinghampollard"));
 
       const contactsResult = await pool.query(`
-        SELECT c.id, c.name, c.email, c.phone, c.job_title, c.notes, c.contact_type,
+        SELECT c.id, c.name, c.email, c.phone, c.role as job_title, c.notes, c.contact_type,
                comp.name as company_name, comp.id as company_id
         FROM crm_contacts c
         LEFT JOIN crm_companies comp ON c.company_id = comp.id
         WHERE LOWER(c.email) = ANY($1)
       `, [externalEmails]);
-      const matchedContacts = contactsResult.rows;
+      // A client caller only gets contact context for their OWN company —
+      // other attendees' CRM records are BGP intel.
+      const matchedContacts = briefingScope
+        ? contactsResult.rows.filter((c: any) => c.company_id === briefingScope)
+        : contactsResult.rows;
 
       const matchedCompanyIds = matchedContacts
         .map((c: any) => c.company_id)
@@ -1202,7 +1250,7 @@ export function setupMicrosoftRoutes(app: Express) {
       let companyDetails: any[] = [];
       if (matchedCompanyIds.length > 0) {
         const compResult = await pool.query(`
-          SELECT id, name, sector, notes, website
+          SELECT id, name, company_type as sector, NULL::text as notes, website
           FROM crm_companies
           WHERE id = ANY($1)
         `, [matchedCompanyIds]);
@@ -1211,7 +1259,7 @@ export function setupMicrosoftRoutes(app: Express) {
 
       if (companyName && companyDetails.length === 0) {
         const compByName = await pool.query(`
-          SELECT id, name, sector, notes, website
+          SELECT id, name, company_type as sector, NULL::text as notes, website
           FROM crm_companies
           WHERE LOWER(name) LIKE $1
           LIMIT 3
@@ -1222,25 +1270,44 @@ export function setupMicrosoftRoutes(app: Express) {
       const allCompanyIds = [...new Set([...matchedCompanyIds, ...companyDetails.map((c: any) => c.id)])];
 
       let relatedDeals: any[] = [];
-      if (allCompanyIds.length > 0) {
-        const dealsResult = await pool.query(`
-          SELECT d.id, d.name, d.status, d.deal_type, d.fee, d.rent_pa, d.pricing,
-                 d.internal_agent, d.notes,
-                 p.name as property_name, p.address as property_address
-          FROM crm_deals d
-          LEFT JOIN crm_properties p ON d.property_id = p.id
-          WHERE d.company_id = ANY($1) AND d.status NOT IN ('WIT')
-          ORDER BY d.created_at DESC
-          LIMIT 10
-        `, [allCompanyIds]);
+      const dealCompanyIds = briefingScope
+        ? allCompanyIds.filter((id: any) => id === briefingScope)
+        : allCompanyIds;
+      if (dealCompanyIds.length > 0) {
+        // Client callers never receive fee/pricing/internal notes — same rule
+        // as the client deal reads elsewhere.
+        // Deals hang off the parties (tenant/landlord/purchaser/vendor), not a
+        // single company_id — the old company_id filter errored the whole
+        // briefing ("Failed to generate briefing" for everyone).
+        const dealPartySql = `(d.tenant_id = ANY($1) OR d.landlord_id = ANY($1) OR d.purchaser_id = ANY($1) OR d.vendor_id = ANY($1))`;
+        const dealsResult = briefingScope
+          ? await pool.query(`
+              SELECT d.id, d.name, d.status, d.deal_type, d.rent_pa,
+                     p.name as property_name, p.address as property_address
+              FROM crm_deals d
+              LEFT JOIN crm_properties p ON d.property_id = p.id
+              WHERE ${dealPartySql} AND d.status NOT IN ('WIT')
+              ORDER BY d.created_at DESC
+              LIMIT 10
+            `, [dealCompanyIds])
+          : await pool.query(`
+              SELECT d.id, d.name, d.status, d.deal_type, d.fee, d.rent_pa, d.pricing,
+                     d.internal_agent, d.comments as notes,
+                     p.name as property_name, p.address as property_address
+              FROM crm_deals d
+              LEFT JOIN crm_properties p ON d.property_id = p.id
+              WHERE ${dealPartySql} AND d.status NOT IN ('WIT')
+              ORDER BY d.created_at DESC
+              LIMIT 10
+            `, [dealCompanyIds]);
         relatedDeals = dealsResult.rows;
       }
 
       let relatedProperties: any[] = [];
       if (propertyName) {
         const propResult = await pool.query(`
-          SELECT p.id, p.name, p.address, p.status, p.asset_class, p.area_sq_ft,
-                 p.asking_rent, p.service_charge, p.rates_payable, p.floor_count, p.notes
+          SELECT p.id, p.name, p.address, p.status, p.asset_class, p.sqft as area_sq_ft,
+                 NULL::text as asking_rent, NULL::text as service_charge, p.notes
           FROM crm_properties p
           WHERE LOWER(p.name) LIKE $1 OR LOWER(p.address) LIKE $1
           LIMIT 5
@@ -1252,8 +1319,8 @@ export function setupMicrosoftRoutes(app: Express) {
         const propNames = relatedDeals.map((d: any) => d.property_name).filter(Boolean);
         if (propNames.length > 0) {
           const propResult = await pool.query(`
-            SELECT p.id, p.name, p.address, p.status, p.asset_class, p.area_sq_ft,
-                   p.asking_rent, p.service_charge, p.rates_payable, p.floor_count, p.notes
+            SELECT p.id, p.name, p.address, p.status, p.asset_class, p.sqft as area_sq_ft,
+                   NULL::text as asking_rent, NULL::text as service_charge, p.notes
             FROM crm_properties p
             WHERE LOWER(p.name) = ANY($1)
             LIMIT 5
@@ -1299,6 +1366,8 @@ export function setupMicrosoftRoutes(app: Express) {
           status: d.status,
           dealType: d.deal_type,
           property: d.property_name,
+          // Scoped rows were selected without fee/agent; undefined drops the
+          // keys in JSON.stringify so nothing fee-shaped reaches the prompt.
           fee: d.fee,
           rentPA: d.rent_pa,
           agent: d.internal_agent,
@@ -1324,7 +1393,41 @@ export function setupMicrosoftRoutes(app: Express) {
       const hasContext = crmContext.contacts.length > 0 || crmContext.companies.length > 0 ||
                          crmContext.deals.length > 0 || crmContext.properties.length > 0;
 
+      // Emails associated with the meeting: recent shared-mailbox threads
+      // with the external attendees, so the briefing can explain WHY the
+      // meeting exists. Staff briefings only — BGP's internal email candour
+      // must never surface in a client-visible briefing.
+      let emailContext: { subject: string; from: string; date: string; preview: string }[] = [];
+      if (!briefingScope && externalEmails.length > 0) {
+        try {
+          const { graphRequest } = await import("./shared-mailbox");
+          const seenMail = new Set<string>();
+          for (const addr of externalEmails.slice(0, 3)) {
+            const r = await graphRequest(
+              `/users/chatbgp@brucegillinghampollard.com/messages?$search="participants:${encodeURIComponent(addr)}"&$top=4&$select=subject,bodyPreview,from,receivedDateTime`
+            ).catch(() => null);
+            for (const m of r?.value || []) {
+              const key = `${m.subject}|${m.receivedDateTime}`;
+              if (seenMail.has(key)) continue;
+              seenMail.add(key);
+              emailContext.push({
+                subject: m.subject || "(no subject)",
+                from: m.from?.emailAddress?.address || "",
+                date: m.receivedDateTime ? new Date(m.receivedDateTime).toLocaleDateString("en-GB") : "",
+                preview: (m.bodyPreview || "").slice(0, 280),
+              });
+            }
+          }
+          emailContext = emailContext
+            .sort((a, b) => (b.date > a.date ? 1 : -1))
+            .slice(0, 6);
+        } catch (mailErr: any) {
+          console.warn("[briefing] email context skipped:", mailErr?.message);
+        }
+      }
+
       let aiBriefing = null;
+      let aiError: string | null = null;
       try {
         const Anthropic = (await import("@anthropic-ai/sdk")).default;
         const anthropic = new Anthropic({
@@ -1361,6 +1464,9 @@ EVENT:
 CRM DATA:
 ${hasContext ? JSON.stringify(crmContext, null, 2) : "No CRM data found for this meeting's attendees or properties."}
 
+RECENT EMAILS WITH THE ATTENDEES (shared mailbox — use these to infer what the meeting is really about and what's outstanding):
+${emailContext.length ? JSON.stringify(emailContext, null, 2) : "None found."}
+
 Return JSON with these fields:
 {
   "summary": "1-2 sentence overview of what this meeting is about and its strategic importance",
@@ -1388,10 +1494,14 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
         }
       } catch (aiErr: any) {
         console.error("AI briefing generation error:", aiErr.message);
+        // Surface the real reason ("credit balance", "overloaded", timeout…)
+        // instead of a bare red "Failed" in the panel.
+        aiError = aiErr?.message || "AI request failed";
       }
 
       res.json({
         crmContext,
+        aiError,
         briefing: aiBriefing || {
           summary: hasContext
             ? `Meeting regarding ${subject}. ${crmContext.contacts.length} known contact(s) attending.`
@@ -1407,7 +1517,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       });
     } catch (err: any) {
       console.error("Calendar briefing error:", err);
-      res.status(500).json({ message: "Failed to generate briefing" });
+      res.status(500).json({ message: "Failed to generate briefing", detail: err?.message || null });
     }
   });
 

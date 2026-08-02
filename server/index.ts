@@ -3378,15 +3378,22 @@ app.use("/api/branding/assets", express.static(
     // viewers (client-sync events only). Dropped out of the list in a
     // branch merge, which blanked Mark's calendar with a 403.
     "/api/team-events",
+    // Calendar intelligence bar — the handler computes insights from the
+    // caller's own company only (fees nulled) when scoped.
+    "/api/microsoft/calendar/insights",
   ];
-  // Microsoft 365 stays fully blocked for clients (mail/calendar/files all
-  // 403) — the client UI must not call it at all; see nav + poller gating.
+  // Microsoft 365 stays otherwise blocked for clients (mail/files/tokens all
+  // 403) — the two calendar-intelligence endpoints above/below are the only
+  // exceptions, and both company-jail their context server-side.
   // The only writes a client may perform. (heartbeat/push/config are
   // harmless presence + client-preference pings every user sends;
   // /api/chatbgp/ covers chat + chat-with-files — tools are stripped for
   // clients inside those handlers via clientChatGuard.)
   const CLIENT_ALLOWED_WRITES = [
     "/api/auth/logout", "/api/chatbgp/", "/api/heartbeat",
+    // Meeting-prep AI briefing (POST) — company-jailed + fee-free for
+    // scoped callers inside the handler; email context is staff-only.
+    "/api/microsoft/calendar/briefing",
     // ChatBGP panel bookkeeping: the AI reply goes to /api/chatbgp/ (allowed)
     // but the panel first creates a thread + posts the user message here.
     // Message POST enforces thread membership server-side; membership and

@@ -138,10 +138,15 @@ function teamEventToCalendarEvent(te: TeamEvent): CalendarEvent {
     _propertyName: te.property_name || undefined,
     _companyName: te.company_name || undefined,
     _attendeeNames: te.attendees || [],
-    attendees: (te.attendees || []).map(name => ({
-      emailAddress: { name, address: "" },
-      status: { response: "accepted" },
-    })),
+    // Synced rows store attendees as "Name <email>" — split them so the
+    // details panel shows the person and the briefing can match contacts.
+    attendees: (te.attendees || []).map(raw => {
+      const m = /^(.*?)\s*<([^>]+)>$/.exec(raw);
+      return {
+        emailAddress: { name: m ? m[1] : raw, address: m ? m[2] : "" },
+        status: { response: "accepted" },
+      };
+    }),
   };
 }
 
@@ -414,19 +419,43 @@ function DaySummaryBar() {
 }
 
 function computeEventLayout(dayEvents: CalendarEvent[]) {
-  const timedEvents = dayEvents.filter(e => !e.isAllDay && getEventDurationMinutes(e.start.dateTime, e.end.dateTime) < 24 * 60);
+  // Width-share by overlap CLUSTER, not by the whole day: one three-way
+  // clash at 15:00 was third-widthing every other event on the board
+  // ("meetings only show half"). Events squeeze only against the events
+  // they actually overlap.
+  const timedEvents = dayEvents
+    .filter(e => !e.isAllDay && getEventDurationMinutes(e.start.dateTime, e.end.dateTime) < 24 * 60)
+    .map(e => {
+      const s = new Date(e.start.dateTime);
+      const en = new Date(e.end.dateTime);
+      const startMin = s.getHours() * 60 + s.getMinutes();
+      const endMin = Math.max(startMin + 15, en.getHours() * 60 + en.getMinutes());
+      return { event: e, startMin, endMin };
+    })
+    .sort((a, b) => a.startMin - b.startMin || b.endMin - a.endMin);
+
   const layout: { event: CalendarEvent; col: number; totalCols: number }[] = [];
-  const columns: { end: number }[] = [];
-  timedEvents.forEach(event => {
-    const startMin = new Date(event.start.dateTime).getHours() * 60 + new Date(event.start.dateTime).getMinutes();
-    const endMin = new Date(event.end.dateTime).getHours() * 60 + new Date(event.end.dateTime).getMinutes();
-    let placed = false;
-    for (let c = 0; c < columns.length; c++) {
-      if (startMin >= columns[c].end) { columns[c].end = endMin; layout.push({ event, col: c, totalCols: 0 }); placed = true; break; }
+  let cluster: typeof timedEvents = [];
+  let clusterEnd = -1;
+  const flushCluster = () => {
+    if (!cluster.length) return;
+    const colEnds: number[] = [];
+    const start = layout.length;
+    for (const item of cluster) {
+      let c = colEnds.findIndex(end => item.startMin >= end);
+      if (c === -1) { colEnds.push(item.endMin); c = colEnds.length - 1; }
+      else colEnds[c] = item.endMin;
+      layout.push({ event: item.event, col: c, totalCols: 0 });
     }
-    if (!placed) { columns.push({ end: endMin }); layout.push({ event, col: columns.length - 1, totalCols: 0 }); }
-  });
-  layout.forEach(item => { item.totalCols = columns.length; });
+    for (let i = start; i < layout.length; i++) layout[i].totalCols = colEnds.length;
+    cluster = [];
+  };
+  for (const item of timedEvents) {
+    if (cluster.length && item.startMin >= clusterEnd) flushCluster();
+    clusterEnd = cluster.length ? Math.max(clusterEnd, item.endMin) : item.endMin;
+    cluster.push(item);
+  }
+  flushCluster();
   return layout;
 }
 
@@ -495,6 +524,7 @@ function DayColumn({ date, events, hours, today, nowTop, onSelectEvent, selected
         return (
           <button
             key={event.id}
+            title={`${event.subject || "Meeting"} · ${formatTime(event.start.dateTime)}–${formatTime(event.end.dateTime)}`}
             className={`absolute rounded-[4px] border-l-[3px] ${color.border} ${color.bg} px-1.5 py-0.5 text-left transition-all hover:shadow-md cursor-pointer overflow-hidden ${isSelected ? "ring-2 ring-blue-500 shadow-md" : ""}`}
             style={{ top: `${top}px`, height: `${height}px`, left: `${colLeft}%`, width: `calc(${colWidth}% - 4px)`, marginLeft: "2px" }}
             onClick={() => onSelectEvent(event)}
@@ -762,6 +792,7 @@ interface BriefingResponse {
     recentHistory: any[];
   };
   briefing: BriefingData;
+  aiError?: string | null;
 }
 
 function EventBriefing({ event }: { event: CalendarEvent }) {
@@ -808,9 +839,10 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
   }
 
   if (briefingMutation.isError) {
+    const errMsg = (briefingMutation.error as any)?.message || "";
     return (
       <div className="space-y-2">
-        <p className="text-xs text-rose-500">Failed to generate briefing</p>
+        <p className="text-xs text-rose-500">Couldn't generate the briefing{errMsg ? ` — ${errMsg.replace(/^\d+:\s*/, "").slice(0, 160)}` : ""}</p>
         <Button variant="outline" size="sm" className="w-full gap-2" onClick={() => briefingMutation.mutate()} data-testid="button-retry-briefing">
           <Sparkles className="w-3.5 h-3.5" />Retry AI Briefing
         </Button>
@@ -849,6 +881,11 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
         </Button>
       </div>
 
+      {briefingMutation.data?.aiError && (
+        <p className="text-[11px] text-amber-600 dark:text-amber-400">
+          AI enrichment unavailable ({briefingMutation.data.aiError.replace(/^\d+\s+/, "").slice(0, 120)}) — showing CRM facts only. Refresh to retry.
+        </p>
+      )}
       {briefing.summary && (
         <div className="rounded-lg bg-violet-500/5 border border-violet-200 dark:border-violet-800/50 px-3 py-2">
           <p className="text-[12px] leading-relaxed text-foreground/80">{briefing.summary}</p>

@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -868,6 +868,32 @@ async function markRound(page, cross) {
     await page.waitForTimeout(2500);
     const calUrl = new URL(page.url());
     if (calUrl.pathname !== '/calendar') throw new Error(`client bounced off /calendar to ${calUrl.pathname} (route guard)`);
+  });
+
+  // Calendar intelligence for clients: insights and the meeting briefing are
+  // company-jailed and FEE-FREE (both used to 500 on phantom columns, and the
+  // briefing was session-gated so client tokens always failed).
+  await step(page, p, 'client-calendar-intelligence', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const ins = await fetch('/api/microsoft/calendar/insights', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const insBody = ins.ok ? await ins.json().catch(() => ({})) : {};
+      const insText = JSON.stringify(insBody.insights || []).toLowerCase();
+      const br = await fetch('/api/microsoft/calendar/briefing', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ subject: 'BGP x Landsec QA probe', companyName: 'Landsec',
+          attendees: [{ emailAddress: { name: 'Mark Warne', address: 'mark.warne@landsec.com' } }] }) }).catch(() => ({ ok: false, status: 0 }));
+      const brBody = br.ok ? await br.json().catch(() => ({})) : {};
+      const deals = brBody?.crmContext?.deals || [];
+      return {
+        insOk: ins.ok, insFee: insText.includes('fee'),
+        brOk: br.ok, dealFee: deals.some((d) => d.fee !== undefined && d.fee !== null),
+        agentLeak: deals.some((d) => d.agent),
+      };
+    });
+    if (!r.insOk) throw new Error('client calendar insights request failed');
+    if (r.insFee) throw new Error('client insights mention fees (staff feed leaked)');
+    if (!r.brOk) throw new Error('client meeting briefing request failed');
+    if (r.dealFee || r.agentLeak) throw new Error('client briefing context leaked deal fee/agent');
   });
 
   // The client SharePoint browser (task-25 surface): the root endpoint must
@@ -1754,6 +1780,35 @@ async function markRound(page, cross) {
   // Client dashboard on a phone-width viewport must not overflow horizontally
   // (the app hit body-scroll bugs before; container queries fixed them). Use
   // a fresh 390px page so the desktop context isn't reused.
+  // Every link in the client sidebar must OPEN when navigated — the nav and
+  // ClientRouteGuard's CLIENT_ALLOWED_ROUTES are maintained separately, and
+  // /calendar + /sharepoint shipped in the nav but not the guard, so clicks
+  // silently bounced to the dashboard on the live site (2026-08-02). Also
+  // proves a staff-only route still bounces.
+  await step(page, p, 'client-nav-guard-consistency', async () => {
+    await page.goto(`${BASE}/`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(2000);
+    const hrefs = await page.evaluate(() => {
+      const links = Array.from(document.querySelectorAll('[data-sidebar] a[href^="/"], nav a[href^="/"], aside a[href^="/"]'));
+      return Array.from(new Set(links.map((a) => a.getAttribute('href').split('?')[0]))).filter((h) => h && h !== '/');
+    });
+    if (hrefs.length < 3) throw new Error(`client sidebar exposed only ${hrefs.length} links — selector or nav regressed`);
+    const bounced = [];
+    for (const href of hrefs.slice(0, 20)) {
+      await page.goto(`${BASE}${href}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForTimeout(1800);
+      const path = new URL(page.url()).pathname;
+      if (path !== href && !path.startsWith(href + '/')) bounced.push(`${href} -> ${path}`);
+      else if (await page.getByText('Page not found').count()) bounced.push(`${href} -> dead route`);
+    }
+    if (bounced.length) throw new Error(`client nav links bounced/dead: ${bounced.join(', ')}`);
+    // Staff-only route must still bounce for a client.
+    await page.goto(`${BASE}/hr`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(1800);
+    if (new URL(page.url()).pathname === '/hr') throw new Error('client can open the staff-only /hr route (guard hole)');
+  });
+
   await step(page, p, 'client-mobile-no-overflow', async () => {
     const mob = await page.context().newPage();
     try {

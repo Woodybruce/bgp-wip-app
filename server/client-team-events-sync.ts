@@ -65,12 +65,23 @@ export async function syncClientTeamEvents(clientCompanyId: string): Promise<{
     [clientCompanyId]
   );
   const contactEmails = new Set<string>(contactRes.rows.map((r: any) => r.email));
+  // "Every Landsec meeting": any attendee on the client's email domain(s)
+  // counts, not just people already in the CRM — a new Landsec attendee
+  // shouldn't hide the meeting. Domains are derived from the known contacts
+  // (generic mail providers excluded).
+  const GENERIC_DOMAINS = new Set(["gmail.com", "hotmail.com", "outlook.com", "yahoo.com", "icloud.com", "aol.com", "live.com", "me.com"]);
+  const clientDomains = new Set<string>(
+    [...contactEmails]
+      .map(e => e.split("@")[1])
+      .filter((d): d is string => !!d && !GENERIC_DOMAINS.has(d))
+  );
 
   const now = new Date();
   const start = new Date(now); start.setDate(start.getDate() - 1);
-  const end = new Date(now); end.setDate(end.getDate() + 30);
+  // 90 days ahead (was 30) — "every Landsec meeting", not just this month's.
+  const end = new Date(now); end.setDate(end.getDate() + 90);
 
-  type Ev = { title: string; start: string; end: string; location: string; propertyId: string | null; uid: string };
+  type Ev = { title: string; start: string; end: string; location: string; propertyId: string | null; uid: string; attendees: string[] };
   const matchedEvents = new Map<string, Ev>();
 
   for (const uid of teamUserIds) {
@@ -100,15 +111,34 @@ export async function syncClientTeamEvents(clientCompanyId: string): Promise<{
           const hit = propMatchers.find(m => hay.includes(m.needle));
           if (hit) { matched = true; propertyId = hit.id; }
         }
-        // Match 2 (broader): a client contact is an attendee.
+        // Match 2 (broader): a client contact is an attendee, or ANY attendee
+        // is on the client's email domain (new joiners aren't in CRM yet).
         if (!matched && Array.isArray(e.attendees)) {
-          matched = e.attendees.some((a: any) => contactEmails.has(norm(a?.emailAddress?.address)));
+          matched = e.attendees.some((a: any) => {
+            const addr = norm(a?.emailAddress?.address);
+            if (!addr) return false;
+            if (contactEmails.has(addr)) return true;
+            const dom = addr.split("@")[1];
+            return !!dom && clientDomains.has(dom);
+          });
         }
         if (!matched) continue;
 
         stats.matched++;
         const uid2 = e.iCalUId || `${subject}|${e.start?.dateTime}`;
         if (!matchedEvents.has(uid2)) {
+          // "Name <email>" per attendee so the client's Event Details can
+          // show who is in the room.
+          const attendeeList: string[] = Array.isArray(e.attendees)
+            ? e.attendees
+                .map((a: any) => {
+                  const nm = a?.emailAddress?.name || "";
+                  const ad = a?.emailAddress?.address || "";
+                  return nm && ad ? `${nm} <${ad}>` : (nm || ad);
+                })
+                .filter(Boolean)
+                .slice(0, 30)
+            : [];
           matchedEvents.set(uid2, {
             title: subject || "Meeting",
             start: e.start?.dateTime,
@@ -116,6 +146,7 @@ export async function syncClientTeamEvents(clientCompanyId: string): Promise<{
             location,
             propertyId,
             uid: uid2,
+            attendees: attendeeList,
           });
         }
       }
@@ -135,9 +166,9 @@ export async function syncClientTeamEvents(clientCompanyId: string): Promise<{
     for (const ev of matchedEvents.values()) {
       if (!ev.start) continue;
       await client.query(
-        `INSERT INTO team_events (title, event_type, start_time, end_time, property_id, company_name, location, created_by)
-         VALUES ($1, 'client-sync', $2, $3, $4, $5, $6, 'client-events-sync')`,
-        [ev.title, ev.start, ev.end || ev.start, ev.propertyId, companyName, ev.location || null]
+        `INSERT INTO team_events (title, event_type, start_time, end_time, property_id, company_name, location, attendees, created_by)
+         VALUES ($1, 'client-sync', $2, $3, $4, $5, $6, $7, 'client-events-sync')`,
+        [ev.title, ev.start, ev.end || ev.start, ev.propertyId, companyName, ev.location || null, ev.attendees.length ? ev.attendees : null]
       );
       stats.upserted++;
     }
