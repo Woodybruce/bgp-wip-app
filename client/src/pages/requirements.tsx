@@ -1990,7 +1990,7 @@ function LeasingSection({
             ))}
           </div>
         ) : (
-          <ScrollableTable minWidth={2630}>
+          <ScrollableTable minWidth={2510}>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -2051,7 +2051,6 @@ function LeasingSection({
                   <TableHead className="min-w-[220px]">Agent Contact</TableHead>
                   <TableHead className="min-w-[180px]">Deal</TableHead>
                   <TableHead className="min-w-[120px]">Landlord Pack</TableHead>
-                  <TableHead className="min-w-[120px]">Extract</TableHead>
                   <TableHead className="min-w-[150px]">Comments</TableHead>
                   <TableHead className="min-w-[80px]">Actions</TableHead>
                 </TableRow>
@@ -2204,15 +2203,6 @@ function LeasingSection({
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
                       <LandlordPackCell itemId={item.id} landlordPack={item.landlordPack} />
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1">
-                      <InlineLabelSelect
-                        value={item.extract}
-                        options={CRM_OPTIONS.reqLeasingExtract}
-                        colorMap={CRM_OPTIONS.reqLeasingExtractColors}
-                        onSave={(v) => inlineUpdate(item.id, { extract: v || null })}
-                        placeholder="Set"
-                      />
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
                       <InlineText
