@@ -25,7 +25,14 @@ export async function gazetteInsolvencyNotices(companyNumber: string): Promise<G
   const num = companyNumber.trim().toUpperCase();
   const url = `https://www.thegazette.co.uk/all-notices/notice/data.json?text=${encodeURIComponent(num)}&categorycode=24&results-page=1`;
   const res = await fetch(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
-  if (!res.ok) throw new Error(`Gazette ${res.status}`);
+  if (!res.ok) {
+    // The Gazette's machine-readable endpoints (data.json / data.feed) went
+    // down fleet-wide on 2026-08-02 returning 500 while the HTML search kept
+    // working — scrape that as a fallback so the earliest-distress signal
+    // doesn't silently drop out of covenant reports.
+    if (res.status >= 500) return gazetteInsolvencyNoticesHtml(num);
+    throw new Error(`Gazette ${res.status}`);
+  }
   const data: any = await res.json();
   let entries: any[] = data?.entry || [];
   if (entries && !Array.isArray(entries)) entries = [entries];
@@ -35,6 +42,36 @@ export async function gazetteInsolvencyNotices(companyNumber: string): Promise<G
     published: String(e?.published || "").slice(0, 10),
     link: String((Array.isArray(e?.link) ? e.link[0]?.["@href"] : e?.link?.["@href"]) || ""),
   })).filter((n) => n.title);
+}
+
+const GAZETTE_MONTHS: Record<string, string> = { january: "01", february: "02", march: "03", april: "04", may: "05", june: "06", july: "07", august: "08", september: "09", october: "10", november: "11", december: "12" };
+
+// HTML-search fallback. Real notices are <article id="item-…/id/notice/…">
+// blocks — the page also embeds sidebar guide articles with the same
+// feed-item class, so match on the id attribute, not the class.
+async function gazetteInsolvencyNoticesHtml(num: string): Promise<GazetteNotice[]> {
+  const url = `https://www.thegazette.co.uk/all-notices/notice?text=${encodeURIComponent(num)}&categorycode=24`;
+  const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0 (BGP covenant engine)" }, signal: AbortSignal.timeout(15_000) });
+  if (!res.ok) throw new Error(`Gazette HTML ${res.status}`);
+  const html = await res.text();
+  const notices: GazetteNotice[] = [];
+  const articleRe = /<article id="item-https:\/\/www\.thegazette\.co\.uk\/id\/notice\/([^"]+)"[\s\S]*?<\/article>/g;
+  for (const m of html.matchAll(articleRe)) {
+    const block = m[0];
+    const title = (block.match(/<h3>([^<]+)<\/h3>/)?.[1] || "").trim();
+    const dateRaw = (block.match(/Publication date<\/dt>\s*<dd>([^<]+)<\/dd>/)?.[1] || "").trim();
+    const dm = dateRaw.match(/^(\d{1,2}) (\w+) (\d{4})$/);
+    const published = dm ? `${dm[3]}-${GAZETTE_MONTHS[dm[2].toLowerCase()] || "01"}-${dm[1].padStart(2, "0")}` : "";
+    notices.push({
+      title,
+      // The HTML page doesn't carry f:notice-code — classify petitions by
+      // title so PETITION_CODES-equivalent severity still applies.
+      code: /petition/i.test(title) ? "2450" : "",
+      published,
+      link: `https://www.thegazette.co.uk/notice/${m[1]}`,
+    });
+  }
+  return notices.filter((n) => n.title);
 }
 
 // Winding-up petition = 2450; administrations 2410-2412; liquidations 2432-2450s.
@@ -76,9 +113,13 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
   ]);
   if (!profile?.company_name) throw new Error(`Company ${num} not found at Companies House`);
 
+  // gazetteFailed distinguishes "screen ran, found nothing" from "screen
+  // never ran" — a clean-looking report whose early-warning layer silently
+  // failed is worse than an amber flag saying so.
+  let gazetteFailed = false;
   const [insolvency, gazette] = await Promise.all([
     profile.has_insolvency_history ? chFetch(`/company/${num}/insolvency`).catch(() => null) : Promise.resolve(null),
-    gazetteInsolvencyNotices(num).catch(() => [] as GazetteNotice[]),
+    gazetteInsolvencyNotices(num).catch(() => { gazetteFailed = true; return [] as GazetteNotice[]; }),
   ]);
 
   // Filed-accounts figures if the company is in the CRM (extracted by ch-accounts).
@@ -110,6 +151,7 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
   if (petitions.length) { score -= 50; flags.push({ level: "red", label: "Winding-up petition in The Gazette", detail: petitions[0].published }); }
   else if (recentGazette.length) { score -= 40; flags.push({ level: "red", label: `Corporate-insolvency Gazette notice (${recentGazette.length})`, detail: `${recentGazette[0].title} · ${recentGazette[0].published}` }); }
   else if (gazette.length) { score -= 15; flags.push({ level: "amber", label: "Historic Gazette insolvency notice", detail: gazette[0].published }); }
+  if (gazetteFailed) flags.push({ level: "amber", label: "Gazette screen unavailable", detail: "Insolvency-notice check could not run — treat the absence of Gazette flags as unverified" });
 
   if (profile.has_insolvency_history && !gazette.length) { score -= 35; flags.push({ level: "red", label: "Insolvency history at Companies House" }); }
 
@@ -143,7 +185,7 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
   const signals = {
     status, ageYears, accountsOverdue: !!profile.accounts?.overdue, nextAccountsDue: profile.accounts?.next_due || null,
     outstandingCharges, newCharges12m, resignations12m,
-    gazetteNotices: gazette.slice(0, 6), insolvencyCases: insolvency?.cases?.length || 0,
+    gazetteNotices: gazette.slice(0, 6), gazetteChecked: !gazetteFailed, insolvencyCases: insolvency?.cases?.length || 0,
     accounts: accounts ? { period: accounts.period, turnover: accounts.turnover, netAssets: accounts.netAssets, cash: accounts.cash, profitBeforeTax: accounts.profitBeforeTax } : null,
   };
 
