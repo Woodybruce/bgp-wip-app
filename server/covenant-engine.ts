@@ -142,6 +142,67 @@ export async function assessDirectorRisk(officersRes: any): Promise<{
   return out;
 }
 
+// ── Payment Practices Reporting (gov.uk) — the free replacement for
+// Experian's days-beyond-terms data. Large companies must file avg
+// days-to-pay and %-paid-late twice a year; the service publishes the lot
+// as one CSV (~100MB). We ingest the latest report per company weekly.
+export async function ingestPaymentPractices(): Promise<{ companies: number }> {
+  const res = await fetch("https://check-payment-practices.service.gov.uk/export/csv/", {
+    headers: { "User-Agent": "Mozilla/5.0 (BGP covenant engine)" }, signal: AbortSignal.timeout(300_000),
+  });
+  if (!res.ok || !res.body) throw new Error(`payment-practices export ${res.status}`);
+  const { parse } = await import("csv-parse");
+  const { Readable } = await import("stream");
+  const parser = (Readable.fromWeb(res.body as any)).pipe(parse({ columns: true, relax_quotes: true, relax_column_count: true }));
+  const latest = new Map<string, { name: string; periodEnd: string; filed: string; avgDays: number | null; pctLate: number | null; pctOver60: number | null }>();
+  for await (const r of parser) {
+    const numRaw = String(r["Company number"] || "").trim().toUpperCase();
+    if (!numRaw) continue;
+    const num = numRaw.padStart(8, "0");
+    const periodEnd = String(r["End date"] || "");
+    const prev = latest.get(num);
+    if (prev && prev.periodEnd >= periodEnd) continue;
+    const toNum = (v: any) => { const n = parseFloat(String(v ?? "")); return isFinite(n) ? n : null; };
+    latest.set(num, {
+      name: String(r["Company"] || ""), periodEnd, filed: String(r["Filing date"] || ""),
+      avgDays: toNum(r["Average time to pay"]),
+      pctLate: toNum(r["% Invoices not paid within agreed terms"]),
+      pctOver60: toNum(r["% Invoices paid later than 60 days"]),
+    });
+  }
+  const entries = Array.from(latest.entries());
+  for (let i = 0; i < entries.length; i += 500) {
+    const chunk = entries.slice(i, i + 500);
+    const values: any[] = []; const rows: string[] = [];
+    chunk.forEach(([num, p], j) => {
+      const b = j * 7;
+      rows.push(`($${b + 1},$${b + 2},nullif($${b + 3},'')::date,nullif($${b + 4},'')::date,$${b + 5},$${b + 6},$${b + 7})`);
+      values.push(num, p.name, p.periodEnd, p.filed, p.avgDays, p.pctLate, p.pctOver60);
+    });
+    await pool.query(
+      `INSERT INTO payment_practices (company_number, company_name, period_end, filed, avg_days_to_pay, pct_paid_late, pct_over_60)
+       VALUES ${rows.join(",")}
+       ON CONFLICT (company_number) DO UPDATE SET company_name = EXCLUDED.company_name, period_end = EXCLUDED.period_end,
+         filed = EXCLUDED.filed, avg_days_to_pay = EXCLUDED.avg_days_to_pay, pct_paid_late = EXCLUDED.pct_paid_late,
+         pct_over_60 = EXCLUDED.pct_over_60, ingested_at = now()`,
+      values,
+    );
+  }
+  console.log(`[payment-practices] ingested ${entries.length} companies' latest reports`);
+  return { companies: entries.length };
+}
+
+async function paymentPracticesFor(num: string): Promise<{ avgDays: number | null; pctLate: number | null; pctOver60: number | null; periodEnd: string | null } | null> {
+  try {
+    const { rows } = await pool.query(
+      `SELECT avg_days_to_pay, pct_paid_late, pct_over_60, period_end::text FROM payment_practices WHERE company_number = $1`,
+      [num],
+    );
+    if (!rows[0]) return null;
+    return { avgDays: rows[0].avg_days_to_pay, pctLate: rows[0].pct_paid_late, pctOver60: rows[0].pct_over_60, periodEnd: rows[0].period_end };
+  } catch { return null; }
+}
+
 // ── FCA daily short-positions register — free distress signal for listed
 // counterparties. Heavy disclosed shorting = the market smells trouble.
 let shortCache: { rows: Array<{ issuer: string; pct: number }>; expiresAt: number } | null = null;
@@ -234,10 +295,11 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
   // record (CH appointments + disqualified register), auditor departures in
   // the filing history, and — for listed counterparties — market signals
   // (Yahoo) plus the FCA disclosed-short register.
-  const [directorRisk, filingHistory, market] = await Promise.all([
+  const [directorRisk, filingHistory, market, payPractices] = await Promise.all([
     assessDirectorRisk(officersRes).catch(() => null),
     chFetch(`/company/${num}/filing-history?items_per_page=100`).catch(() => null),
     ticker ? getStockSnapshot(ticker).catch(() => null) : Promise.resolve(null),
+    paymentPracticesFor(num),
   ]);
   const shortInterest = market ? await fcaShortInterest(profile.company_name).catch(() => null) : null;
 
@@ -302,6 +364,16 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
     }
   }
 
+  // Payment behaviour — statutory Payment Practices reports (large cos).
+  if (payPractices) {
+    const late = payPractices.pctLate;
+    const avg = payPractices.avgDays;
+    if (late != null && late >= 50) { score -= 10; flags.push({ level: "red", label: `${late}% of invoices paid late`, detail: `Payment Practices report to ${payPractices.periodEnd}` }); }
+    else if (late != null && late >= 30) { score -= 6; flags.push({ level: "amber", label: `${late}% of invoices paid late`, detail: `Payment Practices report to ${payPractices.periodEnd}` }); }
+    if (avg != null && avg >= 60) { score -= 6; flags.push({ level: "amber", label: `Slow payer — ${avg} days average`, detail: "Payment Practices report" }); }
+    else if (avg != null && (late == null || late < 30)) flags.push({ level: "info", label: `Pays suppliers in ${avg}d avg${late != null ? ` · ${late}% late` : ""}` });
+  }
+
   // Auditor departure in the last 24 months — classic quiet red flag.
   const auditorDepartures = (filingHistory?.items || []).filter((f: any) => {
     const txt = `${f.description || ""} ${f.type || ""}`.toLowerCase();
@@ -337,7 +409,7 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
     outstandingCharges, newCharges12m, resignations12m,
     gazetteNotices: gazette.slice(0, 6), gazetteChecked: !gazetteFailed, insolvencyCases: insolvency?.cases?.length || 0,
     accounts: accounts ? { period: accounts.period, turnover: accounts.turnover, netAssets: accounts.netAssets, cash: accounts.cash, profitBeforeTax: accounts.profitBeforeTax } : null,
-    directorRisk, auditorDepartures: auditorDepartures.length,
+    directorRisk, auditorDepartures: auditorDepartures.length, paymentPractices: payPractices,
     market: market ? { ticker: market.ticker, price: market.price, currency: market.currency, marketCapGBP: market.marketCapGBP, fiftyTwoWeekChange: market.fiftyTwoWeekChange, shortInterestPct: shortInterest } : null,
   };
 
@@ -376,6 +448,9 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
 
 // ── Cache + watchlist + alerts (Postgres) ───────────────────────────────────
 async function ensureTables() {
+  await pool.query(`CREATE TABLE IF NOT EXISTS payment_practices (
+    company_number VARCHAR PRIMARY KEY, company_name TEXT, period_end DATE, filed DATE,
+    avg_days_to_pay REAL, pct_paid_late REAL, pct_over_60 REAL, ingested_at TIMESTAMP DEFAULT now())`);
   await pool.query(`CREATE TABLE IF NOT EXISTS covenant_reports (
     company_number VARCHAR PRIMARY KEY, company_name TEXT, score INTEGER, grade VARCHAR(1),
     report JSONB NOT NULL, computed_at TIMESTAMP DEFAULT now())`);
@@ -499,7 +574,22 @@ export function setupCovenantRoutes(app: Express) {
     res.json(await runCovenantWatch());
   });
 
+  app.post("/api/covenant/payment-practices/ingest", requireAuth, async (_req: Request, res: Response) => {
+    try { res.json(await ingestPaymentPractices()); }
+    catch (err: any) { res.status(500).json({ error: err?.message || "ingest failed" }); }
+  });
+
   // Nightly watcher — first pass 10 min after boot, then every 24h.
   setTimeout(() => { runCovenantWatch().catch(() => {}); }, 10 * 60 * 1000);
   setInterval(() => { runCovenantWatch().catch(() => {}); }, 24 * 60 * 60 * 1000);
+
+  // Payment-practices reports file twice a year — refresh weekly, plus a
+  // first fill 15 min after boot when the table is empty.
+  setTimeout(async () => {
+    try {
+      const { rows } = await pool.query(`SELECT count(*)::int AS n FROM payment_practices`);
+      if ((rows[0]?.n || 0) === 0) await ingestPaymentPractices();
+    } catch (e: any) { console.warn("[payment-practices] first-fill skipped:", e?.message); }
+  }, 15 * 60 * 1000);
+  setInterval(() => { ingestPaymentPractices().catch((e) => console.warn("[payment-practices] weekly ingest failed:", e?.message)); }, 7 * 24 * 60 * 60 * 1000);
 }
