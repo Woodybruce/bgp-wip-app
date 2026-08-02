@@ -17,6 +17,7 @@ import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { chFetch } from "./companies-house";
+import { getStockSnapshot } from "./stock-price";
 
 // ── Gazette: corporate insolvency notices (free JSON API) ──────────────────
 export interface GazetteNotice { title: string; code: string; published: string; link: string }
@@ -87,9 +88,103 @@ export interface CovenantReport {
   grade: "A" | "B" | "C" | "D" | "E";
   flags: CovenantFlag[];
   signals: Record<string, any>; // raw evidence for the UI
-  verdict: string | null;       // Claude two-liner
+  verdict: string | null;       // Claude commentary
+  missing: string[];            // data gaps — what would complete the picture
   ccjCheckUrl: string;          // manual TrustOnline link (~£6-10/search)
   computedAt: string;
+}
+
+// ── Director risk — free Experian replacement layer ────────────────────────
+// Two CH lookups per active director (capped): their appointment history
+// (companies currently in an insolvency process) and the disqualified-
+// officers register (name match only, so surfaced as "verify", never
+// auto-red).
+const DISTRESS_STATUSES = new Set(["liquidation", "receivership", "administration", "insolvency-proceedings", "voluntary-arrangement"]);
+
+function nameTokens(s: string): Set<string> {
+  return new Set(String(s || "").toUpperCase().replace(/[^A-Z ]+/g, " ").split(/\s+/).filter((t) => t.length > 1));
+}
+
+function namesRoughlyMatch(a: string, b: string): boolean {
+  const ta = nameTokens(a), tb = nameTokens(b);
+  if (ta.size < 2 || tb.size < 2) return false;
+  const [small, big] = ta.size <= tb.size ? [ta, tb] : [tb, ta];
+  for (const t of small) if (!big.has(t)) return false;
+  return true;
+}
+
+export async function assessDirectorRisk(officersRes: any): Promise<{
+  activeDirectors: number; historyChecked: number;
+  directorsWithInsolventCompanies: Array<{ name: string; count: number }>;
+  possibleDisqualified: Array<{ officer: string; match: string }>;
+}> {
+  const active = (officersRes?.items || [])
+    .filter((o: any) => !o.resigned_on && /director/i.test(String(o.officer_role || "")))
+    .slice(0, 8);
+  const out = { activeDirectors: active.length, historyChecked: 0, directorsWithInsolventCompanies: [] as Array<{ name: string; count: number }>, possibleDisqualified: [] as Array<{ officer: string; match: string }> };
+  for (const o of active) {
+    const apptLink = o.links?.officer?.appointments;
+    if (apptLink) {
+      const app = await chFetch(`${apptLink}?items_per_page=50`).catch(() => null);
+      if (app) {
+        out.historyChecked++;
+        const bad = (app.items || []).filter((a: any) => DISTRESS_STATUSES.has(String(a.appointed_to?.company_status || "")));
+        if (bad.length) out.directorsWithInsolventCompanies.push({ name: String(o.name || ""), count: bad.length });
+      }
+    }
+    const q = String(o.name || "").replace(/,/g, " ").trim();
+    if (q) {
+      const s = await chFetch(`/search/disqualified-officers?q=${encodeURIComponent(q)}&items_per_page=3`).catch(() => null);
+      const hit = (s?.items || []).find((it: any) => namesRoughlyMatch(String(it.title || ""), q));
+      if (hit) out.possibleDisqualified.push({ officer: String(o.name || ""), match: String(hit.title || "") });
+    }
+  }
+  return out;
+}
+
+// ── FCA daily short-positions register — free distress signal for listed
+// counterparties. Heavy disclosed shorting = the market smells trouble.
+let shortCache: { rows: Array<{ issuer: string; pct: number }>; expiresAt: number } | null = null;
+
+async function fcaShortInterest(companyName: string): Promise<number | null> {
+  try {
+    if (!shortCache || Date.now() > shortCache.expiresAt) {
+      const res = await fetch("https://www.fca.org.uk/publication/data/short-positions-daily-update.xlsx", {
+        headers: { "User-Agent": "Mozilla/5.0 (BGP covenant engine)" }, signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) return null;
+      const buf = Buffer.from(await res.arrayBuffer());
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(buf, { type: "buffer" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: null });
+      // The register is a disclosure LOG — every update a holder ever filed.
+      // The live position is each holder's most recent row per issuer, and
+      // only counts while still ≥0.5% (below that = position closed/exited).
+      const latest = new Map<string, { issuer: string; pct: number; date: number }>();
+      for (const r of rows) {
+        const issuer = String(r["Name of Share Issuer"] || "").trim();
+        const holder = String(r["Position Holder"] || "").trim();
+        const pct = parseFloat(String(r["Net Short Position (%)"] ?? ""));
+        const date = Number(r["Position Date"]) || 0;
+        if (!issuer || !holder || !isFinite(pct)) continue;
+        const key = `${holder}|${issuer}`;
+        const prev = latest.get(key);
+        if (!prev || date > prev.date) latest.set(key, { issuer, pct, date });
+      }
+      const parsed = Array.from(latest.values()).filter((p) => p.pct >= 0.5).map(({ issuer, pct }) => ({ issuer, pct }));
+      shortCache = { rows: parsed, expiresAt: Date.now() + 12 * 60 * 60 * 1000 };
+    }
+    const target = nameTokens(companyName);
+    if (target.size === 0) return null;
+    let total = 0; let matched = false;
+    for (const { issuer, pct } of shortCache.rows) {
+      if (namesRoughlyMatch(issuer, companyName)) { total += pct; matched = true; }
+    }
+    return matched ? Math.round(total * 100) / 100 : 0;
+  } catch {
+    return null;
+  }
 }
 
 // Parse "£84.2m" / "-£1.2m" / "(£450k)" → number in £; null if unreadable.
@@ -122,16 +217,29 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
     gazetteInsolvencyNotices(num).catch(() => { gazetteFailed = true; return [] as GazetteNotice[]; }),
   ]);
 
-  // Filed-accounts figures if the company is in the CRM (extracted by ch-accounts).
+  // Filed-accounts figures + ticker if the company is in the CRM.
   let accounts: any = null;
+  let ticker: string | null = null;
   try {
     const { rows } = await pool.query(
-      `SELECT companies_house_data->'latestAccountsExtracted' AS acc FROM crm_companies
-        WHERE regexp_replace(upper(companies_house_number), '\\s', '', 'g') = $1 AND companies_house_data ? 'latestAccountsExtracted' LIMIT 1`,
+      `SELECT companies_house_data->'latestAccountsExtracted' AS acc, stock_ticker FROM crm_companies
+        WHERE regexp_replace(upper(companies_house_number), '\\s', '', 'g') = $1 LIMIT 1`,
       [num]
     );
     accounts = rows[0]?.acc || null;
+    ticker = rows[0]?.stock_ticker || null;
   } catch { /* no DB / no row — score still works */ }
+
+  // Free Experian-replacement layers, gathered in parallel: director track
+  // record (CH appointments + disqualified register), auditor departures in
+  // the filing history, and — for listed counterparties — market signals
+  // (Yahoo) plus the FCA disclosed-short register.
+  const [directorRisk, filingHistory, market] = await Promise.all([
+    assessDirectorRisk(officersRes).catch(() => null),
+    chFetch(`/company/${num}/filing-history?items_per_page=100`).catch(() => null),
+    ticker ? getStockSnapshot(ticker).catch(() => null) : Promise.resolve(null),
+  ]);
+  const shortInterest = market ? await fcaShortInterest(profile.company_name).catch(() => null) : null;
 
   const flags: CovenantFlag[] = [];
   let score = 100;
@@ -173,6 +281,48 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
   else if (outstandingCharges > 0) { score -= 4; flags.push({ level: "info", label: `${outstandingCharges} outstanding charge${outstandingCharges > 1 ? "s" : ""}` }); }
   if (newCharges12m > 0) { score -= 6; flags.push({ level: "amber", label: `${newCharges12m} new charge${newCharges12m > 1 ? "s" : ""} in last 12m` }); }
 
+  // Profitability (when extracted accounts carry it).
+  const pbt = parseMoney(accounts?.profitBeforeTax);
+  const turnover = parseMoney(accounts?.turnover);
+  if (pbt != null && pbt < 0) { score -= 10; flags.push({ level: "amber", label: "Loss-making", detail: `PBT ${accounts.profitBeforeTax}${accounts?.period ? ` · ${accounts.period}` : ""}` }); }
+  else if (pbt != null && turnover != null && turnover > 0) {
+    const margin = pbt / turnover;
+    if (margin < 0.02) { score -= 4; flags.push({ level: "amber", label: `Thin margin (${(margin * 100).toFixed(1)}% PBT)` }); }
+    else flags.push({ level: "info", label: `PBT margin ${(margin * 100).toFixed(1)}%` });
+  }
+
+  // Director track record — prior insolvent companies + disqualified register.
+  if (directorRisk) {
+    const insolventDirs = directorRisk.directorsWithInsolventCompanies;
+    if (insolventDirs.length >= 2) { score -= 12; flags.push({ level: "amber", label: `${insolventDirs.length} directors with companies in insolvency processes`, detail: insolventDirs.map((d) => `${d.name} (${d.count})`).join(" · ") }); }
+    else if (insolventDirs.length === 1) { score -= 6; flags.push({ level: "amber", label: "Director linked to insolvent company", detail: `${insolventDirs[0].name} — ${insolventDirs[0].count} appointment${insolventDirs[0].count > 1 ? "s" : ""} in an insolvency process` }); }
+    for (const d of directorRisk.possibleDisqualified) {
+      score -= 10;
+      flags.push({ level: "amber", label: "Possible disqualified-director match — verify", detail: `${d.officer} ↔ register entry ${d.match} (name match only)` });
+    }
+  }
+
+  // Auditor departure in the last 24 months — classic quiet red flag.
+  const auditorDepartures = (filingHistory?.items || []).filter((f: any) => {
+    const txt = `${f.description || ""} ${f.type || ""}`.toLowerCase();
+    return /auditor/.test(txt) && /ceas|resign|remov|vacat|terminat/.test(txt)
+      && f.date && (Date.now() - new Date(f.date).getTime()) < 730 * 864e5;
+  });
+  if (auditorDepartures.length) { score -= 8; flags.push({ level: "amber", label: "Auditor departure filed", detail: `${auditorDepartures[0].date} — ${auditorDepartures[0].description || auditorDepartures[0].type}` }); }
+
+  // Listed-company signals — continuous disclosure beats bureau data.
+  if (market) {
+    const capBn = market.marketCapGBP != null ? market.marketCapGBP / 1e9 : null;
+    flags.push({ level: "info", label: `Listed: ${market.shortName || ticker}`, detail: `${market.exchange || ""}${capBn != null ? ` · mkt cap £${capBn >= 1 ? capBn.toFixed(1) + "bn" : Math.round(capBn * 1000) + "m"}` : ""}` });
+    if (market.price != null && market.fiftyTwoWeekHigh != null && market.fiftyTwoWeekHigh > 0) {
+      const drawdown = 1 - market.price / market.fiftyTwoWeekHigh;
+      if (drawdown >= 0.5) { score -= 12; flags.push({ level: "red", label: `Share price ${Math.round(drawdown * 100)}% below 52-week high` }); }
+      else if (drawdown >= 0.3) { score -= 6; flags.push({ level: "amber", label: `Share price ${Math.round(drawdown * 100)}% below 52-week high` }); }
+    }
+    if (shortInterest != null && shortInterest >= 8) { score -= 10; flags.push({ level: "red", label: `Heavy disclosed short interest (${shortInterest}%)`, detail: "FCA net-short register" }); }
+    else if (shortInterest != null && shortInterest >= 3) { score -= 6; flags.push({ level: "amber", label: `Material disclosed short interest (${shortInterest}%)`, detail: "FCA net-short register" }); }
+  }
+
   // Stability — officer churn + age.
   const resignations12m = (officersRes?.items || []).filter((o: any) => o.resigned_on && (Date.now() - new Date(o.resigned_on).getTime()) < 365 * 864e5).length;
   if (resignations12m >= 3) { score -= 6; flags.push({ level: "amber", label: `${resignations12m} officer resignations in 12m` }); }
@@ -187,9 +337,20 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
     outstandingCharges, newCharges12m, resignations12m,
     gazetteNotices: gazette.slice(0, 6), gazetteChecked: !gazetteFailed, insolvencyCases: insolvency?.cases?.length || 0,
     accounts: accounts ? { period: accounts.period, turnover: accounts.turnover, netAssets: accounts.netAssets, cash: accounts.cash, profitBeforeTax: accounts.profitBeforeTax } : null,
+    directorRisk, auditorDepartures: auditorDepartures.length,
+    market: market ? { ticker: market.ticker, price: market.price, currency: market.currency, marketCapGBP: market.marketCapGBP, fiftyTwoWeekChange: market.fiftyTwoWeekChange, shortInterestPct: shortInterest } : null,
   };
 
-  // Claude two-line verdict — best-effort, never blocks the score.
+  // Data gaps — what would complete the picture. Rendered alongside the
+  // grade so a clean-looking report can't hide an unexecuted check.
+  const missing: string[] = [];
+  if (!accounts) missing.push("No filed-accounts figures extracted yet — run the accounts extraction for balance-sheet signals");
+  if (gazetteFailed) missing.push("Gazette insolvency screen could not run");
+  if (!directorRisk || directorRisk.historyChecked === 0) missing.push("Director track-record sweep did not run");
+  if (!ticker && /\bPLC\b/i.test(profile.company_name || "")) missing.push("PLC with no stock ticker set — add one for market signals");
+  if (!officersRes?.items?.length) missing.push("No officers returned from Companies House");
+
+  // Claude commentary — best-effort, never blocks the score.
   let verdict: string | null = null;
   try {
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
@@ -199,15 +360,15 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
       if (process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) opts.baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
       const client = new Anthropic(opts);
       const msg = await client.messages.create({
-        model: "claude-haiku-4-5-20251001", max_tokens: 150,
-        messages: [{ role: "user", content: `You are a landlord's covenant analyst. Two sentences max, plain English, no hedging: assess tenant covenant strength.\n${profile.company_name} (${num}) — grade ${grade} (${score}/100)\nSignals: ${JSON.stringify({ status, flags: flags.map(f => f.label), accounts: signals.accounts })}` }],
+        model: "claude-haiku-4-5-20251001", max_tokens: 250,
+        messages: [{ role: "user", content: `You are a landlord's covenant analyst. Assess tenant covenant strength in 2-3 plain-English sentences, no hedging — lead with the verdict, then the strongest evidence for and against. If data gaps are listed, close with one short sentence starting "To complete the picture:" naming them. Plain prose only — no markdown, no bold, no headings, no bullet points.\n${profile.company_name} (${num}) — grade ${grade} (${score}/100)\nSignals: ${JSON.stringify({ status, flags: flags.map(f => f.label + (f.detail ? ` (${f.detail})` : "")), accounts: signals.accounts, market: signals.market, directorRisk })}\nData gaps: ${missing.length ? missing.join("; ") : "none"}` }],
       });
       verdict = (msg.content[0] as any)?.text?.trim() || null;
     }
   } catch { /* skip verdict */ }
 
   return {
-    companyNumber: num, companyName: profile.company_name, status, score, grade, flags, signals, verdict,
+    companyNumber: num, companyName: profile.company_name, status, score, grade, flags, signals, verdict, missing,
     ccjCheckUrl: `https://www.trustonline.org.uk/search-yourself/`, // official CCJ register, ~£6-10/search
     computedAt: new Date().toISOString(),
   };

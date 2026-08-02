@@ -92,3 +92,34 @@ export function CovenantBadgeByCompany({ companyId, className = "" }: { companyI
     </span>
   );
 }
+
+// Inline AI commentary + data-gap list for covenant cards. Shares the badge's
+// query key so the report is fetched once per company number.
+export function CovenantCommentary({ companyNumber, className = "" }: { companyNumber?: string | null; className?: string }) {
+  const num = (companyNumber || "").trim();
+  const isClientViewer = useIsClientViewer();
+  const { data } = useQuery<any>({
+    queryKey: ["covenant", num],
+    queryFn: async () => (await apiRequest("GET", `/api/covenant/${encodeURIComponent(num)}`)).json(),
+    enabled: !!num && !isClientViewer,
+    staleTime: 60 * 60 * 1000,
+    retry: 1,
+  });
+  if (!num || isClientViewer || !data?.grade) return null;
+
+  const missing: string[] = data.missing || [];
+  return (
+    <div className={`rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-2 ${className}`} data-testid="covenant-commentary">
+      {data.verdict ? (
+        <p className="text-[11px] leading-snug text-foreground/90 whitespace-pre-wrap">{data.verdict}</p>
+      ) : (
+        <p className="text-[11px] italic text-muted-foreground">Grade {data.grade} ({data.score}/100) — AI commentary unavailable.</p>
+      )}
+      {missing.length > 0 && (
+        <div className="mt-1 text-[10px] text-muted-foreground">
+          <span className="font-medium text-foreground/70">To complete:</span> {missing.join(" · ")}
+        </div>
+      )}
+    </div>
+  );
+}
