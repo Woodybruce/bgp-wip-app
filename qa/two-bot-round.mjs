@@ -303,7 +303,10 @@ async function victoriaRound(page, cross) {
       for (const [title, company] of [[a, 'Landsec'], [bb, 'Hammerson']]) {
         await fetch('/api/team-events', { method: 'POST', credentials: 'include', headers: h,
           body: JSON.stringify({ title, event_type: 'Meetings', company_name: company,
-            start_time: startIso, end_time: endIso }) }).catch(() => {});
+            start_time: startIso, end_time: endIso,
+            // Attendees ride the event so the client round can assert the
+            // who-is-attending pipeline (stored -> served -> parsed).
+            attendees: ['Mark Warne <mark.warne@landsec.com>', 'Victoria Steele <victoria@brucegillinghampollard.com>'] }) }).catch(() => {});
       }
     }, [mine, other, soon.toISOString(), new Date(soon.getTime() + 36e5).toISOString()]);
     // Stamp for the client round: Mark's calendar must show the Landsec
@@ -385,6 +388,32 @@ async function victoriaRound(page, cross) {
 
   // Staff task board: create → complete (PATCH) → delete round-trips, and the
   // task is user-scoped (a completed then deleted task leaves no residue).
+  // Staff deal-board stage move: drag-between-stages persists (the client
+  // 403 guard is covered elsewhere; this is the STAFF happy path). Uses the
+  // Bluewater fixture deal and restores its original status after.
+  await step(page, p, 'staff-deal-stage-move', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      const deal = (Array.isArray(deals) ? deals : []).find((d) => /bluewater/i.test(d.name || ''));
+      if (!deal) return { skip: true };
+      const original = deal.status;
+      const move = await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ status: 'UO' }) });
+      if (!move.ok) return { ok: false, why: `stage PUT ${move.status}` };
+      const after = await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json();
+      const moved = after?.status === 'UO';
+      await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+        body: JSON.stringify({ status: original }) }).catch(() => {});
+      const restored = await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json();
+      return { ok: true, moved, restoredStatus: restored?.status, original };
+    });
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`staff stage move rejected (${r.why})`);
+    if (!r.moved) throw new Error('stage move returned OK but the deal did not change stage');
+    if (r.restoredStatus !== r.original) throw new Error(`fixture deal stuck in UO (restore failed: ${r.restoredStatus})`);
+  });
+
   await step(page, p, 'staff-task-lifecycle', async () => {
     const title = `QA-PROBE task R${ROUND}`;
     const r = await page.evaluate(async (needle) => {
@@ -854,12 +883,21 @@ async function markRound(page, cross) {
       const res = await fetch('/api/team-events', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       if (!res.ok) return { ok: false, status: res.status };
       const events = await res.json().catch(() => []);
-      const titles = (Array.isArray(events) ? events : []).map((e) => e.title || '');
-      return { ok: true, mine: titles.some((t) => t.includes(mine)), other: titles.some((t) => t.includes(other)) };
+      const rows = Array.isArray(events) ? events : [];
+      const titles = rows.map((e) => e.title || '');
+      const mineRow = rows.find((e) => (e.title || '').includes(mine));
+      const att = mineRow?.attendees || [];
+      return {
+        ok: true,
+        mine: !!mineRow,
+        other: titles.some((t) => t.includes(other)),
+        attendeesServed: Array.isArray(att) && att.some((s) => String(s).includes('mark.warne@landsec.com')),
+      };
     }, [cross.calMine, cross.calOther]);
     if (!r.ok) throw new Error(`client calendar request failed (${r.status}) — team-events allowlist regressed?`);
     if (!r.mine) throw new Error("client calendar missing their own company's event (scoping regressed)");
     if (r.other) throw new Error("another client's event leaked into the client calendar");
+    if (!r.attendeesServed) throw new Error("event attendees missing from the client's team-events payload (who-is-attending regressed)");
     // ROUTE check, not just API: ClientRouteGuard bounced /calendar to the
     // dashboard because the route was missing from CLIENT_ALLOWED_ROUTES —
     // the API worked while the click did nothing (live-site 2026-08-02).
