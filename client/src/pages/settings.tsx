@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Users, ChevronDown, ChevronRight, ShieldCheck, AlertTriangle, CheckCircle2, Loader2, Building, Contact, Home, Trash2, Mail, RefreshCw, Play, Inbox, Activity, Wifi, WifiOff, Shield, Clock, MessageSquare, Eye, ExternalLink, User, Landmark, Plus, Power, FolderOpen, Upload, Download, FileText } from "lucide-react";
+import { Users, ChevronDown, ChevronRight, ShieldCheck, AlertTriangle, CheckCircle2, Loader2, Building, Contact, Home, Trash2, Mail, RefreshCw, Play, Inbox, Activity, Wifi, WifiOff, Shield, Clock, MessageSquare, Eye, ExternalLink, User, Landmark, Plus, Power, FolderOpen, Upload, Download, FileText, KeyRound } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -115,6 +115,24 @@ export default function SettingsPage() {
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message || "Failed to update access.", variant: "destructive" });
+    },
+  });
+
+  const resetPassword = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("POST", `/api/admin/users/${id}/reset-password`, {});
+      return res.json();
+    },
+    onSuccess: async (data: any) => {
+      try { await navigator.clipboard.writeText(data.tempPassword); } catch {}
+      toast({
+        title: `Password reset for ${data.name}`,
+        description: `New password: ${data.tempPassword} (copied to clipboard). They're logged out everywhere — hand it over securely.`,
+        duration: 30000,
+      });
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message || "Failed to reset password.", variant: "destructive" });
     },
   });
 
@@ -243,6 +261,14 @@ export default function SettingsPage() {
                                       >
                                         {member.isActive === false ? <Power className="w-3.5 h-3.5" /> : <Shield className="w-3.5 h-3.5" />}
                                       </button>
+                                      <button
+                                        onClick={() => { if (window.confirm(`Reset ${member.name}'s password? They'll be logged out everywhere.`)) resetPassword.mutate(member.id); }}
+                                        className="p-1 rounded-md hover:bg-blue-100 text-blue-500 transition-colors"
+                                        title="Reset password"
+                                        data-testid={`reset-password-${member.username}`}
+                                      >
+                                        <KeyRound className="w-3.5 h-3.5" />
+                                      </button>
                                       {member.isActive !== false && (
                                         <button
                                           onClick={() => forceLogout.mutate(member.id)}
@@ -323,6 +349,14 @@ export default function SettingsPage() {
                           >
                             {member.isActive === false ? <Power className="w-3.5 h-3.5" /> : <Shield className="w-3.5 h-3.5" />}
                           </button>
+                                      <button
+                                        onClick={() => { if (window.confirm(`Reset ${member.name}'s password? They'll be logged out everywhere.`)) resetPassword.mutate(member.id); }}
+                                        className="p-1 rounded-md hover:bg-blue-100 text-blue-500 transition-colors"
+                                        title="Reset password"
+                                        data-testid={`reset-password-${member.username}`}
+                                      >
+                                        <KeyRound className="w-3.5 h-3.5" />
+                                      </button>
                           {member.isActive !== false && (
                             <button
                               onClick={() => forceLogout.mutate(member.id)}

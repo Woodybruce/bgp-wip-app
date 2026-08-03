@@ -4267,6 +4267,119 @@ export function BrandComplianceCard({
 // (with Set Up Folders dialog), mirroring the property page layout.
 // Brand profiles never render this — it lives under the isLandlord
 // branch in BrandProfileSidebar.
+// "Known contacts" — surfaces the BGP email archaeology on the profile:
+// everyone BGP has actually emailed at this company's domain in the last two
+// years, with signature-mined roles/phones, and one-click add-to-CRM for the
+// ones we never logged. The data existed behind an admin diagnostic endpoint;
+// this makes it a working surface (Woody, 2026-08-02: "contacts are critical").
+function KnownContactsCard({ companyId, companyName }: { companyId: string; companyName: string }) {
+  const [open, setOpen] = useState(false);
+  const [addedEmails, setAddedEmails] = useState<Set<string>>(new Set());
+  const [addingEmail, setAddingEmail] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  const { data, isFetching, refetch } = useQuery<any>({
+    queryKey: ["/api/brand", companyId, "bgp-known-contacts"],
+    queryFn: async () => {
+      const res = await fetch(`/api/brand/${companyId}/bgp-known-contacts`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("scan failed");
+      return res.json();
+    },
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+  });
+  const contacts: any[] = data?.contacts || [];
+  const summary = data?.summary;
+
+  const addToCrm = async (k: any) => {
+    setAddingEmail(k.email);
+    try {
+      await apiRequest("POST", "/api/crm/contacts", {
+        name: k.name || k.email.split("@")[0].replace(/\./g, " ").replace(/\b\w/g, (ch: string) => ch.toUpperCase()),
+        email: k.email,
+        phone: k.phone || k.mobile || undefined,
+        role: k.role || undefined,
+        companyId,
+        companyName,
+      });
+      setAddedEmails((prev) => new Set(prev).add(k.email));
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      toast({ title: `${k.name || k.email} added to CRM`, description: `Linked to ${companyName}` });
+    } catch (e: any) {
+      toast({ title: "Couldn't add contact", description: e?.message, variant: "destructive" });
+    } finally {
+      setAddingEmail(null);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <Mail className="w-3.5 h-3.5" /> Known contacts
+          {summary && <span className="normal-case tracking-normal text-[10px]">({summary.notInCrm} not in CRM)</span>}
+        </CardTitle>
+        <button
+          type="button"
+          className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+          onClick={() => { if (!open) setOpen(true); else refetch(); }}
+          data-testid="button-scan-known-contacts"
+        >
+          {isFetching ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+          {open ? "Rescan" : "Scan BGP email"}
+        </button>
+      </CardHeader>
+      {open && (
+        <CardContent className="p-3 pt-0">
+          {isFetching && !contacts.length ? (
+            <p className="text-xs text-muted-foreground py-3 text-center">Mining two years of BGP email…</p>
+          ) : contacts.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-3 text-center">No emailed contacts found at this company's domain.</p>
+          ) : (
+            <>
+              {summary && (
+                <p className="text-[10px] text-muted-foreground mb-2">
+                  {summary.total} people BGP has emailed · {summary.inCrm} already in CRM · {summary.notInCrm} missing
+                  {summary.enrichmentQueued > 0 ? ` · ${summary.enrichmentQueued} signatures still enriching — rescan shortly` : ""}
+                </p>
+              )}
+              <div className="max-h-[320px] overflow-y-auto space-y-1 pr-1" data-testid="known-contacts-list">
+                {contacts.map((k: any) => {
+                  const added = k.inCrm || addedEmails.has(k.email);
+                  return (
+                    <div key={k.email} className="flex items-center gap-2 text-xs py-1 border-b border-border/40 last:border-0">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium truncate">{k.name || k.email}</p>
+                        <p className="text-[10px] text-muted-foreground truncate">
+                          {[k.role, k.email, k.phone || k.mobile].filter(Boolean).join(" · ")}
+                        </p>
+                      </div>
+                      {added ? (
+                        <Badge variant="outline" className="text-[9px] shrink-0 text-emerald-700 border-emerald-200">in CRM</Badge>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 px-2 text-[10px] shrink-0"
+                          onClick={() => addToCrm(k)}
+                          disabled={addingEmail === k.email}
+                          data-testid={`button-add-known-${k.email}`}
+                        >
+                          {addingEmail === k.email ? <Loader2 className="w-3 h-3 animate-spin" /> : "+ Add"}
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
 // Embedded, scrollable chat about this company — lives on the profile so a
 // conversation doesn't mean losing the page. Reuses the group-chat machinery:
 // one thread per company (linked_id), ChatBGP as a member, so plain message
@@ -4659,6 +4772,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
 
       {/* Key contacts */}
       <SidebarKeyContacts data={data} companyId={companyId} topContacts={topContacts} />
+
+      {/* Everyone BGP has emailed at this company, with add-to-CRM */}
+      <KnownContactsCard companyId={companyId} companyName={c.name} />
       </div>
 
       <div className="space-y-3">

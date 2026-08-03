@@ -1094,6 +1094,34 @@ export async function registerRoutes(
     }
   });
 
+  // Admin password reset — there was previously NO way to reset a login
+  // (client or staff) from inside the app. Generates a readable temp
+  // password (or accepts a supplied one), kills the target's sessions and
+  // bearer tokens so the old credentials stop working everywhere, and
+  // returns the new password ONCE for the admin to hand over.
+  app.post("/api/admin/users/:id/reset-password", requireAuth, async (req: any, res) => {
+    try {
+      const adminId = req.session.userId || req.tokenUserId;
+      const [admin] = await pool.query("SELECT is_admin FROM users WHERE id = $1", [adminId]).then(r => r.rows);
+      if (!admin?.is_admin) return res.status(403).json({ message: "Admin access required" });
+      const targetId = req.params.id;
+      const supplied = typeof req.body?.password === "string" ? req.body.password.trim() : "";
+      if (supplied && supplied.length < 8) return res.status(400).json({ message: "Password must be at least 8 characters" });
+      const words = ["Oak", "Brick", "Slate", "Quay", "Arch", "Mews", "Wharf", "Gate", "Court", "Strand"];
+      const newPw = supplied ||
+        `${words[crypto.randomInt(words.length)]}-${words[crypto.randomInt(words.length)]}-${crypto.randomInt(1000, 9999)}`;
+      const { hashPassword } = await import("./auth");
+      const hashed = await hashPassword(newPw);
+      const upd = await pool.query("UPDATE users SET password = $1 WHERE id = $2 RETURNING name, email", [hashed, targetId]);
+      if (!upd.rowCount) return res.status(404).json({ message: "User not found" });
+      await pool.query("DELETE FROM session WHERE sess::jsonb -> 'passport' ->> 'user' = $1 OR sess::jsonb ->> 'userId' = $1", [targetId]).catch(() => {});
+      await pool.query("DELETE FROM auth_tokens WHERE user_id = $1", [targetId]).catch(() => {});
+      res.json({ success: true, name: upd.rows[0].name, email: upd.rows[0].email, tempPassword: newPw });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to reset password" });
+    }
+  });
+
   app.post("/api/admin/users/:id/toggle-access", requireAuth, async (req: any, res) => {
     try {
       const adminId = req.session.userId || req.tokenUserId;
