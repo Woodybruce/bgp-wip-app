@@ -30,6 +30,14 @@ SELECT '99999999-4444-4444-4444-444444444444', 'sam.cole@hammerson.com', u.passw
 FROM users u WHERE u.email = 'mark.warne@landsec.com'
 ON CONFLICT (id) DO NOTHING;
 
+-- Dedicated throwaway for the admin password-reset scenario: its password
+-- is rotated every round, so nothing else may ever log in as it.
+INSERT INTO users (id, username, password, name, email, role, team, is_active)
+SELECT 'aaaaaaaa-5555-5555-5555-555555555555', 'qa.resettable@bgp.test', u.password,
+       'QA Resettable', 'qa.resettable@bgp.test', 'Agency', 'National', true
+FROM users u WHERE u.email = 'mark.warne@landsec.com'
+ON CONFLICT (id) DO NOTHING;
+
 -- A Hammerson sub-entity so the sub-companies cross-tenant read guard is
 -- actually testable (carries AML/KYC data a rival client must never see).
 INSERT INTO crm_companies (id, name, company_type, parent_company_id, kyc_status, aml_risk_level)

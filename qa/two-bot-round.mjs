@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1098,6 +1098,18 @@ async function markRound(page, cross) {
     if (r.addOutStatus !== 403) throw new Error(`client added a contact to an out-of-slice brand (expected 403, got ${r.addOutStatus})`);
   });
 
+  // A client must never reach the admin password-reset (account takeover
+  // vector) — and the target's password must be untouched by the attempt.
+  await step(page, p, 'client-password-reset-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const status = (await fetch('/api/admin/users/aaaaaaaa-5555-5555-5555-555555555555/reset-password', {
+        method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status;
+      return { status };
+    });
+    if (r.status !== 403) throw new Error(`client reached admin password reset (expected 403, got ${r.status})`);
+  });
+
   // Org-wide feeds are BGP-internal: the activity feed hard-empties for
   // client logins (Landsec audit) even when staff sees rows, and
   // notifications/daily-digest must never 4xx/5xx or leak org-wide rows.
@@ -1981,6 +1993,31 @@ async function woodyRound(page, cross) {
   ]) {
     await visit(page, p, path);
   }
+  // Admin password reset (terminal side): resetting the dedicated throwaway
+  // user returns a temp password that actually logs in. Client-side refusal
+  // is covered in mark's round (client-password-reset-guard).
+  await step(page, p, 'admin-password-reset', async () => {
+    const r = await page.evaluate(async (args) => {
+      const [adminUser, adminPw] = args;
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const reset = await fetch('/api/admin/users/aaaaaaaa-5555-5555-5555-555555555555/reset-password', {
+        method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ ok: false, status: 0 }));
+      if (!reset.ok) return { ok: false, why: `reset ${reset.status}` };
+      const d = await reset.json();
+      if (!d.tempPassword) return { ok: false, why: 'no tempPassword returned' };
+      const login = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'qa.resettable@bgp.test', password: d.tempPassword }) }).catch(() => ({ ok: false, status: 0 }));
+      // The login proof just switched THIS page's session cookie to the
+      // throwaway (non-admin) user — every admin call after this scenario
+      // 403s until the session is restored. Log back in as the admin.
+      await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: adminUser, password: adminPw }) }).catch(() => {});
+      return { ok: true, loginWorks: login.ok };
+    }, [ADMIN_USER, PASSWORD]);
+    if (!r.ok) throw new Error(`admin password reset failed (${r.why})`);
+    if (!r.loginWorks) throw new Error('temp password from admin reset does not log in');
+  });
+
   // No error boundary anywhere on the heavy admin boards.
   await step(page, p, 'admin-kyc-board-render', async () => {
     await page.goto(`${BASE}/kyc-clouseau?tab=board`);
