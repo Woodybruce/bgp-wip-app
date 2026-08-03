@@ -4822,13 +4822,19 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       </Card>
       )}
 
-      {/* Embedded chat + Files tree */}
-      <LandlordSidebarBlock
-        companyId={companyId}
-        companyName={c.name}
-        folderTeams={c.folder_teams}
-        sharepointFolderUrl={c.sharepoint_folder_url}
-      />
+      {/* Embedded chat + Files tree. The Files / folder-tree card is
+          landlord-only — brands don't get SharePoint folder trees (Woody,
+          2026-08-03), so brand rows keep just the chat. */}
+      {isLandlord ? (
+        <LandlordSidebarBlock
+          companyId={companyId}
+          companyName={c.name}
+          folderTeams={c.folder_teams}
+          sharepointFolderUrl={c.sharepoint_folder_url}
+        />
+      ) : (
+        <CompanyMiniChat companyId={companyId} companyName={c.name} />
+      )}
       </div>
       </div>
 

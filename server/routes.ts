@@ -6071,12 +6071,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       const u = await pool.query(`SELECT hots_content, hots_updated_at FROM available_units WHERE id = $1`, [req.params.id]);
       const t = unit.propertyId
-        ? await pool.query(`SELECT hots_template FROM crm_properties WHERE id = $1`, [unit.propertyId])
+        ? await pool.query(`SELECT hots_template, hots_template_docx, hots_template_docx_name FROM crm_properties WHERE id = $1`, [unit.propertyId])
         : { rows: [] as any[] };
       res.json({
         content: u.rows[0]?.hots_content || null,
         updatedAt: u.rows[0]?.hots_updated_at || null,
         template: t.rows[0]?.hots_template || null,
+        templateDocx: !!t.rows[0]?.hots_template_docx,
+        templateDocxName: t.rows[0]?.hots_template_docx_name || null,
       });
     } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
   });
@@ -6092,6 +6094,112 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       await pool.query(`UPDATE available_units SET hots_content = $1, hots_updated_at = NOW() WHERE id = $2`, [content, req.params.id]);
       res.json({ ok: true });
     } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  });
+
+  // ── Standard HOTs as a Word document ──────────────────────────────
+  // The standard set is uploaded ONCE per property as a .docx (Woody,
+  // 2026-08-03), the tracker populates a unit copy from the best offer
+  // ({TENANT} {RENT} {TERM} {RENT_FREE} {BREAK} {PREMIUM} {INCENTIVES}
+  // etc.), and the populated copy lands in SharePoint so it opens and
+  // edits in Word Online. The text template above stays as the inline
+  // fallback for properties without a document.
+  pool.query(`ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS hots_template_docx TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS hots_template_docx_name TEXT`).catch(() => {});
+
+  app.post("/api/properties/:id/hots-docx", requireAuth, marketingUpload.single("file"), async (req: any, res) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      if (await resolveCompanyScope(req)) return res.status(403).json({ message: "Staff only" });
+      if (!req.file) return res.status(400).json({ message: "No file" });
+      if (!/\.docx$/i.test(req.file.originalname || "")) return res.status(400).json({ message: "Upload a .docx (Word) document" });
+      const key = `hots-templates/${req.params.id}.docx`;
+      await saveFile(key, req.file.buffer, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", req.file.originalname);
+      await pool.query(`UPDATE crm_properties SET hots_template_docx = $1, hots_template_docx_name = $2 WHERE id = $3`,
+        [key, req.file.originalname, req.params.id]);
+      res.json({ ok: true, name: req.file.originalname });
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Upload failed" }); }
+  });
+
+  app.delete("/api/properties/:id/hots-docx", requireAuth, async (req: any, res) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      if (await resolveCompanyScope(req)) return res.status(403).json({ message: "Staff only" });
+      await pool.query(`UPDATE crm_properties SET hots_template_docx = NULL, hots_template_docx_name = NULL WHERE id = $1`, [req.params.id]);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  });
+
+  // Populate the property's HOTs document for one unit, filling
+  // placeholders from the unit, deal and BEST OFFER (accepted first,
+  // else most recent). destination=word uploads the copy to SharePoint
+  // and returns the Word Online URL; destination=download streams it.
+  app.post("/api/available-units/:id/hots-docx-populate", requireAuth, async (req: any, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      const prop = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+      const key = (prop as any)?.hotsTemplateDocx
+        || (await pool.query(`SELECT hots_template_docx FROM crm_properties WHERE id = $1`, [unit.propertyId])).rows[0]?.hots_template_docx;
+      if (!key) return res.status(400).json({ message: "No standard HOTs document uploaded for this property yet" });
+      const file = await getFile(key);
+      if (!file) return res.status(404).json({ message: "Template document missing from storage" });
+
+      const offerQ = await pool.query(
+        `SELECT * FROM unit_offers WHERE unit_id = $1
+          ORDER BY (status ILIKE 'accept%') DESC, offer_date DESC NULLS LAST LIMIT 1`,
+        [req.params.id]
+      );
+      const offer = offerQ.rows[0] || null;
+      const deal = (unit as any).dealId ? await storage.getCrmDeal((unit as any).dealId).catch(() => null) : null;
+      const landlordQ = (prop as any)?.landlordId
+        ? await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [(prop as any).landlordId])
+        : { rows: [] as any[] };
+      const gbp = (v: any) => (v != null && v !== "" && !isNaN(Number(v))) ? `£${Number(v).toLocaleString("en-GB")}` : "[amount]";
+      const tokens: Record<string, string> = {
+        PROPERTY: prop?.name || "[property]",
+        UNIT: (unit as any).unitName || "[unit]",
+        LANDLORD: landlordQ.rows[0]?.name || "[landlord]",
+        TENANT: offer?.company_name || (deal as any)?.name?.split("—")[0]?.trim() || "[tenant]",
+        TENANT_CONTACT: offer?.contact_name || "[contact]",
+        RENT: offer?.rent_pa != null ? gbp(offer.rent_pa) : gbp((unit as any).askingRent),
+        TERM: offer?.term_years != null ? `${offer.term_years} years` : "[term]",
+        RENT_FREE: offer?.rent_free_months != null ? `${offer.rent_free_months} months` : "[rent free]",
+        BREAK: offer?.break_option || "[break option]",
+        PREMIUM: offer?.premium != null ? gbp(offer.premium) : "[premium]",
+        INCENTIVES: offer?.incentives || "[incentives]",
+        FIT_OUT: offer?.fitting_out_contribution != null ? gbp(offer.fitting_out_contribution) : "[fit-out contribution]",
+        OFFER_DATE: offer?.offer_date || "[offer date]",
+        SERVICE_CHARGE: gbp((unit as any).serviceChargePa),
+        RATES: gbp((unit as any).ratesPa),
+        AREA: (unit as any).totalAreaSqft ? `${Number((unit as any).totalAreaSqft).toLocaleString("en-GB")} sq ft` : ((unit as any).sqft ? `${Number((unit as any).sqft).toLocaleString("en-GB")} sq ft` : "[area]"),
+        DATE: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+      };
+
+      const { default: AdmZip } = await import("adm-zip");
+      const zip = new AdmZip(file.data);
+      const escXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      for (const entry of zip.getEntries()) {
+        if (!/^word\/(document|header\d*|footer\d*)\.xml$/.test(entry.entryName)) continue;
+        let xml = entry.getData().toString("utf8");
+        for (const [k, v] of Object.entries(tokens)) xml = xml.split(`{${k}}`).join(escXml(v));
+        zip.updateFile(entry.entryName, Buffer.from(xml, "utf8"));
+      }
+      const outBuf = zip.toBuffer();
+      const outName = `HOTs — ${tokens.PROPERTY} ${tokens.UNIT} — ${tokens.TENANT}.docx`.replace(/[/\\:*?"<>|]/g, "-");
+
+      if (req.body?.destination === "word") {
+        const { uploadFileToSharePoint } = await import("./microsoft");
+        const up = await uploadFileToSharePoint(outBuf, outName,
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        return res.json({ ok: true, webUrl: up.webUrl, name: up.name });
+      }
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+      res.setHeader("Content-Disposition", contentDispositionFor(outName));
+      res.send(outBuf);
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Populate failed" }); }
   });
 
   // Standard template lives on the property. Staff-only to edit (the

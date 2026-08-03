@@ -1987,7 +1987,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         );
         const allowedCompanyIds = new Set(allowedRows.rows.map((r: any) => r.id));
         const arr = Array.isArray(contacts) ? contacts : contacts.data;
-        const filtered = arr.filter((c: any) => c.companyId && allowedCompanyIds.has(c.companyId));
+        // A companyId query param narrows WITHIN the allowed set (e.g. the
+        // tracker's Client Contact picker wants Landsec people only) —
+        // ignored when it points outside the client's visibility.
+        const requestedCompanyId = req.query.companyId as string | undefined;
+        const narrowTo = requestedCompanyId && allowedCompanyIds.has(requestedCompanyId) ? requestedCompanyId : null;
+        const filtered = arr.filter((c: any) => c.companyId
+          && (narrowTo ? c.companyId === narrowTo : allowedCompanyIds.has(c.companyId)));
         return res.json(Array.isArray(contacts) ? filtered : { ...contacts, data: filtered });
       }
       res.json(contacts);
@@ -4378,6 +4384,123 @@ Return a JSON object with these fields (use null for any field you cannot find):
     [/leisure/i, /leisure|cinema|bowl|golf|padel/i],
     [/retail/i, /retail|shop|store/i],
   ];
+  // ── Brand suggestions for a unit — the fits engine in reverse ─────────
+  // Given an available unit, suggest brands to target: live leasing
+  // requirements whose size/use/location fit the unit (real demand, the
+  // strongest signal), topped up with tracked brands in matching tenant
+  // categories, then ranked by Fable with a one-line reason each. Feeds
+  // the letting tracker's "AI targets" and the operator briefs.
+  app.get("/api/available-units/:id/brand-suggestions", requireAuth, async (req, res) => {
+    try {
+      const unitRow = await pool.query(
+        `SELECT au.id, au.unit_name, au.sqft, au.use_class, au.location,
+                p.id AS property_id, p.name AS property_name, p.address::text AS address, p.landlord_id
+           FROM available_units au JOIN crm_properties p ON p.id = au.property_id
+          WHERE au.id = $1`,
+        [req.params.id]
+      );
+      const unit = unitRow.rows[0];
+      if (!unit) return res.status(404).json({ error: "Unit not found" });
+      const scopeCompanyId = await resolveCompanyScope(req);
+      if (scopeCompanyId && !(await isPropertyInScope(scopeCompanyId, unit.property_id))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      const unitText = `${unit.unit_name || ""} ${unit.use_class || ""} ${unit.location || ""}`;
+      const propText = `${unit.property_name || ""} ${unit.address || ""}`.toLowerCase();
+      const sqft = unit.sqft != null ? Number(unit.sqft) : null;
+
+      // 1. Live requirements that fit this unit (reverse of the Fits column).
+      const reqRows = await pool.query(
+        `SELECT r.id, r.name, r.company_id, r.size, r.use, r.requirement_locations,
+                r.requirement_date, r.agent_contact_id,
+                c.name AS agent_name
+           FROM crm_requirements_leasing r
+           LEFT JOIN crm_contacts c ON c.id = r.agent_contact_id
+          WHERE r.status IS NULL OR r.status = 'Active'`
+      );
+      const candidates: any[] = [];
+      for (const r of reqRows.rows) {
+        const range = parseReqSize(r.size);
+        const uses = (r.use || []).join(" ");
+        const useHint = USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(uses) && unitRe.test(unitText));
+        const locs = (r.requirement_locations || []).map((l: string) => l.toLowerCase()).filter((l: string) => l.length > 2);
+        const locationHit = locs.some((l: string) => propText.includes(l));
+        let sizeFit = false;
+        if (sqft != null && range) sizeFit = sqft >= range.min && sqft <= range.max;
+        // A requirement qualifies when the size genuinely fits, or (when
+        // either side lacks a size) the use/location lines up.
+        if (!(sizeFit || ((sqft == null || !range) && (useHint || locationHit)))) continue;
+        candidates.push({
+          companyId: r.company_id, name: r.name, source: "live_requirement",
+          requirementId: r.id, size: Array.isArray(r.size) ? r.size.join(", ") : r.size,
+          use: (r.use || []).join(", "), agent: r.agent_name || null,
+          requirementDate: r.requirement_date, sizeFit, useHint, locationHit,
+        });
+      }
+
+      // 2. Tracked brands in matching categories (no live requirement needed).
+      const CAT_HINTS: Array<[RegExp, string]> = [
+        [/f&b|rest|kiosk|caf|food|dining/i, "%restaurant%|%caf%|%coffee%|%food%|%bakery%|%qsr%"],
+        [/gym|fitness|studio|wellness|health/i, "%fitness%|%gym%|%wellness%|%health%"],
+        [/leisure|cinema|bowl|golf|padel/i, "%leisure%|%entertainment%"],
+      ];
+      const catPatterns = CAT_HINTS.filter(([re]) => re.test(unitText)).flatMap(([, pats]) => pats.split("|"));
+      if (catPatterns.length) {
+        const seen = new Set(candidates.map((c) => c.companyId).filter(Boolean));
+        const brandRows = await pool.query(
+          `SELECT id, name, company_type FROM crm_companies
+            WHERE is_tracked_brand = true AND merged_into_id IS NULL
+              AND company_type ILIKE ANY($1)
+            ORDER BY last_enriched_at DESC NULLS LAST LIMIT 12`,
+          [catPatterns]
+        );
+        for (const b of brandRows.rows) {
+          if (seen.has(b.id)) continue;
+          candidates.push({ companyId: b.id, name: b.name, source: "tracked_brand", category: b.company_type });
+        }
+      }
+      if (!candidates.length) return res.json({ unit: { id: unit.id, unitName: unit.unit_name, sqft }, suggestions: [] });
+
+      // 3. Fable ranks the combined list against the actual unit. Uses
+      // chatbgp's callClaude (Fable-aware params + Opus fallback) — the
+      // plain utils wrapper 400s on the Fable model.
+      let ranked = candidates.slice(0, 25);
+      try {
+        const { callClaude: callClaudeFable } = await import("./chatbgp");
+        const completion = await callClaudeFable({
+          model: "claude-fable-5",
+          max_completion_tokens: 4000,
+          messages: [
+            {
+              role: "system",
+              content:
+                "Respond with the JSON array immediately — no preamble. " +
+                "You rank brand targets for a specific vacant retail/leisure unit for a UK leasing team. Prefer live " +
+                "requirements with a genuine size fit, then strong use+location alignment, then well-matched tracked brands. " +
+                "Output STRICT JSON only: [{\"i\":number,\"score\":0-100,\"reason\":\"one short sentence naming the concrete fit\"}].",
+            },
+            {
+              role: "user",
+              content: `Unit: ${unit.unit_name} at ${unit.property_name}${sqft ? `, ${sqft} sq ft` : " (no recorded size)"}${unit.use_class ? `, use: ${unit.use_class}` : ""}.\nCandidates:\n${JSON.stringify(ranked.map((c, i) => ({ i, ...c })))}`,
+            },
+          ],
+        });
+        const text = completion.choices?.[0]?.message?.content || "";
+        const start = text.indexOf("["), end = text.lastIndexOf("]");
+        if (start < 0 || end <= start) throw new Error(`no JSON array in response (head: ${JSON.stringify(text.slice(0, 120))})`);
+        const js = JSON.parse(text.slice(start, end + 1)) as Array<{ i: number; score: number; reason: string }>;
+        console.log(`[brand-suggestions] ranked ${js.length}/${ranked.length} for unit ${unit.unit_name}`);
+        for (const v of js) if (ranked[v.i]) { ranked[v.i].aiScore = v.score; ranked[v.i].reason = v.reason; }
+        ranked = ranked.filter((c) => (c.aiScore ?? 50) >= 25).sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
+      } catch (e: any) {
+        console.warn("[brand-suggestions] AI rank failed:", e?.message);
+        ranked.sort((a, b) => Number(b.sizeFit || 0) - Number(a.sizeFit || 0));
+      }
+      res.json({ unit: { id: unit.id, unitName: unit.unit_name, propertyName: unit.property_name, sqft }, suggestions: ranked.slice(0, 12) });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   app.get("/api/crm/requirements-leasing/matches", requireAuth, async (req, res) => {
     try {
       const scopeCompanyId = await resolveCompanyScope(req);

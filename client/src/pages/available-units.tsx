@@ -20,7 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare } from "lucide-react";
+  ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2 } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -300,6 +300,7 @@ export default function AvailableUnitsPage() {
   const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [suggestUnit, setSuggestUnit] = useState<{ id: string; unitName: string } | null>(null);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   // Deep links from TrackerSummary lozenges / "Letting Tracker" buttons
   // carry ?propertyId= and ?status= — honour them on first mount (they
@@ -1537,7 +1538,7 @@ export default function AvailableUnitsPage() {
                     Client{sortBy === "client" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                   </TableHead>
                 )}
-                <TableHead className="w-[170px] min-w-[170px]">Operator</TableHead>
+                <TableHead className="w-[170px] min-w-[170px]">Target Tenant</TableHead>
                 <TableHead className="w-[150px] min-w-[150px]">Category</TableHead>
                 <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>
                 <TableHead className="w-[130px] min-w-[130px]">Status</TableHead>
@@ -1684,14 +1685,26 @@ export default function AvailableUnitsPage() {
                       )}
                       {unitTargets.length === 0 ? (
                         <TableCell colSpan={7}>
-                          <BrandSearchInput
-                            className="h-7 w-[220px] border-dashed text-[11px]"
-                            placeholder="+ Target operator"
-                            value=""
-                            allowCreate={!isClientTracker}
-                            onPick={p => addUnitTarget(u, p)}
-                            testId={`add-target-${u.id}`}
-                          />
+                          <div className="flex items-center gap-1.5">
+                            <BrandSearchInput
+                              className="h-7 w-[220px] border-dashed text-[11px]"
+                              placeholder="+ Target operator"
+                              value=""
+                              allowCreate={!isClientTracker}
+                              onPick={p => addUnitTarget(u, p)}
+                              testId={`add-target-${u.id}`}
+                            />
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-[11px] text-purple-600 hover:text-purple-700"
+                              onClick={() => setSuggestUnit(u)}
+                              title="AI-suggest target brands: live requirements that fit this unit + tracked brands in matching categories, ranked by Fable"
+                              data-testid={`button-suggest-targets-${u.id}`}
+                            >
+                              <Sparkles className="w-3.5 h-3.5 mr-0.5" /> AI
+                            </Button>
+                          </div>
                         </TableCell>
                       ) : (
                         <TargetRowCells
@@ -2143,7 +2156,7 @@ export default function AvailableUnitsPage() {
                 <Select value={wipForm.dealType} onValueChange={v => setWipForm(f => ({ ...f, dealType: v }))}>
                   <SelectTrigger data-testid="wip-deal-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {["New Letting", "Temp Lease", "Lease Acquisition", "Sale", "Lease Renewal", "Rent Review"].map(t => (
+                    {(isClientTracker ? ["New Letting", "Lease Renewal", "Rent Review", "Regear", "Temp Lease"] : ["New Letting", "Temp Lease", "Lease Acquisition", "Sale", "Lease Renewal", "Rent Review", "Regear"]).map(t => (
                       <SelectItem key={t} value={t}>{t}</SelectItem>
                     ))}
                   </SelectContent>
@@ -2755,7 +2768,97 @@ export default function AvailableUnitsPage() {
         isClient={isClientTracker}
         onClose={() => setHotsUnit(null)}
       />
+
+      <SuggestTargetsDialog
+        unit={suggestUnit}
+        onClose={() => setSuggestUnit(null)}
+        onAdd={async (pick) => { if (suggestUnit) await addUnitTarget(suggestUnit, pick); }}
+      />
     </div>
+  );
+}
+
+// ─── AI target suggestions ──────────────────────────────────────────────
+// The fits engine in reverse: live requirements whose size/use/location
+// fit this unit plus tracked brands in matching categories, ranked by
+// Fable with a concrete reason each. One click adds the brand to the
+// unit's Operator Targeting Brief.
+function SuggestTargetsDialog({ unit, onClose, onAdd }: {
+  unit: { id: string; unitName: string } | null;
+  onClose: () => void;
+  onAdd: (pick: BrandPick) => Promise<void>;
+}) {
+  const [addingIdx, setAddingIdx] = useState<number | null>(null);
+  const [addedIdx, setAddedIdx] = useState<Set<number>>(new Set());
+  const { data, isFetching } = useQuery<any>({
+    queryKey: ["/api/available-units", unit?.id, "brand-suggestions"],
+    queryFn: async () => {
+      const res = await fetch(`/api/available-units/${unit!.id}/brand-suggestions`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("suggestion scan failed");
+      return res.json();
+    },
+    enabled: !!unit,
+    staleTime: 5 * 60 * 1000,
+  });
+  const suggestions: any[] = data?.suggestions || [];
+  return (
+    <Dialog open={!!unit} onOpenChange={(o) => { if (!o) { setAddedIdx(new Set()); onClose(); } }}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-purple-500" />
+            Suggested brands — {unit?.unitName}{data?.unit?.sqft ? ` (${Number(data.unit.sqft).toLocaleString()} sq ft)` : ""}
+          </DialogTitle>
+          <DialogDescription>
+            Live requirements that fit this unit, plus tracked brands in matching categories — ranked by AI.
+          </DialogDescription>
+        </DialogHeader>
+        {isFetching ? (
+          <p className="text-sm text-muted-foreground py-6 text-center">Matching live requirements + brand book, AI ranking… ~15s</p>
+        ) : suggestions.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-6 text-center">No confident suggestions — try adding a size to the unit, or search manually.</p>
+        ) : (
+          <div className="max-h-[420px] overflow-y-auto space-y-1.5 pr-1" data-testid="suggested-brands-list">
+            {suggestions.map((s: any, i: number) => (
+              <div key={`${s.companyId || s.name}-${i}`} className="flex items-center gap-2 border rounded-md px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate">
+                    {s.name}
+                    <Badge variant="outline" className={`ml-2 text-[9px] ${s.source === "live_requirement" ? "text-emerald-700 border-emerald-200" : "text-blue-700 border-blue-200"}`}>
+                      {s.source === "live_requirement" ? "live requirement" : "tracked brand"}
+                    </Badge>
+                    {s.aiScore != null && <span className="ml-2 text-[10px] text-muted-foreground tabular-nums">{s.aiScore}</span>}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground truncate" title={s.reason || ""}>
+                    {s.reason || [s.size, s.use, s.agent && `via ${s.agent}`].filter(Boolean).join(" · ")}
+                  </p>
+                </div>
+                {addedIdx.has(i) ? (
+                  <Badge variant="outline" className="text-[10px] text-emerald-700 border-emerald-200 shrink-0">targeted</Badge>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2.5 text-[11px] shrink-0"
+                    disabled={addingIdx === i}
+                    onClick={async () => {
+                      setAddingIdx(i);
+                      try {
+                        await onAdd({ name: s.name, companyId: s.companyId || undefined, companyType: s.category || undefined } as BrandPick);
+                        setAddedIdx((prev) => new Set(prev).add(i));
+                      } finally { setAddingIdx(null); }
+                    }}
+                    data-testid={`button-target-suggested-${i}`}
+                  >
+                    {addingIdx === i ? <Loader2 className="w-3 h-3 animate-spin" /> : "+ Target"}
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2772,11 +2875,49 @@ function HotsDialog({ unit, propertyName, isClient, onClose }: {
   const [template, setTemplate] = useState("");
   const [editTemplate, setEditTemplate] = useState(false);
   const [busy, setBusy] = useState(false);
-  const { data, refetch } = useQuery<{ content: string | null; template: string | null; updatedAt: string | null }>({
+  const { data, refetch } = useQuery<{ content: string | null; template: string | null; updatedAt: string | null; templateDocx?: boolean; templateDocxName?: string | null }>({
     queryKey: ["/api/available-units", unit?.id, "hots"],
     queryFn: () => fetch(`/api/available-units/${unit!.id}/hots`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
     enabled: !!unit,
   });
+  const docxInputRef = useRef<HTMLInputElement>(null);
+  const [wordBusy, setWordBusy] = useState(false);
+  const uploadDocx = async (file: File) => {
+    setWordBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch(`/api/properties/${unit!.propertyId}/hots-docx`, { method: "POST", credentials: "include", headers: getAuthHeaders(), body: fd });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `HTTP ${r.status}`);
+      toast({ title: "Standard HOTs document saved for this property" });
+      refetch();
+    } catch (e: any) { toast({ title: "Upload failed", description: e.message, variant: "destructive" }); }
+    finally { setWordBusy(false); }
+  };
+  const populateDocx = async (destination: "word" | "download") => {
+    setWordBusy(true);
+    try {
+      const r = await fetch(`/api/available-units/${unit!.id}/hots-docx-populate`, {
+        method: "POST", credentials: "include",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ destination }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `HTTP ${r.status}`);
+      if (destination === "word") {
+        const out = await r.json();
+        window.open(out.webUrl, "_blank");
+        toast({ title: "HOTs populated from the offer", description: "Opened in Word — saved to SharePoint" });
+      } else {
+        const blob = await r.blob();
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `HOTs — ${propertyName} ${unit!.unitName || ""}.docx`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+    } catch (e: any) { toast({ title: "Populate failed", description: e.message, variant: "destructive" }); }
+    finally { setWordBusy(false); }
+  };
   useEffect(() => {
     setContent(data?.content || "");
     setTemplate(data?.template || "");
@@ -2804,6 +2945,36 @@ function HotsDialog({ unit, propertyName, isClient, onClose }: {
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
+          {/* Word-document flow: the standard set uploaded once per property,
+              populated per unit from the best offer, edited in Word Online. */}
+          <div className="flex items-center gap-2 flex-wrap rounded-md border border-dashed px-3 py-2">
+            <FileText className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            {data?.templateDocx ? (
+              <>
+                <span className="text-xs text-muted-foreground truncate max-w-[220px]" title={data.templateDocxName || ""}>
+                  {data.templateDocxName || "Standard HOTs.docx"}
+                </span>
+                <Button size="sm" className="h-7 text-xs" disabled={wordBusy} onClick={() => populateDocx("word")} data-testid="hots-docx-word">
+                  {wordBusy ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
+                  Populate from offer → open in Word
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-xs" disabled={wordBusy} onClick={() => populateDocx("download")} data-testid="hots-docx-download">
+                  Download .docx
+                </Button>
+              </>
+            ) : (
+              <span className="text-xs text-muted-foreground">No standard HOTs document for this property yet</span>
+            )}
+            {!isClient && (
+              <>
+                <button type="button" className="text-[11px] text-blue-600 hover:underline ml-auto" onClick={() => docxInputRef.current?.click()} data-testid="hots-docx-upload">
+                  {data?.templateDocx ? "Replace document" : "Upload standard HOTs (.docx)"}
+                </button>
+                <input ref={docxInputRef} type="file" accept=".docx" className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadDocx(f); e.target.value = ""; }} />
+              </>
+            )}
+          </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Button
               size="sm" variant="outline" className="h-7 text-xs" disabled={busy}

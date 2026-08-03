@@ -85,7 +85,11 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
   const agentOptions = useMemo(() => {
     const teamById = new Map<string, string>();
     for (const m of clientTeam) {
-      if (m.user_id) teamById.set(String(m.user_id), m.full_name || m.username || "Unknown");
+      // Agents are BGP people only — the client-team board also carries the
+      // client's own logins (Mark, Jonny), who belong in Client Contact,
+      // not Agent.
+      const isBgp = (m.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
+      if (m.user_id && isBgp) teamById.set(String(m.user_id), m.full_name || m.username || "Unknown");
     }
     // Keep any already-assigned agent visible even if they're not on the
     // client team (so existing pills don't render as bare ids).
@@ -320,7 +324,8 @@ function TargetComments({ comments, onAdd }: { comments: unknown; onAdd: (text: 
     <div className="space-y-1 min-w-[160px]">
       {list.map((c, i) => (
         <div key={i} className="text-[11px] leading-tight" title={c.at ? new Date(c.at).toLocaleString("en-GB") : undefined}>
-          <span className="font-semibold text-primary">{c.userName || "Unknown"}</span>{" "}
+          <span className="font-semibold text-primary">{c.userName || "Unknown"}</span>
+          {c.at && <span className="text-muted-foreground/70 text-[10px]"> {new Date(c.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>}{" "}
           <span>{c.text}</span>
         </div>
       ))}
