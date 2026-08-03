@@ -17,6 +17,13 @@ VALUES ('99999999-3333-3333-3333-333333333333', '99999999-2222-2222-2222-2222222
         'Unit BX10', 'AVA')
 ON CONFLICT (id) DO NOTHING;
 
+-- Rival tenancy-schedule row: the foreign-unit guard proves a Landsec login
+-- cannot write another landlord's leasing schedule.
+INSERT INTO leasing_schedule_units (id, property_id, unit_name, tenant_name)
+VALUES ('99999999-4444-4444-4444-444444444444', '99999999-2222-2222-2222-222222222222',
+        'BX10', 'Rival Tenant')
+ON CONFLICT (id) DO NOTHING;
+
 INSERT INTO users (id, username, password, name, email, role, team, is_active)
 SELECT '99999999-4444-4444-4444-444444444444', 'sam.cole@hammerson.com', u.password,
        'Sam Cole', 'sam.cole@hammerson.com', 'Client', 'Hammerson', true

@@ -1724,6 +1724,12 @@ async function markRound(page, cross) {
       // (drives the client's tenancy view; leaked another landlord's deals).
       const tl = await fetch(`/api/tenancy-schedule/property/${pid}/links`, { headers: auth }).catch(() => ({ status: 0, ok: false }));
       out.push({ ep: 'tenancy-links', status: tl.status, ok: tl.ok });
+      // And WRITING a rival's leasing-schedule row must refuse (seeded
+      // Hammerson row 99999999-4444...; client-tenancy-edit covers own-OK).
+      const sw = await fetch('/api/leasing-schedule/unit/99999999-4444-4444-4444-444444444444', {
+        method: 'PUT', credentials: 'include', headers: { ...auth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates: 'QA-HIJACK' }) }).catch(() => ({ status: 0, ok: false }));
+      out.push({ ep: 'schedule-write', status: sw.status, ok: sw.ok });
       return out;
     }, [foreign, foreignProp]);
     const leaked = r.filter((x) => x.ok);
