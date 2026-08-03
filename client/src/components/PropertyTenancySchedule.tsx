@@ -217,9 +217,11 @@ const SCHEDULE_STATUS_COLOURS: Record<string, string> = {
 };
 
 const COLUMNS: Col[] = [
+  // Unit leads (and is the sticky-left column) — swapped with Zone so the
+  // pinned cell is the unit name, not the zone (Woody, 2026-08-03).
+  { field: "unit_number",      label: "Unit",           band: "Unit Details", width: 90,  align: "left" },
   { field: "grouping",         label: "Zone",           band: "Unit Details", width: 110, align: "left" },
   { field: "floor_level" as any, label: "Floor",        band: "Unit Details", width: 110, align: "left" },
-  { field: "unit_number",      label: "Unit",           band: "Unit Details", width: 90,  align: "left" },
   { field: "permitted_use",    label: "Use",            band: "Unit Details", width: 120, align: "left" },
   { field: "status",           label: "Status",         band: "Unit Details", width: 90,  align: "left" },
   { field: "am_initiative",    label: "AM Initiative?", band: "Unit Details", width: 130, align: "left" },

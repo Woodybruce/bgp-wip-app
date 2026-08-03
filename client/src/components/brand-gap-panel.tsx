@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { apiRequest } from "@/lib/queryClient";
+import { getAuthHeaders } from "@/lib/queryClient";
 import { Target, MapPin, TrendingUp, AlertCircle, FileText } from "lucide-react";
 
 interface BrandGapResult {
@@ -56,7 +56,7 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
       // Hit the endpoint directly so we can read the server's specific
       // 400 body (no-postcode / no-key / geocode-failed) instead of
       // throwing on the apiRequest layer and losing the reason.
-      const res = await fetch(`/api/property/${propertyId}/brand-gaps`, { credentials: "include" });
+      const res = await fetch(`/api/property/${propertyId}/brand-gaps`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `HTTP ${res.status}`);
@@ -124,9 +124,9 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
                 <Link
                   key={r.id}
                   href={r.company_id ? `/companies/${r.company_id}` : `/requirements/${r.id}`}
-                  className="text-xs flex items-center gap-1.5 hover:bg-white/60 rounded px-1 py-0.5"
+                  className="text-xs flex items-center gap-1.5 hover:bg-white/60 rounded px-1 py-0.5 min-w-0 overflow-hidden"
                 >
-                  <span className="font-medium truncate flex-1">
+                  <span className="font-medium truncate flex-1 min-w-0">
                     {r.company_name || r.name || "Unnamed"}
                   </span>
                   {r.use && r.use.length > 0 && (
@@ -134,8 +134,12 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
                       {r.use.slice(0, 2).join(", ")}{r.use.length > 2 ? "…" : ""}
                     </Badge>
                   )}
+                  {/* size is free text and can be a whole sentence ("300-1,500
+                      sq ft with minimum 400 sq ft on ground floor") — cap it
+                      so it can't push the row past the card edge. Full text
+                      on hover. */}
                   {r.size && (
-                    <span className="text-[10px] text-muted-foreground shrink-0">{r.size}</span>
+                    <span className="text-[10px] text-muted-foreground truncate max-w-[150px]" title={r.size}>{r.size}</span>
                   )}
                 </Link>
               ))}

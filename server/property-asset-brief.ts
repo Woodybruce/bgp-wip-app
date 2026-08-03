@@ -146,6 +146,39 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       last_touch_at: d.updated_at,
     }));
 
+    // 2b. Letting Tracker state — live lettings are worked in
+    //     available_units and often have NO crm_deals row, so the brief
+    //     (and the commentary generated from it) claimed "nothing
+    //     transacting" while the tracker was busy (Woody, Bluewater,
+    //     2026-08-03). Surface every unit not yet completed/invoiced.
+    const lettingsQ = await pool.query<any>(
+      `SELECT au.id, au.unit_name, au.marketing_status, au.sqft, au.asking_rent,
+              au.viewings_count, au.last_viewing_date, tc.name AS operator_name
+         FROM available_units au
+         LEFT JOIN crm_companies tc ON tc.id = au.tenant_company_id
+        WHERE au.property_id = $1
+          -- status vocab is mixed word/code case ('Negotiating', 'AVA', 'COM')
+          AND lower(COALESCE(au.marketing_status, '')) NOT IN ('completed', 'invoiced', 'withdrawn', 'com', 'inv', 'wit')
+        ORDER BY CASE lower(au.marketing_status)
+                   WHEN 'exchanged' THEN 0 WHEN 'exc' THEN 0
+                   WHEN 'solicitors' THEN 1 WHEN 'sol' THEN 1
+                   WHEN 'negotiating' THEN 2 WHEN 'neg' THEN 2
+                   WHEN 'under_offer' THEN 3 ELSE 4 END,
+                 au.unit_name
+        LIMIT 40`,
+      [propertyId]
+    ).catch((e: any) => { console.error("[asset-brief] lettings sub-query failed:", e?.message); return { rows: [] as any[] }; });
+    const lettings = lettingsQ.rows.map(u => ({
+      id: u.id,
+      unit_name: u.unit_name,
+      marketing_status: u.marketing_status,
+      sqft: u.sqft,
+      asking_rent: u.asking_rent,
+      viewings_count: u.viewings_count,
+      last_viewing_date: u.last_viewing_date,
+      operator_name: u.operator_name,
+    }));
+
     // 3. Pipeline counts — group active deals into the six client-
     //    friendly buckets the funnel renders.
     const pipeline = {
@@ -369,6 +402,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       asset_lead: assetLead,
       weekly_focus: Array.isArray(p.weekly_focus) ? p.weekly_focus : [],
       active_deals: briefScope ? activeDeals.map((d: any) => ({ ...d, fee_pence: null })) : activeDeals,
+      lettings,
       pipeline,
       activity,
       risks,
@@ -505,7 +539,13 @@ router.post("/api/properties/:id/bgp-commentary/regenerate", requireAuth, async 
     // property and served to client logins, so BGP fee amounts must never
     // appear in it. Deal stage/tenant context is enough for commentary.
     const dealLines = (brief.active_deals as any[]).slice(0, 15).map(d => `- ${d.tenant_name || d.name}${d.unit_name ? ` @ ${d.unit_name}` : ""} — ${d.stage_label}`).join("\n") || "(none)";
-    const activityLines = (brief.activity as any[]).slice(0, 8).map(a => `- ${a.summary} (${new Date(a.date).toLocaleDateString("en-GB")})`).join("\n") || "(none in last 14 days)";
+    // Letting Tracker rows are the live lettings pulse — many never have a
+    // crm_deals row, and skipping them made the commentary declare "nothing
+    // actively transacting" on busy schemes (Bluewater).
+    const lettingLines = ((brief.lettings || []) as any[]).slice(0, 20).map((u: any) =>
+      `- ${u.unit_name} — ${(u.marketing_status || "available").replace(/_/g, " ")}${u.operator_name ? ` with ${u.operator_name}` : ""}${u.viewings_count ? ` · ${u.viewings_count} viewing${u.viewings_count === 1 ? "" : "s"}` : ""}`
+    ).join("\n") || "(none on the tracker)";
+    const activityLines = (brief.activity as any[]).slice(0, 12).map(a => `- ${a.summary} (${new Date(a.date).toLocaleDateString("en-GB")})`).join("\n") || "(none in last 14 days)";
     const riskLines = (brief.risks as any[]).map(r => `- ${r.severity.toUpperCase()}: ${r.message}`).join("\n") || "(none flagged)";
     const focusLines = (brief.weekly_focus as any[]).map(f => `- ${f.text}`).join("\n") || "(none set)";
     const ownerName = brief.owner?.name || "the asset owner";
@@ -516,7 +556,10 @@ router.post("/api/properties/:id/bgp-commentary/regenerate", requireAuth, async 
 Active deals on the property:
 ${dealLines}
 
-Recent activity (last 14 days):
+Letting Tracker — live lettings by unit (marketing / negotiating / with solicitors):
+${lettingLines}
+
+Recent activity — emails, calls and meetings (last 14 days):
 ${activityLines}
 
 Risks flagged:
@@ -528,9 +571,10 @@ ${focusLines}
 Performance: ${(brief.performance.vacancy_rate * 100).toFixed(1)}% vacancy${brief.performance.wault_years != null ? `, WAULT ${brief.performance.wault_years.toFixed(1)} yrs` : ""}.
 
 Write a 3-5 sentence operational paragraph for the asset owner reading this. Cover:
-1. What's actively moving on the property right now (the big-ticket live deals).
-2. The risks worth flagging (vacancies / expiries / covenant).
-3. Where BGP's focus is this week + a forward-looking line.
+1. What's actively moving on the property right now — live deals AND Letting Tracker units in play; only say nothing is transacting if BOTH lists are empty.
+2. What the recent email/meeting activity shows about momentum.
+3. The risks worth flagging (vacancies / expiries / covenant).
+4. Where BGP's focus is this week + a forward-looking line.
 
 Rules: British English, partner-tone, no hype, no "I'm pleased to". Reference the actual tenants / units / rent figures above — don't generalise. Never state BGP fees or commissions. No bullet points or headings, prose only. No preamble or "here is".`;
 
@@ -810,6 +854,66 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
 // Tasks scoped to this property — covers every BGP user's tasks
 // linked to the property directly OR to a deal whose unit lives
 // here. Drives the Weekly Focus card on the property page.
+// Linked contacts for a property. The old client-side derivation only read
+// the contact FK columns off deals matched by property_id — most deals hang
+// off units and most parties are linked at COMPANY level, so the panel
+// showed "no contacts" on busy schemes (Woody, Bluewater 2026-08-03). This
+// walks deals via property/unit/tenancy joins, takes explicit deal-contact
+// FKs first, then counterparty companies' contacts (most-recent first).
+router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { clientBlockedForProperty } = await import("./company-scope");
+    if (await clientBlockedForProperty(req, String(req.params.id))) {
+      return res.status(403).json({ error: "Read-only access for client accounts" });
+    }
+    const { rows } = await pool.query(
+      `WITH pdeals AS (
+         SELECT d.id, d.name,
+                d.client_contact_id, d.tenant_contact_id, d.landlord_contact_id,
+                d.vendor_contact_id, d.purchaser_contact_id, d.vendor_agent_contact_id,
+                d.acquisition_agent_contact_id, d.purchaser_agent_contact_id, d.leasing_agent_contact_id,
+                d.tenant_id, d.landlord_id, d.vendor_id, d.purchaser_id
+           FROM crm_deals d
+           LEFT JOIN property_units pu ON pu.id = d.unit_id
+           LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
+          WHERE d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1
+       ),
+       fk_contacts AS (
+         SELECT DISTINCT ON (cid) cid AS contact_id, pd.name AS via
+           FROM pdeals pd
+           CROSS JOIN LATERAL unnest(ARRAY[
+             pd.client_contact_id, pd.tenant_contact_id, pd.landlord_contact_id,
+             pd.vendor_contact_id, pd.purchaser_contact_id, pd.vendor_agent_contact_id,
+             pd.acquisition_agent_contact_id, pd.purchaser_agent_contact_id, pd.leasing_agent_contact_id
+           ]) AS cid
+          WHERE cid IS NOT NULL
+       ),
+       company_contacts AS (
+         SELECT DISTINCT ON (c.id) c.id AS contact_id, co.name AS via
+           FROM pdeals pd
+           JOIN crm_companies co ON co.id IN (pd.tenant_id, pd.landlord_id, pd.vendor_id, pd.purchaser_id)
+           JOIN crm_contacts c ON c.company_id = co.id
+          ORDER BY c.id, c.last_interaction DESC NULLS LAST
+       )
+       SELECT c.id, c.name, c.role, c.email, c.phone, c.company_id, c.company_name,
+              c.avatar_url, c.last_interaction,
+              COALESCE(fk.via, cc.via) AS via,
+              (fk.contact_id IS NOT NULL) AS on_deal
+         FROM crm_contacts c
+         LEFT JOIN fk_contacts fk ON fk.contact_id = c.id
+         LEFT JOIN company_contacts cc ON cc.contact_id = c.id
+        WHERE fk.contact_id IS NOT NULL OR cc.contact_id IS NOT NULL
+        ORDER BY (fk.contact_id IS NOT NULL) DESC, c.last_interaction DESC NULLS LAST
+        LIMIT 30`,
+      [req.params.id]
+    );
+    res.json({ contacts: rows });
+  } catch (err: any) {
+    console.error("[linked-contacts]", err?.message);
+    res.status(500).json({ error: err?.message || "linked contacts failed" });
+  }
+});
+
 router.get("/api/properties/:id/tasks", requireAuth, async (req: Request, res: Response) => {
   try {
     const propertyId = req.params.id;
