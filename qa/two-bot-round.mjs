@@ -598,6 +598,22 @@ async function victoriaRound(page, cross) {
     cross.offerId = r.offerId;
   });
 
+  // Comps parity: a comp Victoria logs against the client's scheme must show
+  // in the client's scheme-scoped comps table. Kept alive for mark's round;
+  // swept by the QA-COMP purge.
+  await step(page, p, 'agent-add-scheme-comp', async () => {
+    const stamp = `QA-COMP R${ROUND}, Bluewater Shopping Centre`;
+    const r = await page.evaluate(async (needle) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const create = await fetch('/api/crm/comps', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: needle, tenantName: 'QA Comp Tenant', area: 'Bluewater' }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      return { ok: true };
+    }, stamp);
+    if (!r.ok) throw new Error(`agent could not log a scheme comp (${r.why})`);
+    cross.compStamp = stamp;
+  });
+
   // Offer deletion parity: offers have no edit route (create/delete only),
   // so the lifecycle that matters is a deleted offer vanishing everywhere —
   // staff letting activity now, the client's view cross-checked later.
@@ -1808,6 +1824,18 @@ async function markRound(page, cross) {
     }, [cross.briefUnitId, cross.briefId, cross.briefStamp]);
     if (!r.ok) throw new Error(`client cannot read the agent's brief on their own unit (${r.status})`);
     if (!r.matches) throw new Error("agent-authored brief not visible on the client's unit");
+  });
+
+  // Parity for comps: the scheme comp Victoria logged must appear in the
+  // client's scheme-scoped comps table.
+  await step(page, p, 'client-sees-agent-comp', async () => {
+    if (!cross.compStamp) return;
+    const r = await page.evaluate(async (marker) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const c = await (await fetch('/api/crm/comps', { headers: auth })).json().catch(() => []);
+      return { seen: JSON.stringify(c).includes(marker) };
+    }, cross.compStamp);
+    if (!r.seen) throw new Error("agent-logged scheme comp not visible in the client's comps table");
   });
 
   // Parity for offers: the offer Victoria logged on a Landsec unit must show

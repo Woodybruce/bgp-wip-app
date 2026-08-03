@@ -30,6 +30,7 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM image_studio_images WHERE file_name = 'qa-unit-photo.jpg';
   DELETE FROM team_events WHERE title LIKE 'QA-VIS %' OR title LIKE 'QA-CAL-%' OR title LIKE 'QA Landsec brainstorm' OR title LIKE 'QA Other Client review';
   DELETE FROM unit_viewings WHERE attendees LIKE 'QA-VIEWING-%' OR attendees LIKE 'QA-VDEL-%';
+  DELETE FROM crm_comps    WHERE name LIKE 'QA-COMP%';
   DELETE FROM unit_offers WHERE company_name LIKE 'QA-AOFFER-%' OR company_name LIKE 'QA-ODEL-%' OR company_name LIKE 'QA-OFFER-%' OR company_name LIKE 'QA-RIVAL-%';
   -- The team-board scenario adds a member then removes it; if a round dies
   -- mid-way the row survives, so sweep anyone not in the account contacts.
