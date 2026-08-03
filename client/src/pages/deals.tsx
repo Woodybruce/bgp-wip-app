@@ -1793,7 +1793,7 @@ function SimplifiedCreateBody({
             )}
           </div>
           <div className="space-y-1.5">
-            <Label>Tenant{clientRole === "tenant" ? " * (client)" : " *"}</Label>
+            <Label>Tenant{form.dealType === "Consultancy" ? " (optional)" : clientRole === "tenant" ? " * (client)" : " *"}</Label>
             <EntityCombobox
               testId="select-deal-tenant"
               placeholder="Link tenant"
@@ -2285,11 +2285,16 @@ export function DealFormDialog({
           return;
         }
       } else {
-        // Leasing-side deal types — landlord + tenant both required.
-        if (!form.landlordId || !form.tenantId) {
+        // Leasing-side deal types — landlord + tenant both required so AML
+        // can fire on the client + counterparty. Consultancy is advisory work
+        // that often has no tenant yet, so tenant is optional there.
+        const tenantRequired = form.dealType !== "Consultancy";
+        if (!form.landlordId || (tenantRequired && !form.tenantId)) {
           toast({
-            title: "Landlord and Tenant required",
-            description: "Both parties needed so AML can fire on the client + counterparty.",
+            title: tenantRequired ? "Landlord and Tenant required" : "Landlord required",
+            description: tenantRequired
+              ? "Both parties needed so AML can fire on the client + counterparty."
+              : "Link or create the landlord so AML can run on the client.",
             variant: "destructive",
           });
           return;
