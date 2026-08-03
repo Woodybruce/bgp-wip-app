@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { PropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
-import { PropertiesSummary } from "@/components/properties-summary";
 import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, Star as StarIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
@@ -527,6 +526,21 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     if (!(data.company?.domain || data.company?.domain_url)) return; // no website to scrape
     autoUkEntityRan.current = true;
     findUkEntityMutation.mutate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, currentUser]);
+
+  // Auto-enrich on open (staff only) when AI-fillable fields are blank, so
+  // every brand AI fires without button presses (Woody, 2026-08-03). The
+  // endpoint never overwrites human-edited values, and the ref plus the
+  // missing-fields check stop repeat opens from burning AI calls.
+  const autoEnrichRan = useRef(false);
+  useEffect(() => {
+    if (!data || isClientViewer || autoEnrichRan.current) return;
+    const co: any = data.company || {};
+    const missingAiFields = !co.description || !co.concept_pitch || co.store_count == null;
+    if (!missingAiFields) return;
+    autoEnrichRan.current = true;
+    enrichMutation.mutate();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, currentUser]);
 
@@ -2151,29 +2165,36 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 no live tenancies the activity block takes the full width. */}
             <div className={liveLocations.length > 0 ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start" : ""}>
             {liveLocations.length > 0 && (
-              <div className="border-t pt-2">
-                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <Building2 className="w-3 h-3" /> Live tenancies ({liveLocations.length})
-                </div>
-                <div className="space-y-0.5">
-                  {liveLocations.slice(0, 8).map((p: any) => (
-                    <Link key={p.id} href={`/properties/${p.id}`} className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5">
-                      <span className="truncate flex-1 font-medium">{p.name}</span>
-                      <Badge variant="outline" className="text-[10px] shrink-0">
-                        {p.units} {Number(p.units) === 1 ? "unit" : "units"}
-                      </Badge>
-                      {Number(p.total_rent_pa) > 0 && (
-                        <span className="text-[10px] text-muted-foreground shrink-0 font-mono">
-                          £{Math.round(Number(p.total_rent_pa) / 1000)}k pa
+              <Card>
+                <CardHeader className="p-3 pb-2">
+                  <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+                    <Building2 className="w-3.5 h-3.5" /> Live tenancies
+                    <Badge variant="outline" className="text-[10px]">{liveLocations.length}</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-3 pt-0">
+                  <div className="space-y-1 max-h-[340px] overflow-y-auto pr-1">
+                    {liveLocations.map((p: any) => (
+                      <div key={p.id} className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card min-w-0">
+                        <Link href={`/properties/${p.id}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
+                          <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                          <span className="text-xs font-medium truncate">{p.name}</span>
+                        </Link>
+                        <span className="flex items-center gap-1 shrink-0">
+                          <Badge variant="outline" className="text-[9px]">
+                            {p.units} unit{Number(p.units) === 1 ? "" : "s"}
+                          </Badge>
+                          {Number(p.total_rent_pa) > 0 && (
+                            <span className="text-[10px] text-muted-foreground tabular-nums">
+                              £{Math.round(Number(p.total_rent_pa) / 1000)}k pa
+                            </span>
+                          )}
                         </span>
-                      )}
-                    </Link>
-                  ))}
-                  {liveLocations.length > 8 && (
-                    <p className="text-[10px] text-muted-foreground pl-1">+{liveLocations.length - 8} more</p>
-                  )}
-                </div>
-              </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
             )}
 
             {/* Portfolio activity — replaces the old "Pitched into", which
@@ -4367,62 +4388,71 @@ function PortfolioActivityBlock({ companyId }: { companyId: string }) {
   const suggestions: any[] = sugg?.suggestions || [];
   if (!tenantAt.length && !targeted.length && !pitched.length && !suggestions.length) return null;
 
-  const Row = ({ propertyId, propertyName, unitName, right }: any) => (
-    <Link href={`/properties/${propertyId}`} className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5">
-      <span className="truncate flex-1 font-medium">{propertyName}</span>
-      {unitName && <span className="text-[10px] text-muted-foreground shrink-0">{unitName}</span>}
-      {right}
-    </Link>
+  const Row = ({ propertyId, propertyName, unitName, right, title }: any) => (
+    <div className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card min-w-0" title={title || ""}>
+      <Link href={`/properties/${propertyId}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
+        <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+        <span className="text-xs font-medium truncate">{propertyName}</span>
+        {unitName && <span className="text-[10px] text-muted-foreground truncate hidden sm:inline">{unitName}</span>}
+      </Link>
+      <span className="flex items-center gap-1 shrink-0 max-w-[55%] justify-end">{right}</span>
+    </div>
+  );
+
+  const Tier = ({ label, count, tone, children }: any) => (
+    <div>
+      <div className="flex items-center gap-1.5 mb-1">
+        <span className={`text-[10px] uppercase tracking-widest ${tone || "text-muted-foreground/70"}`}>{label}</span>
+        <Badge variant="outline" className="text-[9px] tabular-nums">{count}</Badge>
+      </div>
+      <div className="space-y-1">{children}</div>
+    </div>
   );
 
   return (
-    <div className="border-t pt-2 space-y-2">
-      <div className="text-xs text-muted-foreground flex items-center gap-1">
-        <Target className="w-3 h-3" /> Portfolio activity
-      </div>
-      {tenantAt.length > 0 && (
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-0.5">Tenant at ({tenantAt.length})</p>
-          {tenantAt.slice(0, 4).map((p: any) => (
-            <Row key={`t-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
-              right={<Badge variant="outline" className="text-[9px] shrink-0 text-emerald-700 border-emerald-200">{p.via === "deal" ? (p.deal_type || "deal") : "tenant"}</Badge>} />
-          ))}
-        </div>
-      )}
-      {targeted.length > 0 && (
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-0.5">Targeted ({targeted.length})</p>
-          {targeted.slice(0, 5).map((p: any) => (
-            <Row key={`g-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
-              right={<Badge variant="outline" className="text-[9px] shrink-0">{p.status || (p.via === "letting_tracker" ? "brief" : "schedule")}</Badge>} />
-          ))}
-        </div>
-      )}
-      {pitched.length > 0 && (
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-0.5">Pitched — with evidence ({pitched.length})</p>
-          {pitched.slice(0, 5).map((p: any, i: number) => (
-            <Link key={`p-${i}`} href={`/properties/${p.propertyId}`} className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5">
-              <span className="truncate font-medium shrink-0">{p.propertyName}</span>
-              {p.unitName && <span className="text-[10px] text-muted-foreground shrink-0">{p.unitName}</span>}
-              <span className="text-[10px] text-muted-foreground truncate flex-1 text-right">{p.evidence}</span>
-            </Link>
-          ))}
-        </div>
-      )}
-      {suggestions.length > 0 && (
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-emerald-700/80 mb-0.5">Suggested pitches ({suggestions.length})</p>
-          {suggestions.slice(0, 5).map((u: any) => (
-            <Link key={`s-${u.id}`} href={`/properties/${u.property_id}`} className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5" title={u.reason || ""}>
-              <span className="truncate flex-1 font-medium">{u.property_name}</span>
-              {u.unit_name && <span className="text-[10px] text-muted-foreground shrink-0">{u.unit_name}</span>}
-              {u.sqft && <span className="text-[9px] text-muted-foreground tabular-nums shrink-0">{Number(u.sqft).toLocaleString()} sq ft</span>}
-            </Link>
-          ))}
-        </div>
-      )}
-    </div>
+    <Card>
+      <CardHeader className="p-3 pb-2">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <Target className="w-3.5 h-3.5" /> Portfolio activity
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="p-3 pt-0 space-y-3 max-h-[380px] overflow-y-auto">
+        {tenantAt.length > 0 && (
+          <Tier label="Tenant at" count={tenantAt.length}>
+            {tenantAt.slice(0, 6).map((p: any) => (
+              <Row key={`t-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
+                right={<Badge variant="outline" className="text-[9px] shrink-0 text-emerald-700 border-emerald-200">{p.via === "deal" ? (p.deal_type || "deal") : "tenant"}</Badge>} />
+            ))}
+          </Tier>
+        )}
+        {targeted.length > 0 && (
+          <Tier label="Targeted" count={targeted.length}>
+            {targeted.slice(0, 6).map((p: any) => (
+              <Row key={`g-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
+                right={<Badge variant="outline" className="text-[9px] shrink-0 text-blue-700 border-blue-200">{p.status || (p.via === "letting_tracker" ? "brief" : "schedule")}</Badge>} />
+            ))}
+          </Tier>
+        )}
+        {pitched.length > 0 && (
+          <Tier label="Pitched — with evidence" count={pitched.length}>
+            {pitched.slice(0, 6).map((p: any, i: number) => (
+              <Row key={`p-${i}`} propertyId={p.propertyId} propertyName={p.propertyName} unitName={p.unitName}
+                title={p.evidence}
+                right={<span className="text-[10px] text-amber-700 truncate">{p.evidence}</span>} />
+            ))}
+          </Tier>
+        )}
+        {suggestions.length > 0 && (
+          <Tier label="Suggested pitches" count={suggestions.length} tone="text-emerald-700/80">
+            {suggestions.slice(0, 6).map((u: any) => (
+              <Row key={`s-${u.id}`} propertyId={u.property_id} propertyName={u.property_name} unitName={u.unit_name}
+                title={u.reason}
+                right={u.sqft ? <span className="text-[10px] text-muted-foreground tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null} />
+            ))}
+          </Tier>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -5114,20 +5144,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         </Card>
       )}
 
-      {/* Properties — in occupation & live deals (brands). Moved above
-          Documents & Gallery from the page footer (Woody, 2026-08-03). */}
-      {!isLandlord && (
-        <Card>
-          <CardHeader className="p-3 pb-2">
-            <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-              <Building2 className="w-3.5 h-3.5" /> Properties — in occupation & live deals
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-3 pt-0">
-            <PropertiesSummary companyId={companyId} role="tenant" />
-          </CardContent>
-        </Card>
-      )}
+      {/* Properties board removed — it duplicated Live tenancies (occupation
+          off the tenancy schedule) and Portfolio activity (deal/pitch
+          evidence), which carry the job now (Woody, 2026-08-03). */}
 
       {/* Documents & Gallery (brand) / Gallery (landlord, photos only —
           docs live in the SharePoint Folders panel above). */}
