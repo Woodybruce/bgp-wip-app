@@ -366,11 +366,16 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
             WHERE (n.title ILIKE '%' || co.name || '%' OR n.summary ILIKE '%' || co.name || '%'
                    OR n.ai_summary ILIKE '%' || co.name || '%')
               AND (
+                -- Long distinctive names match on their own. Short/ambiguous
+                -- names ("Bills", "Next", "Oliver") were drowning in junk via
+                -- a generic retail/UK keyword fallback ("cheaper energy
+                -- bills" news all over the Bill's profile) — they now need
+                -- the brand's own domain in the URL, the name at the start
+                -- of the headline, or the brand's industry word alongside.
                 length(trim(co.name)) > 8
-                OR co.domain_url IS NOT NULL AND (n.url ILIKE '%' || regexp_replace(co.domain_url, '^https?://(www\.)?', '', 'i') || '%')
-                OR co.industry IS NOT NULL AND n.title ILIKE '%' || split_part(co.industry, ' ', 1) || '%'
-                OR n.title ~* '\\y(retail|fashion|store|brand|clothing|apparel|shop|boutique|outlet|expansion|opening|pop.up|lease|tenant|uk|london|highstreet|high street)\\y'
-                OR n.summary ~* '\\y(retail|fashion|store|brand|clothing|apparel|shop|boutique|outlet|expansion|opening|pop.up|lease|tenant)\\y'
+                OR (co.domain_url IS NOT NULL AND n.url ILIKE '%' || regexp_replace(co.domain_url, '^https?://(www\.)?', '', 'i') || '%')
+                OR n.title ILIKE co.name || '%'
+                OR (co.industry IS NOT NULL AND n.title ILIKE '%' || split_part(co.industry, ' ', 1) || '%')
               )
             ORDER BY n.url, n.published_at DESC NULLS LAST
          ) deduped

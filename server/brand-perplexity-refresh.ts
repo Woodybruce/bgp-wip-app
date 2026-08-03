@@ -92,6 +92,9 @@ Extract every material event into a JSON array. Use this schema for each event:
 }
 
 Rules:
+- ONLY events about the brand itself — DISCARD events about other companies
+  mentioned in the research, and anything about a different entity that
+  shares the name (sports teams, people, US chains, songs, places).
 - Only material events (skip product launches / vague marketing).
 - If the research says nothing happened, return [].
 - If a date is fuzzy ("late March 2026"), pick the 15th of that month.

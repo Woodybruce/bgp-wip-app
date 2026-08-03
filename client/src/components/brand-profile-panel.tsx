@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { PropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
+import { PropertiesSummary } from "@/components/properties-summary";
 import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, Star as StarIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
@@ -3188,6 +3189,10 @@ function MenuIntelCard({
   const items = intel?.items || [];
   const labelKind = (intel?.type || expectedKind) === "menu" ? "Menu highlights" : "Best sellers";
 
+  // An empty card is just noise for client logins — they can't hit Fetch,
+  // so "No menu items yet" told them nothing (Woody, 2026-08-03).
+  if (miIsClient && items.length === 0) return null;
+
   return (
     <Card>
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
@@ -4857,11 +4862,23 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           and the (internally scrolling) Files tree on the right. Replaces
           the old pairing where Covenant sat alone beside Compliance and
           left most of a column empty (Woody, 2026-08-02). */}
-      {/* Top pair: the two most-used boards side by side (Woody, 2026-08-03) —
-          who we talk to, and the conversation itself. */}
+      {/* Top pair (Woody, 2026-08-03): Key contacts beside Menu highlights /
+          Best sellers, with the chat stacked under the menu card. */}
       <div className={pairCls}>
       <SidebarKeyContacts data={data} companyId={companyId} topContacts={topContacts} />
-      <CompanyMiniChat companyId={companyId} companyName={c.name} />
+      <div className="space-y-3">
+        {!isLandlord && (
+          <MenuIntelCard
+            companyId={companyId}
+            companyName={c.name}
+            industry={c.industry}
+            companyType={c.company_type}
+            intel={c.menu_intel}
+            refreshedAt={c.menu_intel_at}
+          />
+        )}
+        <CompanyMiniChat companyId={companyId} companyName={c.name} />
+      </div>
       </div>
 
       <div className={pairCls}>
@@ -5126,20 +5143,8 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       <BrandInstagramCard companyId={companyId} />
       </div>
 
-      {/* Menu / Best-sellers — F&B brands get menu items, retailers
-          get best-sellers. Hidden for landlords (no consumer product). */}
-      {!isLandlord && (
-        <MenuIntelCard
-          companyId={companyId}
-          companyName={c.name}
-          industry={c.industry}
-          companyType={c.company_type}
-          intel={c.menu_intel}
-          refreshedAt={c.menu_intel_at}
-        />
-      )}
-
-      {/* Files / Folders block moved up — paired with Key contacts. */}
+      {/* Menu / Best-sellers moved up — paired with Key contacts
+          (Woody, 2026-08-03). */}
 
       {/* BGP Team — lives in the sidebar next to the Gallery (landlords
           only) so the right column fills and the page stays aligned. */}
@@ -5151,6 +5156,21 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               BGP Team
             </h3>
             <ClientTeamOrgChart clientCompanyId={companyId} />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Properties — in occupation & live deals (brands). Moved above
+          Documents & Gallery from the page footer (Woody, 2026-08-03). */}
+      {!isLandlord && (
+        <Card>
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+              <Building2 className="w-3.5 h-3.5" /> Properties — in occupation & live deals
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0">
+            <PropertiesSummary companyId={companyId} role="tenant" />
           </CardContent>
         </Card>
       )}

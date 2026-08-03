@@ -1433,19 +1433,12 @@ function CompanyDetail({ id }: { id: string }) {
 
         </div>
 
-        {!usePropertiesBoard && (
+        {/* The tenant Properties board moved into the brand panel, above
+            Documents & Gallery (Woody, 2026-08-03) — only the property-less
+            deals list stays down here. */}
+        {!usePropertiesBoard && propertiesWithDeals.unlinkedDeals.length > 0 && (
           <Card className="lg:col-span-3">
             <CardContent className="p-3 space-y-3">
-              <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                <Building className="w-3.5 h-3.5 text-teal-500" />
-                Properties — in occupation & live deals
-              </h3>
-              {/* Canonical PropertiesSummary in tenant scope (Woody,
-                  2026-08-03) — the inverse of the landlord portfolio board:
-                  properties where this brand occupies units off the tenancy
-                  schedule, plus any carrying its deals, with live-letting /
-                  live-deal chips deep-linking into both boards. */}
-              <PropertiesSummary companyId={id} role="tenant" />
               {propertiesWithDeals.unlinkedDeals.length > 0 && (
                 <div className="border rounded-lg overflow-hidden" data-testid="unlinked-deals-group">
                   <div className="flex items-center gap-2 p-2 bg-muted/50">

@@ -12,6 +12,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import Anthropic from "@anthropic-ai/sdk";
+import { safeParseJSON } from "./utils/anthropic-client";
 import crypto from "crypto";
 
 const router = Router();
@@ -421,7 +422,20 @@ router.get("/api/brand/:companyId/suggested-units", requireAuth, async (req: Req
 
     scored.sort((a: any, b: any) => b.matchScore - a.matchScore);
 
-    res.json(scored.slice(0, 6));
+    // Diversify across properties — the raw ranking loved to fill every
+    // slot from one scheme (O2 Centre × 4). Max two units per property.
+    const perProperty = new Map<string, number>();
+    const diversified: any[] = [];
+    for (const u of scored) {
+      const key = String(u.property_id || u.property_address || "?");
+      const n = perProperty.get(key) || 0;
+      if (n >= 2) continue;
+      perProperty.set(key, n + 1);
+      diversified.push(u);
+      if (diversified.length >= 6) break;
+    }
+
+    res.json(diversified);
   } catch (err: any) {
     console.error(`[suggested-units] ${companyId}: ${err.message}`);
     res.json([]);
@@ -492,14 +506,17 @@ router.post("/api/brand/:companyId/refresh-intel", requireAuth, async (req: Requ
       if (ins.rows[0]?.id) { newArticleIds.push(ins.rows[0].id); added++; }
     }
 
-    // 5. Link new articles as brand_signals for this brand
+    // 5. Link new articles as brand_signals for this brand. The name-regex
+    //    alone was a disaster for short/ambiguous names — "Bill's" (the
+    //    restaurant) collected Buffalo Bills scores from ESPN — so candidates
+    //    now pass a Haiku relevance gate before they become signals.
     const normalizedName = name
       .toLowerCase()
       .replace(/[^a-z0-9& ]+/g, "")
       .replace(/\b(ltd|limited|plc|uk|holdings|group)\b/g, "")
       .replace(/\s+/g, " ")
       .trim();
-    let signalsLinked = 0;
+    const candidates: { id: string; title: string; summary: string | null; url: string; published_at: any }[] = [];
     for (const articleId of newArticleIds) {
       const aR = await pool.query(
         `SELECT title, summary, ai_summary, url, published_at FROM news_articles WHERE id = $1`,
@@ -513,6 +530,14 @@ router.post("/api/brand/:companyId/refresh-intel", requireAuth, async (req: Requ
         "i"
       );
       if (!re.test(hay)) continue;
+      candidates.push({ id: articleId, title: a.title, summary: a.summary, url: a.url, published_at: a.published_at });
+    }
+
+    const relevant = await screenArticlesForBrand(name, industry, candidates.map(c => ({ title: c.title, summary: c.summary })));
+    let signalsLinked = 0;
+    for (let i = 0; i < candidates.length; i++) {
+      if (!relevant.has(i)) continue;
+      const a = candidates[i];
       const dup = await pool.query(
         `SELECT id FROM brand_signals WHERE brand_company_id = $1 AND source = $2`,
         [companyId, a.url]
@@ -526,10 +551,91 @@ router.post("/api/brand/:companyId/refresh-intel", requireAuth, async (req: Requ
       signalsLinked++;
     }
 
+    // 5b. Re-screen the brand's existing recent signals so junk that got in
+    //     before the gate (sports scores, other companies) cleans itself up
+    //     on the next intel refresh.
+    const purged = await rescreenBrandSignals(companyId, name, industry).catch(() => 0);
+
     // 6. Bust intel AI-take cache so next GET regenerates
     cache.delete(`${companyId}:intel`);
 
-    res.json({ added, signalsLinked });
+    res.json({ added, signalsLinked, purged });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Signal relevance screening ──────────────────────────────────────────
+// One Haiku call answering "which of these items are actually about THIS
+// brand?" — the defence against ambiguous names (Bill's the restaurant vs
+// the Buffalo Bills, O2 the venue vs O2 the telco).
+
+async function screenArticlesForBrand(
+  brandName: string,
+  industry: string | null,
+  items: { title: string; summary?: string | null }[]
+): Promise<Set<number>> {
+  if (items.length === 0) return new Set();
+  const listing = items.map((a, i) => `${i}. ${a.title}${a.summary ? ` — ${String(a.summary).slice(0, 140)}` : ""}`).join("\n");
+  const prompt = `"${brandName}" is a UK ${industry || "retail/hospitality"} brand tracked by a commercial property agency.
+
+Which of these news items are genuinely about ${brandName} the ${industry || "retail/hospitality"} BRAND (its stores, sites, trading, funding, people)?
+
+DISCARD items about anything else that shares the name — sports teams and fixtures, people, places, songs, US chains, or other companies. DISCARD items where ${brandName} is only mentioned in passing and the story is about a different company.
+
+Items:
+${listing}
+
+Return ONLY a JSON array of the relevant item numbers, e.g. [0,3]. If none are relevant return [].`;
+  try {
+    const r = await anthropic.messages.create({ model: MODEL_PRIMARY, max_tokens: 200, messages: [{ role: "user", content: prompt }] });
+    const text = r.content.map((b: any) => (b.type === "text" ? b.text : "")).join("").trim();
+    const arr = safeParseJSON(text);
+    if (!Array.isArray(arr)) return new Set();
+    return new Set(arr.filter((n: any) => Number.isInteger(n) && n >= 0 && n < items.length));
+  } catch (e: any) {
+    // Screening unavailable → keep nothing rather than let junk through;
+    // the next refresh retries.
+    console.warn(`[signal-screen] ${brandName}: ${e?.message}`);
+    return new Set();
+  }
+}
+
+// Re-screen a brand's stored signals and delete the ones that aren't about
+// the brand. Deal learnings (source bgp-deal:*) and hand-entered rows with
+// no source are never touched. Returns how many were purged.
+export async function rescreenBrandSignals(companyId: string, brandName: string, industry: string | null): Promise<number> {
+  const sq = await pool.query(
+    `SELECT id, headline, detail FROM brand_signals
+      WHERE brand_company_id = $1
+        AND (source IS NULL OR source NOT LIKE 'bgp-deal:%')
+        AND ai_generated IS NOT FALSE
+      ORDER BY created_at DESC
+      LIMIT 40`,
+    [companyId]
+  );
+  const rows = sq.rows;
+  if (rows.length === 0) return 0;
+  const keep = await screenArticlesForBrand(brandName, industry, rows.map((r: any) => ({ title: r.headline, summary: r.detail })));
+  // A failed screen returns an empty set — treat "keep nothing" as "screen
+  // unavailable" when there were candidates, to avoid wiping real signals.
+  if (keep.size === 0 && rows.length > 3) return 0;
+  const toDelete = rows.filter((_: any, i: number) => !keep.has(i)).map((r: any) => r.id);
+  if (toDelete.length === 0) return 0;
+  await pool.query(`DELETE FROM brand_signals WHERE id = ANY($1)`, [toDelete]);
+  console.log(`[signal-screen] ${brandName}: purged ${toDelete.length} irrelevant signals`);
+  return toDelete.length;
+}
+
+// Manual re-screen — staff can clean a polluted brand immediately.
+router.post("/api/brand/:companyId/signals/rescreen", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const companyId = String(req.params.companyId);
+    const bq = await pool.query(`SELECT name, industry FROM crm_companies WHERE id = $1`, [companyId]);
+    if (!bq.rows[0]) return res.status(404).json({ error: "not found" });
+    const purged = await rescreenBrandSignals(companyId, bq.rows[0].name, bq.rows[0].industry);
+    invalidateBrandAiTake(companyId);
+    res.json({ purged });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
