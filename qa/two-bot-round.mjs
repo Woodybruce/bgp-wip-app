@@ -46,7 +46,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1096,6 +1096,25 @@ async function markRound(page, cross) {
     if (r.editForeign !== 403) throw new Error(`client edited a foreign landlord's contact (expected 403, got ${r.editForeign})`);
     if (!(r.addInSliceStatus >= 200 && r.addInSliceStatus < 300)) throw new Error(`client blocked from adding an in-slice brand contact (${r.addInSliceStatus})`);
     if (r.addOutStatus !== 403) throw new Error(`client added a contact to an out-of-slice brand (expected 403, got ${r.addOutStatus})`);
+  });
+
+  // Clients may regenerate BGP Commentary on their OWN properties (terminal
+  // side, 2026-08-03 — Mark hit a read-only 403 on Liverpool ONE), but a
+  // foreign property must still refuse. Locally the own-property call gets
+  // through the gate and then 500s on the missing AI key — that IS the pass
+  // signal here (the guard admitted the client); prod generates for real.
+  await step(page, p, 'client-commentary-own-property', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const post = async (pid) => (await fetch(`/api/properties/${pid}/bgp-commentary/regenerate`, {
+        method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status;
+      return {
+        own: await post('22222222-2222-2222-2222-222222222222'),
+        foreign: await post('99999999-2222-2222-2222-222222222222'),
+      };
+    });
+    if (r.own === 403 || r.own === 404) throw new Error(`client blocked from regenerating commentary on their own property (${r.own})`);
+    if (r.foreign !== 403) throw new Error(`client regenerated commentary on a foreign property (expected 403, got ${r.foreign})`);
   });
 
   // A client must never reach the admin password-reset (account takeover
