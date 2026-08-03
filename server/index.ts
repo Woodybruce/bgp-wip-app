@@ -2525,6 +2525,33 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   }
   console.log(`[auto-migrate] Schema migration complete — ${ok} applied, ${skipped} skipped`);
 
+  // ── One-off (per Woody, 2026-08): staff headshots. Point profile_pic_url
+  // at the committed /headshots/<slug>.jpg assets for the people whose photos
+  // Woody supplied. Only fills a photo that's absent or an auto-synced M365
+  // data: URL — never clobbers a photo someone deliberately uploaded via the
+  // UI (/uploads/…) — so it applies once and doesn't fight manual changes on
+  // later boots.
+  try {
+    const headshots: Array<{ email: string; url: string }> = [
+      { email: "woody@brucegillinghampollard.com",     url: "/headshots/woody-bruce.jpg" },
+      { email: "charlotte@brucegillinghampollard.com", url: "/headshots/charlotte-roberts.jpg" },
+      { email: "emily@brucegillinghampollard.com",     url: "/headshots/emily-dumbell.jpg" },
+      { email: "victoria@brucegillinghampollard.com",  url: "/headshots/victoria-broadhead.jpg" },
+      { email: "luke@brucegillinghampollard.com",      url: "/headshots/luke-donohoe.jpg" },
+    ];
+    for (const h of headshots) {
+      const r = await pool.query(
+        `UPDATE users SET profile_pic_url = $1
+          WHERE lower(email) = lower($2)
+            AND (profile_pic_url IS NULL OR profile_pic_url = '' OR profile_pic_url LIKE 'data:%')`,
+        [h.url, h.email],
+      );
+      if ((r.rowCount ?? 0) > 0) console.log(`[one-off headshots] Set headshot for ${h.email}`);
+    }
+  } catch (e: any) {
+    console.warn("[one-off headshots] failed:", e?.message);
+  }
+
   // ── One-off (per Woody): Ollie Wilkinson and Rob Barnes have left the team.
   // Remove them from the org chart / team roster by setting is_active = false
   // (kept, not deleted, so their historical deal / fee / expense links stay
