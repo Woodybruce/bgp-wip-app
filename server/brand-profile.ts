@@ -363,18 +363,20 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
            SELECT DISTINCT ON (n.url) n.id, n.title, n.summary, n.ai_summary, n.url, n.image_url, n.source_name, n.published_at, n.category
              FROM news_articles n,
                   (SELECT name, domain_url, domain, industry FROM crm_companies WHERE id = $1) AS co
-            WHERE (n.title ILIKE '%' || co.name || '%' OR n.summary ILIKE '%' || co.name || '%'
-                   OR n.ai_summary ILIKE '%' || co.name || '%')
+            -- Apostrophe-stripped comparison: the brand row says "Bills" but
+            -- real coverage writes "Bill's" — the plain substring match never
+            -- saw genuine articles, only NFL junk.
+            WHERE (replace(n.title, '''', '') ILIKE '%' || replace(co.name, '''', '') || '%'
+                   OR replace(coalesce(n.summary, ''), '''', '') ILIKE '%' || replace(co.name, '''', '') || '%'
+                   OR replace(coalesce(n.ai_summary, ''), '''', '') ILIKE '%' || replace(co.name, '''', '') || '%')
               AND (
                 -- Long distinctive names match on their own. Short/ambiguous
-                -- names ("Bills", "Next", "Oliver") were drowning in junk via
-                -- a generic retail/UK keyword fallback ("cheaper energy
-                -- bills" news all over the Bill's profile) — they now need
-                -- the brand's own domain in the URL, the name at the start
-                -- of the headline, or the brand's industry word alongside.
+                -- names ("Bills", "Next", "Oliver") need the brand's own
+                -- domain in the URL or the brand's industry word in the
+                -- headline. The old name-at-start-of-headline allowance let
+                -- every "Bills …" NFL fixture headline through — removed.
                 length(trim(co.name)) > 8
                 OR (co.domain_url IS NOT NULL AND n.url ILIKE '%' || regexp_replace(co.domain_url, '^https?://(www\.)?', '', 'i') || '%')
-                OR n.title ILIKE co.name || '%'
                 OR (co.industry IS NOT NULL AND n.title ILIKE '%' || split_part(co.industry, ' ', 1) || '%')
               )
             ORDER BY n.url, n.published_at DESC NULLS LAST
