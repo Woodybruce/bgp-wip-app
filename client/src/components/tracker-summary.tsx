@@ -119,8 +119,8 @@ export function TrackerSummary({ propertyId, propertyIds, variant }: {
           <Link href={trackerHref(propertyId)} className="text-[11px] text-primary hover:underline">Add a unit →</Link>
         </div>
       ) : (
-        <div className="space-y-1">
-          {live.slice(0, 5).map(u => (
+        <div className="space-y-1 max-h-[300px] overflow-y-auto pr-1">
+          {live.map(u => (
             <Link key={u.id} href={trackerHref(u.propertyId)} className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card hover:bg-muted/40 min-w-0">
               <span className="text-xs font-medium truncate">{u.unitName || "—"}</span>
               <span className="flex items-center gap-1.5 shrink-0 text-[10px] text-muted-foreground">
@@ -131,11 +131,6 @@ export function TrackerSummary({ propertyId, propertyIds, variant }: {
               </span>
             </Link>
           ))}
-          {live.length > 5 && (
-            <Link href={trackerHref(propertyId)} className="text-[10px] text-muted-foreground hover:text-foreground pl-1 block">
-              +{live.length - 5} more on the tracker →
-            </Link>
-          )}
         </div>
       )}
     </div>

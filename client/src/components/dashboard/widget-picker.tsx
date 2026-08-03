@@ -28,6 +28,7 @@ import {
   Briefcase,
   Landmark,
   TrendingUp,
+  Handshake,
 } from "lucide-react";
 import type { WidgetDefinition, BoardDefinition } from "./types";
 
@@ -36,6 +37,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
   { id: "news-summary", name: "News Feed", description: "AI-curated news feed with headlines and photos", icon: Newspaper, category: "overview" },
   { id: "quick-actions", name: "Quick Actions", description: "Shortcuts to Model Generate, Doc Generate & News", icon: Sparkles, category: "overview" },
   { id: "available-units", name: "Letting Tracker", description: "Full-width letting tracker from your starred instructions", icon: Store, category: "crm" },
+  { id: "deals-board", name: "Deals Board", description: "Live deals pipeline from your starred instructions", icon: Handshake, category: "crm" },
   { id: "today-diary", name: "Weekly Calendar", description: "Full week view with events, types, and intelligence insights", icon: CalendarDays, category: "overview" },
   { id: "active-contacts", name: "Most Active Contacts", description: "Contacts with most interactions recently", icon: UserCheck, category: "crm" },
   { id: "new-requirements", name: "New Requirements", description: "Requirements added in the last 7 days", icon: ListPlus, category: "crm" },
@@ -61,6 +63,7 @@ export const BOARD_REGISTRY: BoardDefinition[] = [
   { id: "triple-row", name: "Calendar · Instructions · Contacts", description: "Weekly calendar, starred instructions, and active contacts", icon: CalendarDays, widgetIds: ["today-diary", "key-instructions", "active-contacts"] },
   { id: "requirements-activity", name: "Requirements & Activity", description: "New requirements and team activity alerts", icon: ListPlus, widgetIds: ["new-requirements", "activity-alerts"] },
   { id: "letting-tracker", name: "Letting Tracker", description: "Available units from starred instructions", icon: Store, widgetIds: ["available-units"] },
+  { id: "deals-board", name: "Deals Board", description: "Live deals pipeline from starred instructions", icon: Handshake, widgetIds: ["deals-board"] },
   { id: "inbox", name: "Inbox", description: "Microsoft 365 email", icon: MailIcon, widgetIds: ["inbox"] },
   { id: "wip-report", name: "Team WIP Report", description: "Full WIP report with filters", icon: BarChart3, widgetIds: ["agent-pipeline"] },
   { id: "sharepoint-files", name: "SharePoint Files", description: "Browse and open SharePoint files", icon: FolderOpen, widgetIds: ["sharepoint"] },
@@ -84,6 +87,7 @@ export const DEFAULT_BOARDS = BOARD_REGISTRY.map(b => b.id);
 export const CLIENT_BOARD_REGISTRY: BoardDefinition[] = [
   { id: "news", name: "News Feed", description: "AI-curated market news feed", icon: Newspaper, widgetIds: ["news-summary"] },
   { id: "letting-tracker", name: "Letting Tracker", description: "Live units being marketed across your portfolio", icon: Store, widgetIds: ["available-units"] },
+  { id: "deals-board", name: "Deals Board", description: "Live deals across your portfolio", icon: Handshake, widgetIds: ["deals-board"] },
   { id: "tasks-briefing", name: "My Tasks & Briefing", description: "Your task list with an AI portfolio briefing", icon: ListTodo, widgetIds: ["my-tasks"] },
 ];
 export const CLIENT_SAFE_WIDGET_IDS = CLIENT_BOARD_REGISTRY.flatMap(b => b.widgetIds);

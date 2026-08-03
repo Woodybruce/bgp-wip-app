@@ -70,6 +70,7 @@ import {
   MyLeadsWidget,
   WipDashboardCard,
   AvailableUnitsWidget,
+  DealsBoardWidget,
   InvestmentTrackerWidget,
   SharePointWidget,
   StudiosWidget,
@@ -2057,6 +2058,7 @@ export default function Dashboard() {
           "new-requirements": { w: 6, h: 8, minW: 4, minH: 5 },
           "activity-alerts": { w: 6, h: 8, minW: 4, minH: 5 },
           "available-units": { w: 6, h: 14, minW: 4, minH: 6 },
+          "deals-board": { w: 6, h: 14, minW: 4, minH: 6 },
           "agent-pipeline": { w: 12, h: 22, minW: 6, minH: 14 },
           "inbox": { w: 12, h: 20, minW: 6, minH: 10 },
           "sharepoint": { w: 6, h: 12, minW: 4, minH: 6 },
@@ -2634,6 +2636,8 @@ export default function Dashboard() {
           if (effectiveTeam === "Investment") return <InvestmentTrackerWidget key="investment-tracker-widget" />;
           return <AvailableUnitsWidget key="available-units" />;
         }
+
+        if (widgetId === "deals-board") return <DealsBoardWidget key="deals-board" />;
 
         if (widgetId === "agent-pipeline") return (
           <WipDashboardCard key="agent-pipeline" user={user} />

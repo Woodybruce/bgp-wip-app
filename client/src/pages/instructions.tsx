@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Search, Building2, AlertCircle, ExternalLink, X, Handshake, FolderTree, Loader2, CheckCircle2, FolderOpen, ChevronRight, FileText, Plus, Star } from "lucide-react";
+import { DealsSummary } from "@/components/deals-summary";
 import { useState, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
@@ -783,83 +784,16 @@ function PropertyFoldersPanel({ propertyName, folderTeams }: { propertyName: str
 }
 
 function LinkedDealsPanel({ propertyId }: { propertyId: string }) {
-  const { data: deals, isLoading } = useQuery<CrmDeal[]>({
-    queryKey: ["/api/crm/properties", propertyId, "deals"],
-    queryFn: async () => {
-      const res = await fetch(`/api/crm/properties/${propertyId}/deals`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load linked deals");
-      return res.json();
-    },
-  });
-
-  if (isLoading) {
-    return (
-      <Card data-testid="linked-deals-panel">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Handshake className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">Linked Deals</h3>
-          </div>
-          <div className="space-y-2">
-            {[1, 2].map((i) => <Skeleton key={i} className="h-14" />)}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const dealsList = deals || [];
-
+  // Canonical DealsSummary card — this page previously carried its own
+  // drifted copy of the properties.tsx panel (raw status text, no counts).
   return (
     <Card data-testid="linked-deals-panel">
       <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Handshake className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">Linked Deals</h3>
-            {dealsList.length > 0 && (
-              <Badge variant="secondary" className="text-[10px]">{dealsList.length}</Badge>
-            )}
-          </div>
+        <div className="flex items-center gap-2 mb-3">
+          <Handshake className="w-4 h-4" />
+          <h3 className="text-sm font-semibold">Linked Deals</h3>
         </div>
-
-        {dealsList.length === 0 ? (
-          <div className="text-center py-6">
-            <Handshake className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-            <p className="text-xs text-muted-foreground">No deals linked to this property</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {dealsList.map((deal) => (
-              <Link
-                key={deal.id}
-                href={`/deals/${deal.id}`}
-                className="block p-3 rounded-md border hover:bg-accent transition-colors group"
-                data-testid={`deal-item-${deal.id}`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-medium truncate">{deal.name}</span>
-                  <ExternalLink className="w-3 h-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
-                </div>
-                <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                  {deal.groupName && (
-                    <Badge variant="secondary" className="text-[10px]">
-                      {deal.groupName}
-                    </Badge>
-                  )}
-                  {deal.status && (
-                    <Badge variant="outline" className="text-[10px]">
-                      {deal.status}
-                    </Badge>
-                  )}
-                  {deal.internalAgent && (
-                    <span className="text-[10px] text-muted-foreground">{deal.internalAgent}</span>
-                  )}
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
+        <DealsSummary variant="card" propertyId={propertyId} />
       </CardContent>
     </Card>
   );

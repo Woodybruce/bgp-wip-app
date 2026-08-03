@@ -1,6 +1,7 @@
 export { MyLeadsWidget } from "./leads-widget";
 export { WipDashboardCard } from "./wip-card";
 export { AvailableUnitsWidget } from "./available-units-widget";
+export { DealsBoardWidget } from "./deals-board-widget";
 export { InvestmentTrackerWidget } from "./investment-tracker-widget";
 export { SharePointWidget } from "./sharepoint-widget";
 export { StudiosWidget } from "./studios-widget";

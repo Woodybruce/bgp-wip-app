@@ -5040,7 +5040,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const urlParams = new URLSearchParams(window.location.search);
   const urlTeamParam = urlParams.get("team");
   const [search, setSearch] = useState("");
-  const [activeGroup, setActiveGroup] = useState("all");
+  // Deep links from DealsSummary (the Deals twin of the tracker summary):
+  // /deals/list?status=NEG&propertyId=… lands here pre-filtered.
+  const [activeGroup, setActiveGroup] = useState(() => legacyToCode(urlParams.get("status")) || "all");
+  const [propertyIdFilter, setPropertyIdFilter] = useState<string | null>(urlParams.get("propertyId"));
   const [createOpen, setCreateOpen] = useState(false);
   const [aiMatchOpen, setAiMatchOpen] = useState(false);
   const [rentAnalysisRunning, setRentAnalysisRunning] = useState(false);
@@ -5568,6 +5571,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   const filteredDeals = useMemo(() => {
     return baseDeals.filter((deal) => {
+      if (propertyIdFilter && deal.propertyId !== propertyIdFilter) return false;
       const dealCode = legacyToCode(deal.status);
       // Always compare canonical codes — statusValues only ever offers codes
       // (legacy free-text rows are normalised through legacyToCode), so the
@@ -5636,7 +5640,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       }
       return true;
     });
-  }, [baseDeals, activeGroup, columnFilters, search, properties, companies, propertyUnits, myName]);
+  }, [baseDeals, activeGroup, columnFilters, search, properties, companies, propertyUnits, myName, propertyIdFilter]);
 
   const teamFilteredDeals = useMemo(() => {
     if (!columnFilters["team"]?.length) return baseDeals;
@@ -5678,10 +5682,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   // this, activeGroup stays pointing at a now-invisible chip and the
   // board reads as empty with no way to clear the filter.
   useEffect(() => {
+    // Don't run before the first load — a ?status= deep link would be wiped
+    // by the empty statusCounts while deals are still fetching.
+    if (isLoading) return;
     if (activeGroup !== "all" && !statusCounts.some(s => s.name === activeGroup)) {
       setActiveGroup("all");
     }
-  }, [statusCounts, activeGroup]);
+  }, [statusCounts, activeGroup, isLoading]);
 
   // '/deals/list' is the deals schedule tab (the bare '/deals' now lands on
   // the WIP Report). 'list' is a reserved hub segment, not a deal id, so
@@ -5693,6 +5700,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const clearAllFilters = () => {
     setSearch("");
     setActiveGroup("all");
+    setPropertyIdFilter(null);
     // Clear everything, including the team filter — "Clear all" should mean all.
     // It used to re-apply the team filter here, so someone whose team switcher
     // was set to their own team could never drop it from the deals page and
@@ -5700,7 +5708,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     setColumnFilters({});
   };
 
-  const hasFilters = search || activeGroup !== "all" || activeFilterCount > 0;
+  const hasFilters = search || activeGroup !== "all" || activeFilterCount > 0 || !!propertyIdFilter;
 
   if (error) {
     return (
@@ -5901,6 +5909,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             data-testid="input-search-deals"
           />
         </div>
+        {propertyIdFilter && (
+          <Badge variant="secondary" className="gap-1 shrink-0" data-testid="chip-property-filter">
+            {properties.find(p => p.id === propertyIdFilter)?.name || "Property"}
+            <button onClick={() => setPropertyIdFilter(null)} className="ml-0.5 hover:text-destructive" aria-label="Clear property filter">
+              <X className="w-3 h-3" />
+            </button>
+          </Badge>
+        )}
         {!isMobile && (<>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

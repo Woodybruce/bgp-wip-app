@@ -102,6 +102,7 @@ import {
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { PropertyLeasingSchedule } from "@/pages/leasing-schedule";
 import { PropertyTenancySchedule } from "@/components/PropertyTenancySchedule";
+import { DealsSummary } from "@/components/deals-summary";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -2202,92 +2203,17 @@ export function TaggedConversationsPanel({ entityType, entityId }: { entityType:
 }
 
 export function LinkedDealsPanel({ propertyId }: { propertyId: string }) {
-  const { data: deals, isLoading } = useQuery<CrmDeal[]>({
-    queryKey: ["/api/crm/properties", propertyId, "deals"],
-    queryFn: async () => {
-      const res = await fetch(`/api/crm/properties/${propertyId}/deals`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load linked deals");
-      return res.json();
-    },
-  });
-
-  const dealsList = deals || [];
-
-  if (isLoading) {
-    return (
-      <Card data-testid="linked-deals-panel">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Handshake className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">Linked Deals</h3>
-          </div>
-          <div className="space-y-2">
-            {[1, 2].map((i) => <Skeleton key={i} className="h-14" />)}
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
+  // Thin wrapper around the canonical DealsSummary — the Deals twin of the
+  // tracker card. The old bespoke list showed raw status text with no stage
+  // counts and no route into the filtered Deals board.
   return (
     <Card data-testid="linked-deals-panel">
       <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Handshake className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">Linked Deals</h3>
-            {dealsList.length > 0 && (
-              <Badge variant="secondary" className="text-[10px]">{dealsList.length}</Badge>
-            )}
-          </div>
+        <div className="flex items-center gap-2 mb-3">
+          <Handshake className="w-4 h-4" />
+          <h3 className="text-sm font-semibold">Linked Deals</h3>
         </div>
-
-        {dealsList.length === 0 ? (
-          <div className="text-center py-6">
-            <Handshake className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-            <p className="text-xs text-muted-foreground">No deals linked to this property</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {dealsList.map((deal) => (
-              <Link
-                key={deal.id}
-                href={`/deals/${deal.id}`}
-              >
-                <div
-                  className="block p-3 rounded-md border hover-elevate transition-colors group cursor-pointer"
-                  data-testid={`deal-item-${deal.id}`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-medium truncate">{deal.name}</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                    {deal.groupName && (
-                      <Badge variant="secondary" className="text-[10px]">
-                        {deal.groupName}
-                      </Badge>
-                    )}
-                    {deal.status && (
-                      <Badge variant="outline" className="text-[10px]">{deal.status}</Badge>
-                    )}
-                    {deal.team && (
-                      <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                        <Users className="w-3 h-3" />
-                        {deal.team}
-                      </span>
-                    )}
-                    {deal.updatedAt && (
-                      <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        {new Date(deal.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
+        <DealsSummary variant="card" propertyId={propertyId} />
       </CardContent>
     </Card>
   );
@@ -2562,12 +2488,12 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
             <p className="text-xs text-muted-foreground">Nobody actively involved yet — contacts appear here from deals, viewings, offers and landlord activity.</p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
             {groups.filter(g => g.rows.length > 0).map(g => (
               <div key={g.key}>
-                <div className={`text-[10px] uppercase tracking-wide font-semibold mb-1 ${g.tint}`}>{g.title} · {g.rows.length}</div>
+                <div className={`text-[10px] uppercase tracking-wide font-semibold mb-1 sticky top-0 bg-card ${g.tint}`}>{g.title} · {g.rows.length}</div>
                 <div className="space-y-0.5">
-                  {g.rows.slice(0, 6).map(contact => (
+                  {g.rows.map(contact => (
                     <Link key={contact.id} href={`/contacts/${contact.id}`} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50 min-w-0" data-testid={`contact-item-${contact.id}`}>
                       <Users className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                       <div className="flex-1 min-w-0">
@@ -2584,7 +2510,6 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
                       )}
                     </Link>
                   ))}
-                  {g.rows.length > 6 && <p className="text-[10px] text-muted-foreground pl-2">+{g.rows.length - 6} more</p>}
                 </div>
               </div>
             ))}
