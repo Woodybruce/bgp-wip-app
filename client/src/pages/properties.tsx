@@ -2202,6 +2202,148 @@ export function TaggedConversationsPanel({ entityType, entityId }: { entityType:
   );
 }
 
+export function ClientPropertyFoldersPanel({ propertyName }: { propertyName: string }) {
+  // The client login's Files board (Woody, 2026-08-03: "put back the files
+  // board but remove the name of the team that set up the folder tree").
+  // Browses the client's jailed SharePoint area (/api/client/sharepoint —
+  // read-only, server-verified to stay inside their own folder) and opens
+  // straight into this property's folder. Deliberately shows NO internal
+  // team names and no write actions.
+  const [trail, setTrail] = useState<Array<{ id: string; name: string }>>([]);
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  const { data: root, isLoading: rootLoading, error: rootError } = useQuery<{ id: string; name: string }>({
+    queryKey: ["/api/client/sharepoint/root"],
+    queryFn: async () => {
+      const r = await fetch("/api/client/sharepoint/root", { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || "SharePoint unavailable");
+      return r.json();
+    },
+    retry: false,
+    staleTime: 5 * 60_000,
+  });
+
+  const { data: rootListing } = useQuery<{ items: any[] }>({
+    queryKey: ["/api/client/sharepoint/list", root?.id],
+    queryFn: async () => {
+      const r = await fetch(`/api/client/sharepoint/list?itemId=${encodeURIComponent(root!.id)}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error("Couldn't list folder");
+      return r.json();
+    },
+    enabled: !!root?.id,
+    staleTime: 60_000,
+  });
+
+  // The property's own folder under the client root, matched loosely by name
+  // ("Bluewater" folder ↔ "Bluewater Shopping Centre" property).
+  const propFolder = useMemo(() => {
+    const items = rootListing?.items || [];
+    const p = norm(propertyName);
+    if (!p) return null;
+    return items.find((i: any) => i.isFolder && (p.includes(norm(i.name)) || norm(i.name).includes(p))) || null;
+  }, [rootListing, propertyName]);
+
+  const base = propFolder ? { id: propFolder.id, name: propFolder.name } : root ? { id: root.id, name: root.name } : null;
+  const currentId = trail.length > 0 ? trail[trail.length - 1].id : base?.id;
+
+  const { data: listing, isLoading: listLoading } = useQuery<{ items: any[] }>({
+    queryKey: ["/api/client/sharepoint/list", currentId],
+    queryFn: async () => {
+      const r = await fetch(`/api/client/sharepoint/list?itemId=${encodeURIComponent(currentId!)}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error("Couldn't list folder");
+      return r.json();
+    },
+    enabled: !!currentId,
+    staleTime: 60_000,
+  });
+
+  const formatSize = (bytes: number | null) => {
+    if (bytes == null) return "";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  if (rootError) {
+    return (
+      <Card data-testid="client-property-folders-panel">
+        <CardContent className="p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <FolderOpen className="w-4 h-4" />
+            <h3 className="text-sm font-semibold">Documents</h3>
+          </div>
+          <p className="text-xs text-muted-foreground">{(rootError as any)?.message || "No document folder is linked for your account yet — ask your BGP team."}</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const items = listing?.items || [];
+  return (
+    <Card data-testid="client-property-folders-panel">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 mb-2">
+          <FolderOpen className="w-4 h-4" />
+          <h3 className="text-sm font-semibold">Documents</h3>
+        </div>
+        {base && (
+          <div className="flex items-center gap-1 mb-2 text-[11px] flex-wrap">
+            <button onClick={() => setTrail([])} className={trail.length ? "text-primary hover:underline" : "text-foreground font-medium"} data-testid="client-folders-breadcrumb-root">
+              {propFolder ? propertyName : base.name}
+            </button>
+            {trail.map((t, i) => (
+              <span key={t.id} className="flex items-center gap-1">
+                <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                <button
+                  onClick={() => setTrail(trail.slice(0, i + 1))}
+                  className={i === trail.length - 1 ? "text-foreground font-medium" : "text-primary hover:underline"}
+                >
+                  {t.name}
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        {(rootLoading || listLoading) ? (
+          <div className="space-y-1">{[1, 2, 3].map(i => <Skeleton key={i} className="h-7" />)}</div>
+        ) : items.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-4">This folder is empty.</p>
+        ) : (
+          <div className="space-y-0.5 max-h-[300px] overflow-y-auto pr-1">
+            {items.map((item: any) => item.isFolder ? (
+              <button
+                key={item.id}
+                onClick={() => setTrail([...trail, { id: item.id, name: item.name }])}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50 text-left min-w-0"
+                data-testid={`client-folder-${item.id}`}
+              >
+                <FolderOpen className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <span className="text-xs truncate flex-1">{item.name}</span>
+                {item.childCount != null && <span className="text-[10px] text-muted-foreground shrink-0">{item.childCount}</span>}
+                <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
+              </button>
+            ) : (
+              <a
+                key={item.id}
+                href={`/api/client/sharepoint/content?itemId=${encodeURIComponent(item.id)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50 min-w-0"
+                data-testid={`client-file-${item.id}`}
+              >
+                <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <span className="text-xs truncate flex-1">{item.name}</span>
+                <span className="text-[10px] text-muted-foreground shrink-0">{formatSize(item.size)}</span>
+                <FileDown className="w-3 h-3 text-muted-foreground shrink-0" />
+              </a>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function LinkedDealsPanel({ propertyId }: { propertyId: string }) {
   // Thin wrapper around the canonical DealsSummary — the Deals twin of the
   // tracker card. The old bespoke list showed raw status text with no stage

@@ -87,6 +87,7 @@ import {
   InlineBillingEntity,
   SetUpFoldersDialog,
   PropertyFoldersPanel,
+  ClientPropertyFoldersPanel,
   PropertySharepointLink,
   LinkedDealsPanel, TaggedConversationsPanel,
   ClientBoardPanel,
@@ -944,10 +945,9 @@ export function PropertyDetail({ id }: { id: string }) {
               Files+Contacts, Compliance+Activity, BGP Contacts+Client
               Board, Deals+Units (Woody, 2026-07-30). */}
           <aside className="space-y-3 lg:sticky lg:top-4 self-start">
-              {/* SharePoint is fully sealed for client accounts — the
-                  panel could only ever render dead Upload/Delete buttons
-                  over a 403, so it's staff-only. */}
-              {!isClientViewer && (
+              {/* Clients get the read-only jailed browser (their own
+                  SharePoint area, no internal team names) instead of the
+                  staff panel — restored per Woody, 2026-08-03. */}
               <ReferenceSection
                 title="Files"
                 icon={FolderOpen}
@@ -955,10 +955,15 @@ export function PropertyDetail({ id }: { id: string }) {
                 onToggle={() => toggleSection("files")}
                 testId="toggle-files-section"
               >
-                <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} />
-                <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
+                {isClientViewer ? (
+                  <ClientPropertyFoldersPanel propertyName={property.name} />
+                ) : (
+                  <>
+                    <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} />
+                    <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
+                  </>
+                )}
               </ReferenceSection>
-              )}
 
               <ReferenceSection
                 title="Linked Contacts"
