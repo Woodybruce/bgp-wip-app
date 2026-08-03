@@ -1108,8 +1108,21 @@ export async function registerRoutes(
       const adminId = req.session.userId || req.tokenUserId;
       const [admin] = await pool.query("SELECT is_admin FROM users WHERE id = $1", [adminId]).then(r => r.rows);
       if (!admin?.is_admin) return res.status(403).json({ message: "Admin access required" });
-      const del = await pool.query(`DELETE FROM crm_interactions WHERE match_method = 'keyword_company'`);
-      res.json({ deleted: del.rowCount || 0 });
+      // Batched — a single DELETE timed out on the millions of fan-out rows.
+      // Runs to a ~25s budget and reports done:false when more remain, so
+      // the caller just re-POSTs until done:true.
+      const started = Date.now();
+      let deleted = 0;
+      let done = false;
+      while (Date.now() - started < 25_000) {
+        const del = await pool.query(
+          `DELETE FROM crm_interactions WHERE id IN (
+             SELECT id FROM crm_interactions WHERE match_method = 'keyword_company' LIMIT 20000)`
+        );
+        deleted += del.rowCount || 0;
+        if ((del.rowCount || 0) === 0) { done = true; break; }
+      }
+      res.json({ deleted, done });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
