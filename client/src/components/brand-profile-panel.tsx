@@ -2219,26 +2219,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               </div>
             )}
 
-            {/* Pitched-to history */}
-            {pitchedTo.length > 0 && (
-              <div className="border-t pt-2">
-                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <Target className="w-3 h-3" /> Pitched into ({pitchedTo.length})
-                </div>
-                <div className="space-y-0.5">
-                  {pitchedTo.slice(0, 6).map((p) => (
-                    <Link key={p.id} href={`/properties/${p.property_id}`} className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5">
-                      <span className="truncate flex-1 font-medium">{p.property_name}</span>
-                      {p.unit_name && <span className="text-[10px] text-muted-foreground shrink-0">{p.unit_name}</span>}
-                      {p.status && <Badge variant="outline" className="text-[10px] shrink-0">{p.status}</Badge>}
-                    </Link>
-                  ))}
-                  {pitchedTo.length > 6 && (
-                    <p className="text-[10px] text-muted-foreground pl-1">+{pitchedTo.length - 6} more</p>
-                  )}
-                </div>
-              </div>
-            )}
+            {/* Portfolio activity — replaces the old "Pitched into", which
+                conflated existing tenancies, fuzzy name mentions and target
+                lists and never saw the letting tracker. Three honest tiers
+                + where to pitch next (Woody, 2026-08-03). */}
+            <PortfolioActivityBlock companyId={companyId} />
 
             {/* Suggested BGP units — parked admin-only (WIP) so it doesn't
                 clutter the brand profile for the team. */}
@@ -4267,6 +4252,95 @@ export function BrandComplianceCard({
 // (with Set Up Folders dialog), mirroring the property page layout.
 // Brand profiles never render this — it lives under the isLandlord
 // branch in BrandProfileSidebar.
+// Portfolio activity — the honest pitch picture for a brand: where they're
+// a tenant, where they're on a target list (letting tracker + leasing
+// schedule), what's actually been pitched (with the evidence), and which
+// available units we should pitch them next.
+function PortfolioActivityBlock({ companyId }: { companyId: string }) {
+  const { data: act } = useQuery<any>({
+    queryKey: ["/api/brands", companyId, "portfolio-activity"],
+    queryFn: async () => {
+      const r = await fetch(`/api/brands/${companyId}/portfolio-activity`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return null;
+      return r.json();
+    },
+    staleTime: 2 * 60 * 1000,
+  });
+  const { data: sugg } = useQuery<any>({
+    queryKey: ["/api/brands", companyId, "suggested-pitches"],
+    queryFn: async () => {
+      const r = await fetch(`/api/brands/${companyId}/suggested-pitches`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return null;
+      return r.json();
+    },
+    staleTime: 2 * 60 * 1000,
+  });
+  if (!act) return null;
+  const tenantAt: any[] = act.tenantAt || [];
+  const targeted: any[] = act.targeted || [];
+  const pitched: any[] = act.pitched || [];
+  const suggestions: any[] = sugg?.suggestions || [];
+  if (!tenantAt.length && !targeted.length && !pitched.length && !suggestions.length) return null;
+
+  const Row = ({ propertyId, propertyName, unitName, right }: any) => (
+    <Link href={`/properties/${propertyId}`} className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5">
+      <span className="truncate flex-1 font-medium">{propertyName}</span>
+      {unitName && <span className="text-[10px] text-muted-foreground shrink-0">{unitName}</span>}
+      {right}
+    </Link>
+  );
+
+  return (
+    <div className="border-t pt-2 space-y-2">
+      <div className="text-xs text-muted-foreground flex items-center gap-1">
+        <Target className="w-3 h-3" /> Portfolio activity
+      </div>
+      {tenantAt.length > 0 && (
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-0.5">Tenant at ({tenantAt.length})</p>
+          {tenantAt.slice(0, 4).map((p: any) => (
+            <Row key={`t-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
+              right={<Badge variant="outline" className="text-[9px] shrink-0 text-emerald-700 border-emerald-200">{p.via === "deal" ? (p.deal_type || "deal") : "tenant"}</Badge>} />
+          ))}
+        </div>
+      )}
+      {targeted.length > 0 && (
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-0.5">Targeted ({targeted.length})</p>
+          {targeted.slice(0, 5).map((p: any) => (
+            <Row key={`g-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
+              right={<Badge variant="outline" className="text-[9px] shrink-0">{p.status || (p.via === "letting_tracker" ? "brief" : "schedule")}</Badge>} />
+          ))}
+        </div>
+      )}
+      {pitched.length > 0 && (
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70 mb-0.5">Pitched — with evidence ({pitched.length})</p>
+          {pitched.slice(0, 5).map((p: any, i: number) => (
+            <Link key={`p-${i}`} href={`/properties/${p.propertyId}`} className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5">
+              <span className="truncate font-medium shrink-0">{p.propertyName}</span>
+              {p.unitName && <span className="text-[10px] text-muted-foreground shrink-0">{p.unitName}</span>}
+              <span className="text-[10px] text-muted-foreground truncate flex-1 text-right">{p.evidence}</span>
+            </Link>
+          ))}
+        </div>
+      )}
+      {suggestions.length > 0 && (
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-emerald-700/80 mb-0.5">Suggested pitches ({suggestions.length})</p>
+          {suggestions.slice(0, 5).map((u: any) => (
+            <Link key={`s-${u.id}`} href={`/properties/${u.property_id}`} className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5" title={u.reason || ""}>
+              <span className="truncate flex-1 font-medium">{u.property_name}</span>
+              {u.unit_name && <span className="text-[10px] text-muted-foreground shrink-0">{u.unit_name}</span>}
+              {u.sqft && <span className="text-[9px] text-muted-foreground tabular-nums shrink-0">{Number(u.sqft).toLocaleString()} sq ft</span>}
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // "Known contacts" — surfaces the BGP email archaeology on the profile:
 // everyone BGP has actually emailed at this company's domain in the last two
 // years, with signature-mined roles/phones, and one-click add-to-CRM for the
@@ -4274,6 +4348,9 @@ export function BrandComplianceCard({
 // this makes it a working surface (Woody, 2026-08-02: "contacts are critical").
 function KnownContactsCard({ companyId, companyName }: { companyId: string; companyName: string }) {
   const [open, setOpen] = useState(false);
+  // The engine mines BGP's own email + burns provider credits — staff only.
+  const { data: kcUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const kcIsClient = !kcUser || kcUser.role === "Client" || !!kcUser.companyScopeId;
   const [addedEmails, setAddedEmails] = useState<Set<string>>(new Set());
   const [addingEmail, setAddingEmail] = useState<string | null>(null);
   const { toast } = useToast();
@@ -4316,6 +4393,7 @@ function KnownContactsCard({ companyId, companyName }: { companyId: string; comp
     }
   };
 
+  if (kcIsClient) return null;
   return (
     <Card>
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2">

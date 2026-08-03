@@ -10,6 +10,8 @@ const router = Router();
 
 // Brands whose gallery has had the duplicate-image healing sweep this boot.
 const dedupeSweepFired = new Set<string>();
+// Per-brand cooldown for the server-side UK-entity auto-kick below.
+const entityKickFired = new Map<string, number>();
 
 // Cheap ISO 3166-1 alpha-2 inference from Google Places formatted_address.
 // We only get formatted_address back from Text Search (no structured
@@ -167,6 +169,38 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       import("./brand-images").then(m => m.dedupeBrandImageRows(sweepId)).catch(e =>
         console.warn(`[brand-profile] image dedupe sweep failed: ${e?.message}`)
       );
+    }
+
+    // Server-side UK-entity auto-kick. The client-side auto-scrape only runs
+    // for staff viewers (client research POSTs 403), so a brand first opened
+    // by a client (Landsec browsing Bills) sat parked forever — no entity,
+    // no Companies House number, no Covenant card. Fire the scraper here
+    // instead, whoever is looking; guarded UPDATE + 6h cooldown per brand.
+    if (!entityKickFired.has(sweepId) || Date.now() - entityKickFired.get(sweepId)! > 6 * 3600_000) {
+      entityKickFired.set(sweepId, Date.now());
+      (async () => {
+        const row = (await pool.query(
+          `SELECT name, domain, domain_url, backers, uk_entity_name, companies_house_number
+             FROM crm_companies WHERE id = $1`, [sweepId])).rows[0];
+        if (!row || row.uk_entity_name || !(row.domain || row.domain_url)) return;
+        const { scrapeUkEntityFromWebsite } = await import("./companies-house");
+        const scraped = await scrapeUkEntityFromWebsite(row.domain || row.domain_url, { name: row.name, parentGroup: row.backers });
+        if (scraped.entityName) {
+          await pool.query(
+            `UPDATE crm_companies SET uk_entity_name = $1
+              WHERE id = $2 AND (uk_entity_name IS NULL OR uk_entity_name = '')`,
+            [scraped.entityName, sweepId]);
+        }
+        if (scraped.chNumber && !row.companies_house_number) {
+          await pool.query(
+            `UPDATE crm_companies SET companies_house_number = $1
+              WHERE id = $2 AND (companies_house_number IS NULL OR companies_house_number = '')`,
+            [scraped.chNumber, sweepId]);
+        }
+        if (scraped.entityName || scraped.chNumber) {
+          console.log(`[brand-profile] auto-identified entity for ${row.name}: ${scraped.entityName || "?"} / ${scraped.chNumber || "no CH#"}`);
+        }
+      })().catch(e => console.warn(`[brand-profile] entity auto-kick failed: ${e?.message}`));
     }
 
     // Clients may only read their OWN company's profile here. (Landsec audit.)

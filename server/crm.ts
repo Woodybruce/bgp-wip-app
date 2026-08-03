@@ -4384,6 +4384,130 @@ Return a JSON object with these fields (use null for any field you cannot find):
     [/leisure/i, /leisure|cinema|bowl|golf|padel/i],
     [/retail/i, /retail|shop|store/i],
   ];
+  // ── Brand portfolio activity — the honest pitch view ──────────────────
+  // Replaces the old "Pitched into" (which conflated existing tenancies,
+  // fuzzy name mentions and target lists, and never saw the letting
+  // tracker). Three tiers: Tenant at / Targeted / Pitched-with-evidence,
+  // unioned across the letting tracker briefs AND the leasing schedule.
+  app.get("/api/brands/:id/portfolio-activity", requireAuth, async (req, res) => {
+    try {
+      const brandId = String(req.params.id);
+      const scope = await resolveCompanyScope(req);
+      if (scope && !(await isClientVisibleBrand(brandId, scope))) return res.status(403).json({ error: "Access denied" });
+      const nameQ = await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [brandId]);
+      const brandName = nameQ.rows[0]?.name;
+      if (!brandName) return res.status(404).json({ error: "Brand not found" });
+      // Client callers only see activity on their own portfolio.
+      const propScope = (n: number) => scope
+        ? `AND (p.landlord_id = $${n} OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${n}))`
+        : "";
+      const p2 = (base: any[]) => scope ? [...base, scope] : base;
+
+      const [tenantLs, tenantDeals, trackerTargets, lsTargets, offers, viewings] = await Promise.all([
+        pool.query(
+          `SELECT u.id, u.unit_name, u.status, p.id AS property_id, p.name AS property_name
+             FROM leasing_schedule_units u JOIN crm_properties p ON p.id = u.property_id
+            WHERE u.tenant_company_id = $1 ${propScope(2)}`, p2([brandId])),
+        pool.query(
+          `SELECT d.id, d.status, d.deal_type, p.id AS property_id, p.name AS property_name
+             FROM crm_deals d JOIN crm_properties p ON p.id = d.property_id
+            WHERE d.tenant_id = $1 AND d.status NOT IN ('Dead','Withdrawn') ${propScope(2)}`, p2([brandId])),
+        pool.query(
+          `SELECT t.id, t.status, t.priority, t.created_at, au.unit_name,
+                  p.id AS property_id, p.name AS property_name
+             FROM unit_target_operators t
+             JOIN unit_briefs b ON b.id = t.brief_id
+             JOIN available_units au ON au.id = b.unit_id
+             JOIN crm_properties p ON p.id = au.property_id
+            WHERE (t.company_id = $1 OR LOWER(t.operator_name) = LOWER($2)) ${propScope(3)}`, p2([brandId, brandName])),
+        pool.query(
+          `SELECT u.id, u.unit_name, u.status, u.updated_at, p.id AS property_id, p.name AS property_name
+             FROM leasing_schedule_units u JOIN crm_properties p ON p.id = u.property_id
+            WHERE (u.target_company_ids @> ARRAY[$1]::text[] OR u.target_brands ILIKE '%' || $2 || '%')
+              AND u.tenant_company_id IS DISTINCT FROM $1 ${propScope(3)}`, p2([brandId, brandName])),
+        pool.query(
+          `SELECT o.id, o.offer_date, o.rent_pa, o.status, au.unit_name, p.id AS property_id, p.name AS property_name
+             FROM unit_offers o JOIN available_units au ON au.id = o.unit_id
+             JOIN crm_properties p ON p.id = au.property_id
+            WHERE o.company_id = $1 ${propScope(2)}`, p2([brandId])),
+        pool.query(
+          `SELECT v.id, v.viewing_date, au.unit_name, p.id AS property_id, p.name AS property_name
+             FROM unit_viewings v JOIN available_units au ON au.id = v.unit_id
+             JOIN crm_properties p ON p.id = au.property_id
+            WHERE v.company_id = $1 ${propScope(2)}`, p2([brandId])),
+      ]);
+
+      const tenantAt = [
+        ...tenantLs.rows.map((r: any) => ({ ...r, via: "leasing_schedule" })),
+        ...tenantDeals.rows.map((r: any) => ({ ...r, via: "deal" })),
+      ];
+      const targeted = [
+        ...trackerTargets.rows.map((r: any) => ({ ...r, via: "letting_tracker" })),
+        ...lsTargets.rows.map((r: any) => ({ ...r, via: "leasing_schedule" })),
+      ];
+      // Pitched = targeting that moved (status past Identified) or produced
+      // a viewing / an offer — each row names its evidence.
+      const pitched = [
+        ...trackerTargets.rows
+          .filter((r: any) => r.status && r.status !== "Identified")
+          .map((r: any) => ({ propertyId: r.property_id, propertyName: r.property_name, unitName: r.unit_name, evidence: `Target status: ${r.status}`, at: r.created_at })),
+        ...viewings.rows.map((r: any) => ({ propertyId: r.property_id, propertyName: r.property_name, unitName: r.unit_name, evidence: `Viewing · ${r.viewing_date}`, at: r.viewing_date })),
+        ...offers.rows.map((r: any) => ({ propertyId: r.property_id, propertyName: r.property_name, unitName: r.unit_name, evidence: `Offer${r.rent_pa ? ` £${Number(r.rent_pa).toLocaleString("en-GB")} pa` : ""}${r.status ? ` (${r.status})` : ""} · ${r.offer_date}`, at: r.offer_date })),
+      ];
+      res.json({ brandName, tenantAt, targeted, pitched });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Suggested pitches for a brand — which of OUR available units fit ──
+  // Driven by the brand's live requirement when one exists (size range),
+  // else by category/use alignment. Excludes units already targeted or
+  // where they're the tenant. Deterministic reasons — instant, no AI call.
+  app.get("/api/brands/:id/suggested-pitches", requireAuth, async (req, res) => {
+    try {
+      const brandId = String(req.params.id);
+      const scope = await resolveCompanyScope(req);
+      if (scope && !(await isClientVisibleBrand(brandId, scope))) return res.status(403).json({ error: "Access denied" });
+      const brandQ = await pool.query(`SELECT name, company_type FROM crm_companies WHERE id = $1`, [brandId]);
+      if (!brandQ.rows[0]) return res.status(404).json({ error: "Brand not found" });
+      const { name: brandName, company_type: brandType } = brandQ.rows[0];
+
+      const reqQ = await pool.query(
+        `SELECT size, use, requirement_locations FROM crm_requirements_leasing
+          WHERE company_id = $1 AND (status IS NULL OR status = 'Active')
+          ORDER BY requirement_date DESC NULLS LAST LIMIT 1`, [brandId]);
+      const liveReq = reqQ.rows[0] || null;
+      const range = liveReq ? parseReqSize(liveReq.size) : null;
+
+      const unitsQ = await pool.query(
+        `SELECT au.id, au.unit_name, au.sqft, au.use_class,
+                p.id AS property_id, p.name AS property_name
+           FROM available_units au JOIN crm_properties p ON p.id = au.property_id
+          WHERE au.marketing_status IN ('AVA','NEG')
+            ${scope ? "AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))" : ""}
+            AND au.id NOT IN (
+              SELECT b.unit_id FROM unit_target_operators t JOIN unit_briefs b ON b.id = t.brief_id
+               WHERE t.company_id = $1)`,
+        scope ? [brandId, scope] : [brandId]);
+
+      const typeText = `${brandType || ""} ${brandName}`;
+      const suggestions: any[] = [];
+      for (const u of unitsQ.rows) {
+        const unitText = `${u.unit_name || ""} ${u.use_class || ""}`;
+        if (range && u.sqft != null) {
+          const sq = Number(u.sqft);
+          if (sq >= range.min && sq <= range.max) {
+            suggestions.push({ ...u, reason: `Fits their live ${Array.isArray(liveReq.size) ? liveReq.size.join(", ") : liveReq.size} requirement (${sq.toLocaleString("en-GB")} sq ft)`, strength: 2 });
+            continue;
+          }
+        }
+        const useHit = USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(typeText) && unitRe.test(unitText));
+        if (useHit) suggestions.push({ ...u, reason: `${u.use_class || "Unit"} suits their ${(brandType || "category").replace(/^Tenant - /, "")} format`, strength: 1 });
+      }
+      suggestions.sort((a, b) => b.strength - a.strength);
+      res.json({ brandName, liveRequirement: !!liveReq, suggestions: suggestions.slice(0, 8) });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // ── Brand suggestions for a unit — the fits engine in reverse ─────────
   // Given an available unit, suggest brands to target: live leasing
   // requirements whose size/use/location fit the unit (real demand, the
