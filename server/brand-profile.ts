@@ -916,7 +916,9 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     const { articleLooksRelevantForBrand, aiJudgeSignalRelevance } = await import("./news-brand-linking");
     const filteredSignals = signals.rows.filter((s: any) => {
       if (s.ai_relevant === false) return false;
-      if (s.signal_type !== "news") return true;
+      // Heuristic collision filter on every type — junk reaches opening/
+      // closure rows too (the classifier links cross-topic articles), and it
+      // also backstops AI-judged-relevant rows the judge got wrong.
       return articleLooksRelevantForBrand(c.name, c.industry, s.headline || "", s.detail || null);
     }).slice(0, 20);
 
@@ -924,7 +926,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // the hardcoded collision lists above only cover known ambiguous names,
     // so a brand like Bills can drown in "energy bills" headlines until its
     // rows are judged. Verdicts land in ai_relevant; next load drops them.
-    const unjudged = signals.rows.filter((s: any) => s.signal_type === "news" && s.ai_relevant == null);
+    const unjudged = signals.rows.filter((s: any) => s.ai_relevant == null);
     if (unjudged.length && (!signalJudgeFired.has(sweepId) || Date.now() - signalJudgeFired.get(sweepId)! > 6 * 3600_000)) {
       signalJudgeFired.set(sweepId, Date.now());
       aiJudgeSignalRelevance(

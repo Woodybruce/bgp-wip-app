@@ -138,7 +138,7 @@ export function articleLooksRelevantForBrand(brandName: string, industry: string
     boots: /\bfootball boots\b|\bwellington boots\b|\bworking boots\b/,
     pandora: /\bspotify\b|\bpandora radio\b|\bstreaming\b/,
     river: /\bthames\b|\bnile\b|\bflood\b|\briverbank\b/,
-    bills: /\b(food|energy|tax|household|utility|utilities|vet|medical|grocery|water|gas|electricity|phone|fuel|shopping|rising) bills?\b|\bbills? (rise|rising|soar|surge|jump|hike)\b|\bbritish gas\b|\bcost of living\b|\bbuffalo bills\b/,
+    bills: /\b(food|energy|tax|household|utility|utilities|vet|medical|grocery|water|gas|electricity|phone|fuel|shopping|rising) bills?\b|\bbills? (rise|rising|soar|surge|jump|hike)\b|\bbritish gas\b|\bcost of living\b|\bbuffalo bills\b|\bbills (vs|at|@)\b|\bespn\b|\bnfl\b|\bquarterback\b|\btouchdown\b/,
     "bill's": /\b(food|energy|tax|household|utility|vet|medical|grocery) bills?\b|\bcost of living\b/,
   };
   const rx = drop[lcBrand];
