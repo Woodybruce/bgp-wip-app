@@ -1984,6 +1984,16 @@ async function markRound(page, cross) {
       }));
       // 4px tolerance for sub-pixel rounding.
       if (scrollW > clientW + 4) throw new Error(`client dashboard overflows on mobile: scrollWidth ${scrollW} > viewport ${clientW}`);
+      // The property page got a unified any-width layout (terminal,
+      // 2026-08-03) — hold it to the same no-overflow bar on a phone.
+      await mob.goto(`${BASE}/properties/22222222-2222-2222-2222-222222222222`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(3000);
+      const prop = await mob.evaluate(() => ({
+        scrollW: document.documentElement.scrollWidth,
+        clientW: document.documentElement.clientWidth,
+      }));
+      if (prop.scrollW > prop.clientW + 4) throw new Error(`client property page overflows on mobile: scrollWidth ${prop.scrollW} > viewport ${prop.clientW}`);
     } finally {
       await mob.close();
     }
