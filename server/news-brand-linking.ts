@@ -174,7 +174,12 @@ export async function aiJudgeSignalRelevance(
 ): Promise<number> {
   if (!rows.length) return 0;
   await ensureAiRelevantColumn();
-  const batch = rows.slice(0, 40);
+  let totalJudged = 0;
+  // Batches of 40 until every row is judged — a single capped batch left
+  // brands with a deep junk backlog (Bills had 80) half-cleaned until the
+  // per-brand cooldown expired.
+  for (let off = 0; off < rows.length; off += 40) {
+  const batch = rows.slice(off, off + 40);
   try {
     const { callClaude } = await import("./chatbgp");
     const completion = await callClaude({
@@ -206,11 +211,13 @@ export async function aiJudgeSignalRelevance(
     }
     const dropped = js.filter((v) => !v.relevant).length;
     if (dropped) console.log(`[signal-judge] ${brand.name}: ${dropped}/${judged} signals marked irrelevant`);
-    return judged;
+    totalJudged += judged;
   } catch (e: any) {
     console.warn(`[signal-judge] ${brand.name} failed: ${e?.message}`);
-    return 0;
+    break;
   }
+  }
+  return totalJudged;
 }
 
 export async function ensureBrandGoogleNewsFeeds(): Promise<{ created: number; total: number; refreshed: number }> {

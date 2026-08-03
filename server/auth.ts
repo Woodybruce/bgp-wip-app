@@ -801,6 +801,54 @@ export function setupAuth(app: Express) {
     );
     res.json({ success: true });
   });
+
+  // Promote another user's saved dashboard arrangement to the org template.
+  // The template button on the dashboard saves the CALLER's layout, and only
+  // admins can call it — so a layout staged on a client account (arrange the
+  // boards logged in as the client to see exactly what they see) had no path
+  // to becoming the default. Admin-only. Pass resetTeam to also clear the
+  // personal layouts of that team's users so the new standard actually shows
+  // for them (their own saved layout otherwise wins over the template).
+  app.put("/api/dashboard-template/from-user/:userId", requireAuth, async (req: Request, res: Response) => {
+    const callerId = req.session.userId || req.tokenUserId;
+    if (!callerId) return res.status(401).json({ message: "Not authenticated" });
+    const caller = await pool.query(`SELECT is_admin FROM users WHERE id = $1`, [callerId]);
+    if (!caller.rows[0]?.is_admin) {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+    const source = await pool.query(
+      `SELECT id, name, team, dashboard_layout FROM users WHERE id = $1`,
+      [String(req.params.userId)]
+    );
+    if (!source.rows[0]) return res.status(404).json({ message: "User not found" });
+    const layout = source.rows[0].dashboard_layout;
+    if (!layout || typeof layout !== "object") {
+      return res.status(400).json({ message: `${source.rows[0].name} has no saved dashboard layout` });
+    }
+    await pool.query(
+      `INSERT INTO system_settings (key, value, updated_at) VALUES ('dashboard_template', $1, now())
+       ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()`,
+      [JSON.stringify(layout)]
+    );
+    let layoutsCleared = 0;
+    const { resetTeam } = req.body || {};
+    if (resetTeam && typeof resetTeam === "string") {
+      const cleared = await pool.query(
+        `UPDATE users SET dashboard_layout = NULL
+          WHERE team = $1 AND id <> $2 AND dashboard_layout IS NOT NULL`,
+        [resetTeam, source.rows[0].id]
+      );
+      layoutsCleared = cleared.rowCount || 0;
+    }
+    res.json({
+      success: true,
+      sourceUser: source.rows[0].name,
+      version: (layout as any)?._version || null,
+      boards: Array.isArray((layout as any)?.combined?.lg) ? (layout as any).combined.lg.length : null,
+      hidden: (layout as any)?.hiddenPortfolio || null,
+      layoutsCleared,
+    });
+  });
 }
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
