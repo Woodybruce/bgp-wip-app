@@ -1,4 +1,5 @@
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
+import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { DEAL_STATUS_BADGE_COLORS } from "@/lib/deal-status-colors";
 import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
 import { useTeam } from "@/lib/team-context";
@@ -67,6 +68,7 @@ import {
   FolderPlus,
   Save,
   MapPin,
+  Store,
   SlidersHorizontal,
   Eye,
   EyeOff,
@@ -4894,6 +4896,101 @@ export function LinkedLandRegistryPanel({ propertyId }: { propertyId: string }) 
 // PropertyDetail extracted to @/components/property-detail.tsx
 
 
+function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
+  // The Properties board's canonical header (Woody, 2026-08-03) — same
+  // design language as TrackerSummary / DealsSummary: live counts off the
+  // two canonical feeds with chips deep-linking into each board, plus the
+  // portfolio map. Renders identically for staff and client logins (the
+  // feeds are already scoped server-side), so Landsec sees the same board.
+  const [mapOpen, setMapOpen] = useState(true);
+
+  const { data: units = [] } = useQuery<any[]>({
+    queryKey: ["/api/available-units"],
+    queryFn: async () => {
+      const r = await fetch("/api/available-units", { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+  const { data: deals = [] } = useQuery<any[]>({
+    queryKey: ["/api/crm/deals", { excludeTracker: true }],
+    queryFn: async () => {
+      const r = await fetch("/api/crm/deals?excludeTrackerDeals=true", { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+
+  const ids = useMemo(() => new Set(items.map(p => p.id)), [items]);
+  const liveLettings = useMemo(() => units.filter(u => {
+    if (!u.propertyId || !ids.has(u.propertyId)) return false;
+    const code = legacyToCode(u.marketingStatus) || "AVA";
+    return ["OPP", "REP", "AVA", "NEG", "SOL", "EXC"].includes(code);
+  }).length, [units, ids]);
+  const liveDeals = useMemo(() => deals.filter(d => {
+    if (!d.propertyId || !ids.has(d.propertyId)) return false;
+    const code = legacyToCode(d.status);
+    return !!code && ["REP", "AVA", "NEG", "SOL", "EXC"].includes(code);
+  }).length, [deals, ids]);
+
+  const stores = useMemo(() => items.map(p => {
+    const lat = parseFloat(String((p as any).latitude ?? ""));
+    const lng = parseFloat(String((p as any).longitude ?? ""));
+    return {
+      id: p.id,
+      name: p.name,
+      address: typeof p.address === "string" ? p.address : (p.address as any)?.formatted || (p as any).postcode || null,
+      lat: Number.isFinite(lat) ? lat : null,
+      lng: Number.isFinite(lng) ? lng : null,
+      status: null,
+      tone: "linked" as const,
+      href: `/properties/${p.id}`,
+    };
+  }), [items]);
+  const geocodedCount = stores.filter(s => s.lat != null && s.lng != null).length;
+
+  return (
+    <div className="space-y-2" data-testid="properties-board-header">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] bg-card">
+          <Building2 className="w-3 h-3 text-muted-foreground" />
+          <span className="font-semibold tabular-nums">{items.length}</span>
+          <span className="text-muted-foreground">propert{items.length === 1 ? "y" : "ies"}</span>
+        </span>
+        <Link href="/deals/letting" className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${liveLettings ? "bg-card" : "opacity-40"}`} title="Open the Letting Tracker">
+          <Store className="w-3 h-3 text-muted-foreground" />
+          <span className="font-semibold tabular-nums">{liveLettings}</span>
+          <span className="text-muted-foreground">live letting{liveLettings === 1 ? "" : "s"}</span>
+        </Link>
+        <Link href="/deals/list" className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${liveDeals ? "bg-card" : "opacity-40"}`} title="Open the Deals board">
+          <Handshake className="w-3 h-3 text-muted-foreground" />
+          <span className="font-semibold tabular-nums">{liveDeals}</span>
+          <span className="text-muted-foreground">live deal{liveDeals === 1 ? "" : "s"}</span>
+        </Link>
+        <button
+          onClick={() => setMapOpen(o => !o)}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] bg-card hover:opacity-80"
+          data-testid="btn-toggle-portfolio-map"
+        >
+          <MapPin className="w-3 h-3 text-muted-foreground" />
+          <span className="text-muted-foreground">Map</span>
+          {mapOpen ? <ChevronUp className="w-3 h-3 text-muted-foreground" /> : <ChevronDown className="w-3 h-3 text-muted-foreground" />}
+        </button>
+      </div>
+      {mapOpen && (
+        <div className="border rounded-lg overflow-hidden" data-testid="properties-portfolio-map">
+          <BrandPortfolioMap stores={stores} height={260} alwaysRender />
+          {geocodedCount < items.length && (
+            <p className="text-[10px] text-muted-foreground px-2 py-1 border-t">
+              {geocodedCount} of {items.length} properties have a map position — the rest are still geocoding.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Properties() {
   const [, params] = useRoute("/properties/:id");
   const [search, setSearch] = useState("");
@@ -5413,6 +5510,8 @@ function PropertiesList({
           onClose={() => setActiveView("list")}
         />
       )}
+
+      {activeView === "list" && <PropertiesBoardHeader items={filteredItems} />}
 
       {activeView === "list" && <>{isMobile ? (
         <div className="flex flex-wrap gap-1.5">
