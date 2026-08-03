@@ -1898,8 +1898,14 @@ router.post("/api/brand/:companyId/menu-intel/refresh", requireAuth, async (req:
     res.json({ ...payload, refreshed_at: new Date().toISOString() });
   } catch (err: any) {
     console.error(`[brand menu-intel ${req.params.companyId}]`, err?.message || err);
-    const code = /not found/.test(err?.message) ? 404 : /not configured/.test(err?.message) ? 503 : /parse/.test(err?.message) ? 502 : 500;
-    res.status(code).json({ error: err.message || "menu-intel refresh failed" });
+    const msg = String(err?.message || "");
+    // Perplexity billing/limit failures came through as a bare 500 — say
+    // what's actually wrong so the toast is actionable.
+    if (/401|quota|exceeded|billing|credit/i.test(msg)) {
+      return res.status(503).json({ error: "Perplexity account is out of credit — menu intel is paused until the Perplexity plan is topped up." });
+    }
+    const code = /not found/.test(msg) ? 404 : /not configured/.test(msg) ? 503 : /parse/.test(msg) ? 502 : 500;
+    res.status(code).json({ error: msg || "menu-intel refresh failed" });
   }
 });
 
