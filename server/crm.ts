@@ -4393,7 +4393,9 @@ Return a JSON object with these fields (use null for any field you cannot find):
     try {
       const brandId = String(req.params.id);
       const scope = await resolveCompanyScope(req);
-      if (scope && !(await isClientVisibleBrand(brandId, scope))) return res.status(403).json({ error: "Access denied" });
+      // Own-company pass: a client opening THEIR OWN profile (a landlord row,
+      // never in the tenant slice) must not be refused by the brand gate.
+      if (scope && brandId !== scope && !(await isClientVisibleBrand(brandId, scope))) return res.status(403).json({ error: "Access denied" });
       const nameQ = await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [brandId]);
       const brandName = nameQ.rows[0]?.name;
       if (!brandName) return res.status(404).json({ error: "Brand not found" });
@@ -4466,7 +4468,9 @@ Return a JSON object with these fields (use null for any field you cannot find):
     try {
       const brandId = String(req.params.id);
       const scope = await resolveCompanyScope(req);
-      if (scope && !(await isClientVisibleBrand(brandId, scope))) return res.status(403).json({ error: "Access denied" });
+      // Own-company pass: a client opening THEIR OWN profile (a landlord row,
+      // never in the tenant slice) must not be refused by the brand gate.
+      if (scope && brandId !== scope && !(await isClientVisibleBrand(brandId, scope))) return res.status(403).json({ error: "Access denied" });
       const brandQ = await pool.query(`SELECT name, company_type FROM crm_companies WHERE id = $1`, [brandId]);
       if (!brandQ.rows[0]) return res.status(404).json({ error: "Brand not found" });
       const { name: brandName, company_type: brandType } = brandQ.rows[0];
