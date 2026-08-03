@@ -388,10 +388,10 @@ function TargetTenantsCell({ unit, letting, onUpdate }: {
   const addToRow = (pick: BrandPick) => {
     if (rowNames.some(n => n.toLowerCase() === pick.name.toLowerCase())) return;
     const nextNames = [...rowNames, pick.name].join(", ");
-    onUpdate(unit.id, "target_tenants", nextNames);
+    onUpdate(String(unit.id), "target_tenants", nextNames);
     if (pick.companyId) {
       const ids = new Set([...(unit.target_company_ids || []), pick.companyId]);
-      onUpdate(unit.id, "target_company_ids", [...ids]);
+      onUpdate(String(unit.id), "target_company_ids", [...ids]);
     }
   };
 
