@@ -576,6 +576,31 @@ async function victoriaRound(page, cross) {
     cross.offerId = r.offerId;
   });
 
+  // Offer deletion parity: offers have no edit route (create/delete only),
+  // so the lifecycle that matters is a deleted offer vanishing everywhere —
+  // staff letting activity now, the client's view cross-checked later.
+  await step(page, p, 'agent-offer-delete-lifecycle', async () => {
+    const stamp = `QA-ODEL-R${ROUND}`;
+    const r = await page.evaluate(async (marker) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = (Array.isArray(units) ? units : []).find((u) => u.propertyId === '22222222-2222-2222-2222-222222222222');
+      if (!unit) return { skip: true };
+      const post = await fetch(`/api/available-units/${unit.id}/offers`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ companyName: marker, offerDate: new Date().toISOString().slice(0, 10) }) });
+      if (!post.ok) return { ok: false, why: `POST ${post.status}` };
+      const made = await post.json();
+      const del = await fetch(`/api/available-units/offers/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      if (!del.ok) return { ok: false, why: `DELETE ${del.status}` };
+      const all = await (await fetch('/api/available-units/all-offers', { headers: auth })).json();
+      return { ok: true, stillThere: JSON.stringify(all).includes(marker) };
+    }, stamp);
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`agent offer delete lifecycle failed (${r.why})`);
+    if (r.stillThere) throw new Error('deleted offer still visible in staff letting activity');
+    cross.odelStamp = stamp;
+  });
+
   // 4l. Tracker inline-detail PATCH (new Costs-popover Details section):
   // write a detail field through the same PATCH the popover uses and verify
   // it persists, then restore the prior value.
@@ -1664,12 +1689,15 @@ async function markRound(page, cross) {
   // on the client's own letting activity (scoped all-offers).
   await step(page, p, 'client-sees-agent-offer', async () => {
     if (!cross.offerStamp) return;
-    const r = await page.evaluate(async (marker) => {
+    const r = await page.evaluate(async (args) => {
+      const [marker, deleted] = args;
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const o = await (await fetch('/api/available-units/all-offers', { headers: auth })).json();
-      return { seen: JSON.stringify(o).includes(marker) };
-    }, cross.offerStamp);
+      const body = JSON.stringify(o);
+      return { seen: body.includes(marker), deletedGone: !deleted || !body.includes(deleted) };
+    }, [cross.offerStamp, cross.odelStamp || null]);
     if (!r.seen) throw new Error("agent-logged offer not visible on the client's letting activity");
+    if (!r.deletedGone) throw new Error("agent-DELETED offer still visible on the client's letting activity");
   });
 
   // Locks in the terminal-side audit fix: a client reading ANOTHER
