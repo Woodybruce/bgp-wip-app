@@ -138,7 +138,7 @@ export function articleLooksRelevantForBrand(brandName: string, industry: string
     boots: /\bfootball boots\b|\bwellington boots\b|\bworking boots\b/,
     pandora: /\bspotify\b|\bpandora radio\b|\bstreaming\b/,
     river: /\bthames\b|\bnile\b|\bflood\b|\briverbank\b/,
-    bills: /\b(food|energy|tax|household|utility|utilities|vet|medical|grocery|water|gas|electricity|phone|fuel|shopping|rising) bills?\b|\bbills? (rise|rising|soar|surge|jump|hike)\b|\bbritish gas\b|\bcost of living\b|\bbuffalo bills\b|\bbills (vs|at|@)\b|\bespn\b|\bnfl\b|\bquarterback\b|\btouchdown\b/,
+    bills: /\b(food|energy|tax|household|utility|utilities|vet|medical|grocery|water|gas|electricity|phone|fuel|shopping|rising|heating) bills?\b|\bbills? (rise|rising|soar|surge|jump|hike)\b|\bbritish gas\b|\bcost of living\b|\bmartin lewis\b|\bheating or eating\b|\bbuffalo\b|\bbills (vs|at|@|gm|qb|wr|rb|te|coach|roster|draft|offense|defense)\b|\bespn\b|\bnfl\b|\bquarterback\b|\btouchdown\b|\bkeon coleman\b|\bjosh allen\b|\btrump\b|\bpresident\b|\bcongress\b|\bsenate\b/,
     "bill's": /\b(food|energy|tax|household|utility|vet|medical|grocery) bills?\b|\bcost of living\b/,
   };
   const rx = drop[lcBrand];

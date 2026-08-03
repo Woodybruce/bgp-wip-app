@@ -154,23 +154,18 @@ function matchEmailToContact(
 function matchKeywordsToContacts(
   text: string,
   contacts: ContactMatch[],
-  companies: { id: string; name: string }[]
+  _companies: { id: string; name: string }[]
 ): { contact: ContactMatch; method: string }[] {
   const matches: { contact: ContactMatch; method: string }[] = [];
   const lower = text.toLowerCase();
   const seenContactIds = new Set<string>();
 
-  for (const company of companies) {
-    if (company.name.length >= 3 && lower.includes(company.name.toLowerCase())) {
-      const companyContacts = contacts.filter((c) => c.companyId === company.id);
-      for (const c of companyContacts) {
-        if (!seenContactIds.has(c.id)) {
-          seenContactIds.add(c.id);
-          matches.push({ contact: c, method: "keyword_company" });
-        }
-      }
-    }
-  }
+  // Company-name keyword matching removed (Woody, 2026-08-03): any email
+  // whose text contained a brand named after an everyday word ("Bills",
+  // "Next", "Boots") fanned an interaction out to EVERY contact at that
+  // company, every sweep — Bills contacts all showed an identical, inflated
+  // "254 · today". A contact interaction now requires the person to actually
+  // be on the email (address match) or named in it (below).
 
   for (const c of contacts) {
     if (seenContactIds.has(c.id)) continue;
