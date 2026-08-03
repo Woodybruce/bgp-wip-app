@@ -26,7 +26,7 @@ const MIN_WIDTH = 480;               // reject thumbnails
 
 interface FoundImage {
   url: string;
-  source: "press" | "wikipedia" | "homepage" | "cse" | "landlord-website";
+  source: "press" | "wikipedia" | "homepage" | "cse" | "landlord-website" | "places";
   caption?: string;
   pageUrl?: string;             // where we discovered it (for attribution)
 }
@@ -64,8 +64,12 @@ async function fetchHtml(url: string, timeoutMs = 8000): Promise<string | null> 
     const res = await fetch(url, {
       signal: AbortSignal.timeout(timeoutMs),
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; BGPBrandBot/1.0)",
-        "Accept": "text/html",
+        // Real-browser UA — "BGPBrandBot" got 403'd/challenged by the WAFs
+        // (Sucuri, Cloudflare) most retail/hospitality sites sit behind,
+        // which silently emptied the press/homepage sources.
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "en-GB,en;q=0.9",
       },
       redirect: "follow",
     });
@@ -80,7 +84,7 @@ async function fetchImage(url: string): Promise<{ buffer: Buffer; mime: string }
   try {
     const res = await fetch(url, {
       signal: AbortSignal.timeout(12000),
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; BGPBrandBot/1.0)" },
+      headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36" },
       redirect: "follow",
     });
     if (!res.ok) return null;
@@ -254,6 +258,95 @@ async function findHomepageImages(domain: string): Promise<FoundImage[]> {
     }
   }
   return out;
+}
+
+// ─── Source: Google Places photos ─────────────────────────────────────────
+// The single best source for hospitality/retail: real photos of the brand's
+// actual venues (owner + customer shots) keyed off the place_ids we already
+// hold in brand_stores from the store-finder. No scraping, no bot walls.
+
+async function findPlacesPhotos(companyId: string): Promise<FoundImage[]> {
+  const key = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
+  if (!key) return [];
+  try {
+    const { rows: stores } = await pool.query<{ place_id: string; name: string | null }>(
+      `SELECT place_id, name FROM brand_stores
+        WHERE brand_company_id = $1 AND place_id IS NOT NULL AND place_id <> ''
+        ORDER BY (status = 'open') DESC NULLS LAST, researched_at DESC NULLS LAST
+        LIMIT 6`,
+      [companyId]
+    );
+    const out: FoundImage[] = [];
+    for (const s of stores) {
+      if (out.length >= 10) break;
+      try {
+        const r = await fetch(
+          `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(s.place_id)}&fields=photos&key=${encodeURIComponent(key)}`,
+          { signal: AbortSignal.timeout(8000) }
+        );
+        if (!r.ok) continue;
+        const d: any = await r.json();
+        const photos: any[] = d?.result?.photos || [];
+        for (const p of photos.slice(0, 2)) {
+          if (!p.photo_reference) continue;
+          out.push({
+            url: `https://maps.googleapis.com/maps/api/place/photo?maxwidth=1400&photo_reference=${encodeURIComponent(p.photo_reference)}&key=${encodeURIComponent(key)}`,
+            source: "places",
+            caption: s.name || undefined,
+          });
+        }
+      } catch { /* next store */ }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+// ─── AI vision judge ───────────────────────────────────────────────────────
+// The old pipeline kept the FIRST candidates that passed a byte-size check —
+// homepage scrapes are full of nav banners, promo tiles, logos and headshots,
+// so galleries filled with dross. Every candidate now gets a cheap Haiku
+// vision check before storing: keep real storefront/interior/food/product
+// photography, reject logos, text graphics, menus-as-images, headshots and
+// off-brand subjects.
+
+async function aiJudgeBrandImage(
+  brandName: string,
+  industry: string | null,
+  buffer: Buffer,
+): Promise<{ keep: boolean; kind: string } | null> {
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) return null;
+  try {
+    const small = await sharp(buffer).resize(512, 512, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 60 }).toBuffer();
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY });
+    const msg = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 120,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: small.toString("base64") } },
+          {
+            type: "text",
+            text: `Is this a good gallery photo for the brand "${brandName}"${industry ? ` (${industry})` : ""} on a property-industry platform? ` +
+              `GOOD: real photography of a storefront, interior, food/drink, or product in situ. ` +
+              `BAD: logos, icons, text-heavy promo graphics, menus rendered as images, screenshots, maps, charts, lone headshots, stock photos of unrelated subjects. ` +
+              `Reply with STRICT JSON only: {"keep":true|false,"kind":"storefront|interior|food|product|people|logo|graphic|other"}`,
+          },
+        ],
+      }],
+    });
+    const txt = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("");
+    const m = txt.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const js = JSON.parse(m[0]);
+    return { keep: !!js.keep, kind: String(js.kind || "other") };
+  } catch (e: any) {
+    console.warn(`[brand-images] vision judge failed: ${e?.message}`);
+    return null; // fail open — caller keeps the image when the judge is down
+  }
 }
 
 // ─── Source 4: Google Custom Search Images (paid) ─────────────────────────
@@ -563,6 +656,13 @@ export async function refreshBrandImages(companyId: string, opts: {
   const landlordImages = await findLandlordWebsiteImages(companyId);
   candidates.push(...landlordImages);
 
+  // Google Places photos lead for retail/hospitality brands — real shots of
+  // their actual venues off the place_ids we already hold, immune to the
+  // bot walls that empty the scraping sources (Woody, 2026-08-03).
+  if (!isLandlord) {
+    candidates.push(...await findPlacesPhotos(companyId));
+  }
+
   if (isLandlord) {
     // For landlords: own-website first, then trusted press, skip Wikipedia
     // (institutional landlord Wikipedia articles are mostly corporate logo +
@@ -641,6 +741,7 @@ export async function refreshBrandImages(companyId: string, opts: {
   let imported = 0;
   let attempted = 0;
   let duplicatesSkipped = 0;
+  let aiRejected = 0;
   const seenUrls = new Set<string>();
   const deduper = new ImageDeduper();
   await deduper.preload(brand.id, brand.name);
@@ -660,6 +761,16 @@ export async function refreshBrandImages(companyId: string, opts: {
       continue;
     }
 
+    // Vision gate — drop logos / promo graphics / headshots / off-brand
+    // subjects before they reach the gallery. Fails open if the judge is
+    // unavailable so the pipeline still fills.
+    const verdict = await aiJudgeBrandImage(brand.name, brand.industry, fetched.buffer);
+    if (verdict && !verdict.keep) {
+      aiRejected++;
+      console.log(`[brand-images ${brand.name}] vision judge rejected (${verdict.kind}): ${c.url.slice(0, 120)}`);
+      continue;
+    }
+
     // Phase 2: try to match the URL slug against a CRM property
     // owned by this landlord (e.g. "trinity-leeds-...webp" → Trinity
     // Leeds property row). When we find one, the image is filed
@@ -670,7 +781,7 @@ export async function refreshBrandImages(companyId: string, opts: {
         buffer: fetched.buffer,
         fileName: `${brand.name} — ${c.source}${c.caption ? `: ${c.caption.slice(0, 80)}` : ""}`,
         category: "Brands",
-        tags: ["brand-auto", brand.name, c.source],
+        tags: ["brand-auto", brand.name, c.source, ...(verdict?.kind && verdict.kind !== "other" ? [verdict.kind] : [])],
         description: c.pageUrl ? `Auto-fetched from ${c.source} (${c.pageUrl}) for ${brand.name}` : `Auto-fetched from ${c.source} for ${brand.name}`,
         source: c.source,
         brandName: brand.name,
@@ -688,7 +799,11 @@ export async function refreshBrandImages(companyId: string, opts: {
     }
   }
 
-  return { attempted, imported, bySource, skipped: duplicatesSkipped > 0 ? `${duplicatesSkipped} duplicate images skipped` : "", deleted };
+  const skippedNotes = [
+    duplicatesSkipped > 0 ? `${duplicatesSkipped} duplicates skipped` : "",
+    aiRejected > 0 ? `${aiRejected} rejected by vision judge` : "",
+  ].filter(Boolean).join(" · ");
+  return { attempted, imported, bySource, skipped: skippedNotes, deleted };
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────
