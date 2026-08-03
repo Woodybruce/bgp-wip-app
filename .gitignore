@@ -29,4 +29,5 @@ data/*
 !.claude/settings.json
 !.claude/hooks/
 qa/logs/
+qa/smoke-shots/
 test-results/
