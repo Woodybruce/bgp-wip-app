@@ -20,7 +20,6 @@ import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { BrandSearchInput } from "@/components/brand-search-input";
 import { InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
-import { CRM_OPTIONS } from "@/lib/crm-options";
 import { BRIEF_TARGET_STATUSES } from "@shared/schema";
 
 export const TARGET_STATUS_COLORS: Record<string, string> = {
@@ -33,16 +32,19 @@ export const TARGET_STATUS_COLORS: Record<string, string> = {
   "Passed": "bg-zinc-400",
 };
 
-const BRAND_CATEGORIES = CRM_OPTIONS.companyType as readonly string[];
+// Curated category taxonomy for the Letting Tracker + targeting brief
+// (Woody, 2026-08): a short hospitality / leisure list, not the full brand
+// companyType set. Exported so the tracker's quick-add can reuse it.
+export const LETTING_CATEGORIES: readonly string[] = ["Care", "Grab and go", "Restaurant", "Leisure", "Food market"];
 
 function CategoryItems({ current }: { current: string }) {
   return (
     <SelectContent className="max-h-64">
-      {current && !BRAND_CATEGORIES.includes(current) && (
+      {current && !LETTING_CATEGORIES.includes(current) && (
         <SelectItem value={current}>{current}</SelectItem>
       )}
-      {BRAND_CATEGORIES.filter(ct => ct !== "Landlord").map(ct => (
-        <SelectItem key={ct} value={ct}>{ct.replace(/^Tenant - /, "")}</SelectItem>
+      {LETTING_CATEGORIES.map(ct => (
+        <SelectItem key={ct} value={ct}>{ct}</SelectItem>
       ))}
     </SelectContent>
   );
@@ -83,7 +85,11 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
   const agentOptions = useMemo(() => {
     const teamById = new Map<string, string>();
     for (const m of clientTeam) {
-      if (m.user_id) teamById.set(String(m.user_id), m.full_name || m.username || "Unknown");
+      // Agents are BGP people only — the client-team board also carries the
+      // client's own logins (Mark, Jonny), who belong in Client Contact,
+      // not Agent.
+      const isBgp = (m.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
+      if (m.user_id && isBgp) teamById.set(String(m.user_id), m.full_name || m.username || "Unknown");
     }
     // Keep any already-assigned agent visible even if they're not on the
     // client team (so existing pills don't render as bare ids).
@@ -281,7 +287,7 @@ export function TargetOperatorsTable({ targets, clientCompanyId, ensureBriefId, 
           value={newTarget.operatorName}
           companyId={newTarget.companyId}
           allowCreate
-          onPick={p => setNewTarget(prev => ({ ...prev, operatorName: p.name, companyId: p.companyId, category: p.companyType || prev.category }))}
+          onPick={p => setNewTarget(prev => ({ ...prev, operatorName: p.name, companyId: p.companyId, category: p.companyType && LETTING_CATEGORIES.includes(p.companyType) ? p.companyType : prev.category }))}
           testId="input-new-target-name"
         />
         <Select value={newTarget.category} onValueChange={v => setNewTarget(p => ({ ...p, category: v }))}>
@@ -318,7 +324,8 @@ function TargetComments({ comments, onAdd }: { comments: unknown; onAdd: (text: 
     <div className="space-y-1 min-w-[160px]">
       {list.map((c, i) => (
         <div key={i} className="text-[11px] leading-tight" title={c.at ? new Date(c.at).toLocaleString("en-GB") : undefined}>
-          <span className="font-semibold text-primary">{c.userName || "Unknown"}</span>{" "}
+          <span className="font-semibold text-primary">{c.userName || "Unknown"}</span>
+          {c.at && <span className="text-muted-foreground/70 text-[10px]"> {new Date(c.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>}{" "}
           <span>{c.text}</span>
         </div>
       ))}

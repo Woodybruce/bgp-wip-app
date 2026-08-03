@@ -11,6 +11,7 @@ import { DraggableGrid } from "@/components/draggable-grid";
 import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { PropertiesSummary } from "@/components/properties-summary";
+import { ActivitySummary } from "@/components/activity-summary";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import { AIActivityCard } from "@/components/ai-activity-card";
 import {
@@ -1176,38 +1177,22 @@ export default function Dashboard() {
           } : null,
           {
             id: "portfolio-events",
-            label: "Upcoming Events",
+            label: "Activity",
             defaultW: 6, defaultH: 12, minW: 3, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
                 <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <CalendarDays className="w-3.5 h-3.5 text-teal-500" />
-                    Upcoming Events ({stats.upcomingEvents ?? portfolioData.events?.length ?? 0})
+                    Activity
                   </h3>
-                  <p className="text-[10px] text-muted-foreground -mt-1">Portfolio meetings, viewings and calls from the BGP account team's diaries.</p>
-                  {portfolioData.events?.length > 0 ? (
-                    <ScrollArea className="flex-1">
-                      <div className="space-y-0.5 pr-2">
-                        {portfolioData.events.map((ev: any, i: number) => (
-                          <div key={i} className="flex items-center justify-between px-2 py-1.5 text-xs">
-                            <div className="min-w-0 flex-1">
-                              <span className="text-sm font-medium truncate block">{ev.title}</span>
-                              <span className="text-muted-foreground">
-                                {new Date(ev.start_time).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}
-                                {ev.location ? ` · ${ev.location}` : ""}
-                              </span>
-                            </div>
-                            {ev.event_type && (
-                              <Badge variant="outline" className="text-[10px] px-1.5 shrink-0">{ev.event_type}</Badge>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">No upcoming events</p>
-                  )}
+                  <p className="text-[10px] text-muted-foreground -mt-1">Upcoming diary events and recent emails / calls / meetings across your portfolio.</p>
+                  {/* Canonical ActivitySummary (Woody, 2026-08-03) — replaces
+                      the bespoke Upcoming Events list; same board as the
+                      property page and staff dashboard. */}
+                  <div className="flex-1 overflow-hidden">
+                    <ActivitySummary companyId={resolvedCompanyId!} />
+                  </div>
                 </CardContent>
               </Card>
             ),
@@ -2502,41 +2487,15 @@ export default function Dashboard() {
               <div>
                 <div className="flex items-center gap-2">
                   <Bell className="w-4 h-4 text-amber-500" />
-                  <CardTitle className="text-sm font-semibold">{dashboardViewMode === "team" ? "Team Activity" : "Activity Alerts"}</CardTitle>
-                  {dashIntel?.activityAlerts && dashIntel.activityAlerts.length > 0 && (
-                    <span className="text-[10px] font-medium text-amber-600 bg-amber-500/10 rounded-full px-1.5 py-0.5">{dashIntel.activityAlerts.length}</span>
-                  )}
+                  <CardTitle className="text-sm font-semibold">Activity</CardTitle>
                 </div>
-                <p className="text-[10px] text-muted-foreground mt-0.5 ml-6">Recent emails and meetings between colleagues and your contacts</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5 ml-6">Upcoming diary events and recent emails / calls / meetings</p>
               </div>
             </CardHeader>
             <CardContent className="pt-0">
-              {dashIntel?.activityAlerts && dashIntel.activityAlerts.length > 0 ? (
-                <div className="space-y-1.5 max-h-[200px] overflow-y-auto">
-                  {dashIntel.activityAlerts.map((alert, i) => {
-                    const bgpName = alert.bgpUser.split("@")[0].replace(/([a-z])([A-Z])/g, "$1 $2");
-                    return (
-                      <Link key={i} href={`/contacts/${alert.contactId}`}>
-                        <div className="flex items-start gap-2.5 p-2 rounded-md border hover:bg-muted/50 transition-colors cursor-pointer text-xs" data-testid={`activity-alert-${i}`}>
-                          <div className="w-7 h-7 rounded-full bg-amber-500/10 flex items-center justify-center shrink-0">
-                            {alert.type === "email" ? <MailIcon className="w-3.5 h-3.5 text-amber-500" /> : <Video className="w-3.5 h-3.5 text-amber-500" />}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="font-medium"><span className="capitalize">{bgpName}</span> · {alert.contactName}</p>
-                            <p className="text-muted-foreground truncate">{alert.type} {alert.subject ? `— ${alert.subject}` : ""}</p>
-                            <p className="text-muted-foreground">{new Date(alert.date).toLocaleDateString("en-GB")}</p>
-                          </div>
-                        </div>
-                      </Link>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="text-center py-4 text-muted-foreground">
-                  <Bell className="w-6 h-6 mx-auto mb-1.5 opacity-30" />
-                  <p className="text-xs">No colleague activity on your contacts this week</p>
-                </div>
-              )}
+              {/* Canonical ActivitySummary (Woody, 2026-08-03) — replaces the
+                  bespoke Team Activity / Activity Alerts list. */}
+              <ActivitySummary />
             </CardContent>
           </Card>
         );
