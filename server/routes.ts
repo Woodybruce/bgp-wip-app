@@ -1099,6 +1099,22 @@ export async function registerRoutes(
   // password (or accepts a supplied one), kills the target's sessions and
   // bearer tokens so the old credentials stop working everywhere, and
   // returns the new password ONCE for the admin to hand over.
+  // One-shot cleanup for the keyword_company interaction fan-out (any email
+  // mentioning "Bills"/"Next"/"Boots" logged a touch against every contact
+  // at that company). The matcher no longer writes these; this removes the
+  // historical rows so touch counts reflect real involvement again.
+  app.post("/api/admin/interactions/purge-keyword-company", requireAuth, async (req: any, res) => {
+    try {
+      const adminId = req.session.userId || req.tokenUserId;
+      const [admin] = await pool.query("SELECT is_admin FROM users WHERE id = $1", [adminId]).then(r => r.rows);
+      if (!admin?.is_admin) return res.status(403).json({ message: "Admin access required" });
+      const del = await pool.query(`DELETE FROM crm_interactions WHERE match_method = 'keyword_company'`);
+      res.json({ deleted: del.rowCount || 0 });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.post("/api/admin/users/:id/reset-password", requireAuth, async (req: any, res) => {
     try {
       const adminId = req.session.userId || req.tokenUserId;

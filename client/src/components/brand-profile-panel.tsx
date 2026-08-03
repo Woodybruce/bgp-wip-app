@@ -3598,7 +3598,7 @@ function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSel
 // strength badge. The name itself links to the contact page; the role
 // is click-to-edit so users can fill in titles RocketReach got wrong
 // (or didn't return) without leaving the landlord profile.
-function KeyContactRow({ contact, companyId }: { contact: any; companyId: string }) {
+function KeyContactRow({ contact, companyId, discovery }: { contact: any; companyId: string; discovery?: any }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [editingRole, setEditingRole] = useState(false);
@@ -3632,6 +3632,15 @@ function KeyContactRow({ contact, companyId }: { contact: any; companyId: string
           <Link href={`/contacts/${contact.id}`} className="hover:underline">{contact.name}</Link>
           {hasEmail && <Mail className="w-2.5 h-2.5 text-emerald-600 shrink-0" />}
           {hasLinkedin && <Linkedin className="w-2.5 h-2.5 text-blue-600 shrink-0" />}
+          {discovery?.bgp?.threadCount ? (
+            <span className="text-[9px] px-1 py-0 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800 shrink-0" title="BGP has real email history with this person">
+              known · {discovery.bgp.threadCount} threads
+            </span>
+          ) : discovery?.ai?.confidence != null ? (
+            <span className="text-[9px] px-1 py-0 rounded bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800 shrink-0 tabular-nums" title={discovery.ai?.reason || "AI-verified against RocketReach/Apollo"}>
+              AI {discovery.ai.confidence}
+            </span>
+          ) : null}
           {touches > 0 && (
             <span
               className="ml-auto text-[9px] px-1 py-0 rounded bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800 shrink-0"
@@ -3880,12 +3889,24 @@ function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId
   });
 
   // ONE deduped list: CRM contacts first, then discovered candidates that
-  // don't match a CRM row (matched by email, falling back to name).
+  // don't match a CRM row (matched by email, falling back to name). When a
+  // candidate DOES match a CRM row, its discovery data (thread history, AI
+  // confidence, source) decorates that row instead of being thrown away —
+  // otherwise the AI-check/known badges never showed for brands whose
+  // contacts were already imported (Woody, 2026-08-03).
   const allContacts = data.contacts || [];
   const normEmail = (e: any) => String(e || "").toLowerCase().trim();
   const normName = (n: any) => String(n || "").toLowerCase().replace(/\s+/g, " ").trim();
   const crmEmailSet = new Set(allContacts.map((c: any) => normEmail(c.email)).filter(Boolean));
   const crmNameSet = new Set(allContacts.map((c: any) => normName(c.name)).filter(Boolean));
+  const discoveryByKey = new Map<string, any>();
+  for (const k of (cascade?.contacts || [])) {
+    const e = normEmail(k.email);
+    const n = normName(k.name);
+    if (e && !discoveryByKey.has(e)) discoveryByKey.set(e, k);
+    if (n && !discoveryByKey.has(n)) discoveryByKey.set(n, k);
+  }
+  const discoveryFor = (c: any) => discoveryByKey.get(normEmail(c.email)) || discoveryByKey.get(normName(c.name)) || null;
   const seenDiscovered = new Set<string>();
   const discovered = (cascade?.contacts || [])
     .filter((k: any) => k.ai?.verdict !== "drop" && !k.bgp?.inCrm)
@@ -3899,6 +3920,7 @@ function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId
       seenDiscovered.add(dupKey);
       return true;
     });
+  const crmAiChecked = allContacts.filter((c: any) => discoveryFor(c)?.ai).length;
 
   const crmVisible = showAll ? allContacts : allContacts.filter((c: any) => isPropertyTier(c.role));
   const discoveredVisible = showAll ? discovered : discovered.filter((k: any) => isPropertyTier(k.title));
@@ -3968,7 +3990,7 @@ function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId
         ) : (
           <div className="max-h-[340px] overflow-y-auto pr-1 space-y-1.5">
             {crmVisible.map((dm: any) => (
-              <KeyContactRow key={dm.id} contact={dm} companyId={companyId} />
+              <KeyContactRow key={dm.id} contact={dm} companyId={companyId} discovery={discoveryFor(dm)} />
             ))}
             {discoveredVisible.map((k: any) => {
               const rowKey = normEmail(k.email) || normName(k.name);
@@ -4012,9 +4034,9 @@ function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId
         )}
         {summary && !kcIsClient && (
           <p className="text-[10px] text-muted-foreground mt-1.5">
-            {allContacts.length} in CRM · {discovered.length} discovered
-            {summary.revealed ? ` (${summary.revealed} emails revealed)` : ""}
-            {summary.aiJudged ? " · AI-checked" : ""}
+            {allContacts.length} in CRM{crmAiChecked > 0 ? ` (${crmAiChecked} AI-verified)` : ""}
+            {discovered.length > 0 ? ` · ${discovered.length} new discovered` : " · no new contacts found"}
+            {summary.revealed ? ` · ${summary.revealed} emails revealed` : ""}
             {scanning ? " · rescanning…" : ""}
           </p>
         )}
@@ -4824,8 +4846,10 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   // stacked full-width boards — pair the related ones half-width instead
   // (Compliance+Covenant, Key contacts+Files, News+Instagram; Woody,
   // 2026-07-30). The narrow sticky sidebar keeps the single column.
+  // items-stretch + h-full children so paired boards share one depth —
+  // mismatched card bottoms left slabs of dead space (Woody, 2026-08-03).
   const pairCls = (isLandlord || isBrand)
-    ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start"
+    ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-stretch [&>*]:h-full"
     : "space-y-3";
 
   return (
@@ -4855,7 +4879,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       </div>
 
       <div className={pairCls}>
-      <div className="space-y-3">
+      <div className="flex flex-col gap-3">
       {/* Compliance / AML board — gates every downstream check on knowing
           the brand's actual UK trading entity. Scraper auto-fires on
           first load (from the parent useEffect); the user can overwrite
@@ -4864,12 +4888,13 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       <BrandComplianceCard companyId={companyId} company={c} />
       </div>
 
-      <div className="space-y-3">
+      <div className="flex flex-col gap-3">
       {/* Covenant — live house engine (Companies House + The Gazette + filed
           accounts). Always rendered so the board is visibly part of the
           standard layout; before a CH match lands it explains what unlocks
-          it instead of silently disappearing (Woody, 2026-08-03). */}
-      <Card>
+          it instead of silently disappearing (Woody, 2026-08-03). flex-1 so
+          it fills the column to the Compliance board's depth. */}
+      <Card className="flex-1">
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
             Covenant
