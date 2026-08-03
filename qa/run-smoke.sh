@@ -27,6 +27,7 @@ fi
 
 # 3. Start the app the way CI does: minimal env, no AI keys.
 DATABASE_URL="postgresql://postgres@127.0.0.1:5432/$DB" \
+PGSSLMODE=disable \
 PORT="$PORT" NODE_ENV=production SESSION_SECRET=smoke-local HOST=0.0.0.0 \
   node dist/index.cjs >/tmp/smoke-app.log 2>&1 &
 APP_PID=$!

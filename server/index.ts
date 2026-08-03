@@ -2715,7 +2715,9 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     const pgMod = await import("pg");
     const client = new pgMod.default.Client({
       connectionString: process.env.DATABASE_URL,
-      ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+      ssl: process.env.PGSSLMODE === "disable"
+        ? false
+        : process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
     });
     try {
       await client.connect();
