@@ -236,18 +236,25 @@ function MyTasksWidget() {
     if (!d) return null;
     const due = new Date(d); due.setHours(0, 0, 0, 0);
     const diff = Math.floor((due.getTime() - startOfToday().getTime()) / 86400000);
-    if (diff < 0) return <span className="text-[10px] text-red-600 font-medium">{Math.abs(diff)}d overdue</span>;
-    if (diff === 0) return <span className="text-[10px] text-orange-600 font-medium">Today</span>;
-    if (diff === 1) return <span className="text-[10px] text-blue-600">Tomorrow</span>;
-    return <span className="text-[10px] text-muted-foreground">{new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>;
+    if (diff < 0) return <span className="text-xs text-red-600 font-medium">{Math.abs(diff)}d overdue</span>;
+    if (diff === 0) return <span className="text-xs text-orange-600 font-medium">Today</span>;
+    if (diff === 1) return <span className="text-xs text-blue-600">Tomorrow</span>;
+    return <span className="text-xs text-muted-foreground">{new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>;
   };
   const renderBriefingLine = (line: string, i: number) => {
-    if (line.startsWith("## ")) return <h3 key={i} className="text-xs font-semibold mt-2 mb-0.5">{line.slice(3)}</h3>;
-    if (line.startsWith("# ")) return <h2 key={i} className="text-xs font-bold mt-2 mb-0.5 first:mt-0">{line.slice(2)}</h2>;
-    if (line.startsWith("- ") || line.startsWith("• ")) return <li key={i} className="ml-3 text-[11px] list-disc marker:text-primary/40 leading-snug">{line.slice(2).replace(/\*\*/g, "")}</li>;
+    if (line.startsWith("## ")) return <h3 key={i} className="text-sm font-semibold mt-2 mb-0.5">{line.slice(3)}</h3>;
+    if (line.startsWith("# ")) return <h2 key={i} className="text-sm font-bold mt-2 mb-0.5 first:mt-0">{line.slice(2)}</h2>;
+    if (line.startsWith("- ") || line.startsWith("• ")) return <li key={i} className="ml-4 text-[13px] list-disc marker:text-primary/40 leading-snug">{line.slice(2).replace(/\*\*/g, "")}</li>;
     if (line.trim() === "") return <div key={i} className="h-1" />;
     if (line.startsWith("---")) return <hr key={i} className="my-1.5 border-border" />;
-    return <p key={i} className="text-[11px] leading-snug">{line.replace(/\*\*/g, "")}</p>;
+    // Markdown table rows used to leak as raw "| Metric | Figures |" text —
+    // render each data row as "label — value" and drop the separator rows.
+    if (line.trim().startsWith("|")) {
+      const cells = line.split("|").map(c => c.trim()).filter(Boolean);
+      if (cells.length === 0 || cells.every(c => /^[-: ]+$/.test(c))) return null;
+      return <p key={i} className="text-[13px] leading-snug"><span className="text-muted-foreground">{cells[0]}</span>{cells.length > 1 ? ` — ${cells.slice(1).join(" · ")}` : ""}</p>;
+    }
+    return <p key={i} className="text-[13px] leading-snug">{line.replace(/\*\*/g, "")}</p>;
   };
   return (
     <Card key="my-tasks" className="h-full flex flex-col" data-testid="widget-my-tasks">
@@ -267,7 +274,7 @@ function MyTasksWidget() {
         <div className="mb-2 rounded-lg border bg-muted/30 overflow-hidden">
           <button
             onClick={() => setBriefingOpen(!briefingOpen)}
-            className="w-full flex items-center justify-between px-3 py-1.5 text-[11px] font-medium hover:bg-muted/50 transition-colors"
+            className="w-full flex items-center justify-between px-3 py-1.5 text-xs font-medium hover:bg-muted/50 transition-colors"
             data-testid="widget-briefing-toggle"
           >
             <div className="flex items-center gap-1.5">
@@ -349,11 +356,11 @@ function MyTasksWidget() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       {priorityIcon(task.priority)}
-                      <span className="text-xs font-medium truncate">{task.title}</span>
+                      <span className="text-sm font-medium truncate">{task.title}</span>
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
                       {dueLabel(task.due_date)}
-                      {task.deal_name && <span className="text-[10px] text-muted-foreground truncate max-w-[120px]">{task.deal_name}</span>}
+                      {task.deal_name && <span className="text-xs text-muted-foreground truncate max-w-[140px]">{task.deal_name}</span>}
                     </div>
                   </div>
                 </div>
