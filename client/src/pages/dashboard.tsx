@@ -10,6 +10,7 @@ import { useBrand } from "@/lib/brand-context";
 import { DraggableGrid } from "@/components/draggable-grid";
 import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
+import { PropertiesSummary } from "@/components/properties-summary";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import { AIActivityCard } from "@/components/ai-activity-card";
 import {
@@ -1292,28 +1293,9 @@ export default function Dashboard() {
                     <Building2 className="w-3.5 h-3.5 text-teal-500" />
                     Linked Properties ({portfolioData.properties.length})
                   </h3>
-                  <ScrollArea className="flex-1">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 pr-2">
-                      {portfolioData.properties.map((property: any) => {
-                        const isLeasing = property.status === "Leasing Instruction";
-                        return (
-                        <Link key={property.id} href={`/properties/${property.id}`}>
-                          <div className={`flex flex-col p-2 rounded-md transition-colors cursor-pointer ${isLeasing ? "border border-green-300 dark:border-green-700 bg-green-50/50 dark:bg-green-900/10 hover:bg-green-50 dark:hover:bg-green-900/20" : "border border-purple-300 dark:border-purple-700 bg-purple-50/50 dark:bg-purple-900/10 hover:bg-purple-50 dark:hover:bg-purple-900/20"}`} data-testid={`link-property-${property.id}`}>
-                            <div className="flex items-center gap-2 min-w-0">
-                              <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLeasing ? "bg-green-500" : "bg-purple-500"}`} />
-                              <p className="text-sm font-medium truncate text-zinc-800 dark:text-zinc-200">{property.name}</p>
-                            </div>
-                            {property.asset_class && (
-                              <div className="flex flex-wrap gap-0.5 mt-1 ml-4">
-                                <Badge className="text-[9px] px-1 py-0 bg-zinc-200 text-zinc-700 dark:bg-zinc-700 dark:text-zinc-300">{property.asset_class}</Badge>
-                              </div>
-                            )}
-                          </div>
-                        </Link>
-                        );
-                      })}
-                    </div>
-                  </ScrollArea>
+                  <div className="flex-1 overflow-hidden">
+                    <PropertiesSummary companyId={resolvedCompanyId!} role="landlord" />
+                  </div>
                 </CardContent>
               </Card>
             ),
@@ -2659,105 +2641,18 @@ export default function Dashboard() {
           // The Landsec portfolio board already shows properties grouped with their deals,
           // so suppress this general widget for Landsec to avoid showing the same content twice.
           if (isLandsecTeam && portfolioData) return null;
-          const scopedDeals = deals || [];
-          const scopedProps = properties || [];
-          const propMap = new Map(scopedProps.map(p => [p.id, p]));
-          const grouped = new Map<string, { property: CrmProperty; deals: CrmDeal[] }>();
-          const unlinked: CrmDeal[] = [];
-          for (const deal of scopedDeals) {
-            if (deal.propertyId && propMap.has(deal.propertyId)) {
-              if (!grouped.has(deal.propertyId)) {
-                grouped.set(deal.propertyId, { property: propMap.get(deal.propertyId)!, deals: [] });
-              }
-              grouped.get(deal.propertyId)!.deals.push(deal);
-            } else if (!deal.propertyId) {
-              unlinked.push(deal);
-            }
-          }
-          const propertiesWithNoDeals = scopedProps.filter(p => !grouped.has(p.id));
-          const totalDeals = scopedDeals.length;
-          const totalProperties = grouped.size + propertiesWithNoDeals.length;
+          // Canonical PropertiesSummary (Woody, 2026-08-03) — active properties
+          // with live-letting / live-deal chips deep-linking into both boards.
           return (
             <Card key="properties-deals" className="h-full flex flex-col">
               <CardContent className="p-3 space-y-2 flex-1 overflow-hidden">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5" data-testid="text-properties-deals-title">
                     <Building2 className="w-3.5 h-3.5 text-teal-500" />
-                    Properties & Deals ({totalDeals} deal{totalDeals !== 1 ? "s" : ""} across {totalProperties} propert{totalProperties !== 1 ? "ies" : "y"})
+                    Properties & Deals
                   </h3>
-                  <div className="flex items-center gap-2">
-                    <Link href="/deals">
-                      <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-all-deals">
-                        <ExternalLink className="w-3 h-3" />All Deals
-                      </span>
-                    </Link>
-                    <Link href="/properties">
-                      <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-all-properties">
-                        <ExternalLink className="w-3 h-3" />All Properties
-                      </span>
-                    </Link>
-                  </div>
                 </div>
-                <ScrollArea className="flex-1">
-                  <div className="pr-2">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                      {Array.from(grouped.values()).map(({ property, deals }) => (
-                        <div key={property.id} className="border rounded-lg overflow-hidden" data-testid={`widget-property-group-${property.id}`}>
-                          <Link href={`/properties/${property.id}`}>
-                            <div className="flex items-center gap-2 p-2 bg-teal-50 dark:bg-teal-900/20 hover:bg-teal-100 dark:hover:bg-teal-900/30 transition-colors cursor-pointer border-b border-teal-100 dark:border-teal-800">
-                              <Building2 className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
-                              <div className="flex-1 min-w-0">
-                                <p className="text-xs font-medium truncate text-teal-700 dark:text-teal-300">{property.name}</p>
-                              </div>
-                              <Badge className="text-[9px] shrink-0 bg-teal-100 text-teal-700 dark:bg-teal-800 dark:text-teal-300 border-0">{deals.length} deal{deals.length !== 1 ? "s" : ""}</Badge>
-                            </div>
-                          </Link>
-                          <div className="divide-y max-h-[150px] overflow-y-auto">
-                            {deals.map((deal) => (
-                              <Link key={deal.id} href={`/deals/${deal.id}`}>
-                                <div className="flex items-center justify-between px-2 py-1.5 hover:bg-muted/30 transition-colors cursor-pointer" data-testid={`link-widget-deal-${deal.id}`}>
-                                  <div className="min-w-0 flex-1">
-                                    <p className="text-xs truncate">{deal.name}</p>
-                                    <p className="text-[10px] text-muted-foreground">{deal.status}</p>
-                                  </div>
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    {deal.dealType && (
-                                      <Badge variant="secondary" className={`text-[9px] ${deal.dealType === "Leasing" ? "bg-teal-100 text-teal-700 dark:bg-teal-800 dark:text-teal-300" : deal.dealType === "Lease Advisory" ? "bg-blue-100 text-blue-700 dark:bg-blue-800 dark:text-blue-300" : deal.dealType === "Tenant Rep" ? "bg-purple-100 text-purple-700 dark:bg-purple-800 dark:text-purple-300" : ""}`}>{deal.dealType}</Badge>
-                                    )}
-                                  </div>
-                                </div>
-                              </Link>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    {unlinked.length > 0 && (
-                      <div className="border rounded-lg overflow-hidden mt-2">
-                        <div className="flex items-center gap-2 p-2 bg-muted/50">
-                          <BarChart3 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                          <p className="text-xs font-medium">Other Deals</p>
-                          <Badge variant="outline" className="text-[10px] shrink-0 ml-auto">{unlinked.length}</Badge>
-                        </div>
-                        <div className="divide-y">
-                          {unlinked.map((deal) => (
-                            <Link key={deal.id} href={`/deals/${deal.id}`}>
-                              <div className="flex items-center justify-between px-2 py-1.5 pl-7 hover:bg-muted/30 transition-colors cursor-pointer" data-testid={`link-widget-deal-${deal.id}`}>
-                                <div className="min-w-0 flex-1">
-                                  <p className="text-xs truncate">{deal.name}</p>
-                                  <p className="text-[10px] text-muted-foreground">{deal.status}</p>
-                                </div>
-                                {deal.dealType && (
-                                  <Badge variant="secondary" className="text-[9px]">{deal.dealType}</Badge>
-                                )}
-                              </div>
-                            </Link>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </ScrollArea>
+                <PropertiesSummary onlyActive />
               </CardContent>
             </Card>
           );

@@ -62,6 +62,7 @@ import { InlineAddress } from "@/components/address-autocomplete";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty } from "@shared/schema";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
 import { LenderPanel } from "@/components/lender-panel";
+import { PropertiesSummary } from "@/components/properties-summary";
 
 interface CHSearchResult {
   companyNumber: string;
@@ -1432,45 +1433,19 @@ function CompanyDetail({ id }: { id: string }) {
 
         </div>
 
-        {!usePropertiesBoard && (propertiesWithDeals.grouped.length > 0 || propertiesWithDeals.unlinkedDeals.length > 0) && (
+        {!usePropertiesBoard && (
           <Card className="lg:col-span-3">
             <CardContent className="p-3 space-y-3">
               <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                <Handshake className="w-3.5 h-3.5 text-teal-500" />
-                Properties & Deals ({relatedDeals.length} deal{relatedDeals.length !== 1 ? "s" : ""} across {propertiesWithDeals.grouped.length} propert{propertiesWithDeals.grouped.length !== 1 ? "ies" : "y"})
+                <Building className="w-3.5 h-3.5 text-teal-500" />
+                Properties — in occupation & live deals
               </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                {propertiesWithDeals.grouped.map(({ property, deals }) => (
-                  <div key={property.id} className="border rounded-lg overflow-hidden" data-testid={`property-group-${property.id}`}>
-                    <Link href={`/properties/${property.id}`}>
-                      <div className="flex items-center gap-2 p-2 bg-teal-50 dark:bg-teal-900/20 hover:bg-teal-100 dark:hover:bg-teal-900/30 transition-colors cursor-pointer border-b border-teal-100 dark:border-teal-800">
-                        <Building className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium truncate text-teal-700 dark:text-teal-300">{property.name}</p>
-                        </div>
-                        <Badge className="text-[9px] shrink-0 bg-teal-100 text-teal-700 dark:bg-teal-800 dark:text-teal-300 border-0">{deals.length} deal{deals.length !== 1 ? "s" : ""}</Badge>
-                      </div>
-                    </Link>
-                    <div className="divide-y max-h-[150px] overflow-y-auto">
-                      {deals.map((deal) => (
-                        <Link key={deal.id} href={`/deals/${deal.id}`}>
-                          <div className="flex items-center justify-between px-2 py-1.5 hover:bg-muted/30 transition-colors cursor-pointer" data-testid={`link-deal-${deal.id}`}>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs truncate">{deal.name}</p>
-                              <p className="text-[10px] text-muted-foreground">{deal.status || deal.groupName}</p>
-                            </div>
-                            <div className="flex items-center gap-1 shrink-0">
-                              {deal.dealType && (
-                                <Badge variant="secondary" className={`text-[9px] ${deal.dealType === "Leasing" ? "bg-teal-100 text-teal-700 dark:bg-teal-800 dark:text-teal-300" : ""}`}>{deal.dealType}</Badge>
-                              )}
-                            </div>
-                          </div>
-                        </Link>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              {/* Canonical PropertiesSummary in tenant scope (Woody,
+                  2026-08-03) — the inverse of the landlord portfolio board:
+                  properties where this brand occupies units off the tenancy
+                  schedule, plus any carrying its deals, with live-letting /
+                  live-deal chips deep-linking into both boards. */}
+              <PropertiesSummary companyId={id} role="tenant" />
               {propertiesWithDeals.unlinkedDeals.length > 0 && (
                 <div className="border rounded-lg overflow-hidden" data-testid="unlinked-deals-group">
                   <div className="flex items-center gap-2 p-2 bg-muted/50">

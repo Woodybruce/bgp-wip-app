@@ -7046,6 +7046,77 @@ These terms are indicative only and do not constitute a binding agreement.`;
     }
   });
 
+  // Canonical property grouping for a company — the data feed behind
+  // PropertiesSummary (the properties twin of TrackerSummary/DealsSummary).
+  // role=landlord: properties they own / are linked to (same resolution as
+  // /api/company-portfolio). role=tenant: properties where the brand is in
+  // occupation off the tenancy schedule (FK, exact tenant/trading name, or
+  // brand-name prefix — the same evidence rule as linked-contacts) plus any
+  // property carrying one of their deals. Client logins only see rows inside
+  // their own portfolio scope.
+  app.get("/api/crm/companies/:companyId/property-summary", requireAuth, async (req, res) => {
+    try {
+      const { companyId } = req.params;
+      const role = String(req.query.role || "landlord");
+      const scopeCompanyId = await resolveCompanyScope(req);
+      if (scopeCompanyId && role === "landlord" && scopeCompanyId !== companyId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      let rows: any[];
+      if (role === "tenant") {
+        rows = (await pool.query(
+          `WITH occ AS (
+             SELECT ts.property_id, count(*) AS units
+               FROM tenancy_schedule_units ts
+               JOIN crm_companies co ON co.id = $1
+              WHERE ts.tenant_company_id = co.id
+                 OR lower(co.name) IN (lower(COALESCE(ts.tenant_name,'')), lower(COALESCE(ts.trading_name,'')))
+                 OR (length(co.name) >= 5 AND lower(COALESCE(ts.tenant_name,'')) LIKE lower(co.name) || ' %')
+              GROUP BY ts.property_id
+           ),
+           dealprops AS (
+             SELECT DISTINCT property_id FROM crm_deals
+              WHERE tenant_id = $1 AND property_id IS NOT NULL
+           )
+           SELECT p.id, p.name, p.asset_class, COALESCE(o.units, 0)::int AS units_occupied
+             FROM crm_properties p
+             LEFT JOIN occ o ON o.property_id = p.id
+            WHERE p.id IN (SELECT property_id FROM occ UNION SELECT property_id FROM dealprops)
+            ORDER BY COALESCE(o.units, 0) DESC, p.name`,
+          [companyId]
+        )).rows;
+      } else {
+        rows = (await pool.query(
+          `SELECT p.id, p.name, p.asset_class, NULL AS units_occupied
+             FROM crm_properties p
+            WHERE p.landlord_id = $1 OR p.freeholder_id = $1 OR p.long_leaseholder_id = $1
+               OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+            ORDER BY p.name`,
+          [companyId]
+        )).rows;
+      }
+
+      // A client viewing a brand only sees occupancy inside their own
+      // portfolio — never another landlord's tenancy data.
+      if (scopeCompanyId && role === "tenant") {
+        const scoped = await pool.query(
+          `SELECT id FROM crm_properties
+            WHERE landlord_id = $1
+               OR id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)`,
+          [scopeCompanyId]
+        );
+        const allowed = new Set(scoped.rows.map((r: any) => r.id));
+        rows = rows.filter((r: any) => allowed.has(r.id));
+      }
+
+      res.json(rows);
+    } catch (err: any) {
+      console.error("[property-summary]", err?.message);
+      res.status(500).json({ message: err?.message || "property summary failed" });
+    }
+  });
+
   app.get("/api/company-portfolio/:companyId", requireAuth, async (req, res) => {
     try {
       const { companyId } = req.params;
