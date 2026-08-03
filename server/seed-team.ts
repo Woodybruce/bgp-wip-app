@@ -33,8 +33,8 @@ export const BGP_ORG_CHART: SeedPerson[] = [
   // Investment column — Jack heads Investment + Board + Finance
   { name: "Jack Barratt", role: "ED, Head of Investment – Finance", team: "Investment", reportsTo: "Woody Bruce", boardMember: true, managementTeam: true, additionalTeams: ["BOARD", "Finance"], displayOrder: 0 },
   { name: "Nick Halley", role: "Director – Investment", team: "Investment", reportsTo: "Jack Barratt", displayOrder: 1 },
-  { name: "Ollie Wilkinson", role: "Associate Director – Investment", team: "Investment", reportsTo: "Nick Halley", displayOrder: 2 },
-  { name: "Jonny Palmer", role: "Graduate", team: "Investment", reportsTo: "Ollie Wilkinson", displayOrder: 3 },
+  // Ollie Wilkinson left the team (2026) — Jonny now reports to Nick Halley.
+  { name: "Jonny Palmer", role: "Graduate", team: "Investment", reportsTo: "Nick Halley", displayOrder: 2 },
 
   // Lease Advisory column — Pete heads
   { name: "Pete Wood", role: "Head – Lease Consultancy / Management", team: "Lease Advisory", reportsTo: "Woody Bruce", managementTeam: true, displayOrder: 0 },
@@ -43,8 +43,8 @@ export const BGP_ORG_CHART: SeedPerson[] = [
   // National Leasing column — Vicky heads
   { name: "Victoria Broadhead", role: "Head – National / Management", team: "National Leasing", reportsTo: "Woody Bruce", managementTeam: true, displayOrder: 0 },
   { name: "Lucy Gardiner", role: "Director – National Team", team: "National Leasing", reportsTo: "Victoria Broadhead", displayOrder: 1 },
-  { name: "Rob Barnes", role: "Surveyor – National Team", team: "National Leasing", reportsTo: "Lucy Gardiner", displayOrder: 2 },
-  { name: "Luke Donohoe", role: "Graduate Surveyor – National Team", team: "National Leasing", reportsTo: "Rob Barnes", displayOrder: 3 },
+  // Rob Barnes left the team (2026) — Luke now reports to Lucy Gardiner.
+  { name: "Luke Donohoe", role: "Graduate Surveyor – National Team", team: "National Leasing", reportsTo: "Lucy Gardiner", displayOrder: 2 },
 
   // Development / Re-purposing column — Tracey heads
   { name: "Tracey Pollard", role: "Head – Development / Re-purposing", team: "Development", reportsTo: "Woody Bruce", additionalTeams: ["BOARD"], displayOrder: 0 },

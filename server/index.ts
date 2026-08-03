@@ -2502,6 +2502,35 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
   }
   console.log(`[auto-migrate] Schema migration complete — ${ok} applied, ${skipped} skipped`);
 
+  // ── One-off (per Woody): Ollie Wilkinson and Rob Barnes have left the team.
+  // Remove them from the org chart / team roster by setting is_active = false
+  // (kept, not deleted, so their historical deal / fee / expense links stay
+  // valid). Their direct reports roll up to the leaver's own manager so the
+  // chart stays connected. Idempotent — skips anyone already inactive, so it
+  // applies exactly once.
+  try {
+    const departures = [
+      { email: "ollie@brucegillinghampollard.com", name: "Ollie Wilkinson" },
+      { email: "rob@brucegillinghampollard.com",   name: "Rob Barnes" },
+    ];
+    for (const d of departures) {
+      const { rows } = await pool.query(
+        `SELECT id, manager_id, is_active FROM users
+          WHERE lower(email) = lower($1) OR lower(name) = lower($2) LIMIT 1`,
+        [d.email, d.name],
+      );
+      const person = rows[0];
+      if (!person) { console.warn(`[one-off departures] ${d.name} not found — nothing changed`); continue; }
+      if (person.is_active === false) continue; // already removed — idempotent
+      // Roll their direct reports up to the leaver's own manager.
+      await pool.query(`UPDATE users SET manager_id = $1 WHERE manager_id = $2`, [person.manager_id ?? null, person.id]);
+      await pool.query(`UPDATE users SET is_active = false WHERE id = $1`, [person.id]);
+      console.log(`[one-off departures] Removed ${d.name} from the team (deactivated; direct reports rolled up)`);
+    }
+  } catch (e: any) {
+    console.warn("[one-off departures] failed:", e?.message);
+  }
+
   // ── One-off (per Woody): deals 3437, 3490 & 3226 (Harry) are exempt from
   // the 15% BGP House cut — the whole fee goes to the agent, not 85%. The fee
   // editor hard-locks the house slice on every deal, so this can't be done in
