@@ -40,7 +40,7 @@ import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiS
 import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer, PropertyUnit } from "@shared/schema";
 import { BRIEF_TARGET_STATUSES } from "@shared/schema";
 import { BrandSearchInput, type BrandPick } from "@/components/brand-search-input";
-import { TargetRowCells } from "@/components/target-operators-table";
+import { TargetRowCells, LETTING_CATEGORIES } from "@/components/target-operators-table";
 import { useTeam } from "@/lib/team-context";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { DEAL_TYPE_COLORS, DEAL_TEAM_COLORS } from "@/pages/deals";
@@ -997,7 +997,7 @@ export default function AvailableUnitsPage() {
       await apiRequest("POST", `/api/unit-briefs/${briefId}/targets`, {
         operatorName: pick.name,
         companyId: pick.companyId,
-        category: pick.companyType || undefined,
+        category: pick.companyType && LETTING_CATEGORIES.includes(pick.companyType) ? pick.companyType : undefined,
         priority: "B",
         agentUserIds: auUser?.id ? [String(auUser.id)] : undefined,
       });
