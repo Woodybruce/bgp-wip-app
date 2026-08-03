@@ -58,6 +58,7 @@ interface Task {
   assigned_by_user_id?: string | null;
   assigned_by_name?: string | null;
   assignee_name?: string | null;
+  source?: string | null;
 }
 
 interface BriefingData {
@@ -167,6 +168,12 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
           </span>
           <PriorityBadge priority={task.priority} />
           {task.category && <CategoryBadge category={task.category} />}
+          {task.source === "ai_suggested" && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950 dark:border-violet-800 dark:text-violet-300" title="Suggested by ChatBGP from letting-tracker activity — mark done when handled, or done to dismiss">
+              <Sparkles className="w-2.5 h-2.5" />
+              AI suggested
+            </span>
+          )}
           {showAssignee && task.assignee_name ? (
             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:border-indigo-800 dark:text-indigo-300">
               <User className="w-2.5 h-2.5" />

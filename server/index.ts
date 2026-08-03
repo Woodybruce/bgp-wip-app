@@ -2885,6 +2885,7 @@ import { registerVoaRoutes, startVoaAutoImport } from "./voa";
 import { registerLegalDDRoutes } from "./legal-dd";
 import { setupSharedMailboxRoutes } from "./shared-mailbox";
 import { registerInteractionRoutes } from "./interactions";
+import { registerTaskSuggestionRoutes } from "./task-suggestions";
 import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "./crm";
 import companiesHouseRouter, { runBatchReKyc } from "./companies-house";
 import { registerPropertyPathwayRoutes } from "./property-pathway";
@@ -3691,6 +3692,7 @@ app.use("/api/branding/assets", express.static(
   registerLegalDDRoutes(app);
   setupSharedMailboxRoutes(app);
   registerInteractionRoutes(app);
+  registerTaskSuggestionRoutes(app);
 
   registerEmailProcessorRoutes(app);
   registerHealthCheckRoutes(app);

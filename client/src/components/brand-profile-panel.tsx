@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { PropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
-import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, Star as StarIcon } from "lucide-react";
+import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, Star as StarIcon, UserPlus, ClipboardList } from "lucide-react";
+import { TagChip, TAG_TOKEN_SOURCE, buildTagToken, type TagType } from "@/components/chat-tags";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
@@ -4567,56 +4568,224 @@ function CompanyMiniChat({ companyId, companyName, fill }: { companyId: string; 
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length]);
 
-  const send = async () => {
-    const text = draft.trim();
-    if (!text || sending) return;
+  // ── Team-chat parity (Woody, 2026-08-03): @ tags, add members, Tracker ──
+  const { toast: mcToast } = useToast();
+  const [tab, setTab] = useState<"chat" | "tracker">("chat");
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionStart, setMentionStart] = useState(-1);
+  const [mentionResults, setMentionResults] = useState<any[]>([]);
+  const pendingTagsRef = useRef<Map<string, { type: TagType; id: string; name: string }>>(new Map());
+  const inputRef = useRef<HTMLInputElement>(null);
+  const { data: mcMe } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const { data: mcUsers = [] } = useQuery<Array<{ id: string; name: string }>>({ queryKey: ["/api/users"] });
+
+  const { data: trackerData } = useQuery<any>({
+    queryKey: ["/api/brands", companyId, "tracker-comments"],
+    queryFn: async () => {
+      const res = await fetch(`/api/brands/${companyId}/tracker-comments`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return { comments: [] };
+      return res.json();
+    },
+    staleTime: 2 * 60 * 1000,
+  });
+  const trackerComments: any[] = trackerData?.comments || [];
+
+  // Same debounced tag-search the main chat uses — server applies client
+  // scoping, so Landsec logins only see their own portfolio in the @ menu.
+  useEffect(() => {
+    if (mentionQuery === null || mentionQuery.length < 2) { setMentionResults([]); return; }
+    const q = mentionQuery;
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/chat/tag-search?q=${encodeURIComponent(q)}`, { credentials: "include", headers: getAuthHeaders() });
+        if (!res.ok) return;
+        const d = await res.json();
+        setMentionResults((d.results || []).slice(0, 6));
+      } catch {}
+    }, 180);
+    return () => clearTimeout(t);
+  }, [mentionQuery]);
+
+  const ensureThread = async (): Promise<string> => {
+    if (threadId) return threadId;
+    const res = await apiRequest("POST", "/api/chat/threads", {
+      title: `${companyName} — discussion`,
+      memberIds: ["__chatbgp__"],
+      isAiChat: false,
+      linkedType: "company",
+      linkedId: companyId,
+      linkedName: companyName,
+    });
+    const created = await res.json();
+    setThreadId(created.id);
+    return created.id;
+  };
+
+  const memberIds = new Set<string>((thread?.members || []).map((m: any) => m.id));
+  const addMember = async (userId: string, name: string) => {
+    try {
+      const tid = await ensureThread();
+      await apiRequest("POST", `/api/chat/threads/${tid}/members`, { userId });
+      mcToast({ title: `${name} added to the ${companyName} chat` });
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", tid] });
+    } catch (e: any) {
+      mcToast({ title: "Couldn't add member", description: e?.message, variant: "destructive" });
+    }
+  };
+
+  const onDraftChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setDraft(val);
+    const cursor = e.target.selectionStart ?? val.length;
+    const beforeCursor = val.slice(0, cursor);
+    const at = beforeCursor.lastIndexOf("@");
+    if (at >= 0 && (at === 0 || /[\s]/.test(beforeCursor[at - 1]))) {
+      const q = beforeCursor.slice(at + 1);
+      if (!q.includes(" ") && q.length <= 24) { setMentionQuery(q); setMentionStart(at); return; }
+    }
+    setMentionQuery(null); setMentionStart(-1);
+  };
+
+  const pickMention = (r: { type: string; id: string; name: string }) => {
+    const clean = r.name.replace(/[\[\]()]/g, "").trim();
+    const inserted = r.type === "user" ? `@${clean.split(" ")[0]}` : `@${clean}`;
+    const before = draft.slice(0, mentionStart);
+    const after = draft.slice(mentionStart + 1 + (mentionQuery?.length || 0));
+    if (r.type === "user") {
+      if (!memberIds.has(r.id) && r.id !== mcMe?.id) addMember(r.id, r.name);
+    } else {
+      pendingTagsRef.current.set(inserted, { type: r.type as TagType, id: r.id, name: clean });
+    }
+    setDraft(`${before}${inserted} ${after}`);
+    setMentionQuery(null); setMentionStart(-1);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const sendWithTags = async () => {
+    if (!draft.trim() || sending) return;
+    if (pendingTagsRef.current.size > 0) {
+      let content = draft;
+      const entries = [...pendingTagsRef.current.entries()].sort((a, b) => b[0].length - a[0].length);
+      for (const [key, tag] of entries) {
+        if (content.includes(key)) content = content.split(key).join(buildTagToken(tag.type, tag.id, tag.name));
+      }
+      pendingTagsRef.current.clear();
+      setDraft(content);
+      // draft state hasn't flushed yet — send the swapped content directly
+      await sendContent(content);
+    } else {
+      await sendContent(draft);
+    }
+  };
+
+  const sendContent = async (text: string) => {
+    const body = text.trim();
+    if (!body || sending) return;
     setSending(true);
     try {
-      let tid = threadId;
-      if (!tid) {
-        const res = await apiRequest("POST", "/api/chat/threads", {
-          title: `${companyName} — discussion`,
-          memberIds: ["__chatbgp__"],
-          isAiChat: false,
-          linkedType: "company",
-          linkedId: companyId,
-          linkedName: companyName,
-        });
-        const created = await res.json();
-        tid = created.id;
-        setThreadId(tid);
-      }
-      await apiRequest("POST", `/api/chat/threads/${tid}/messages`, { content: text });
+      const tid = await ensureThread();
+      await apiRequest("POST", `/api/chat/threads/${tid}/messages`, { content: body });
       setDraft("");
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", tid] });
     } catch { /* surfaced by global toast */ }
     finally { setSending(false); }
   };
 
-  const stripTags = (s: string) => (s || "").replace(/@\[([^\]]+)\]\(tag:[^)]+\)/g, "@$1");
+  // Token-aware renderer — tags arrive as @[Name](tag:type/id) and render
+  // as the same clickable chips the main chat shows.
+  const renderContent = (s: string) => {
+    const out: React.ReactNode[] = [];
+    const re = new RegExp(TAG_TOKEN_SOURCE, "g");
+    let last = 0; let m: RegExpExecArray | null; let key = 0;
+    while ((m = re.exec(s || "")) !== null) {
+      if (m.index > last) out.push(s.slice(last, m.index));
+      out.push(<TagChip key={key++} type={m[2] as TagType} id={m[3]} name={m[1]} />);
+      last = m.index + m[0].length;
+    }
+    if (last < (s || "").length) out.push(s.slice(last));
+    return out;
+  };
+
+  const addableUsers = (Array.isArray(mcUsers) ? mcUsers : []).filter(u => !memberIds.has(u.id) && u.id !== mcMe?.id);
 
   return (
     <Card className={fill ? "h-full flex flex-col overflow-hidden" : undefined}>
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2 shrink-0">
-        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <MessageSquare className="w-3.5 h-3.5" /> Chat — {companyName}
-        </CardTitle>
-        {threadId && (
+        <CardTitle className="text-xs flex items-center gap-1 uppercase tracking-wider text-muted-foreground">
           <button
             type="button"
-            className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted"
-            onClick={() => navigate(`/chatbgp?thread=${threadId}`)}
-            data-testid="button-minichat-open-full"
+            onClick={() => setTab("chat")}
+            className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded ${tab === "chat" ? "bg-muted text-foreground" : "hover:text-foreground"}`}
           >
-            Open full
+            <MessageSquare className="w-3.5 h-3.5" /> Chat
           </button>
-        )}
+          {trackerComments.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setTab("tracker")}
+              className={`flex items-center gap-1.5 px-1.5 py-0.5 rounded ${tab === "tracker" ? "bg-muted text-foreground" : "hover:text-foreground"}`}
+              data-testid="button-minichat-tracker-tab"
+            >
+              <ClipboardList className="w-3.5 h-3.5" /> Tracker ({trackerComments.length})
+            </button>
+          )}
+        </CardTitle>
+        <div className="flex items-center gap-1.5">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="text-[10px] px-1.5 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+                title="Add a team member to this conversation"
+                data-testid="button-minichat-add-member"
+              >
+                <UserPlus className="w-3 h-3" />
+                {memberIds.size > 0 ? memberIds.size : ""}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="max-h-[260px] overflow-y-auto">
+              {addableUsers.length === 0 ? (
+                <DropdownMenuItem disabled className="text-xs">Everyone's already in</DropdownMenuItem>
+              ) : addableUsers.map(u => (
+                <DropdownMenuItem key={u.id} className="text-xs" onClick={() => addMember(u.id, u.name)}>
+                  {u.name}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {threadId && (
+            <button
+              type="button"
+              className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted"
+              onClick={() => navigate(`/chatbgp?thread=${threadId}`)}
+              data-testid="button-minichat-open-full"
+            >
+              Open full
+            </button>
+          )}
+        </div>
       </CardHeader>
       <CardContent className={`p-3 pt-0 space-y-2 ${fill ? "flex-1 flex flex-col min-h-0" : ""}`}>
+        {tab === "tracker" ? (
+          <div className={`${fill ? "flex-1" : "max-h-[280px]"} overflow-y-auto space-y-1.5 pr-1`} data-testid="minichat-tracker">
+            {trackerComments.map((cm: any, i: number) => (
+              <div key={i} className="text-xs rounded-lg border border-border/50 px-2.5 py-1.5">
+                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mb-0.5">
+                  <span className="font-medium text-foreground/80">{cm.userName}</span>
+                  {cm.at && <span>{new Date(cm.at).toLocaleDateString("en-GB")}</span>}
+                  <Link href={`/properties/${cm.propertyId}`} className="ml-auto hover:underline truncate max-w-[45%]">
+                    {cm.propertyName}{cm.unitName ? ` · ${cm.unitName}` : ""}
+                  </Link>
+                </div>
+                <p className="whitespace-pre-wrap break-words">{cm.text}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
         <div ref={scrollRef} className={`${fill ? "flex-1" : "max-h-[280px]"} overflow-y-auto space-y-2 pr-1`} data-testid="minichat-messages">
           {messages.length === 0 ? (
             <p className="text-xs text-muted-foreground py-4 text-center">
-              Ask anything about {companyName} — ChatBGP answers here, and teammates can join from the chat panel.
+              Ask anything about {companyName} — @ tags properties and deals, and teammates you @ join the conversation.
             </p>
           ) : (
             messages.map((m: any) => (
@@ -4624,24 +4793,50 @@ function CompanyMiniChat({ companyId, companyName, fill }: { companyId: string; 
                 m.role === "assistant" ? "bg-muted/60" : "bg-primary/10 ml-6"
               }`}>
                 {m.role === "assistant" && <span className="font-semibold text-[10px] block text-muted-foreground">ChatBGP</span>}
-                {stripTags(m.content)}
+                {renderContent(m.content)}
               </div>
             ))
           )}
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <input
-            className="flex-1 h-8 rounded-md border bg-background px-2.5 text-xs outline-none focus:ring-1 focus:ring-ring"
-            placeholder={`Message about ${companyName}…`}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-            data-testid="input-minichat"
-          />
-          <Button size="sm" className="h-8 px-3 text-xs" onClick={send} disabled={sending || !draft.trim()} data-testid="button-minichat-send">
-            {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Send"}
-          </Button>
+        )}
+        {tab === "chat" && (
+        <div className="relative shrink-0">
+          {mentionQuery !== null && mentionResults.length > 0 && (
+            <div className="absolute bottom-full left-0 right-12 mb-1 rounded-md border bg-popover shadow-md z-20 max-h-[200px] overflow-y-auto">
+              {mentionResults.map((r: any) => (
+                <button
+                  key={`${r.type}-${r.id}`}
+                  type="button"
+                  className="w-full text-left px-2 py-1.5 text-xs hover:bg-muted flex items-center gap-2"
+                  onMouseDown={(e) => { e.preventDefault(); pickMention(r); }}
+                  data-testid={`minichat-mention-${r.type}-${r.id}`}
+                >
+                  <span className="font-medium truncate">{r.name}</span>
+                  <span className="text-[10px] text-muted-foreground ml-auto shrink-0">{r.type}{r.subtitle ? ` · ${r.subtitle}` : ""}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-1.5">
+            <input
+              ref={inputRef}
+              className="flex-1 h-8 rounded-md border bg-background px-2.5 text-xs outline-none focus:ring-1 focus:ring-ring"
+              placeholder={`Message about ${companyName} — @ to tag`}
+              value={draft}
+              onChange={onDraftChange}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && mentionQuery !== null) { setMentionQuery(null); setMentionStart(-1); return; }
+                if (e.key === "Enter" && !e.shiftKey && mentionQuery !== null && mentionResults.length > 0) { e.preventDefault(); pickMention(mentionResults[0]); return; }
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendWithTags(); }
+              }}
+              data-testid="input-minichat"
+            />
+            <Button size="sm" className="h-8 px-3 text-xs" onClick={sendWithTags} disabled={sending || !draft.trim()} data-testid="button-minichat-send">
+              {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Send"}
+            </Button>
+          </div>
         </div>
+        )}
       </CardContent>
     </Card>
   );
