@@ -2231,6 +2231,20 @@ async function samRound(page, cross) {
   // Rival client WRITE attempts against Landsec assets by id must be refused
   // — read guards exist; this locks the write side (viewing, offer, HOTs,
   // unit PATCH, brief create on a Landsec unit).
+  // Bidirectional isolation on the ActivitySummary feed: the rival client
+  // must never see Landsec content (mirror of client-activity-summary-scoped).
+  await step(page, p, 'rival-activity-summary-isolated', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/activity-summary', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = JSON.stringify(await res.json().catch(() => ({})));
+      return { ok: true, landsec: /landsec|bluewater/i.test(body) };
+    });
+    if (!r.ok) throw new Error(`rival activity-summary unhealthy (${r.status})`);
+    if (r.landsec) throw new Error("Landsec content leaked into the rival client's activity summary");
+  });
+
   await step(page, p, 'rival-client-write-guards', async () => {
     const landsecUnit = await page.evaluate(async () => {
       // Resolve a Landsec unit id via fixture convention (Bluewater unit is
