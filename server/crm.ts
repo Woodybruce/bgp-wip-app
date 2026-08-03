@@ -1987,7 +1987,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         );
         const allowedCompanyIds = new Set(allowedRows.rows.map((r: any) => r.id));
         const arr = Array.isArray(contacts) ? contacts : contacts.data;
-        const filtered = arr.filter((c: any) => c.companyId && allowedCompanyIds.has(c.companyId));
+        // A companyId query param narrows WITHIN the allowed set (e.g. the
+        // tracker's Client Contact picker wants Landsec people only) —
+        // ignored when it points outside the client's visibility.
+        const requestedCompanyId = req.query.companyId as string | undefined;
+        const narrowTo = requestedCompanyId && allowedCompanyIds.has(requestedCompanyId) ? requestedCompanyId : null;
+        const filtered = arr.filter((c: any) => c.companyId
+          && (narrowTo ? c.companyId === narrowTo : allowedCompanyIds.has(c.companyId)));
         return res.json(Array.isArray(contacts) ? filtered : { ...contacts, data: filtered });
       }
       res.json(contacts);
