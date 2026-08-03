@@ -111,9 +111,9 @@ export function CovenantCommentary({ companyNumber, className = "" }: { companyN
   return (
     <div className={`rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-3 ${className}`} data-testid="covenant-commentary">
       {data.verdict ? (
-        <p className="text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap">{data.verdict}</p>
+        <p className="text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">{data.verdict}</p>
       ) : (
-        <p className="text-sm italic text-muted-foreground">Grade {data.grade} ({data.score}/100) — AI commentary unavailable.</p>
+        <p className="text-xs italic text-muted-foreground">Grade {data.grade} ({data.score}/100) — AI commentary unavailable.</p>
       )}
       {missing.length > 0 && (
         <div className="mt-1.5 text-xs text-muted-foreground">

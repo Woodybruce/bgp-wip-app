@@ -4003,6 +4003,19 @@ export function BrandComplianceCard({
     ? `https://find-and-update.company-information.service.gov.uk/company/${company.companies_house_number}`
     : null;
 
+  // One list drives both the checklist rows and the "missing for AML pass"
+  // footer so they can never drift apart.
+  const downstreamChecks = [
+    { key: "ch", label: "Companies House profile", done: !!company.companies_house_number },
+    { key: "psc", label: "Officers + PSCs", done: !!(company.companies_house_data as any)?.pscs?.length },
+    { key: "accounts", label: "Latest accounts", done: !!company.last_accounts_storage_key },
+    { key: "annual_report", label: "Annual report (PLC)", done: !!company.annual_report_storage_key },
+    { key: "covenant", label: "Covenant grade (CH + Gazette)", done: company.kyc_status === "verified" },
+    { key: "aml", label: "AML PEP / adverse media", done: !!company.aml_pep_status },
+  ];
+  // Annual report only applies to PLCs — don't hold an AML pass on it.
+  const amlMissing = downstreamChecks.filter((r) => !r.done && r.key !== "annual_report");
+
   const inner = (
     <div className="space-y-2.5">
       {prefix}
@@ -4115,14 +4128,7 @@ export function BrandComplianceCard({
         <div className="border-t pt-2">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Downstream checks</div>
           <div className="space-y-0.5">
-            {[
-              { key: "ch", label: "Companies House profile", done: !!company.companies_house_number },
-              { key: "psc", label: "Officers + PSCs", done: !!(company.companies_house_data as any)?.pscs?.length },
-              { key: "accounts", label: "Latest accounts", done: !!company.last_accounts_storage_key },
-              { key: "annual_report", label: "Annual report (PLC)", done: !!company.annual_report_storage_key },
-              { key: "covenant", label: "Covenant grade (CH + Gazette)", done: company.kyc_status === "verified" },
-              { key: "aml", label: "AML PEP / adverse media", done: !!company.aml_pep_status },
-            ].map((row) => (
+            {downstreamChecks.map((row) => (
               <div key={row.key} className="flex items-center gap-1.5 text-[11px]">
                 {row.done ? (
                   <Check className="w-3 h-3 text-emerald-600 shrink-0" />
@@ -4185,6 +4191,20 @@ export function BrandComplianceCard({
                 ? "BGP is compiling these checks — covenant, accounts and AML screening appear here as they complete."
                 : "Confirm the UK trading entity above, then we'll work out which APIs to pull (CH, Red Flag, AML PEP) against the right registered name."}
             </p>
+          )}
+          {/* AML pass status — what still stands between this brand and a
+              clean pass (Woody, 2026-08-03). */}
+          {hasEntity && (
+            amlMissing.length === 0 ? (
+              <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50/60 dark:border-emerald-900 dark:bg-emerald-950/30 px-2 py-1.5 text-[11px] text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 shrink-0" /> AML pass complete — all checks in.
+              </div>
+            ) : (
+              <div className="mt-2 rounded-md border border-amber-200 bg-amber-50/60 dark:border-amber-900 dark:bg-amber-950/30 px-2 py-1.5 text-[11px] text-amber-800 dark:text-amber-300">
+                <span className="font-medium">Missing for AML pass:</span>{" "}
+                {amlMissing.map((r) => r.label).join(" · ")}
+              </div>
+            )
           )}
         </div>
     </div>
@@ -4869,7 +4889,11 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         <CardContent className="p-3 pt-0 space-y-2">
           {(c as any)?.companies_house_number ? (
             <>
-              <CovenantCommentary companyNumber={(c as any).companies_house_number} />
+              {/* Scroll cap keeps this card the same height as the
+                  Compliance & KYC board beside it (Woody, 2026-08-03). */}
+              <div className="max-h-[300px] overflow-y-auto pr-1">
+                <CovenantCommentary companyNumber={(c as any).companies_house_number} />
+              </div>
               <Button
                 size="sm"
                 variant="outline"
