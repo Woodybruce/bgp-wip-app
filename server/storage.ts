@@ -1054,7 +1054,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createCrmDeal(deal: InsertCrmDeal): Promise<CrmDeal> {
-    const normalised = await normaliseInternalAgents(deal as any);
+    // Coerce date-string values to Date objects for Drizzle timestamp columns.
+    // Direct callers (e.g. the Letting Tracker SOL promotion) pass ISO strings
+    // straight in, bypassing the Zod schema that would parse them; Drizzle's
+    // timestamp serializer calls .toISOString() and throws on a raw string.
+    // Mirrors the same coercion in updateCrmDeal.
+    const tsFields = ["kycApprovedAt", "instructedAt", "targetDate", "exchangedAt", "completedAt", "invoicedAt", "amlEddCompletedAt", "amlIdVerifiedAt", "amlSarFiledAt"];
+    const coerced: any = { ...deal };
+    for (const f of tsFields) {
+      if (coerced[f] && typeof coerced[f] === "string") {
+        coerced[f] = new Date(coerced[f]);
+      }
+    }
+    const normalised = await normaliseInternalAgents(coerced);
     const [d] = await db.insert(crmDeals).values(normalised).returning();
     return d;
   }
