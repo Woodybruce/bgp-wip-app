@@ -4462,10 +4462,13 @@ Return a JSON object with these fields (use null for any field you cannot find):
       }
       if (!candidates.length) return res.json({ unit: { id: unit.id, unitName: unit.unit_name, sqft }, suggestions: [] });
 
-      // 3. Fable ranks the combined list against the actual unit.
+      // 3. Fable ranks the combined list against the actual unit. Uses
+      // chatbgp's callClaude (Fable-aware params + Opus fallback) — the
+      // plain utils wrapper 400s on the Fable model.
       let ranked = candidates.slice(0, 25);
       try {
-        const completion = await callClaude({
+        const { callClaude: callClaudeFable } = await import("./chatbgp");
+        const completion = await callClaudeFable({
           model: "claude-fable-5",
           max_completion_tokens: 1600,
           messages: [
