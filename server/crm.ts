@@ -4460,6 +4460,53 @@ Return a JSON object with these fields (use null for any field you cannot find):
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── Letting-tracker comments for a brand — feeds the Tracker tab on the
+  // brand chat card. Flattens the attributed comment logs off every target
+  // row that names this brand, newest first, with property/unit context.
+  app.get("/api/brands/:id/tracker-comments", requireAuth, async (req, res) => {
+    try {
+      const brandId = String(req.params.id);
+      const scope = await resolveCompanyScope(req);
+      if (scope && brandId !== scope && !(await isClientVisibleBrand(brandId, scope))) return res.status(403).json({ error: "Access denied" });
+      const nameQ = await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [brandId]);
+      const brandName = nameQ.rows[0]?.name;
+      if (!brandName) return res.status(404).json({ error: "Brand not found" });
+      const propScope = (n: number) => scope
+        ? `AND (p.landlord_id = $${n} OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $${n}))`
+        : "";
+      const params: any[] = scope ? [brandId, brandName, scope] : [brandId, brandName];
+      const targets = await pool.query(
+        `SELECT t.comments, t.status, au.unit_name, p.id AS property_id, p.name AS property_name
+           FROM unit_target_operators t
+           JOIN unit_briefs b ON b.id = t.brief_id
+           JOIN available_units au ON au.id = b.unit_id
+           JOIN crm_properties p ON p.id = au.property_id
+          WHERE (t.company_id = $1 OR LOWER(t.operator_name) = LOWER($2)) ${propScope(3)}`,
+        params
+      );
+      const comments: any[] = [];
+      for (const t of targets.rows) {
+        const list = Array.isArray(t.comments) ? t.comments : [];
+        for (const cm of list) {
+          if (!cm || !cm.text) continue;
+          comments.push({
+            text: cm.text,
+            userName: cm.userName || "Unknown",
+            at: cm.at || null,
+            status: t.status || null,
+            unitName: t.unit_name || null,
+            propertyId: t.property_id,
+            propertyName: t.property_name,
+          });
+        }
+      }
+      comments.sort((a, b) => (b.at || "").localeCompare(a.at || ""));
+      res.json({ comments: comments.slice(0, 40) });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Suggested pitches for a brand — which of OUR available units fit ──
   // Driven by the brand's live requirement when one exists (size range),
   // else by category/use alignment. Excludes units already targeted or
