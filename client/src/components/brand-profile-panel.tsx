@@ -3950,6 +3950,10 @@ function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId
           </button>
         )}
         <PendingSendersList data={data} companyId={companyId} />
+        {/* Discovered-contacts engine (BGP email archaeology + RocketReach +
+            Apollo + AI judge) folded into this board — one contacts surface
+            instead of two cards (Woody, 2026-08-03). Staff-only inside. */}
+        <KnownContactsSection companyId={companyId} companyName={data.company?.name || ""} />
       </CardContent>
     </Card>
   );
@@ -4355,7 +4359,9 @@ function PortfolioActivityBlock({ companyId }: { companyId: string }) {
 // years, with signature-mined roles/phones, and one-click add-to-CRM for the
 // ones we never logged. The data existed behind an admin diagnostic endpoint;
 // this makes it a working surface (Woody, 2026-08-02: "contacts are critical").
-function KnownContactsCard({ companyId, companyName }: { companyId: string; companyName: string }) {
+// Renders as a section inside the Key contacts board (one combined board;
+// Woody, 2026-08-03) rather than its own card.
+function KnownContactsSection({ companyId, companyName }: { companyId: string; companyName: string }) {
   const [open, setOpen] = useState(false);
   // The engine mines BGP's own email + burns provider credits — staff only.
   const { data: kcUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -4404,12 +4410,12 @@ function KnownContactsCard({ companyId, companyName }: { companyId: string; comp
 
   if (kcIsClient) return null;
   return (
-    <Card>
-      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2">
-        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+    <div className="mt-3 pt-2 border-t">
+      <div className="flex flex-row items-center justify-between gap-2 mb-1">
+        <span className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Mail className="w-3.5 h-3.5" /> Known contacts
           {summary && <span className="normal-case tracking-normal text-[10px]">({summary.total} found)</span>}
-        </CardTitle>
+        </span>
         <button
           type="button"
           className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
@@ -4419,9 +4425,9 @@ function KnownContactsCard({ companyId, companyName }: { companyId: string; comp
           {isFetching ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
           {open ? "Rescan" : "Find contacts"}
         </button>
-      </CardHeader>
+      </div>
       {open && (
-        <CardContent className="p-3 pt-0">
+        <div>
           {isFetching && !contacts.length ? (
             <p className="text-xs text-muted-foreground py-3 text-center">Mining BGP email, searching RocketReach, AI-checking every candidate — 20-40s…</p>
           ) : contacts.length === 0 ? (
@@ -4480,9 +4486,9 @@ function KnownContactsCard({ companyId, companyName }: { companyId: string; comp
               </div>
             </>
           )}
-        </CardContent>
+        </div>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -4893,9 +4899,6 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           via the input below. Until uk_entity_name is set, all downstream
           checks (CH details, PSC, accounts, Red Flag, AML PEP) stay parked. */}
       <BrandComplianceCard companyId={companyId} company={c} />
-
-      {/* Everyone BGP has emailed at this company, with add-to-CRM */}
-      <KnownContactsCard companyId={companyId} companyName={c.name} />
       </div>
 
       <div className="space-y-3">
