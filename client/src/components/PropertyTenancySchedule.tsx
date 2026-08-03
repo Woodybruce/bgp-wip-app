@@ -1255,6 +1255,23 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
             </td>
           );
         }
+        // L&T Act is a two-state choice, not free text — the import
+        // canonicalises Landsec's True/False into these values too
+        // (True = Inside; Woody, 2026-08-03).
+        if (c.field === "outside_lt_act") {
+          return (
+            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
+              <InlineEdit
+                value={displayVal}
+                field="outside_lt_act"
+                unitId={unit.id}
+                onSave={onUpdate}
+                type="select"
+                options={["Inside", "Outside"]}
+              />
+            </td>
+          );
+        }
         if (c.field === "permitted_use") {
           return (
             <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>

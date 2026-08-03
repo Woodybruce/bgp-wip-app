@@ -211,6 +211,20 @@ const DATE_FIELDS = new Set([
   "break_notice",
 ]);
 
+// L&T Act arrives in wildly different shapes: Landsec's "L&T Act" column
+// is True/False where True = INSIDE the 1954 Act (Woody, 2026-08-03);
+// legacy "Outside L&T Act" sheets are Yes/No where Yes = OUTSIDE. The grid
+// offers exactly two states, so canonicalise every import to those.
+function canonicalLtAct(raw: any, headerMeansOutside: boolean): string | null {
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (!v) return null;
+  if (/inside|protected/.test(v)) return "Inside";
+  if (/outside|excluded|contracted/.test(v)) return "Outside";
+  if (/^(true|yes|y|1|x|✓)$/.test(v)) return headerMeansOutside ? "Outside" : "Inside";
+  if (/^(false|no|n|0)$/.test(v)) return headerMeansOutside ? "Inside" : "Outside";
+  return String(raw).trim();
+}
+
 function normaliseFieldValue(field: string, raw: any): any {
   if (raw === undefined) return undefined;
   if (raw === null || raw === "") {
@@ -560,6 +574,8 @@ const HEADER_ALIASES: Record<string, string> = {
   "unexp term break": "unexpired_term_break",
   "unexp term expiry": "unexpired_term",
   "months to expiry": "unexpired_term",  // Landsec feed gives months not years
+  "break type": "break_type",
+  "break party": "break_type",
   "next review": "next_review_date",
   "next review date": "next_review_date",  // Landsec Bluewater feed
   "review basis": "erv_profile",   // Landsec Bluewater feed
@@ -715,11 +731,18 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
     const headerRow = data[bestHeaderIdx] || [];
     const colToField: Record<number, string> = {};
     const unmatchedHeaders: string[] = [];
+    // For L&T Act columns, remember whether the header itself says
+    // "outside" — that flips what a True/Yes value means.
+    const ltActHeaderOutside: Record<number, boolean> = {};
     for (let c = 0; c < headerRow.length; c++) {
       const raw = headerRow[c];
       if (raw == null || String(raw).trim() === "") continue;
-      const field = HEADER_ALIASES[normaliseHeader(raw)];
-      if (field) colToField[c] = field;
+      const norm = normaliseHeader(raw);
+      const field = HEADER_ALIASES[norm];
+      if (field) {
+        colToField[c] = field;
+        if (field === "outside_lt_act") ltActHeaderOutside[c] = /outside/.test(norm);
+      }
       else unmatchedHeaders.push(String(raw).trim());
     }
 
@@ -751,7 +774,23 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
             continue;
           }
         }
+        if (field === "outside_lt_act") {
+          rec[field] = canonicalLtAct(raw, ltActHeaderOutside[colIdx] === true);
+          continue;
+        }
         rec[field] = normaliseFieldValue(field, raw);
+      }
+
+      // Auto-derive the break party (T/L/M chip) when the sheet doesn't
+      // carry it explicitly — Landsec feeds have separate Earliest Tenant
+      // Break / Earliest Landlord Break columns, which is all we need:
+      // both on the same date = Mutual; otherwise whichever side has a
+      // date drives the chip (Woody, 2026-08-03).
+      if (!rec.break_type) {
+        const tb = rec.break_date, lb = rec.landlord_break_date;
+        if (tb && lb) rec.break_type = tb === lb ? "M" : "T";
+        else if (tb) rec.break_type = "T";
+        else if (lb) rec.break_type = "L";
       }
 
       // Grouping row carry-forward — if only the grouping cell has a value
