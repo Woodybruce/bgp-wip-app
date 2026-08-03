@@ -137,11 +137,14 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     };
     const withComputed = occupied.rows.map((r: any) => ({
       ...r,
-      unexpired_term: r.unexpired_term ?? monthsBetween(r.lease_expiry),
-      // Client expects `unexpired_term_break` — months to the earliest of
-      // expiry / tenant break / landlord break. Always recomputed so today's
-      // value is current.
+      // ALL unexpired terms are auto-calculated from their dates on every
+      // render — stored/imported values no longer win, so the numbers can't
+      // go stale (Woody, 2026-08-03). unexpired_term runs to expiry,
+      // _break to the earliest of expiry / tenant break / landlord break,
+      // _review to the next rent review.
+      unexpired_term: monthsBetween(r.lease_expiry),
       unexpired_term_break: monthsBetween(earliest(r.lease_expiry, r.break_date, r.landlord_break_date)),
+      unexpired_term_review: monthsBetween(r.next_review_date),
       term_years: (r.term_years && Number(r.term_years) > 0) ? r.term_years : yearsBetween(r.lease_start, r.lease_expiry),
     }));
 
@@ -215,7 +218,9 @@ function normaliseFieldValue(field: string, raw: any): any {
   }
   if (NUMERIC_FIELDS.has(field)) {
     if (typeof raw === "number") return raw;
-    const n = Number(String(raw).replace(/[£,]/g, ""));
+    // "%" included: T/O % cells arrive as "7.5%" and were parsing to NaN →
+    // null, which is why turnover percentages never survived the import.
+    const n = Number(String(raw).replace(/[£,%\s]/g, ""));
     return isNaN(n) ? null : n;
   }
   if (DATE_FIELDS.has(field)) {
@@ -556,6 +561,7 @@ const HEADER_ALIASES: Record<string, string> = {
   "unexp term expiry": "unexpired_term",
   "months to expiry": "unexpired_term",  // Landsec feed gives months not years
   "next review": "next_review_date",
+  "next review date": "next_review_date",  // Landsec Bluewater feed
   "review basis": "erv_profile",   // Landsec Bluewater feed
   "l t act": "outside_lt_act",
   "outside l t act": "outside_lt_act",
@@ -587,7 +593,10 @@ const HEADER_ALIASES: Record<string, string> = {
   "target rent": "erv_pa",            // Landsec Bluewater feed — ERV not passing
   "marketing rent pa": "marketing_rent_pa",
   "t o rent payable": "turnover_rent_payable",
-  "t o": "turnover_percent",          // Landsec "T/O %" column
+  "t o": "turnover_percent",          // Landsec "T/O %" column ("%" strips in normalise)
+  "t o percent": "turnover_percent",
+  "t o rent percent": "turnover_percent",
+  "turnover rent percent": "turnover_percent",
   "erv profile": "erv_profile",
   "erv pa": "erv_pa",
   "rent free value": "rent_free_value",

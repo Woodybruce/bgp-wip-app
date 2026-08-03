@@ -234,8 +234,11 @@ const COLUMNS: Col[] = [
   { field: "break_notice",     label: "Break Notice",   band: "Lease Details", width: 100, align: "center", type: "date" },
   { field: "lease_expiry",     label: "Expiry",         band: "Lease Details", width: 100, align: "center", type: "date" },
   { field: "term_years",       label: "Term",           band: "Lease Details", width: 70,  align: "right", type: "num" },
+  // The three Unexp columns are server-computed from their dates on every
+  // render (months) — read-only in the grid, no manual drift.
   { field: "unexpired_term_break", label: "Unexp (Break)", band: "Lease Details", width: 90, align: "right", type: "num" },
   { field: "unexpired_term",   label: "Unexp (Expiry)", band: "Lease Details", width: 90,  align: "right", type: "num" },
+  { field: "unexpired_term_review" as any, label: "Unexp (Review)", band: "Lease Details", width: 95, align: "right", type: "num" },
   { field: "next_review_date", label: "Next Review",    band: "Lease Details", width: 100, align: "center", type: "date" },
   { field: "outside_lt_act",   label: "L&T Act",        band: "Lease Details", width: 100, align: "left" },
   { field: "area_basement_gia", label: "Basement",      band: "Areas — GIA", width: 90,  align: "right", type: "num" },
@@ -254,7 +257,10 @@ const COLUMNS: Col[] = [
   { field: "passing_rent_pa",   label: "Passing Rent",  band: "Rental Income", width: 110, align: "right", type: "currency" },
   { field: "marketing_rent_pa", label: "Quoting Rent",  band: "Rental Income", width: 120, align: "right", type: "currency" },
   { field: "turnover_rent_payable", label: "T/O Rent",  band: "Rental Income", width: 110, align: "right", type: "currency" },
-  { field: "erv_profile",       label: "ERV Profile",   band: "Rental Income", width: 100, align: "left" },
+  { field: "turnover_percent" as any, label: "T/O %",   band: "Rental Income", width: 80,  align: "right", type: "num" },
+  // Populated from Landsec's "Review Basis" column — renamed from the old
+  // "ERV Profile" label to match the source (Woody, 2026-08-03).
+  { field: "erv_profile",       label: "Review Basis",  band: "Rental Income", width: 100, align: "left" },
   { field: "erv_pa",            label: "ERV (pa)",      band: "Rental Income", width: 110, align: "right", type: "currency" },
   { field: "rent_free_value",   label: "Rent Free",     band: "Rental Income", width: 110, align: "right", type: "currency" },
   { field: "capex_value",       label: "Capex",         band: "Rental Income", width: 110, align: "right", type: "currency" },
@@ -442,6 +448,7 @@ const LETTINGS_HIDDEN_BANDS = new Set([
 const LETTINGS_HIDDEN_FIELDS = new Set([
   "passing_rent_pa",         // tenancy view
   "turnover_rent_payable",   // tenancy view
+  "turnover_percent",        // tenancy view
   "rent_free_value",         // tenancy view
   "capex_value",             // tenancy view
   "comments",                // generic; leasing_comments is the lettings version
@@ -1336,6 +1343,14 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
         }
 
         return (
+          // The Unexp columns are server-computed from break / expiry /
+          // review dates on every render — display-only, no manual edits
+          // to drift out of date.
+          c.field === "unexpired_term" || c.field === "unexpired_term_break" || (c.field as string) === "unexpired_term_review" ? (
+            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap text-muted-foreground${stickyCls}`} title="Auto-calculated from the lease dates">
+              {displayVal || "—"}
+            </td>
+          ) :
           <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}`}>
             <InlineEdit
               value={displayVal}
