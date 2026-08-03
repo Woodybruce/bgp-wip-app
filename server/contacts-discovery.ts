@@ -101,6 +101,39 @@ async function runApolloSearch(domain: string | null, companyName: string): Prom
   }
 }
 
+// Apollo people/match — the precise (credit-consuming) endpoint. Given a
+// name+company (or better, an email), returns the full person record:
+// verified email + status, LinkedIn, seniority, departments, employment
+// history AND the organisation's firmographics (employees, revenue,
+// funding, founded) — data RocketReach doesn't carry. Used by the
+// cascade as an enrichment pass over the top candidates, never as a
+// primary search (api_search returns obfuscated teasers).
+async function apolloMatchPerson(args: { name?: string | null; email?: string | null; companyName: string }): Promise<any | null> {
+  const key = process.env.APOLLO_API_KEY;
+  if (!key) return null;
+  const body: Record<string, any> = { reveal_personal_emails: false };
+  if (args.email) body.email = args.email;
+  if (args.name) {
+    const parts = args.name.trim().split(/\s+/);
+    body.first_name = parts[0];
+    if (parts.length > 1) body.last_name = parts.slice(1).join(" ");
+  }
+  body.organization_name = args.companyName;
+  try {
+    const res = await fetch("https://api.apollo.io/api/v1/people/match", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Api-Key": key },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as any;
+    return data?.person || null;
+  } catch {
+    return null;
+  }
+}
+
 async function runRocketReachSearch(domain: string | null, companyName: string, scope: "tenant" | "landlord"): Promise<{ ok: boolean; total: number; sample: Array<{ name: string; title: string | null; seniority: string | null; email: string | null }>; error?: string }> {
   const key = process.env.ROCKETREACH_API_KEY;
   if (!key) return { ok: false, total: 0, sample: [], error: "ROCKETREACH_API_KEY not set" };
@@ -611,6 +644,34 @@ async function handleContactsCascade(companyId: string, res: Response, opts: { l
     }
   }
 
+  // ── Apollo match enrichment — for the top candidates, confirm + enrich
+  // via people/match (verified email/status, LinkedIn, seniority) and
+  // capture the organisation's firmographics once (employees, revenue,
+  // funding — Apollo-only data). Credit-consuming: capped at 5 per scan.
+  let organizationIntel: any = null;
+  if (process.env.APOLLO_API_KEY && opts.ai !== undefined) {
+    const enrichTargets = merged.filter((m) => m.name && !m.name.includes("@")).slice(0, 5);
+    for (const t of enrichTargets) {
+      const person = await apolloMatchPerson({ name: t.name, email: t.email, companyName: company.name });
+      if (!person) continue;
+      t.email = t.email || person.email || null;
+      t.linkedin = t.linkedin || person.linkedin_url || null;
+      t.title = t.title || person.title || null;
+      (t as any).seniority = person.seniority || null;
+      (t as any).emailStatus = person.email_status || null;
+      if (!t.sources.includes("apollo")) t.sources.push("apollo");
+      if (!organizationIntel && person.organization) {
+        const o = person.organization;
+        organizationIntel = {
+          name: o.name, employees: o.estimated_num_employees ?? null,
+          revenue: o.annual_revenue_printed ?? null, industry: o.industry ?? null,
+          founded: o.founded_year ?? null, funding: o.total_funding_printed ?? null,
+          linkedin: o.linkedin_url ?? null,
+        };
+      }
+    }
+  }
+
   // ── AI judge — Fable reviews every candidate against the company:
   // right company (email domain vs brand domain), plausible current
   // title, useful to a leasing/property team, provider noise filtered.
@@ -663,6 +724,7 @@ async function handleContactsCascade(companyId: string, res: Response, opts: { l
   return res.json({
     company: { id: companyId, name: company.name, domain, companyType: company.company_type, scope },
     contacts: merged,
+    organizationIntel,
     sources: {
       bgp_email: { total: bgpRes.length },
       rocketreach: rrRes.ok ? { total: rrRes.total, sampleCount: rrRes.sample.length } : { ok: false, error: rrRes.error },
@@ -674,6 +736,7 @@ async function handleContactsCascade(companyId: string, res: Response, opts: { l
       rocketreachOnly: merged.filter((m) => m.sources.includes("rocketreach") && !m.bgp).length,
       apolloOnly: merged.filter((m) => m.sources.includes("apollo") && !m.bgp).length,
       revealed: merged.filter((m) => m.rocketreach?.lookedUp).length,
+      apolloEnriched: merged.filter((m) => (m as any).seniority || (m as any).emailStatus).length,
       aiJudged: merged.filter((m) => !!m.ai).length,
     },
   });
