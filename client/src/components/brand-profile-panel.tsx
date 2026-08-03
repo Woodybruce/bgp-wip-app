@@ -2193,7 +2193,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
             {/* Live tenancies — every property on the platform where
                 this brand resolves as a tenant via the canonical FK.
-                The reciprocal of the tenancy schedule's brand link. */}
+                The reciprocal of the tenancy schedule's brand link.
+                Paired with Portfolio activity in one row; when there are
+                no live tenancies the activity block takes the full width. */}
+            <div className={liveLocations.length > 0 ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start" : ""}>
             {liveLocations.length > 0 && (
               <div className="border-t pt-2">
                 <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
@@ -2225,6 +2228,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 lists and never saw the letting tracker. Three honest tiers
                 + where to pitch next (Woody, 2026-08-03). */}
             <PortfolioActivityBlock companyId={companyId} />
+            </div>
 
             {/* Suggested BGP units — parked admin-only (WIP) so it doesn't
                 clutter the brand profile for the team. */}
@@ -4896,42 +4900,52 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
 
       <div className="space-y-3">
       {/* Covenant — live house engine (Companies House + The Gazette + filed
-          accounts). Replaced the old Red Flag/Experian placeholder card. */}
-      {(c as any)?.companies_house_number && (
+          accounts). Always rendered so the board is visibly part of the
+          standard layout; before a CH match lands it explains what unlocks
+          it instead of silently disappearing (Woody, 2026-08-03). */}
       <Card>
         <CardHeader className="p-3 pb-2">
           <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
             Covenant
-            <CovenantBadge companyNumber={(c as any).companies_house_number} />
+            {(c as any)?.companies_house_number && (
+              <CovenantBadge companyNumber={(c as any).companies_house_number} />
+            )}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-3 pt-0 space-y-2">
-          <CovenantCommentary companyNumber={(c as any).companies_house_number} />
-          <Button
-            size="sm"
-            variant="outline"
-            className="w-full h-7 text-xs"
-            onClick={runCreditCheck}
-            title="Re-run the house covenant check (Companies House + The Gazette + filed accounts + director track record + market signals) and add this brand to the nightly watch"
-          >
-            Refresh covenant check
-          </Button>
+          {(c as any)?.companies_house_number ? (
+            <>
+              <CovenantCommentary companyNumber={(c as any).companies_house_number} />
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full h-7 text-xs"
+                onClick={runCreditCheck}
+                title="Re-run the house covenant check (Companies House + The Gazette + filed accounts + director track record + market signals) and add this brand to the nightly watch"
+              >
+                Refresh covenant check
+              </Button>
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Waiting for the UK trading entity — the covenant engine unlocks
+              once a Companies House match is set on the Compliance board.
+            </p>
+          )}
         </CardContent>
       </Card>
-      )}
 
-      {/* Embedded chat + Files tree. The Files / folder-tree card is
-          landlord-only — brands don't get SharePoint folder trees (Woody,
-          2026-08-03), so brand rows keep just the chat. */}
-      {isLandlord ? (
+      {/* Files tree — landlord-only (brands don't get SharePoint folder
+          trees). The chat used to fall back into this slot for brands,
+          which duplicated the copy already in the top pair (Woody,
+          2026-08-03). */}
+      {isLandlord && (
         <LandlordSidebarBlock
           companyId={companyId}
           companyName={c.name}
           folderTeams={c.folder_teams}
           sharepointFolderUrl={c.sharepoint_folder_url}
         />
-      ) : (
-        <CompanyMiniChat companyId={companyId} companyName={c.name} />
       )}
       </div>
       </div>
