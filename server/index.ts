@@ -2539,6 +2539,7 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
       { email: "victoria@brucegillinghampollard.com",  url: "/headshots/victoria-broadhead.jpg" },
       { email: "luke@brucegillinghampollard.com",      url: "/headshots/luke-donohoe.jpg" },
       { email: "lucyg@brucegillinghampollard.com",     url: "/headshots/lucy-gardiner.jpg" },
+      { email: "emilyc@brucegillinghampollard.com",    url: "/headshots/emily-cann.jpg" },
     ];
     for (const h of headshots) {
       const r = await pool.query(
