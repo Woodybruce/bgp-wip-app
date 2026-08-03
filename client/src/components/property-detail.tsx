@@ -1082,7 +1082,7 @@ function AvailableUnitsPanel({ propertyId, readOnly }: { propertyId: string; rea
   const { data: units = [], isLoading } = useQuery<AvailableUnitRow[]>({
     queryKey: ["/api/available-units", { propertyId }],
     queryFn: async () => {
-      const r = await fetch(`/api/available-units?propertyId=${encodeURIComponent(propertyId)}`, { credentials: "include" });
+      const r = await fetch(`/api/available-units?propertyId=${encodeURIComponent(propertyId)}`, { credentials: "include", headers: getAuthHeaders() });
       if (!r.ok) throw new Error("failed to load units");
       return r.json();
     },
