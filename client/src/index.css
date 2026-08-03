@@ -921,6 +921,14 @@ html {
   outline: 2px solid #2E5E3F;
   outline-offset: 2px;
 }
+/* …except command-palette / picker search inputs (cmdk). They autofocus
+   the moment the popover opens, and the offset outline draws OUTSIDE the
+   input — overflowing the panel's rounded corners and reading as a bleed
+   (Woody: brand picker on the Letting Tracker, 2026-08-03). The wrapper's
+   border-b is the focus affordance for these. */
+[cmdk-input-wrapper] input:focus-visible {
+  outline: none;
+}
 
 /* Consistent link color (BGP green) */
 a:not([class]) {

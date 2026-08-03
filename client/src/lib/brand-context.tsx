@@ -125,11 +125,17 @@ export function BrandProvider({ children }: { children: ReactNode }) {
     const accent = theme.secondaryColor ? hexToHslTriplet(theme.secondaryColor) : primary;
     if (!primary) return;
     const primaryFg = luminance(theme.primaryColor) > 0.5 ? "0 0% 10%" : "0 0% 100%";
-    const accentFg = theme.secondaryColor && luminance(theme.secondaryColor) > 0.5 ? "0 0% 10%" : "0 0% 100%";
     root.style.setProperty("--primary", primary);
     root.style.setProperty("--primary-foreground", primaryFg);
-    root.style.setProperty("--accent", accent || primary);
-    root.style.setProperty("--accent-foreground", accentFg);
+    // --accent is shadcn's HOVER/HIGHLIGHT surface (dropdown rows, command
+    // items, menu focus). Skinning it with the raw brand colour painted
+    // every highlighted row a saturated full-bleed bar with white text —
+    // "44 Brekkie" in the Letting Tracker brand picker. Keep the brand HUE
+    // but as a pale tint so highlights stay quiet and text stays dark.
+    const accentTint = (accent || primary).replace(/^(\d+(?:\.\d+)?) (\d+(?:\.\d+)?)% (\d+(?:\.\d+)?)%$/,
+      (_m, h, s) => `${h} ${Math.min(Number(s), 60)}% 92%`);
+    root.style.setProperty("--accent", accentTint);
+    root.style.setProperty("--accent-foreground", "0 0% 10%");
     root.style.setProperty("--ring", accent || primary);
     // Sidebar takes the deep primary with light text.
     root.style.setProperty("--sidebar", primary);
