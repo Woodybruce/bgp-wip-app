@@ -87,7 +87,7 @@ import {
   SetUpFoldersDialog,
   PropertyFoldersPanel,
   PropertySharepointLink,
-  LinkedDealsPanel,
+  LinkedDealsPanel, TaggedConversationsPanel,
   ClientBoardPanel,
   LinkedContactsPanel,
   PropertyIntelligencePanel,
@@ -250,7 +250,7 @@ function ReferenceSection(props: {
 }) {
   return (
     <CollapsibleCard {...props}>
-      <div className="max-h-[260px] overflow-y-auto -mx-3 px-3">
+      <div className="max-h-[380px] overflow-y-auto -mx-3 px-3">
         {props.children}
       </div>
     </CollapsibleCard>
@@ -426,7 +426,7 @@ export function PropertyDetail({ id }: { id: string }) {
             sticky reference column on the right. Each reference board
             has its own max-height + internal overflow-y so the boards
             stay the same outward size and only their bodies scroll. */}
-        <div className="p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] gap-4 lg:gap-6 items-start">
+        <div className="p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_660px] gap-4 lg:gap-6 items-start">
           <div className="min-w-0 space-y-3">
             <div className="flex items-center gap-3 flex-wrap">
               <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground hover:text-foreground -ml-2" data-testid="button-back-properties" onClick={() => window.history.length > 1 ? window.history.back() : navigate("/properties")}>
@@ -516,6 +516,18 @@ export function PropertyDetail({ id }: { id: string }) {
                 </div>
               )}
               <div className="flex items-center gap-2 ml-auto">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs gap-1.5"
+                  onClick={() => {
+                    const prompt = `Tell me about ${property.name || "this property"} — occupancy, live deals, letting activity and anything notable in the CRM.`;
+                    window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt } }));
+                  }}
+                  data-testid="button-ask-ai-property"
+                >
+                  <MessageSquare className="w-3.5 h-3.5" /> Ask ChatBGP
+                </Button>
                 {!isClientViewer && (<>
                 <Link href={`/image-studio?property=${encodeURIComponent(property.name)}&address=${encodeURIComponent(formatAddress(property.address) || property.name)}&propertyId=${encodeURIComponent(property.id)}`}>
                   <Button variant="outline" size="sm" className="gap-1.5 text-xs" data-testid="button-image-studio">
@@ -642,7 +654,7 @@ export function PropertyDetail({ id }: { id: string }) {
                         <div className="grid grid-cols-[130px,1fr] items-center gap-2 text-[11px]">
                           <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
                           <div className="min-w-0">
-                            <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} />
+                            <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} readOnly={isClientViewer} />
                           </div>
                         </div>
                       ) : (
@@ -664,7 +676,7 @@ export function PropertyDetail({ id }: { id: string }) {
                                 {isClientViewer ? (
                                   <span className="truncate block">{allCompanies.find(c => c.id === row.id)?.name || "—"}</span>
                                 ) : (
-                                  <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} />
+                                  <InlineOwnerLink propertyId={id} companyId={row.id} fieldName={row.field} label={row.label} allCompanies={allCompanies} readOnly={isClientViewer} />
                                 )}
                               </div>
                             </div>
@@ -673,7 +685,7 @@ export function PropertyDetail({ id }: { id: string }) {
                             <div className="grid grid-cols-[130px,1fr] items-center gap-2">
                               <span className="text-muted-foreground leading-tight truncate" title={empty[0].label}>{empty[0].label}</span>
                               <div className="min-w-0">
-                                <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} />
+                                <InlineOwnerLink propertyId={id} companyId={empty[0].id} fieldName={empty[0].field} label={empty[0].label} allCompanies={allCompanies} readOnly={isClientViewer} />
                               </div>
                             </div>
                           )}
@@ -925,7 +937,12 @@ export function PropertyDetail({ id }: { id: string }) {
               the same outward size and only their contents scroll. The
               column itself is sticky so it stays visible as you scroll
               through the (longer) left column. */}
-          <aside className="space-y-3 lg:sticky lg:top-4 self-start">
+          {/* On very wide screens the reference stack doubles to two
+              columns (sidebar widens to 660px) so related boards sit
+              side by side half-width instead of one long strip —
+              Files+Contacts, Compliance+Activity, BGP Contacts+Client
+              Board, Deals+Units (Woody, 2026-07-30). */}
+          <aside className="space-y-3 2xl:space-y-0 2xl:grid 2xl:grid-cols-2 2xl:gap-3 2xl:items-start lg:sticky lg:top-4 self-start">
               {/* SharePoint is fully sealed for client accounts — the
                   panel could only ever render dead Upload/Delete buttons
                   over a 403, so it's staff-only. */}
@@ -941,6 +958,16 @@ export function PropertyDetail({ id }: { id: string }) {
                 <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
               </ReferenceSection>
               )}
+
+              <ReferenceSection
+                title="Linked Contacts"
+                icon={UserCheck}
+                open={sidebarSections.contacts}
+                onToggle={() => toggleSection("contacts")}
+                testId="toggle-contacts-section"
+              >
+                <LinkedContactsPanel propertyId={property.id} />
+              </ReferenceSection>
 
               {!isClientViewer && (
               <ReferenceSection
@@ -969,20 +996,6 @@ export function PropertyDetail({ id }: { id: string }) {
                 </ErrorBoundary>
               </ReferenceSection>
 
-              {!isClientViewer && (
-              <ReferenceSection
-                title="Data linkage"
-                icon={Activity}
-                open={sidebarSections.linkage}
-                onToggle={() => toggleSection("linkage")}
-                testId="toggle-linkage-section"
-              >
-                <ErrorBoundary compact name="Property linkage audit">
-                  <PropertyLinkageCard propertyId={property.id} />
-                </ErrorBoundary>
-              </ReferenceSection>
-              )}
-
               <ReferenceSection
                 title="BGP Contacts"
                 icon={UserCheck}
@@ -990,7 +1003,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 onToggle={() => toggleSection("team")}
                 testId="toggle-team-section"
               >
-                <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} />
+                <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={isClientViewer} />
               </ReferenceSection>
 
               {!isClientViewer && (
@@ -1006,16 +1019,6 @@ export function PropertyDetail({ id }: { id: string }) {
               )}
 
               <ReferenceSection
-                title="Linked Contacts"
-                icon={UserCheck}
-                open={sidebarSections.contacts}
-                onToggle={() => toggleSection("contacts")}
-                testId="toggle-contacts-section"
-              >
-                <LinkedContactsPanel propertyId={property.id} />
-              </ReferenceSection>
-
-              <ReferenceSection
                 title="Deals"
                 icon={Handshake}
                 open={sidebarSections.deals}
@@ -1023,6 +1026,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 testId="toggle-deals-section"
               >
                 <LinkedDealsPanel propertyId={property.id} />
+                <TaggedConversationsPanel entityType="property" entityId={property.id} />
               </ReferenceSection>
 
               <ReferenceSection
@@ -1044,6 +1048,20 @@ export function PropertyDetail({ id }: { id: string }) {
                 testId="toggle-land-registry-section"
               >
                 <LinkedLandRegistryPanel propertyId={property.id} />
+              </ReferenceSection>
+              )}
+
+              {!isClientViewer && (
+              <ReferenceSection
+                title="Data linkage"
+                icon={Activity}
+                open={sidebarSections.linkage}
+                onToggle={() => toggleSection("linkage")}
+                testId="toggle-linkage-section"
+              >
+                <ErrorBoundary compact name="Property linkage audit">
+                  <PropertyLinkageCard propertyId={property.id} />
+                </ErrorBoundary>
               </ReferenceSection>
               )}
           </aside>

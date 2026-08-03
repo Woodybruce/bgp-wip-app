@@ -1,5 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import dns from "node:dns";
 
 // Railway's default DNS result order prefers IPv6, which silently
@@ -38,11 +38,34 @@ import { pool } from "./db";
 // first error, which is how compliance_board/training tables went missing.
 (async () => {
   const MIGRATIONS: string[] = [
+    // Per-client CRM: extra brands added from the global directory beyond
+    // the client's auto category slice.
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS crm_extra_brand_ids TEXT[]`,
+    // Client brand theme (logo.dev) — logo + colours for the client-app skin.
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS logo_url TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_primary_color TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_secondary_color TEXT`,
+    // Targeting brief: images attached from Image Studio.
+    `ALTER TABLE unit_briefs ADD COLUMN IF NOT EXISTS image_ids TEXT[]`,
+    // Heads of Terms: each property carries a standard HOTs template;
+    // each tracker unit carries its negotiated instance.
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS hots_template TEXT`,
+    `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS hots_content TEXT`,
+    `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS hots_updated_at TIMESTAMPTZ`,
     // Target operators: BGP agent pills (auto-tagged to whoever adds the
     // target) + the client-side contact driving it.
     `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS agent_user_ids TEXT[]`,
     `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS client_contact_id VARCHAR`,
     `ALTER TABLE unit_target_operators ADD COLUMN IF NOT EXISTS comments JSONB`,
+    // Backfill briefs created without a client company (tracker
+    // auto-creates) from the property's landlord, so the targets'
+    // Client-Contact picker has the client's people to offer.
+    `UPDATE unit_briefs ub
+        SET client_company_id = p.landlord_id
+       FROM crm_properties p
+      WHERE p.id = ub.property_id
+        AND ub.client_company_id IS NULL
+        AND p.landlord_id IS NOT NULL`,
     // Diary→viewings sync: provenance + idempotent upsert key for viewings
     // auto-created from Outlook calendar events (see server/viewing-sync.ts).
     `ALTER TABLE unit_viewings ADD COLUMN IF NOT EXISTS source TEXT`,
@@ -2878,6 +2901,7 @@ import { registerPropertyBrochureRoutes } from "./property-brochures";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
 import clientTeamsRouter from "./client-teams";
+import clientSharepointRouter from "./client-sharepoint";
 import turnoverRouter from "./turnover";
 import { serveStatic } from "./static";
 import { registerEmailProcessorRoutes, startEmailProcessor } from "./email-processor";
@@ -2890,6 +2914,13 @@ import { setupWebSocket } from "./websocket";
 import { createServer } from "http";
 
 const app = express();
+// Railway terminates TLS at its edge proxy and forwards with X-Forwarded-For.
+// Without this, req.ip is the edge proxy's address for every user, so the
+// rate limiters below share ONE bucket across the whole userbase — ordinary
+// afternoon browsing 429'd the brand-profile auto-triggers (contacts / KYC /
+// store research never fired) and the login limiter could lock the entire
+// office out at 20 attempts per 15 min.
+app.set("trust proxy", 1);
 const httpServer = createServer(app);
 
 // Railway health check — unauthenticated, before all middleware
@@ -3156,7 +3187,18 @@ const apiLimiter = rateLimit({
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
+  // The whole office sits behind one NAT'd public IP, so per-IP buckets
+  // still pool every staff member together — a brand profile open fires
+  // ~30 calls, and five people browsing at once starved the auto-triggers.
+  // Key authenticated traffic by its bearer token instead; anonymous
+  // traffic falls back to the (IPv6-safe) IP key.
+  keyGenerator: (req) =>
+    req.headers.authorization || ipKeyGenerator(req.ip || ""),
   skip: (req) => {
+    // Dev/QA runs everything from one IP (two harness personas + HMR), so the
+    // per-IP bucket trips on ordinary page loads. The limiter is a prod
+    // protection; skip it entirely outside production.
+    if (process.env.NODE_ENV !== "production") return true;
     const p = req.originalUrl || req.path;
     return (
       p.startsWith("/api/chat") ||
@@ -3341,6 +3383,11 @@ app.use("/api/branding/assets", express.static(
     "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",
     "/api/available-units", "/api/tasks",
     "/api/chat/threads", "/api/chat-media/", "/api/brand-logo/",
+    // Smart-tag picker + "conversations about X" — both company-scoped for
+    // clients server-side (tag-search filters to the caller's own portfolio;
+    // threads-tagging is member-scoped), so a Landsec login only ever sees
+    // its own entities and its own threads.
+    "/api/chat/tag-search", "/api/chat/threads-tagging",
     // Harmless infra reads every logged-in browser makes: the public web-push
     // VAPID key (push writes are already client-allowed) and aggregate logo
     // cache stats used by the shared company-logo helper.
@@ -3356,15 +3403,26 @@ app.use("/api/branding/assets", express.static(
     // Tracker lists these, and the handler scopes the rows (and their target
     // operators) to the caller's portfolio.
     "/api/unit-briefs",
+    // Client calendar — the handler company-scopes events for client
+    // viewers (client-sync events only). Dropped out of the list in a
+    // branch merge, which blanked Mark's calendar with a 403.
+    "/api/team-events",
+    // Calendar intelligence bar — the handler computes insights from the
+    // caller's own company only (fees nulled) when scoped.
+    "/api/microsoft/calendar/insights",
   ];
-  // Microsoft 365 stays fully blocked for clients (mail/calendar/files all
-  // 403) — the client UI must not call it at all; see nav + poller gating.
+  // Microsoft 365 stays otherwise blocked for clients (mail/files/tokens all
+  // 403) — the two calendar-intelligence endpoints above/below are the only
+  // exceptions, and both company-jail their context server-side.
   // The only writes a client may perform. (heartbeat/push/config are
   // harmless presence + client-preference pings every user sends;
   // /api/chatbgp/ covers chat + chat-with-files — tools are stripped for
   // clients inside those handlers via clientChatGuard.)
   const CLIENT_ALLOWED_WRITES = [
     "/api/auth/logout", "/api/chatbgp/", "/api/heartbeat",
+    // Meeting-prep AI briefing (POST) — company-jailed + fee-free for
+    // scoped callers inside the handler; email context is staff-only.
+    "/api/microsoft/calendar/briefing",
     // ChatBGP panel bookkeeping: the AI reply goes to /api/chatbgp/ (allowed)
     // but the panel first creates a thread + posts the user message here.
     // Message POST enforces thread membership server-side; membership and
@@ -3375,6 +3433,14 @@ app.use("/api/branding/assets", express.static(
     // Landsec may add/amend CRM contacts — POST/PUT scope-checked in crm.ts
     // (own company or the hospitality-brand slice only).
     "/api/crm/contacts",
+    // Clients may create tenant BRANDS (create is category-gated to the
+    // client CRM slice; company PUT is gated to own row / visible brands)
+    // and kick the AI enrichment on a brand they can see. Both checks live
+    // in the handlers, added for the requirements-board "+ New brand" flow.
+    "/api/crm/companies", "/api/brand/enrich/",
+    // Client pulls brands into their own CRM from the global directory
+    // (crm_extra_brand_ids on their company) — scope-checked per handler.
+    "/api/client/crm/",
     // Clients may create + edit deals on their OWN portfolio (Woody, 2026-07:
     // "client needs to be able to do as much as the agent"). The handler
     // forces the deal onto the client's own company and strips every fee
@@ -3393,6 +3459,9 @@ app.use("/api/branding/assets", express.static(
     // Both singular (/unit/:id PUT) and plural (/units/:id/archive PATCH) —
     // the archive button 403'd while the delete beside it worked.
     "/api/tenancy-schedule/unit", "/api/leasing-schedule/unit", "/api/leasing-schedule/units",
+    // One-click "+ Tracker" from the tenancy schedule — scope-checked in the
+    // handler (checkPropertyAccess), so a client can only list their own units.
+    "/api/leasing-schedule/promote-from-tenancy",
     // Clients may manage their OWN tasks (every task endpoint is scoped to
     // user_id); the My Tasks dashboard widget needs create/complete/reorder.
     "/api/tasks",
@@ -3424,17 +3493,24 @@ app.use("/api/branding/assets", express.static(
     //    matched here and keep working.
     /^\/api\/dashboard\/intelligence/,
     /^\/api\/crm\/(landlords|stats)\b/,
-    /^\/api\/crm\/(contact-property-links|contact-deal-links|contact-requirement-links|company-deal-links|property-deal-links|property-tenants)\b/,
+    // property-deal-links + property-tenants are no longer blocked: the
+    // client Properties page needs both maps and the handlers now scope
+    // them to the caller's own portfolio (same pattern as property-agents).
+    /^\/api\/crm\/(contact-property-links|contact-deal-links|contact-requirement-links|company-deal-links)\b/,
     /^\/api\/crm\/companies\/[^/]+\/trading-entities/,
     /^\/api\/crm\/properties\/[^/]+\/agents/,
     // all-viewings / all-offers (+counts) are now SCOPED per caller in
     // routes.ts, so clients get letting activity on their OWN units — the
-    // tracker's viewings/offers controls need them to render. all-files and
-    // matches are still firm-wide, so they stay blocked.
-    /^\/api\/available-units\/(all-files|matches)\b/,
+    // tracker's viewings/offers controls need them to render. matches is
+    // now scoped in routes.ts too (own unit only, results filtered to
+    // client-visible brands) — the brief dialog needs it. all-files stays
+    // firm-wide and blocked.
+    /^\/api\/available-units\/all-files\b/,
     /^\/api\/leasing-schedule\/export-excel/,           // firm-wide export; per-property /property/:id/export stays scoped
     /^\/api\/leasing-schedule\/property\/[^/]+\/privacy/,
-    /^\/api\/tenancy-schedule\/property\/[^/]+\/links/,
+    // tenancy-schedule /links is no longer blocked: the client unified
+    // schedule (editable since the Tenancy→Tracker parity work) needs the
+    // deal/letting link map, and the handler now scope-checks the property.
     /^\/api\/properties\/[^/]+\/(360|brochures|tasks|orphan-deals|instructions|project-files|duplicate-units|plan-pickable-units|plans|unresolved-tenants|linkage-audit)\b/,
     /^\/api\/image-studio\/orphans/,
   ];
@@ -3453,11 +3529,32 @@ app.use("/api/branding/assets", express.static(
         if (CLIENT_BLOCKED_SUBPATHS.some(re => re.test(p))) {
           return res.status(403).json({ error: "Not available for client accounts" });
         }
+        // Staff-only deal operations riding under the allowed /api/crm/deals
+        // prefix — none of their handlers client-check, so the gateway must:
+        // single + bulk delete, bulk field edits, the internal per-agent fee
+        // split, and the firm-wide rent-analysis / HOTs-parse AI ops. Deal
+        // create + edit stay open (scope-checked + fee-stripped in crm.ts).
+        if (/^\/api\/crm\/deals\/(bulk-update|bulk-delete|bulk-rent-analysis)$/.test(p) ||
+            /^\/api\/crm\/deals\/[^/]+\/(fee-allocations|parse-hots)$/.test(p) ||
+            (req.method === "DELETE" && /^\/api\/crm\/deals\/[^/]+$/.test(p))) {
+          return res.status(403).json({ error: "Not available for client accounts" });
+        }
+        // Contact-graph link writes ride under the allowed /api/crm/contacts
+        // prefix but have no scope check — a client could wire ANY contact
+        // onto ANY deal / property / requirement (including other tenants').
+        // Client contact parity is add/amend of the contact RECORD only, not
+        // the relationship graph, so block these link writes entirely.
+        if (/^\/api\/crm\/contacts\/[^/]+\/(properties|deals|requirements)(\/|$)/.test(p)) {
+          return res.status(403).json({ error: "Not available for client accounts" });
+        }
         // Authoring an Operator Targeting Brief on one of their own units —
         // the create route hangs off /api/available-units/:id/brief; the
         // handler verifies the unit's property is in the client's scope.
         // (We don't open all of /api/available-units, only the brief POST.)
         if (req.method === "POST" && /^\/api\/available-units\/[^/]+\/brief$/.test(p)) return next();
+        // AI-draft a brief for one of their own units (read-only draft, the
+        // handler scope-checks the unit); the client reviews before saving.
+        if (req.method === "POST" && /^\/api\/available-units\/[^/]+\/brief\/draft-ai$/.test(p)) return next();
         // Leasing strategy board writes on the client's OWN property — the
         // strategic-principles key block, AI target generation and target-
         // tenant rows ("Save failed — read-only" on the Landsec board).
@@ -3485,7 +3582,18 @@ app.use("/api/branding/assets", express.static(
       if (brandRead) {
         const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
         const scope = await resolveCompanyScope(req);
-        if (brandRead[1] === scope || (await isClientVisibleBrand(brandRead[1]))) return next();
+        if (brandRead[1] === scope || (await isClientVisibleBrand(brandRead[1], scope))) return next();
+      }
+      // AI activity commentary (AIActivityCard) on the client's OWN company —
+      // the dashboard BGP Relationship board mirrors the internal page
+      // (Woody, 2026-07-30). Read-only: the exact landlord|brand/:id shape
+      // only, so the raw meeting/email viewer routes and the curate POST
+      // (a write) stay sealed for clients.
+      const activityRead = p.match(/^\/api\/activity\/(landlord|brand)\/([^/]+)$/);
+      if (activityRead) {
+        const { resolveCompanyScope } = await import("./company-scope");
+        const scope = await resolveCompanyScope(req);
+        if (scope && activityRead[2] === scope) return next();
       }
       if (allowed) return next();
       return res.status(403).json({ error: "Not available for client accounts" });
@@ -3556,6 +3664,7 @@ app.use("/api/branding/assets", express.static(
   app.use(leasingScheduleRouter);
   app.use(tenancyScheduleRouter);
   app.use(clientTeamsRouter);
+  app.use(clientSharepointRouter);
   app.use(turnoverRouter);
   app.use(sanctionsRouter);
   app.use(kycClouseauRouter);

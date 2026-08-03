@@ -11,6 +11,7 @@ export function ScrollableTable({ children, minWidth }: ScrollableTableProps) {
   const innerRef = useRef<HTMLDivElement>(null);
   const syncingRef = useRef<"bottom" | "table" | null>(null);
   const [contentWidth, setContentWidth] = useState(minWidth);
+  const [maxHeight, setMaxHeight] = useState<number | null>(null);
 
   useEffect(() => {
     const bottomEl = bottomScrollRef.current;
@@ -56,9 +57,40 @@ export function ScrollableTable({ children, minWidth }: ScrollableTableProps) {
     return () => ro.disconnect();
   }, [minWidth]);
 
+  // Height the scroll box to whatever room is actually left below it. The CSS
+  // fallback assumes 200px of page furniture above the table; pages that stack
+  // a title + count cards + a search bar + a section header run to ~325px, so
+  // the box overshot the viewport and its last rows (and the synced bottom
+  // scrollbar) sat below the fold, unreachable. Measure instead of guess.
+  useEffect(() => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    const update = () => {
+      const top = el.getBoundingClientRect().top;
+      // Leave room for the sync bar underneath plus a little breathing space.
+      const avail = window.innerHeight - top - 24;
+      setMaxHeight(Math.max(240, Math.round(avail)));
+    };
+    update();
+    window.addEventListener("resize", update);
+    // The furniture above can change height (filter chips wrapping, cards
+    // loading in), which moves our top edge without firing a window resize.
+    const ro = new ResizeObserver(update);
+    if (el.parentElement) ro.observe(el.parentElement);
+    ro.observe(document.body);
+    return () => {
+      window.removeEventListener("resize", update);
+      ro.disconnect();
+    };
+  }, []);
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      <div ref={tableScrollRef} className="table-scroll-container flex-1 min-h-0">
+      <div
+        ref={tableScrollRef}
+        className="table-scroll-container flex-1 min-h-0"
+        style={maxHeight ? { maxHeight } : undefined}
+      >
         <div ref={innerRef} style={{ minWidth }}>
           {children}
         </div>

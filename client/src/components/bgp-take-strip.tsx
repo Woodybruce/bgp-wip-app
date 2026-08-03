@@ -13,6 +13,19 @@ const TAB_LABELS: Record<Tab, string> = {
   intel: "BGP take — what's changed",
 };
 
+// The query throws the raw response body, which for API errors is a JSON
+// blob — `{"error":"AI take unavailable…"}` was rendering verbatim in the
+// strip. Unwrap it to the message alone.
+function friendlyTakeError(raw?: string): string {
+  if (!raw) return "Unable to generate take.";
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed.error || parsed.message || "Unable to generate take.";
+  } catch {
+    return raw;
+  }
+}
+
 export function BgpTakeStrip({ companyId, tab }: { companyId: string; tab: Tab }) {
   const { toast } = useToast();
   const queryKey = ["/api/brand", companyId, "ai-take", tab];
@@ -67,7 +80,7 @@ export function BgpTakeStrip({ companyId, tab }: { companyId: string; tab: Tab }
       {isLoading ? (
         <p className="text-xs text-muted-foreground italic">Generating BGP take…</p>
       ) : isError ? (
-        <p className="text-xs text-muted-foreground italic">{(error as any)?.message || "Unable to generate take."}</p>
+        <p className="text-xs text-muted-foreground italic">{friendlyTakeError((error as any)?.message)}</p>
       ) : data?.text ? (
         <p className="text-xs leading-snug text-foreground/90 whitespace-pre-wrap">{data.text}</p>
       ) : (

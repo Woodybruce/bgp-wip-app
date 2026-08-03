@@ -8,6 +8,7 @@
 // rows not yet normalised to codes — always try legacyToCode first.
 
 export const DEAL_STATUS_DOT_COLORS: Record<string, string> = {
+  OPP: "bg-teal-500",
   REP: "bg-slate-500",
   SPEC: "bg-violet-500",
   LIVE: "bg-blue-500",
@@ -42,6 +43,7 @@ export const DEAL_STATUS_DOT_COLORS: Record<string, string> = {
 };
 
 export const DEAL_STATUS_BADGE_COLORS: Record<string, string> = {
+  OPP: "bg-teal-100 text-teal-800",
   REP: "bg-slate-100 text-slate-800 dark:bg-slate-900/40 dark:text-slate-300",
   SPEC: "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
   LIVE: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",

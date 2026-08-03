@@ -15,7 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { CovenantBadge } from "@/components/covenant-badge";
+import { CovenantBadge, CovenantCommentary } from "@/components/covenant-badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -749,7 +749,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   });
 
   const addRepMutation = useMutation({
-    mutationFn: async (vars: { brandCompanyId: string; agentCompanyId: string; agentType: string; region?: string; primaryContactId?: string }) => {
+    mutationFn: async (vars: { brandCompanyId: string; agentCompanyId?: string; agentType: string; region?: string; primaryContactId?: string }) => {
       const res = await apiRequest("POST", `/api/brand/representations`, vars);
       return res.json();
     },
@@ -1322,7 +1322,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               );
             })()}
             {/* Outreach strip — quick-action buttons */}
-            <div className="flex items-center gap-1.5 flex-wrap mb-2 order-1">
+            <div className="flex items-center gap-1.5 flex-wrap mb-2 order-1 empty:hidden">
               {editingDomain ? (
                 <div className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background text-xs">
                   <Globe className="w-3 h-3 text-muted-foreground" />
@@ -1370,6 +1370,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   >
                     <Globe className="w-3 h-3" /> Website
                   </a>
+                  {!isClientViewer && (
                   <button
                     onClick={() => {
                       setDomainInput((c.domain || (c.domain_url || "").replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "")) || "");
@@ -1381,8 +1382,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   >
                     <Pencil className="w-3 h-3" />
                   </button>
+                  )}
                 </div>
-              ) : (
+              ) : !isClientViewer ? (
                 <button
                   onClick={() => { setDomainInput(""); setEditingDomain(true); }}
                   className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-dashed border-border/60 bg-background hover:bg-muted/50 text-xs font-medium text-muted-foreground transition-colors"
@@ -1390,7 +1392,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 >
                   <Globe className="w-3 h-3" /> Add website
                 </button>
-              )}
+              ) : null}
               {c.linkedin_url && (
                 <a
                   href={c.linkedin_url}
@@ -1495,7 +1497,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             </div>
 
             {/* Single BGP AI take + Ask ChatBGP question runner — sits above all zones */}
-            <div className="mt-2 order-2 space-y-3">
+            <div className="mt-2 order-2 space-y-3 empty:hidden">
               {currentUser?.role !== "Client" && <BgpTakeStrip companyId={companyId} tab="brand" />}
               {currentUser?.role !== "Client" && <AskChatBGPInline brandName={c.name} />}
             </div>
@@ -1519,8 +1521,18 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 more get ignored. */}
             {(() => {
               const hasStreetView = stores.some((s: any) => typeof s.lat === "number" && typeof s.lng === "number");
+              // Dedupe pinned heroes by content — the gallery healing sweep
+              // deliberately keeps hero pins, so two pins of the same photo
+              // would otherwise render side by side.
+              const seenHero = new Set<string>();
               const heroes = (data.images || [])
                 .filter((i: any) => Array.isArray(i.tags) && i.tags.includes("brand-hero"))
+                .filter((i: any) => {
+                  const key = i.thumbnail_data || i.id;
+                  if (seenHero.has(key)) return false;
+                  seenHero.add(key);
+                  return true;
+                })
                 .slice(0, 2);
               const srcFor = (img: any) => img.thumbnail_data
                 ? (img.thumbnail_data.startsWith("data:")
@@ -1551,7 +1563,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     {hasStreetView && (
                       <div className="overflow-hidden rounded-md bg-muted/40">
                         <img
-                          src={`/api/brand/${companyId}/flagship-image`}
+                          src={`/api/brand/${companyId}/flagship-image?exclude=${encodeURIComponent(heroes[0].id)}`}
                           alt="Flagship store street view"
                           className="w-full h-full object-cover"
                           onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
@@ -1570,7 +1582,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   {hasStreetView && (
                     <div className="overflow-hidden rounded-md bg-muted/40">
                       <img
-                        src={`/api/brand/${companyId}/flagship-image`}
+                        src={`/api/brand/${companyId}/flagship-image${firstImg ? `?exclude=${encodeURIComponent(firstImg.id)}` : ""}`}
                         alt="Flagship store street view"
                         className="w-full h-full object-cover"
                         onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
@@ -1601,7 +1613,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             )}
 
             {/* Key facts row */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm empty:hidden">
               {c.store_count != null && (
                 <div>
                   <div className="text-xs text-muted-foreground flex items-center gap-1">
@@ -1786,7 +1798,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 <div className="col-span-2">
                   <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />
                 </div>
-              ) : c.is_tracked_brand ? (
+              ) : c.is_tracked_brand && !isClientViewer ? (
                 <div className="col-span-2">
                   <TickerSuggestPicker
                     companyId={c.id}
@@ -1823,8 +1835,45 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                  block below instead. UK/Global toggle was rolled back
                  May 2026; backend + brand_stores.country schema kept in
                  place so we can re-enable later. */}
-            {!isLandlord && stores.length > 0 && (() => {
+            {/* Staff always see the section, even at 0 stores — the auto
+                research fires on first open, and when it comes back empty
+                (Places quota, rate limit, obscure brand) the section used
+                to vanish entirely, which read as "the location map is
+                gone". Clients still only see it once stores exist. */}
+            {!isLandlord && (stores.length > 0 || !isClientViewer) && (() => {
               const visible = stores.filter((s: any) => !s.country || s.country === "GB");
+              if (stores.length === 0) {
+                return (
+                  <div className="border-t border-border/40 mt-3 pt-2 order-5">
+                    <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+                      <Store className="w-3.5 h-3.5 text-muted-foreground" />
+                      <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
+                        UK stores
+                      </span>
+                      {!researchStoresMutation.isPending && (
+                        <button
+                          onClick={() => researchStoresMutation.mutate("uk")}
+                          className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted"
+                          data-testid="btn-research-stores-uk"
+                        >
+                          Re-scan UK
+                        </button>
+                      )}
+                    </div>
+                    {researchStoresMutation.isPending ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground border border-dashed rounded-md px-3 py-6 justify-center">
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        Researching UK stores — the location map will appear here when the scan finishes…
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground border border-dashed rounded-md px-3 py-4">
+                        No stores found yet{storesDiagnostic ? ` — ${storesDiagnostic}` : ""}.
+                        {" "}Re-scan to retry, or add stores manually and the map will appear.
+                      </div>
+                    )}
+                  </div>
+                );
+              }
               return (
                 <div className="border-t border-border/40 mt-3 pt-2 order-5">
                   <div className="flex items-center gap-1.5 mb-2 flex-wrap">
@@ -1897,6 +1946,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             )}
             <div className="space-y-2.5">
             {!isClientViewer && (<>
+            {/* AI relationship read — the calendar/interaction commentary.
+                Consolidated away in the single-strip pass, missed and asked
+                back (Woody, 2026-07-30). */}
+            <BgpTakeStrip companyId={companyId} tab="activity" />
             {/* BGP coverage — who covers this brand internally, plus
                 a click-to-edit role per person so we can label
                 Charlotte = Investment lead, Harriette = Leasing. */}
@@ -2323,6 +2376,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 ) : (
                   <div className="rounded-md border border-dashed border-muted-foreground/30 p-3 text-center">
                     <p className="text-xs text-muted-foreground mb-2">No brand expansion narrative yet</p>
+                    {!isClientViewer && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -2333,6 +2387,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                       <Sparkles className={`w-3 h-3 mr-1 text-purple-500 ${enrichMutation.isPending ? "animate-pulse" : ""}`} />
                       {enrichMutation.isPending ? "Generating…" : "Auto-generate summary"}
                     </Button>
+                    )}
                   </div>
                 )}
             {/* Expansion flags */}
@@ -2383,7 +2438,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
             {/* Pipnet requirements — external feed of what the brand is asking
                 the wider market for. Lazy-fetched, cached server-side 1h. */}
-            <PipnetRequirementsRow companyId={companyId} brandName={c.name} />
+            <PipnetRequirementsRow companyId={companyId} brandName={c.name} isClient={isClientViewer} />
 
             {/* Signals feed — same shape as the old Hunter Intel zone */}
             <div>
@@ -2636,9 +2691,12 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                       {/* Fall-through: company picker. Used for the brand-search
                           case, AND as a fallback when the agent search returns
                           nothing (so user can still pick by company name). */}
+                      {/* Any company can be the agent firm — previously gated on
+                          agent_type being set, which hid every agent firm whose
+                          sub-type was blank (the common case). The server
+                          self-heals agent_type on save. */}
                       {allCompaniesForPicker
                         .filter(co => co.id !== companyId && co.name.toLowerCase().includes(repSearch.toLowerCase()))
-                        .filter(co => addRep === "agent" ? !!co.agent_type : true)
                         .slice(0, 10)
                         .map(co => (
                           <button
@@ -2673,12 +2731,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   />
                 </div>
                 <div className="flex items-center gap-2">
+                  {/* Enable when an agent firm OR an agent contact is chosen —
+                      the server resolves the firm from the contact (creating a
+                      lightweight Agent company if the person has none). */}
                   <Button
                     size="sm"
-                    disabled={!repForm.otherCompanyId || addRepMutation.isPending}
+                    disabled={(!repForm.otherCompanyId && !(addRep === "agent" && repForm.contactId)) || addRepMutation.isPending}
                     onClick={() => {
                       const vars = addRep === "agent"
-                        ? { brandCompanyId: companyId, agentCompanyId: repForm.otherCompanyId, agentType: repForm.agent_type, region: repForm.region || undefined, primaryContactId: repForm.contactId || undefined }
+                        ? { brandCompanyId: companyId, agentCompanyId: repForm.otherCompanyId || undefined, agentType: repForm.agent_type, region: repForm.region || undefined, primaryContactId: repForm.contactId || undefined }
                         : { brandCompanyId: repForm.otherCompanyId, agentCompanyId: companyId, agentType: repForm.agent_type, region: repForm.region || undefined };
                       addRepMutation.mutate(vars);
                     }}
@@ -2724,7 +2785,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   );
 }
 
-function PipnetRequirementsRow({ companyId, brandName }: { companyId: string; brandName: string }) {
+function PipnetRequirementsRow({ companyId, brandName, isClient }: { companyId: string; brandName: string; isClient?: boolean }) {
   const { data, isLoading, refetch, isFetching } = useQuery<{ rows: any[]; fetched_at: string | null; cached?: boolean; error?: string }>({
     queryKey: ["/api/brand", companyId, "pipnet-requirements"],
     queryFn: async () => {
@@ -2747,6 +2808,7 @@ function PipnetRequirementsRow({ companyId, brandName }: { companyId: string; br
             <span className="text-[10px] ml-1">· {new Date(data.fetched_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
           )}
         </span>
+        {!isClient && (
         <button
           onClick={() => fetch(`/api/brand/${companyId}/pipnet-requirements?refresh=1`, { credentials: "include" }).then(() => refetch())}
           disabled={isFetching}
@@ -2754,6 +2816,7 @@ function PipnetRequirementsRow({ companyId, brandName }: { companyId: string; br
         >
           {isFetching ? "Searching…" : "Refresh"}
         </button>
+        )}
       </div>
       {isLoading ? (
         <p className="text-[11px] text-muted-foreground italic">Loading…</p>
@@ -4013,7 +4076,7 @@ export function BrandComplianceCard({
                   <div className="text-sm font-semibold leading-tight truncate" title={entity}>{entity}</div>
                 ) : (
                   <div className="text-xs italic text-muted-foreground">
-                    {rescrape.isPending ? "Scraping the brand's T&Cs page…" : "Not found — enter manually or re-run scraper."}
+                    {rescrape.isPending ? "Scraping the brand's T&Cs page…" : bcIsClient ? "Not confirmed yet — BGP is identifying the UK trading entity." : "Not found — enter manually or re-run scraper."}
                   </div>
                 )}
                 {company.companies_house_number && (
@@ -4027,6 +4090,7 @@ export function BrandComplianceCard({
                   </a>
                 )}
               </div>
+              {!bcIsClient && (
               <button
                 onClick={() => { setDraft(entity); setEditing(true); }}
                 className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted"
@@ -4034,6 +4098,7 @@ export function BrandComplianceCard({
               >
                 <Pencil className="w-3 h-3" />
               </button>
+              )}
               {!bcIsClient && (
               <button
                 onClick={() => rescrape.mutate()}
@@ -4165,7 +4230,9 @@ export function BrandComplianceCard({
           </div>
           {!hasEntity && (
             <p className="text-[10px] text-muted-foreground italic mt-2 leading-snug">
-              Confirm the UK trading entity above, then we'll work out which APIs to pull (CH, Red Flag, AML PEP) against the right registered name.
+              {bcIsClient
+                ? "BGP is compiling these checks — covenant, accounts and AML screening appear here as they complete."
+                : "Confirm the UK trading entity above, then we'll work out which APIs to pull (CH, Red Flag, AML PEP) against the right registered name."}
             </p>
           )}
         </div>
@@ -4200,6 +4267,237 @@ export function BrandComplianceCard({
 // (with Set Up Folders dialog), mirroring the property page layout.
 // Brand profiles never render this — it lives under the isLandlord
 // branch in BrandProfileSidebar.
+// "Known contacts" — surfaces the BGP email archaeology on the profile:
+// everyone BGP has actually emailed at this company's domain in the last two
+// years, with signature-mined roles/phones, and one-click add-to-CRM for the
+// ones we never logged. The data existed behind an admin diagnostic endpoint;
+// this makes it a working surface (Woody, 2026-08-02: "contacts are critical").
+function KnownContactsCard({ companyId, companyName }: { companyId: string; companyName: string }) {
+  const [open, setOpen] = useState(false);
+  const [addedEmails, setAddedEmails] = useState<Set<string>>(new Set());
+  const [addingEmail, setAddingEmail] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  const { data, isFetching, refetch } = useQuery<any>({
+    queryKey: ["/api/brand", companyId, "bgp-known-contacts"],
+    queryFn: async () => {
+      const res = await fetch(`/api/brand/${companyId}/bgp-known-contacts`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("scan failed");
+      return res.json();
+    },
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+  });
+  const contacts: any[] = data?.contacts || [];
+  const summary = data?.summary;
+
+  const addToCrm = async (k: any) => {
+    setAddingEmail(k.email);
+    try {
+      await apiRequest("POST", "/api/crm/contacts", {
+        name: k.name || k.email.split("@")[0].replace(/\./g, " ").replace(/\b\w/g, (ch: string) => ch.toUpperCase()),
+        email: k.email,
+        phone: k.phone || k.mobile || undefined,
+        role: k.role || undefined,
+        companyId,
+        companyName,
+      });
+      setAddedEmails((prev) => new Set(prev).add(k.email));
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      toast({ title: `${k.name || k.email} added to CRM`, description: `Linked to ${companyName}` });
+    } catch (e: any) {
+      toast({ title: "Couldn't add contact", description: e?.message, variant: "destructive" });
+    } finally {
+      setAddingEmail(null);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <Mail className="w-3.5 h-3.5" /> Known contacts
+          {summary && <span className="normal-case tracking-normal text-[10px]">({summary.notInCrm} not in CRM)</span>}
+        </CardTitle>
+        <button
+          type="button"
+          className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+          onClick={() => { if (!open) setOpen(true); else refetch(); }}
+          data-testid="button-scan-known-contacts"
+        >
+          {isFetching ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+          {open ? "Rescan" : "Scan BGP email"}
+        </button>
+      </CardHeader>
+      {open && (
+        <CardContent className="p-3 pt-0">
+          {isFetching && !contacts.length ? (
+            <p className="text-xs text-muted-foreground py-3 text-center">Mining two years of BGP email…</p>
+          ) : contacts.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-3 text-center">No emailed contacts found at this company's domain.</p>
+          ) : (
+            <>
+              {summary && (
+                <p className="text-[10px] text-muted-foreground mb-2">
+                  {summary.total} people BGP has emailed · {summary.inCrm} already in CRM · {summary.notInCrm} missing
+                  {summary.enrichmentQueued > 0 ? ` · ${summary.enrichmentQueued} signatures still enriching — rescan shortly` : ""}
+                </p>
+              )}
+              <div className="max-h-[320px] overflow-y-auto space-y-1 pr-1" data-testid="known-contacts-list">
+                {contacts.map((k: any) => {
+                  const added = k.inCrm || addedEmails.has(k.email);
+                  return (
+                    <div key={k.email} className="flex items-center gap-2 text-xs py-1 border-b border-border/40 last:border-0">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium truncate">{k.name || k.email}</p>
+                        <p className="text-[10px] text-muted-foreground truncate">
+                          {[k.role, k.email, k.phone || k.mobile].filter(Boolean).join(" · ")}
+                        </p>
+                      </div>
+                      {added ? (
+                        <Badge variant="outline" className="text-[9px] shrink-0 text-emerald-700 border-emerald-200">in CRM</Badge>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 px-2 text-[10px] shrink-0"
+                          onClick={() => addToCrm(k)}
+                          disabled={addingEmail === k.email}
+                          data-testid={`button-add-known-${k.email}`}
+                        >
+                          {addingEmail === k.email ? <Loader2 className="w-3 h-3 animate-spin" /> : "+ Add"}
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
+// Embedded, scrollable chat about this company — lives on the profile so a
+// conversation doesn't mean losing the page. Reuses the group-chat machinery:
+// one thread per company (linked_id), ChatBGP as a member, so plain message
+// POSTs get a real Fable answer server-side and we just poll the thread.
+function CompanyMiniChat({ companyId, companyName }: { companyId: string; companyName: string }) {
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [, navigate] = useLocation();
+
+  // Find (or lazily create on first send) the company's discussion thread.
+  const { data: threads = [] } = useQuery<any[]>({ queryKey: ["/api/chat/threads"] });
+  useEffect(() => {
+    if (threadId) return;
+    const existing = (Array.isArray(threads) ? threads : []).find(
+      (t: any) => t.linkedId === companyId && !t.isAiChat && t.hasAiMember
+    );
+    if (existing) setThreadId(existing.id);
+  }, [threads, companyId, threadId]);
+
+  const { data: thread } = useQuery<any>({
+    queryKey: ["/api/chat/threads", threadId],
+    queryFn: async () => {
+      const res = await fetch(`/api/chat/threads/${threadId}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!threadId,
+    refetchInterval: 5000,
+  });
+  const messages: any[] = thread?.messages || [];
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages.length]);
+
+  const send = async () => {
+    const text = draft.trim();
+    if (!text || sending) return;
+    setSending(true);
+    try {
+      let tid = threadId;
+      if (!tid) {
+        const res = await apiRequest("POST", "/api/chat/threads", {
+          title: `${companyName} — discussion`,
+          memberIds: ["__chatbgp__"],
+          isAiChat: false,
+          linkedType: "company",
+          linkedId: companyId,
+          linkedName: companyName,
+        });
+        const created = await res.json();
+        tid = created.id;
+        setThreadId(tid);
+      }
+      await apiRequest("POST", `/api/chat/threads/${tid}/messages`, { content: text });
+      setDraft("");
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", tid] });
+    } catch { /* surfaced by global toast */ }
+    finally { setSending(false); }
+  };
+
+  const stripTags = (s: string) => (s || "").replace(/@\[([^\]]+)\]\(tag:[^)]+\)/g, "@$1");
+
+  return (
+    <Card>
+      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2">
+        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+          <MessageSquare className="w-3.5 h-3.5" /> Chat — {companyName}
+        </CardTitle>
+        {threadId && (
+          <button
+            type="button"
+            className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted"
+            onClick={() => navigate(`/chatbgp?thread=${threadId}`)}
+            data-testid="button-minichat-open-full"
+          >
+            Open full
+          </button>
+        )}
+      </CardHeader>
+      <CardContent className="p-3 pt-0 space-y-2">
+        <div ref={scrollRef} className="max-h-[280px] overflow-y-auto space-y-2 pr-1" data-testid="minichat-messages">
+          {messages.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center">
+              Ask anything about {companyName} — ChatBGP answers here, and teammates can join from the chat panel.
+            </p>
+          ) : (
+            messages.map((m: any) => (
+              <div key={m.id} className={`text-xs rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${
+                m.role === "assistant" ? "bg-muted/60" : "bg-primary/10 ml-6"
+              }`}>
+                {m.role === "assistant" && <span className="font-semibold text-[10px] block text-muted-foreground">ChatBGP</span>}
+                {stripTags(m.content)}
+              </div>
+            ))
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <input
+            className="flex-1 h-8 rounded-md border bg-background px-2.5 text-xs outline-none focus:ring-1 focus:ring-ring"
+            placeholder={`Message about ${companyName}…`}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+            data-testid="input-minichat"
+          />
+          <Button size="sm" className="h-8 px-3 text-xs" onClick={send} disabled={sending || !draft.trim()} data-testid="button-minichat-send">
+            {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Send"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function LandlordSidebarBlock({
   companyId,
   companyName,
@@ -4218,36 +4516,49 @@ function LandlordSidebarBlock({
   // SharePoint folder creation is a BGP-staff action (M365 is sealed for
   // clients), so only staff see the "{Client} property tree" button.
   const sbIsStaff = !!sbUser && sbUser.role !== "Client" && !sbUser.companyScopeId;
-  const [, navigate] = useLocation();
   // Create a top-level "{Client}" folder in the BGP share drive with a
   // per-property subfolder tree for every property this client owns. Runs
   // against live SharePoint, so it needs an M365-connected session.
+  // The build runs as a background job server-side (the edge proxy 504s
+  // anything over ~45s and a full client tree takes longer) — POST returns
+  // 202 straight away and we poll the status endpoint until it finishes.
   const setUpClientFolders = async () => {
     if (!window.confirm(`Create a "${companyName}" folder in the BGP share drive with a folder tree for each of their properties?`)) return;
     setClientFoldersBusy(true);
     try {
       const res = await apiRequest("POST", "/api/microsoft/client-folders", { companyId });
-      const data = await res.json();
+      const kick = await res.json();
       sbToast({
-        title: "Folders created",
-        description: `${companyName}: ${data.properties} propert${data.properties === 1 ? "y" : "ies"}, ${data.created} folders created${data.errors ? `, ${data.errors} errors` : ""}.`,
+        title: "Folder setup started",
+        description: `${companyName}: building trees for ${kick.properties} propert${kick.properties === 1 ? "y" : "ies"} in the background…`,
       });
+      const startedAt = Date.now();
+      const poll = async () => {
+        if (Date.now() - startedAt > 10 * 60_000) {
+          setClientFoldersBusy(false);
+          sbToast({ title: "Folder setup still running", description: "Taking longer than expected — check SharePoint in a few minutes. Re-running later is safe.", variant: "destructive" });
+          return;
+        }
+        try {
+          const sr = await apiRequest("GET", `/api/microsoft/client-folders/status/${companyId}`);
+          const s = await sr.json();
+          if (s.status === "done") {
+            setClientFoldersBusy(false);
+            sbToast({ title: "Folders created", description: `${companyName}: ${s.created} of ${s.total} folders in place${s.errors ? `, ${s.errors} errors` : ""}.` });
+            return;
+          }
+          if (s.status === "failed") {
+            setClientFoldersBusy(false);
+            sbToast({ title: "Folder setup failed part-way", description: `${s.created} folders created before the error — re-running resumes from there. ${s.message || ""}`, variant: "destructive" });
+            return;
+          }
+        } catch { /* transient — keep polling */ }
+        setTimeout(poll, 3000);
+      };
+      setTimeout(poll, 3000);
     } catch (e: any) {
-      sbToast({ title: "Folder setup failed", description: e?.message || "Not connected to Microsoft 365?", variant: "destructive" });
-    } finally {
       setClientFoldersBusy(false);
-    }
-  };
-  // Open (or reuse — the backend dedupes one AI thread per entity) a chat
-  // scoped to this landlord, so ChatBGP actually knows who we're talking
-  // about instead of landing on an empty generic chat.
-  const openLandlordChat = async () => {
-    try {
-      const res = await apiRequest("POST", "/api/chat/threads", { isAiChat: true, linkedType: "company", linkedId: companyId, linkedName: companyName });
-      const thread = await res.json();
-      navigate(`/chatbgp?thread=${thread.id}`);
-    } catch {
-      navigate("/chatbgp");
+      sbToast({ title: "Folder setup failed", description: e?.message || "Not connected to Microsoft 365?", variant: "destructive" });
     }
   };
   return (
@@ -4261,15 +4572,7 @@ function LandlordSidebarBlock({
         entityType="landlord"
       />
 
-      <button
-        type="button"
-        onClick={openLandlordChat}
-        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity justify-center w-full"
-        data-testid="button-open-landlord-chat"
-      >
-        <MessageSquare className="w-3.5 h-3.5" />
-        Chat about {companyName}
-      </button>
+      <CompanyMiniChat companyId={companyId} companyName={companyName} />
 
       <Card>
         <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2">
@@ -4301,11 +4604,15 @@ function LandlordSidebarBlock({
           </div>
         </CardHeader>
         <CardContent className="p-3 pt-0">
-          <PropertyFoldersPanel
-            propertyName={companyName}
-            folderTeams={folderTeams && folderTeams.length > 0 ? folderTeams : ["Investment"]}
-            sharepointFolderUrl={sharepointFolderUrl || null}
-          />
+          {/* Long folder trees (Landsec has 100+ property folders) scroll
+              inside the card instead of stretching the whole page. */}
+          <div className="max-h-[420px] overflow-y-auto pr-1">
+            <PropertyFoldersPanel
+              propertyName={companyName}
+              folderTeams={folderTeams && folderTeams.length > 0 ? folderTeams : ["Investment"]}
+              sharepointFolderUrl={sharepointFolderUrl || null}
+            />
+          </div>
         </CardContent>
       </Card>
     </>
@@ -4437,11 +4744,25 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         ? "bg-rose-500"
         : "bg-zinc-300";
   const topContacts = (data.contacts || []).slice(0, 5);
+  // On the full-width landlord/brand layout the sidebar cards render as
+  // stacked full-width boards — pair the related ones half-width instead
+  // (Compliance+Covenant, Key contacts+Files, News+Instagram; Woody,
+  // 2026-07-30). The narrow sticky sidebar keeps the single column.
+  const pairCls = (isLandlord || isBrand)
+    ? "grid grid-cols-1 md:grid-cols-2 gap-3 items-start"
+    : "space-y-3";
 
   return (
     <aside className={(isLandlord || isBrand)
       ? "w-full shrink-0 space-y-3 self-start"
       : "w-full md:w-[420px] lg:w-[480px] shrink-0 space-y-3 md:sticky md:top-3 self-start"}>
+      {/* Two balanced columns: the tall Compliance board + Key contacts on
+          the left; the compact Covenant card, the embedded scrollable chat
+          and the (internally scrolling) Files tree on the right. Replaces
+          the old pairing where Covenant sat alone beside Compliance and
+          left most of a column empty (Woody, 2026-08-02). */}
+      <div className={pairCls}>
+      <div className="space-y-3">
       {/* Compliance / AML board — gates every downstream check on knowing
           the brand's actual UK trading entity. Scraper auto-fires on
           first load (from the parent useEffect); the user can overwrite
@@ -4449,6 +4770,14 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           checks (CH details, PSC, accounts, Red Flag, AML PEP) stay parked. */}
       <BrandComplianceCard companyId={companyId} company={c} />
 
+      {/* Key contacts */}
+      <SidebarKeyContacts data={data} companyId={companyId} topContacts={topContacts} />
+
+      {/* Everyone BGP has emailed at this company, with add-to-CRM */}
+      <KnownContactsCard companyId={companyId} companyName={c.name} />
+      </div>
+
+      <div className="space-y-3">
       {/* Covenant — live house engine (Companies House + The Gazette + filed
           accounts). Replaced the old Red Flag/Experian placeholder card. */}
       {(c as any)?.companies_house_number && (
@@ -4459,13 +4788,14 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
             <CovenantBadge companyNumber={(c as any).companies_house_number} />
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-3 pt-0">
+        <CardContent className="p-3 pt-0 space-y-2">
+          <CovenantCommentary companyNumber={(c as any).companies_house_number} />
           <Button
             size="sm"
             variant="outline"
             className="w-full h-7 text-xs"
             onClick={runCreditCheck}
-            title="Re-run the house covenant check (Companies House + The Gazette + filed accounts) and add this brand to the nightly watch"
+            title="Re-run the house covenant check (Companies House + The Gazette + filed accounts + director track record + market signals) and add this brand to the nightly watch"
           >
             Refresh covenant check
           </Button>
@@ -4473,13 +4803,21 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       </Card>
       )}
 
-      {/* Key contacts */}
-      <SidebarKeyContacts data={data} companyId={companyId} topContacts={topContacts} />
+      {/* Embedded chat + Files tree */}
+      <LandlordSidebarBlock
+        companyId={companyId}
+        companyName={c.name}
+        folderTeams={c.folder_teams}
+        sharepointFolderUrl={c.sharepoint_folder_url}
+      />
+      </div>
+      </div>
 
       {/* BGP relationship card removed — it duplicated the Key contacts card
           above, the Deal ledger zone and the header's Tracked-brand badge.
           Team membership is now edited in Zone 4's Coverage row (BgpTeamMenu). */}
 
+      <div className={pairCls}>
       {/* News & Media */}
       {data.news && data.news.length > 0 && (() => {
         const newsSourceColor = (name: string | null): string => {
@@ -4680,6 +5018,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       })()}
 
       <BrandInstagramCard companyId={companyId} />
+      </div>
 
       {/* Menu / Best-sellers — F&B brands get menu items, retailers
           get best-sellers. Hidden for landlords (no consumer product). */}
@@ -4694,19 +5033,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         />
       )}
 
-      {/* Landlord-only sidebar block — Chat shortcut, Files / Folders
-          (with Set Up Folders dialog), reusing the property page's
-          components. Order mirrors the property sidebar in the
-          Bluewater screenshot. */}
-      {/* Files / Folders + scoped chat — now shown for EVERY company
-          (brands + landlords), so the folder toolkit is identical on
-          every company profile, not landlords-only. */}
-      <LandlordSidebarBlock
-        companyId={companyId}
-        companyName={c.name}
-        folderTeams={c.folder_teams}
-        sharepointFolderUrl={c.sharepoint_folder_url}
-      />
+      {/* Files / Folders block moved up — paired with Key contacts. */}
 
       {/* BGP Team — lives in the sidebar next to the Gallery (landlords
           only) so the right column fills and the page stays aligned. */}

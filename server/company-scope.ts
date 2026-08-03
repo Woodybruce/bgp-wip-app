@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { pool } from "./db";
+import { CLIENT_CRM_CATEGORIES, isClientCrmCategory } from "@shared/tenant-categories";
 
 const BGP_EMAIL_DOMAIN = "@brucegillinghampollard.com";
 
@@ -77,14 +78,72 @@ export async function resolveCompanyScope(req: Request): Promise<string | null> 
   return (req as any)._companyScope;
 }
 
-// Hospitality / F&B brand slice visible to client accounts. Keep in sync
-// with CLIENT_BRAND_TYPE_RE in crm.ts and bpBrandRe in brand-profile.ts.
-export const CLIENT_VISIBLE_BRAND_RE = /^tenant -.*(restaurant|dining|f&b|qsr|fast food|fast casual|food|bakery|patisserie|caf[ée]|coffee|bar|hospitality|hotel|leisure|cinema|entertainment|fitness|gym|yoga)/i;
+// The brands a landlord client's CRM shows: the hospitality/F&B/leisure/fitness
+// category slice (Landsec, 2026-08 — narrowed back from all-tenants) PLUS any
+// brand the client has pulled in from the global directory (crm_extra_brand_ids
+// on their own company). CLIENT_CRM_CATEGORIES in shared/tenant-categories.ts
+// is the single source of truth for the slice; every client-facing brand
+// filter goes through isClientVisibleBrand (per-row) or clientBrandSliceSql
+// (SQL fragment) below — don't hand-roll another regex.
+export async function getClientExtraBrandIds(scopeCompanyId: string | null | undefined): Promise<Set<string>> {
+  if (!scopeCompanyId) return new Set();
+  const r = await pool.query(`SELECT crm_extra_brand_ids FROM crm_companies WHERE id = $1`, [scopeCompanyId]);
+  return new Set<string>(((r.rows[0]?.crm_extra_brand_ids as string[]) || []).filter(Boolean));
+}
 
-export async function isClientVisibleBrand(companyId: string): Promise<boolean> {
+// The people a client account may see and message — NOT the whole BGP staff
+// directory. Three sources, unioned: the BGP team assigned to this client on
+// the org chart (crm_client_team_members), agents linked to the client's
+// properties, and anyone on the client's own team (fellow client logins and
+// staff share users.team with the client team name). Fails closed: unknown
+// scope → empty set (the caller still lets the requester see themself).
+export async function getClientVisibleUserIds(scopeCompanyId: string | null | undefined): Promise<Set<string>> {
+  const ids = new Set<string>();
+  if (!scopeCompanyId) return ids;
+  try {
+    const r = await pool.query(
+      `SELECT user_id FROM crm_client_team_members WHERE client_company_id = $1
+       UNION
+       SELECT user_id FROM crm_property_agents WHERE property_id IN (
+         SELECT id FROM crm_properties WHERE landlord_id = $1
+         UNION
+         SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+       UNION
+       SELECT u.id FROM users u
+         JOIN crm_companies c ON c.id = $1
+        WHERE LOWER(u.team) = LOWER(c.name)
+           OR c.name ILIKE ANY(COALESCE(u.additional_teams, '{}'))`,
+      [scopeCompanyId]
+    );
+    for (const row of r.rows) if (row.user_id) ids.add(row.user_id);
+  } catch {}
+  return ids;
+}
+
+// SQL fragment for "this crm_companies row is a client-visible brand":
+// slice categories + the client's own extras. Safe to inline — category
+// names are our own constants, extra ids are validated as uuids. Pass the
+// id column reference used by the surrounding query (e.g. "c.id") when the
+// table is aliased or joined.
+export async function clientBrandSliceSql(scopeCompanyId: string | null | undefined, idCol = "id"): Promise<string> {
+  const names = CLIENT_CRM_CATEGORIES.map(n => `'${n.replace(/'/g, "''")}'`).join(",");
+  const extras = [...(await getClientExtraBrandIds(scopeCompanyId))].filter(id => /^[0-9a-f-]{36}$/i.test(id));
+  const extraSql = extras.length ? ` OR ${idCol} IN (${extras.map(id => `'${id}'`).join(",")})` : "";
+  return `(company_type ILIKE ANY(ARRAY[${names}])${extraSql})`;
+}
+
+export async function isClientVisibleBrand(companyId: string, scopeCompanyId?: string | null): Promise<boolean> {
   if (!companyId || !/^[0-9a-f-]{36}$/i.test(companyId)) return false;
   const r = await pool.query(`SELECT company_type FROM crm_companies WHERE id = $1`, [companyId]);
-  return CLIENT_VISIBLE_BRAND_RE.test(r.rows[0]?.company_type || "");
+  // Slice categories (Woody, 2026-08-01: "landsec only want CRM on the
+  // hospitality fitness restaurants leisure cafes") plus any brand the client
+  // explicitly pulled in from the global directory. Non-brands stay out.
+  if (isClientCrmCategory(r.rows[0]?.company_type)) return true;
+  if (scopeCompanyId) {
+    const extra = await getClientExtraBrandIds(scopeCompanyId);
+    if (extra.has(companyId)) return true;
+  }
+  return false;
 }
 
 // True when the requesting user is an external client (role='Client' or a

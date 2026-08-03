@@ -31,7 +31,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Search, Users, FileText, AlertCircle, X, Plus, Pencil, Trash2, Building2, Archive, User, Mail, Phone, Upload, Download, File, MapPin, Check, Circle, Loader2, Sparkles } from "lucide-react";
+import { Search, Users, FileText, AlertCircle, X, Plus, Pencil, Trash2, Building2, Archive, User, Mail, Phone, Upload, Download, File, MapPin, Check, Circle, Loader2, Sparkles, MessageCircle, Target, Flame } from "lucide-react";
+import { TENANT_CATEGORIES, CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -75,6 +76,27 @@ interface LocationEntry {
 function parseLocationData(raw: string | null): LocationEntry[] {
   if (!raw) return [];
   try { return JSON.parse(raw); } catch { return []; }
+}
+
+// Recency badge for the requirement date — landlords should discount stale
+// demand at a glance. Green ≤30d, amber ≤90d, red older.
+function FreshBadge({ iso }: { iso: string | null | undefined }) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (isNaN(t)) return null;
+  const days = Math.max(0, Math.round((Date.now() - t) / 86400000));
+  const cls = days <= 30 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+    : days <= 90 ? "bg-amber-50 text-amber-700 border-amber-200"
+    : "bg-red-50 text-red-600 border-red-200";
+  const label = days === 0 ? "today" : days < 7 ? `${days}d` : days < 60 ? `${Math.round(days / 7)}w` : `${Math.round(days / 30)}mo`;
+  return <Badge variant="outline" className={`${cls} text-[9px] px-1 py-0 shrink-0`}>{label}</Badge>;
+}
+
+// How many days old a requirement is — used by the "Fresh 90d" filter.
+function requirementAgeDays(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return isNaN(t) ? null : Math.round((Date.now() - t) / 86400000);
 }
 
 const PROGRESS_STAGES = [
@@ -252,6 +274,10 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
   const [deleteItem, setDeleteItem] = useState<CrmRequirementsLeasing | null>(null);
   const [matchItem, setMatchItem] = useState<CrmRequirementsLeasing | null>(null);
   const [pipnetSyncing, setPipnetSyncing] = useState(false);
+  const [freshOnly, setFreshOnly] = useState(false);
+  const [fitsOnly, setFitsOnly] = useState(false);
+  const [newBrandOpen, setNewBrandOpen] = useState(false);
+  const [discussingId, setDiscussingId] = useState<string | null>(null);
   const { toast } = useToast();
   const [, navigate] = useLocation();
   // Client logins (e.g. Landsec) get a read-only market view — no sync /
@@ -441,6 +467,91 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
     queryKey: ["/api/crm/requirements-leasing"],
   });
 
+  // Requirement → vacancy matches ("Fits" column). Server-scoped: staff see
+  // fits across every instructed unit, a Landsec login only their portfolio.
+  const { data: matchData } = useQuery<{ unitPool: number; matches: Record<string, { count: number; top: any[] }> }>({
+    queryKey: ["/api/crm/requirements-leasing/matches"],
+  });
+  const fitsMap = matchData?.matches || {};
+
+  // "Discuss" — spin up a chat about this requirement with the brand smart-
+  // tagged and ChatBGP in the room, then jump straight into it.
+  const discussRequirement = async (item: CrmRequirementsLeasing) => {
+    if (discussingId) return;
+    setDiscussingId(item.id);
+    try {
+      const res = await apiRequest("POST", "/api/chat/threads", {
+        title: `${item.name} — requirement`,
+        memberIds: ["__chatbgp__"],
+        isAiChat: false,
+      });
+      const thread = await res.json();
+      const tag = item.companyId ? `@[${item.name}](tag:company/${item.companyId})` : item.name;
+      const sizeText = Array.isArray(item.size) ? item.size.join(", ") : (item.size || "");
+      await apiRequest("POST", `/api/chat/threads/${thread.id}/messages`, {
+        content: `${tag} requirement${sizeText ? ` (${sizeText})` : ""} — @ChatBGP what do we know about this brand, and which of our available units could fit?`,
+      });
+      navigate(`/chatbgp?thread=${thread.id}`);
+    } catch (e: any) {
+      toast({ title: "Couldn't start the conversation", description: e?.message, variant: "destructive" });
+    } finally {
+      setDiscussingId(null);
+    }
+  };
+
+  // "Intro pack" — put this brand on the unit's Operator Targeting Brief
+  // (creating the brief if the unit doesn't have one yet).
+  const sendToBrief = async (match: any, item: CrmRequirementsLeasing) => {
+    try {
+      const listRes = await apiRequest("GET", "/api/unit-briefs");
+      const rows = await listRes.json();
+      let brief = (Array.isArray(rows) ? rows : [])
+        .map((r: any) => r.brief || r)
+        .find((b: any) => b.unitId === match.unitId);
+      if (!brief) {
+        const createRes = await apiRequest("POST", "/api/unit-briefs", { unitId: match.unitId });
+        brief = await createRes.json();
+      }
+      if (!brief?.id) throw new Error("Could not open a brief for this unit");
+      const sizeText = Array.isArray(item.size) ? item.size.join(", ") : (item.size || "");
+      await apiRequest("POST", `/api/unit-briefs/${brief.id}/targets`, {
+        operatorName: item.name,
+        companyId: item.companyId || undefined,
+        rationale: `Live requirement${sizeText ? ` (${sizeText})` : ""} — added from the Requirements board`,
+      });
+      toast({ title: `${item.name} → ${match.unitName} brief`, description: `Added as a target operator at ${match.propertyName}` });
+    } catch (e: any) {
+      toast({ title: "Couldn't add to brief", description: e?.message, variant: "destructive" });
+    }
+  };
+
+  // Demand read-out: what the requirements say the market wants right now.
+  const demand = useMemo(() => {
+    const active = items.filter((i) => i.status === "Active" || !i.status);
+    const sizeBands: Record<string, number> = { "under 1,000": 0, "1,000–3,000": 0, "3,000–10,000": 0, "10,000+": 0 };
+    for (const i of active) {
+      const raw = (Array.isArray(i.size) ? i.size.join(" ") : i.size || "").replace(/,/g, "");
+      const nums = raw.match(/\d{3,}/g)?.map(Number) || [];
+      if (!nums.length) continue;
+      const mid = nums.length > 1 ? (nums[0] + nums[1]) / 2 : nums[0];
+      if (mid < 1000) sizeBands["under 1,000"]++;
+      else if (mid < 3000) sizeBands["1,000–3,000"]++;
+      else if (mid < 10000) sizeBands["3,000–10,000"]++;
+      else sizeBands["10,000+"]++;
+    }
+    const topBand = Object.entries(sizeBands).sort((a, b) => b[1] - a[1])[0];
+    const locCounts: Record<string, number> = {};
+    for (const i of active) {
+      for (const l of (Array.isArray(i.requirementLocations) ? i.requirementLocations : [])) {
+        locCounts[l] = (locCounts[l] || 0) + 1;
+      }
+    }
+    const topLocs = Object.entries(locCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    const fitsCount = active.filter((i) => fitsMap[i.id]?.count).length;
+    const fresh90 = active.filter((i) => { const d = requirementAgeDays(i.requirementDate); return d !== null && d <= 90; }).length;
+    return { topBand, topLocs, fitsCount, fresh90, total: active.length };
+  }, [items, fitsMap]);
+
   const { data: companies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
   });
@@ -624,7 +735,12 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
         const ids = item.bgpContactUserIds || (item.bgpContactUserId ? [item.bgpContactUserId] : []);
         if (ids.length > 0 && !ids.some(id => teamUserIds.has(id))) return false;
       }
-      if (groupFilter !== "all" && item.groupName !== groupFilter) return false;
+      if (groupFilter !== "all" && (item.groupName || "Ungrouped") !== groupFilter) return false;
+      if (freshOnly) {
+        const age = requirementAgeDays(item.requirementDate);
+        if (age === null || age > 90) return false;
+      }
+      if (fitsOnly && !fitsMap[item.id]?.count) return false;
       if (columnFilters.status?.length && !columnFilters.status.includes(item.status || "")) return false;
       if (columnFilters.use?.length) {
         const vals = Array.isArray(item.use) ? item.use : [];
@@ -653,7 +769,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
       }
       return true;
     });
-  }, [items, groupFilter, columnFilters, search, teamUserIds, companyFilter]);
+  }, [items, groupFilter, columnFilters, search, teamUserIds, companyFilter, freshOnly, fitsOnly, fitsMap]);
 
   const activeItems = useMemo(() => filteredItems.filter((i) => i.status === "Active" || !i.status), [filteredItems]);
   const pastItems = useMemo(() => filteredItems.filter((i) => i.status === "Past"), [filteredItems]);
@@ -685,12 +801,16 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
-        {Object.entries(groupCounts).map(([group, count]) => {
+        {Object.entries(groupCounts).filter(([group]) => group !== "Ungrouped").map(([group, count]) => {
           const groupColor = group === "Active" ? "bg-emerald-500" :
             group === "Prospect" ? "bg-blue-500" :
             group === "Target" ? "bg-amber-500" :
             group === "Under Offer" ? "bg-purple-500" :
             group === "Completed" ? "bg-slate-500" :
+            group === "F&B" ? "bg-rose-500" :
+            group === "Fitness & Wellness" ? "bg-blue-500" :
+            group === "Leisure" ? "bg-purple-500" :
+            group === "Retail" ? "bg-amber-500" :
             "bg-gray-500";
           return (
             <Card
@@ -731,6 +851,56 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
         </Card>
       </div>
 
+      {/* Demand read-out: what the live requirements say the market wants —
+          complements the group cards (use mix) with size, geography and how
+          much of that demand fits the caller's own vacancies. */}
+      {demand.total > 0 && (
+        <div className="flex items-stretch gap-3 flex-wrap">
+          <Card className={`flex-1 min-w-[170px] cursor-pointer transition-colors ${fitsOnly ? "border-primary" : ""}`} data-testid="card-demand-fits" onClick={() => setFitsOnly(!fitsOnly)}>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <Target className="w-4 h-4 text-emerald-600 shrink-0" />
+                <div>
+                  <p className="text-lg font-bold tabular-nums">{demand.fitsCount}<span className="text-xs font-normal text-muted-foreground"> / {demand.total}</span></p>
+                  <p className="text-xs text-muted-foreground">fit your available units</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className={`flex-1 min-w-[170px] cursor-pointer transition-colors ${freshOnly ? "border-primary" : ""}`} data-testid="card-demand-fresh" onClick={() => setFreshOnly(!freshOnly)}>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <Flame className="w-4 h-4 text-amber-500 shrink-0" />
+                <div>
+                  <p className="text-lg font-bold tabular-nums">{demand.fresh90}</p>
+                  <p className="text-xs text-muted-foreground">active in the last 90 days</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          {demand.topBand && demand.topBand[1] > 0 && (
+            <Card className="flex-1 min-w-[170px]" data-testid="card-demand-size">
+              <CardContent className="p-3">
+                <p className="text-lg font-bold tabular-nums">{demand.topBand[0]} <span className="text-xs font-normal text-muted-foreground">sq ft</span></p>
+                <p className="text-xs text-muted-foreground">most-wanted size ({demand.topBand[1]} requirements)</p>
+              </CardContent>
+            </Card>
+          )}
+          {demand.topLocs.length > 0 && (
+            <Card className="flex-1 min-w-[200px]" data-testid="card-demand-locations">
+              <CardContent className="p-3">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {demand.topLocs.map(([loc, n]) => (
+                    <Badge key={loc} variant="outline" className="text-[10px]">{loc} · {n}</Badge>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">hottest locations</p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -742,17 +912,27 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
             data-testid="input-search-leasing"
           />
         </div>
-        {(search || groupFilter !== "all" || hasColumnFilters) && (
+        {(search || groupFilter !== "all" || hasColumnFilters || freshOnly || fitsOnly) && (
           <Button
             variant="outline"
             size="sm"
-            onClick={() => { setSearch(""); setGroupFilter("all"); setColumnFilters({}); }}
+            onClick={() => { setSearch(""); setGroupFilter("all"); setColumnFilters({}); setFreshOnly(false); setFitsOnly(false); }}
             data-testid="button-clear-leasing-filters"
           >
             <X className="w-3.5 h-3.5 mr-1" />
             Clear
           </Button>
         )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setNewBrandOpen(true)}
+          data-testid="button-new-brand"
+          title="Create a brand in the CRM — AI fills in description, industry and imagery"
+        >
+          <Sparkles className="w-3.5 h-3.5 mr-1 text-purple-500" />
+          New Brand
+        </Button>
         {/* Admin/debug sync + inspect tools — hidden on mobile so the board is
             a clean Search + Add + cards layout, uniform with the others.
             Hidden for clients too: sync/import are staff-only writes. */}
@@ -880,6 +1060,10 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
         onEdit={setEditItem}
         onDelete={setDeleteItem}
         onMatch={setMatchItem}
+        fitsMap={fitsMap}
+        onDiscuss={discussRequirement}
+        discussingId={discussingId}
+        onBrief={sendToBrief}
         columnFilters={columnFilters}
         filterOptions={leasingFilterOptions}
         onToggleFilter={toggleColumnFilter}
@@ -915,6 +1099,10 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
               onEdit={setEditItem}
               onDelete={setDeleteItem}
               onMatch={setMatchItem}
+              fitsMap={fitsMap}
+              onDiscuss={discussRequirement}
+              discussingId={discussingId}
+              onBrief={sendToBrief}
               isArchived
               columnFilters={columnFilters}
               filterOptions={leasingFilterOptions}
@@ -954,6 +1142,10 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
               onEdit={setEditItem}
               onDelete={setDeleteItem}
               onMatch={setMatchItem}
+              fitsMap={fitsMap}
+              onDiscuss={discussRequirement}
+              discussingId={discussingId}
+              onBrief={sendToBrief}
               isArchived
               columnFilters={columnFilters}
               filterOptions={leasingFilterOptions}
@@ -1048,7 +1240,91 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
         requirement={matchItem}
         onClose={() => setMatchItem(null)}
       />
+
+      <NewBrandDialog
+        open={newBrandOpen}
+        onOpenChange={setNewBrandOpen}
+        isClientView={isClientView}
+      />
     </div>
+  );
+}
+
+// Create a brand straight from the requirements board, then kick the brand-
+// AI stack (description, industry, logo + imagery via /api/brand/enrich).
+// Clients get the client CRM category slice; staff get the full taxonomy.
+function NewBrandDialog({ open, onOpenChange, isClientView }: { open: boolean; onOpenChange: (o: boolean) => void; isClientView?: boolean }) {
+  const { toast } = useToast();
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("");
+  const [website, setWebsite] = useState("");
+  const [saving, setSaving] = useState(false);
+  const categories = isClientView ? CLIENT_CRM_CATEGORIES : TENANT_CATEGORIES;
+
+  const submit = async () => {
+    if (!name.trim() || !category || saving) return;
+    setSaving(true);
+    try {
+      const res = await apiRequest("POST", "/api/crm/companies", {
+        name: name.trim(),
+        companyType: category,
+        isTrackedBrand: true,
+        domainUrl: website.trim() || undefined,
+      });
+      const created = await res.json();
+      // Fire the AI enrichment in the background — logo, description,
+      // industry, imagery land on the brand profile as it completes.
+      apiRequest("POST", `/api/brand/enrich/${created.id}`, {}).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      toast({ title: `${created.name} created`, description: "AI enrichment running — description, logo and imagery will appear on the brand profile shortly." });
+      setName(""); setCategory(""); setWebsite("");
+      onOpenChange(false);
+    } catch (e: any) {
+      toast({ title: "Couldn't create brand", description: e?.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>New brand</DialogTitle>
+          <DialogDescription>Creates the brand in the CRM and runs the AI enrichment (description, industry, logo, imagery).</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label>Brand name</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Blank Street Coffee" data-testid="input-new-brand-name" />
+          </div>
+          <div className="space-y-2">
+            <Label>Category</Label>
+            <Select value={category || undefined} onValueChange={setCategory}>
+              <SelectTrigger data-testid="select-new-brand-category">
+                <SelectValue placeholder="Select category" />
+              </SelectTrigger>
+              <SelectContent className="max-h-[280px]">
+                {categories.map((c) => (
+                  <SelectItem key={c} value={c}>{c.replace(/^Tenant - /, "")}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Website <span className="text-muted-foreground font-normal">(optional — helps the AI)</span></Label>
+            <Input value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://…" data-testid="input-new-brand-website" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={submit} disabled={!name.trim() || !category || saving} data-testid="button-submit-new-brand">
+            {saving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+            Create brand
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1944,6 +2220,10 @@ function LeasingSection({
   onEdit,
   onDelete,
   onMatch,
+  fitsMap = {},
+  onDiscuss,
+  discussingId,
+  onBrief,
   isArchived,
   columnFilters,
   filterOptions,
@@ -1966,6 +2246,10 @@ function LeasingSection({
   onEdit: (item: CrmRequirementsLeasing) => void;
   onDelete: (item: CrmRequirementsLeasing) => void;
   onMatch?: (item: CrmRequirementsLeasing) => void;
+  fitsMap?: Record<string, { count: number; top: any[] }>;
+  onDiscuss?: (item: CrmRequirementsLeasing) => void;
+  discussingId?: string | null;
+  onBrief?: (match: any, item: CrmRequirementsLeasing) => void;
   isArchived?: boolean;
   columnFilters?: Record<string, string[]>;
   filterOptions?: { status: string[]; use: string[]; requirementType: string[]; size: string[]; requirementLocations: string[] };
@@ -1990,11 +2274,11 @@ function LeasingSection({
             ))}
           </div>
         ) : (
-          <ScrollableTable minWidth={2400}>
+          <ScrollableTable minWidth={2740}>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="min-w-[120px] sticky left-0 bg-background z-10">Name</TableHead>
+                  <TableHead className="min-w-[130px] w-[180px] max-w-[180px] sticky left-0 bg-background z-10">Name</TableHead>
                   <TableHead className="min-w-[100px]">Date</TableHead>
                   <TableHead className="min-w-[100px]">
                     {filterOptions && onToggleFilter ? (
@@ -2016,7 +2300,7 @@ function LeasingSection({
                       />
                     ) : "Use"}
                   </TableHead>
-                  <TableHead className="min-w-[100px]">
+                  <TableHead className="min-w-[150px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Requirement Type"
@@ -2026,7 +2310,7 @@ function LeasingSection({
                       />
                     ) : "Requirement Type"}
                   </TableHead>
-                  <TableHead className="min-w-[100px]">
+                  <TableHead className="min-w-[150px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Size"
@@ -2036,7 +2320,7 @@ function LeasingSection({
                       />
                     ) : "Size"}
                   </TableHead>
-                  <TableHead className="min-w-[150px]">
+                  <TableHead className="min-w-[280px]">
                     {filterOptions && onToggleFilter ? (
                       <ColumnFilterPopover
                         label="Req. Locations"
@@ -2046,12 +2330,12 @@ function LeasingSection({
                       />
                     ) : "Req. Locations"}
                   </TableHead>
+                  <TableHead className="min-w-[230px]">Fits</TableHead>
                   <TableHead className="min-w-[220px]">Map Locations</TableHead>
                   <TableHead className="min-w-[220px]">Principal Contact</TableHead>
                   <TableHead className="min-w-[220px]">Agent Contact</TableHead>
                   <TableHead className="min-w-[180px]">Deal</TableHead>
                   <TableHead className="min-w-[120px]">Landlord Pack</TableHead>
-                  <TableHead className="min-w-[120px]">Extract</TableHead>
                   <TableHead className="min-w-[150px]">Comments</TableHead>
                   <TableHead className="min-w-[80px]">Actions</TableHead>
                 </TableRow>
@@ -2059,7 +2343,7 @@ function LeasingSection({
               <TableBody>
                 {items.map((item) => (
                   <TableRow key={item.id} className={`text-xs ${isArchived ? "opacity-60" : ""}`} data-testid={`row-leasing-${item.id}`}>
-                    <TableCell className="px-1.5 py-1 font-medium text-sm sticky left-0 bg-background z-10">
+                    <TableCell className="px-1.5 py-1 font-medium text-sm w-[180px] max-w-[180px] truncate sticky left-0 bg-background z-10">
                       <InlineCompanyPicker
                         companies={companies}
                         currentCompanyId={item.companyId}
@@ -2088,10 +2372,13 @@ function LeasingSection({
                       )}
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
-                      <InlineDate
-                        value={item.requirementDate || null}
-                        onSave={(v) => inlineUpdate(item.id, { requirementDate: v || null })}
-                      />
+                      <div className="flex items-center gap-1">
+                        <InlineDate
+                          value={item.requirementDate || null}
+                          onSave={(v) => inlineUpdate(item.id, { requirementDate: v || null })}
+                        />
+                        <FreshBadge iso={item.requirementDate} />
+                      </div>
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
                       <InlineLabelSelect
@@ -2141,6 +2428,41 @@ function LeasingSection({
                         placeholder="Set locations"
                         testId={`select-locations-${item.id}`}
                       />
+                    </TableCell>
+                    <TableCell className="px-1.5 py-1" data-testid={`cell-fits-${item.id}`}>
+                      {(() => {
+                        const fit = fitsMap[item.id];
+                        if (!fit?.count) return <span className="text-[10px] text-muted-foreground">—</span>;
+                        return (
+                          <div className="space-y-0.5">
+                            {fit.top.slice(0, 2).map((m: any) => (
+                              <div key={m.unitId} className="flex items-center gap-1 group/fit">
+                                <button
+                                  className="text-[11px] text-emerald-700 hover:underline truncate max-w-[150px] text-left"
+                                  onClick={() => navigate(`/properties/${m.propertyId}`)}
+                                  title={`${m.unitName} · ${m.propertyName} · ${Number(m.sqft).toLocaleString()} sq ft${m.locationHit ? " · location match" : ""}`}
+                                >
+                                  {m.unitName} · {m.propertyName}
+                                </button>
+                                <span className="text-[9px] text-muted-foreground tabular-nums shrink-0">{Number(m.sqft).toLocaleString()}</span>
+                                {onBrief && (
+                                  <button
+                                    className="text-[9px] text-blue-600 hover:underline opacity-0 group-hover/fit:opacity-100 shrink-0"
+                                    onClick={() => onBrief(m, item)}
+                                    title="Add this brand to the unit's targeting brief"
+                                    data-testid={`button-brief-${item.id}-${m.unitId}`}
+                                  >
+                                    + brief
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                            {fit.count > 2 && (
+                              <span className="text-[9px] text-muted-foreground">+{fit.count - 2} more</span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
                       <MapLocationsCell
@@ -2206,15 +2528,6 @@ function LeasingSection({
                       <LandlordPackCell itemId={item.id} landlordPack={item.landlordPack} />
                     </TableCell>
                     <TableCell className="px-1.5 py-1">
-                      <InlineLabelSelect
-                        value={item.extract}
-                        options={CRM_OPTIONS.reqLeasingExtract}
-                        colorMap={CRM_OPTIONS.reqLeasingExtractColors}
-                        onSave={(v) => inlineUpdate(item.id, { extract: v || null })}
-                        placeholder="Set"
-                      />
-                    </TableCell>
-                    <TableCell className="px-1.5 py-1">
                       <InlineText
                         value={item.comments || ""}
                         onSave={(v) => inlineUpdate(item.id, { comments: v || null })}
@@ -2225,6 +2538,19 @@ function LeasingSection({
                     </TableCell>
                     <TableCell className="px-1 py-1">
                       <div className="flex items-center gap-0.5">
+                        {onDiscuss && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-emerald-600 hover:text-emerald-700"
+                            onClick={() => onDiscuss(item)}
+                            disabled={discussingId === item.id}
+                            data-testid={`button-discuss-leasing-${item.id}`}
+                            title="Discuss in chat — brand tagged, ChatBGP in the room"
+                          >
+                            {discussingId === item.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageCircle className="w-3.5 h-3.5" />}
+                          </Button>
+                        )}
                         {onMatch && (
                           <Button
                             variant="ghost"
@@ -2688,7 +3014,6 @@ function LeasingFormDialog({
     size: Array.isArray(defaultValues?.size) ? defaultValues.size : defaultValues?.size ? [defaultValues.size as string] : [],
     requirementLocations: Array.isArray(defaultValues?.requirementLocations) ? defaultValues.requirementLocations : defaultValues?.requirementLocations ? [defaultValues.requirementLocations as string] : [],
     locationData: defaultValues?.locationData || null,
-    extract: defaultValues?.extract || "",
     comments: defaultValues?.comments || "",
   });
 
@@ -2907,36 +3232,13 @@ function LeasingFormDialog({
               onChange={(data) => setForm({ ...form, locationData: data })}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label>Extract</Label>
-              <Select value={form.extract || undefined} onValueChange={(v) => setForm({ ...form, extract: v === "__clear__" ? "" : v })}>
-                <SelectTrigger data-testid="select-leasing-extract">
-                  <SelectValue placeholder="Select" />
-                </SelectTrigger>
-                <SelectContent>
-                  {CRM_OPTIONS.reqLeasingExtract.map((e) => (
-                    <SelectItem key={e} value={e}>
-                      <div className="flex items-center gap-2">
-                        <div className={`w-2 h-2 rounded-full ${CRM_OPTIONS.reqLeasingExtractColors[e] || "bg-gray-400"}`} />
-                        {e}
-                      </div>
-                    </SelectItem>
-                  ))}
-                  <SelectItem value="__clear__">
-                    <span className="text-muted-foreground">Clear</span>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Comments</Label>
-              <Textarea
-                value={form.comments}
-                onChange={(e) => setForm({ ...form, comments: e.target.value })}
-                data-testid="input-leasing-comments"
-              />
-            </div>
+          <div className="space-y-2">
+            <Label>Comments</Label>
+            <Textarea
+              value={form.comments}
+              onChange={(e) => setForm({ ...form, comments: e.target.value })}
+              data-testid="input-leasing-comments"
+            />
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -3109,7 +3411,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
         const ids = (item as any).bgpContactUserIds || [];
         if (ids.length > 0 && !ids.some((id: string) => teamUserIds.has(id))) return false;
       }
-      if (groupFilter !== "all" && item.groupName !== groupFilter) return false;
+      if (groupFilter !== "all" && (item.groupName || "Ungrouped") !== groupFilter) return false;
       if (columnFilters.group?.length && !columnFilters.group.includes(item.groupName || "")) return false;
       if (columnFilters.use?.length) {
         const vals = Array.isArray(item.use) ? item.use : [];
@@ -3132,8 +3434,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
         return (
           item.name.toLowerCase().includes(s) ||
           (Array.isArray(item.use) ? item.use.join(" ") : (item.use || "")).toLowerCase().includes(s) ||
-          item.locations?.toLowerCase().includes(s) ||
-          item.extract?.toLowerCase().includes(s)
+          item.locations?.toLowerCase().includes(s)
         );
       }
       return true;
@@ -3164,7 +3465,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
-        {Object.entries(groupCounts).map(([group, count]) => {
+        {Object.entries(groupCounts).filter(([group]) => group !== "Ungrouped").map(([group, count]) => {
           const badgeColor = group === "Institutional" ? "bg-indigo-500" :
             group === "Active Buyers" ? "bg-emerald-500" :
             group === "Target Buyers" ? "bg-amber-500" :
@@ -3599,7 +3900,6 @@ function InvestmentFormDialog({
     requirementType: Array.isArray(defaultValues?.requirementType) ? defaultValues.requirementType.join(", ") : (defaultValues?.requirementType || ""),
     size: Array.isArray(defaultValues?.size) ? defaultValues.size.join(", ") : (defaultValues?.size || ""),
     locations: defaultValues?.locations || "",
-    extract: defaultValues?.extract || "",
     contactName: defaultValues?.contactName || "",
     contactEmail: defaultValues?.contactEmail || "",
     contactMobile: defaultValues?.contactMobile || "",
@@ -3709,14 +4009,6 @@ function InvestmentFormDialog({
               data-testid="input-invest-locations"
             />
           </div>
-          <div className="space-y-2">
-            <Label>Extract</Label>
-            <Textarea
-              value={form.extract}
-              onChange={(e) => setForm({ ...form, extract: e.target.value })}
-              data-testid="input-invest-extract"
-            />
-          </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button type="submit" disabled={isPending || !form.name} data-testid="button-submit-invest">
@@ -3737,9 +4029,15 @@ export default function Requirements() {
   const companyIdParam = urlParams.get("companyId");
   const newParam = urlParams.get("new");
   const effectiveTeam = activeTeam === "all" ? userTeam : activeTeam;
+  // Investment requirements are BGP's own acquisition mandates — not relevant
+  // to a landlord client, so the toggle is hidden and the view forced to
+  // Leasing for client logins (Woody, 2026-08).
+  const { data: pageUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientView = pageUser?.role === "Client";
   const defaultIsInvestment = effectiveTeam === "Investment";
   const initialView = typeParam ? typeParam === "investment" : defaultIsInvestment;
   const [isInvestmentView, setIsInvestmentView] = useState(initialView);
+  const showInvestment = isInvestmentView && !isClientView;
   // ?new=1 (dashboard widget "Add") opens the create dialog for the view we
   // landed on; strip it from the URL so a refresh doesn't reopen the dialog.
   const [autoCreateView] = useState(newParam ? (initialView ? "investment" : "leasing") : null);
@@ -3760,12 +4058,13 @@ export default function Requirements() {
           <div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>
             <p className="text-sm text-muted-foreground">
-              {isInvestmentView ? "Investment requirements" : "Leasing requirements"}
+              {showInvestment ? "Investment requirements" : "Leasing requirements"}
               {teamParam ? ` · Filtered by ${teamParam} team` : ""}
               {companyIdParam ? " · Filtered by company" : ""}
             </p>
           </div>
         </div>
+        {!isClientView && (
         <div className="flex items-center gap-1 bg-muted rounded-lg p-1 w-full sm:w-auto shrink-0" data-testid="view-toggle">
           <button
             onClick={() => setIsInvestmentView(false)}
@@ -3782,9 +4081,10 @@ export default function Requirements() {
             Investment
           </button>
         </div>
+        )}
       </div>
 
-      {isInvestmentView ? <InvestmentTable teamFilter={teamParam} autoCreate={autoCreateView === "investment"} /> : <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreateView === "leasing"} />}
+      {showInvestment ? <InvestmentTable teamFilter={teamParam} autoCreate={autoCreateView === "investment"} /> : <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} autoCreate={autoCreateView === "leasing"} />}
     </div>
   );
 }

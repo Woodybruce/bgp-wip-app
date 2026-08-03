@@ -225,6 +225,13 @@ export async function enrichBrandById(companyId: string): Promise<Record<string,
 // Enrich a single company right now
 router.post("/api/brand/enrich/:companyId", requireAuth, async (req: Request, res: Response) => {
   try {
+    // Clients may enrich client-visible brands only (e.g. one they just
+    // created from the requirements board) — never another client's row.
+    const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req);
+    if (scope && !(await isClientVisibleBrand(String(req.params.companyId), scope))) {
+      return res.status(403).json({ error: "Access denied" });
+    }
     const out = await enrichCompany(String(req.params.companyId));
     res.json(out);
   } catch (err: any) {

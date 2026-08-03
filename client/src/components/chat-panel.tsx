@@ -54,6 +54,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import type { User as UserType } from "@shared/schema";
+import { TagChip, TAG_TOKEN_SOURCE, TAG_META, buildTagToken, type TagType } from "@/components/chat-tags";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -296,7 +297,10 @@ function isSafeUrl(url: string) {
 }
 
 function renderFormattedText(text: string, isUserBubble?: boolean): (string | JSX.Element)[] {
-  const tokenRegex = /!\[([^\]]*)\]\(([^)]+)\)|\[([^\]]+)\]\((https?:\/\/[^)]+)\)|\[([^\]]+)\]\((\/api\/chat-media\/[^)]+)\)|\*\*(.+?)\*\*|(https?:\/\/[^\s<>)\]]+)/g;
+  const tokenRegex = new RegExp(
+    `!\\[([^\\]]*)\\]\\(([^)]+)\\)|\\[([^\\]]+)\\]\\((https?:\\/\\/[^)]+)\\)|\\[([^\\]]+)\\]\\((\\/api\\/chat-media\\/[^)]+)\\)|\\*\\*(.+?)\\*\\*|(https?:\\/\\/[^\\s<>)\\]]+)|${TAG_TOKEN_SOURCE}`,
+    "g"
+  );
   const result: (string | JSX.Element)[] = [];
   let lastIndex = 0;
   let match;
@@ -327,6 +331,8 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
       result.push(<AuthDownloadLink key={key++} href={match[6]}>{match[5]}</AuthDownloadLink>);
     } else if (match[7]) {
       result.push(<strong key={key++}>{match[7]}</strong>);
+    } else if (match[9] && match[10] && match[11]) {
+      result.push(<TagChip key={key++} type={match[10] as TagType} id={match[11]} name={match[9]} />);
     } else if (match[8]) {
       const url = match[8].replace(/[.,;:!?]+$/, "");
       const trailing = match[8].slice(url.length);
@@ -538,7 +544,7 @@ function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, 
   );
 }
 
-function AddMemberPopover({ threadId, existingMemberIds, creatorId }: { threadId: string; existingMemberIds: string[]; creatorId: string }) {
+function AddMemberPopover({ threadId, existingMemberIds, creatorId, hasAiMember }: { threadId: string; existingMemberIds: string[]; creatorId: string; hasAiMember?: boolean }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
 
@@ -553,6 +559,12 @@ function AddMemberPopover({ threadId, existingMemberIds, creatorId }: { threadId
       return res.json();
     },
     onSuccess: (_data, userId) => {
+      if (userId === "__chatbgp__") {
+        toast({ title: "ChatBGP joined the conversation" });
+        queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
+        queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+        return;
+      }
       const user = allUsers?.find((u) => u.id === userId);
       toast({ title: `${user?.name || "Team member"} added to chat` });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
@@ -577,7 +589,25 @@ function AddMemberPopover({ threadId, existingMemberIds, creatorId }: { threadId
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-52 p-2" align="end">
-        <p className="text-xs font-semibold px-2 py-1 text-muted-foreground">Add team member</p>
+        <p className="text-xs font-semibold px-2 py-1 text-muted-foreground">Add to conversation</p>
+        {!hasAiMember && (
+          <button
+            onClick={() => {
+              addMutation.mutate("__chatbgp__");
+              setOpen(false);
+            }}
+            className="w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded hover:bg-accent text-left mb-1"
+            data-testid="button-add-member-chatbgp"
+          >
+            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-gray-800 to-black flex items-center justify-center shrink-0">
+              <Sparkles className="w-3 h-3 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <span className="truncate font-medium block">ChatBGP</span>
+              <span className="text-[10px] text-muted-foreground">AI assistant</span>
+            </div>
+          </button>
+        )}
         <div className="max-h-[200px] overflow-y-auto">
           {availableUsers.length === 0 ? (
             <p className="text-xs text-muted-foreground px-2 py-2">All team members already added</p>
@@ -905,7 +935,7 @@ function ThreadCard({ thread, onClick, onDelete, currentUserId, userPics }: { th
   const isDm = !isAi && otherMembers.length === 1;
   const dmName = isDm ? otherMembers[0].name : null;
   const dmInitials = dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
-  const displayTitle = isDm ? dmName : (thread.title || "New conversation");
+  const displayTitle = thread.title || dmName || "New conversation";
   const dmPic = isDm && otherMembers[0] ? userPics?.[otherMembers[0].id] : null;
 
   const renderAvatar = () => {
@@ -1016,10 +1046,14 @@ function ThreadList({ threads, onSelect, onNewGroupChat, unseenCount, onOpenAiFu
   const [searchQuery, setSearchQuery] = useState("");
 
   const filteredThreads = useMemo(() => {
+    // Every non-AI thread the API returned is one this user belongs to —
+    // show them all (the old "2+ other members" rule hid 1:1 conversations
+    // from the person who was added to them). Only your own empty,
+    // member-less drafts stay hidden.
     let filtered = threads.filter(t => {
       if (t.isAiChat) return false;
       const otherMembers = t.members.filter(m => m.id !== currentUserId);
-      if (otherMembers.length <= 1) return false;
+      if (otherMembers.length === 0 && t.createdBy === currentUserId && !t.lastMessage) return false;
       return true;
     });
     if (searchQuery.trim()) {
@@ -1029,37 +1063,52 @@ function ThreadList({ threads, onSelect, onNewGroupChat, unseenCount, onOpenAiFu
         t.creatorName.toLowerCase().includes(q) ||
         (t.propertyName || "").toLowerCase().includes(q) ||
         (t.linkedName || "").toLowerCase().includes(q) ||
-        (t.lastMessage?.content || "").toLowerCase().includes(q)
+        (t.lastMessage?.content || "").toLowerCase().includes(q) ||
+        t.members.some(m => m.name.toLowerCase().includes(q))
       );
     }
     return filtered;
   }, [threads, searchQuery, currentUserId]);
 
+  const latestAiThread = useMemo(
+    () => threads.filter(t => t.isAiChat).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0],
+    [threads]
+  );
+
   return (
     <div className="flex-1 overflow-y-auto flex flex-col">
-      <div className="px-3 pt-3 pb-2 space-y-2 shrink-0">
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1 gap-1.5 text-xs h-9 rounded-lg"
-            onClick={onNewGroupChat}
-            data-testid="button-new-group-chat"
-          >
-            <Users className="w-3.5 h-3.5" />
-            New Group
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="flex-1 gap-1.5 text-xs h-9 rounded-lg"
-            onClick={() => onOpenAiFullPage()}
-            data-testid="button-new-ai-chat"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            AI Chat
-          </Button>
+      {/* ChatBGP pinned at the top of the inbox — one tap to the AI, while
+          the conversations below make the human chat impossible to miss. */}
+      <button
+        onClick={() => onOpenAiFullPage()}
+        className="w-full flex items-center gap-3 px-3 py-3 hover:bg-accent/50 transition-colors border-b text-left shrink-0"
+        data-testid="button-pinned-chatbgp"
+      >
+        <div className="w-10 h-10 rounded-full bg-gray-900 text-white flex items-center justify-center shrink-0">
+          <Sparkles className="w-4.5 h-4.5" />
         </div>
+        <div className="flex-1 min-w-0">
+          <span className="text-[13px] font-semibold block">ChatBGP</span>
+          <p className="text-[12px] text-muted-foreground truncate">
+            {latestAiThread?.lastMessage
+              ? <><span className="font-medium">{latestAiThread.lastMessage.senderName.split(" ")[0]}: </span>{latestAiThread.lastMessage.content}</>
+              : "Ask about brands, units, deals — or add it to any chat"}
+          </p>
+        </div>
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground shrink-0">AI</span>
+      </button>
+
+      <div className="px-3 pt-3 pb-2 space-y-2 shrink-0">
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full gap-1.5 text-xs h-9 rounded-lg"
+          onClick={onNewGroupChat}
+          data-testid="button-new-group-chat"
+        >
+          <Users className="w-3.5 h-3.5" />
+          New message
+        </Button>
 
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
@@ -1082,11 +1131,19 @@ function ThreadList({ threads, onSelect, onNewGroupChat, unseenCount, onOpenAiFu
         </div>
       </div>
 
+      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-3 pt-1 pb-1 shrink-0">
+        Conversations
+      </p>
+
       {filteredThreads.length === 0 && !searchQuery ? (
-        <div className="text-center py-10 flex-1 flex flex-col items-center justify-center">
+        <div className="text-center py-10 flex-1 flex flex-col items-center justify-center px-6">
           <MessageCircle className="w-10 h-10 text-muted-foreground/40 mb-3" />
           <p className="text-sm text-muted-foreground font-medium">No conversations yet</p>
-          <p className="text-xs text-muted-foreground mt-1">Start a group chat or AI conversation</p>
+          <p className="text-xs text-muted-foreground mt-1 mb-4">Message your team about a property, a deal or a brand — tag anything with @.</p>
+          <Button size="sm" className="gap-1.5 text-xs" onClick={onNewGroupChat} data-testid="button-empty-new-message">
+            <Users className="w-3.5 h-3.5" />
+            Message your team
+          </Button>
         </div>
       ) : filteredThreads.length === 0 && searchQuery ? (
         <div className="text-center py-8">
@@ -1138,7 +1195,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   const chatBgpCtx = useChatBGPState();
   const activeThreadId = chatBgpCtx.activeThreadId;
   const setActiveThreadId = chatBgpCtx.setActiveThreadId;
-  const [view, setView] = useState<"chat" | "threads" | "new-group">("chat");
+  // The panel lands on the unified inbox — ChatBGP pinned on top, team
+  // conversations below. The AI screen is one tap away, not the front door.
+  const [view, setView] = useState<"chat" | "threads" | "new-group">("threads");
   const [showSidebar, setShowSidebar] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
@@ -1272,8 +1331,52 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       const firstName = u.name.split(" ")[0]?.toLowerCase() || "";
       const fullName = u.name.toLowerCase();
       return firstName.startsWith(q) || fullName.startsWith(q) || u.name.toLowerCase().includes(q);
-    }).slice(0, 6);
+    }).slice(0, 4);
   }, [mentionQuery, allUsers, currentUser?.id]);
+
+  // ── Smart tags: the @ menu also searches brands, properties, deals and
+  // letting-tracker units (debounced server search), plus a ChatBGP row.
+  // Selecting an entity inserts readable "@Name" text; handleSend swaps it
+  // for the durable @[Name](tag:type/id) token that renders as a chip.
+  const [tagEntities, setTagEntities] = useState<Array<{ type: TagType; id: string; name: string; subtitle?: string }>>([]);
+  const pendingTagsRef = useRef<Map<string, { type: TagType; id: string; name: string }>>(new Map());
+
+  useEffect(() => {
+    if (mentionQuery === null || mentionQuery.length < 2) {
+      setTagEntities([]);
+      return;
+    }
+    const q = mentionQuery;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/chat/tag-search?q=${encodeURIComponent(q)}`, {
+          credentials: "include",
+          headers: { ...getAuthHeaders() },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const entities = (data.results || []).filter((r: any) => r.type !== "user");
+        setTagEntities(entities);
+      } catch {}
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [mentionQuery]);
+
+  type MentionOption =
+    | { kind: "chatbgp" }
+    | { kind: "user"; id: string; name: string }
+    | { kind: "entity"; type: TagType; id: string; name: string; subtitle?: string };
+
+  const mentionOptions = useMemo<MentionOption[]>(() => {
+    if (mentionQuery === null) return [];
+    const q = mentionQuery.toLowerCase();
+    const opts: MentionOption[] = [];
+    const aiMatches = q === "" || "chatbgp".startsWith(q) || "chat".startsWith(q) || q === "ai";
+    if (aiMatches && !isActiveThreadAi && activeThreadId) opts.push({ kind: "chatbgp" });
+    for (const u of mentionUsers) opts.push({ kind: "user", id: u.id, name: u.name });
+    for (const e of tagEntities) opts.push({ kind: "entity", type: e.type, id: e.id, name: e.name, subtitle: e.subtitle });
+    return opts;
+  }, [mentionQuery, mentionUsers, tagEntities, isActiveThreadAi, activeThreadId]);
 
   const addMemberToThread = useMutation({
     mutationFn: async ({ threadId, userId }: { threadId: string; userId: string }) => {
@@ -1291,32 +1394,50 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     },
   });
 
-  const handleMentionSelect = useCallback(async (user: { id: string; name: string }) => {
+  const handleOptionSelect = useCallback(async (opt: MentionOption) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
     const before = input.slice(0, mentionStart);
     const after = input.slice(textarea.selectionStart);
-    const newInput = `${before}@${user.name.split(" ")[0]} ${after}`;
+
+    let inserted: string;
+    if (opt.kind === "chatbgp") {
+      inserted = "@ChatBGP";
+      // Summoning the AI adds it to the conversation immediately, same as
+      // picking a person — the server also auto-joins on send as a backstop.
+      if (activeThreadId && !activeThread?.hasAiMember) {
+        addMemberToThread.mutate({ threadId: activeThreadId, userId: "__chatbgp__" });
+      }
+    } else if (opt.kind === "user") {
+      inserted = `@${opt.name.split(" ")[0]}`;
+      if (activeThreadId) {
+        const existingMemberIds = new Set(activeThread?.members?.map((m) => m.id) || []);
+        const creatorId = activeThread?.createdBy || currentUser?.id || "";
+        if (!existingMemberIds.has(opt.id) && opt.id !== creatorId) {
+          addMemberToThread.mutate({ threadId: activeThreadId, userId: opt.id });
+        }
+      }
+    } else {
+      // Brackets/parens would corrupt the tag token — strip them from the
+      // display name (they stay intact on the record itself).
+      const clean = opt.name.replace(/[\[\]()]/g, "").trim();
+      inserted = `@${clean}`;
+      pendingTagsRef.current.set(inserted, { type: opt.type, id: opt.id, name: clean });
+    }
+
+    const newInput = `${before}${inserted} ${after}`;
     setInput(newInput);
     setMentionQuery(null);
     setMentionIndex(0);
     setMentionStart(-1);
 
     setTimeout(() => {
-      const cursorPos = before.length + user.name.split(" ")[0].length + 2;
+      const cursorPos = before.length + inserted.length + 1;
       textarea.selectionStart = cursorPos;
       textarea.selectionEnd = cursorPos;
       textarea.focus();
     }, 0);
-
-    if (activeThreadId) {
-      const existingMemberIds = new Set(activeThread?.members?.map((m) => m.id) || []);
-      const creatorId = activeThread?.createdBy || currentUser?.id || "";
-      if (!existingMemberIds.has(user.id) && user.id !== creatorId) {
-        addMemberToThread.mutate({ threadId: activeThreadId, userId: user.id });
-      }
-    }
-  }, [input, mentionStart, activeThreadId, activeThread, currentUser, addMemberToThread, allUsers]);
+  }, [input, mentionStart, activeThreadId, activeThread, currentUser, addMemberToThread]);
 
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
@@ -1747,120 +1868,11 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     retryDelay: 1000,
   });
 
-  const chatbgpMentionMutation = useMutation({
-    mutationFn: async ({ content, threadId }: { content: string; threadId: string }) => {
-      await saveMessageMutation.mutateAsync({
-        threadId,
-        role: "user",
-        content,
-      });
-
-      const threadMessages = activeThread?.messages || [];
-      const recentMessages = threadMessages.slice(-10).map(m => ({
-        role: m.role,
-        content: m.content,
-      }));
-      recentMessages.push({ role: "user", content });
-
-      const token = localStorage.getItem("bgp_auth_token");
-      const hdrs: Record<string, string> = { "Content-Type": "application/json" };
-      if (token) hdrs["Authorization"] = `Bearer ${token}`;
-      const mentionCtrl = new AbortController();
-      const mentionTmo = setTimeout(() => mentionCtrl.abort(), 600000);
-      const res = await fetch("/api/chatbgp/chat", {
-        method: "POST",
-        headers: hdrs,
-        body: JSON.stringify({ messages: recentMessages, threadId }),
-        credentials: "include",
-        signal: mentionCtrl.signal,
-      });
-      clearTimeout(mentionTmo);
-      if (!res.ok) throw new Error("Request failed");
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("No stream");
-      const decoder = new TextDecoder();
-      let buf = "", last = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() || "";
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try { const p = JSON.parse(line.slice(6)); if (p.reply) last = line.slice(6); } catch {}
-          }
-        }
-      }
-      if (buf.startsWith("data: ")) {
-        try { const p = JSON.parse(buf.slice(6)); if (p.reply) last = buf.slice(6); } catch {}
-      }
-      if (!last) throw new Error("No response");
-      return { ...JSON.parse(last), threadId };
-    },
-    onSuccess: (data: { reply: string; action?: ChatAction; threadId: string; savedToThread?: boolean }) => {
-      const msg: LocalChatMessage = { role: "assistant", content: data.reply };
-      if (data.action) msg.action = data.action;
-      setMessages(prev => [...prev, msg]);
-
-      if (!data.savedToThread) {
-        saveMessageMutation.mutate({
-          threadId: data.threadId,
-          role: "assistant",
-          content: data.reply,
-          actionData: data.action ? JSON.stringify(data.action) : undefined,
-        });
-      }
-
-      queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", data.threadId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
-    },
-    onError: async (_err: any) => {
-      const tid = activeThreadId;
-      if (tid) {
-        const delays = [3000, 8000, 15000, 30000, 60000];
-        for (const delay of delays) {
-          try {
-            await new Promise(r => setTimeout(r, delay));
-            const token = localStorage.getItem("bgp_auth_token");
-            const headers: Record<string, string> = {};
-            if (token) headers["Authorization"] = `Bearer ${token}`;
-            const res = await fetch(`/api/chat/threads/${tid}`, { credentials: "include", headers });
-            if (res.ok) {
-              const thread = await res.json();
-              const msgs = thread.messages || [];
-              if (msgs.length > 0) {
-                const lastMsg = msgs[msgs.length - 1];
-                if (lastMsg.role === "assistant") {
-                  const recovered: LocalChatMessage = { role: "assistant", content: lastMsg.content };
-                  if (lastMsg.actionData) {
-                    try { recovered.action = JSON.parse(lastMsg.actionData); } catch {}
-                  }
-                  setMessages(prev => {
-                    const filtered = prev.filter(m => m.content !== "Sorry, ChatBGP couldn't respond right now.");
-                    return [...filtered, recovered];
-                  });
-                  queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", tid] });
-                  queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
-                  return;
-                }
-              }
-            }
-          } catch {}
-        }
-      }
-      setMessages(prev => [
-        ...prev,
-        { role: "assistant", content: "Sorry, ChatBGP couldn't respond right now." },
-      ]);
-    },
-  });
-
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, aiSendMutation.isPending, teamSendMutation.isPending, chatbgpMentionMutation.isPending]);
+  }, [messages, aiSendMutation.isPending, teamSendMutation.isPending]);
 
   useEffect(() => {
     unmountedRef.current = false;
@@ -2326,7 +2338,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     }
   }, [isRecording, stopRecording, startRecording]);
 
-  const isSending = aiSendMutation.isPending || teamSendMutation.isPending || chatbgpMentionMutation.isPending;
+  const isSending = aiSendMutation.isPending || teamSendMutation.isPending;
 
   useEffect(() => {
     if (pendingPromptRef.current && !isSending && input === pendingPromptRef.current) {
@@ -2360,7 +2372,6 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
         return newMessages;
       });
     } else {
-      const hasChatBGPMention = content.toLowerCase().includes("@chatbgp");
       const userMessage: LocalChatMessage = {
         role: "user",
         content,
@@ -2369,13 +2380,14 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
       };
       setMessages(prev => [...prev, userMessage]);
 
-      if (hasChatBGPMention && activeThreadId) {
-        chatbgpMentionMutation.mutate({ content, threadId: activeThreadId });
-      } else if (activeThreadId) {
+      // The server owns AI replies in team threads: it auto-joins ChatBGP on
+      // an @mention and triggers the group responder — one code path, no
+      // double-reply when the AI is already a member.
+      if (activeThreadId) {
         teamSendMutation.mutate({ content, threadId: activeThreadId });
       }
     }
-  }, [activeThreadId, currentUser, isActiveThreadAi, aiSendMutation, teamSendMutation, chatbgpMentionMutation]);
+  }, [activeThreadId, currentUser, isActiveThreadAi, aiSendMutation, teamSendMutation]);
 
   // Drain the queue when a mutation finishes
   useEffect(() => {
@@ -2390,7 +2402,18 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     if (!text && attachedFiles.length === 0) return;
     stopTyping();
 
-    const content = text || (attachedFiles.length > 0 ? `Please process these ${attachedFiles.length} file(s)` : "");
+    let content = text || (attachedFiles.length > 0 ? `Please process these ${attachedFiles.length} file(s)` : "");
+    // Swap the readable "@Name" inserts for durable tag tokens. Longest
+    // names first so "@Bluewater Shopping Centre" wins over "@Bluewater".
+    if (pendingTagsRef.current.size > 0) {
+      const entries = [...pendingTagsRef.current.entries()].sort((a, b) => b[0].length - a[0].length);
+      for (const [key, tag] of entries) {
+        if (content.includes(key)) {
+          content = content.split(key).join(buildTagToken(tag.type, tag.id, tag.name));
+        }
+      }
+      pendingTagsRef.current.clear();
+    }
     const filesToSend = [...attachedFiles];
     setInput("");
     setAttachedFiles([]);
@@ -2421,20 +2444,20 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   }, [activeThreadId, isSending, currentUser, messages, isActiveThreadAi, aiSendMutation, teamSendMutation]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (mentionQuery !== null && mentionUsers.length > 0) {
+    if (mentionQuery !== null && mentionOptions.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setMentionIndex((prev) => (prev + 1) % mentionUsers.length);
+        setMentionIndex((prev) => (prev + 1) % mentionOptions.length);
         return;
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setMentionIndex((prev) => (prev - 1 + mentionUsers.length) % mentionUsers.length);
+        setMentionIndex((prev) => (prev - 1 + mentionOptions.length) % mentionOptions.length);
         return;
       }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
-        handleMentionSelect(mentionUsers[mentionIndex]);
+        handleOptionSelect(mentionOptions[mentionIndex]);
         return;
       }
       if (e.key === "Escape") {
@@ -2511,9 +2534,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
   const threadCreatorId = activeThread?.createdBy || currentUser?.id || "";
 
   const headerTitle = view === "new-group"
-    ? "New Group"
+    ? "New message"
     : view === "threads"
-      ? "Messages"
+      ? "Chat"
       : activeThread
         ? (activeThread.title || "Chat")
         : (isActiveThreadAi ? "ChatBGP" : "Chat");
@@ -2569,7 +2592,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
               <ArrowLeft className={`w-4 h-4 transition-transform rotate-180`} />
             </Button>
           )}
-          {view === "chat" && activeThreadId && (
+          {view === "chat" && !(showSidebar && !activeThreadId) && (
             <Button
               variant="ghost"
               size="icon"
@@ -2577,24 +2600,21 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
               onClick={() => {
                 setActiveThreadId(null);
                 setMessages([]);
-                setView("chat");
+                setView("threads");
               }}
-              data-testid="button-back-to-ai"
+              data-testid="button-back-to-inbox"
+              title="All conversations"
             >
               <ArrowLeft className="w-4 h-4" />
             </Button>
           )}
-          {(view === "threads" || view === "new-group") && (
+          {view === "new-group" && (
             <Button
               variant="ghost"
               size="icon"
               className="h-7 w-7 shrink-0"
-              onClick={() => {
-                setView("chat");
-                setActiveThreadId(null);
-                setMessages([]);
-              }}
-              data-testid="button-back-to-ai-chat"
+              onClick={() => setView("threads")}
+              data-testid="button-back-to-inbox-from-group"
             >
               <ArrowLeft className="w-4 h-4" />
             </Button>
@@ -2605,9 +2625,12 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
               {view === "chat" && !isActiveThreadAi && activeThreadId && <Users className="w-4 h-4 text-muted-foreground shrink-0" />}
               <span className="font-semibold text-[14px] truncate">{headerTitle}</span>
             </div>
-            {activeThreadId && view === "chat" && threadMembers.length > 0 && (
+            {activeThreadId && view === "chat" && (threadMembers.length > 0 || activeThread?.hasAiMember) && (
               <div className="text-[11px] text-muted-foreground truncate mt-0.5">
-                {threadMembers.slice(0, 4).map(m => m.name.split(" ")[0]).join(", ")}
+                {[
+                  ...threadMembers.slice(0, 4).map(m => m.name.split(" ")[0]),
+                  ...(activeThread?.hasAiMember && !isActiveThreadAi ? ["ChatBGP"] : []),
+                ].join(", ")}
                 {threadMembers.length > 4 && ` +${threadMembers.length - 4}`}
               </div>
             )}
@@ -2640,6 +2663,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                 threadId={activeThreadId}
                 existingMemberIds={threadMembers.map(m => m.id)}
                 creatorId={threadCreatorId}
+                hasAiMember={!!activeThread?.hasAiMember}
               />
               <PropertyPicker
                 threadId={activeThreadId}
@@ -2814,7 +2838,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                     onCheckboxClick={handleCheckboxClick}
                   />
                 ))}
-                {(aiSendMutation.isPending || chatbgpMentionMutation.isPending) && (
+                {aiSendMutation.isPending && (
                   streamingText ? (
                     // Live draft — tokens render as they stream, claude.ai-style.
                     <div className="flex justify-start" data-testid="panel-streaming-response">
@@ -2849,7 +2873,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
                     </div>
                     <span>
                       {typingUsers.length === 1
-                        ? `${allUsers?.find(u => u.id === typingUsers[0].userId)?.name?.split(" ")[0] || "Someone"} is typing...`
+                        ? `${typingUsers[0].userId === "__chatbgp__" ? "ChatBGP" : allUsers?.find(u => u.id === typingUsers[0].userId)?.name?.split(" ")[0] || "Someone"} is typing...`
                         : `${typingUsers.length} people typing...`}
                     </span>
                   </div>
@@ -2936,41 +2960,83 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
               ) : (
                 <>
                   <div className="relative flex-1">
-                    {mentionQuery !== null && mentionUsers.length > 0 && (
+                    {mentionQuery !== null && mentionOptions.length > 0 && (
                       <div
                         ref={mentionRef}
                         className="absolute bottom-full left-0 right-0 mb-1 bg-popover border rounded-lg shadow-lg z-50 overflow-hidden"
                         data-testid="mention-dropdown"
                       >
-                        <div className="px-2 py-1.5 border-b">
-                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Team Members</p>
+                        <div className="max-h-[280px] overflow-y-auto">
+                          {mentionOptions.map((opt, i) => {
+                            const groupOf = (o: typeof opt) =>
+                              o.kind === "chatbgp" ? "AI" :
+                              o.kind === "user" ? "People" :
+                              o.type === "company" ? "Brands & companies" :
+                              o.type === "property" ? "Properties" :
+                              o.type === "deal" ? "Deals" :
+                              o.type === "unit" ? "Letting tracker" :
+              o.type === "folder" ? "Folders" : "Contacts";
+                            const group = groupOf(opt);
+                            const showHeader = i === 0 || groupOf(mentionOptions[i - 1]) !== group;
+                            const optKey = opt.kind === "chatbgp" ? "chatbgp" : `${opt.kind === "entity" ? opt.type : "user"}-${opt.id}`;
+                            return (
+                              <div key={optKey}>
+                                {showHeader && (
+                                  <div className="px-2 py-1 border-b bg-muted/40">
+                                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{group}</p>
+                                  </div>
+                                )}
+                                <button
+                                  className={`w-full flex items-center gap-2 px-2.5 py-2 text-xs text-left transition-colors ${
+                                    i === mentionIndex ? "bg-accent" : "hover:bg-accent/50"
+                                  }`}
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    handleOptionSelect(opt);
+                                  }}
+                                  onMouseEnter={() => setMentionIndex(i)}
+                                  data-testid={`mention-option-${optKey}`}
+                                >
+                                  {opt.kind === "chatbgp" ? (
+                                    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-gray-800 to-black flex items-center justify-center shrink-0">
+                                      <Sparkles className="w-3 h-3 text-white" />
+                                    </div>
+                                  ) : opt.kind === "user" ? (
+                                    <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                                      <span className="text-[10px] font-semibold">{opt.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</span>
+                                    </div>
+                                  ) : (
+                                    (() => {
+                                      const Icon = TAG_META[opt.type]?.icon || Building2;
+                                      return (
+                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${TAG_META[opt.type]?.chip || "bg-muted"}`}>
+                                          <Icon className="w-3 h-3" />
+                                        </div>
+                                      );
+                                    })()
+                                  )}
+                                  <div className="flex-1 min-w-0">
+                                    <p className="font-medium truncate">{opt.kind === "chatbgp" ? "ChatBGP" : opt.name}</p>
+                                    {opt.kind === "entity" && opt.subtitle && (
+                                      <p className="text-[10px] text-muted-foreground truncate">{opt.subtitle}</p>
+                                    )}
+                                    {opt.kind === "chatbgp" && (
+                                      <p className="text-[10px] text-muted-foreground truncate">AI assistant — joins this conversation</p>
+                                    )}
+                                  </div>
+                                  {opt.kind === "user" && activeThreadId && (
+                                    <span className="text-[9px] text-muted-foreground shrink-0">
+                                      {activeThread?.members?.some((m) => m.id === opt.id) ? "In chat" : "+ Add"}
+                                    </span>
+                                  )}
+                                  {opt.kind === "entity" && (
+                                    <span className="text-[9px] text-muted-foreground shrink-0">Tag</span>
+                                  )}
+                                </button>
+                              </div>
+                            );
+                          })}
                         </div>
-                        {mentionUsers.map((user, i) => (
-                          <button
-                            key={user.id}
-                            className={`w-full flex items-center gap-2 px-2.5 py-2 text-xs text-left transition-colors ${
-                              i === mentionIndex ? "bg-accent" : "hover:bg-accent/50"
-                            }`}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              handleMentionSelect(user);
-                            }}
-                            onMouseEnter={() => setMentionIndex(i)}
-                            data-testid={`mention-option-${user.id}`}
-                          >
-                            <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                              <span className="text-[10px] font-semibold">{user.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}</span>
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="font-medium truncate">{user.name}</p>
-                            </div>
-                            {activeThreadId && (
-                              <span className="text-[9px] text-muted-foreground shrink-0">
-                                {activeThread?.members?.some((m) => m.id === user.id) ? "In chat" : "+ Add"}
-                              </span>
-                            )}
-                          </button>
-                        ))}
                       </div>
                     )}
                     <Textarea

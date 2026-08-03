@@ -127,7 +127,10 @@ export function BrandPortfolioMap({
       }
       bounds.extend([s.lat!, s.lng!]);
     }
-    mapInstance.current.fitBounds(bounds, { padding: [16, 16], maxZoom: 10 });
+    // animate:false — a fitBounds zoom animation left running while the
+    // dashboard grid re-renders/unmounts the widget crashes Leaflet's
+    // _onZoomTransitionEnd ("_leaflet_pos of undefined") on every zoom end.
+    mapInstance.current.fitBounds(bounds, { padding: [16, 16], maxZoom: 10, animate: false });
   }, [stores, onSelect]);
 
   // The dashboard renders this inside a resizable grid widget, so the
@@ -148,7 +151,7 @@ export function BrandPortfolioMap({
         const pts = stores
           .filter(s => typeof s.lat === "number" && typeof s.lng === "number" && Number.isFinite(s.lat) && Number.isFinite(s.lng))
           .map(s => [s.lat!, s.lng!] as [number, number]);
-        if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [16, 16], maxZoom: 10 });
+        if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [16, 16], maxZoom: 10, animate: false });
       });
     });
     ro.observe(el);
@@ -158,6 +161,9 @@ export function BrandPortfolioMap({
   useEffect(() => {
     return () => {
       if (mapInstance.current) {
+        // Cancel any in-flight pan/zoom before teardown — removing a map
+        // mid-animation leaves its transition handler firing on dead panes.
+        try { mapInstance.current.stop(); } catch {}
         mapInstance.current.remove();
         mapInstance.current = null;
       }

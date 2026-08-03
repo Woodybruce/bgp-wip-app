@@ -170,16 +170,14 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     }
 
     // Clients may only read their OWN company's profile here. (Landsec audit.)
-    const { resolveCompanyScope } = await import("./company-scope");
+    const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
     const bpScope = await resolveCompanyScope(req as any);
     if (bpScope && bpScope !== companyId) {
-      // Clients get full Brand Intelligence on the hospitality/F&B brand
-      // slice (same predicate as GET /api/crm/companies — keep in sync
-      // with CLIENT_BRAND_TYPE_RE in crm.ts). Everything else stays 403.
-      const { pool } = await import("./db");
-      const t = await pool.query(`SELECT company_type FROM crm_companies WHERE id = $1`, [companyId]);
-      const bpBrandRe = /^tenant -.*(restaurant|dining|f&b|qsr|fast food|fast casual|food|bakery|patisserie|caf[ée]|coffee|bar|hospitality|hotel|leisure|cinema|entertainment|fitness|gym|yoga)/i;
-      if (!bpBrandRe.test(t.rows[0]?.company_type || "")) {
+      // Clients get full Brand Intelligence on any brand they can see in
+      // their CRM — the hospitality/leisure/fitness slice plus their own
+      // added brands (same predicate as GET /api/crm/companies). Everything
+      // else stays 403.
+      if (!(await isClientVisibleBrand(String(companyId), bpScope))) {
         return res.status(403).json({ error: "Not available for this account" });
       }
     }
@@ -1033,14 +1031,41 @@ router.patch("/api/brand/:companyId", requireAuth, async (req: Request, res: Res
 // ─── Agent representations CRUD ─────────────────────────────────────────
 router.post("/api/brand/representations", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { brandCompanyId, agentCompanyId, agentType, region, primaryContactId, startDate, notes } = req.body || {};
-    if (!brandCompanyId || !agentCompanyId || !agentType) {
-      return res.status(400).json({ error: "brandCompanyId, agentCompanyId, agentType required" });
+    const { brandCompanyId, agentType, region, primaryContactId, startDate, notes } = req.body || {};
+    let { agentCompanyId } = req.body || {};
+    if (!brandCompanyId || !agentType) {
+      return res.status(400).json({ error: "brandCompanyId and agentType required" });
+    }
+    // Resolve the agent FIRM from the picked agent CONTACT when no company was
+    // chosen — the representation table is keyed on the agent company, but the
+    // user often just picks the agent person. Use the contact's own company;
+    // if they have none, mint a lightweight Agent company from their name and
+    // link it, so "add this agent to the brand" always lands.
+    if (!agentCompanyId && primaryContactId) {
+      const ct = await pool.query(`SELECT company_id, name FROM crm_contacts WHERE id = $1`, [primaryContactId]);
+      agentCompanyId = ct.rows[0]?.company_id || null;
+      if (!agentCompanyId && ct.rows[0]?.name) {
+        const created = await pool.query(
+          `INSERT INTO crm_companies (name, company_type, agent_type) VALUES ($1, 'Agent', $2) RETURNING id`,
+          [`${ct.rows[0].name} (Agent)`, agentType]
+        );
+        agentCompanyId = created.rows[0].id;
+        await pool.query(`UPDATE crm_contacts SET company_id = $1 WHERE id = $2 AND company_id IS NULL`, [agentCompanyId, primaryContactId]);
+      }
+    }
+    if (!agentCompanyId) {
+      return res.status(400).json({ error: "Pick an agent firm or an agent contact." });
     }
     const r = await pool.query(
       `INSERT INTO brand_agent_representations (brand_company_id, agent_company_id, agent_type, region, primary_contact_id, start_date, notes)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
       [brandCompanyId, agentCompanyId, agentType, region || null, primaryContactId || null, startDate || null, notes || null]
+    );
+    // Self-heal: stamp the sub-type on the agent company so it shows in the
+    // agent pickers next time (the blank agent_type is what hid it before).
+    await pool.query(
+      `UPDATE crm_companies SET agent_type = $1 WHERE id = $2 AND (agent_type IS NULL OR agent_type = '')`,
+      [agentType, agentCompanyId]
     );
     res.json(r.rows[0]);
   } catch (err: any) {
@@ -1231,7 +1256,7 @@ export async function researchBrandStores(
   found: number; upserted: number; openCount: number; companyName: string;
   diagnostics: Array<{ step: string; outcome: string; detail?: string }>;
 }> {
-  const googleKey = process.env.GOOGLE_API_KEY;
+  const googleKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
   if (!googleKey) throw new Error("GOOGLE_API_KEY not configured");
   const scope = opts.scope === "global" ? "global" : "uk";
 
@@ -1483,7 +1508,7 @@ router.get("/api/brand/gallery-image/:imageId", requireAuth, async (req: Request
 // the panel banner stays sharp on retina displays.
 router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Request, res: Response) => {
   try {
-    const apiKey = process.env.GOOGLE_API_KEY;
+    const apiKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
     const companyId = String(req.params.companyId);
 
     const sendImage = (buf: Buffer, mime: string = "image/jpeg") => {
@@ -1537,12 +1562,18 @@ router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Requ
     //    Loop the top matches so we can skip rows whose local file has
     //    been wiped on a deploy without falling through to 204 when
     //    other valid images are sitting right behind them.
+    // The banner renders this endpoint NEXT TO a gallery image — the client
+    // passes ?exclude=<imageId> for the pane it's already showing so the
+    // fallback can't serve the same photo twice side by side ("images are
+    // in here twice", Woody).
+    const excludeId = typeof req.query.exclude === "string" && req.query.exclude ? req.query.exclude : null;
     const fb = await pool.query(
       `SELECT i.local_path, i.mime_type
          FROM image_studio_images i
          JOIN crm_companies c ON LOWER(i.brand_name) = LOWER(c.name)
         WHERE c.id = $1
           AND 'brand-auto' = ANY(i.tags)
+          AND ($2::text IS NULL OR i.id::text <> $2::text)
         ORDER BY
           CASE
             WHEN 'landlord-website' = ANY(i.tags) THEN 1
@@ -1554,7 +1585,7 @@ router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Requ
           END,
           i.created_at DESC
         LIMIT 8`,
-      [companyId]
+      [companyId, excludeId]
     );
     if (fb.rows.length > 0) {
       // readPersistedImage falls back to a DB-stored copy when the local

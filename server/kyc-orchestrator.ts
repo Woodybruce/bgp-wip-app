@@ -954,4 +954,87 @@ router.post("/api/kyc/run-periodic-rescreen", requireAuth, async (req: Request, 
   }
 });
 
+// ── AI commentary + outstanding items for the KYC panel ─────────────────────
+// The outstanding list is computed deterministically in code (never by the
+// model); Claude only writes the plain-English read of where the file stands.
+const KYC_CHECKLIST_LABELS: Record<string, string> = {
+  id_verified: "Identity verification (passport / driving licence)",
+  address_verified: "Address verification (utility / bank statement)",
+  ubo_identified: "Ultimate beneficial owner(s) identification",
+  company_cert: "Cert of incorporation / Companies House check",
+  sof_evidenced: "Source of funds evidence",
+  sow_evidenced: "Source of wealth evidence",
+  sanctions_clear: "Sanctions screening",
+  pep_checked: "PEP screening",
+  adverse_media: "Adverse media check",
+  edd_complete: "Enhanced due diligence (if required)",
+  risk_assessed: "Customer risk rating",
+  mlro_review: "MLRO file review",
+};
+
+const kycCommentaryCache = new Map<string, { data: any; expiresAt: number }>();
+
+router.get("/api/kyc/company/:companyId/commentary", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const companyId = String(req.params.companyId);
+    const refresh = req.query.refresh === "1";
+    const cached = kycCommentaryCache.get(companyId);
+    if (!refresh && cached && Date.now() < cached.expiresAt) return res.json(cached.data);
+
+    const { rows } = await pool.query(
+      `SELECT name, company_type, companies_house_number, uk_entity_name, aml_checklist,
+              kyc_status, kyc_expires_at, companies_house_data
+         FROM crm_companies WHERE id = $1`,
+      [companyId],
+    );
+    const co = rows[0];
+    if (!co) return res.status(404).json({ error: "Company not found" });
+
+    const checklist: Record<string, { ticked?: boolean; source?: string }> = co.aml_checklist || {};
+    const chData: any = co.companies_house_data || {};
+
+    // Deterministic outstanding list: data-level gaps first, then unticked
+    // checklist items grouped as-is.
+    const outstanding: string[] = [];
+    if (!co.companies_house_number) outstanding.push("Companies House number not confirmed — resolve the UK trading entity first");
+    if (!co.uk_entity_name) outstanding.push("UK trading entity name not set");
+    if (co.companies_house_number && !(Array.isArray(chData.officers) && chData.officers.length)) outstanding.push("Officers not yet pulled from Companies House");
+    if (co.companies_house_number && !(Array.isArray(chData.pscs) && chData.pscs.length)) outstanding.push("PSCs not yet pulled from Companies House");
+    if (co.companies_house_number && !chData.latestAccountsExtracted) outstanding.push("Latest filed accounts not yet extracted");
+    for (const [id, label] of Object.entries(KYC_CHECKLIST_LABELS)) {
+      if (!checklist[id]?.ticked) outstanding.push(label);
+    }
+    const ticked = Object.entries(KYC_CHECKLIST_LABELS).filter(([id]) => checklist[id]?.ticked).map(([, label]) => label);
+    const autoTicked = Object.entries(KYC_CHECKLIST_LABELS).filter(([id]) => checklist[id]?.ticked && (checklist[id] as any)?.source && (checklist[id] as any).source !== "manual").length;
+
+    let commentary: string | null = null;
+    try {
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+      if (apiKey) {
+        const opts: any = { apiKey };
+        if (process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) opts.baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+        const client = new Anthropic(opts);
+        const msg = await client.messages.create({
+          model: "claude-haiku-4-5-20251001", max_tokens: 250,
+          messages: [{ role: "user", content: `You are an MLRO's assistant summarising a KYC/AML file. 2-3 plain-English sentences: where the file stands, what's done, and the most important thing still needed. Never invent checks — only reference what's listed. Plain prose only — no markdown, no bold, no headings, no bullet points.\nCompany: ${co.name} (${co.company_type || "type unknown"}) · CH ${co.companies_house_number || "not confirmed"} · KYC status: ${co.kyc_status || "not started"}${co.kyc_expires_at ? ` · expires ${String(co.kyc_expires_at).slice(0, 10)}` : ""}\nCompleted (${ticked.length}/${Object.keys(KYC_CHECKLIST_LABELS).length}, ${autoTicked} auto-evidenced): ${ticked.join("; ") || "nothing yet"}\nOutstanding: ${outstanding.join("; ") || "nothing — file complete"}` }],
+        });
+        commentary = (msg.content[0] as any)?.text?.trim() || null;
+      }
+    } catch { /* commentary is best-effort */ }
+
+    const payload = {
+      commentary,
+      outstanding,
+      completed: ticked.length,
+      total: Object.keys(KYC_CHECKLIST_LABELS).length,
+      generatedAt: new Date().toISOString(),
+    };
+    kycCommentaryCache.set(companyId, { data: payload, expiresAt: Date.now() + 10 * 60 * 1000 });
+    res.json(payload);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "Commentary failed" });
+  }
+});
+
 export default router;

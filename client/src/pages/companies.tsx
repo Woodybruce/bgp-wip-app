@@ -1532,6 +1532,11 @@ function PropertyFoldersBrowser({ propertyName }: { propertyName: string }) {
   const [currentTeam, setCurrentTeam] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState("");
   const TEAMS = CRM_OPTIONS.dealTeam;
+  // SharePoint is sealed for client logins, so this probe only ever produced a
+  // 403 per team on every client visit. Clients already see "Documents are
+  // managed by the BGP team" instead of the browser.
+  const { data: pfbViewer } = useQuery<any>({ queryKey: ["/api/auth/me"], staleTime: 5 * 60 * 1000 });
+  const pfbIsClient = pfbViewer?.role === "Client" || !!pfbViewer?.companyScopeId;
 
   const { data: teamResults } = useQuery<Record<string, { exists: boolean; folders: SpItem[] }>>({
     queryKey: ["/api/microsoft/property-folders-check", propertyName],
@@ -1551,7 +1556,7 @@ function PropertyFoldersBrowser({ propertyName }: { propertyName: string }) {
       }
       return results;
     },
-    enabled: expanded,
+    enabled: expanded && !pfbIsClient,
     staleTime: 60000,
   });
 
@@ -1569,7 +1574,7 @@ function PropertyFoldersBrowser({ propertyName }: { propertyName: string }) {
       if (!res.ok) throw new Error("Failed to browse");
       return res.json();
     },
-    enabled: !!currentTeam,
+    enabled: !!currentTeam && !pfbIsClient,
   });
 
   const foundTeams = teamResults ? Object.keys(teamResults) : [];

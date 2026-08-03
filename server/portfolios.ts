@@ -26,6 +26,33 @@ let _ensured = false;
 async function ensureTables(): Promise<void> {
   if (_ensured) return;
   await pool.query(`
+    -- portfolio_runs carries a hard FK onto property_pathway_runs, which is
+    -- only created by drizzle migrations — on a database that never ran them
+    -- (fresh deploy, local fixture) every /api/portfolios call 500'd with
+    -- 'relation "property_pathway_runs" does not exist'. Bootstrap it here
+    -- too (matches shared/schema.ts propertyPathwayRuns) so the page
+    -- self-heals like the rest of the app's ensure-table blocks.
+    CREATE TABLE IF NOT EXISTS property_pathway_runs (
+      id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+      property_id varchar,
+      address text NOT NULL,
+      postcode text,
+      formatted_address text,
+      uprn text,
+      lat double precision,
+      lng double precision,
+      current_stage integer NOT NULL DEFAULT 1,
+      stage_status jsonb NOT NULL DEFAULT '{}'::jsonb,
+      stage_results jsonb NOT NULL DEFAULT '{}'::jsonb,
+      sharepoint_folder_path text,
+      sharepoint_folder_url text,
+      model_run_id varchar,
+      why_buy_document_url text,
+      started_by varchar,
+      started_at timestamp DEFAULT now(),
+      updated_at timestamp DEFAULT now(),
+      completed_at timestamp
+    );
     CREATE TABLE IF NOT EXISTS portfolios (
       id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
       name text NOT NULL,

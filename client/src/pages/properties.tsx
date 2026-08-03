@@ -481,11 +481,13 @@ export function InlineAgents({
   allUsers,
   colorMap,
   landlordId,
+  readOnly,
 }: {
   propertyId: string;
   agentLinks: Array<{ propertyId: string; userId: string; role?: string | null }>;
   allUsers: User[];
   colorMap?: Record<string, string>;
+  readOnly?: boolean;
   // When set, the picker biases the unassigned list toward people already
   // on the landlord's client team (see crm_client_team_members). Falls
   // back to the full BGP staff list when omitted.
@@ -610,6 +612,7 @@ export function InlineAgents({
                     ))}
                   </div>
                 </div>
+                {!readOnly && (
                 <div className="border-t pt-2 flex justify-end">
                   <button
                     onClick={() => removeMutation.mutate(String(user.id))}
@@ -619,11 +622,13 @@ export function InlineAgents({
                     <X className="w-2.5 h-2.5" />Remove from property
                   </button>
                 </div>
+                )}
               </div>
             </PopoverContent>
           </Popover>
         );
       })}
+      {!readOnly && (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -679,6 +684,7 @@ export function InlineAgents({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
     </div>
   );
 }
@@ -847,12 +853,14 @@ export function InlineOwnerLink({
   fieldName,
   label,
   allCompanies,
+  readOnly,
 }: {
   propertyId: string;
   companyId: string | null | undefined;
   fieldName: string;
   label: string;
   allCompanies: CrmCompany[];
+  readOnly?: boolean;
 }) {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
@@ -880,20 +888,28 @@ export function InlineOwnerLink({
     return (
       <div className="flex items-center gap-1 min-w-0 max-w-full">
         <Link href={`/companies/${company.id}`} className="min-w-0 max-w-full">
-          <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted max-w-full inline-flex items-center" title={company.name}>
+          {/* Role label on the chip — the same company often fills several
+              roles (Landsec as Landlord AND Freeholder), and unlabelled
+              chips read as duplicates. */}
+          <Badge variant="outline" className="text-[11px] px-2 py-0.5 cursor-pointer hover:bg-muted max-w-full inline-flex items-center" title={`${label}: ${company.name}`}>
             <Building2 className="w-3 h-3 mr-1 text-muted-foreground shrink-0" />
+            <span className="text-muted-foreground mr-1 shrink-0">{label} ·</span>
             <span className="truncate">{company.name}</span>
           </Badge>
         </Link>
+        {!readOnly && (
         <button
           className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center shrink-0"
           onClick={() => updateMutation.mutate(null)}
         >
           <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
         </button>
+        )}
       </div>
     );
   }
+
+  if (readOnly) return null;
 
   return (
     <DropdownMenu>
@@ -1186,10 +1202,12 @@ export function InlineDeals({
   propertyId,
   dealLinks,
   allDeals,
+  readOnly,
 }: {
   propertyId: string;
   dealLinks: DealLink[];
   allDeals: DealLink[];
+  readOnly?: boolean;
 }) {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
@@ -1240,6 +1258,7 @@ export function InlineDeals({
                 <span className="truncate">{deal.name}</span>
               </Badge>
             </Link>
+            {!readOnly && (
             <button
               className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center shrink-0 opacity-0 group-hover/deal:opacity-100 transition-opacity"
               onClick={() => unlinkMutation.mutate(deal.id)}
@@ -1247,9 +1266,11 @@ export function InlineDeals({
             >
               <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
             </button>
+            )}
           </div>
         ))}
       </div>
+      {!readOnly && (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -1288,6 +1309,7 @@ export function InlineDeals({
           </div>
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
     </div>
   );
 }
@@ -1296,10 +1318,12 @@ export function InlineTenants({
   propertyId,
   tenantLinks,
   allCompanies,
+  readOnly,
 }: {
   propertyId: string;
   tenantLinks: { propertyId: string; companyId: string }[];
   allCompanies: CrmCompany[];
+  readOnly?: boolean;
 }) {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
@@ -1357,6 +1381,7 @@ export function InlineTenants({
               {company.name}
             </Badge>
           </Link>
+          {!readOnly && (
           <button
             className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center"
             onClick={() => removeMutation.mutate(company.id)}
@@ -1364,11 +1389,13 @@ export function InlineTenants({
           >
             <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
           </button>
+          )}
         </span>
       ))}
       {hiddenCount > 0 && (
         <Badge variant="secondary" className="text-[10px] px-1.5 py-0">+{hiddenCount} more</Badge>
       )}
+      {!readOnly && (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -1406,6 +1433,7 @@ export function InlineTenants({
           </div>
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
     </div>
   );
 }
@@ -2116,6 +2144,60 @@ export function PropertySharepointLink({
       <Link2 className="w-3 h-3 mr-1" />
       Link SharePoint Folder
     </Button>
+  );
+}
+
+// Conversations that @-tagged this record in chat — the flip side of smart
+// tags: from the entity page back to every discussion that mentioned it.
+// Member-scoped server-side, so it only ever lists threads you belong to.
+export function TaggedConversationsPanel({ entityType, entityId }: { entityType: string; entityId: string }) {
+  const [, navigate] = useLocation();
+  // Chat tagging is a staff feature (member-scoped BGP threads); a client
+  // viewer isn't in any of those threads, so firing this just 403s on every
+  // client property view. Skip it for client logins.
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"], staleTime: 5 * 60 * 1000 });
+  const isClientViewer = me?.role === "Client" || !!me?.companyScopeId;
+  const { data } = useQuery<{ threads: Array<{ id: string; title: string | null; updatedAt: string; hasAiMember?: boolean; lastMessage: string | null }> }>({
+    queryKey: ["/api/chat/threads-tagging", entityType, entityId],
+    enabled: !isClientViewer,
+    queryFn: async () => {
+      const res = await fetch(`/api/chat/threads-tagging?type=${entityType}&id=${entityId}`, { credentials: "include" });
+      if (!res.ok) return { threads: [] };
+      return res.json();
+    },
+  });
+  if (isClientViewer) return null;
+  const threads = data?.threads || [];
+  if (threads.length === 0) return null;
+
+  return (
+    <Card data-testid="tagged-conversations-panel">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <MessageSquare className="w-4 h-4" />
+          <h3 className="text-sm font-semibold">Conversations</h3>
+          <Badge variant="secondary" className="text-[10px]">{threads.length}</Badge>
+        </div>
+        <div className="space-y-2">
+          {threads.map((t) => (
+            <div
+              key={t.id}
+              className="block p-3 rounded-md border hover-elevate transition-colors cursor-pointer"
+              onClick={() => navigate(`/chatbgp?thread=${t.id}`)}
+              data-testid={`tagged-thread-${t.id}`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium truncate">{t.title || "Conversation"}</span>
+                {t.hasAiMember && <Sparkles className="w-3 h-3 shrink-0 text-muted-foreground" />}
+              </div>
+              {t.lastMessage && (
+                <p className="text-xs text-muted-foreground truncate mt-1">{t.lastMessage}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -5009,6 +5091,11 @@ function PropertiesList({
 
   const { activeTeam } = useTeam();
   const isLandsecView = activeTeam === "Landsec";
+  // Client logins get a read-oriented table: the inline ownership editors,
+  // status/class/team setters and the header's Import / New Property /
+  // Landlord Health are staff tools (their writes are server-blocked anyway).
+  const { data: propsViewer } = useQuery<any>({ queryKey: ["/api/auth/me"], staleTime: 5 * 60 * 1000 });
+  const isClientViewer = propsViewer?.role === "Client" || !!propsViewer?.companyScopeId;
 
   const landsecCompanyIds = useMemo(() => {
     if (!isLandsecView || !allCompanies) return null;
@@ -5220,6 +5307,7 @@ function PropertiesList({
       fullHeight
       subtitle={`${items.length} properties in the CRM${isLandsecView ? " · Landsec portfolio" : teamFilter ? ` · Filtered by ${teamFilter} team` : ""}`}
       actions={
+        isClientViewer ? undefined : (
         <>
           {/* On mobile keep just the primary action — Landlord Health and
               Import are desktop tools and bled off the right edge on a phone. */}
@@ -5252,6 +5340,7 @@ function PropertiesList({
             New Property
           </Button>
         </>
+        )
       }
       className="space-y-6"
       testId="properties-page"
@@ -5617,6 +5706,7 @@ function PropertiesList({
                               fieldName="landlordId"
                               label="Client / Landlord"
                               allCompanies={allCompanies}
+                              readOnly={isClientViewer}
                             />
                             <InlineOwnerLink
                               propertyId={item.id}
@@ -5624,6 +5714,7 @@ function PropertiesList({
                               fieldName="freeholderId"
                               label="Freeholder"
                               allCompanies={allCompanies}
+                              readOnly={isClientViewer}
                             />
                             <InlineOwnerLink
                               propertyId={item.id}
@@ -5631,6 +5722,7 @@ function PropertiesList({
                               fieldName="longLeaseholderId"
                               label="Long Leaseholder"
                               allCompanies={allCompanies}
+                              readOnly={isClientViewer}
                             />
                             <InlineOwnerLink
                               propertyId={item.id}
@@ -5638,6 +5730,7 @@ function PropertiesList({
                               fieldName="seniorLenderId"
                               label="Senior Lender"
                               allCompanies={allCompanies}
+                              readOnly={isClientViewer}
                             />
                             <InlineOwnerLink
                               propertyId={item.id}
@@ -5645,12 +5738,16 @@ function PropertiesList({
                               fieldName="juniorLenderId"
                               label="Junior Lender"
                               allCompanies={allCompanies}
+                              readOnly={isClientViewer}
                             />
                           </div>
                         </TableCell>
                       )}
                       {visibleColumns.status && (
                         <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                          {isClientViewer ? (
+                            <span className="text-xs">{item.status || "—"}</span>
+                          ) : (
                           <InlineLabelSelect
                             value={item.status}
                             options={STATUS_OPTIONS}
@@ -5659,10 +5756,14 @@ function PropertiesList({
                             placeholder="Set status"
                             compact
                           />
+                          )}
                         </TableCell>
                       )}
                       {visibleColumns.assetClass && (
                         <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                          {isClientViewer ? (
+                            <span className="text-xs">{(Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass) || "—"}</span>
+                          ) : (
                           <InlineLabelSelect
                             value={Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass}
                             options={ASSET_CLASS_OPTIONS}
@@ -5670,16 +5771,21 @@ function PropertiesList({
                             onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "assetClass", value: val })}
                             placeholder="Set class"
                           />
+                          )}
                         </TableCell>
                       )}
                       {visibleColumns.engagement && (
                         <TableCell className="px-1.5 py-1 w-[140px] max-w-[140px]" onClick={(e) => e.stopPropagation()}>
+                          {isClientViewer ? (
+                            <span className="text-xs">{Array.isArray(item.bgpEngagement) ? item.bgpEngagement.join(", ") : (item.bgpEngagement || "—")}</span>
+                          ) : (
                           <InlineEngagement
                             value={item.bgpEngagement}
                             options={TEAM_OPTIONS}
                             colorMap={TEAM_COLORS}
                             onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "bgpEngagement", value: val })}
                           />
+                          )}
                         </TableCell>
                       )}
                       {visibleColumns.deals && (
@@ -5688,6 +5794,7 @@ function PropertiesList({
                             propertyId={item.id}
                             dealLinks={dealLinks}
                             allDeals={allDealsRaw}
+                            readOnly={isClientViewer}
                           />
                         </TableCell>
                       )}
@@ -5697,6 +5804,7 @@ function PropertiesList({
                             propertyId={item.id}
                             tenantLinks={tenantLinks}
                             allCompanies={allCompanies}
+                            readOnly={isClientViewer}
                           />
                         </TableCell>
                       )}
@@ -5708,6 +5816,7 @@ function PropertiesList({
                             allUsers={allUsers}
                             colorMap={userColorMap}
                             landlordId={item.landlordId}
+                            readOnly={isClientViewer}
                           />
                         </TableCell>
                       )}

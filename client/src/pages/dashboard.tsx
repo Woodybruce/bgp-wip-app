@@ -11,6 +11,7 @@ import { DraggableGrid } from "@/components/draggable-grid";
 import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
+import { AIActivityCard } from "@/components/ai-activity-card";
 import {
   Building2,
   CalendarDays,
@@ -204,7 +205,7 @@ function ActivityFeedWidget() {
 
 function MyTasksWidget() {
   const { data: tasksData = [], isLoading: tasksLoading } = useQuery<any[]>({ queryKey: ["/api/tasks"] });
-  const { data: briefingData, isLoading: briefingLoading } = useQuery<any>({
+  const { data: briefingData, isLoading: briefingLoading, refetch: refetchBriefing } = useQuery<any>({
     queryKey: ["/api/ai-briefing"],
     staleTime: 30 * 60 * 1000,
     refetchOnWindowFocus: false,
@@ -288,7 +289,23 @@ function MyTasksWidget() {
                   {briefingData.briefing.split("\n").map(renderBriefingLine)}
                 </div>
               ) : (
-                <p className="text-[11px] text-muted-foreground py-2">Briefing will appear shortly...</p>
+                /* AI unavailable or briefing not generated — show a static
+                   digest so the panel always earns its space, with a retry
+                   instead of an open-ended promise. */
+                <div className="py-2 space-y-1">
+                  <p className="text-[11px] leading-snug">
+                    {activeTasks.length === 0
+                      ? "No open tasks — all clear for today."
+                      : `${activeTasks.length} open task${activeTasks.length === 1 ? "" : "s"}${overdueTasks.length > 0 ? `, ${overdueTasks.length} overdue` : ""}.`}
+                  </p>
+                  <button
+                    onClick={() => refetchBriefing()}
+                    className="text-[10px] text-primary hover:underline flex items-center gap-1"
+                    data-testid="button-retry-briefing"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5" /> Try AI briefing again
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -644,9 +661,22 @@ export default function Dashboard() {
   const rawTemplate = templateData?.template;
   const templateLayout = (rawTemplate?._version >= LAYOUT_VERSION) ? rawTemplate : null;
 
-  const portfolioSavedLayout = validSaved?.portfolio || templateLayout?.portfolio || null;
   const widgetSavedLayout = validSaved?.widgets || templateLayout?.widgets || null;
   const hiddenPortfolioBoards: string[] = validSaved?.hiddenPortfolio ?? templateLayout?.hiddenPortfolio ?? ["portfolio-properties"];
+
+  // Portfolio boards and widgets used to live in two separate grids stacked
+  // on the page, so a widget (e.g. My Tasks & Briefing) could never be
+  // dragged above the portfolio boards — drags "to the top" silently snapped
+  // back. When the portfolio section is present they now render as ONE grid,
+  // laid out from `combined` — seeded by stacking the two legacy layouts so
+  // existing arrangements carry over.
+  const combinedSavedLayout = validSaved?.combined || templateLayout?.combined || (() => {
+    const p = (validSaved?.portfolio || templateLayout?.portfolio)?.lg as any[] | undefined;
+    const w = (validSaved?.widgets || templateLayout?.widgets)?.lg as any[] | undefined;
+    if (!p && !w) return null;
+    const maxY = (p || []).reduce((m: number, l: any) => Math.max(m, l.y + l.h), 0);
+    return { lg: [...(p || []), ...(w || []).map((l: any) => ({ ...l, y: l.y + maxY }))] };
+  })();
 
   const isAdmin = (user as any)?.isAdmin || (user as any)?.is_admin;
 
@@ -664,9 +694,9 @@ export default function Dashboard() {
     },
   });
 
-  const handlePortfolioLayoutSave = useCallback((layout: Record<string, any>) => {
+  const handleCombinedLayoutSave = useCallback((layout: Record<string, any>) => {
     const current = (user as any)?.dashboardLayout || {};
-    layoutSaveMutation.mutate({ ...current, portfolio: layout, _version: LAYOUT_VERSION });
+    layoutSaveMutation.mutate({ ...current, combined: layout, _version: LAYOUT_VERSION });
   }, [layoutSaveMutation, user]);
 
   const handleWidgetLayoutSave = useCallback((layout: Record<string, any>) => {
@@ -674,17 +704,31 @@ export default function Dashboard() {
     layoutSaveMutation.mutate({ ...current, widgets: layout, _version: LAYOUT_VERSION });
   }, [layoutSaveMutation, user]);
 
+  // Hide/show must base the hidden list on hiddenPortfolioBoards (what the
+  // UI is actually showing, template fallback included) — basing it on the
+  // user's own (often absent) layout meant a chip click saved the wrong
+  // list: showing one board unhid everything, hiding one re-showed the
+  // template-hidden ones.
   const handleHidePortfolioBoard = useCallback((boardId: string) => {
     const current = (user as any)?.dashboardLayout || {};
-    const hidden = [...(current.hiddenPortfolio || []), boardId];
+    const hidden = Array.from(new Set([...hiddenPortfolioBoards, boardId]));
     layoutSaveMutation.mutate({ ...current, hiddenPortfolio: hidden, _version: LAYOUT_VERSION });
-  }, [layoutSaveMutation, user]);
+  }, [layoutSaveMutation, user, hiddenPortfolioBoards]);
 
   const handleShowPortfolioBoard = useCallback((boardId: string) => {
     const current = (user as any)?.dashboardLayout || {};
-    const hidden = (current.hiddenPortfolio || []).filter((id: string) => id !== boardId);
-    layoutSaveMutation.mutate({ ...current, hiddenPortfolio: hidden, _version: LAYOUT_VERSION });
-  }, [layoutSaveMutation, user]);
+    const hidden = hiddenPortfolioBoards.filter((id: string) => id !== boardId);
+    // Drop the restored board's stale rect so the grid appends it fresh at
+    // the bottom (full width, own row) instead of dumping it onto its old
+    // coordinates on top of whatever now lives there.
+    const portfolio = current.portfolio?.lg
+      ? { ...current.portfolio, lg: current.portfolio.lg.filter((l: any) => l.i !== boardId) }
+      : current.portfolio;
+    const combined = current.combined?.lg
+      ? { ...current.combined, lg: current.combined.lg.filter((l: any) => l.i !== boardId) }
+      : current.combined;
+    layoutSaveMutation.mutate({ ...current, portfolio, combined, hiddenPortfolio: hidden, _version: LAYOUT_VERSION });
+  }, [layoutSaveMutation, user, hiddenPortfolioBoards]);
 
   const handleResetLayout = useCallback(() => {
     layoutSaveMutation.mutate(null as any, {
@@ -876,6 +920,11 @@ export default function Dashboard() {
   }
   const topGroups = Object.entries(dealsByGroup).sort(([, a], [, b]) => b - a).slice(0, 5);
 
+  // Filled in by the portfolio section below (renders earlier in the JSX)
+  // and consumed by the single dashboard grid at the bottom — portfolio
+  // boards and widgets share one grid so any board can be dragged anywhere.
+  let portfolioBoardsForGrid: any[] = [];
+
   return (
     <div className="p-4 sm:p-6 space-y-6" data-testid="dashboard-page">
       <div className="flex items-start justify-between gap-4">
@@ -1025,6 +1074,26 @@ export default function Dashboard() {
                       {companyInfo.companyType && (
                         <Badge className="text-[10px] bg-zinc-800 text-white dark:bg-zinc-200 dark:text-zinc-800">{companyInfo.companyType}</Badge>
                       )}
+                    </div>
+                  </div>
+                  {/* Headline KPI strip — the first screen should carry the
+                      portfolio numbers, not just the company name. */}
+                  <div className="grid grid-cols-4 gap-2 mb-3">
+                    <div className="rounded-lg border bg-muted/30 px-2 py-1.5 text-center">
+                      <p className="text-base font-bold tabular-nums leading-tight">{(portfolioData.properties || []).length}</p>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Properties</p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/30 px-2 py-1.5 text-center">
+                      <p className="text-base font-bold tabular-nums leading-tight">{occupancyRate}%</p>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Occupancy</p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/30 px-2 py-1.5 text-center">
+                      <p className="text-base font-bold tabular-nums leading-tight">{stats.vacantUnits ?? 0}</p>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Vacant units</p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/30 px-2 py-1.5 text-center">
+                      <p className="text-base font-bold tabular-nums leading-tight">{expiringUnits}</p>
+                      <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Expiring soon</p>
                     </div>
                   </div>
                   <ScrollArea className="flex-1">
@@ -1254,7 +1323,7 @@ export default function Dashboard() {
           {
             id: "portfolio-relationship",
             label: "BGP Relationship",
-            defaultW: 6, defaultH: 6, minW: 3, minH: 4,
+            defaultW: 6, defaultH: 14, minW: 3, minH: 4,
             content: (() => {
               const evs = (portfolioData.events || []) as any[];
               const past = evs
@@ -1310,6 +1379,19 @@ export default function Dashboard() {
                           ))}
                         </div>
                       </div>
+                    )}
+                    {/* The full AI activity commentary — same card as the
+                        internal company page's BGP Relationship zone ("just
+                        mirror our page", Woody 2026-07-30). Read-only for
+                        clients; the middleware scopes it to their own
+                        company and the curate action stays staff-side. */}
+                    {clientCompanyId && (
+                      <AIActivityCard
+                        subjectType="landlord"
+                        subjectId={clientCompanyId}
+                        title={`${clientCompanyName || companyInfo?.name || "Account"} — Activity`}
+                        compact
+                      />
                     )}
                   </CardContent>
                 </Card>
@@ -1937,6 +2019,8 @@ export default function Dashboard() {
         const visiblePortfolioItems = clientScopedItems.filter((item: any) => !hiddenPortfolioBoards.includes(item.id));
         const hiddenPortfolioItems = clientScopedItems.filter((item: any) => hiddenPortfolioBoards.includes(item.id));
 
+        portfolioBoardsForGrid = visiblePortfolioItems.map((i: any) => ({ ...i, description: i.description || PORTFOLIO_DESCRIPTIONS[i.id] }));
+
         return (
           <div data-testid="portfolio-overview">
             <div className="flex items-center gap-2 mb-2">
@@ -1958,14 +2042,6 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
-            <DraggableGrid
-              items={visiblePortfolioItems.map((i: any) => ({ ...i, description: i.description || PORTFOLIO_DESCRIPTIONS[i.id] }))}
-              savedLayout={portfolioSavedLayout}
-              onLayoutSave={handlePortfolioLayoutSave}
-              onHideItem={handleHidePortfolioBoard}
-              editing={dashboardEditing}
-              rowHeight={30}
-            />
           </div>
         );
       })()}
@@ -2701,7 +2777,7 @@ export default function Dashboard() {
         return null;
         };
 
-        const gridItems = activeWidgets.map((wid) => {
+        const widgetGridItems = activeWidgets.map((wid) => {
           const sizes = WIDGET_GRID_SIZES[wid] || { w: 12, h: 8, minW: 4, minH: 4 };
           return {
             id: wid,
@@ -2715,19 +2791,25 @@ export default function Dashboard() {
           };
         }).filter(item => item.content !== null);
 
+        // One grid for everything. When portfolio boards are present they
+        // share the grid with the widgets (combined layout key); plain staff
+        // dashboards keep their existing widgets layout untouched.
+        const hasPortfolioBoards = portfolioBoardsForGrid.length > 0;
+        const gridItems = [...portfolioBoardsForGrid, ...widgetGridItems];
+
         return (
           <DraggableGrid
             items={gridItems}
-            savedLayout={widgetSavedLayout}
-            onLayoutSave={handleWidgetLayoutSave}
-            onHideItem={handleHideWidget}
+            savedLayout={hasPortfolioBoards ? combinedSavedLayout : widgetSavedLayout}
+            onLayoutSave={hasPortfolioBoards ? handleCombinedLayoutSave : handleWidgetLayoutSave}
+            onHideItem={(id) => (id.startsWith("portfolio-") ? handleHidePortfolioBoard(id) : handleHideWidget(id))}
             editing={dashboardEditing}
             rowHeight={30}
           />
         );
       })()}
 
-      {activeWidgets.length === 0 && (
+      {activeWidgets.length === 0 && portfolioBoardsForGrid.length === 0 && (
         <Card>
           <CardContent className="py-16 text-center">
             <Settings2 className="w-10 h-10 mx-auto mb-3 text-muted-foreground opacity-30" />

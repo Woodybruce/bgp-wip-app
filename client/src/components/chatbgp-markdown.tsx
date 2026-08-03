@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { TagChip, TAG_TOKEN_SOURCE, type TagType } from "@/components/chat-tags";
 import { Copy, Check, Download, Loader2 } from "lucide-react";
 
 // Single source of truth for chat-media downloads across desktop chat,
@@ -141,7 +142,8 @@ function parseInline(text: string, keyPrefix: string): (string | JSX.Element)[] 
     String.raw`|\[([^\]]+)\]` + GAP + String.raw`\((\/` + URL_CORE + String.raw`)\)` +                 // [t](/path)
     String.raw`|\*\*(.+?)\*\*` +                                                  // **bold**
     "|`([^`]+)`" +                                                                // `code`
-    String.raw`|(https?:\/\/[^\s<>)\]]+)`,                                        // bare url
+    String.raw`|(https?:\/\/[^\s<>)\]]+)` +                                       // bare url
+    `|${TAG_TOKEN_SOURCE}`,                                                       // @[Name](tag:type/id) smart tag
     "g",
   );
   const result: (string | JSX.Element)[] = [];
@@ -182,6 +184,9 @@ function parseInline(text: string, keyPrefix: string): (string | JSX.Element)[] 
     } else if (match[10]) {
       // `code`
       result.push(<code key={`${keyPrefix}-${key++}`}>{match[10]}</code>);
+    } else if (match[12] && match[13] && match[14]) {
+      // @[Name](tag:type/id) — smart tag chip
+      result.push(<TagChip key={`${keyPrefix}-${key++}`} type={match[13] as TagType} id={match[14]} name={match[12]} />);
     } else if (match[11]) {
       // bare https://url
       const url = match[11].replace(/[.,;:!?]+$/, "");

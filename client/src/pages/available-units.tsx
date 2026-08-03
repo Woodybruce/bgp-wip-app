@@ -20,8 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target,
-} from "lucide-react";
+  ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -30,7 +29,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Fragment, useState, useMemo, useRef, useCallback } from "react";
+import { Fragment, useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
@@ -41,7 +40,7 @@ import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiS
 import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer, PropertyUnit } from "@shared/schema";
 import { BRIEF_TARGET_STATUSES } from "@shared/schema";
 import { BrandSearchInput, type BrandPick } from "@/components/brand-search-input";
-import { TargetOperatorsTable } from "@/components/target-operators-table";
+import { TargetRowCells } from "@/components/target-operators-table";
 import { useTeam } from "@/lib/team-context";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { DEAL_TYPE_COLORS, DEAL_TEAM_COLORS } from "@/pages/deals";
@@ -303,6 +302,15 @@ export default function AvailableUnitsPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
+  // Header sort — Property/Unit and Client columns, A→Z / Z→A toggle.
+  const [sortBy, setSortBy] = useState<"none" | "property" | "client">("none");
+  const [sortDir, setSortDir] = useState<1 | -1>(1);
+  const toggleSort = (key: "property" | "client") => {
+    if (sortBy === key) {
+      if (sortDir === 1) setSortDir(-1);
+      else { setSortBy("none"); setSortDir(1); }
+    } else { setSortBy(key); setSortDir(1); }
+  };
   const [targetStatusFilter, setTargetStatusFilter] = useState("all");
   const [propertyFilter, setPropertyFilter] = useState("all");
   const [assetClassFilter, setAssetClassFilter] = useState("all");
@@ -326,6 +334,7 @@ export default function AvailableUnitsPage() {
   // Start Date, Restrictions) collapse behind it.
   const [showAllUnitFields, setShowAllUnitFields] = useState(false);
   const [filesUnit, setFilesUnit] = useState<AvailableUnit | null>(null);
+  const [hotsUnit, setHotsUnit] = useState<AvailableUnit | null>(null);
   const [briefUnit, setBriefUnit] = useState<AvailableUnit | null>(null);
   const [viewingsUnit, setViewingsUnit] = useState<AvailableUnit | null>(null);
   const [offersUnit, setOffersUnit] = useState<AvailableUnit | null>(null);
@@ -539,6 +548,15 @@ export default function AvailableUnitsPage() {
     if (!teamFilteredPropertyIds) return units;
     return units.filter(u => teamFilteredPropertyIds.has(u.propertyId));
   }, [units, teamFilteredPropertyIds]);
+
+  // Hide the Client column whenever the view is pinned to one client —
+  // client logins, staff viewing-as-client, the sidebar team switched to a
+  // client team (Landsec), or the toolbar team filter set to one: every
+  // row is that client, so the column says nothing.
+  const hideClientCol = isClientTracker
+    || !!(auUser as any)?.companyScopeId
+    || !!teamFilteredPropertyIds
+    || (bgpTeamFilter !== "all" && !(INTERNAL_BGP_TEAMS as Set<string>).has(bgpTeamFilter));
 
   const dealMap = useMemo(() => {
     const m: Record<string, CrmDeal> = {};
@@ -991,21 +1009,12 @@ export default function AvailableUnitsPage() {
     return properties.filter(p => ids.has(p.id));
   }, [teamUnits, properties]);
 
-  const filtered = useMemo(() => {
+  // Toolbar filters only (team / property / location / agent / target /
+  // search) — WITHOUT the status pill. The KPI lozenges count from this
+  // set so they always mirror the toolbar; the status pill then applies
+  // on top for the table.
+  const toolbarFiltered = useMemo(() => {
     let result = teamUnits;
-    // The Letting Tracker is the marketing pipeline (REP / AVA / NEG). Once a
-    // unit moves to Solicitors it lives on the Deals board; we hide SOL+ from
-    // the default view here so the tracker stays focused. Users can still
-    // click an SOL/EXC/COM pill to drill back in.
-    const PRE_SOL_CODES = new Set(["REP", "SPEC", "LIVE", "AVA", "NEG"]);
-    if (statusFilter !== "all") {
-      result = result.filter(u => legacyToCode(u.marketingStatus) === statusFilter);
-    } else {
-      result = result.filter(u => {
-        const code = legacyToCode(u.marketingStatus) || "AVA";
-        return PRE_SOL_CODES.has(code);
-      });
-    }
     if (propertyFilter !== "all") result = result.filter(u => u.propertyId === propertyFilter);
     if (assetClassFilter !== "all") result = result.filter(u => u.useClass === assetClassFilter);
     if (locationFilter !== "all") result = result.filter(u => u.location === locationFilter);
@@ -1039,7 +1048,35 @@ export default function AvailableUnitsPage() {
       });
     }
     return result;
-  }, [teamUnits, statusFilter, targetStatusFilter, briefByUnit, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies]);
+  }, [teamUnits, targetStatusFilter, briefByUnit, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies]);
+
+  const filtered = useMemo(() => {
+    // The Letting Tracker is the marketing pipeline (REP / AVA / NEG). Once a
+    // unit moves to Solicitors it lives on the Deals board; we hide SOL+ from
+    // the default view here so the tracker stays focused. Users can still
+    // click an SOL/EXC/COM lozenge to drill back in.
+    const PRE_SOL_CODES = new Set(["OPP", "REP", "SPEC", "LIVE", "AVA", "NEG"]);
+    let result = statusFilter !== "all"
+      ? toolbarFiltered.filter(u => legacyToCode(u.marketingStatus) === statusFilter)
+      : toolbarFiltered.filter(u => {
+          const code = legacyToCode(u.marketingStatus) || "AVA";
+          return PRE_SOL_CODES.has(code);
+        });
+    if (sortBy !== "none") {
+      const clientNameFor = (u: AvailableUnit) => {
+        const d = u.dealId ? dealMap[u.dealId] : null;
+        const id = d
+          ? ((d.dealType || "").toLowerCase().includes("tenant rep") ? d.tenantId : d.landlordId)
+          : (propertyMap[u.propertyId] as any)?.landlordId;
+        return id ? (crmCompanies.find(c => c.id === id)?.name || "") : "";
+      };
+      const keyFor = (u: AvailableUnit) => sortBy === "property"
+        ? `${propertyMap[u.propertyId]?.name || ""} ${u.unitName || ""}`
+        : clientNameFor(u);
+      result = [...result].sort((a, b) => sortDir * keyFor(a).localeCompare(keyFor(b), "en-GB", { sensitivity: "base" }));
+    }
+    return result;
+  }, [toolbarFiltered, statusFilter, sortBy, sortDir, propertyMap, dealMap, crmCompanies]);
 
   const stats = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1135,6 +1172,35 @@ export default function AvailableUnitsPage() {
             )}
           </p>
         </div>
+        <div className="flex items-center gap-2">
+        {auUser?.isAdmin && (
+          <Button
+            variant="outline"
+            onClick={async () => {
+              // Dry-run first, then a numbers-in-hand confirm before touching data.
+              try {
+                const r = await apiRequest("POST", "/api/admin/letting-tracker-focus", { dryRun: true });
+                const plan = await r.json();
+                const msg = `Focus the tracker on units in play?\n\n` +
+                  `Keep: ${plan.keep}\nRemove idle rows: ${plan.prune}\nPull in from strategy boards: ${plan.pullIn}\nTargets to migrate: ${plan.targetsToMigrate}\n\n` +
+                  `Idle rows have no viewings, offers, files, targets, live deal or strategy-board activity. ` +
+                  `Their tenancy (rent roll) rows are untouched and can be re-listed any time.`;
+                if (!window.confirm(msg)) return;
+                const r2 = await apiRequest("POST", "/api/admin/letting-tracker-focus", { dryRun: false });
+                const done = await r2.json();
+                toast({ title: "Tracker focused", description: `Removed ${done.pruned}, pulled in ${done.added}, migrated ${done.migrated} targets.` });
+                queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+                queryClient.invalidateQueries({ queryKey: ["/api/unit-briefs"] });
+                queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+              } catch (e: any) {
+                toast({ title: "Tracker focus failed", description: e?.message, variant: "destructive" });
+              }
+            }}
+            data-testid="button-focus-tracker"
+          >
+            <Target className="h-4 w-4 mr-1" /> Focus tracker
+          </Button>
+        )}
         <Button
           onClick={() => {
             // Stage 3b feature flag — when on, the new unified dialog opens
@@ -1151,6 +1217,7 @@ export default function AvailableUnitsPage() {
         >
           <Plus className="h-4 w-4 mr-1" /> Add Unit
         </Button>
+        </div>
       </div>
 
       {/* Single thin FY activity strip — was two full cards stacked
@@ -1290,7 +1357,7 @@ export default function AvailableUnitsPage() {
       {isMobile ? (
         <div className="flex flex-wrap gap-1.5">
           {MARKETING_STATUSES.map(s => {
-            const count = teamUnits.filter(u => legacyToCode(u.marketingStatus) === s).length;
+            const count = toolbarFiltered.filter(u => legacyToCode(u.marketingStatus) === s).length;
             return (
               <button
                 key={s}
@@ -1309,7 +1376,7 @@ export default function AvailableUnitsPage() {
       <ScrollArea className="w-full">
         <div className="flex items-center gap-3 pb-1">
           {MARKETING_STATUSES.map(s => {
-            const count = teamUnits.filter(u => legacyToCode(u.marketingStatus) === s).length;
+            const count = toolbarFiltered.filter(u => legacyToCode(u.marketingStatus) === s).length;
             return (
               <Card
                 key={s}
@@ -1457,16 +1524,26 @@ export default function AvailableUnitsPage() {
                   />
                 </TableHead>
                 <TableHead className="w-[56px]">Ref</TableHead>
-                <TableHead className="w-[200px] min-w-[180px]">Property / Unit</TableHead>
-                <TableHead className="w-[130px] min-w-[130px]">Deal Type</TableHead>
-                <TableHead className="w-[150px] min-w-[150px]">Client</TableHead>
-                <TableHead className="w-[150px] min-w-[150px]">Team / BGP</TableHead>
+                <TableHead className="w-[200px] min-w-[180px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("property")} data-testid="sort-property">
+                  Property / Unit{sortBy === "property" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
+                </TableHead>
+                <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>
+                {!hideClientCol && (
+                  <TableHead className="w-[150px] min-w-[150px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
+                    Client{sortBy === "client" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
+                  </TableHead>
+                )}
+                <TableHead className="w-[170px] min-w-[170px]">Operator</TableHead>
+                <TableHead className="w-[150px] min-w-[150px]">Category</TableHead>
+                <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>
+                <TableHead className="w-[130px] min-w-[130px]">Status</TableHead>
+                <TableHead className="w-[140px] min-w-[140px]">Agent</TableHead>
+                <TableHead className="w-[140px] min-w-[140px]">Client Contact</TableHead>
+                <TableHead className="min-w-[200px]">Comments</TableHead>
                 <TableHead className="w-[130px] min-w-[130px]">Floor Areas</TableHead>
                 <TableHead className="w-[130px] min-w-[130px] text-right">Costs</TableHead>
-                <TableHead className="w-[110px] min-w-[110px]">Class / Cond</TableHead>
-                <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>
+                <TableHead className="w-[130px] min-w-[130px]">Deal Type</TableHead>
                 <TableHead className="w-[100px] min-w-[100px] text-center">Activity</TableHead>
-                {!isClientTracker && <TableHead className="w-[130px] min-w-[130px]">Fee &amp; FA</TableHead>}
                 <TableHead className="w-[90px] min-w-[90px]">Files</TableHead>
                 <TableHead className="w-[90px] min-w-[90px]">Brief</TableHead>
                 <TableHead className="w-[100px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
@@ -1475,7 +1552,7 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isClientTracker ? 14 : 15} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={hideClientCol ? 18 : 19} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1484,10 +1561,17 @@ export default function AvailableUnitsPage() {
                 filtered.map(u => {
                   const prop = propertyMap[u.propertyId];
                   const deal = u.dealId ? dealMap[u.dealId] : null;
+                  const unitTargets: any[] = briefByUnit[u.id]?.targets || [];
+                  // Unit-level cells span every target row, so targets read
+                  // as first-class columns. Adding after the first target
+                  // happens via the small + next to the first operator —
+                  // no dedicated add row eating vertical space.
+                  const unitRowSpan = Math.max(1, unitTargets.length);
+                  const unitClientCompanyId = briefByUnit[u.id]?.clientCompanyId || (prop as any)?.landlordId || null;
                   return (
                     <Fragment key={u.id}>
                     <TableRow className={selectedIds.has(u.id) ? "bg-primary/5" : ""} data-testid={`row-unit-${u.id}`}>
-                      <TableCell className="px-2">
+                      <TableCell rowSpan={unitRowSpan} className="px-2">
                         <Checkbox
                           checked={selectedIds.has(u.id)}
                           onCheckedChange={() => {
@@ -1501,7 +1585,7 @@ export default function AvailableUnitsPage() {
                           data-testid={`checkbox-unit-${u.id}`}
                         />
                       </TableCell>
-                      <TableCell className="text-xs font-mono text-muted-foreground">
+                      <TableCell rowSpan={unitRowSpan} className="text-xs font-mono text-muted-foreground">
                         {deal?.dealRef ? (
                           <div className="flex items-center gap-1.5">
                             <a
@@ -1531,7 +1615,7 @@ export default function AvailableUnitsPage() {
                           </div>
                         ) : "—"}
                       </TableCell>
-                      <TableCell className="px-1.5 py-1 max-w-[220px]">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[220px]">
                         <div className="flex flex-col gap-0.5">
                           <div className="text-sm font-medium truncate">
                             <InlineLinkSelect
@@ -1553,17 +1637,18 @@ export default function AvailableUnitsPage() {
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell className="px-1.5">
-                        {deal ? (
-                          <InlineLabelSelect
-                            value={deal.dealType}
-                            options={CRM_OPTIONS.dealType}
-                            colorMap={DEAL_TYPE_COLORS}
-                            onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "dealType", value: v || null })}
-                          />
-                        ) : <span className="text-xs text-muted-foreground">—</span>}
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5">
+                        <InlineLabelSelect
+                          value={legacyToCode(u.marketingStatus) || "AVA"}
+                          options={MARKETING_STATUSES}
+                          colorMap={STATUS_LABEL_COLORS}
+                          labelMap={DEAL_STATUS_LABELS}
+                          onSave={v => inlineUpdate(u.id, "marketingStatus", v || "AVA")}
+                          allowClear={false}
+                        />
                       </TableCell>
-                      <TableCell className="px-1.5 max-w-[140px]">
+                      {!hideClientCol && (
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[140px]">
                         {deal ? (() => {
                           const isTenantRep = (deal.dealType || "").toLowerCase().includes("tenant rep");
                           const field = isTenantRep ? "tenantId" : "landlordId";
@@ -1578,29 +1663,50 @@ export default function AvailableUnitsPage() {
                               placeholder="Link client"
                             />
                           );
-                        })() : <span className="text-xs text-muted-foreground">—</span>}
-                      </TableCell>
-                      <TableCell className="px-1.5 max-w-[180px]">
-                        <div className="space-y-1">
-                          {deal ? (
-                            <InlineMultiSelect
-                              value={deal.team || []}
-                              options={CRM_OPTIONS.dealTeam.map(t => ({ label: t, value: t }))}
-                              colorMap={DEAL_TEAM_COLORS}
-                              placeholder="Set team"
-                              onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "team", value: v.length > 0 ? v : null })}
-                            />
-                          ) : <span className="text-xs text-muted-foreground italic">No team</span>}
-                          <InlineMultiSelect
-                            value={Array.isArray(u.agentUserIds) ? u.agentUserIds : []}
-                            options={agentOptions}
-                            onSave={v => inlineUpdate(u.id, "agentUserIds", v)}
-                            placeholder="Set agent"
-                            testId={`inline-agent-${u.id}`}
+                        })() : (
+                          /* No deal yet — fall back to the property's
+                             landlord, editable: the unit PATCH stamps the
+                             property / mirrors once a deal exists. */
+                          <InlineLinkSelect
+                            value={(propertyMap[u.propertyId] as any)?.landlordId || null}
+                            options={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                            href={(propertyMap[u.propertyId] as any)?.landlordId ? `/companies/${(propertyMap[u.propertyId] as any).landlordId}` : undefined}
+                            onSave={(v) => { if (v) inlineUpdate(u.id, "landlordId", v); }}
+                            onCreate={async (name) => { const c = await createCompany(name); inlineUpdate(u.id, "landlordId", c.id); }}
+                            placeholder="Link client"
                           />
-                        </div>
+                        )}
                       </TableCell>
-                      <TableCell className="px-1.5 py-1">
+                      )}
+                      {unitTargets.length === 0 ? (
+                        <TableCell colSpan={7}>
+                          <BrandSearchInput
+                            className="h-7 w-[220px] border-dashed text-[11px]"
+                            placeholder="+ Target operator"
+                            value=""
+                            allowCreate={!isClientTracker}
+                            onPick={p => addUnitTarget(u, p)}
+                            testId={`add-target-${u.id}`}
+                          />
+                        </TableCell>
+                      ) : (
+                        <TargetRowCells
+                          target={unitTargets[0]}
+                          clientCompanyId={unitClientCompanyId}
+                          onChanged={() => invalidateBriefs(u.id)}
+                          operatorExtra={
+                            <BrandSearchInput
+                              iconOnly
+                              placeholder="Add target operator…"
+                              value=""
+                              allowCreate={!isClientTracker}
+                              onPick={p => addUnitTarget(u, p)}
+                              testId={`add-target-${u.id}`}
+                            />
+                          }
+                        />
+                      )}
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1">
                         <div className="space-y-0.5">
                           {deal ? (
                             [
@@ -1645,7 +1751,7 @@ export default function AvailableUnitsPage() {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="px-1.5 py-1 text-right">
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 text-right">
                         <Popover>
                           <PopoverTrigger asChild>
                             <button
@@ -1659,7 +1765,7 @@ export default function AvailableUnitsPage() {
                                 { label: "SC",    value: u.serviceChargePa },
                               ].filter(r => r.value != null).length === 0 ? (
                                 <span className="text-muted-foreground text-[11px] flex items-center gap-1 justify-end">
-                                  <Plus className="w-3 h-3" /> Add costs
+                                  <Plus className="w-3 h-3" /> Costs / details
                                 </span>
                               ) : (
                                 [
@@ -1675,7 +1781,7 @@ export default function AvailableUnitsPage() {
                               )}
                             </button>
                           </PopoverTrigger>
-                          <PopoverContent className="w-[280px] p-3 space-y-2.5" align="end">
+                          <PopoverContent className="w-[320px] p-3 space-y-2.5 max-h-[70vh] overflow-y-auto" align="end">
                             <p className="text-xs font-semibold">Costs</p>
                             <div className="grid grid-cols-[100px_1fr] items-center gap-2">
                               <Label className="text-xs text-muted-foreground">Quoting Rent</Label>
@@ -1689,36 +1795,74 @@ export default function AvailableUnitsPage() {
                               <Label className="text-xs text-muted-foreground">SC p.a.</Label>
                               <InlineNumber value={u.serviceChargePa} onSave={v => inlineUpdate(u.id, "serviceChargePa", v)} prefix="£" />
                             </div>
+                            {/* Full unit details — every Edit Unit form field is
+                                editable here too, writing through the same PATCH
+                                so the table and the form mirror each other. */}
+                            <p className="text-xs font-semibold border-t pt-2">Details</p>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Floor</Label>
+                              <InlineText value={u.floor} onSave={v => inlineUpdate(u.id, "floor", v || null)} placeholder="—" className="text-xs" />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Use class</Label>
+                              <InlineText value={u.useClass} onSave={v => inlineUpdate(u.id, "useClass", v || null)} placeholder="—" className="text-xs" />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Condition</Label>
+                              <InlineText value={u.condition} onSave={v => inlineUpdate(u.id, "condition", v || null)} placeholder="—" className="text-xs" />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">EPC</Label>
+                              <InlineText value={u.epcRating} onSave={v => inlineUpdate(u.id, "epcRating", v || null)} placeholder="—" className="text-xs" />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Available from</Label>
+                              <input
+                                type="date"
+                                className="h-7 text-xs border rounded px-1.5 bg-background"
+                                defaultValue={u.availableDate ? String(u.availableDate).slice(0, 10) : ""}
+                                onBlur={e => { const v = e.target.value || null; if (v !== (u.availableDate ? String(u.availableDate).slice(0, 10) : null)) inlineUpdate(u.id, "availableDate", v); }}
+                              />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Marketing start</Label>
+                              <input
+                                type="date"
+                                className="h-7 text-xs border rounded px-1.5 bg-background"
+                                defaultValue={u.marketingStartDate ? String(u.marketingStartDate).slice(0, 10) : ""}
+                                onBlur={e => { const v = e.target.value || null; if (v !== (u.marketingStartDate ? String(u.marketingStartDate).slice(0, 10) : null)) inlineUpdate(u.id, "marketingStartDate", v); }}
+                              />
+                            </div>
+                            <div className="grid grid-cols-[100px_1fr] items-center gap-2">
+                              <Label className="text-xs text-muted-foreground">Location</Label>
+                              <InlineText value={u.location} onSave={v => inlineUpdate(u.id, "location", v || null)} placeholder="—" className="text-xs" />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs text-muted-foreground">Notes</Label>
+                              <InlineText value={u.notes} onSave={v => inlineUpdate(u.id, "notes", v || null)} placeholder="Add notes…" className="text-xs" />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs text-muted-foreground">Restrictions</Label>
+                              <InlineText value={u.restrictions} onSave={v => inlineUpdate(u.id, "restrictions", v || null)} placeholder="—" className="text-xs" />
+                            </div>
                           </PopoverContent>
                         </Popover>
                       </TableCell>
-                      <TableCell className="px-1.5 py-1 max-w-[140px]">
-                        <div className="space-y-1">
-                          <InlineLabelSelect
-                            value={u.useClass || ""}
-                            options={USE_CLASSES}
-                            colorMap={ASSET_CLASS_COLORS}
-                            onSave={v => inlineUpdate(u.id, "useClass", v)}
-                            placeholder="Set class"
-                          />
-                          <InlineSelect
-                            value={u.condition || ""}
-                            options={CONDITIONS}
-                            onSave={v => inlineUpdate(u.id, "condition", v)}
-                          />
-                        </div>
-                      </TableCell>
-                      <TableCell>
+                      <TableCell rowSpan={unitRowSpan}>
+                        {/* No backing deal yet → still editable: the unit
+                            PATCH auto-creates the deal when a type is set,
+                            so this cell can never be a dead dash. */}
                         <InlineLabelSelect
-                          value={legacyToCode(u.marketingStatus) || "AVA"}
-                          options={MARKETING_STATUSES}
-                          colorMap={STATUS_LABEL_COLORS}
-                          labelMap={DEAL_STATUS_LABELS}
-                          onSave={v => inlineUpdate(u.id, "marketingStatus", v || "AVA")}
-                          allowClear={false}
+                          value={deal?.dealType || null}
+                          options={CRM_OPTIONS.dealType}
+                          colorMap={DEAL_TYPE_COLORS}
+                          onSave={(v) => {
+                            if (deal) dealInlineUpdate.mutate({ id: deal.id, field: "dealType", value: v || null });
+                            else if (v) inlineUpdate(u.id, "dealType", v);
+                          }}
                         />
                       </TableCell>
-                      <TableCell className="text-center">
+                      <TableCell rowSpan={unitRowSpan} className="text-center">
                         <div className="flex items-center justify-center gap-1">
                           <Button
                             variant="ghost"
@@ -1745,60 +1889,8 @@ export default function AvailableUnitsPage() {
                           </Button>
                         </div>
                       </TableCell>
-                      {!isClientTracker && (
-                      <TableCell className="px-1.5 py-1 max-w-[150px]">
-                        <div className="space-y-0.5">
-                          <InlineNumber
-                            value={u.fee}
-                            onSave={v => inlineUpdate(u.id, "fee", v)}
-                            placeholder="—"
-                            prefix="£"
-                          />
-                          {deal ? (
-                            deal.feeAgreementUrl ? (
-                              <div className="flex items-center gap-1">
-                                <a
-                                  href={deal.feeAgreementUrl.startsWith("http") ? deal.feeAgreementUrl : `https://${deal.feeAgreementUrl}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 text-[11px] text-green-700 hover:underline"
-                                  title="Open fee agreement"
-                                >
-                                  <FileBadge className="h-3 w-3" />
-                                  FA signed
-                                </a>
-                                <button
-                                  className="text-[10px] text-muted-foreground hover:text-foreground"
-                                  title="Change URL"
-                                  onClick={() => {
-                                    const url = window.prompt("Fee agreement URL:", deal.feeAgreementUrl || "");
-                                    if (url !== null) dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreementUrl", value: url || null });
-                                  }}
-                                >✎</button>
-                              </div>
-                            ) : (
-                              <button
-                                className="inline-flex items-center gap-1 text-[11px] text-red-600 hover:text-red-800"
-                                title="No fee agreement on file — click to add link"
-                                onClick={() => {
-                                  const url = window.prompt("Paste fee agreement URL (SharePoint / OneDrive link):");
-                                  if (url) {
-                                    dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreementUrl", value: url });
-                                    dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreement", value: "YES" });
-                                  }
-                                }}
-                              >
-                                <AlertTriangle className="h-3 w-3" />
-                                FA missing
-                              </button>
-                            )
-                          ) : (
-                            <span className="text-[10px] text-muted-foreground italic">FA n/a</span>
-                          )}
-                        </div>
-                      </TableCell>
-                      )}
-                      <TableCell>
+                      <TableCell rowSpan={unitRowSpan}>
+                        <div className="flex flex-col items-start">
                         <Button
                           variant="ghost"
                           size="sm"
@@ -1809,8 +1901,20 @@ export default function AvailableUnitsPage() {
                           <FileText className="h-3.5 w-3.5" />
                           Files
                         </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs gap-1"
+                          onClick={() => setHotsUnit(u)}
+                          title="Heads of Terms"
+                          data-testid={`button-hots-${u.id}`}
+                        >
+                          <FileBadge className="h-3.5 w-3.5" />
+                          HOTs
+                        </Button>
+                        </div>
                       </TableCell>
-                      <TableCell>
+                      <TableCell rowSpan={unitRowSpan}>
                         <Button
                           variant="ghost"
                           size="sm"
@@ -1822,7 +1926,7 @@ export default function AvailableUnitsPage() {
                           Brief
                         </Button>
                       </TableCell>
-                      <TableCell className={`sticky right-0 z-10 border-l ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
+                      <TableCell rowSpan={unitRowSpan} className={`sticky right-0 z-10 border-l ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
                         <div className="flex gap-1">
                           <Button
                             variant="ghost"
@@ -1833,6 +1937,20 @@ export default function AvailableUnitsPage() {
                             title="Find matching requirements"
                           >
                             <Sparkles className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            onClick={() => {
+                              const pName = propertyMap[u.propertyId]?.name || "the property";
+                              const prompt = `Tell me about unit ${u.unitName || u.id} at ${pName} — current letting status, targeting and anything relevant from the CRM.`;
+                              window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt", { detail: { prompt } }));
+                            }}
+                            data-testid={`button-ask-ai-${u.id}`}
+                            title="Ask ChatBGP about this unit"
+                          >
+                            <MessageSquare className="h-3.5 w-3.5" />
                           </Button>
                           <Button
                             variant="ghost"
@@ -1855,27 +1973,15 @@ export default function AvailableUnitsPage() {
                         </div>
                       </TableCell>
                     </TableRow>
-                    <TableRow className="bg-muted/20 hover:bg-muted/20">
-                      <TableCell colSpan={isClientTracker ? 14 : 15} className="p-3">
-                        {(briefByUnit[u.id]?.targets || []).length > 0 ? (
-                          <TargetOperatorsTable
-                            targets={briefByUnit[u.id]?.targets || []}
-                            clientCompanyId={briefByUnit[u.id]?.clientCompanyId || null}
-                            ensureBriefId={() => ensureBriefFor(u)}
-                            onChanged={() => invalidateBriefs(u.id)}
-                          />
-                        ) : (
-                          <BrandSearchInput
-                            className="h-7 w-[240px] border-dashed text-[11px]"
-                            placeholder="+ Target operator"
-                            value=""
-                            allowCreate={!isClientTracker}
-                            onPick={p => addUnitTarget(u, p)}
-                            testId={`add-target-${u.id}`}
-                          />
-                        )}
-                      </TableCell>
-                    </TableRow>
+                    {unitTargets.slice(1).map((t: any) => (
+                      <TableRow key={t.id} className={selectedIds.has(u.id) ? "bg-primary/5" : ""} data-testid={`row-unit-target-${t.id}`}>
+                        <TargetRowCells
+                          target={t}
+                          clientCompanyId={unitClientCompanyId}
+                          onChanged={() => invalidateBriefs(u.id)}
+                        />
+                      </TableRow>
+                    ))}
                     </Fragment>
                   );
                 })
@@ -2638,7 +2744,147 @@ export default function AvailableUnitsPage() {
         propertyName={filesUnit ? (propertyMap[filesUnit.propertyId]?.name || "") : ""}
         onClose={() => setFilesUnit(null)}
       />
+
+      <HotsDialog
+        unit={hotsUnit}
+        propertyName={hotsUnit ? (propertyMap[hotsUnit.propertyId]?.name || "") : ""}
+        isClient={isClientTracker}
+        onClose={() => setHotsUnit(null)}
+      />
     </div>
+  );
+}
+
+// ─── Heads of Terms dialog ──────────────────────────────────────────────
+// Standard HOTs live on the property; "Populate" copies them onto the unit
+// with the deal specifics filled in ({PROPERTY}, {UNIT}, {TENANT}, {RENT},
+// {SERVICE_CHARGE}, {RATES}, {AREA}, {LANDLORD}); the text is negotiated
+// inline and exported as a PDF for the solicitors.
+function HotsDialog({ unit, propertyName, isClient, onClose }: {
+  unit: AvailableUnit | null; propertyName: string; isClient: boolean; onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [content, setContent] = useState("");
+  const [template, setTemplate] = useState("");
+  const [editTemplate, setEditTemplate] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const { data, refetch } = useQuery<{ content: string | null; template: string | null; updatedAt: string | null }>({
+    queryKey: ["/api/available-units", unit?.id, "hots"],
+    queryFn: () => fetch(`/api/available-units/${unit!.id}/hots`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
+    enabled: !!unit,
+  });
+  useEffect(() => {
+    setContent(data?.content || "");
+    setTemplate(data?.template || "");
+  }, [data, unit?.id]);
+
+  const call = async (method: string, url: string, body?: any) => {
+    const r = await fetch(url, {
+      method,
+      credentials: "include",
+      headers: { ...getAuthHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `HTTP ${r.status}`);
+    return r.json();
+  };
+
+  if (!unit) return null;
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <FileBadge className="h-4 w-4" />
+            Heads of Terms — {propertyName}{unit.unitName ? ` · ${unit.unitName}` : ""}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              size="sm" variant="outline" className="h-7 text-xs" disabled={busy}
+              onClick={async () => {
+                if (content.trim() && !window.confirm("Replace the current HOTs with a fresh copy of the property standard?")) return;
+                setBusy(true);
+                try {
+                  const out = await call("POST", `/api/available-units/${unit.id}/hots/populate`);
+                  setContent(out.content || "");
+                  toast({ title: "HOTs populated from the property standard" });
+                } catch (e: any) { toast({ title: "Populate failed", description: e.message, variant: "destructive" }); }
+                finally { setBusy(false); }
+              }}
+              data-testid="hots-populate"
+            >
+              Populate from standard
+            </Button>
+            <Button
+              size="sm" className="h-7 text-xs" disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await call("PUT", `/api/available-units/${unit.id}/hots`, { content });
+                  toast({ title: "HOTs saved" });
+                  refetch();
+                } catch (e: any) { toast({ title: "Save failed", description: e.message, variant: "destructive" }); }
+                finally { setBusy(false); }
+              }}
+              data-testid="hots-save"
+            >
+              Save
+            </Button>
+            <a
+              href={`/api/available-units/${unit.id}/hots/pdf`}
+              target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center h-7 px-2.5 rounded-md border text-xs hover:bg-muted"
+              data-testid="hots-pdf"
+            >
+              Download PDF
+            </a>
+            {!isClient && (
+              <button
+                type="button"
+                className="text-[11px] text-muted-foreground hover:text-foreground underline ml-auto"
+                onClick={() => setEditTemplate(v => !v)}
+              >
+                {editTemplate ? "Hide standard template" : "Edit property standard"}
+              </button>
+            )}
+          </div>
+          {editTemplate && !isClient && (
+            <div className="space-y-1.5 rounded-md border p-2 bg-muted/30">
+              <p className="text-[11px] text-muted-foreground">
+                Standard HOTs for {propertyName} — placeholders {"{PROPERTY} {UNIT} {LANDLORD} {TENANT} {RENT} {SERVICE_CHARGE} {RATES} {AREA}"} fill from the unit and deal on Populate.
+              </p>
+              <Textarea value={template} onChange={e => setTemplate(e.target.value)} rows={10} className="font-mono text-xs" placeholder="Paste or write the property's standard Heads of Terms…" />
+              <Button
+                size="sm" variant="outline" className="h-7 text-xs" disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await call("PUT", `/api/properties/${unit.propertyId}/hots-template`, { template });
+                    toast({ title: "Standard HOTs saved for this property" });
+                  } catch (e: any) { toast({ title: "Save failed", description: e.message, variant: "destructive" }); }
+                  finally { setBusy(false); }
+                }}
+              >
+                Save standard template
+              </Button>
+            </div>
+          )}
+          <Textarea
+            value={content}
+            onChange={e => setContent(e.target.value)}
+            rows={22}
+            className="font-mono text-xs leading-relaxed"
+            placeholder={`No HOTs on this unit yet — click "Populate from standard" to pull the property's standard terms with this deal's details filled in.`}
+            data-testid="hots-content"
+          />
+          {data?.updatedAt && (
+            <p className="text-[10px] text-muted-foreground">Last saved {new Date(data.updatedAt).toLocaleString("en-GB")}</p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -3167,7 +3413,7 @@ function UnitFormDialog({
             <Input type="date" value={form.availableDate} onChange={e => upd("availableDate", e.target.value)} />
           </div>
           <div className="col-span-2">
-            <Label>BGP Contact *</Label>
+            <Label>BGP Contact</Label>
             {/* Same DropdownMenu pattern as the New Deal dialog so the
                 two forms feel like one. Stores agentUserIds (user IDs)
                 rather than names, since the server keyed off IDs. */}
@@ -3356,7 +3602,7 @@ function UnitFormDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={onSubmit} disabled={isPending || !form.unitName || !form.propertyId || !form.dealType || form.agentUserIds.length === 0} title={!form.dealType ? "Pick a deal type" : form.agentUserIds.length === 0 ? "Pick at least one BGP agent" : ""}>
+          <Button onClick={onSubmit} disabled={isPending || !form.unitName || !form.propertyId || !form.dealType} title={!form.dealType ? "Pick a deal type" : ""}>
             {isPending ? "Saving..." : "Save"}
           </Button>
         </DialogFooter>

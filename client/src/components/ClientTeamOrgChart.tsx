@@ -425,7 +425,7 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
                   onDragOver={readOnly ? undefined : (e) => { e.preventDefault(); setDragOverCol(col.name); }}
                   onDragLeave={readOnly ? undefined : () => setDragOverCol(prev => prev === col.name ? null : prev)}
                   onDrop={readOnly ? undefined : () => handleDropOnColumn(col.name)}
-                  className={`flex-1 min-w-[220px] rounded-lg border ${style.border} ${isOver ? "ring-2 ring-primary/60 ring-offset-1" : ""} ${style.bg} p-2 flex flex-col gap-2`}
+                  className={`flex-none w-[185px] rounded-lg border ${style.border} ${isOver ? "ring-2 ring-primary/60 ring-offset-1" : ""} ${style.bg} p-2 flex flex-col gap-2`}
                   data-testid={`team-column-${col.name.replace(/\s+/g, "-").toLowerCase()}`}
                 >
                   <div className="flex items-center justify-between px-1 group">

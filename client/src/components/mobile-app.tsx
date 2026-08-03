@@ -15,6 +15,7 @@ import * as voiceRecovery from "@/lib/voice-recovery";
 import { AuthDownloadLink } from "@/components/chatbgp-markdown";
 import { useLocation } from "wouter";
 import { useTeam } from "@/lib/team-context";
+import { TagChip, TAG_TOKEN_SOURCE, TAG_META, buildTagToken, type TagType } from "@/components/chat-tags";
 import type { User as UserType } from "@shared/schema";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -252,14 +253,19 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
   // Without this branch the relative link doesn't match the http(s)
   // alternation and falls through as plain text — what you're seeing
   // when downloads aren't tappable on the phone.
-  const tokenRegex = /!\[([^\]]*)\]\(([^)]+)\)|\[([^\]]+)\]\((https?:\/\/[^)]+)\)|\[([^\]]+)\]\((\/api\/chat-media\/[^)]+)\)|\*\*(.+?)\*\*|(https?:\/\/[^\s<>)\]]+)/g;
+  const tokenRegex = new RegExp(
+    `!\\[([^\\]]*)\\]\\(([^)]+)\\)|\\[([^\\]]+)\\]\\((https?:\\/\\/[^)]+)\\)|\\[([^\\]]+)\\]\\((\\/api\\/chat-media\\/[^)]+)\\)|\\*\\*(.+?)\\*\\*|(https?:\\/\\/[^\\s<>)\\]]+)|${TAG_TOKEN_SOURCE}`,
+    "g"
+  );
   const result: (string | JSX.Element)[] = [];
   let lastIndex = 0;
   let match;
   let key = 0;
   while ((match = tokenRegex.exec(text)) !== null) {
     if (match.index > lastIndex) result.push(text.slice(lastIndex, match.index));
-    if (match[1] !== undefined && match[2]) {
+    if (match[9] && match[10] && match[11]) {
+      result.push(<TagChip key={key++} type={match[10] as TagType} id={match[11]} name={match[9]} />);
+    } else if (match[1] !== undefined && match[2]) {
       if (isSafeUrl(match[2])) {
         result.push(
           <a key={key++} href={match[2]} target="_blank" rel="noopener noreferrer" className="block my-1">
@@ -718,7 +724,7 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
   const isDm = !isAi && otherMembers.length === 1;
   const dmName = isDm ? otherMembers[0].name : null;
   const dmInitials = dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
-  const displayTitle = isDm ? dmName : (thread.title || "New conversation");
+  const displayTitle = thread.title || dmName || "New conversation";
   const dmPic = isDm && otherMembers[0] ? userPics?.[otherMembers[0].id] : null;
 
   const timeStr = (() => {
@@ -1595,98 +1601,9 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     },
   });
 
-  const chatbgpMentionMutation = useMutation({
-    mutationFn: async ({ content, tid }: { content: string; tid: string }) => {
-      await saveMessageMutation.mutateAsync({ threadId: tid, role: "user", content });
-      const threadMessages = activeThread?.messages || [];
-      const recentMessages = threadMessages.slice(-10).map(m => ({ role: m.role, content: m.content }));
-      recentMessages.push({ role: "user", content });
-      const token = localStorage.getItem("bgp_auth_token");
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (token) headers["Authorization"] = `Bearer ${token}`;
-      const mentionController = new AbortController();
-      const mentionTimeout = setTimeout(() => mentionController.abort(), 600000)  // 10 min — Why Buy / Pathway turns routinely take 4-5 min so 5 min was clipping legitimate responses;
-      const res = await fetch("/api/chatbgp/chat", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ messages: recentMessages, threadId: tid }),
-        credentials: "include",
-        signal: mentionController.signal,
-      });
-      clearTimeout(mentionTimeout);
-      if (!res.ok) throw new Error("Request failed");
-      const reader = res.body?.getReader();
-      if (!reader) throw new Error("No stream");
-      const decoder = new TextDecoder();
-      let buf = "", last = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split("\n");
-        buf = lines.pop() || "";
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try { const p = JSON.parse(line.slice(6)); if (p.reply) last = line.slice(6); } catch {}
-          }
-        }
-      }
-      if (buf.startsWith("data: ")) {
-        try { const p = JSON.parse(buf.slice(6)); if (p.reply) last = buf.slice(6); } catch {}
-      }
-      if (!last) throw new Error("No response");
-      return { ...JSON.parse(last), threadId: tid };
-    },
-    onSuccess: (data: { reply: string; action?: ChatAction; threadId: string; savedToThread?: boolean }) => {
-      const msg: LocalChatMessage = { role: "assistant", content: data.reply };
-      if (data.action) msg.action = data.action;
-      setMessages(prev => [...prev, msg]);
-      if (!data.savedToThread) {
-        saveMessageMutation.mutate({ threadId: data.threadId, role: "assistant", content: data.reply, actionData: data.action ? JSON.stringify(data.action) : undefined });
-      }
-      queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", data.threadId] });
-      queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
-    },
-    onError: async (_err: any) => {
-      if (threadId) {
-        const delays = [3000, 8000, 15000, 30000, 60000];
-        for (const delay of delays) {
-          try {
-            await new Promise(r => setTimeout(r, delay));
-            const token = localStorage.getItem("bgp_auth_token");
-            const headers: Record<string, string> = {};
-            if (token) headers["Authorization"] = `Bearer ${token}`;
-            const res = await fetch(`/api/chat/threads/${threadId}`, { credentials: "include", headers });
-            if (res.ok) {
-              const thread = await res.json();
-              const msgs = thread.messages || [];
-              if (msgs.length > 0) {
-                const lastMsg = msgs[msgs.length - 1];
-                if (lastMsg.role === "assistant") {
-                  const recovered: LocalChatMessage = { role: "assistant", content: lastMsg.content };
-                  if (lastMsg.actionData) {
-                    try { recovered.action = JSON.parse(lastMsg.actionData); } catch {}
-                  }
-                  setMessages(prev => {
-                    const filtered = prev.filter(m => m.content !== "Sorry, ChatBGP couldn't respond right now.");
-                    return [...filtered, recovered];
-                  });
-                  queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
-                  queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
-                  return;
-                }
-              }
-            }
-          } catch {}
-        }
-      }
-      setMessages(prev => [...prev, { role: "assistant", content: "Sorry, ChatBGP couldn't respond right now." }]);
-    },
-  });
-
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages, aiSendMutation.isPending, chatbgpMentionMutation.isPending]);
+  }, [messages, aiSendMutation.isPending]);
 
   useEffect(() => {
     // Drain one queued message when the current send finishes. Array-based
@@ -1708,8 +1625,51 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     return allUsers.filter(u => {
       if (u.id === currentUser?.id) return false;
       return u.name.toLowerCase().includes(q);
-    }).slice(0, 6);
+    }).slice(0, 4);
   }, [mentionQuery, allUsers, currentUser?.id]);
+
+  // Smart tags on mobile — same grammar as the desktop panel: the @ menu
+  // searches brands, properties, deals and letting-tracker units alongside
+  // people; selections insert readable "@Name" text and swap to durable
+  // @[Name](tag:type/id) tokens at send time.
+  const [tagEntities, setTagEntities] = useState<Array<{ type: TagType; id: string; name: string; subtitle?: string }>>([]);
+  const pendingTagsRef = useRef<Map<string, { type: TagType; id: string; name: string }>>(new Map());
+
+  useEffect(() => {
+    if (mentionQuery === null || mentionQuery.length < 2) {
+      setTagEntities([]);
+      return;
+    }
+    const q = mentionQuery;
+    const timer = setTimeout(async () => {
+      try {
+        const token = localStorage.getItem("bgp_auth_token");
+        const headers: Record<string, string> = {};
+        if (token) headers["Authorization"] = `Bearer ${token}`;
+        const res = await fetch(`/api/chat/tag-search?q=${encodeURIComponent(q)}`, { credentials: "include", headers });
+        if (!res.ok) return;
+        const data = await res.json();
+        setTagEntities((data.results || []).filter((r: any) => r.type !== "user"));
+      } catch {}
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [mentionQuery]);
+
+  type MobileMentionOption =
+    | { kind: "chatbgp" }
+    | { kind: "user"; id: string; name: string }
+    | { kind: "entity"; type: TagType; id: string; name: string; subtitle?: string };
+
+  const mentionOptions = useMemo<MobileMentionOption[]>(() => {
+    if (mentionQuery === null) return [];
+    const q = mentionQuery.toLowerCase();
+    const opts: MobileMentionOption[] = [];
+    const aiMatches = q === "" || "chatbgp".startsWith(q) || "chat".startsWith(q) || q === "ai";
+    if (aiMatches && !isActiveThreadAi && threadId) opts.push({ kind: "chatbgp" });
+    for (const u of mentionUsers) opts.push({ kind: "user", id: u.id, name: u.name });
+    for (const e of tagEntities) opts.push({ kind: "entity", type: e.type, id: e.id, name: e.name, subtitle: e.subtitle });
+    return opts;
+  }, [mentionQuery, mentionUsers, tagEntities, isActiveThreadAi, threadId]);
 
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
@@ -1734,15 +1694,32 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     setMentionStart(-1);
   }, [sendTyping]);
 
-  const handleMentionSelect = useCallback((user: { id: string; name: string }) => {
+  const handleOptionSelect = useCallback((opt: MobileMentionOption) => {
     const textarea = textareaRef.current;
     if (!textarea) return;
     const before = input.slice(0, mentionStart);
     const after = input.slice(textarea.selectionStart);
-    const newInput = `${before}@${user.name.split(" ")[0]} ${after}`;
-    setInput(newInput);
+    let inserted: string;
+    if (opt.kind === "chatbgp") {
+      inserted = "@ChatBGP";
+    } else if (opt.kind === "user") {
+      inserted = `@${opt.name.split(" ")[0]}`;
+    } else {
+      const clean = opt.name.replace(/[\[\]()]/g, "").trim();
+      inserted = `@${clean}`;
+      pendingTagsRef.current.set(inserted, { type: opt.type, id: opt.id, name: clean });
+    }
+    setInput(`${before}${inserted} ${after}`);
     setMentionQuery(null);
     setMentionStart(-1);
+    // Put the caret straight after the inserted tag — without this the next
+    // keystrokes land wherever the browser parked the caret after re-render.
+    setTimeout(() => {
+      const pos = before.length + inserted.length + 1;
+      textarea.selectionStart = pos;
+      textarea.selectionEnd = pos;
+      textarea.focus();
+    }, 0);
   }, [input, mentionStart]);
 
   const [uploading, setUploading] = useState(false);
@@ -1939,7 +1916,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     return () => document.removeEventListener("visibilitychange", onVis);
   }, [isRecording]);
 
-  const isSending = aiSendMutation.isPending || teamSendMutation.isPending || chatbgpMentionMutation.isPending || uploading;
+  const isSending = aiSendMutation.isPending || teamSendMutation.isPending || uploading;
   // Array-based queue so the user can stack multiple ChatBGP requests while
   // a long response is still streaming. Drained one-at-a-time by the effect
   // above. Mirrors the desktop chat-panel behaviour.
@@ -1986,14 +1963,21 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       setInput("");
       aiSendMutation.mutate({ newMessages, files: originalFiles, tid: threadId });
     } else {
-      const content = text || (uploadedAttachments.length > 0 ? "Shared files" : "");
-      const hasChatBGPMention = text.toLowerCase().includes("@chatbgp");
+      let content = text || (uploadedAttachments.length > 0 ? "Shared files" : "");
+      // Swap readable "@Name" inserts for durable tag tokens (longest first).
+      if (pendingTagsRef.current.size > 0) {
+        const entries = [...pendingTagsRef.current.entries()].sort((a, b) => b[0].length - a[0].length);
+        for (const [key, tag] of entries) {
+          if (content.includes(key)) content = content.split(key).join(buildTagToken(tag.type, tag.id, tag.name));
+        }
+        pendingTagsRef.current.clear();
+      }
       const userMessage: LocalChatMessage = { role: "user", content, userName: currentUser?.name, userId: currentUser?.id, attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined };
       setMessages(prev => [...prev, userMessage]);
       setInput("");
-      if (hasChatBGPMention && threadId) {
-        chatbgpMentionMutation.mutate({ content, tid: threadId });
-      } else if (threadId) {
+      // The server owns AI replies in team threads (auto-join on @mention) —
+      // the old client-side mention path double-replied once auto-join landed.
+      if (threadId) {
         teamSendMutation.mutate({ content, tid: threadId, attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined });
       }
     }
@@ -2358,7 +2342,9 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
 
         {typingUsers.length > 0 && !isSending && (
           <div className="text-sm italic px-2 text-gray-400">
-            {typingUsers.length === 1 ? `${typingUsers[0]} is typing...` : `${typingUsers.length} people typing...`}
+            {typingUsers.length === 1
+              ? `${(typingUsers[0] as any)?.userId === "__chatbgp__" ? "ChatBGP" : allUsers?.find(u => u.id === (typingUsers[0] as any)?.userId)?.name?.split(" ")[0] || "Someone"} is typing...`
+              : `${typingUsers.length} people typing...`}
           </div>
         )}
         </div>
@@ -2374,17 +2360,56 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         )}
       </div>
 
-      {mentionQuery !== null && mentionUsers.length > 0 && (
-        <div className="border-t px-4 py-2 max-h-[200px] overflow-y-auto bg-white">
-          {mentionUsers.map((u, i) => (
-            <button
-              key={u.id}
-              onClick={() => handleMentionSelect(u)}
-              className={`w-full text-left px-4 py-3 rounded-lg text-[15px] ${i === mentionIndex ? "bg-gray-100" : ""}`}
-            >
-              {u.name}
-            </button>
-          ))}
+      {mentionQuery !== null && mentionOptions.length > 0 && (
+        <div className="border-t max-h-[240px] overflow-y-auto bg-white">
+          {mentionOptions.map((opt, i) => {
+            const groupOf = (o: typeof opt) =>
+              o.kind === "chatbgp" ? "AI" :
+              o.kind === "user" ? "People" :
+              o.type === "company" ? "Brands & companies" :
+              o.type === "property" ? "Properties" :
+              o.type === "deal" ? "Deals" :
+              o.type === "unit" ? "Letting tracker" :
+              o.type === "folder" ? "Folders" : "Contacts";
+            const group = groupOf(opt);
+            const showHeader = i === 0 || groupOf(mentionOptions[i - 1]) !== group;
+            const optKey = opt.kind === "chatbgp" ? "chatbgp" : `${opt.kind === "entity" ? opt.type : "user"}-${opt.id}`;
+            return (
+              <div key={optKey}>
+                {showHeader && (
+                  <p className="px-4 pt-2 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider bg-gray-50">{group}</p>
+                )}
+                <button
+                  onClick={() => handleOptionSelect(opt)}
+                  className={`w-full flex items-center gap-2.5 text-left px-4 py-3 text-[15px] ${i === mentionIndex ? "bg-gray-100" : ""}`}
+                  data-testid={`mobile-mention-${optKey}`}
+                >
+                  {opt.kind === "chatbgp" ? (
+                    <span className="w-7 h-7 rounded-full bg-gradient-to-br from-gray-800 to-black flex items-center justify-center shrink-0">
+                      <Sparkles className="w-3.5 h-3.5 text-white" />
+                    </span>
+                  ) : opt.kind === "entity" ? (
+                    (() => {
+                      const Icon = TAG_META[opt.type]?.icon || Building2;
+                      return (
+                        <span className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${TAG_META[opt.type]?.chip || "bg-gray-100"}`}>
+                          <Icon className="w-3.5 h-3.5" />
+                        </span>
+                      );
+                    })()
+                  ) : (
+                    <span className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center shrink-0 text-[11px] font-semibold">
+                      {opt.name.split(" ").map(n => n[0]).join("").slice(0, 2)}
+                    </span>
+                  )}
+                  <span className="flex-1 min-w-0">
+                    <span className="block truncate">{opt.kind === "chatbgp" ? "ChatBGP" : opt.name}</span>
+                    {opt.kind === "entity" && opt.subtitle && <span className="block text-[12px] text-gray-500 truncate">{opt.subtitle}</span>}
+                  </span>
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -3151,9 +3176,13 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     const other: ThreadData[] = [];
     for (const t of (threads || [])) {
       if (t.isAiChat) ai.push(t);
-      else if (t.members.length > 0) {
+      else {
+        // Show every conversation the user belongs to — the old "2+ other
+        // members" rule hid 1:1 threads from the mobile list entirely. Only
+        // your own empty, member-less drafts stay hidden.
         const otherMembers = t.members.filter(m => m.id !== currentUser?.id);
-        if (otherMembers.length > 1) team.push(t);
+        if (otherMembers.length === 0 && t.createdBy === currentUser?.id && !t.lastMessage) continue;
+        team.push(t);
       }
     }
     return { teamThreads: team, aiThreads: ai, otherThreads: other };

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet.markercluster/dist/MarkerCluster.css";
@@ -3446,6 +3447,11 @@ out body;>;out skel qt;`;
 
 export default function EdozoMap({ initialSearch, onSearchConsumed, onResolveProperty }: { initialSearch?: { address: string; postcode: string | null } | null; onSearchConsumed?: () => void; onResolveProperty?: (p: { id: string; name: string; postcode: string | null }) => void } = {}) {
   const { toast } = useToast();
+  // Client logins (Landsec) don't see BGP-internal map layers — Investment
+  // Comps and Pathway runs are BGP's own pipeline/comparables. (Landsec audit.)
+  const { data: mapViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const mapIsClient = !!mapViewer && (mapViewer.role === "Client" || !!mapViewer.companyScopeId);
+  const CLIENT_HIDDEN_LAYERS = new Set(["icomps", "pathway"]);
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   // Google Places autocomplete input rendered as an overlay on the map.
@@ -3515,6 +3521,12 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   const [showLeaseEvents, setShowLeaseEvents] = useState(true);
   const [showPathway, setShowPathway] = useState(true);
   const pathwayMarkersRef = useRef<L.LayerGroup | null>(null);
+  // Pathway defaults on — force the BGP-internal layers off for clients so
+  // their pins don't render even though the toggle is hidden. (Landsec audit.)
+  useEffect(() => {
+    if (mapIsClient) { setShowInvestmentComps(false); setShowPathway(false); }
+  }, [mapIsClient]);
+
   // Available Properties layer — market listings (external_properties: PIPnet /
   // emailed / WhatsApp flyers) + BGP's own available units, shown together.
   const [showAvailable, setShowAvailable] = useState(true);
@@ -6055,7 +6067,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
               { key: "tp",     label: "Tenancy Plans",  count: tenancyPlanCount, dot: "#dc2626", on: showTenancyPlans, set: setShowTenancyPlans },
               { key: "annot",  label: "Annotations",     count: annotations.length, dot: "#a855f7", on: showAnnotations, set: setShowAnnotations },
               { key: "hmlr",   label: "HMLR Titles", count: hmlrPolygons?.features?.length ?? 0, dot: "#1e40af", on: showHmlrTitles, set: setShowHmlrTitles },
-            ].map((row) => (
+            ].filter((row) => !(mapIsClient && CLIENT_HIDDEN_LAYERS.has(row.key))).map((row) => (
               <button
                 key={row.key}
                 onClick={() => row.set(!row.on)}

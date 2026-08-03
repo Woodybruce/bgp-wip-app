@@ -635,7 +635,10 @@ export function CompanyPropertiesBoard({
           ))}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        {/* The property list is capped with its own scroll — on landlords
+            with a real portfolio (Landsec) it ran on for screens under the
+            map ("lots under the map", Woody 2026-07-30). */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[560px] overflow-y-auto pr-1">
           {visibleProps.map(p => {
             const isOpen = expanded.has(p.id);
             const occ = p.units.filter(u => u.status === "Occupied").length;

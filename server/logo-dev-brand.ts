@@ -136,6 +136,63 @@ export async function enrichCompanyFromLogoDev(companyId: string): Promise<{ upd
   return { updated };
 }
 
+// Extract logo + brand colours from a logo.dev Brand API payload and stamp
+// them on a company so the client app can skin itself in the client's own
+// brand ("their version of the app"). The Brand API returns logos + colours
+// in a few shapes across accounts; parse defensively.
+function pickLogoUrl(brand: any): string | null {
+  if (typeof brand?.logo === "string") return brand.logo;
+  const logos = Array.isArray(brand?.logos) ? brand.logos : [];
+  // Prefer a light-theme wordmark/icon that reads on a dark sidebar; else first.
+  const byTheme = logos.find((l: any) => /light/i.test(l?.theme || "")) || logos[0];
+  return byTheme?.url || byTheme?.src || (typeof logos[0] === "string" ? logos[0] : null) || null;
+}
+function pickColours(brand: any): { primary: string | null; secondary: string | null } {
+  const raw = brand?.colors ?? brand?.colours ?? [];
+  const arr: any[] = Array.isArray(raw) ? raw : Object.values(raw || {});
+  const hexOf = (c: any): string | null => {
+    const h = typeof c === "string" ? c : (c?.hex || c?.value || c?.color);
+    return typeof h === "string" && /^#?[0-9a-f]{6}$/i.test(h.trim()) ? (h.trim().startsWith("#") ? h.trim() : `#${h.trim()}`) : null;
+  };
+  const typed = (want: RegExp) => arr.find((c: any) => typeof c === "object" && want.test(String(c?.type || c?.name || "")));
+  const primary = hexOf(typed(/accent|primary|brand|base|dark/i)) || hexOf(arr[0]) || null;
+  const secondary = hexOf(typed(/secondary|light|background|muted/i)) || hexOf(arr.find((c: any) => hexOf(c) && hexOf(c) !== primary)) || null;
+  return { primary, secondary };
+}
+
+export async function fetchBrandThemeForCompany(companyId: string, opts: { force?: boolean } = {}): Promise<{
+  logoUrl: string | null; primary: string | null; secondary: string | null;
+} | null> {
+  if (!isLogoDevBrandConfigured()) return null;
+  const q = await pool.query(
+    `SELECT id, name, domain, domain_url, logo_url, brand_primary_color, brand_secondary_color FROM crm_companies WHERE id = $1`,
+    [companyId]
+  );
+  const c = q.rows[0];
+  if (!c) return null;
+  // Fill-blanks unless forced (a manual refresh from the company page).
+  if (!opts.force && c.logo_url && c.brand_primary_color) {
+    return { logoUrl: c.logo_url, primary: c.brand_primary_color, secondary: c.brand_secondary_color };
+  }
+  const domain = cleanDomain(c.domain) || cleanDomain(c.domain_url);
+  if (!domain) return null;
+  const brand = await fetchLogoDevBrand(domain);
+  if (!brand) return null;
+  const logoUrl = pickLogoUrl(brand);
+  const { primary, secondary } = pickColours(brand);
+  await pool.query(
+    `UPDATE crm_companies
+        SET logo_url = COALESCE($1, logo_url),
+            brand_primary_color = COALESCE($2, brand_primary_color),
+            brand_secondary_color = COALESCE($3, brand_secondary_color),
+            updated_at = now()
+      WHERE id = $4`,
+    [logoUrl, primary, secondary, companyId]
+  );
+  console.log(`[logo-dev-brand] ${c.name}: theme logo=${!!logoUrl} primary=${primary || "—"} secondary=${secondary || "—"}`);
+  return { logoUrl, primary, secondary };
+}
+
 // Bulk backfill over the brand book — brands with a domain and at least one
 // blank target field. Sequential (the API allows bursts, but credits are
 // the real constraint) with a hard per-run limit.
@@ -143,11 +200,11 @@ export async function runLogoDevBackfill(limit = 100, hospitalityOnly = false): 
   configured: boolean; candidates: number; processed: number; filled: number; fieldsFilled: number;
 }> {
   // hospitalityOnly = the client-visible (Landsec) brand slice only.
-  const sliceFilter = hospitalityOnly ? `AND company_type ~* $2` : "";
+  let sliceFilter = "";
   const params: any[] = [Math.min(limit, 500)];
   if (hospitalityOnly) {
-    const { CLIENT_VISIBLE_BRAND_RE } = await import("./company-scope");
-    params.push(CLIENT_VISIBLE_BRAND_RE.source);
+    const { clientBrandSliceSql } = await import("./company-scope");
+    sliceFilter = `AND ${await clientBrandSliceSql(null)}`;
   }
   const candidatesQ = await pool.query(
     `SELECT id FROM crm_companies

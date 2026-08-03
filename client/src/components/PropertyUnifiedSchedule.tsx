@@ -93,7 +93,10 @@ export function PropertyUnifiedSchedule({ propertyId }: { propertyId: string }) 
       {/* Re-mount the underlying board when the lens changes so its
           internal hiddenFields state re-initialises from the lens-
           specific localStorage. Saves a more invasive refactor. */}
-      <PropertyTenancySchedule key={lens} propertyId={propertyId} lens={lens} readOnly={isClientSched} />
+      {/* Clients get the same live board as staff — vacant rows visible and
+          the tenancy → Letting Tracker one-click included ("client does as
+          much as the agent"). Their writes are scope-checked server-side. */}
+      <PropertyTenancySchedule key={lens} propertyId={propertyId} lens={lens} />
     </div>
   );
 }

@@ -176,7 +176,7 @@ router.get("/api/leasing-schedule/company/:companyId", requireAuth, async (req, 
       // Client viewing a brand profile: show that brand's footprint across
       // the CLIENT'S schemes only (tenant of, or targeted at, a unit on a
       // property they own) — never other landlords' schedules.
-      if (!(await isClientVisibleBrand(String(req.params.companyId)))) {
+      if (!(await isClientVisibleBrand(String(req.params.companyId), lsScope))) {
         return res.status(403).json({ error: "Not available for this account" });
       }
       const scopedPool = await getPool();

@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { pool } from "./db";
 import { requireAuth, requireAdmin, getUserIdFromToken } from "./auth";
 import { setPipnetCreds, clearPipnetCreds, getPipnetCredsStatus } from "./integration-credentials";
-import { resolveCompanyScope } from "./company-scope";
+import { resolveCompanyScope, isPropertyInScope, isDealInScope, isContactInScope, isClientVisibleBrand, getClientExtraBrandIds, getClientVisibleUserIds } from "./company-scope";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -109,14 +109,124 @@ const chatMediaUpload = multer({
 const GROUP_CHAT_TOOLS = [
   "search_crm", "search_news", "query_wip", "create_deal", "update_deal",
   "create_contact", "update_contact", "create_company", "update_company",
-  "create_property", "upsert_tenancy_schedule", "add_property_imagery",
-  "create_available_unit", "update_available_unit",
+  "create_property", "create_available_unit", "update_available_unit",
   "update_investment_tracker", "create_investment_tracker",
   "log_viewing", "log_offer", "create_requirement", "create_diary_entry",
   "delete_record", "web_search", "ingest_url", "property_lookup", "property_data_lookup",
   "tfl_nearby", "search_green_street", "query_xero", "scan_duplicates",
-  "navigate_to", "send_email",
+  "navigate_to", "send_email", "query_leasing_schedule",
 ];
+
+// ── Smart tags ──────────────────────────────────────────────────────────
+// Chat messages carry entity tags as inline tokens: @[Name](tag:type/id).
+// The client renders them as clickable chips; here they (a) trigger the
+// AI auto-join when the tag is the AI itself and (b) get resolved into
+// real CRM context for the group AI responder.
+const TAG_TOKEN_REGEX = /@\[([^\]]+)\]\(tag:(user|company|property|deal|unit|contact|folder)\/([^)\s]+)\)/g;
+
+// One regex for "the user summoned the AI", shared by the auto-join in the
+// message handler and the must-respond rule in triggerAiGroupResponse.
+// Covers @ChatBGP / "chat bgp" / bare "@chat" / an AI user-tag token.
+const AI_MENTION_REGEX = /@?chat\s*(bgp|pave|landsec)\b|@chat\b|\(tag:user\/__chatbgp__\)/i;
+
+function stripTagTokens(text: string): string {
+  return text.replace(TAG_TOKEN_REGEX, "@$1");
+}
+
+// Resolve the entities tagged in a conversation into a compact context
+// block for the group AI, so "@[Bluewater](tag:property/…) what's vacant?"
+// answers from the actual record instead of a cold search.
+async function buildTaggedEntityContext(messages: Array<{ content: string }>, scopeCompanyId?: string | null): Promise<string> {
+  const seen = new Map<string, { type: string; id: string; name: string }>();
+  for (const m of messages) {
+    for (const match of (m.content || "").matchAll(TAG_TOKEN_REGEX)) {
+      const [, name, type, id] = match;
+      if (type !== "user" && seen.size < 8) seen.set(`${type}/${id}`, { type, id, name });
+    }
+  }
+  if (seen.size === 0) return "";
+  // Defense-in-depth for client scope: even if a staff member tagged an
+  // out-of-portfolio entity in a shared thread, a client's AI turn must not
+  // get that record's details injected. Drop anything out of scope before we
+  // resolve it. Null scope = internal staff, no filtering.
+  if (scopeCompanyId) {
+    for (const [key, { type, id }] of [...seen.entries()]) {
+      let ok = true;
+      if (type === "property") ok = await isPropertyInScope(scopeCompanyId, id).catch(() => false);
+      else if (type === "deal") ok = await isDealInScope(scopeCompanyId, id).catch(() => false);
+      else if (type === "contact") ok = await isContactInScope(scopeCompanyId, id).catch(() => false);
+      else if (type === "company") ok = id === scopeCompanyId || await isClientVisibleBrand(id, scopeCompanyId).catch(() => false);
+      else if (type === "unit") {
+        const r = await pool.query(`SELECT property_id FROM available_units WHERE id = $1`, [id]).catch(() => ({ rows: [] as any[] }));
+        ok = !!r.rows[0]?.property_id && await isPropertyInScope(scopeCompanyId, r.rows[0].property_id).catch(() => false);
+      }
+      if (!ok) seen.delete(key);
+    }
+    if (seen.size === 0) return "";
+  }
+  const lines: string[] = [];
+  for (const { type, id, name } of seen.values()) {
+    try {
+      if (type === "property") {
+        const r = await pool.query(
+          `SELECT p.name, p.status, p.asset_class,
+            (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id) as unit_count,
+            (SELECT COUNT(*) FROM available_units au WHERE au.property_id = p.id AND au.marketing_status = 'Available') as available_count
+           FROM crm_properties p WHERE p.id = $1`, [id]);
+        const p = r.rows[0];
+        if (p) {
+          lines.push(`- Property **${p.name}** (id ${id}) — ${p.asset_class || "unknown class"}, status ${p.status || "unknown"}, ${p.unit_count} units (${p.available_count} available)`);
+          // Inline the unit schedule so "which units are free at X?" answers
+          // straight from context — the group loop only gets a few tool hops.
+          const units = await pool.query(
+            `SELECT unit_name, sqft, asking_rent, marketing_status FROM available_units
+             WHERE property_id = $1 ORDER BY unit_name LIMIT 15`, [id]);
+          for (const u of units.rows) {
+            lines.push(`  - ${u.unit_name}: ${u.sqft ? Number(u.sqft).toLocaleString() + " sqft" : "size TBC"}${u.asking_rent ? ", £" + u.asking_rent + " psf" : ""} — ${u.marketing_status || "status unknown"}`);
+          }
+          const ls = await pool.query(
+            `SELECT COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE status ILIKE 'vacant%' OR status ILIKE 'available%') as vacant,
+                    COALESCE(SUM(rent_pa), 0) as rent
+             FROM leasing_schedule_units WHERE property_id = $1`, [id]);
+          if (Number(ls.rows[0]?.total) > 0) {
+            lines.push(`  - Leasing schedule: ${ls.rows[0].total} units, ${ls.rows[0].vacant} vacant, £${Number(ls.rows[0].rent).toLocaleString()} passing rent pa`);
+          }
+        }
+      } else if (type === "deal") {
+        const r = await pool.query(
+          `SELECT d.name, d.status, d.deal_type, d.team, p.name as property_name FROM crm_deals d
+           LEFT JOIN crm_properties p ON d.property_id = p.id WHERE d.id = $1`, [id]);
+        const d = r.rows[0];
+        if (d) lines.push(`- Deal **${d.name}** (id ${id}) — ${d.deal_type || "deal"}, status ${d.status || "unknown"}${d.property_name ? `, property ${d.property_name}` : ""}${d.team ? `, team ${d.team}` : ""}`);
+      } else if (type === "company") {
+        const r = await pool.query(`SELECT name, company_type FROM crm_companies WHERE id = $1`, [id]);
+        const c = r.rows[0];
+        if (c) lines.push(`- Company/brand **${c.name}** (id ${id})${c.company_type ? ` — ${c.company_type}` : ""}`);
+      } else if (type === "unit") {
+        const r = await pool.query(
+          `SELECT au.unit_name, au.sqft, au.asking_rent, au.marketing_status, p.name as property_name
+           FROM available_units au LEFT JOIN crm_properties p ON au.property_id = p.id WHERE au.id = $1`, [id]);
+        const u = r.rows[0];
+        if (u) lines.push(`- Letting-tracker unit **${u.unit_name}**${u.property_name ? ` at ${u.property_name}` : ""} (id ${id}) — ${u.sqft ? Number(u.sqft).toLocaleString() + " sqft, " : ""}${u.asking_rent ? "£" + u.asking_rent + " psf, " : ""}status ${u.marketing_status || "unknown"}`);
+      } else if (type === "folder") {
+        lines.push(`- SharePoint folder **${name}** was linked in the chat — that's where the relevant documents live. You cannot open folders yourself; acknowledge the pointer rather than asking for uploads.`);
+        continue;
+      } else if (type === "contact") {
+        const r = await pool.query(`SELECT c.name, c.email, co.name as company_name FROM crm_contacts c LEFT JOIN crm_companies co ON c.company_id = co.id WHERE c.id = $1`, [id]);
+        const c = r.rows[0];
+        if (c) lines.push(`- Contact **${c.name}** (id ${id})${c.company_name ? ` — ${c.company_name}` : ""}${c.email ? `, ${c.email}` : ""}`);
+      }
+      if (!lines.length || !lines[lines.length - 1].includes(`(id ${id})`)) {
+        // Entity was deleted since it was tagged — keep the AI honest about it.
+        lines.push(`- Tagged "${name}" (${type} ${id}) — no longer found in the CRM`);
+      }
+    } catch {
+      lines.push(`- Tagged "${name}" (${type} ${id}) — lookup failed`);
+    }
+  }
+  return `\n\n## TAGGED IN THIS CONVERSATION\nThese records were tagged with @ in the chat. Questions near a tag are almost certainly about that record — use these ids directly with your tools instead of searching by name:\n${lines.join("\n")}\n`;
+}
 
 // available_units / investment_tracker store agent user IDs (text[] of
 // user.id), but crm_deals.internal_agent stores display NAMES (the
@@ -168,17 +278,29 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       chatbgp.getEmailAndCalendarContext(req).catch(() => ""),
     ]);
 
-    // Client logins get NO tools in the group-AI path either — this loop is
-    // separate from the main chat handler's clientChatGuard. (Landsec audit.)
-    const groupIsClient = await (await import("./company-scope")).isClientRequestUser(req).catch(() => true);
-    const groupTools = groupIsClient ? [] : ((allTools as any).tools?.filter((t: any) =>
-      GROUP_CHAT_TOOLS.includes(t.function?.name)
-    ) || []);
+    // Client logins get the SAME agentic reach in group chat as they do in the
+    // main ChatBGP window — they can drive their own CRM (search, create/update
+    // their deals, contacts, companies, properties, viewings, requirements,
+    // navigate) — just filtered through isToolAllowedForClient so BGP-internal
+    // tools (SharePoint, email, raw SQL, WIP/Xero, destructive ops) stay off.
+    // Cross-client data stays segregated at the query layer (resolveCompanyScope).
+    const { isClientRequestUser, resolveCompanyScope: resolveGroupScope } = await import("./company-scope");
+    const { isToolAllowedForClient } = await import("./chatbgp");
+    const groupIsClient = await isClientRequestUser(req).catch(() => true);
+    const groupClientScope = groupIsClient ? await resolveGroupScope(req).catch(() => null) : null;
+    const groupTools = (groupIsClient && !groupClientScope) ? [] : ((allTools as any).tools?.filter((t: any) => {
+      const name = t.function?.name;
+      if (!GROUP_CHAT_TOOLS.includes(name)) return false;
+      if (groupIsClient && !isToolAllowedForClient(name)) return false;
+      return true;
+    }) || []);
 
     const lastUserMsg = recentMessages.filter(m => m.role === "user").pop()?.content || "";
-    const mentionsChatBGP = /chat\s*bgp|@chat\s*bgp|@chat\b/i.test(lastUserMsg);
+    const mentionsChatBGP = AI_MENTION_REGEX.test(lastUserMsg);
+    const taggedScope = await resolveCompanyScope(req).catch(() => null);
+    const taggedContext = await buildTaggedEntityContext(recentMessages, taggedScope).catch(() => "");
 
-    const groupSystemPrompt = systemPrompt + learnings + calendarContext +
+    const groupSystemPrompt = systemPrompt + learnings + calendarContext + taggedContext +
       `\n\nIMPORTANT: You are participating in a GROUP CHAT with multiple team members. ` +
       `The most recent message was sent by ${senderName}. ` +
       `CRITICAL RULES FOR GROUP CHAT:\n` +
@@ -194,17 +316,26 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       `   - Share relevant context you know about similar requirements or properties\n` +
       `7. When someone asks to check their diary/calendar, look at the calendar context provided to you and summarise their upcoming schedule.\n` +
       `8. NEVER respond with raw error messages or technical details. If a tool fails, apologise briefly and try a different approach.\n` +
+      `8b. FINISH YOUR ANSWER IN THIS TURN. After a tool result comes back, your next message IS the final answer the team sees — include the actual findings (names, numbers, statuses). NEVER end with "Let me pull/check/look up..." or a sentence that trails off with a colon: there is no further lookup after you reply. If the tool returned nothing useful, say what you tried and what you'd need.\n` +
       (mentionsChatBGP
         ? `9. The user mentioned you by name — you MUST respond. Do NOT skip.`
         : `9. Only respond with exactly __SKIP__ if the conversation is clearly a private side-conversation between team members that has nothing to do with work, property, or anything you could help with. When in doubt, respond — it's better to be helpful than silent.`);
 
-    console.log(`[ai-group] Prepared in ${Date.now() - startTime}ms (${groupTools.length} tools, mention=${mentionsChatBGP})`);
+    // Group chat answers on Fable 5 by default (same as the main ChatBGP
+    // window), honouring any per-thread /opus or /sonnet preference. callClaude
+    // applies the Fable safety-classifier params + Opus fallback automatically.
+    const { resolveChatModel } = await import("./chatbgp-model-router");
+    const { model: groupModel } = await resolveChatModel({ threadId }).catch(() => ({ model: "claude-fable-5" }));
+
+    console.log(`[ai-group] Prepared in ${Date.now() - startTime}ms (${groupTools.length} tools, mention=${mentionsChatBGP}, model=${groupModel})`);
 
     const completionOptions: any = {
-      model: "claude-sonnet-4-6",
+      model: groupModel,
       messages: [
         { role: "system", content: groupSystemPrompt },
-        ...recentMessages,
+        // Tag tokens read as line noise to the model — send plain @Name;
+        // the resolved records are already in TAGGED IN THIS CONVERSATION.
+        ...recentMessages.map(m => ({ ...m, content: stripTagTokens(m.content) })),
       ],
       max_completion_tokens: 2048,
       tools: groupTools.length > 0 ? groupTools : undefined,
@@ -220,7 +351,13 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     let claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
     let currentMessage = claudeResponse.choices?.[0]?.message;
     let loopCount = 0;
-    const maxLoops = 5;
+    const maxLoops = 6;
+    // Multi-hop: each handled tool's summarised outcome is fed back as a tool
+    // result so the model can chain lookups (search → detail → answer) instead
+    // of the first tool's summary being posted as the final reply. lastHandled*
+    // is the safety net if the model goes quiet after tools or hits the cap.
+    let lastAction: any = null;
+    let lastHandledReply: string | null = null;
 
     while (currentMessage?.tool_calls && currentMessage.tool_calls.length > 0 && loopCount < maxLoops) {
       loopCount++;
@@ -241,21 +378,17 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       try {
         const result = await chatbgp.handleCrmToolCall(fnName, fnArgs, req, completionOptions, currentMessage, toolCall);
         if (result?.handled && result.response) {
-          const replyText = result.response.reply;
-          if (replyText && replyText.trim() !== "__SKIP__") {
-            const saved = await storage.createChatMessage({
-              threadId,
-              role: "assistant",
-              content: replyText,
-              userId: null,
-              actionData: result.response.action ? JSON.stringify(result.response.action) : null,
-              attachments: null,
-            });
-            emitNewMessage(threadId, saved, "ChatBGP");
-          }
-          if (io) io.to(`thread:${threadId}`).emit("stop_typing", { threadId, userId: "__chatbgp__" });
-          console.log(`[ai-group] Responded in ${Date.now() - startTime}ms (${loopCount} tool calls)`);
-          return;
+          lastAction = result.response.action || lastAction;
+          lastHandledReply = result.response.reply || lastHandledReply;
+          completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
+          completionOptions.messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({ result: result.response.reply || "done", action: result.response.action || null }),
+          });
+          claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
+          currentMessage = claudeResponse.choices?.[0]?.message;
+          continue;
         }
 
         completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
@@ -274,6 +407,11 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
     if (io) io.to(`thread:${threadId}`).emit("stop_typing", { threadId, userId: "__chatbgp__" });
 
     let replyText = currentMessage?.content;
+    if ((!replyText || !replyText.trim() || replyText.trim() === "__SKIP__") && lastHandledReply) {
+      // Model went quiet after its tool run (or hit the hop cap) — post the
+      // last tool summary rather than dropping the work on the floor.
+      replyText = lastHandledReply;
+    }
     if (!replyText || replyText.trim() === "__SKIP__") {
       if (mentionsChatBGP) {
         replyText = "I'm here! How can I help?";
@@ -289,11 +427,11 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       role: "assistant",
       content: replyText,
       userId: null,
-      actionData: null,
+      actionData: lastAction ? JSON.stringify(lastAction) : null,
       attachments: null,
     });
     emitNewMessage(threadId, saved, "ChatBGP");
-    console.log(`[ai-group] Responded in ${Date.now() - startTime}ms`);
+    console.log(`[ai-group] Responded in ${Date.now() - startTime}ms (${loopCount} tool hops)`);
   } catch (err: any) {
     console.error("[ai-group] AI response failed:", err?.message);
     if (io) io.to(`thread:${threadId}`).emit("stop_typing", { threadId, userId: "__chatbgp__" });
@@ -517,7 +655,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/config/maps-key", requireAuth, (_req, res) => {
-    res.json({ key: process.env.GOOGLE_API_KEY || "" });
+    res.json({ key: process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY || "" });
   });
 
   const GOAD_DIR = path.join(process.cwd(), "data", "goad");
@@ -939,14 +1077,48 @@ export async function registerRoutes(
   app.get("/api/users", requireAuth, async (req, res) => {
     try {
       const allUsers = await storage.getAllUsers();
-      // Client logins only need id+name (agent chips/colors on their boards) —
-      // not the staff directory with emails/teams. (Landsec audit.)
-      if (await (await import("./company-scope")).isClientRequestUser(req)) {
-        return res.json(allUsers.filter(u => u.isActive !== false).map(u => ({ id: u.id, name: u.name })));
+      // Client logins (and staff in client-view) see only the people working
+      // on their account — assigned client team, property agents, own team —
+      // not the whole BGP staff directory. id+name only, no emails/teams.
+      const usersScope = await resolveCompanyScope(req);
+      if (usersScope) {
+        const visible = await getClientVisibleUserIds(usersScope);
+        const me = req.session.userId || (req as any).tokenUserId;
+        return res.json(allUsers
+          .filter(u => u.isActive !== false && (u.id === me || visible.has(u.id)))
+          .map(u => ({ id: u.id, name: u.name })));
       }
       res.json(allUsers.map(u => ({ id: u.id, name: u.name, username: u.username, email: u.email, role: u.role, department: u.department, team: u.team, additionalTeams: u.additionalTeams || [], profilePicUrl: u.profilePicUrl || null, isActive: u.isActive !== false })));
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch users" });
+    }
+  });
+
+  // Admin password reset — there was previously NO way to reset a login
+  // (client or staff) from inside the app. Generates a readable temp
+  // password (or accepts a supplied one), kills the target's sessions and
+  // bearer tokens so the old credentials stop working everywhere, and
+  // returns the new password ONCE for the admin to hand over.
+  app.post("/api/admin/users/:id/reset-password", requireAuth, async (req: any, res) => {
+    try {
+      const adminId = req.session.userId || req.tokenUserId;
+      const [admin] = await pool.query("SELECT is_admin FROM users WHERE id = $1", [adminId]).then(r => r.rows);
+      if (!admin?.is_admin) return res.status(403).json({ message: "Admin access required" });
+      const targetId = req.params.id;
+      const supplied = typeof req.body?.password === "string" ? req.body.password.trim() : "";
+      if (supplied && supplied.length < 8) return res.status(400).json({ message: "Password must be at least 8 characters" });
+      const words = ["Oak", "Brick", "Slate", "Quay", "Arch", "Mews", "Wharf", "Gate", "Court", "Strand"];
+      const newPw = supplied ||
+        `${words[crypto.randomInt(words.length)]}-${words[crypto.randomInt(words.length)]}-${crypto.randomInt(1000, 9999)}`;
+      const { hashPassword } = await import("./auth");
+      const hashed = await hashPassword(newPw);
+      const upd = await pool.query("UPDATE users SET password = $1 WHERE id = $2 RETURNING name, email", [hashed, targetId]);
+      if (!upd.rowCount) return res.status(404).json({ message: "User not found" });
+      await pool.query("DELETE FROM session WHERE sess::jsonb -> 'passport' ->> 'user' = $1 OR sess::jsonb ->> 'userId' = $1", [targetId]).catch(() => {});
+      await pool.query("DELETE FROM auth_tokens WHERE user_id = $1", [targetId]).catch(() => {});
+      res.json({ success: true, name: upd.rows[0].name, email: upd.rows[0].email, tempPassword: newPw });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to reset password" });
     }
   });
 
@@ -1135,10 +1307,26 @@ export async function registerRoutes(
       const now = new Date();
       const end = new Date(now);
       end.setDate(end.getDate() + days);
-      const result = await pool.query(
-        `SELECT * FROM team_events WHERE start_time >= $1 AND start_time <= $2 ORDER BY start_time`,
-        [now.toISOString(), end.toISOString()]
-      );
+      // Client logins (and staff in client view) only see their own
+      // company's events — the client-events-sync rows plus any manual
+      // team event tagged with their company name. BGP's wider diary
+      // never crosses over.
+      const teScope = await resolveCompanyScope(req);
+      // Match the company name case/whitespace-insensitively — synced events
+      // can carry name variants ("LANDSEC", trailing space) and the exact
+      // string compare blanked the client calendar entirely.
+      const result = teScope
+        ? await pool.query(
+            `SELECT * FROM team_events
+              WHERE start_time >= $1 AND start_time <= $2
+                AND lower(trim(company_name)) = (SELECT lower(trim(name)) FROM crm_companies WHERE id = $3)
+              ORDER BY start_time`,
+            [now.toISOString(), end.toISOString(), teScope]
+          )
+        : await pool.query(
+            `SELECT * FROM team_events WHERE start_time >= $1 AND start_time <= $2 ORDER BY start_time`,
+            [now.toISOString(), end.toISOString()]
+          );
       res.json(result.rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch team events" });
@@ -1587,6 +1775,165 @@ export async function registerRoutes(
   });
 
 
+  // Smart-tag picker behind the chat @ menu: people, brands/companies,
+  // properties, deals and letting-tracker units in one grouped payload.
+  app.get("/api/chat/tag-search", requireAuth, async (req, res) => {
+    try {
+      const q = (req.query.q as string || "").trim();
+      const results: Array<{ type: string; id: string; name: string; subtitle?: string }> = [];
+
+      // Client accounts (and staff in client-view) only tag entities inside
+      // their own portfolio — the picker must honour the same data segregation
+      // the CRM does, or a landlord client would see other clients' property,
+      // deal and company names in the @ menu. Null scope = internal staff, no
+      // filter. Reuses the canonical scope checks from company-scope.ts.
+      const scopeCompanyId = await resolveCompanyScope(req);
+      const clientExtraBrands = scopeCompanyId ? await getClientExtraBrandIds(scopeCompanyId) : new Set<string>();
+
+      const like = `%${escapeLike(q)}%`;
+      // Scoped accounts only tag people working on their account (assigned
+      // client team, property agents, own team) — same rule as /api/users.
+      const taggableUserIds = scopeCompanyId
+        ? [...(await getClientVisibleUserIds(scopeCompanyId)), req.session.userId || (req as any).tokenUserId].filter(Boolean)
+        : null;
+      const userRows = taggableUserIds
+        ? await pool.query(
+            `SELECT id, name, department FROM users WHERE ($1 = '' OR name ILIKE $2) AND id = ANY($3) ORDER BY name LIMIT 6`,
+            [q, like, taggableUserIds]
+          )
+        : await pool.query(
+            `SELECT id, name, department FROM users WHERE ($1 = '' OR name ILIKE $2) ORDER BY name LIMIT 6`,
+            [q, like]
+          );
+      for (const u of userRows.rows) {
+        results.push({ type: "user", id: u.id, name: u.name, subtitle: u.department || undefined });
+      }
+
+      if (q.length >= 2) {
+        const [crmResults, unitRows] = await Promise.all([
+          storage.crmSearchAll(q).catch(() => []),
+          pool.query(
+            `SELECT au.id, au.unit_name, au.marketing_status, au.property_id, p.name as property_name
+             FROM available_units au LEFT JOIN crm_properties p ON au.property_id = p.id
+             WHERE au.unit_name ILIKE $1 OR p.name ILIKE $1
+             ORDER BY au.unit_name LIMIT 10`,
+            [like]
+          ).catch(() => ({ rows: [] as any[] })),
+        ]);
+        const caps: Record<string, number> = { company: 5, property: 5, deal: 5, contact: 4 };
+        const counts: Record<string, number> = {};
+        for (const r of crmResults) {
+          if (!(r.type in caps)) continue;
+          // Data segregation for client scope: only surface entities the
+          // client is actually allowed to see (their portfolio + client-
+          // visible brands). Internal staff (null scope) skip every check.
+          if (scopeCompanyId) {
+            if (r.type === "property" && !(await isPropertyInScope(scopeCompanyId, r.id))) continue;
+            if (r.type === "deal" && !(await isDealInScope(scopeCompanyId, r.id))) continue;
+            if (r.type === "contact" && !(await isContactInScope(scopeCompanyId, r.id))) continue;
+            if (r.type === "company" && r.id !== scopeCompanyId
+                && !clientExtraBrands.has(r.id)
+                && !(await isClientVisibleBrand(r.id, scopeCompanyId))) continue;
+          }
+          counts[r.type] = (counts[r.type] || 0) + 1;
+          if (counts[r.type] > caps[r.type]) continue;
+          results.push({ type: r.type, id: r.id, name: r.name, subtitle: r.detail });
+        }
+        let unitCount = 0;
+        for (const u of unitRows.rows) {
+          if (scopeCompanyId && !(u.property_id && await isPropertyInScope(scopeCompanyId, u.property_id))) continue;
+          if (++unitCount > 5) break;
+          results.push({
+            type: "unit",
+            id: u.id,
+            name: u.property_name ? `${u.unit_name} · ${u.property_name}` : u.unit_name,
+            subtitle: u.marketing_status || undefined,
+          });
+        }
+
+        // SharePoint folders come from the archivist's knowledge-base index —
+        // no live Graph call, so the picker stays fast and degrades to nothing
+        // when the index is empty. Folder ids carry the URL base64url-encoded
+        // (URLs contain characters the tag token grammar forbids). Client
+        // accounts only see folders whose path names their own company — the
+        // index isn't row-level segregated, so fail closed for scoped users.
+        try {
+          const folderScope = scopeCompanyId
+            ? await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [scopeCompanyId]).then(r => r.rows[0]?.name || null).catch(() => null)
+            : null;
+          if (!scopeCompanyId || folderScope) {
+            const folderRows = await pool.query(
+              `SELECT folder_path, MAX(folder_url) as folder_url, COUNT(*) as files FROM (
+                 SELECT regexp_replace(file_path, '/[^/]*$', '') AS folder_path, folder_url
+                 FROM knowledge_base WHERE folder_url IS NOT NULL AND file_path IS NOT NULL
+               ) t
+               WHERE folder_path ILIKE $1 AND folder_path <> ''
+                 AND ($2::text IS NULL OR folder_path ILIKE '%' || $2 || '%')
+               GROUP BY folder_path ORDER BY length(folder_path) ASC LIMIT 4`,
+              [like, folderScope]
+            );
+            for (const f of folderRows.rows) {
+              const segs = String(f.folder_path).split("/").filter(Boolean);
+              const name = segs[segs.length - 1] || f.folder_path;
+              results.push({
+                type: "folder",
+                id: Buffer.from(String(f.folder_url)).toString("base64url"),
+                name,
+                subtitle: `${segs.slice(0, -1).join(" / ")}${segs.length > 1 ? " · " : ""}${f.files} files`,
+              });
+            }
+          }
+        } catch {}
+      }
+
+      res.json({ results });
+    } catch (err: any) {
+      console.error("[tag-search] Error:", err?.message);
+      res.json({ results: [] });
+    }
+  });
+
+  // Conversations that tag a given record — powers the "Conversations" card
+  // on entity pages. Member-scoped: you only see threads you belong to, same
+  // visibility rule as the chat list itself.
+  app.get("/api/chat/threads-tagging", requireAuth, async (req, res) => {
+    try {
+      const userId = req.session.userId!;
+      const type = String(req.query.type || "");
+      const id = String(req.query.id || "");
+      if (!/^(company|property|deal|unit|contact)$/.test(type) || !id) {
+        return res.status(400).json({ message: "type and id required" });
+      }
+      const tagFragment = `(tag:${type}/${id})`;
+      const rows = await pool.query(
+        `SELECT DISTINCT ON (t.id) t.id, t.title, t.updated_at, t.has_ai_member,
+                (SELECT m2.content FROM chat_messages m2 WHERE m2.thread_id = t.id ORDER BY m2.created_at DESC LIMIT 1) as last_message
+         FROM chat_threads t
+         JOIN chat_messages m ON m.thread_id = t.id
+         LEFT JOIN chat_thread_members mem ON mem.thread_id = t.id AND mem.user_id = $2
+         WHERE position($1 in m.content) > 0
+           AND (t.created_by = $2 OR mem.user_id IS NOT NULL)
+         ORDER BY t.id, t.updated_at DESC`,
+        [tagFragment, userId]
+      );
+      const threads = rows.rows
+        .sort((a: any, b: any) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+        .slice(0, 10)
+        .map((r: any) => ({
+          id: r.id,
+          title: r.title,
+          updatedAt: r.updated_at,
+          hasAiMember: r.has_ai_member,
+          lastMessage: r.last_message ? String(r.last_message).replace(/@\[([^\]]+)\]\(tag:[^)]+\)/g, "@$1").slice(0, 90) : null,
+        }));
+      res.json({ threads });
+    } catch (err: any) {
+      console.error("[threads-tagging] Error:", err?.message);
+      res.json({ threads: [] });
+    }
+  });
+
+
   app.get("/api/chat/threads", requireAuth, async (req, res) => {
     try {
       const userId = req.session.userId!;
@@ -1655,6 +2002,7 @@ export async function registerRoutes(
           linkedId: row.linked_id,
           linkedName: row.linked_name,
           isAiChat: row.is_ai_chat,
+          hasAiMember: row.has_ai_member,
           groupPicUrl: row.group_pic_url,
           createdAt: row.created_at,
           updatedAt: row.updated_at,
@@ -1928,6 +2276,18 @@ export async function registerRoutes(
           }).catch(() => {});
         }
 
+        // Summoning the AI by name pulls it into the conversation for good —
+        // the WhatsApp mental model: mention someone and they're in the group.
+        if (!thread.hasAiMember && !thread.isAiChat && typeof content === "string" && AI_MENTION_REGEX.test(content)) {
+          try {
+            await storage.updateChatThread(thread.id, { hasAiMember: true });
+            (thread as any).hasAiMember = true;
+            emitMemberAdded(thread.id, "__chatbgp__", "ChatBGP");
+          } catch (e: any) {
+            console.error("[ai-group] Failed to auto-join AI on mention:", e?.message);
+          }
+        }
+
         if (thread.hasAiMember && !thread.isAiChat) {
           triggerAiGroupResponse(thread.id, userId, req).catch(async (err) => {
             console.error("[ai-group] Error triggering AI response:", err?.message);
@@ -1960,6 +2320,13 @@ export async function registerRoutes(
       if (!thread) return res.status(404).json({ message: "Thread not found" });
       const { userId } = req.body;
       if (!userId) return res.status(400).json({ message: "userId required" });
+      if (userId === "__chatbgp__") {
+        // The AI joins via the thread flag, not a member row — same mechanism
+        // as the create-time toggle, so the group responder picks it up.
+        await storage.updateChatThread(thread.id, { hasAiMember: true });
+        emitMemberAdded(thread.id, "__chatbgp__", "ChatBGP");
+        return res.json({ threadId: thread.id, userId: "__chatbgp__" });
+      }
       const member = await storage.addChatThreadMember({
         threadId: thread.id,
         userId,
@@ -1978,6 +2345,11 @@ export async function registerRoutes(
     try {
       const id = req.params.id as string;
       const memberId = req.params.userId as string;
+      if (memberId === "__chatbgp__") {
+        await storage.updateChatThread(id, { hasAiMember: false });
+        emitMemberRemoved(id, "__chatbgp__");
+        return res.json({ success: true });
+      }
       await storage.removeChatThreadMember(id, memberId);
       emitMemberRemoved(id, memberId);
       res.json({ success: true });
@@ -4519,9 +4891,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     return r.rows[0]?.property_id ?? null;
   }
 
-  app.post("/api/available-units/:id/brief", requireAuth, async (req: any, res) => {
+  // Shared by the unit page route and the requirements-board "Fits" flow
+  // (clients reach it via POST /api/unit-briefs, which is on their write
+  // allowlist; the scope check inside rejects units outside their portfolio).
+  const createBriefForUnit = async (req: any, res: any, unitId: string) => {
     try {
-      const unit = await storage.getAvailableUnit(String(req.params.id));
+      const unit = await storage.getAvailableUnit(unitId);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
       if (await assertUnitInClientScope(req, unit.propertyId)) {
         return res.status(403).json({ message: "Not available for client accounts" });
@@ -4540,12 +4915,33 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         createdByUserId: userId,
         createdByName: userName,
       });
+      // Default the client to the property's landlord (e.g. Landsec) —
+      // briefs auto-created from the tracker arrive without one, and the
+      // targets' Client-Contact picker needs it to offer the client's
+      // people (Mark Warne, Jonny Rushton, ...).
+      if (!parsed.clientCompanyId && unit.propertyId) {
+        const briefProp = await storage.getCrmProperty(unit.propertyId);
+        const briefLandlordId = (briefProp as any)?.landlordId;
+        if (briefLandlordId) {
+          parsed.clientCompanyId = briefLandlordId;
+          if (!parsed.clientCompany) {
+            const landlordCo = await storage.getCrmCompany(briefLandlordId);
+            if (landlordCo?.name) parsed.clientCompany = landlordCo.name;
+          }
+        }
+      }
       const [brief] = await db.insert(unitBriefs).values(parsed).returning();
       res.json(brief);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
       res.status(500).json({ message: err?.message || "Failed to create brief" });
     }
+  };
+  app.post("/api/available-units/:id/brief", requireAuth, (req: any, res) =>
+    createBriefForUnit(req, res, String(req.params.id)));
+  app.post("/api/unit-briefs", requireAuth, (req: any, res) => {
+    if (!req.body?.unitId) return res.status(400).json({ message: "unitId is required" });
+    return createBriefForUnit(req, res, String(req.body.unitId));
   });
 
   app.patch("/api/unit-briefs/:id", requireAuth, async (req: any, res) => {
@@ -4656,6 +5052,169 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Client-app brand theme — the caller's OWN company logo + colours (from
+  // logo.dev), so a landlord client's app skins itself in their brand.
+  // Client-allowed (under /api/client/); staff get their active client team's.
+  app.get("/api/client/brand-theme", requireAuth, async (req: any, res) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      const scope = await resolveCompanyScope(req);
+      if (!scope) return res.json({ scoped: false });
+      const q = await pool.query(
+        `SELECT name, logo_url, brand_primary_color, brand_secondary_color FROM crm_companies WHERE id = $1`,
+        [scope]
+      );
+      const c = q.rows[0];
+      if (!c) return res.json({ scoped: false });
+      // Lazy fetch: if we have a key but no theme yet, populate it in the
+      // background so the next load is branded (doesn't block this response).
+      if (!c.logo_url || !c.brand_primary_color) {
+        import("./logo-dev-brand").then(m => m.fetchBrandThemeForCompany(scope)).catch(() => {});
+      }
+      res.json({
+        scoped: true,
+        companyId: scope,
+        name: c.name,
+        logoUrl: c.logo_url || null,
+        primaryColor: c.brand_primary_color || null,
+        secondaryColor: c.brand_secondary_color || null,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to load brand theme" });
+    }
+  });
+
+  // ── Client CRM: add brands from the global directory ─────────────────
+  // A client's CRM auto-shows the hospitality/F&B/leisure/fitness slice; these
+  // let them pull ANY other brand from the global directory into their CRM
+  // (stored on their own company's crm_extra_brand_ids).
+  app.get("/api/client/crm/global-brands", requireAuth, async (req: any, res) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      const scope = await resolveCompanyScope(req);
+      if (!scope) return res.status(403).json({ message: "Client accounts only" });
+      const search = String(req.query.search || "").trim();
+      if (search.length < 2) return res.json([]);
+      // Search the whole tenant directory (any category) so the client can add
+      // brands outside their auto slice; exclude what they already see.
+      const { isClientCrmCategory } = await import("@shared/tenant-categories");
+      const { getClientExtraBrandIds } = await import("./company-scope");
+      const extra = await getClientExtraBrandIds(scope);
+      const q = await pool.query(
+        `SELECT id, name, company_type FROM crm_companies
+          WHERE merged_into_id IS NULL AND company_type ILIKE 'Tenant -%'
+            AND name ILIKE $1
+          ORDER BY is_tracked_brand DESC NULLS LAST, name LIMIT 25`,
+        [`%${search}%`]
+      );
+      res.json(q.rows.map((r: any) => ({
+        id: r.id, name: r.name, companyType: r.company_type,
+        inSlice: isClientCrmCategory(r.company_type),
+        added: extra.has(r.id),
+      })));
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Search failed" }); }
+  });
+
+  app.post("/api/client/crm/add-brand", requireAuth, async (req: any, res) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      const scope = await resolveCompanyScope(req);
+      if (!scope) return res.status(403).json({ message: "Client accounts only" });
+      const brandId = String(req.body?.brandId || "");
+      if (!/^[0-9a-f-]{36}$/i.test(brandId)) return res.status(400).json({ message: "brandId required" });
+      const chk = await pool.query(`SELECT company_type FROM crm_companies WHERE id = $1`, [brandId]);
+      if (!chk.rows[0] || !/^tenant -/i.test(chk.rows[0].company_type || "")) {
+        return res.status(400).json({ message: "Only tenant brands can be added" });
+      }
+      await pool.query(
+        `UPDATE crm_companies
+            SET crm_extra_brand_ids = (SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(crm_extra_brand_ids, '{}') || $1::text)))
+          WHERE id = $2`,
+        [brandId, scope]
+      );
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed to add brand" }); }
+  });
+
+  app.delete("/api/client/crm/add-brand/:brandId", requireAuth, async (req: any, res) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      const scope = await resolveCompanyScope(req);
+      if (!scope) return res.status(403).json({ message: "Client accounts only" });
+      await pool.query(
+        `UPDATE crm_companies SET crm_extra_brand_ids = array_remove(crm_extra_brand_ids, $1) WHERE id = $2`,
+        [String(req.params.brandId), scope]
+      );
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed to remove brand" }); }
+  });
+
+  // Staff refresh of a company's brand theme from logo.dev (company page).
+  app.post("/api/crm/companies/:id/fetch-brand-theme", requireAuth, async (req: any, res) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      if (await resolveCompanyScope(req)) return res.status(403).json({ message: "Staff only" });
+      const { fetchBrandThemeForCompany, isLogoDevBrandConfigured } = await import("./logo-dev-brand");
+      if (!isLogoDevBrandConfigured()) return res.status(503).json({ message: "logo.dev Brand API not configured (LOGO_DEV_SECRET_KEY)" });
+      const theme = await fetchBrandThemeForCompany(String(req.params.id), { force: true });
+      if (!theme) return res.status(404).json({ message: "No brand found — the company needs a domain, or logo.dev had no match." });
+      res.json(theme);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch brand theme" });
+    }
+  });
+
+  // AI-draft a targeting brief from scratch for a unit: gathers the unit,
+  // its property, the categories already in the scheme, the client and the
+  // firm's taxonomy, and asks Claude to propose the brief fields + a
+  // suggested target-operator list. Returns the draft for review — nothing
+  // is saved. Scope-checked so a client can only draft on their own units.
+  app.post("/api/available-units/:id/brief/draft-ai", requireAuth, async (req: any, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+      let clientCompany: string | null = null;
+      if ((property as any)?.landlordId) {
+        const co = await storage.getCrmCompany((property as any).landlordId).catch(() => null);
+        clientCompany = (co as any)?.name || null;
+      }
+      // Categories / operators already represented in the scheme — from the
+      // tenancy schedule (occupied units carry a tenant/trading name).
+      const tenantsQ = await pool.query(
+        `SELECT DISTINCT COALESCE(trading_name, tenant_name) AS n
+           FROM tenancy_schedule_units
+          WHERE property_id = $1 AND COALESCE(trading_name, tenant_name) IS NOT NULL
+          LIMIT 60`,
+        [unit.propertyId]
+      ).catch(() => ({ rows: [] as any[] }));
+      const currentTenants = tenantsQ.rows.map((r: any) => String(r.n)).filter(Boolean);
+      const { TENANT_CATEGORIES } = await import("@shared/tenant-categories");
+      const taxonomy: string[] = [...TENANT_CATEGORIES];
+      const { draftBriefFromContext } = await import("./unit-brief-doc");
+      const draft = await draftBriefFromContext({
+        unitName: (unit as any).unitName,
+        floor: (unit as any).floor,
+        sqft: (unit as any).sqft,
+        askingRent: (unit as any).askingRent,
+        propertyName: property?.name,
+        address: (property as any)?.address,
+        clientCompany,
+        currentTenants,
+        taxonomy,
+      });
+      res.json(draft);
+    } catch (err: any) {
+      if (/api ?key|authentication|not configured/i.test(err?.message || "")) {
+        return res.status(503).json({ message: "AI drafting unavailable — AI service is not configured" });
+      }
+      res.status(500).json({ message: err?.message || "Failed to draft brief" });
+    }
+  });
+
   app.post("/api/unit-briefs/:id/generate-document", requireAuth, async (req: any, res) => {
     try {
       if (await assertUnitInClientScope(req, await briefPropertyId(String(req.params.id)))) {
@@ -4666,6 +5225,170 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.json({ ...result, sharepoint: !!result.sharepointUrl });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to generate brief document" });
+    }
+  });
+
+  // Focus the Letting Tracker on units actually in play. Three passes:
+  //   1. PRUNE — tracker rows with no leasing activity at all (idle AVA
+  //      imports: no viewings/offers/files/targets, stub-or-no deal, no
+  //      strategy-board activity) are deleted. The tenancy row (the rent
+  //      roll spine) is untouched — a pruned unit can be re-listed any
+  //      time with the one-click on its tenancy row.
+  //   2. PULL IN — strategy-board (leasing_schedule_units) rows showing
+  //      activity (updates / optimum target / targets) whose tenancy row
+  //      has no tracker listing get one created and linked.
+  //   3. MIGRATE — strategy-board target_tenants (approved/converted)
+  //      move onto the tracker's target-operator system so nothing typed
+  //      on the boards is lost when they're retired.
+  // dryRun (default true) reports what WOULD happen without touching data.
+  app.post("/api/admin/letting-tracker-focus", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const dryRun = req.body?.dryRun !== false;
+      const { legacyToCode } = await import("@shared/deal-status");
+
+      const units = (await pool.query(`
+        SELECT au.id, au.unit_name, au.property_id, au.marketing_status, au.deal_id, au.tenancy_unit_id,
+               p.name AS property_name,
+               d.status AS deal_status, d.tenant_id AS deal_tenant_id, d.fee AS deal_fee,
+               (SELECT COUNT(*) FROM unit_viewings v WHERE v.unit_id = au.id)::int AS viewings,
+               (SELECT COUNT(*) FROM unit_offers o WHERE o.unit_id = au.id)::int AS offers,
+               (SELECT COUNT(*) FROM unit_marketing_files f WHERE f.unit_id = au.id)::int AS files,
+               (SELECT COUNT(*) FROM unit_target_operators t JOIN unit_briefs b ON b.id = t.brief_id WHERE b.unit_id = au.id)::int AS brief_targets,
+               ls.id AS ls_id,
+               (COALESCE(ls.updates, '') <> '' OR COALESCE(ls.optimum_target, '') <> '' OR COALESCE(ls.target_brands, '') <> '') AS ls_activity,
+               (SELECT COUNT(*) FROM target_tenants tt WHERE tt.unit_id = ls.id AND tt.status IN ('approved','converted'))::int AS ls_targets
+          FROM available_units au
+          LEFT JOIN crm_properties p ON p.id = au.property_id
+          LEFT JOIN crm_deals d ON d.id = au.deal_id
+          LEFT JOIN leasing_schedule_units ls ON ls.tenancy_unit_id = au.tenancy_unit_id AND au.tenancy_unit_id IS NOT NULL
+      `)).rows;
+
+      const inPlay = (u: any): boolean => {
+        const code = legacyToCode(u.marketing_status) || "AVA";
+        if (code !== "AVA" && code !== "REP") return true;
+        if (u.viewings > 0 || u.offers > 0 || u.files > 0 || u.brief_targets > 0) return true;
+        const dealCode = u.deal_status ? (legacyToCode(u.deal_status) || "AVA") : "AVA";
+        if (u.deal_id && (dealCode !== "AVA" || u.deal_tenant_id || u.deal_fee)) return true;
+        if (u.ls_activity || u.ls_targets > 0) return true;
+        return false;
+      };
+
+      const keep = units.filter(inPlay);
+      const drop = units.filter((u: any) => !inPlay(u));
+
+      // Strategy-board rows in play whose tenancy row has no tracker listing.
+      const missing = (await pool.query(`
+        SELECT ls.id AS ls_id, ls.tenancy_unit_id, ls.property_id, ls.unit_name,
+               ts.unit_number, ts.premises, ts.nia_sqft, ts.gia_sqft, ts.marketing_rent_pa,
+               p.name AS property_name
+          FROM leasing_schedule_units ls
+          JOIN tenancy_schedule_units ts ON ts.id = ls.tenancy_unit_id
+          LEFT JOIN crm_properties p ON p.id = ls.property_id
+         WHERE (COALESCE(ls.updates, '') <> '' OR COALESCE(ls.optimum_target, '') <> '' OR COALESCE(ls.target_brands, '') <> ''
+                OR EXISTS (SELECT 1 FROM target_tenants tt WHERE tt.unit_id = ls.id AND tt.status IN ('approved','converted')))
+           AND NOT EXISTS (SELECT 1 FROM available_units au WHERE au.tenancy_unit_id = ls.tenancy_unit_id)
+      `)).rows;
+
+      // Strategy-board targets to migrate onto tracker targets.
+      const lsTargets = (await pool.query(`
+        SELECT tt.id, tt.brand_name, tt.company_id, tt.status, tt.outcome, tt.rationale, ls.tenancy_unit_id, ls.property_id
+          FROM target_tenants tt
+          JOIN leasing_schedule_units ls ON ls.id = tt.unit_id
+         WHERE tt.status IN ('approved','converted') AND ls.tenancy_unit_id IS NOT NULL
+      `)).rows;
+
+      const report: any = {
+        dryRun,
+        scanned: units.length,
+        keep: keep.length,
+        prune: drop.length,
+        pullIn: missing.length,
+        targetsToMigrate: lsTargets.length,
+        pruneSample: drop.slice(0, 12).map((u: any) => `${u.property_name || "?"} — ${u.unit_name}`),
+        pullInSample: missing.slice(0, 12).map((m: any) => `${m.property_name || "?"} — ${m.unit_name || m.unit_number || m.premises}`),
+      };
+      if (dryRun) return res.json(report);
+
+      // 1. Prune idle rows (storage handles files/viewings/offers cleanup,
+      //    clears the tenancy back-reference and removes still-AVA stub deals).
+      let pruned = 0;
+      for (const u of drop) {
+        try {
+          const unitRow = await storage.getAvailableUnit(u.id);
+          await storage.deleteAvailableUnit(u.id);
+          if (unitRow?.dealId) {
+            const linkedDeal = await storage.getCrmDeal(unitRow.dealId);
+            if (linkedDeal && (legacyToCode(linkedDeal.status) || "AVA") === "AVA" && !linkedDeal.tenantId && !linkedDeal.fee) {
+              await storage.deleteCrmDeal(unitRow.dealId);
+            }
+          }
+          pruned++;
+        } catch (e: any) {
+          console.warn(`[tracker-focus] prune failed for ${u.id}:`, e?.message);
+        }
+      }
+
+      // 2. Create listings for in-play strategy rows missing from the tracker.
+      let added = 0;
+      for (const m of missing) {
+        try {
+          const ins = await pool.query(
+            `INSERT INTO available_units (property_id, unit_name, sqft, asking_rent, marketing_status, tenancy_unit_id)
+             VALUES ($1, $2, $3, $4, 'Available', $5) RETURNING id`,
+            [m.property_id, m.unit_name || m.unit_number || m.premises || "Unit",
+             m.nia_sqft ?? m.gia_sqft ?? null, m.marketing_rent_pa ?? null, m.tenancy_unit_id]
+          );
+          await pool.query(
+            `UPDATE tenancy_schedule_units SET letting_tracker_unit_id = $1 WHERE id = $2`,
+            [ins.rows[0].id, m.tenancy_unit_id]
+          );
+          added++;
+        } catch (e: any) {
+          console.warn(`[tracker-focus] pull-in failed for ls ${m.ls_id}:`, e?.message);
+        }
+      }
+
+      // 3. Migrate strategy-board targets → tracker target operators
+      //    (converted → Let, approved → Identified), deduped by name per unit.
+      let migrated = 0;
+      for (const t of lsTargets) {
+        try {
+          const au = await pool.query(
+            `SELECT id, unit_name, property_id FROM available_units WHERE tenancy_unit_id = $1 LIMIT 1`,
+            [t.tenancy_unit_id]
+          );
+          if (!au.rows[0]) continue;
+          let brief = await pool.query(`SELECT id FROM unit_briefs WHERE unit_id = $1 LIMIT 1`, [au.rows[0].id]);
+          if (!brief.rows[0]) {
+            const prop = await storage.getCrmProperty(au.rows[0].property_id);
+            brief = await pool.query(
+              `INSERT INTO unit_briefs (unit_id, property_id, title, client_company_id, client_company)
+               VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+              [au.rows[0].id, au.rows[0].property_id, `Operator Targeting — ${au.rows[0].unit_name}`,
+               (prop as any)?.landlordId || null, null]
+            );
+          }
+          const dupe = await pool.query(
+            `SELECT 1 FROM unit_target_operators WHERE brief_id = $1 AND LOWER(operator_name) = LOWER($2) LIMIT 1`,
+            [brief.rows[0].id, t.brand_name]
+          );
+          if (dupe.rows[0]) continue;
+          await pool.query(
+            `INSERT INTO unit_target_operators (brief_id, operator_name, company_id, rationale, status)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [brief.rows[0].id, t.brand_name, t.company_id || null, t.rationale || null,
+             (t.status === "converted" || t.outcome === "signed") ? "Let" : "Identified"]
+          );
+          migrated++;
+        } catch (e: any) {
+          console.warn(`[tracker-focus] target migrate failed for ${t.id}:`, e?.message);
+        }
+      }
+
+      res.json({ ...report, dryRun: false, pruned, added, migrated });
+    } catch (err: any) {
+      console.error("[tracker-focus] failed:", err);
+      res.status(500).json({ message: err?.message || "Tracker focus failed" });
     }
   });
 
@@ -5335,10 +6058,142 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // ─── Heads of Terms ────────────────────────────────────────────────
+  // Each property holds a standard HOTs template; each tracker unit holds
+  // its negotiated instance. Populate copies the template with the deal /
+  // unit specifics filled in; PDF renders the instance for solicitors.
+  app.get("/api/available-units/:id/hots", requireAuth, async (req, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      const u = await pool.query(`SELECT hots_content, hots_updated_at FROM available_units WHERE id = $1`, [req.params.id]);
+      const t = unit.propertyId
+        ? await pool.query(`SELECT hots_template FROM crm_properties WHERE id = $1`, [unit.propertyId])
+        : { rows: [] as any[] };
+      res.json({
+        content: u.rows[0]?.hots_content || null,
+        updatedAt: u.rows[0]?.hots_updated_at || null,
+        template: t.rows[0]?.hots_template || null,
+      });
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  });
+
+  app.put("/api/available-units/:id/hots", requireAuth, async (req, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      const content = typeof req.body?.content === "string" ? req.body.content : null;
+      await pool.query(`UPDATE available_units SET hots_content = $1, hots_updated_at = NOW() WHERE id = $2`, [content, req.params.id]);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  });
+
+  // Standard template lives on the property. Staff-only to edit (the
+  // template is BGP's standard form); clients read it via the unit GET.
+  app.put("/api/properties/:id/hots-template", requireAuth, async (req: any, res) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      if (await resolveCompanyScope(req)) return res.status(403).json({ message: "Staff only" });
+      const template = typeof req.body?.template === "string" ? req.body.template : null;
+      await pool.query(`UPDATE crm_properties SET hots_template = $1 WHERE id = $2`, [template, req.params.id]);
+      res.json({ ok: true });
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  });
+
+  // Populate: template + unit/deal specifics → the unit's HOTs draft.
+  app.post("/api/available-units/:id/hots/populate", requireAuth, async (req, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      const prop = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+      const t = unit.propertyId
+        ? await pool.query(`SELECT hots_template FROM crm_properties WHERE id = $1`, [unit.propertyId])
+        : { rows: [] as any[] };
+      const template: string = t.rows[0]?.hots_template ||
+        `HEADS OF TERMS — SUBJECT TO CONTRACT
+
+Property: {PROPERTY}
+Unit: {UNIT}
+Landlord: {LANDLORD}
+Tenant: {TENANT}
+
+Rent: {RENT} per annum exclusive
+Lease length: [term] years
+Rent free: [months] months
+Break option: [details]
+Rent reviews: [pattern]
+Service charge: {SERVICE_CHARGE}
+Rates payable: {RATES}
+Use: [permitted use]
+Repairing obligation: [FRI / IRI]
+Conditions: [board approval / planning / licences]
+
+Each party to bear its own legal costs.
+These terms are indicative only and do not constitute a binding agreement.`;
+      const deal = (unit as any).dealId ? await storage.getCrmDeal((unit as any).dealId).catch(() => null) : null;
+      const landlordQ = (prop as any)?.landlordId
+        ? await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [(prop as any).landlordId])
+        : { rows: [] as any[] };
+      const fmtGBP = (v: any) => (v != null && v !== "" && !isNaN(Number(v))) ? `£${Number(v).toLocaleString("en-GB")}` : "[amount]";
+      const filled = template
+        .replace(/\{PROPERTY\}/g, prop?.name || "[property]")
+        .replace(/\{UNIT\}/g, (unit as any).unitName || "[unit]")
+        .replace(/\{LANDLORD\}/g, landlordQ.rows[0]?.name || (deal as any)?.landlord || "[landlord]")
+        .replace(/\{TENANT\}/g, (deal as any)?.name?.split("—")[0]?.trim() || "[tenant]")
+        .replace(/\{RENT\}/g, fmtGBP((unit as any).askingRent))
+        .replace(/\{SERVICE_CHARGE\}/g, fmtGBP((unit as any).serviceChargePa))
+        .replace(/\{RATES\}/g, fmtGBP((unit as any).ratesPa))
+        .replace(/\{AREA\}/g, (unit as any).totalAreaSqft ? `${Number((unit as any).totalAreaSqft).toLocaleString("en-GB")} sq ft` : "[area]");
+      await pool.query(`UPDATE available_units SET hots_content = $1, hots_updated_at = NOW() WHERE id = $2`, [filled, req.params.id]);
+      res.json({ content: filled });
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  });
+
+  // PDF for solicitors — pdfkit render of the negotiated text.
+  app.get("/api/available-units/:id/hots/pdf", requireAuth, async (req, res) => {
+    try {
+      const unit = await storage.getAvailableUnit(req.params.id as string);
+      if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      const u = await pool.query(`SELECT hots_content FROM available_units WHERE id = $1`, [req.params.id]);
+      const content: string = u.rows[0]?.hots_content;
+      if (!content) return res.status(404).json({ message: "No HOTs on this unit yet" });
+      const prop = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+      const PDFDocument = (await import("pdfkit")).default;
+      const doc = new PDFDocument({ margin: 56, size: "A4" });
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="HOTs - ${(prop?.name || "Property").replace(/[^a-zA-Z0-9 ]/g, "")} - ${((unit as any).unitName || "Unit").replace(/[^a-zA-Z0-9 ]/g, "")}.pdf"`);
+      doc.pipe(res);
+      doc.fontSize(9).fillColor("#666").text("SUBJECT TO CONTRACT — WITHOUT PREJUDICE", { align: "right" });
+      doc.moveDown(0.5);
+      doc.fontSize(16).fillColor("#000").text("Heads of Terms", { align: "left" });
+      doc.fontSize(10).fillColor("#444").text(`${prop?.name || ""}${(unit as any).unitName ? ` — ${(unit as any).unitName}` : ""}`);
+      doc.moveDown();
+      doc.fontSize(10).fillColor("#000").text(content, { lineGap: 3 });
+      doc.moveDown(2);
+      doc.fontSize(8).fillColor("#888").text(`Prepared by Bruce Gillingham Pollard — ${new Date().toLocaleDateString("en-GB")}`);
+      doc.end();
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed" }); }
+  });
+
   app.get("/api/available-units/:id/files", requireAuth, async (req, res) => {
     try {
       const unit = await storage.getAvailableUnit(req.params.id as string);
       if (!unit) return res.status(404).json({ message: "Unit not found" });
+      if (await assertUnitInClientScope(req, unit.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       const { unitMarketingFiles } = await import("@shared/schema");
       const files = await db.select().from(unitMarketingFiles).where(eq(unitMarketingFiles.unitId, req.params.id as string)).orderBy(unitMarketingFiles.createdAt);
       res.json(files);
@@ -5367,6 +6222,29 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         fileSize: req.file.size,
         mimeType: req.file.mimetype,
       }).returning();
+      // Photos uploaded against a tracker unit also land in the Image
+      // Gallery, filed under the property (and tagged with the unit) so
+      // they show organised on the property page / Image Studio.
+      if ((req.file.mimetype || "").startsWith("image/")) {
+        try {
+          const prop = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+          const { storeImageFromBuffer } = await import("./image-studio");
+          await storeImageFromBuffer({
+            buffer: req.file.buffer,
+            fileName: req.file.originalname,
+            category: "Properties",
+            tags: ["letting-tracker", ...(unit.unitName ? [unit.unitName] : []), ...(prop?.name ? [prop.name] : [])],
+            description: `Uploaded on the Letting Tracker${unit.unitName ? ` — ${unit.unitName}` : ""}${prop?.name ? ` at ${prop.name}` : ""}`,
+            source: "letting-tracker",
+            propertyId: unit.propertyId || null,
+            companyId: (prop as any)?.landlordId || null,
+            address: (prop as any)?.address || undefined,
+            mimeType: req.file.mimetype,
+          });
+        } catch (e: any) {
+          console.warn("[unit-files] gallery mirror failed:", e?.message);
+        }
+      }
       res.json(file);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to upload file" });
@@ -5401,6 +6279,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // --- Unit Viewings ---
   app.get("/api/available-units/:id/viewings", requireAuth, async (req, res) => {
     try {
+      const vUnit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, vUnit?.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       const { unitViewings } = await import("@shared/schema");
       const rows = await db.select().from(unitViewings).where(eq(unitViewings.unitId, req.params.id as string)).orderBy(unitViewings.viewingDate);
       res.json(rows);
@@ -5445,6 +6327,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   // --- Unit Offers ---
   app.get("/api/available-units/:id/offers", requireAuth, async (req, res) => {
     try {
+      const oUnit = await storage.getAvailableUnit(req.params.id as string);
+      if (await assertUnitInClientScope(req, oUnit?.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       const { unitOffers } = await import("@shared/schema");
       const rows = await db.select().from(unitOffers).where(eq(unitOffers.unitId, req.params.id as string)).orderBy(unitOffers.offerDate);
       res.json(rows);
@@ -6219,10 +7105,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         rentRecordedUnits = parseInt(tenancyResult.rows[0]?.rent_recorded || "0");
       }
 
+      // Deals belong to the client when the deal's landlord is the company,
+      // OR it sits on one of the company's properties, OR its group carries
+      // the client name — landlord_id alone missed nearly everything and the
+      // portfolio showed "0 active deals" while the Deals board was full.
       const dealsResult = await pool.query(
-        `SELECT COUNT(*) as total,
-                COUNT(*) FILTER (WHERE status NOT IN ('WIT', 'COM', 'INV')) as active
-         FROM crm_deals WHERE landlord_id = $1`,
+        `SELECT COUNT(DISTINCT d.id) as total,
+                COUNT(DISTINCT d.id) FILTER (WHERE d.status NOT IN ('WIT', 'COM', 'INV')) as active
+         FROM crm_deals d
+         LEFT JOIN crm_properties p ON d.property_id = p.id
+         WHERE d.landlord_id = $1
+            OR p.landlord_id = $1
+            OR d.group_name ILIKE '%' || (SELECT name FROM crm_companies WHERE id = $1) || '%'`,
         [companyId]
       );
 
@@ -6616,6 +7510,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const unitRows = await pool.query(`SELECT * FROM available_units WHERE id = $1`, [unitId]);
       const unit = unitRows.rows[0];
       if (!unit) return res.json([]);
+      // Clients get requirement matches for units on their OWN properties
+      // only, and only for brands they can see (slice + their extras) —
+      // the rest of the requirements book is BGP intel.
+      if (await assertUnitInClientScope(req, unit.property_id ?? unit.propertyId)) {
+        return res.status(403).json({ error: "Access denied" });
+      }
 
       const conditions: string[] = [];
       const params: any[] = [];
@@ -6635,14 +7535,19 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
       const query = `
-        SELECT r.*, c.name as company_name 
+        SELECT r.*, c.name as company_name, c.company_type as company_type
         FROM crm_requirements_leasing r
         LEFT JOIN crm_companies c ON r.company_id = c.id
         ${whereClause}
         ORDER BY r.created_at DESC LIMIT 20
       `;
       const matches = await pool.query(query, params);
-      res.json(matches.rows);
+      const { resolveCompanyScope, getClientExtraBrandIds } = await import("./company-scope");
+      const matchScope = await resolveCompanyScope(req);
+      if (!matchScope) return res.json(matches.rows);
+      const { isClientCrmCategory } = await import("@shared/tenant-categories");
+      const matchExtras = await getClientExtraBrandIds(matchScope);
+      res.json(matches.rows.filter((r: any) => isClientCrmCategory(r.company_type) || matchExtras.has(r.company_id)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

@@ -200,6 +200,9 @@ const CLIENT_ALLOWED_ROUTES = [
   "/deals", "/tasks", "/today", "/leasing-schedule", "/land-registry",
   "/business-rates", "/m/images", "/cad-measure", "/settings/profile",
   "/news",
+  // Task-25 client surfaces — the nav showed these but this guard bounced
+  // the click back to the dashboard ("still bounces", 2026-08-02).
+  "/calendar", "/sharepoint",
 ];
 function ClientRouteGuard() {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
@@ -522,7 +525,11 @@ function AuthenticatedApp() {
   if (isChatBGP) {
     return (
       <div className="h-screen w-screen max-w-[100vw] overflow-hidden flex flex-col">
-        <header className="flex items-center justify-between gap-2 px-3 py-2 border-b h-12 shrink-0">
+        {/* Client logins carry the app's client skin through to the chat
+            page — navy header with the client name — instead of dropping
+            back to BGP-white. Staff keep the BGP header. The sidebar vars
+            pair fg/bg, so the text stays readable under any scheme. */}
+        <header className={`flex items-center justify-between gap-2 px-3 py-2 border-b h-12 shrink-0 ${(currentUser as any)?.companyScopeName || currentUser?.role === "Client" ? "bg-sidebar text-sidebar-foreground border-sidebar-border" : ""}`}>
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
@@ -538,8 +545,17 @@ function AuthenticatedApp() {
             >
               <ArrowLeft className="h-4 w-4" />
             </button>
-            <img src={bgpLogoDark} alt="BGP" className="h-5 dark:hidden" />
-            <img src={bgpLogoLight} alt="BGP" className="h-5 hidden dark:block" />
+            {(currentUser as any)?.companyScopeName || currentUser?.role === "Client" ? (
+              <span className="text-sm font-semibold tracking-tight">
+                {(currentUser as any)?.companyScopeName || "Client"}
+                <span className="opacity-60 font-normal"> · ChatBGP</span>
+              </span>
+            ) : (
+              <>
+                <img src={bgpLogoDark} alt="BGP" className="h-5 dark:hidden" />
+                <img src={bgpLogoLight} alt="BGP" className="h-5 hidden dark:block" />
+              </>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <ColorSchemeSelector />
@@ -679,7 +695,12 @@ function AppContent() {
   useEffect(() => {
     if (user?.id) {
       setUserId(user.id);
-      setTeamLocked((user as any)?.role === "Client" || !!(user as any)?.companyScopeId);
+      // Lock the team switcher for real client logins only. Staff viewing
+      // as a client also carry companyScopeId, and locking on it made
+      // setActiveTeam("all") a no-op — the Exit button looked dead and
+      // staff were trapped in client-view mode.
+      const isBgpStaff = ((user as any)?.email || "").toLowerCase().endsWith("@brucegillinghampollard.com");
+      setTeamLocked(((user as any)?.role === "Client" || !!(user as any)?.companyScopeId) && !isBgpStaff);
     }
     if (user?.team) {
       setUserTeam(user.team as TeamName);

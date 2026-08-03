@@ -20,7 +20,10 @@ import {
   Flower2, Clapperboard, Tv, Gamepad2, Baby, Palette, PartyPopper,
   HeartPulse, Bath, Dumbbell, Tag, Wrench, Watch, Gem, Footprints,
   ShoppingCart, Crosshair, TrendingDown, Eye, Lightbulb, Target, ClipboardList,
+  Plus, Check, Loader2,
 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { getAuthHeaders } from "@/lib/queryClient";
 
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const BrandHunterBoard = lazy(() => import("@/components/brand-hunter-board"));
@@ -121,7 +124,7 @@ function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string 
   }
 
   const initial = name.charAt(0).toUpperCase();
-  const colours = ["bg-pink-600","bg-rose-600","bg-purple-600","bg-orange-600","bg-yellow-600","bg-teal-600","bg-sky-600","bg-emerald-600"];
+  const colours = ["bg-rose-800","bg-red-900","bg-violet-900","bg-orange-900","bg-amber-800","bg-teal-900","bg-slate-700","bg-emerald-900"];
   const colour = colours[name.charCodeAt(0) % colours.length];
   return (
     <div className={`${colour} rounded flex items-center justify-center text-white font-bold`} style={{ width: size, height: size, fontSize: size * 0.4 }}>
@@ -232,11 +235,14 @@ export default function BrandsHub() {
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">{isClientHub ? "Brands across your portfolio and the wider hospitality market" : "Live view of every brand across the Hub"}</p>
         </div>
-        <Link href="/companies?tab=tenants">
-          <Button variant="outline" size="sm">
-            All Brands <ChevronRight className="w-3 h-3 ml-1" />
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          {isClientHub && <ClientAddBrandButton />}
+          <Link href="/companies?tab=tenants">
+            <Button variant="outline" size="sm">
+              All Brands <ChevronRight className="w-3 h-3 ml-1" />
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* ── Tabs ───────────────────────────────────────────────────── */}
@@ -515,7 +521,7 @@ type TopCat = { key: string; label: string; icon: any; color: string; gradient: 
 
 const BRAND_CATEGORIES: TopCat[] = [
   {
-    key: "luxury", label: "Luxury", icon: Diamond, color: "bg-yellow-600", gradient: "from-yellow-500 to-amber-600",
+    key: "luxury", label: "Luxury", icon: Diamond, color: "bg-amber-800", gradient: "from-amber-800 to-amber-900",
     subs: [
       { key: "luxury-fashion", label: "Luxury Fashion", icon: Crown, match: ["Tenant - Luxury", "Tenant - Luxury Fashion"] },
       { key: "luxury-accessories", label: "Luxury Accessories", icon: Gem, match: ["Tenant - Luxury Accessories"] },
@@ -524,7 +530,7 @@ const BRAND_CATEGORIES: TopCat[] = [
     ],
   },
   {
-    key: "retail", label: "Fashion & Retail", icon: Store, color: "bg-pink-600", gradient: "from-pink-500 to-rose-600",
+    key: "retail", label: "Fashion & Retail", icon: Store, color: "bg-rose-800", gradient: "from-rose-800 to-rose-900",
     subs: [
       { key: "flagship-fashion", label: "Flagship Fashion", icon: Crown, match: ["Tenant - Flagship Fashion"] },
       { key: "fashion", label: "Fashion", icon: Shirt, match: ["Tenant - Fashion", "Tenant - Clothing", "Tenant - Apparel", "Tenant - Womenswear", "Tenant - Menswear", "Tenant - Kidswear", "Tenant - Lingerie"] },
@@ -546,7 +552,7 @@ const BRAND_CATEGORIES: TopCat[] = [
     ],
   },
   {
-    key: "restaurants", label: "Food & Drink", icon: Utensils, color: "bg-rose-600", gradient: "from-rose-500 to-red-600",
+    key: "restaurants", label: "Food & Drink", icon: Utensils, color: "bg-red-900", gradient: "from-red-900 to-rose-950",
     subs: [
       { key: "fine-dining", label: "Fine Dining", icon: UtensilsCrossed, match: ["Tenant - Fine Dining"] },
       { key: "casual-dining", label: "Casual Dining", icon: Utensils, match: ["Tenant - Casual Dining", "Tenant - Restaurant", "Tenant - Food & Drink"] },
@@ -557,7 +563,7 @@ const BRAND_CATEGORIES: TopCat[] = [
     ],
   },
   {
-    key: "leisure", label: "Leisure & Experience", icon: Clapperboard, color: "bg-purple-600", gradient: "from-purple-500 to-violet-600",
+    key: "leisure", label: "Leisure & Experience", icon: Clapperboard, color: "bg-violet-900", gradient: "from-violet-900 to-purple-950",
     subs: [
       { key: "cinema", label: "Cinema", icon: Tv, match: ["Tenant - Cinema", "Tenant - Cinema & Film"] },
       { key: "experiential", label: "Experiential", icon: PartyPopper, match: ["Tenant - Experiential", "Tenant - Activation", "Tenant - Entertainment"] },
@@ -569,7 +575,7 @@ const BRAND_CATEGORIES: TopCat[] = [
     ],
   },
   {
-    key: "health", label: "Health & Wellness", icon: Dumbbell, color: "bg-orange-600", gradient: "from-orange-500 to-amber-600",
+    key: "health", label: "Health & Wellness", icon: Dumbbell, color: "bg-orange-900", gradient: "from-orange-900 to-amber-950",
     subs: [
       { key: "gym", label: "Gym & Fitness", icon: Dumbbell, match: ["Tenant - Gym", "Tenant - Fitness", "Tenant - Gym & Fitness", "Tenant - Health & Fitness"] },
       { key: "wellness", label: "Wellness & Spa", icon: Bath, match: ["Tenant - Wellness", "Tenant - Spa", "Tenant - Hair", "Tenant - Nails", "Tenant - Aesthetics"] },
@@ -577,7 +583,7 @@ const BRAND_CATEGORIES: TopCat[] = [
     ],
   },
   {
-    key: "national", label: "National & Regional", icon: MapPin, color: "bg-teal-600", gradient: "from-teal-500 to-emerald-600",
+    key: "national", label: "National & Regional", icon: MapPin, color: "bg-teal-900", gradient: "from-teal-900 to-emerald-950",
     subs: [
       { key: "grocery", label: "Grocery & Convenience", icon: ShoppingCart, match: ["Tenant - Grocery", "Tenant - Convenience", "Tenant - Supermarket"] },
       { key: "value-retail", label: "Value & Discount", icon: Tag, match: ["Tenant - Value Retail", "Tenant - Discount", "Tenant - Pound Store"] },
@@ -730,8 +736,8 @@ function BrandExplorer() {
       {/* Category cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
         <div
-          className={`cursor-pointer rounded-xl p-4 text-white transition-all hover:scale-[1.02] active:scale-[0.98] bg-gradient-to-br from-teal-500 to-teal-700 ${
-            activeCat === null ? "shadow-lg ring-2 ring-teal-400 ring-offset-2" : "opacity-80 hover:opacity-100"
+          className={`cursor-pointer rounded-xl p-4 text-white transition-all hover:scale-[1.02] active:scale-[0.98] bg-gradient-to-br from-slate-700 to-slate-900 ${
+            activeCat === null ? "shadow-lg ring-2 ring-slate-400 ring-offset-2" : "opacity-80 hover:opacity-100"
           }`}
           onClick={() => { setCat(null); setSub(null); }}
         >
@@ -1359,5 +1365,86 @@ function TurnoverResearchPanel({ onResearch, researchingId }: { onResearch: (id:
         </p>
       )}
     </div>
+  );
+}
+
+// Client-only: pull a brand from the global directory into this client's CRM.
+// Their CRM auto-shows the hospitality/F&B/leisure/fitness slice; this adds
+// anything else (fashion, beauty, etc.) they want to track.
+function ClientAddBrandButton() {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [addingId, setAddingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || q.trim().length < 2) { setResults([]); return; }
+    let cancelled = false;
+    setLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/client/crm/global-brands?search=${encodeURIComponent(q.trim())}`, { credentials: "include", headers: getAuthHeaders() });
+        const d = await r.json();
+        if (!cancelled) setResults(Array.isArray(d) ? d : []);
+      } catch { if (!cancelled) setResults([]); }
+      finally { if (!cancelled) setLoading(false); }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [q, open]);
+
+  const add = async (id: string) => {
+    setAddingId(id);
+    try {
+      await apiRequest("POST", "/api/client/crm/add-brand", { brandId: id });
+      setResults(prev => prev.map(b => b.id === id ? { ...b, added: true } : b));
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brands/hub"] });
+      toast({ title: "Brand added to your CRM" });
+    } catch (e: any) {
+      toast({ title: "Couldn't add brand", description: e.message, variant: "destructive" });
+    } finally { setAddingId(null); }
+  };
+
+  return (
+    <>
+      <Button size="sm" variant="outline" onClick={() => setOpen(true)} data-testid="client-add-brand">
+        <Plus className="w-3 h-3 mr-1" /> Add brand
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add a brand to your CRM</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">Your CRM shows hospitality, F&amp;B, leisure and fitness brands automatically. Search the wider directory to add any other brand you want to track.</p>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search all brands…" className="pl-8 h-9 text-sm" data-testid="client-add-brand-search" />
+            </div>
+            <div className="max-h-[320px] overflow-y-auto space-y-1">
+              {loading && <p className="text-xs text-muted-foreground py-2 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Searching…</p>}
+              {!loading && q.trim().length >= 2 && results.length === 0 && <p className="text-xs text-muted-foreground py-2">No brands match.</p>}
+              {results.map(b => (
+                <div key={b.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded border bg-card">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium truncate">{b.name}</div>
+                    <div className="text-[10px] text-muted-foreground">{(b.companyType || "").replace(/^Tenant - /, "")}{b.inSlice ? " · already in your CRM" : ""}</div>
+                  </div>
+                  {b.added || b.inSlice ? (
+                    <Badge variant="outline" className="text-[10px] gap-1 shrink-0"><Check className="w-3 h-3" /> {b.inSlice ? "In CRM" : "Added"}</Badge>
+                  ) : (
+                    <Button size="sm" variant="secondary" className="h-7 text-xs shrink-0" disabled={addingId === b.id} onClick={() => add(b.id)}>
+                      {addingId === b.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Plus className="w-3 h-3 mr-1" /> Add</>}
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

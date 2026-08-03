@@ -3470,9 +3470,20 @@ export default function LeasingSchedulePage() {
     return Object.entries(groups).sort((a, b) => b[1].length - a[1].length);
   }, [filtered]);
 
+  // Archived 2026-07: Tenancy Schedule + Letting Tracker are the two
+  // boards now. The page stays reachable for old links / reference, with
+  // a banner pointing at the replacements.
+  const archivedBanner = (
+    <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2 flex-wrap">
+      <span className="font-semibold uppercase tracking-wider">Archived</span>
+      <span>This board is retired — day-to-day leasing lives on the property Tenancy Schedule and the <Link href="/deals/letting" className="underline font-medium">Letting Tracker</Link>. It's kept here for reference.</span>
+    </div>
+  );
+
   if (propertyId) {
     return (
-      <div className="p-6 max-w-[1400px] mx-auto">
+      <div className="p-6 max-w-[1400px] mx-auto space-y-3">
+        {archivedBanner}
         <PropertyScheduleView propertyId={propertyId} />
       </div>
     );
@@ -3480,6 +3491,7 @@ export default function LeasingSchedulePage() {
 
   return (
     <div className="p-4 sm:p-6 space-y-4">
+      {archivedBanner}
       <div className="sticky top-0 z-10 bg-background -mx-4 sm:-mx-6 px-4 sm:px-6 -mt-4 sm:-mt-6 pt-4 sm:pt-6 pb-3 border-b flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2" data-testid="page-title">

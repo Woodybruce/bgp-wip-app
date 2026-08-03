@@ -93,7 +93,11 @@ export function TeamProvider({ children }: { children: ReactNode }) {
     // like nothing happened.
     (async () => {
       try {
-        const token = localStorage.getItem("authToken");
+        // Same storage key as getAuthHeaders — this read used the wrong key
+        // ("authToken"), so the team save posted unauthenticated, failed
+        // silently, and staff were stuck in client-view mode: the exit
+        // button appeared to do nothing.
+        const token = localStorage.getItem("bgp_auth_token");
         await fetch("/api/auth/active-team", {
           method: "POST",
           credentials: "include",

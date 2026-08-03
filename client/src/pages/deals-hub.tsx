@@ -63,8 +63,9 @@ export default function DealsHub() {
     if (isProfile) return;
     const t = getTabFromLocation(location);
     if (isClient) {
-      // Clients may use Deals + Letting Tracker only; anything else → Deals.
-      setTab(t === "letting" ? "letting" : "deals");
+      // Clients: Deals + Letting Tracker + Properties (scoped to their own
+      // portfolio server-side); anything else → Deals.
+      setTab(t === "letting" || t === "properties" ? t : "deals");
       return;
     }
     if (t) setTab(t);
@@ -81,7 +82,7 @@ export default function DealsHub() {
   ], [isMobile]);
 
   const tabs = useMemo(() => {
-    if (isClient) return allTabs.filter(t => t.key === "deals" || t.key === "letting");
+    if (isClient) return allTabs.filter(t => t.key === "deals" || t.key === "letting" || t.key === "properties");
     if (activeTeam === "Investment") return allTabs.filter(t => t.key !== "letting");
     if (activeTeam && activeTeam !== "all") return allTabs.filter(t => t.key !== "investment");
     return allTabs;

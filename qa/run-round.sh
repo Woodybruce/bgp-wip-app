@@ -16,14 +16,21 @@ if ! curl -s -o /dev/null --max-time 3 http://localhost:5000/api/auth/me; then
   exit 2
 fi
 
+# 1b. Seed the multi-persona fixtures (idempotent — Hammerson rival client).
+psql -U bgp -h localhost bgp -f qa/seed-personas.sql >/dev/null 2>&1 || echo "[qa] (persona seed skipped)"
+
 # 2. Purge test rows from the previous round so data doesn't pile up.
 psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM crm_deals    WHERE name LIKE 'QA-R%' OR name LIKE '%PROBE%';
   DELETE FROM crm_contacts WHERE name LIKE 'QA Contact%';
+  DELETE FROM user_tasks   WHERE title LIKE 'QA-PROBE task%';
+  DELETE FROM crm_requirements_leasing WHERE name LIKE 'QA-REQ%' OR name LIKE 'QA-PROBE req%';
   DELETE FROM unit_target_operators WHERE brief_id IN (SELECT id FROM unit_briefs WHERE title LIKE 'QA Brief%');
   DELETE FROM unit_briefs WHERE title LIKE 'QA Brief%';
   DELETE FROM image_studio_images WHERE file_name = 'qa-unit-photo.jpg';
-  DELETE FROM team_events WHERE title LIKE 'QA-CAL-%' OR title LIKE 'QA Landsec brainstorm' OR title LIKE 'QA Other Client review';
+  DELETE FROM team_events WHERE title LIKE 'QA-VIS %' OR title LIKE 'QA-CAL-%' OR title LIKE 'QA Landsec brainstorm' OR title LIKE 'QA Other Client review';
+  DELETE FROM unit_viewings WHERE attendees LIKE 'QA-VIEWING-%' OR attendees LIKE 'QA-VDEL-%';
+  DELETE FROM unit_offers WHERE company_name LIKE 'QA-AOFFER-%' OR company_name LIKE 'QA-ODEL-%' OR company_name LIKE 'QA-OFFER-%' OR company_name LIKE 'QA-RIVAL-%';
   -- The team-board scenario adds a member then removes it; if a round dies
   -- mid-way the row survives, so sweep anyone not in the account contacts.
   DELETE FROM crm_client_team_members m

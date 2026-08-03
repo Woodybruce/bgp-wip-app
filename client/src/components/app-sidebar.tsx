@@ -127,7 +127,8 @@ const unfinishedNav = [
   { title: "Letting Hunter", url: "/hunters/letting", icon: Target },
   { title: "Investment Hunter", url: "/hunters/investment", icon: Target },
   { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase },
-  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
+  // Leasing Schedule retired (archived) — Tenancy Schedule + Letting
+  // Tracker are the two boards now. Route stays live for old links.
   { title: "Lease Advisory", url: "/pla/matters", icon: Landmark },
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, badge: "BD" },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
@@ -368,6 +369,36 @@ export function AppSidebar() {
     ? user.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()
     : "?";
 
+  // The client logo renders as a white silhouette (brightness-0 invert) so a
+  // dark wordmark reads on the navy sidebar — but only when the sidebar
+  // surface actually IS dark. A client account without the navy scheme (or a
+  // light brand colour from logo.dev) keeps the logo's own colours; a white
+  // silhouette on a light sidebar is invisible. Measured from the rendered
+  // background rather than assumed, so it tracks scheme + injected brand vars.
+  const logoBoxRef = useRef<HTMLDivElement>(null);
+  const [darkSidebar, setDarkSidebar] = useState(true);
+  useEffect(() => {
+    const measure = () => {
+      let el: Element | null = logoBoxRef.current;
+      while (el) {
+        const bg = getComputedStyle(el).backgroundColor;
+        const m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+        if (m && (m[4] === undefined || parseFloat(m[4]) > 0.1)) {
+          const lum = (0.2126 * +m[1] + 0.7152 * +m[2] + 0.0722 * +m[3]) / 255;
+          setDarkSidebar(lum < 0.5);
+          return;
+        }
+        el = el.parentElement;
+      }
+    };
+    // The scheme class and the injected brand CSS vars can land AFTER first
+    // paint (theme fetch, style effects), so a single measurement races them
+    // — re-measure a few times until the surface colour has settled.
+    const raf = requestAnimationFrame(measure);
+    const timers = [300, 1000, 2500].map((ms) => setTimeout(measure, ms));
+    return () => { cancelAnimationFrame(raf); timers.forEach(clearTimeout); };
+  }, [colorScheme, brand.logoUrl, brand.primaryColor]);
+
   return (
     // collapsible="none" pins the left nav permanently open (the hover-peek
     // behaviour moved to the chat panel on the right edge — see App.tsx).
@@ -375,8 +406,15 @@ export function AppSidebar() {
       <SidebarHeader className="p-3 pt-5 pb-5">
         <Link href="/">
           {isLandsec ? (
-            <div className="cursor-pointer flex flex-col items-center justify-center h-16 gap-1">
-              <img src={landsecLogo} alt="Landsec" className="h-11 w-auto object-contain dark:invert" />
+            <div ref={logoBoxRef} className="cursor-pointer flex flex-col items-center justify-center h-16 gap-1">
+              {/* Real client logo from logo.dev when we have it; else the
+                  bundled Landsec mark. object-contain keeps any aspect ratio. */}
+              <img
+                src={brand.logoUrl || landsecLogo}
+                alt={brand.name || "Landsec"}
+                className={`h-11 w-auto max-w-[150px] object-contain ${darkSidebar ? "brightness-0 invert" : ""}`}
+                onError={(e) => { if (brand.logoUrl) (e.currentTarget as HTMLImageElement).src = landsecLogo; }}
+              />
               <span className="text-[10px] text-sidebar-foreground/50">Powered by BGP</span>
             </div>
           ) : (
@@ -396,11 +434,12 @@ export function AppSidebar() {
         <NavSection
           label="AI Tools"
           items={aiNav
-            // Clients don't get the Property Intelligence map (every layer
-            // 403s → blank grey map) or CAD Measure — staff tools. (Landsec
-            // audit + visual QA.) Image Studio stays: the server scopes the
-            // gallery to the client's own buildings.
-            .filter(i => !(isClientUser && ["/property-intelligence", "/cad-measure"].includes(i.url)))
+            // CAD Measure stays staff-only. Property Intelligence is client-
+            // visible again — its layer endpoints (land-registry, VOA, map
+            // layers, OS data, Edozo) are on the client read allowlist now.
+            // Image Studio stays: the server scopes the gallery to the
+            // client's own buildings.
+            .filter(i => !(isClientUser && ["/cad-measure"].includes(i.url)))
             .map(i =>
               // The full /image-studio page is admin-only (it calls admin
               // endpoints). Non-admins (e.g. CGI partners like Luke) and
@@ -410,10 +449,13 @@ export function AppSidebar() {
             )}
           storageKey="ai"
         />
-        {!isClientUser && (<>
         <SidebarSeparator />
-        <NavSection label="Microsoft 365" items={microsoftNav} storageKey="ms" defaultOpen={false} />
-        </>)}
+        <NavSection
+          label="Microsoft 365"
+          items={isClientUser ? microsoftNav.filter(i => i.url !== "/mail") : microsoftNav}
+          storageKey="ms"
+          defaultOpen={false}
+        />
         <SidebarSeparator />
         {user?.isAdmin && (
           <>
@@ -577,7 +619,7 @@ export const mobileOverlayItems = [
   { title: "People & HR", url: "/hr", icon: Users },
   { title: "My Card", url: "/my-expenses", icon: CreditCard },
   { title: "Landlord Intelligence", url: "/landlords", icon: Briefcase, adminOnly: true },
-  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
+  // Leasing Schedule retired (archived) — route stays live for old links.
   { title: "Comps", url: "/comps", icon: Scale },
   { title: "Lease Advisory", url: "/pla/matters", icon: Landmark, adminOnly: true },
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
@@ -614,7 +656,7 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
   // Parity with desktop: Reporting hidden everywhere now, and client logins
   // also lose the BGP-internal items (People & HR, My Card, WIP).
   const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
-  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/sharepoint", "/calendar", "/mail", "/property-intelligence", "/cad-measure"];
+  const clientHidden = ["/hr", "/my-expenses", "/reporting", "/wip-report", "/today", "/mail", "/cad-measure"];
   const items = (user?.role === "Client" || !!(user as any)?.companyScopeId)
     ? filteredByAdmin.filter(i => !clientHidden.includes(i.url))
     : filteredByAdmin.filter(i => i.url !== "/reporting" || isLandsec);
