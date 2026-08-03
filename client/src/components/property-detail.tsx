@@ -41,6 +41,7 @@ import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
 import { TrackerSummary } from "@/components/tracker-summary";
+import { ActivitySummary } from "@/components/activity-summary";
 import { BrandComplianceCard } from "@/components/brand-profile-panel";
 import {
   PropertyAssetBriefPanel,
@@ -48,7 +49,6 @@ import {
   PipelinePerformanceBoard,
   WeeklyFocusCard,
   RiskRegisterCard,
-  PropertyRecentActivityCard,
   BgpCommentaryCard,
   PropertyLinkageCard,
 } from "@/components/property-asset-brief";
@@ -990,15 +990,16 @@ export function PropertyDetail({ id }: { id: string }) {
               </ReferenceSection>
 
               <ReferenceSection
-                title="Recent activity"
+                title="Activity"
                 icon={Activity}
-                badge="14d"
                 open={sidebarSections.activity}
                 onToggle={() => toggleSection("activity")}
                 testId="toggle-activity-section"
               >
-                <ErrorBoundary compact name="Property recent activity">
-                  <PropertyRecentActivityCard propertyId={property.id} />
+                <ErrorBoundary compact name="Property activity">
+                  {/* Canonical ActivitySummary — upcoming diary events plus
+                      the last 14 days of touches (Woody, 2026-08-03). */}
+                  <ActivitySummary propertyId={property.id} />
                 </ErrorBoundary>
               </ReferenceSection>
 

@@ -2902,6 +2902,7 @@ import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
 import clientTeamsRouter from "./client-teams";
 import clientSharepointRouter from "./client-sharepoint";
+import activitySummaryRouter from "./activity-summary";
 import turnoverRouter from "./turnover";
 import { serveStatic } from "./static";
 import { registerEmailProcessorRoutes, startEmailProcessor } from "./email-processor";
@@ -3386,6 +3387,9 @@ app.use("/api/branding/assets", express.static(
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
     "/api/favorite-instructions", "/api/chatbgp/", "/api/hr/photo/",
     "/api/available-units", "/api/tasks",
+    // Canonical activity feed — handler scopes clients to their own
+    // portfolio and returns sanitised summaries only.
+    "/api/activity-summary",
     "/api/chat/threads", "/api/chat-media/", "/api/brand-logo/",
     // Smart-tag picker + "conversations about X" — both company-scoped for
     // clients server-side (tag-search filters to the caller's own portfolio;
@@ -3681,6 +3685,7 @@ app.use("/api/branding/assets", express.static(
   app.use(tenancyScheduleRouter);
   app.use(clientTeamsRouter);
   app.use(clientSharepointRouter);
+  app.use(activitySummaryRouter);
   app.use(turnoverRouter);
   app.use(sanctionsRouter);
   app.use(kycClouseauRouter);
