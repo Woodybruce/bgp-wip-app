@@ -956,7 +956,11 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       activeDeals,
       parentGroup: parentGroup.rows[0] || null,
       siblings: siblings.rows,
-      news: news.rows,
+      // Same collision filter as the signals — the News & Media zone was
+      // showing NFL fixture coverage on Bills the restaurant.
+      news: (news.rows as any[]).filter((n: any) =>
+        articleLooksRelevantForBrand(c.name, c.industry, n.title || n.headline || "", n.summary || null)
+      ),
       requirements: requirements.rows,
       pitchedTo: pitchedTo.rows,
       liveLocations: liveLocations.rows,
