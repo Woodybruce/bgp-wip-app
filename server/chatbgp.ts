@@ -3417,6 +3417,25 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
   tools.push({
     type: "function",
     function: {
+      name: "create_task",
+      description: "Create a task on someone's task list. Use whenever someone asks you to remind them, set a to-do, or give a colleague/agent something to do (e.g. 'task for Rob: send the Bluewater brief by Friday'). If no assignee is named, the task goes to the person you're talking to.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "The task, short and actionable" },
+          assigneeName: { type: "string", description: "Who the task is FOR (a person's name) — omit to assign to the requester" },
+          description: { type: "string", description: "Optional extra detail" },
+          dueDate: { type: "string", description: "Optional due date YYYY-MM-DD" },
+          priority: { type: "string", enum: ["urgent", "high", "medium", "low"] },
+        },
+        required: ["title"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "update_property",
       description: "Update an existing property in the CRM. Search first to find the property ID.",
       parameters: {
@@ -11901,6 +11920,55 @@ export async function handleCrmToolCall(
     }).returning();
     const reply = await summaryHelper({ success: true, action: "created", entity: "diary entry", title: created[0].title, day: fnArgs.day, time: fnArgs.time });
     return { handled: true, response: { reply: reply || `Diary entry "${created[0].title}" logged for ${fnArgs.day} at ${fnArgs.time}.` } };
+  }
+
+  if (fnName === "create_task") {
+    const requesterId = req?.session?.userId || (req as any)?.tokenUserId || null;
+    if (!requesterId) return { handled: true, response: { reply: "I couldn't work out who's asking, so I can't set the task." } };
+    let ownerId = requesterId;
+    let assignedById: string | null = null;
+    let assignedByName: string | null = null;
+    let assigneeName: string | null = null;
+    if (fnArgs.assigneeName) {
+      // Resolve the named person; clients (Landsec) may only assign within
+      // the people working on their account — same rule as the HTTP route.
+      const { resolveCompanyScope, getClientVisibleUserIds } = await import("./company-scope");
+      const scope = await resolveCompanyScope(req);
+      const allowedIds = scope ? await getClientVisibleUserIds(scope) : null;
+      const match = await pool.query(
+        `SELECT id, name FROM users WHERE is_active IS NOT FALSE AND name ILIKE $1 ORDER BY name LIMIT 5`,
+        [`%${String(fnArgs.assigneeName).trim()}%`]
+      );
+      const candidates = allowedIds ? match.rows.filter((r: any) => allowedIds.has(r.id) || r.id === requesterId) : match.rows;
+      if (!candidates.length) return { handled: true, response: { reply: `I couldn't find "${fnArgs.assigneeName}" among the people you can assign tasks to.` } };
+      if (candidates.length > 1) return { handled: true, response: { reply: `Which ${fnArgs.assigneeName} — ${candidates.map((c: any) => c.name).join(", ")}?` } };
+      if (candidates[0].id !== requesterId) {
+        ownerId = candidates[0].id;
+        assigneeName = candidates[0].name;
+        assignedById = requesterId;
+        const meQ = await pool.query(`SELECT name FROM users WHERE id = $1`, [requesterId]);
+        assignedByName = meQ.rows[0]?.name || null;
+      }
+    }
+    const ins = await pool.query(
+      `INSERT INTO user_tasks (user_id, title, description, due_date, priority, assigned_by_user_id, assigned_by_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, title`,
+      [ownerId, String(fnArgs.title).trim(), fnArgs.description || null, fnArgs.dueDate || null, fnArgs.priority || "medium", assignedById, assignedByName]
+    );
+    if (assignedById) {
+      try {
+        const { emitNotification } = await import("./websocket");
+        const { sendPushNotification } = await import("./push-notifications");
+        emitNotification(ownerId, { type: "task_assigned", threadId: "", senderName: assignedByName || "Someone", preview: ins.rows[0].title } as any);
+        sendPushNotification(ownerId, { title: `New task from ${assignedByName || "a colleague"}`, body: ins.rows[0].title.slice(0, 100), tag: `task-${ins.rows[0].id}`, url: "/tasks" }).catch(() => {});
+      } catch { /* notification is best-effort */ }
+    }
+    return { handled: true, response: {
+      reply: assigneeName
+        ? `Task set for ${assigneeName}: "${ins.rows[0].title}"${fnArgs.dueDate ? ` (due ${fnArgs.dueDate})` : ""} — they've been notified.`
+        : `Task added to your list: "${ins.rows[0].title}"${fnArgs.dueDate ? ` (due ${fnArgs.dueDate})` : ""}.`,
+      action: { type: "navigate", url: "/tasks" },
+    } };
   }
 
   if (fnName === "web_search") {

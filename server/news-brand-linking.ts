@@ -1,6 +1,6 @@
 // Links ingested news articles to tracked brands and creates brand_signals.
 // Also auto-maintains a Google News RSS feed per tracked brand.
-import { db } from "./db";
+import { db, pool } from "./db";
 import { crmCompanies, newsSources, newsArticles, brandSignals } from "@shared/schema";
 import { eq, and, sql, desc, isNotNull } from "drizzle-orm";
 import { googleNewsRssUrl, createRssAppFeed } from "./rssapp";
@@ -96,6 +96,9 @@ function googleNewsQueryForBrand(brandName: string, industry?: string | null): s
     everlast: ' -boxing -mma -fight',
     burger: ' -recipe',
     base: ' -military -army',
+    bills: ' -"food bills" -"energy bills" -"tax bill" -"tax bills" -"household bills" -"utility bills" -"vet bills" -"medical bills" -"grocery bills"',
+    "bill's": ' -"food bills" -"energy bills" -"tax bills" -"household bills"',
+    oliver: ' -"jamie oliver"',
   };
   const exclusion = collisionExclusions[lc] || "";
   // Industry context bias — adds a positive term that Google's ranker uses to
@@ -135,6 +138,8 @@ export function articleLooksRelevantForBrand(brandName: string, industry: string
     boots: /\bfootball boots\b|\bwellington boots\b|\bworking boots\b/,
     pandora: /\bspotify\b|\bpandora radio\b|\bstreaming\b/,
     river: /\bthames\b|\bnile\b|\bflood\b|\briverbank\b/,
+    bills: /\b(food|energy|tax|household|utility|utilities|vet|medical|grocery|water|gas|electricity|phone|fuel|shopping|rising) bills?\b|\bbills? (rise|rising|soar|surge|jump|hike)\b|\bbritish gas\b|\bcost of living\b|\bbuffalo bills\b/,
+    "bill's": /\b(food|energy|tax|household|utility|vet|medical|grocery) bills?\b|\bcost of living\b/,
   };
   const rx = drop[lcBrand];
   if (rx && rx.test(txt)) return false;
@@ -147,6 +152,65 @@ export function articleLooksRelevantForBrand(brandName: string, industry: string
   }
 
   return true;
+}
+
+// ── AI relevance judge ──────────────────────────────────────────────────
+// The hardcoded lists above catch known collisions, but every ambiguous
+// brand name needs its own entry — "Bills" the restaurant drowned in food/
+// energy/tax-bills headlines because nobody had added it. This judge asks
+// Haiku once per stored signal whether the headline is really about THIS
+// company; the verdict is written to brand_signals.ai_relevant so each row
+// is judged exactly once. Callers exclude ai_relevant = false at read time.
+let aiRelevantColumnEnsured = false;
+async function ensureAiRelevantColumn() {
+  if (aiRelevantColumnEnsured) return;
+  await pool.query(`ALTER TABLE brand_signals ADD COLUMN IF NOT EXISTS ai_relevant BOOLEAN`).catch(() => {});
+  aiRelevantColumnEnsured = true;
+}
+
+export async function aiJudgeSignalRelevance(
+  brand: { id: string; name: string; industry?: string | null; domain?: string | null },
+  rows: Array<{ id: string; headline: string | null; detail: string | null }>,
+): Promise<number> {
+  if (!rows.length) return 0;
+  await ensureAiRelevantColumn();
+  const batch = rows.slice(0, 40);
+  try {
+    const { callClaude } = await import("./chatbgp");
+    const completion = await callClaude({
+      model: "claude-haiku-4-5-20251001",
+      max_completion_tokens: 1200,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You judge whether news headlines are about a specific COMPANY, or merely contain its name as an ordinary " +
+            "word / a different entity. Be strict: 'food bills rise' is NOT about the restaurant chain Bill's; a story " +
+            "about a Bill's restaurant opening IS. Output STRICT JSON only: [{\"i\":number,\"relevant\":true|false}].",
+        },
+        {
+          role: "user",
+          content: `Company: ${brand.name}${brand.industry ? ` (${brand.industry})` : ""}${brand.domain ? ` — ${brand.domain}` : ""}\nHeadlines:\n` +
+            JSON.stringify(batch.map((r, i) => ({ i, headline: r.headline, detail: (r.detail || "").slice(0, 140) }))),
+        },
+      ],
+    });
+    const text = completion.choices?.[0]?.message?.content || "";
+    const js = JSON.parse(text.slice(text.indexOf("["), text.lastIndexOf("]") + 1)) as Array<{ i: number; relevant: boolean }>;
+    let judged = 0;
+    for (const v of js) {
+      const row = batch[v.i];
+      if (!row) continue;
+      await pool.query(`UPDATE brand_signals SET ai_relevant = $1 WHERE id = $2`, [!!v.relevant, row.id]);
+      judged++;
+    }
+    const dropped = js.filter((v) => !v.relevant).length;
+    if (dropped) console.log(`[signal-judge] ${brand.name}: ${dropped}/${judged} signals marked irrelevant`);
+    return judged;
+  } catch (e: any) {
+    console.warn(`[signal-judge] ${brand.name} failed: ${e?.message}`);
+    return 0;
+  }
 }
 
 export async function ensureBrandGoogleNewsFeeds(): Promise<{ created: number; total: number; refreshed: number }> {

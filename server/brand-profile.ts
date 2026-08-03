@@ -8,10 +8,16 @@ import { pool } from "./db";
 
 const router = Router();
 
+// ai_relevant is written by aiJudgeSignalRelevance (news-brand-linking) but
+// read here — make sure the column exists before the first profile request.
+pool.query(`ALTER TABLE brand_signals ADD COLUMN IF NOT EXISTS ai_relevant BOOLEAN`).catch(() => {});
+
 // Brands whose gallery has had the duplicate-image healing sweep this boot.
 const dedupeSweepFired = new Set<string>();
 // Per-brand cooldown for the server-side UK-entity auto-kick below.
 const entityKickFired = new Map<string, number>();
+// Per-brand cooldown for the fire-and-forget AI signal-relevance judge.
+const signalJudgeFired = new Map<string, number>();
 
 // Cheap ISO 3166-1 alpha-2 inference from Google Places formatted_address.
 // We only get formatted_address back from Text Search (no structured
@@ -201,6 +207,16 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
           console.log(`[brand-profile] auto-identified entity for ${row.name}: ${scraped.entityName || "?"} / ${scraped.chNumber || "no CH#"}`);
         }
       })().catch(e => console.warn(`[brand-profile] entity auto-kick failed: ${e?.message}`));
+      // Menu / best-sellers auto-kick, same rationale: the refresh button is
+      // a staff research POST, so brands first browsed by clients never got
+      // their menu card. One attempt per brand per cooldown window.
+      (async () => {
+        const m = (await pool.query(
+          `SELECT name, menu_intel FROM crm_companies WHERE id = $1`, [sweepId])).rows[0];
+        if (!m || m.menu_intel) return;
+        await refreshMenuIntelForCompany(sweepId);
+        console.log(`[brand-profile] auto-refreshed menu intel for ${m.name}`);
+      })().catch(e => console.warn(`[brand-profile] menu auto-kick skipped: ${e?.message}`));
     }
 
     // Clients may only read their OWN company's profile here. (Landsec audit.)
@@ -247,7 +263,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // drops obvious false-positive news (Supreme Court for streetwear brand
     // "Supreme", football "Coach", etc.) and we still want 20 real signals.
     const signalsQ = pool.query(
-      `SELECT id, signal_type, headline, detail, source, signal_date, magnitude, sentiment, ai_generated, created_at
+      `SELECT id, signal_type, headline, detail, source, signal_date, magnitude, sentiment, ai_generated, ai_relevant, created_at
          FROM brand_signals WHERE brand_company_id = $1
          ORDER BY COALESCE(signal_date, created_at) DESC LIMIT 80`,
       [companyId]
@@ -897,11 +913,25 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // Re-apply the news relevance filter at read time so historical noise
     // (US Supreme Court articles, football coach articles, etc.) drops out
     // even before the next news refresh runs to delete them properly.
-    const { articleLooksRelevantForBrand } = await import("./news-brand-linking");
+    const { articleLooksRelevantForBrand, aiJudgeSignalRelevance } = await import("./news-brand-linking");
     const filteredSignals = signals.rows.filter((s: any) => {
+      if (s.ai_relevant === false) return false;
       if (s.signal_type !== "news") return true;
       return articleLooksRelevantForBrand(c.name, c.industry, s.headline || "", s.detail || null);
     }).slice(0, 20);
+
+    // Any news signal Haiku hasn't judged yet gets judged in the background —
+    // the hardcoded collision lists above only cover known ambiguous names,
+    // so a brand like Bills can drown in "energy bills" headlines until its
+    // rows are judged. Verdicts land in ai_relevant; next load drops them.
+    const unjudged = signals.rows.filter((s: any) => s.signal_type === "news" && s.ai_relevant == null);
+    if (unjudged.length && (!signalJudgeFired.has(sweepId) || Date.now() - signalJudgeFired.get(sweepId)! > 6 * 3600_000)) {
+      signalJudgeFired.set(sweepId, Date.now());
+      aiJudgeSignalRelevance(
+        { id: sweepId, name: c.name, industry: c.industry, domain: c.domain || c.domain_url },
+        unjudged.map((s: any) => ({ id: s.id, headline: s.headline, detail: s.detail })),
+      ).catch(() => {});
+    }
 
     res.json({
       company: c,
@@ -1789,19 +1819,20 @@ async function enrichMenuItemImagesWithCse(
   console.log(`[menu-intel ${brandName}] CSE: ${filled}/${attempted} filled (${rejected} rejected by relevance filter), ${errors} errors, ${items.length} items total, domain="${cleanDomain || "(none)"}"`);
 }
 
-router.post("/api/brand/:companyId/menu-intel/refresh", requireAuth, async (req: Request, res: Response) => {
-  try {
-    const { companyId } = req.params;
+// Callable form — used by the refresh route below AND the profile-load
+// auto-kick (a brand first opened by a client otherwise never gets its
+// menu: the refresh button is a staff research POST).
+export async function refreshMenuIntelForCompany(companyId: string): Promise<any> {
     const r = await pool.query(
       `SELECT id, name, company_type, industry, domain FROM crm_companies WHERE id = $1`,
       [companyId]
     );
     const c = r.rows[0];
-    if (!c) return res.status(404).json({ error: "company not found" });
+    if (!c) throw new Error("company not found");
 
     const { askPerplexity, isPerplexityConfigured } = await import("./perplexity");
     if (!isPerplexityConfigured()) {
-      return res.status(503).json({ error: "Perplexity not configured" });
+      throw new Error("Perplexity not configured");
     }
 
     const isFood = isFoodBrand(c.company_type, c.industry);
@@ -1830,7 +1861,7 @@ router.post("/api/brand/:companyId/menu-intel/refresh", requireAuth, async (req:
     }
     const items = Array.isArray(parsed.items) ? parsed.items.slice(0, 14) : [];
     if (items.length === 0) {
-      return res.status(502).json({ error: "Couldn't parse menu items from Perplexity response" });
+      throw new Error("Couldn't parse menu items from Perplexity response");
     }
 
     // Fill any missing per-item image via Google Custom Search (image mode).
@@ -1851,11 +1882,17 @@ router.post("/api/brand/:companyId/menu-intel/refresh", requireAuth, async (req:
       `UPDATE crm_companies SET menu_intel = $1::jsonb, menu_intel_at = NOW() WHERE id = $2`,
       [JSON.stringify(payload), companyId]
     );
+    return payload;
+}
 
+router.post("/api/brand/:companyId/menu-intel/refresh", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const payload = await refreshMenuIntelForCompany(String(req.params.companyId));
     res.json({ ...payload, refreshed_at: new Date().toISOString() });
   } catch (err: any) {
     console.error(`[brand menu-intel ${req.params.companyId}]`, err?.message || err);
-    res.status(500).json({ error: err.message || "menu-intel refresh failed" });
+    const code = /not found/.test(err?.message) ? 404 : /not configured/.test(err?.message) ? 503 : /parse/.test(err?.message) ? 502 : 500;
+    res.status(code).json({ error: err.message || "menu-intel refresh failed" });
   }
 });
 

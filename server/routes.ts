@@ -111,7 +111,7 @@ const GROUP_CHAT_TOOLS = [
   "create_contact", "update_contact", "create_company", "update_company",
   "create_property", "create_available_unit", "update_available_unit",
   "update_investment_tracker", "create_investment_tracker",
-  "log_viewing", "log_offer", "create_requirement", "create_diary_entry",
+  "log_viewing", "log_offer", "create_requirement", "create_diary_entry", "create_task",
   "delete_record", "web_search", "ingest_url", "property_lookup", "property_data_lookup",
   "tfl_nearby", "search_green_street", "query_xero", "scan_duplicates",
   "navigate_to", "send_email", "query_leasing_schedule",
@@ -7931,18 +7931,32 @@ These terms are indicative only and do not constitute a binding agreement.`;
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Tasks were a personal to-do list only (user_id = owner) — nobody could
+  // give anyone else a task, which is why the feature sat idle (Woody,
+  // 2026-08-03). Assignment model: user_id stays "who the task is FOR"
+  // (so every existing query keeps working); assigned_by_* records who set
+  // it when that's a different person. Clients (Landsec) may assign to the
+  // people on their account team; staff to anyone. Both directions notify.
+  pool.query(`ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS assigned_by_user_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS assigned_by_name TEXT`).catch(() => {});
+
   app.get("/api/tasks", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const status = req.query.status as string | undefined;
-      let query = `SELECT t.*, 
-        d.name as deal_name, p.name as property_name, c.name as contact_name
-        FROM user_tasks t 
+      // view=assigned → tasks I set for OTHER people, so the assigner can
+      // track what they've delegated (Landsec watching their agents' list).
+      const assignedView = req.query.view === "assigned";
+      let query = `SELECT t.*,
+        d.name as deal_name, p.name as property_name, c.name as contact_name,
+        u.name as assignee_name
+        FROM user_tasks t
         LEFT JOIN crm_deals d ON t.linked_deal_id = d.id
         LEFT JOIN crm_properties p ON t.linked_property_id = p.id
         LEFT JOIN crm_contacts c ON t.linked_contact_id = c.id
-        WHERE t.user_id = $1`;
+        LEFT JOIN users u ON u.id = t.user_id
+        WHERE ${assignedView ? "t.assigned_by_user_id = $1 AND t.user_id <> $1" : "t.user_id = $1"}`;
       const params: any[] = [userId];
       if (status && status !== "all") {
         query += ` AND t.status = $2`;
@@ -7962,18 +7976,51 @@ These terms are indicative only and do not constitute a binding agreement.`;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const { title, description, dueDate, priority, category, linkedDealId, linkedPropertyId, linkedContactId,
               linkedOnenotePageId, linkedOnenotePageUrl, linkedEvernoteNoteId, linkedEvernoteNoteUrl,
-              parentTaskId, isPinned, tags } = req.body;
+              parentTaskId, isPinned, tags, assigneeUserId } = req.body;
       if (!title || !title.trim()) return res.status(400).json({ error: "Title is required" });
+
+      // Assignment: the task lands on the ASSIGNEE's list; assigned_by
+      // records who set it. Clients may only assign within the people
+      // working on their account (same visibility set as their pickers).
+      let ownerId = userId;
+      let assignedById: string | null = null;
+      let assignedByName: string | null = null;
+      if (assigneeUserId && assigneeUserId !== userId) {
+        const { resolveCompanyScope, getClientVisibleUserIds } = await import("./company-scope");
+        const scope = await resolveCompanyScope(req);
+        if (scope) {
+          const visible = await getClientVisibleUserIds(scope);
+          if (!visible.has(String(assigneeUserId))) {
+            return res.status(403).json({ error: "You can only assign tasks to people on your account team" });
+          }
+        }
+        const assigneeRow = await pool.query(`SELECT id, name FROM users WHERE id = $1 AND is_active IS NOT FALSE`, [assigneeUserId]);
+        if (!assigneeRow.rows[0]) return res.status(404).json({ error: "Assignee not found" });
+        const me = await storage.getUser(userId);
+        ownerId = assigneeUserId;
+        assignedById = userId;
+        assignedByName = me?.name || null;
+      }
+
       const result = await pool.query(
         `INSERT INTO user_tasks (user_id, title, description, due_date, priority, category, linked_deal_id, linked_property_id, linked_contact_id,
           linked_onenote_page_id, linked_onenote_page_url, linked_evernote_note_id, linked_evernote_note_url,
-          parent_task_id, is_pinned, tags)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *`,
-        [userId, title.trim(), description?.trim() || null, dueDate || null, priority || "medium", category || null,
+          parent_task_id, is_pinned, tags, assigned_by_user_id, assigned_by_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING *`,
+        [ownerId, title.trim(), description?.trim() || null, dueDate || null, priority || "medium", category || null,
          linkedDealId || null, linkedPropertyId || null, linkedContactId || null,
          linkedOnenotePageId || null, linkedOnenotePageUrl || null, linkedEvernoteNoteId || null, linkedEvernoteNoteUrl || null,
-         parentTaskId || null, isPinned || false, tags || null]
+         parentTaskId || null, isPinned || false, tags || null, assignedById, assignedByName]
       );
+      if (assignedById) {
+        emitNotification(ownerId, { type: "task_assigned", threadId: "", senderName: assignedByName || "Someone", preview: title.trim() } as any);
+        sendPushNotification(ownerId, {
+          title: `New task from ${assignedByName || "a colleague"}`,
+          body: title.trim().slice(0, 100),
+          tag: `task-${result.rows[0].id}`,
+          url: "/tasks",
+        }).catch(() => {});
+      }
       res.json(result.rows[0]);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -7983,7 +8030,9 @@ These terms are indicative only and do not constitute a binding agreement.`;
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const taskId = req.params.id;
-      const existing = await pool.query("SELECT * FROM user_tasks WHERE id = $1 AND user_id = $2", [taskId, userId]);
+      // The assignee OR the person who assigned it may update (the assigner
+      // needs to chase, amend or close their own delegated tasks).
+      const existing = await pool.query("SELECT * FROM user_tasks WHERE id = $1 AND (user_id = $2 OR assigned_by_user_id = $2)", [taskId, userId]);
       if (existing.rows.length === 0) return res.status(404).json({ error: "Task not found" });
 
       const fields: string[] = [];
@@ -8025,9 +8074,22 @@ These terms are indicative only and do not constitute a binding agreement.`;
 
       values.push(taskId, userId);
       const result = await pool.query(
-        `UPDATE user_tasks SET ${fields.join(", ")} WHERE id = $${idx} AND user_id = $${idx + 1} RETURNING *`,
+        `UPDATE user_tasks SET ${fields.join(", ")} WHERE id = $${idx} AND (user_id = $${idx + 1} OR assigned_by_user_id = $${idx + 1}) RETURNING *`,
         values
       );
+      // Completing a delegated task tells the person who set it.
+      const row = result.rows[0];
+      if (row && req.body.status === "done" && existing.rows[0].status !== "done"
+          && row.assigned_by_user_id && row.assigned_by_user_id !== userId) {
+        const completer = await storage.getUser(userId);
+        emitNotification(row.assigned_by_user_id, { type: "task_completed", threadId: "", senderName: completer?.name || "Someone", preview: row.title } as any);
+        sendPushNotification(row.assigned_by_user_id, {
+          title: `${completer?.name || "Someone"} completed a task`,
+          body: String(row.title).slice(0, 100),
+          tag: `task-${row.id}`,
+          url: "/tasks",
+        }).catch(() => {});
+      }
       res.json(result.rows[0]);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -8036,7 +8098,7 @@ These terms are indicative only and do not constitute a binding agreement.`;
     try {
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      await pool.query("DELETE FROM user_tasks WHERE id = $1 AND user_id = $2", [req.params.id, userId]);
+      await pool.query("DELETE FROM user_tasks WHERE id = $1 AND (user_id = $2 OR assigned_by_user_id = $2)", [req.params.id, userId]);
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });

@@ -55,6 +55,9 @@ interface Task {
   deal_name?: string;
   property_name?: string;
   contact_name?: string;
+  assigned_by_user_id?: string | null;
+  assigned_by_name?: string | null;
+  assignee_name?: string | null;
 }
 
 interface BriefingData {
@@ -127,9 +130,9 @@ function formatDueDate(dateStr: string | null) {
   return { text: date.toLocaleDateString("en-GB", { day: "numeric", month: "short" }), className: "text-muted-foreground" };
 }
 
-function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubtask, onToggleSubtask }: {
+function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubtask, onToggleSubtask, showAssignee }: {
   task: Task; subtasks: Task[]; onToggle: () => void; onEdit: () => void; onDelete: () => void;
-  onPin: () => void; onAddSubtask: () => void; onToggleSubtask: (id: string) => void;
+  onPin: () => void; onAddSubtask: () => void; onToggleSubtask: (id: string) => void; showAssignee?: boolean;
 }) {
   const isDone = task.status === "done";
   const dueInfo = formatDueDate(task.due_date);
@@ -164,6 +167,17 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
           </span>
           <PriorityBadge priority={task.priority} />
           {task.category && <CategoryBadge category={task.category} />}
+          {showAssignee && task.assignee_name ? (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:border-indigo-800 dark:text-indigo-300">
+              <User className="w-2.5 h-2.5" />
+              {task.assignee_name}
+            </span>
+          ) : task.assigned_by_name ? (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950 dark:border-indigo-800 dark:text-indigo-300">
+              <User className="w-2.5 h-2.5" />
+              from {task.assigned_by_name}
+            </span>
+          ) : null}
           {task.tags && task.tags.split(",").map(t => t.trim()).filter(Boolean).map(tag => (
             <span key={tag} className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-medium bg-primary/10 text-primary border border-primary/20">
               <Hash className="w-2 h-2" />{tag}
@@ -375,6 +389,7 @@ function AddTaskInline({ onAdd }: { onAdd: (title: string) => void }) {
 export default function TasksPage() {
   const { toast } = useToast();
   const [filter, setFilter] = useState<"all" | "todo" | "in_progress" | "done">("all");
+  const [viewAssigned, setViewAssigned] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [editTask, setEditTask] = useState<Task | null>(null);
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -388,7 +403,7 @@ export default function TasksPage() {
     linkedDealId: "", linkedPropertyId: "",
     linkedOnenotePageId: "", linkedOnenotePageUrl: "",
     linkedEvernoteNoteId: "", linkedEvernoteNoteUrl: "",
-    tags: "",
+    tags: "", assigneeUserId: "",
   });
 
   const [showImportDialog, setShowImportDialog] = useState(false);
@@ -423,7 +438,20 @@ export default function TasksPage() {
   const [exporting, setExporting] = useState(false);
 
   const { data: tasks = [], isLoading: tasksLoading } = useQuery<Task[]>({
-    queryKey: ["/api/tasks"],
+    // Prefix invalidations on ["/api/tasks"] still hit both variants.
+    queryKey: ["/api/tasks", viewAssigned ? "assigned" : "mine"],
+    queryFn: async () => {
+      const res = await fetch(`/api/tasks${viewAssigned ? "?view=assigned" : ""}`, {
+        credentials: "include", headers: getAuthHeaders(),
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      return res.json();
+    },
+  });
+
+  const { data: assignableUsers = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ["/api/users"],
+    staleTime: 10 * 60 * 1000,
   });
 
   const { data: briefingData, isLoading: briefingLoading, refetch: refetchBriefing } = useQuery<BriefingData>({
@@ -573,6 +601,7 @@ export default function TasksPage() {
       linkedEvernoteNoteId: task.linked_evernote_note_id || "",
       linkedEvernoteNoteUrl: task.linked_evernote_note_url || "",
       tags: task.tags || "",
+      assigneeUserId: "",
     });
     setShowEditDialog(true);
   };
@@ -671,7 +700,7 @@ export default function TasksPage() {
                     linkedDealId: "", linkedPropertyId: "",
                     linkedOnenotePageId: "", linkedOnenotePageUrl: "",
                     linkedEvernoteNoteId: "", linkedEvernoteNoteUrl: "",
-                    tags: "",
+                    tags: "", assigneeUserId: "",
                   }); }}
                   data-testid="button-new-task"
                 >
@@ -779,6 +808,7 @@ export default function TasksPage() {
                       onEdit={() => openEdit(task)}
                       onDelete={() => deleteMutation.mutate(task.id)}
                       onPin={() => updateMutation.mutate({ id: task.id, isPinned: !task.is_pinned })}
+                      showAssignee={viewAssigned}
                       onAddSubtask={() => { setAddingSubtaskFor(task.id); setSubtaskTitle(""); }}
                       onToggleSubtask={(id) => {
                         const sub = tasks.find(t => t.id === id);
@@ -798,6 +828,19 @@ export default function TasksPage() {
                     Tasks
                   </CardTitle>
                   <div className="flex gap-1 border-b">
+                    <button
+                      className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px flex items-center gap-1 ${
+                        viewAssigned
+                          ? "border-primary text-primary"
+                          : "border-transparent text-muted-foreground hover:text-foreground"
+                      }`}
+                      onClick={() => setViewAssigned(v => !v)}
+                      title="Tasks you assigned to other people"
+                      data-testid="filter-assigned-by-me"
+                    >
+                      <User className="w-3.5 h-3.5" />
+                      Assigned by me
+                    </button>
                     {(["all", "todo", "in_progress", "done"] as const).map(f => (
                       <button
                         key={f}
@@ -858,6 +901,7 @@ export default function TasksPage() {
                         onEdit={() => openEdit(task)}
                         onDelete={() => deleteMutation.mutate(task.id)}
                         onPin={() => updateMutation.mutate({ id: task.id, isPinned: !task.is_pinned })}
+                      showAssignee={viewAssigned}
                         onAddSubtask={() => { setAddingSubtaskFor(task.id); setSubtaskTitle(""); }}
                         onToggleSubtask={(id) => {
                           const sub = tasks.find(t => t.id === id);
@@ -914,6 +958,7 @@ export default function TasksPage() {
                             onEdit={() => openEdit(task)}
                             onDelete={() => deleteMutation.mutate(task.id)}
                             onPin={() => updateMutation.mutate({ id: task.id, isPinned: !task.is_pinned })}
+                      showAssignee={viewAssigned}
                             onAddSubtask={() => { setAddingSubtaskFor(task.id); setSubtaskTitle(""); }}
                             onToggleSubtask={(id) => {
                               const sub = tasks.find(t => t.id === id);
@@ -997,6 +1042,23 @@ export default function TasksPage() {
                   data-testid="input-task-due-date"
                 />
               </div>
+              {!editTask && (
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Assign to</label>
+                  <Select value={editForm.assigneeUserId || "me"} onValueChange={(v) => setEditForm({ ...editForm, assigneeUserId: v === "me" ? "" : v })}>
+                    <SelectTrigger data-testid="select-task-assignee">
+                      <SelectValue placeholder="Myself" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="me">Myself</SelectItem>
+                      {(Array.isArray(assignableUsers) ? assignableUsers : []).map((u) => (
+                        <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[10px] text-muted-foreground mt-1">Assigned tasks land on their list — they get a notification, and you can track them under "Assigned by me".</p>
+                </div>
+              )}
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Link to Deal</label>
                 <Select value={editForm.linkedDealId || "none"} onValueChange={(v) => setEditForm({ ...editForm, linkedDealId: v === "none" ? "" : v })}>
@@ -1326,6 +1388,8 @@ export default function TasksPage() {
                     dueDate: editForm.dueDate || null,
                     linkedDealId: editForm.linkedDealId || null,
                     linkedPropertyId: editForm.linkedPropertyId || null,
+                    tags: editForm.tags || null,
+                    assigneeUserId: editForm.assigneeUserId || null,
                   });
                   setShowEditDialog(false);
                 }}

@@ -2492,7 +2492,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 </div>
               )}
               {data.signals.length > 0 && (
-                <div className="space-y-1">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1">
                   {(signalsShowAll ? data.signals : data.signals.slice(0, 6)).map((s: any) => {
                     const typeCls: Record<string, string> = {
                       opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -4669,7 +4669,6 @@ function LandlordSidebarBlock({
         entityType="landlord"
       />
 
-      <CompanyMiniChat companyId={companyId} companyName={companyName} />
 
       <Card>
         <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2">
@@ -4858,6 +4857,13 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           and the (internally scrolling) Files tree on the right. Replaces
           the old pairing where Covenant sat alone beside Compliance and
           left most of a column empty (Woody, 2026-08-02). */}
+      {/* Top pair: the two most-used boards side by side (Woody, 2026-08-03) —
+          who we talk to, and the conversation itself. */}
+      <div className={pairCls}>
+      <SidebarKeyContacts data={data} companyId={companyId} topContacts={topContacts} />
+      <CompanyMiniChat companyId={companyId} companyName={c.name} />
+      </div>
+
       <div className={pairCls}>
       <div className="space-y-3">
       {/* Compliance / AML board — gates every downstream check on knowing
@@ -4866,9 +4872,6 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           via the input below. Until uk_entity_name is set, all downstream
           checks (CH details, PSC, accounts, Red Flag, AML PEP) stay parked. */}
       <BrandComplianceCard companyId={companyId} company={c} />
-
-      {/* Key contacts */}
-      <SidebarKeyContacts data={data} companyId={companyId} topContacts={topContacts} />
 
       {/* Everyone BGP has emailed at this company, with add-to-CRM */}
       <KnownContactsCard companyId={companyId} companyName={c.name} />
