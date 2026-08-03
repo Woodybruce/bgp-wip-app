@@ -1073,6 +1073,30 @@ async function markRound(page, cross) {
     if (r.addOutStatus !== 403) throw new Error(`client added a contact to an out-of-slice brand (expected 403, got ${r.addOutStatus})`);
   });
 
+  // Org-wide feeds are BGP-internal: the activity feed hard-empties for
+  // client logins (Landsec audit) even when staff sees rows, and
+  // notifications/daily-digest must never 4xx/5xx or leak org-wide rows.
+  await step(page, p, 'client-feeds-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => {
+        const res = await fetch(url, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+        if (!res.ok) return { status: res.status, len: null };
+        const d = await res.json().catch(() => null);
+        return { status: res.status, len: Array.isArray(d) ? d.length : (d ? -1 : null) };
+      };
+      return {
+        activity: await g('/api/activity-feed'),
+        notifications: await g('/api/notifications'),
+        digest: await g('/api/daily-digest'),
+      };
+    });
+    if (r.activity.status !== 200) throw new Error(`client activity-feed unhealthy (${r.activity.status})`);
+    if (r.activity.len !== 0) throw new Error(`org-wide activity leaked to client (${r.activity.len} rows)`);
+    if (r.notifications.status !== 200) throw new Error(`client notifications unhealthy (${r.notifications.status})`);
+    if (r.digest.status !== 200) throw new Error(`client daily-digest unhealthy (${r.digest.status})`);
+  });
+
   // Global search must respect the client's scope: their own portfolio and
   // in-slice brands are findable, a rival landlord and out-of-slice brands
   // return nothing. (Staff search sees everything — differential covered by
