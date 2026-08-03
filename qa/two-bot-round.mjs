@@ -1189,9 +1189,14 @@ async function markRound(page, cross) {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const status = (await fetch('/api/tasks', { method: 'POST', credentials: 'include', headers: auth,
         body: JSON.stringify({ title: 'QA-PROBE task hijack', assigneeUserId: 'aaaaaaaa-5555-5555-5555-555555555555' }) }).catch(() => ({ status: 0 }))).status;
-      return { status };
+      // The AI task-suggestions sweep (terminal, 2026-08-03) is an org-wide
+      // AI op — staff only.
+      const sweep = (await fetch('/api/tasks/suggestions/run', { method: 'POST', credentials: 'include', headers: auth,
+        body: '{}' }).catch(() => ({ status: 0 }))).status;
+      return { status, sweep };
     });
     if (r.status < 400) throw new Error(`client assigned a task onto a staff list (${r.status})`);
+    if (r.sweep < 400) throw new Error(`client triggered the AI task-suggestions sweep (${r.sweep})`);
   });
 
   // ActivitySummary board (terminal, 2026-08-03): the dashboard's upcoming/
