@@ -1987,7 +1987,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         );
         const allowedCompanyIds = new Set(allowedRows.rows.map((r: any) => r.id));
         const arr = Array.isArray(contacts) ? contacts : contacts.data;
-        const filtered = arr.filter((c: any) => c.companyId && allowedCompanyIds.has(c.companyId));
+        // A companyId query param narrows WITHIN the allowed set (e.g. the
+        // tracker's Client Contact picker wants Landsec people only) —
+        // ignored when it points outside the client's visibility.
+        const requestedCompanyId = req.query.companyId as string | undefined;
+        const narrowTo = requestedCompanyId && allowedCompanyIds.has(requestedCompanyId) ? requestedCompanyId : null;
+        const filtered = arr.filter((c: any) => c.companyId
+          && (narrowTo ? c.companyId === narrowTo : allowedCompanyIds.has(c.companyId)));
         return res.json(Array.isArray(contacts) ? filtered : { ...contacts, data: filtered });
       }
       res.json(contacts);
@@ -4456,10 +4462,13 @@ Return a JSON object with these fields (use null for any field you cannot find):
       }
       if (!candidates.length) return res.json({ unit: { id: unit.id, unitName: unit.unit_name, sqft }, suggestions: [] });
 
-      // 3. Fable ranks the combined list against the actual unit.
+      // 3. Fable ranks the combined list against the actual unit. Uses
+      // chatbgp's callClaude (Fable-aware params + Opus fallback) — the
+      // plain utils wrapper 400s on the Fable model.
       let ranked = candidates.slice(0, 25);
       try {
-        const completion = await callClaude({
+        const { callClaude: callClaudeFable } = await import("./chatbgp");
+        const completion = await callClaudeFable({
           model: "claude-fable-5",
           max_completion_tokens: 1600,
           messages: [

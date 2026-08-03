@@ -28,6 +28,7 @@ const IGNORED_RESPONSES = [
   /\/api\/microsoft\//,                  // no M365 creds locally
   /\/api\/chatbgp\/status/,              // no AI key locally
   /\/api\/hr\/photo\//,                  // 404 = no photo; UI hides the img
+  /\/api\/client\/sharepoint\//,         // 404 locally = no Graph creds/folder; the panel's fallback is the pass state (403 regressions still caught by client-sharepoint-surface)
   /\/api\/ai-briefing/,                  // 503 locally (no AI key) by design
   /\/api\/brand\/[^/]+\/ai-take\//,      // 503 locally (no AI key) by design
   /\/api\/brand\/[^/]+\/(competitors\/research|rocketreach-company\/refresh)/, // 503 locally, no keys
@@ -893,6 +894,18 @@ async function markRound(page, cross) {
     if (await page.getByText('Page not found').count()) throw new Error('property detail is a dead route for client');
     const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
     if (body.length < 40) throw new Error('property detail rendered blank for client');
+    // Client Files board (2026-08-03: "put back the files board but remove
+    // the team name"): panel must render — folder content or the graceful
+    // no-folder fallback — and never leak an internal team name.
+    const panel = page.locator('[data-testid="client-property-folders-panel"]');
+    if (!(await panel.count())) throw new Error('client Files board missing from the property page');
+    const panelText = (await panel.innerText().catch(() => '')).trim();
+    if (panelText.length < 10) throw new Error('client Files board rendered blank');
+    for (const team of ['National', 'Westend', 'West End', 'Lease Advisory', 'Investment Team']) {
+      if (new RegExp(`Set up by.*${team}|${team} folder tree`, 'i').test(panelText)) {
+        throw new Error(`client Files board leaks internal team name "${team}"`);
+      }
+    }
   });
 
   // The client team calendar (task-25 surface, reported dead 2026-08-02):

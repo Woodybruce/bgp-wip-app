@@ -1538,7 +1538,7 @@ export default function AvailableUnitsPage() {
                     Client{sortBy === "client" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                   </TableHead>
                 )}
-                <TableHead className="w-[170px] min-w-[170px]">Operator</TableHead>
+                <TableHead className="w-[170px] min-w-[170px]">Target Tenant</TableHead>
                 <TableHead className="w-[150px] min-w-[150px]">Category</TableHead>
                 <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>
                 <TableHead className="w-[130px] min-w-[130px]">Status</TableHead>
@@ -2156,7 +2156,7 @@ export default function AvailableUnitsPage() {
                 <Select value={wipForm.dealType} onValueChange={v => setWipForm(f => ({ ...f, dealType: v }))}>
                   <SelectTrigger data-testid="wip-deal-type"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {["New Letting", "Temp Lease", "Lease Acquisition", "Sale", "Lease Renewal", "Rent Review"].map(t => (
+                    {(isClientTracker ? ["New Letting", "Lease Renewal", "Rent Review", "Regear", "Temp Lease"] : ["New Letting", "Temp Lease", "Lease Acquisition", "Sale", "Lease Renewal", "Rent Review", "Regear"]).map(t => (
                       <SelectItem key={t} value={t}>{t}</SelectItem>
                     ))}
                   </SelectContent>
