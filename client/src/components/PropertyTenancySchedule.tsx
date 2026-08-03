@@ -871,6 +871,13 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     <div className="space-y-3" data-testid="property-tenancy-schedule">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
+          {/* Tracker link leads the whole schedule header (Woody, 2026-08-03) —
+              live lettings are worked THERE; this board is the rent roll. */}
+          <Button size="sm" className="h-7 text-xs" asChild data-testid="btn-open-letting-tracker">
+            <a href={`/deals/letting?propertyId=${propertyId}`}>
+              <ExternalLink className="w-3 h-3 mr-1" />Letting Tracker
+            </a>
+          </Button>
           <Badge variant="secondary" className="text-[10px]">{units.length} units</Badge>
           {Object.keys(colFilters).length > 0 && (
             <Badge
@@ -884,13 +891,6 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           )}
         </div>
         <div className="flex gap-2 flex-wrap">
-          {/* Tracker leads the toolbar — live lettings are worked THERE, not
-              on this board (the Lettings lens is retired; Woody 2026-08-03). */}
-          <Button size="sm" className="h-7 text-xs" asChild data-testid="btn-open-letting-tracker">
-            <a href={`/deals/letting?propertyId=${propertyId}`}>
-              <ExternalLink className="w-3 h-3 mr-1" />Letting Tracker
-            </a>
-          </Button>
           <div className="relative">
             <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." className="h-7 text-xs pl-7 w-40" data-testid="tenancy-search" />

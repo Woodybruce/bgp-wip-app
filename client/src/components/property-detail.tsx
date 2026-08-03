@@ -426,7 +426,12 @@ export function PropertyDetail({ id }: { id: string }) {
             sticky reference column on the right. Each reference board
             has its own max-height + internal overflow-y so the boards
             stay the same outward size and only their bodies scroll. */}
-        <div className="p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_660px] gap-4 lg:gap-6 items-start">
+        {/* One layout at every width: the old 2xl mode doubled the aside to
+            660px (two board columns), squeezing the main content exactly on
+            BIG windows — Landsec's window hit it, BGP's didn't, and the two
+            looked like different apps (Woody, 2026-08-03). Single ~340px
+            aside always. */}
+        <div className="p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-4 lg:gap-6 items-start">
           <div className="min-w-0 space-y-3">
             <div className="flex items-center gap-3 flex-wrap">
               <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground hover:text-foreground -ml-2" data-testid="button-back-properties" onClick={() => window.history.length > 1 ? window.history.back() : navigate("/properties")}>
@@ -937,7 +942,7 @@ export function PropertyDetail({ id }: { id: string }) {
               side by side half-width instead of one long strip —
               Files+Contacts, Compliance+Activity, BGP Contacts+Client
               Board, Deals+Units (Woody, 2026-07-30). */}
-          <aside className="space-y-3 2xl:space-y-0 2xl:grid 2xl:grid-cols-2 2xl:gap-3 2xl:items-start lg:sticky lg:top-4 self-start">
+          <aside className="space-y-3 lg:sticky lg:top-4 self-start">
               {/* SharePoint is fully sealed for client accounts — the
                   panel could only ever render dead Upload/Delete buttons
                   over a 403, so it's staff-only. */}
@@ -1032,18 +1037,9 @@ export function PropertyDetail({ id }: { id: string }) {
                 <AvailableUnitsPanel propertyId={property.id} />
               </ReferenceSection>
 
-              {/* Land Registry back to staff-only (Woody, 2026-08-03). */}
-              {!isClientViewer && (
-              <ReferenceSection
-                title="Land Registry"
-                icon={Landmark}
-                open={sidebarSections.landRegistry}
-                onToggle={() => toggleSection("landRegistry")}
-                testId="toggle-land-registry-section"
-              >
-                <LinkedLandRegistryPanel propertyId={property.id} />
-              </ReferenceSection>
-              )}
+              {/* Land Registry retired from the property page entirely
+                  (Woody, 2026-08-03) — title data lives in Property
+                  Intelligence when needed. */}
 
               {!isClientViewer && (
               <ReferenceSection

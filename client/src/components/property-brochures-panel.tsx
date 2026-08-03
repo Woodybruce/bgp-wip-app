@@ -88,7 +88,7 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
   const { data, isLoading, isError } = useQuery<BrochureResponse>({
     queryKey: ["/api/properties", propertyId, "brochures"],
     queryFn: async () => {
-      const res = await fetch(`/api/properties/${propertyId}/brochures`, { credentials: "include" });
+      const res = await fetch(`/api/properties/${propertyId}/brochures`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
