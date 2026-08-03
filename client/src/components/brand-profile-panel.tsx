@@ -1514,92 +1514,45 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             )}
 
 
-            {/* Visual brand banner. Hero images come from any
-                image tagged "brand-hero" (toggle from the gallery
-                lightbox). If fewer than 2 heroes are pinned, the
-                banner falls back to: street view (if available) +
-                first gallery image. Set up to 2 heroes max — any
-                more get ignored. */}
+            {/* Visual brand banner. The FIRST pane is the best available
+                image (pinned "brand-hero" → street view → first gallery
+                image); the SECOND pane is the company chat, moved up from
+                the sidebar so the conversation sits at the top of the
+                profile (Woody, 2026-08-03). */}
             {(() => {
               const hasStreetView = stores.some((s: any) => typeof s.lat === "number" && typeof s.lng === "number");
-              // Dedupe pinned heroes by content — the gallery healing sweep
-              // deliberately keeps hero pins, so two pins of the same photo
-              // would otherwise render side by side.
-              const seenHero = new Set<string>();
-              const heroes = (data.images || [])
-                .filter((i: any) => Array.isArray(i.tags) && i.tags.includes("brand-hero"))
-                .filter((i: any) => {
-                  const key = i.thumbnail_data || i.id;
-                  if (seenHero.has(key)) return false;
-                  seenHero.add(key);
-                  return true;
-                })
-                .slice(0, 2);
+              const hero = (data.images || []).find((i: any) => Array.isArray(i.tags) && i.tags.includes("brand-hero"));
               const srcFor = (img: any) => img.thumbnail_data
                 ? (img.thumbnail_data.startsWith("data:")
                     ? img.thumbnail_data
                     : `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`)
                 : `/api/brand/gallery-image/${img.id}`;
-
-              // Two heroes pinned → show both, no street view
-              if (heroes.length === 2) {
-                return (
-                  <div className="grid gap-1.5 rounded-md overflow-hidden grid-cols-2" style={{ height: 220 }}>
-                    {heroes.map((h: any) => (
-                      <div key={h.id} className="overflow-hidden rounded-md bg-muted/40">
-                        <img src={srcFor(h)} alt={h.file_name || ""} className="w-full h-full object-cover" />
-                      </div>
-                    ))}
-                  </div>
-                );
-              }
-
-              // One hero pinned → hero + street view (or just hero)
-              if (heroes.length === 1) {
-                return (
-                  <div className={`grid gap-1.5 rounded-md overflow-hidden ${hasStreetView ? "grid-cols-2" : "grid-cols-1"}`} style={{ height: 220 }}>
-                    <div className="overflow-hidden rounded-md bg-muted/40">
-                      <img src={srcFor(heroes[0])} alt={heroes[0].file_name || ""} className="w-full h-full object-cover" />
-                    </div>
-                    {hasStreetView && (
-                      <div className="overflow-hidden rounded-md bg-muted/40">
-                        <img
-                          src={`/api/brand/${companyId}/flagship-image?exclude=${encodeURIComponent(heroes[0].id)}`}
-                          alt="Flagship store street view"
-                          className="w-full h-full object-cover"
-                          onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                );
-              }
-
-              // No heroes → fall back to legacy street-view + first-image layout
               const firstImg = data.images[0];
-              if (!hasStreetView && !firstImg) return null;
+              const imagePane = hero ? (
+                <img src={srcFor(hero)} alt={hero.file_name || ""} className="w-full h-full object-cover" />
+              ) : hasStreetView ? (
+                <img
+                  src={`/api/brand/${companyId}/flagship-image${firstImg ? `?exclude=${encodeURIComponent(firstImg.id)}` : ""}`}
+                  alt="Flagship store street view"
+                  className="w-full h-full object-cover"
+                  onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
+                />
+              ) : firstImg ? (
+                <img
+                  src={srcFor(firstImg)}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
+                />
+              ) : null;
               return (
-                <div className={`grid gap-1.5 rounded-md overflow-hidden ${hasStreetView && firstImg ? "grid-cols-2" : "grid-cols-1"}`} style={{ height: 220 }}>
-                  {hasStreetView && (
-                    <div className="overflow-hidden rounded-md bg-muted/40">
-                      <img
-                        src={`/api/brand/${companyId}/flagship-image${firstImg ? `?exclude=${encodeURIComponent(firstImg.id)}` : ""}`}
-                        alt="Flagship store street view"
-                        className="w-full h-full object-cover"
-                        onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
-                      />
-                    </div>
+                <div className={`grid gap-1.5 rounded-md ${imagePane ? "grid-cols-2" : "grid-cols-1"}`} style={{ height: 260 }}>
+                  {imagePane && (
+                    <div className="overflow-hidden rounded-md bg-muted/40">{imagePane}</div>
                   )}
-                  {firstImg && (
-                    <div className="overflow-hidden rounded-md bg-muted/40">
-                      <img
-                        src={srcFor(firstImg)}
-                        alt=""
-                        className="w-full h-full object-cover"
-                        onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
-                      />
-                    </div>
-                  )}
+                  <div className="h-full min-h-0">
+                    <CompanyMiniChat companyId={companyId} companyName={c.name} fill />
+                  </div>
                 </div>
               );
             })()}
@@ -4496,7 +4449,7 @@ function KnownContactsSection({ companyId, companyName }: { companyId: string; c
 // conversation doesn't mean losing the page. Reuses the group-chat machinery:
 // one thread per company (linked_id), ChatBGP as a member, so plain message
 // POSTs get a real Fable answer server-side and we just poll the thread.
-function CompanyMiniChat({ companyId, companyName }: { companyId: string; companyName: string }) {
+function CompanyMiniChat({ companyId, companyName, fill }: { companyId: string; companyName: string; fill?: boolean }) {
   const [threadId, setThreadId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -4559,8 +4512,8 @@ function CompanyMiniChat({ companyId, companyName }: { companyId: string; compan
   const stripTags = (s: string) => (s || "").replace(/@\[([^\]]+)\]\(tag:[^)]+\)/g, "@$1");
 
   return (
-    <Card>
-      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2">
+    <Card className={fill ? "h-full flex flex-col overflow-hidden" : undefined}>
+      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between gap-2 shrink-0">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <MessageSquare className="w-3.5 h-3.5" /> Chat — {companyName}
         </CardTitle>
@@ -4575,8 +4528,8 @@ function CompanyMiniChat({ companyId, companyName }: { companyId: string; compan
           </button>
         )}
       </CardHeader>
-      <CardContent className="p-3 pt-0 space-y-2">
-        <div ref={scrollRef} className="max-h-[280px] overflow-y-auto space-y-2 pr-1" data-testid="minichat-messages">
+      <CardContent className={`p-3 pt-0 space-y-2 ${fill ? "flex-1 flex flex-col min-h-0" : ""}`}>
+        <div ref={scrollRef} className={`${fill ? "flex-1" : "max-h-[280px]"} overflow-y-auto space-y-2 pr-1`} data-testid="minichat-messages">
           {messages.length === 0 ? (
             <p className="text-xs text-muted-foreground py-4 text-center">
               Ask anything about {companyName} — ChatBGP answers here, and teammates can join from the chat panel.
@@ -4592,7 +4545,7 @@ function CompanyMiniChat({ companyId, companyName }: { companyId: string; compan
             ))
           )}
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 shrink-0">
           <input
             className="flex-1 h-8 rounded-md border bg-background px-2.5 text-xs outline-none focus:ring-1 focus:ring-ring"
             placeholder={`Message about ${companyName}…`}
@@ -4873,22 +4826,20 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           the old pairing where Covenant sat alone beside Compliance and
           left most of a column empty (Woody, 2026-08-02). */}
       {/* Top pair (Woody, 2026-08-03): Key contacts beside Menu highlights /
-          Best sellers, with the chat stacked under the menu card. */}
+          Best sellers. The chat moved up into the banner's second pane at
+          the very top of the profile. */}
       <div className={pairCls}>
       <SidebarKeyContacts data={data} companyId={companyId} topContacts={topContacts} />
-      <div className="space-y-3">
-        {!isLandlord && (
-          <MenuIntelCard
-            companyId={companyId}
-            companyName={c.name}
-            industry={c.industry}
-            companyType={c.company_type}
-            intel={c.menu_intel}
-            refreshedAt={c.menu_intel_at}
-          />
-        )}
-        <CompanyMiniChat companyId={companyId} companyName={c.name} />
-      </div>
+      {!isLandlord && (
+        <MenuIntelCard
+          companyId={companyId}
+          companyName={c.name}
+          industry={c.industry}
+          companyType={c.company_type}
+          intel={c.menu_intel}
+          refreshedAt={c.menu_intel_at}
+        />
+      )}
       </div>
 
       <div className={pairCls}>
