@@ -2932,6 +2932,7 @@ import tenancyScheduleRouter from "./tenancy-schedule";
 import clientTeamsRouter from "./client-teams";
 import clientSharepointRouter from "./client-sharepoint";
 import activitySummaryRouter from "./activity-summary";
+import expansionIntelRouter from "./expansion-intel";
 import turnoverRouter from "./turnover";
 import { serveStatic } from "./static";
 import { registerEmailProcessorRoutes, startEmailProcessor } from "./email-processor";
@@ -3715,6 +3716,7 @@ app.use("/api/branding/assets", express.static(
   app.use(clientTeamsRouter);
   app.use(clientSharepointRouter);
   app.use(activitySummaryRouter);
+  app.use(expansionIntelRouter);
   app.use(turnoverRouter);
   app.use(sanctionsRouter);
   app.use(kycClouseauRouter);
@@ -4129,6 +4131,14 @@ app.use("/api/branding/assets", express.static(
           if (now.getDay() === 1 && now.getHours() === 8 && now.getMinutes() < 60 && weekOfYear % 2 === 0) {
             runFortnightlyBrandDigest().catch(err =>
               console.error("[brand-digest] cron run failed:", err?.message)
+            );
+          }
+          // Nightly expansion-fact normalisation — 05:00, between the
+          // scraper (04:00) and the trigger scan (07:00) so triggers score
+          // off normalised facts. Capped at 25 brands per night.
+          if (now.getHours() === 5 && now.getMinutes() < 60) {
+            import("./expansion-intel").then(m => m.nightlyNormalisePass()).catch(err =>
+              console.error("[expansion-intel] cron run failed:", err?.message)
             );
           }
           // Daily brand-trigger scan — 07:00, after the scraper has run

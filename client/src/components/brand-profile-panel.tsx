@@ -939,8 +939,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     return local.replace(/\b\w/g, c => c.toUpperCase());
   };
 
-  // Hunter score (computed score + flags from brand_signals + stock)
-  const { data: hunter } = useQuery<{ expansionScore: number; expansionFlags: string[] }>({
+  // Expansion score v2 — sub-scores + why-lines; legacy score/flags kept.
+  const { data: hunter } = useQuery<{
+    expansionScore: number;
+    expansionFlags: string[];
+    subScores?: { ukMomentum: number; capacity: number; intent: number; engagement: number };
+    lines?: { points: number; label: string; bucket: string }[];
+  }>({
     queryKey: ["/api/brand", companyId, "hunter-score"],
     queryFn: async () => {
       const r = await fetch(`/api/brand/${companyId}/hunter-score`, {
@@ -2325,6 +2330,51 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 )}
               </div>
               <div className="space-y-2.5">
+                {/* v2 sub-scores — four evidence buckets with why-lines
+                    (Woody, 2026-08-03: "we need a much better approach"). */}
+                {hunter?.subScores && (
+                  <div className="rounded-md border p-2 space-y-1.5">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {([
+                        ["ukMomentum", "UK momentum"],
+                        ["capacity", "Capacity"],
+                        ["intent", "Intent"],
+                        ["engagement", "BGP engagement"],
+                      ] as const).map(([key, label]) => {
+                        const v = (hunter.subScores as any)[key] ?? 0;
+                        return (
+                          <div key={key}>
+                            <div className="flex items-center justify-between text-[10px] mb-0.5">
+                              <span className="text-muted-foreground">{label}</span>
+                              <span className="font-semibold tabular-nums">{v}/25</span>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${v >= 15 ? "bg-emerald-500" : v >= 8 ? "bg-amber-500" : "bg-zinc-400"}`}
+                                style={{ width: `${(v / 25) * 100}%` }}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {(hunter.lines?.length ?? 0) > 0 && (
+                      <details className="pt-0.5">
+                        <summary className="text-[10px] text-primary cursor-pointer hover:underline">Why this score</summary>
+                        <div className="mt-1 space-y-0.5">
+                          {hunter.lines!.map((l: any, i: number) => (
+                            <div key={i} className="flex items-start gap-1.5 text-[11px]">
+                              <span className={`font-semibold tabular-nums shrink-0 w-8 text-right ${l.points >= 0 ? "text-emerald-600" : "text-red-600"}`}>
+                                {l.points >= 0 ? "+" : ""}{l.points}
+                              </span>
+                              <span className="text-muted-foreground">{l.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                )}
                 {c.brand_analysis ? (
                   <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-2">
                     <div className="flex items-center gap-1 text-xs text-purple-700 dark:text-purple-300 mb-1">

@@ -300,36 +300,15 @@ router.get("/api/brand/:companyId/ai-take/:tab", requireAuth, async (req: Reques
   }
 });
 
-// Per-brand Hunter score. Mirrors the bulk dashboard scorer so the brand
-// profile can show the same number/flags without a big roundtrip.
+// Per-brand expansion score — Expansion Intelligence v2 (Woody, 2026-08-03):
+// four evidence sub-scores with time decay and why-lines, BGP ground truth
+// included. The payload is a superset of the old {expansionScore,
+// expansionFlags} shape so existing consumers keep working.
 router.get("/api/brand/:companyId/hunter-score", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { computeHunterScore } = await import("./hunter-score");
-    const companyId = String(req.params.companyId);
-    const brandQ = await pool.query(
-      `SELECT id, name, rollout_status, store_count, backers, instagram_handle,
-              tiktok_handle, dept_store_presence, franchise_activity, hunter_flag,
-              concept_pitch, description, stock_ticker
-         FROM crm_companies WHERE id = $1`,
-      [companyId]
-    );
-    if (!brandQ.rows[0]) return res.status(404).json({ error: "not found" });
-    const signalsQ = await pool.query(
-      `SELECT signal_type, headline, magnitude, sentiment
-         FROM brand_signals
-        WHERE brand_company_id = $1
-          AND COALESCE(signal_date, created_at) >= now() - interval '365 days'`,
-      [companyId]
-    );
-    let stock: any = null;
-    if (brandQ.rows[0].stock_ticker) {
-      try {
-        const { getStockSnapshots } = await import("./stock-price");
-        const map = await getStockSnapshots([String(brandQ.rows[0].stock_ticker).trim().toUpperCase()]);
-        stock = Array.from(map.values())[0] || null;
-      } catch {}
-    }
-    const result = computeHunterScore({ brand: brandQ.rows[0], signals: signalsQ.rows, stock });
+    const { scoreBrandExpansion } = await import("./expansion-intel");
+    const result = await scoreBrandExpansion(String(req.params.companyId));
+    if (!result) return res.status(404).json({ error: "not found" });
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -544,8 +523,8 @@ router.post("/api/brand/:companyId/refresh-intel", requireAuth, async (req: Requ
       );
       if (dup.rows.length > 0) continue;
       await pool.query(
-        `INSERT INTO brand_signals (brand_company_id, signal_type, headline, detail, signal_date, source, sentiment, magnitude)
-         VALUES ($1, 'news', $2, $3, $4, $5, 'neutral', 'low')`,
+        `INSERT INTO brand_signals (brand_company_id, signal_type, headline, detail, signal_date, source, sentiment, magnitude, ai_generated)
+         VALUES ($1, 'news', $2, $3, $4, $5, 'neutral', 'low', true)`,
         [companyId, a.title, a.summary || null, a.published_at || null, a.url]
       );
       signalsLinked++;

@@ -11,6 +11,14 @@ const router = Router();
 // ai_relevant is written by aiJudgeSignalRelevance (news-brand-linking) but
 // read here — make sure the column exists before the first profile request.
 pool.query(`ALTER TABLE brand_signals ADD COLUMN IF NOT EXISTS ai_relevant BOOLEAN`).catch(() => {});
+// Expansion Intelligence v2 fact columns (Woody, 2026-08-03)
+pool.query(`
+  ALTER TABLE brand_signals ADD COLUMN IF NOT EXISTS geography TEXT;
+  ALTER TABLE brand_signals ADD COLUMN IF NOT EXISTS confidence TEXT;
+  ALTER TABLE brand_signals ADD COLUMN IF NOT EXISTS dedupe_key TEXT;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_brand_signals_dedupe
+    ON brand_signals(brand_company_id, dedupe_key) WHERE dedupe_key IS NOT NULL;
+`).catch((e) => console.warn("[brand-signals] v2 columns:", e?.message));
 
 // Brands whose gallery has had the duplicate-image healing sweep this boot.
 const dedupeSweepFired = new Set<string>();

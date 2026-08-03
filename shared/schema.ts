@@ -608,6 +608,11 @@ export const brandSignals = pgTable("brand_signals", {
   magnitude: text("magnitude"), // small | medium | large
   sentiment: text("sentiment"), // positive | neutral | negative
   aiGenerated: boolean("ai_generated").default(false),
+  // Expansion Intelligence v2 (Woody, 2026-08-03): facts are geo-tagged,
+  // confidence-rated and deduped across sources.
+  geography: text("geography"), // uk | europe | row | unknown
+  confidence: text("confidence"), // confirmed | reported | rumour
+  dedupeKey: text("dedupe_key"), // slug fingerprint — one fact per event
   createdAt: timestamp("created_at").defaultNow(),
 });
 export const insertBrandSignalSchema = createInsertSchema(brandSignals).omit({ id: true, createdAt: true });
