@@ -1163,6 +1163,25 @@ async function markRound(page, cross) {
     if (r.status !== 403) throw new Error(`client reached admin password reset (expected 403, got ${r.status})`);
   });
 
+  // Merged contacts list (terminal, 2026-08-03: auto-discovery + dedupe):
+  // the client's contact list must not serve duplicate (name,email) rows.
+  await step(page, p, 'client-contacts-deduped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = await (await fetch('/api/crm/contacts', { headers: auth })).json().catch(() => []);
+      const rows = Array.isArray(list) ? list : (list?.data || []);
+      const seen = new Set(); const dupes = [];
+      for (const c of rows) {
+        const key = `${String(c.name || '').trim().toLowerCase()}|${String(c.email || '').trim().toLowerCase()}`;
+        if (key === '|') continue;
+        if (seen.has(key)) dupes.push(c.name);
+        seen.add(key);
+      }
+      return { total: rows.length, dupes };
+    });
+    if (r.dupes.length) throw new Error(`client contact list has duplicate rows post-dedupe: ${r.dupes.slice(0, 3).join(', ')}`);
+  });
+
   // A client must not assign tasks onto BGP staff lists (the create route
   // gates assignee to the client's own visible people).
   await step(page, p, 'client-task-assign-guard', async () => {
