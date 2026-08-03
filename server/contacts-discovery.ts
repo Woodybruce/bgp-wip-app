@@ -139,10 +139,12 @@ async function runRocketReachSearch(domain: string | null, companyName: string, 
     const people = (data.profiles || []) as any[];
     const total = data.pagination?.total ?? people.length;
     const sample = people.slice(0, 10).map((p: any) => ({
+      id: p.id || null,
       name: p.name || [p.first_name, p.last_name].filter(Boolean).join(" "),
       title: p.current_title || null,
       seniority: null,
       email: p.recommended_professional_email || (p.emails?.[0]?.email) || null,
+      linkedin: p.linkedin_url || null,
     }));
     return { ok: true, total, sample };
   } catch (e: any) {
@@ -201,18 +203,21 @@ router.get("/api/admin/contacts-discovery-compare/:companyId", requireAuth, asyn
 // brand profile UI can offer one-click "Add as contact" alongside
 // the RocketReach import.
 
-async function handleBgpKnownContactsForCompanyId(companyId: string, monthsBack: number, res: Response) {
+// Compute form of the archaeology — used by the GET endpoint below AND by
+// the find-contacts engine, which merges these results with the paid
+// providers before the AI judge pass.
+async function computeBgpKnownContacts(companyId: string, monthsBack: number): Promise<{ status: number; body: any }> {
 
   const { rows: companyRows } = await pool.query(
     `SELECT id, name, domain, domain_url FROM crm_companies WHERE id = $1`,
     [companyId],
   );
   const company = companyRows[0];
-  if (!company) return res.status(404).json({ error: "Company not found" });
+  if (!company) return { status: 404, body: { error: "Company not found" } };
 
   const domain = cleanDomain(company.domain || company.domain_url);
   if (!domain) {
-    return res.json({ company: { id: companyId, name: company.name }, contacts: [], note: "Company has no domain — set one to enable BGP email archaeology." });
+    return { status: 200, body: { company: { id: companyId, name: company.name }, contacts: [], note: "Company has no domain — set one to enable BGP email archaeology." } };
   }
 
   // Pull every interaction whose participants array contains at least one
@@ -281,7 +286,7 @@ async function handleBgpKnownContactsForCompanyId(companyId: string, monthsBack:
   }
 
   if (byEmail.size === 0) {
-    return res.json({ company: { id: companyId, name: company.name, domain }, contacts: [], lookbackMonths: monthsBack });
+    return { status: 200, body: { company: { id: companyId, name: company.name, domain }, contacts: [], lookbackMonths: monthsBack } };
   }
 
   // Cross-reference against existing CRM contacts so the UI can split into
@@ -371,7 +376,7 @@ async function handleBgpKnownContactsForCompanyId(companyId: string, monthsBack:
     );
   }
 
-  return res.json({
+  return { status: 200, body: {
     company: { id: companyId, name: company.name, domain },
     lookbackMonths: monthsBack,
     contacts,
@@ -382,12 +387,13 @@ async function handleBgpKnownContactsForCompanyId(companyId: string, monthsBack:
       enriched: contacts.filter((c) => c.enriched).length,
       enrichmentQueued: toEnrich.length,
     },
-  });
+  } };
 }
 
 router.get("/api/brand/:companyId/bgp-known-contacts", requireAuth, async (req: Request, res: Response) => {
   const monthsBack = Math.max(1, Math.min(60, parseInt(String(req.query.months || "24"), 10) || 24));
-  await handleBgpKnownContactsForCompanyId(String(req.params.companyId), monthsBack, res);
+  const r = await computeBgpKnownContacts(String(req.params.companyId), monthsBack);
+  res.status(r.status).json(r.body);
 });
 
 // ─── Name-based shortcuts ───────────────────────────────────────────────
@@ -434,7 +440,8 @@ router.get("/api/brand/by-name/:name/bgp-known-contacts", requireAuth, async (re
   const id = await resolveCompanyIdByName(String(req.params.name || ""));
   if (!id) return res.status(404).json({ error: `No CRM company matched "${req.params.name}"` });
   const monthsBack = Math.max(1, Math.min(60, parseInt(String(req.query.months || "24"), 10) || 24));
-  await handleBgpKnownContactsForCompanyId(id, monthsBack, res);
+  const r = await computeBgpKnownContacts(id, monthsBack);
+  res.status(r.status).json(r.body);
 });
 
 // ─── Cascade endpoint ───────────────────────────────────────────────────
@@ -449,7 +456,7 @@ router.get("/api/brand/by-name/:name/bgp-known-contacts", requireAuth, async (re
 // buttons. Apollo is only consulted for landlord-scope companies; for
 // tenant brands the team turned it off (too noisy).
 
-async function handleContactsCascade(companyId: string, res: Response) {
+async function handleContactsCascade(companyId: string, res: Response, opts: { lookups: boolean; ai: boolean } = { lookups: true, ai: true }) {
   const { rows } = await pool.query(
     `SELECT id, name, domain, domain_url, company_type FROM crm_companies WHERE id = $1`,
     [companyId],
@@ -465,11 +472,8 @@ async function handleContactsCascade(companyId: string, res: Response) {
   // when RR is thin AND we're in landlord scope).
   const [bgpRes, rrRes] = await Promise.all([
     (async () => {
-      // Re-use the archaeology pipeline. We need its contacts array
-      // so we materialise the response into a synthetic res object.
-      const stub: any = { json: (b: any) => { stub._body = b; return stub; }, status: () => stub };
-      await handleBgpKnownContactsForCompanyId(companyId, 24, stub);
-      return stub._body?.contacts || [];
+      const r = await computeBgpKnownContacts(companyId, 24);
+      return r.body?.contacts || [];
     })(),
     runRocketReachSearch(domain, company.name, scope).catch((e) => ({ ok: false, total: 0, sample: [], error: e?.message })),
   ]);
@@ -492,7 +496,9 @@ async function handleContactsCascade(companyId: string, res: Response) {
       inCrm: boolean;
       crmContactId: string | null;
     };
-    rocketreach?: { sample: boolean };
+    rocketreach?: { sample: boolean; id?: number | null; lookedUp?: boolean };
+    emailValidity?: string | null;
+    ai?: { confidence: number; verdict: string; reason: string } | null;
   };
   const byKey = new Map<string, Merged>();
 
@@ -528,7 +534,8 @@ async function handleContactsCascade(companyId: string, res: Response) {
       if (existing) {
         existing.sources.push("rocketreach");
         existing.title = existing.title || p.title;
-        existing.rocketreach = { sample: true };
+        existing.linkedin = existing.linkedin || (p as any).linkedin || null;
+        existing.rocketreach = { sample: true, id: (p as any).id || null };
       } else {
         byKey.set(key, {
           email: p.email,
@@ -536,9 +543,9 @@ async function handleContactsCascade(companyId: string, res: Response) {
           title: p.title,
           phone: null,
           mobile: null,
-          linkedin: null,
+          linkedin: (p as any).linkedin || null,
           sources: ["rocketreach"],
-          rocketreach: { sample: true },
+          rocketreach: { sample: true, id: (p as any).id || null },
         });
       }
     }
@@ -577,6 +584,82 @@ async function handleContactsCascade(companyId: string, res: Response) {
     return bBgp - aBgp;
   });
 
+  // ── RocketReach premium lookups — reveal real emails/phones for the top
+  // provider-only candidates (BGP-touched rows already carry them). The
+  // plan has unlimited premium lookups, so the only cost is latency:
+  // capped at 5 per call.
+  const rrKey = process.env.ROCKETREACH_API_KEY;
+  if (rrKey && opts.lookups) {
+    const targets = merged.filter((m) => !m.bgp && !m.email && m.rocketreach?.id).slice(0, 5);
+    for (const t of targets) {
+      try {
+        const r = await fetch(`https://api.rocketreach.co/api/v2/person/lookup?id=${t.rocketreach!.id}`, {
+          headers: { "Api-Key": rrKey }, signal: AbortSignal.timeout(20_000),
+        });
+        if (!r.ok) continue;
+        const d: any = await r.json();
+        const emails = Array.isArray(d.emails) ? d.emails : [];
+        const pro = emails.find((e: any) => e.type === "professional" && e.smtp_valid === "valid")
+          || emails.find((e: any) => e.smtp_valid === "valid");
+        t.email = d.current_work_email || pro?.email || d.recommended_email || emails[0]?.email || null;
+        t.emailValidity = pro?.smtp_valid || emails[0]?.smtp_valid || null;
+        t.phone = t.phone || (Array.isArray(d.phones) ? d.phones[0]?.number : null) || null;
+        t.linkedin = t.linkedin || d.linkedin_url || null;
+        t.title = t.title || d.current_title || null;
+        t.rocketreach!.lookedUp = true;
+      } catch { /* lookup is best-effort */ }
+    }
+  }
+
+  // ── AI judge — Fable reviews every candidate against the company:
+  // right company (email domain vs brand domain), plausible current
+  // title, useful to a leasing/property team, provider noise filtered.
+  if (opts.ai && merged.length) {
+    try {
+      const { callClaude } = await import("./chatbgp");
+      const judgeInput = merged.slice(0, 25).map((m, i) => ({
+        i, name: m.name, title: m.title, email: m.email,
+        sources: m.sources, bgpThreads: m.bgp?.threadCount || 0,
+      }));
+      const completion = await callClaude({
+        model: "claude-fable-5",
+        max_completion_tokens: 1800,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You judge CRM contact candidates for a UK commercial property agency. For each candidate decide: is this " +
+              "plausibly a real, current person at the given company, and how useful are they to a leasing/acquisitions " +
+              "conversation? Rules: an email at the company's own domain is strong evidence; bgpThreads > 0 means the agency " +
+              "has genuinely corresponded with them (very strong — never drop). Free-mail or mismatched-domain emails without " +
+              "bgpThreads are weak. Operational roles (chef, barista, store staff) are real but low-value for leasing: keep, " +
+              "confidence <= 40. Senior property/expansion/finance/founder roles are high-value. Output STRICT JSON only: an " +
+              "array [{\"i\":number,\"confidence\":0-100,\"verdict\":\"keep\"|\"drop\"|\"unsure\",\"reason\":\"one short sentence\"}]. No prose.",
+          },
+          {
+            role: "user",
+            content: `Company: ${company.name} (domain: ${domain || "unknown"}, type: ${company.company_type || "?"})\nCandidates:\n${JSON.stringify(judgeInput)}`,
+          },
+        ],
+      });
+      const text = completion.choices?.[0]?.message?.content || "";
+      const js = text.slice(text.indexOf("["), text.lastIndexOf("]") + 1);
+      const verdicts = JSON.parse(js) as Array<{ i: number; confidence: number; verdict: string; reason: string }>;
+      for (const v of verdicts) {
+        if (merged[v.i]) merged[v.i].ai = { confidence: v.confidence, verdict: v.verdict, reason: v.reason };
+      }
+      // Re-rank: BGP relationships first (by touch volume), then AI confidence.
+      merged.sort((a, b) => {
+        const aBgp = a.bgp?.threadCount ?? -1;
+        const bBgp = b.bgp?.threadCount ?? -1;
+        if (aBgp !== bBgp) return bBgp - aBgp;
+        return (b.ai?.confidence ?? 0) - (a.ai?.confidence ?? 0);
+      });
+    } catch (e: any) {
+      console.warn("[cascade] AI judge failed:", e?.message);
+    }
+  }
+
   return res.json({
     company: { id: companyId, name: company.name, domain, companyType: company.company_type, scope },
     contacts: merged,
@@ -590,12 +673,17 @@ async function handleContactsCascade(companyId: string, res: Response) {
       bgpTouched: merged.filter((m) => !!m.bgp).length,
       rocketreachOnly: merged.filter((m) => m.sources.includes("rocketreach") && !m.bgp).length,
       apolloOnly: merged.filter((m) => m.sources.includes("apollo") && !m.bgp).length,
+      revealed: merged.filter((m) => m.rocketreach?.lookedUp).length,
+      aiJudged: merged.filter((m) => !!m.ai).length,
     },
   });
 }
 
 router.get("/api/brand/:companyId/contacts-cascade", requireAuth, async (req: Request, res: Response) => {
-  await handleContactsCascade(String(req.params.companyId), res);
+  await handleContactsCascade(String(req.params.companyId), res, {
+    lookups: req.query.lookups !== "0",
+    ai: req.query.ai !== "0",
+  });
 });
 
 router.get("/api/brand/by-name/:name/contacts-cascade", requireAuth, async (req: Request, res: Response) => {
