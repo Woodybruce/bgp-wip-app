@@ -47,7 +47,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-task-assign-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -413,6 +413,27 @@ async function victoriaRound(page, cross) {
     if (!r.ok) throw new Error(`staff stage move rejected (${r.why})`);
     if (!r.moved) throw new Error('stage move returned OK but the deal did not change stage');
     if (r.restoredStatus !== r.original) throw new Error(`fixture deal stuck in UO (restore failed: ${r.restoredStatus})`);
+  });
+
+  // Task assignment (terminal, 2026-08-03): a task assigned to another staff
+  // member lands on the ASSIGNEE's list. Victoria assigns to Woody; the
+  // woody round verifies receipt. Swept by the QA-PROBE task purge.
+  await step(page, p, 'agent-assign-task', async () => {
+    const title = `QA-PROBE task ASSIGN R${ROUND}`;
+    const r = await page.evaluate(async (needle) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const staff = await (await fetch('/api/hr/staff', { headers: auth })).json().catch(() => []);
+      const rows = Array.isArray(staff) ? staff : (staff?.staff || []);
+      const woody = rows.find((s) => String(s.email || '').startsWith('woody@'));
+      if (!woody) return { skip: true };
+      const create = await fetch('/api/tasks', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ title: needle, assigneeUserId: woody.id }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      return { ok: true };
+    }, title);
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`staff task assignment failed (${r.why})`);
+    cross.assignedTaskTitle = title;
   });
 
   await step(page, p, 'staff-task-lifecycle', async () => {
@@ -1142,6 +1163,18 @@ async function markRound(page, cross) {
     if (r.status !== 403) throw new Error(`client reached admin password reset (expected 403, got ${r.status})`);
   });
 
+  // A client must not assign tasks onto BGP staff lists (the create route
+  // gates assignee to the client's own visible people).
+  await step(page, p, 'client-task-assign-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const status = (await fetch('/api/tasks', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ title: 'QA-PROBE task hijack', assigneeUserId: 'aaaaaaaa-5555-5555-5555-555555555555' }) }).catch(() => ({ status: 0 }))).status;
+      return { status };
+    });
+    if (r.status < 400) throw new Error(`client assigned a task onto a staff list (${r.status})`);
+  });
+
   // ActivitySummary board (terminal, 2026-08-03): the dashboard's upcoming/
   // recent feed must serve client-scoped content only — never another
   // landlord's deals — and the board must render.
@@ -1336,8 +1369,13 @@ async function markRound(page, cross) {
     await page.waitForTimeout(3000);
     if (!(await page.getByText('BGP Relationship', { exact: false }).count()))
       throw new Error('BGP Relationship card missing from client dashboard');
-    if (!(await page.getByText('Portfolio Map', { exact: false }).count()))
-      throw new Error('Portfolio Map widget missing from client dashboard');
+    // The map widget was renamed "Properties & Deals" in the canonical-family
+    // rework (2026-08-03) — accept either label; the leaflet assertions below
+    // are the real substance.
+    const mapLabel = (await page.getByText('Properties & Deals', { exact: false }).count())
+      || (await page.getByText('Portfolio Map', { exact: false }).count());
+    if (!mapLabel)
+      throw new Error('portfolio map widget missing from client dashboard');
     if (!(await page.locator('.leaflet-container').count()))
       throw new Error('portfolio map did not initialise (no leaflet container)');
     const coords = await page.evaluate(async () => {
@@ -2077,6 +2115,19 @@ async function woodyRound(page, cross) {
     }, [ADMIN_USER, PASSWORD]);
     if (!r.ok) throw new Error(`admin password reset failed (${r.why})`);
     if (!r.loginWorks) throw new Error('temp password from admin reset does not log in');
+  });
+
+  // Receipt of Victoria's assigned task — assignment must land on the
+  // assignee's own list, not the assigner's.
+  await step(page, p, 'admin-sees-assigned-task', async () => {
+    if (!cross.assignedTaskTitle) return;
+    const r = await page.evaluate(async (needle) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = await (await fetch('/api/tasks', { headers: auth })).json().catch(() => []);
+      const rows = Array.isArray(list) ? list : (list?.data || []);
+      return { seen: rows.some((t) => t.title === needle) };
+    }, cross.assignedTaskTitle);
+    if (!r.seen) throw new Error("task assigned to this user never arrived on their list");
   });
 
   // No error boundary anywhere on the heavy admin boards.
