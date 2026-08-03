@@ -2526,41 +2526,21 @@ export function ClientBoardPanel({ propertyId, landlordId, allCompanies }: { pro
 }
 
 export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
-  const { data: deals } = useQuery<CrmDeal[]>({
-    queryKey: ["/api/crm/properties", propertyId, "deals"],
+  // Server-derived: deals reached via property/unit/tenancy joins, explicit
+  // deal-contact FKs first, then counterparty companies' contacts. The old
+  // client-side FK harvest missed unit-linked deals and company-level
+  // contacts, so this panel sat empty on busy schemes (Bluewater).
+  const { data } = useQuery<{ contacts: Array<{ id: string; name: string; role: string | null; email: string | null; company_id: string | null; company_name: string | null; via: string | null; on_deal: boolean; }> }>({
+    queryKey: ["/api/properties", propertyId, "linked-contacts"],
     queryFn: async () => {
-      const res = await fetch(`/api/crm/properties/${propertyId}/deals`, { credentials: "include" });
-      if (!res.ok) return [];
+      const res = await fetch(`/api/properties/${propertyId}/linked-contacts`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return { contacts: [] };
       return res.json();
     },
   });
-
-  const contactIds = useMemo(() => {
-    if (!deals) return [];
-    const ids = new Set<string>();
-    const CONTACT_FK_FIELDS = [
-      "clientContactId", "tenantContactId", "landlordContactId", "vendorContactId",
-      "purchaserContactId", "vendorAgentContactId", "acquisitionAgentContactId",
-      "purchaserAgentContactId", "leasingAgentContactId",
-    ];
-    deals.forEach((d) => {
-      for (const f of CONTACT_FK_FIELDS) {
-        const v = (d as any)[f];
-        if (v) ids.add(v);
-      }
-    });
-    return Array.from(ids);
-  }, [deals]);
-
-  const { data: allContacts } = useQuery<CrmContact[]>({
-    queryKey: ["/api/crm/contacts"],
-    enabled: contactIds.length > 0,
-  });
-
-  const linkedContacts = useMemo(() => {
-    if (!allContacts || contactIds.length === 0) return [];
-    return allContacts.filter((c) => contactIds.includes(c.id));
-  }, [allContacts, contactIds]);
+  const linkedContacts = (data?.contacts || []).map(c => ({
+    id: c.id, name: c.name, role: c.role, companyName: c.company_name, via: c.via, onDeal: c.on_deal,
+  }));
 
   return (
     <Card data-testid="linked-contacts-panel">
@@ -2593,7 +2573,10 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
                   )}
                 </div>
                 {contact.role && (
-                  <Badge variant="outline" className="text-[10px] shrink-0">{contact.role}</Badge>
+                  <Badge variant="outline" className="text-[10px] shrink-0 max-w-[110px] truncate">{contact.role}</Badge>
+                )}
+                {contact.onDeal && contact.via && (
+                  <Badge variant="outline" className="text-[10px] shrink-0 max-w-[120px] truncate bg-blue-50 border-blue-200 text-blue-700" title={contact.via}>{contact.via}</Badge>
                 )}
               </div>
             ))}

@@ -233,12 +233,39 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       [propertyId]
     ).then(r => r.rows).catch(() => [] as any[]);
 
+    // Clients get the gap analysis focused on THEIR brand slice (hospitality/
+    // leisure/fitness + self-adds — the standing Landsec decision), not the
+    // full brand universe (Woody, 2026-08-03).
+    let sliceFilter: ((id: string) => boolean) | null = null;
+    if (gapScope) {
+      const { clientBrandSliceSql, isClientRequestUser } = await import("./company-scope");
+      if (await isClientRequestUser(req as any)) {
+        const candidateIds = [...new Set([...onScheme, ...wider, ...gap].map(b => String(b.brand_company_id)))];
+        if (candidateIds.length) {
+          const sliceSql = await clientBrandSliceSql(gapScope);
+          const visible = await pool.query(
+            `SELECT id FROM crm_companies WHERE id = ANY($1::text[]) AND ${sliceSql}`,
+            [candidateIds]
+          );
+          const visibleSet = new Set(visible.rows.map((r: any) => String(r.id)));
+          sliceFilter = (id: string) => visibleSet.has(id);
+        } else {
+          sliceFilter = () => false;
+        }
+      }
+    }
+    const sliced = <T extends { brand_company_id: string }>(arr: T[]) =>
+      sliceFilter ? arr.filter(b => sliceFilter!(String(b.brand_company_id))) : arr;
+    const slicedReqs = sliceFilter
+      ? matchingRequirements.filter((r: any) => !r.company_id || sliceFilter!(String(r.company_id)))
+      : matchingRequirements;
+
     res.json({
       property: { id: propertyId, name: location.name, postcode: location.postcode, lat: location.lat, lng: location.lng },
-      onScheme: onScheme.map(b => ({ ...b, nearest_distance_km: Number(b.nearest_distance_km.toFixed(2)) })),
-      wider: wider.map(b => ({ ...b, nearest_distance_km: Number(b.nearest_distance_km.toFixed(2)) })),
-      gap: gap.map(b => ({ ...b, nearest_distance_km: Number(b.nearest_distance_km.toFixed(2)) })),
-      matchingRequirements,
+      onScheme: sliced(onScheme).map(b => ({ ...b, nearest_distance_km: Number(b.nearest_distance_km.toFixed(2)) })),
+      wider: sliced(wider).map(b => ({ ...b, nearest_distance_km: Number(b.nearest_distance_km.toFixed(2)) })),
+      gap: sliced(gap).map(b => ({ ...b, nearest_distance_km: Number(b.nearest_distance_km.toFixed(2)) })),
+      matchingRequirements: slicedReqs,
       categorySignature,
       radii: { onScheme: onSchemeRadiusKm, wider: widerRadiusKm },
       stats: {

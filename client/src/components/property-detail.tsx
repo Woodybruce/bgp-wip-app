@@ -782,15 +782,14 @@ export function PropertyDetail({ id }: { id: string }) {
                 <PropertyDecksPanel propertyId={property.id} />
               </ErrorBoundary>
               */}
-              {/* Brand Gap is a staff analysis (fires /brand-gaps, which is
-                  staff-only) — never render it for a client viewer. */}
-              {!isClientViewer && (
+              {/* Brand Gap renders for clients too — the server slices the
+                  analysis to their brand categories + self-adds (Woody,
+                  2026-08-03), so Landsec sees the hospitality/leisure view. */}
               <ErrorBoundary compact name="Brand gap">
                 <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
                   <BrandGapPanel propertyId={property.id} />
                 </CollapsibleCard>
               </ErrorBoundary>
-              )}
             </div>
 
             {/* Pipeline + Performance combined — single 'how's the
@@ -1033,6 +1032,8 @@ export function PropertyDetail({ id }: { id: string }) {
                 <AvailableUnitsPanel propertyId={property.id} />
               </ReferenceSection>
 
+              {/* Land Registry back to staff-only (Woody, 2026-08-03). */}
+              {!isClientViewer && (
               <ReferenceSection
                 title="Land Registry"
                 icon={Landmark}
@@ -1042,6 +1043,7 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <LinkedLandRegistryPanel propertyId={property.id} />
               </ReferenceSection>
+              )}
 
               {!isClientViewer && (
               <ReferenceSection
