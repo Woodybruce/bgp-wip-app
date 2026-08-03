@@ -2526,21 +2526,27 @@ export function ClientBoardPanel({ propertyId, landlordId, allCompanies }: { pro
 }
 
 export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
-  // Server-derived: deals reached via property/unit/tenancy joins, explicit
-  // deal-contact FKs first, then counterparty companies' contacts. The old
-  // client-side FK harvest missed unit-linked deals and company-level
-  // contacts, so this panel sat empty on busy schemes (Bluewater).
-  const { data } = useQuery<{ contacts: Array<{ id: string; name: string; role: string | null; email: string | null; company_id: string | null; company_name: string | null; via: string | null; on_deal: boolean; }> }>({
+  // Evidence-based groups (Woody, 2026-08-03): active landlord contacts,
+  // tenants in occupation, parties on deals, and viewing/offer interest —
+  // never the raw company directory (the old version surfaced every
+  // RocketReach import at the landlord).
+  type LinkedContact = { id: string; name: string; role: string | null; email: string | null; company_id: string | null; company_name: string | null; last_interaction: string | null; via: string | null };
+  const { data } = useQuery<{ landlord: LinkedContact[]; tenants: LinkedContact[]; deals: LinkedContact[]; interest: LinkedContact[] }>({
     queryKey: ["/api/properties", propertyId, "linked-contacts"],
     queryFn: async () => {
       const res = await fetch(`/api/properties/${propertyId}/linked-contacts`, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) return { contacts: [] };
+      if (!res.ok) return { landlord: [], tenants: [], deals: [], interest: [] };
       return res.json();
     },
   });
-  const linkedContacts = (data?.contacts || []).map(c => ({
-    id: c.id, name: c.name, role: c.role, companyName: c.company_name, via: c.via, onDeal: c.on_deal,
-  }));
+
+  const groups: Array<{ key: string; title: string; rows: LinkedContact[]; tint: string }> = [
+    { key: "landlord", title: "Landlord — active", rows: data?.landlord || [], tint: "text-blue-700" },
+    { key: "deals", title: "Doing deals", rows: data?.deals || [], tint: "text-emerald-700" },
+    { key: "interest", title: "Viewed / offered", rows: data?.interest || [], tint: "text-amber-700" },
+    { key: "tenants", title: "In occupation", rows: data?.tenants || [], tint: "text-muted-foreground" },
+  ];
+  const total = groups.reduce((n, g) => n + g.rows.length, 0);
 
   return (
     <Card data-testid="linked-contacts-panel">
@@ -2548,36 +2554,38 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
         <div className="flex items-center gap-2 mb-3">
           <Users className="w-4 h-4" />
           <h3 className="text-sm font-semibold">Linked Contacts</h3>
-          {linkedContacts.length > 0 && (
-            <Badge variant="secondary" className="text-[10px]">{linkedContacts.length}</Badge>
-          )}
+          {total > 0 && <Badge variant="secondary" className="text-[10px]">{total}</Badge>}
         </div>
-        {linkedContacts.length === 0 ? (
+        {total === 0 ? (
           <div className="text-center py-6">
             <Users className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-            <p className="text-xs text-muted-foreground">No contacts linked via deals</p>
+            <p className="text-xs text-muted-foreground">Nobody actively involved yet — contacts appear here from deals, viewings, offers and landlord activity.</p>
           </div>
         ) : (
-          <div className="space-y-1">
-            {linkedContacts.map((contact) => (
-              <div
-                key={contact.id}
-                className="flex items-center gap-2 px-2 py-1.5 rounded-md"
-                data-testid={`contact-item-${contact.id}`}
-              >
-                <Users className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <span className="text-xs font-medium truncate block">{contact.name}</span>
-                  {contact.companyName && (
-                    <span className="text-[10px] text-muted-foreground truncate block">{contact.companyName}</span>
-                  )}
+          <div className="space-y-3">
+            {groups.filter(g => g.rows.length > 0).map(g => (
+              <div key={g.key}>
+                <div className={`text-[10px] uppercase tracking-wide font-semibold mb-1 ${g.tint}`}>{g.title} · {g.rows.length}</div>
+                <div className="space-y-0.5">
+                  {g.rows.slice(0, 6).map(contact => (
+                    <Link key={contact.id} href={`/contacts/${contact.id}`} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50 min-w-0" data-testid={`contact-item-${contact.id}`}>
+                      <Users className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-xs font-medium truncate block">{contact.name}</span>
+                        <span className="text-[10px] text-muted-foreground truncate block">
+                          {[contact.role, contact.company_name].filter(Boolean).join(" · ")}
+                        </span>
+                      </div>
+                      {contact.via && g.key !== "landlord" && g.key !== "tenants" && (
+                        <Badge variant="outline" className="text-[9px] shrink-0 max-w-[110px] truncate" title={contact.via}>{contact.via}</Badge>
+                      )}
+                      {contact.last_interaction && (
+                        <span className="text-[9px] text-muted-foreground shrink-0">{new Date(contact.last_interaction).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+                      )}
+                    </Link>
+                  ))}
+                  {g.rows.length > 6 && <p className="text-[10px] text-muted-foreground pl-2">+{g.rows.length - 6} more</p>}
                 </div>
-                {contact.role && (
-                  <Badge variant="outline" className="text-[10px] shrink-0 max-w-[110px] truncate">{contact.role}</Badge>
-                )}
-                {contact.onDeal && contact.via && (
-                  <Badge variant="outline" className="text-[10px] shrink-0 max-w-[120px] truncate bg-blue-50 border-blue-200 text-blue-700" title={contact.via}>{contact.via}</Badge>
-                )}
               </div>
             ))}
           </div>

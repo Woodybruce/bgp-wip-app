@@ -854,21 +854,64 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
 // Tasks scoped to this property — covers every BGP user's tasks
 // linked to the property directly OR to a deal whose unit lives
 // here. Drives the Weekly Focus card on the property page.
-// Linked contacts for a property. The old client-side derivation only read
-// the contact FK columns off deals matched by property_id — most deals hang
-// off units and most parties are linked at COMPANY level, so the panel
-// showed "no contacts" on busy schemes (Woody, Bluewater 2026-08-03). This
-// walks deals via property/unit/tenancy joins, takes explicit deal-contact
-// FKs first, then counterparty companies' contacts (most-recent first).
+// Linked contacts, rethought (Woody, 2026-08-03): the previous company-leg
+// pulled EVERY contact at the landlord company — on Bluewater that meant a
+// wall of RocketReach-imported Landsec names with no property involvement.
+// Now four evidence-based groups, each requiring a real tie to THIS
+// property: active landlord contacts (interaction history, not directory
+// membership), tenants in occupation, parties on live deals, and agents /
+// prospects who actually viewed or offered.
 router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Request, res: Response) => {
   try {
     const { clientBlockedForProperty } = await import("./company-scope");
     if (await clientBlockedForProperty(req, String(req.params.id))) {
       return res.status(403).json({ error: "Read-only access for client accounts" });
     }
-    const { rows } = await pool.query(
+    const pid = String(req.params.id);
+    const shape = (r: any, via: string) => ({
+      id: r.id, name: r.name, role: r.role, email: r.email, company_id: r.company_id,
+      company_name: r.company_name, avatar_url: r.avatar_url, last_interaction: r.last_interaction, via,
+    });
+
+    // 1. Landlord-side people who are ACTIVE — they have interaction
+    //    history with BGP. Directory-only rows (RocketReach imports with
+    //    no touches) stay out.
+    const landlordQ = pool.query(
+      `WITH owner_cos AS (
+         SELECT landlord_id AS id FROM crm_properties WHERE id = $1 AND landlord_id IS NOT NULL
+         UNION SELECT freeholder_id FROM crm_properties WHERE id = $1 AND freeholder_id IS NOT NULL
+         UNION SELECT long_leaseholder_id FROM crm_properties WHERE id = $1 AND long_leaseholder_id IS NOT NULL
+         UNION SELECT company_id FROM crm_company_properties WHERE property_id = $1
+       )
+       SELECT c.* FROM crm_contacts c JOIN owner_cos o ON o.id = c.company_id
+        WHERE c.last_interaction IS NOT NULL
+        ORDER BY c.last_interaction DESC LIMIT 8`,
+      [pid]
+    );
+
+    // 2. Tenants in occupation — one contact per occupier company off the
+    //    tenancy schedule (FK first, name-match fallback), freshest first.
+    const tenantsQ = pool.query(
+      `WITH occ AS (
+         SELECT DISTINCT co.id FROM tenancy_schedule_units ts
+         JOIN crm_companies co
+           ON co.id = ts.tenant_company_id
+           OR lower(co.name) IN (lower(COALESCE(ts.tenant_name,'')), lower(COALESCE(ts.trading_name,'')))
+           OR (length(co.name) >= 5 AND lower(COALESCE(ts.tenant_name,'')) LIKE lower(co.name) || ' %')
+        WHERE ts.property_id = $1
+       )
+       SELECT DISTINCT ON (c.company_id) c.* FROM crm_contacts c JOIN occ ON occ.id = c.company_id
+        ORDER BY c.company_id, c.last_interaction DESC NULLS LAST
+        LIMIT 12`,
+      [pid]
+    );
+
+    // 3. Parties on deals at the property: explicit deal-contact FKs always
+    //    count; counterparty-company contacts count when the deal is LIVE
+    //    and the person has interaction history.
+    const dealsQ = pool.query(
       `WITH pdeals AS (
-         SELECT d.id, d.name,
+         SELECT d.id, d.name, d.status,
                 d.client_contact_id, d.tenant_contact_id, d.landlord_contact_id,
                 d.vendor_contact_id, d.purchaser_contact_id, d.vendor_agent_contact_id,
                 d.acquisition_agent_contact_id, d.purchaser_agent_contact_id, d.leasing_agent_contact_id,
@@ -878,36 +921,57 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
            LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
           WHERE d.property_id = $1 OR pu.property_id = $1 OR ts.property_id = $1
        ),
-       fk_contacts AS (
-         SELECT DISTINCT ON (cid) cid AS contact_id, pd.name AS via
-           FROM pdeals pd
-           CROSS JOIN LATERAL unnest(ARRAY[
-             pd.client_contact_id, pd.tenant_contact_id, pd.landlord_contact_id,
-             pd.vendor_contact_id, pd.purchaser_contact_id, pd.vendor_agent_contact_id,
-             pd.acquisition_agent_contact_id, pd.purchaser_agent_contact_id, pd.leasing_agent_contact_id
-           ]) AS cid
-          WHERE cid IS NOT NULL
+       fk AS (
+         SELECT DISTINCT ON (cid) cid AS contact_id, pd.name AS deal_name FROM pdeals pd
+         CROSS JOIN LATERAL unnest(ARRAY[
+           pd.client_contact_id, pd.tenant_contact_id, pd.landlord_contact_id,
+           pd.vendor_contact_id, pd.purchaser_contact_id, pd.vendor_agent_contact_id,
+           pd.acquisition_agent_contact_id, pd.purchaser_agent_contact_id, pd.leasing_agent_contact_id
+         ]) AS cid WHERE cid IS NOT NULL
        ),
-       company_contacts AS (
-         SELECT DISTINCT ON (c.id) c.id AS contact_id, co.name AS via
+       live AS (
+         SELECT DISTINCT ON (c.id) c.id AS contact_id, pd.name AS deal_name
            FROM pdeals pd
-           JOIN crm_companies co ON co.id IN (pd.tenant_id, pd.landlord_id, pd.vendor_id, pd.purchaser_id)
-           JOIN crm_contacts c ON c.company_id = co.id
-          ORDER BY c.id, c.last_interaction DESC NULLS LAST
+           JOIN crm_companies co ON co.id IN (pd.tenant_id, pd.vendor_id, pd.purchaser_id)
+           JOIN crm_contacts c ON c.company_id = co.id AND c.last_interaction IS NOT NULL
+          WHERE COALESCE(pd.status,'') NOT IN ('WIT','COM','INV')
+          ORDER BY c.id, c.last_interaction DESC
+       ),
+       merged AS (
+         SELECT contact_id, deal_name FROM fk
+         UNION SELECT contact_id, deal_name FROM live
        )
-       SELECT c.id, c.name, c.role, c.email, c.phone, c.company_id, c.company_name,
-              c.avatar_url, c.last_interaction,
-              COALESCE(fk.via, cc.via) AS via,
-              (fk.contact_id IS NOT NULL) AS on_deal
-         FROM crm_contacts c
-         LEFT JOIN fk_contacts fk ON fk.contact_id = c.id
-         LEFT JOIN company_contacts cc ON cc.contact_id = c.id
-        WHERE fk.contact_id IS NOT NULL OR cc.contact_id IS NOT NULL
-        ORDER BY (fk.contact_id IS NOT NULL) DESC, c.last_interaction DESC NULLS LAST
-        LIMIT 30`,
-      [req.params.id]
+       SELECT DISTINCT ON (c.id) c.*, m.deal_name FROM crm_contacts c JOIN merged m ON m.contact_id = c.id
+        ORDER BY c.id, c.last_interaction DESC NULLS LAST
+        LIMIT 12`,
+      [pid]
     );
-    res.json({ contacts: rows });
+
+    // 4. Interest — people who actually viewed or offered on the
+    //    property's tracker units.
+    const interestQ = pool.query(
+      `WITH touches AS (
+         SELECT v.contact_id, v.viewing_date::timestamp AS at, 'viewed' AS kind
+           FROM unit_viewings v JOIN available_units au ON au.id = v.unit_id
+          WHERE au.property_id = $1 AND v.contact_id IS NOT NULL
+         UNION ALL
+         SELECT o.contact_id, o.offer_date::timestamp AS at, 'offered' AS kind
+           FROM unit_offers o JOIN available_units au ON au.id = o.unit_id
+          WHERE au.property_id = $1 AND o.contact_id IS NOT NULL
+       )
+       SELECT DISTINCT ON (c.id) c.*, t.kind, t.at FROM crm_contacts c JOIN touches t ON t.contact_id = c.id
+        ORDER BY c.id, t.at DESC
+        LIMIT 10`,
+      [pid]
+    );
+
+    const [landlord, tenants, deals, interest] = await Promise.all([landlordQ, tenantsQ, dealsQ, interestQ]);
+    res.json({
+      landlord: landlord.rows.map((r: any) => shape(r, "landlord team")),
+      tenants: tenants.rows.map((r: any) => shape(r, "in occupation")),
+      deals: deals.rows.map((r: any) => shape(r, r.deal_name || "on a deal")),
+      interest: interest.rows.map((r: any) => shape(r, r.kind === "offered" ? "made an offer" : "viewed")),
+    });
   } catch (err: any) {
     console.error("[linked-contacts]", err?.message);
     res.status(500).json({ error: err?.message || "linked contacts failed" });

@@ -301,7 +301,11 @@ export default function AvailableUnitsPage() {
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  const [statusFilter, setStatusFilter] = useState("all");
+  // Deep links from TrackerSummary lozenges / "Letting Tracker" buttons
+  // carry ?propertyId= and ?status= — honour them on first mount (they
+  // were silently ignored before).
+  const urlParam = (k: string) => { try { return new URLSearchParams(window.location.search).get(k) || "all"; } catch { return "all"; } };
+  const [statusFilter, setStatusFilter] = useState(() => urlParam("status"));
   // Header sort — Property/Unit and Client columns, A→Z / Z→A toggle.
   const [sortBy, setSortBy] = useState<"none" | "property" | "client">("none");
   const [sortDir, setSortDir] = useState<1 | -1>(1);
@@ -312,7 +316,7 @@ export default function AvailableUnitsPage() {
     } else { setSortBy(key); setSortDir(1); }
   };
   const [targetStatusFilter, setTargetStatusFilter] = useState("all");
-  const [propertyFilter, setPropertyFilter] = useState("all");
+  const [propertyFilter, setPropertyFilter] = useState(() => urlParam("propertyId"));
   const [assetClassFilter, setAssetClassFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
   const [bgpTeamFilter, setBgpTeamFilter] = useState("all");

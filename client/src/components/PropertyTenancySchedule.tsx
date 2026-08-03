@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { CovenantBadgeByCompany } from "@/components/covenant-badge";
 import { BrandSearchInput, type BrandPick } from "@/components/brand-search-input";
+import { TrackerSummary } from "@/components/tracker-summary";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -980,6 +981,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           )}
         </div>
       </div>
+
+      {/* Live lettings pulse — canonical tracker strip; each lozenge opens
+          the Letting Tracker pre-filtered (Woody, 2026-08-03). */}
+      <TrackerSummary variant="strip" propertyId={propertyId} />
 
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
         {[

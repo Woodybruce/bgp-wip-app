@@ -40,6 +40,7 @@ import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view
 import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
+import { TrackerSummary } from "@/components/tracker-summary";
 import { BrandComplianceCard } from "@/components/brand-profile-panel";
 import {
   PropertyAssetBriefPanel,
@@ -1074,62 +1075,11 @@ interface AvailableUnitRow {
   dealId: string | null;
   dealRef: string | null;
 }
-function AvailableUnitsPanel({ propertyId, readOnly }: { propertyId: string; readOnly?: boolean }) {
-  const { data: units = [], isLoading } = useQuery<AvailableUnitRow[]>({
-    queryKey: ["/api/available-units", { propertyId }],
-    queryFn: async () => {
-      const r = await fetch(`/api/available-units?propertyId=${encodeURIComponent(propertyId)}`, { credentials: "include", headers: getAuthHeaders() });
-      if (!r.ok) throw new Error("failed to load units");
-      return r.json();
-    },
-  });
-
-  if (isLoading) {
-    return <div className="space-y-1.5">{[1, 2].map(i => <Skeleton key={i} className="h-12" />)}</div>;
-  }
-  if (units.length === 0) {
-    return (
-      <div className="text-center py-4">
-        <Store className="w-7 h-7 mx-auto mb-1.5 text-muted-foreground/30" />
-        <p className="text-xs text-muted-foreground">{readOnly ? "No units currently being marketed here." : "No units on the Letting Tracker yet"}</p>
-        {!readOnly && (
-          <a href={`/deals/letting?propertyId=${propertyId}`} className="text-[11px] text-blue-600 hover:underline mt-1 inline-block">
-            Add unit →
-          </a>
-        )}
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-1.5" data-testid="available-units-panel">
-      {units.map(u => (
-        <div key={u.id} className="flex items-center justify-between gap-2 p-2 rounded border bg-card hover:bg-muted/40">
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium truncate">{u.unitName || "—"}</div>
-            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-              {u.marketingStatus && <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">{u.marketingStatus}</Badge>}
-              {u.sqft && <span>{u.sqft.toLocaleString()} sqft</span>}
-              {u.askingRent && <span>£{u.askingRent.toLocaleString()}</span>}
-            </div>
-          </div>
-          {u.dealId && (
-            <a
-              href={`/deals/${u.dealId}`}
-              className="text-[11px] font-mono text-blue-600 hover:underline shrink-0"
-              title="Open deal"
-            >
-              {u.dealRef ? `#${u.dealRef}` : "Deal →"}
-            </a>
-          )}
-        </div>
-      ))}
-      {!readOnly && (
-        <a href={`/deals/letting?propertyId=${propertyId}`} className="text-[11px] text-blue-600 hover:underline block pt-1">
-          Open in Letting Tracker →
-        </a>
-      )}
-    </div>
-  );
+function AvailableUnitsPanel({ propertyId }: { propertyId: string; readOnly?: boolean }) {
+  // Thin wrapper over the canonical tracker summary (Woody, 2026-08-03) —
+  // the property sidebar, dashboard widget and page-header strip are all
+  // the same component now.
+  return <TrackerSummary variant="card" propertyId={propertyId} />;
 }
 
 // ── Brand pipeline images (auto-attributed from landlord scrape) ────────────
