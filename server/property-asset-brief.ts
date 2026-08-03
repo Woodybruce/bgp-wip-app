@@ -468,8 +468,17 @@ function buildActivitySummary(a: any): string {
 // always has a value even when offline.
 router.post("/api/properties/:id/bgp-commentary/regenerate", requireAuth, async (req: Request, res: Response) => {
   try {
-    if (await (await import("./company-scope")).isClientRequestUser(req as any)) {
-      return res.status(403).json({ error: "Read-only access for client accounts" });
+    // Clients may regenerate commentary on their OWN properties (Woody,
+    // 2026-08-03 — Mark Warne hit the read-only 403 on Liverpool ONE).
+    // Safe because the brief below is re-fetched with the requester's own
+    // cookie, so the prompt only ever sees client-visible data, and the
+    // prompt already bans fee figures from the stored prose.
+    const { isClientRequestUser, resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    if (await isClientRequestUser(req as any)) {
+      const scope = await resolveCompanyScope(req as any);
+      if (!scope || !(await isPropertyInScope(scope, req.params.id))) {
+        return res.status(403).json({ error: "Read-only access for client accounts" });
+      }
     }
     const propertyId = req.params.id;
     // Re-hit our own asset-brief route so we re-use all the join

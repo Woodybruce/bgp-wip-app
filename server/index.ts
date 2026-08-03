@@ -3562,6 +3562,11 @@ app.use("/api/branding/assets", express.static(
         // their own company's properties on every one of these routes.
         if (/^\/api\/leasing-schedule\/property\/[^/]+\/(strategic-principles|generate-targets)$/.test(p)) return next();
         if (/^\/api\/leasing-schedule\/target\/[^/]+$/.test(p)) return next();
+        // BGP Commentary regenerate on the client's OWN property — Mark
+        // Warne's 403 on Liverpool ONE (Woody, 2026-08-03). The handler in
+        // property-asset-brief.ts confines clients to in-scope properties
+        // and the prompt never carries fee figures.
+        if (req.method === "POST" && /^\/api\/properties\/[^/]+\/bgp-commentary\/regenerate$/.test(p)) return next();
         // Same prefix-matching rule as the read allowlist: entries ending in
         // "/" match by prefix, others match exactly or as a path segment.
         if (CLIENT_ALLOWED_WRITES.some(w =>
