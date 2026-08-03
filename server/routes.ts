@@ -7382,8 +7382,8 @@ These terms are indicative only and do not constitute a binding agreement.`;
            FROM team_events te
            LEFT JOIN crm_properties p ON te.property_id = p.id
            WHERE (te.property_id = ANY($1) OR te.company_name = $2)
-             AND te.start_time >= NOW() - INTERVAL '7 days'
-             AND te.start_time <= NOW() + INTERVAL '30 days'
+             AND te.start_time >= NOW() - INTERVAL '60 days'
+             AND te.start_time <= NOW() + INTERVAL '90 days'
            ORDER BY te.start_time`,
           [propertyIds, cpCompanyName]
         );

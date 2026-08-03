@@ -435,6 +435,102 @@ function LoadingSkeleton() {
 
 
 
+// Week-grid team calendar for the client portfolio dashboard (Woody,
+// 2026-08-03: "similar to [the staff diary] but a reflection of the
+// SharePoint team calendar"). Same visual language as the staff diary —
+// Mon–Fri columns, hour slots, colour-coded event chips — but fed by the
+// synced team_events for the client's portfolio (no Microsoft token needed).
+function ClientTeamWeekCalendar({ events }: { events: any[] }) {
+  const [weekOffset, setWeekOffset] = useState(0);
+  const monday = new Date();
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7) + weekOffset * 7);
+  const days: Date[] = Array.from({ length: 5 }, (_, i) => {
+    const d = new Date(monday); d.setDate(monday.getDate() + i); return d;
+  });
+  const HOUR_START = 8, HOUR_END = 18, ROW_H = 34;
+  const hours = Array.from({ length: HOUR_END - HOUR_START }, (_, i) => i + HOUR_START);
+  const wkLabel = `${days[0].getDate()} – ${days[4].getDate()} ${days[4].toLocaleDateString("en-GB", { month: "long", year: "numeric" })}`;
+  const todayStr = new Date().toDateString();
+
+  const chipColor: Record<string, string> = {
+    viewing: "bg-blue-100 dark:bg-blue-900/40 border-blue-300 text-blue-800 dark:text-blue-200",
+    inspection: "bg-rose-100 dark:bg-rose-900/40 border-rose-300 text-rose-800 dark:text-rose-200",
+    meeting: "bg-amber-100 dark:bg-amber-900/40 border-amber-300 text-amber-800 dark:text-amber-200",
+    call: "bg-purple-100 dark:bg-purple-900/40 border-purple-300 text-purple-800 dark:text-purple-200",
+    valuation: "bg-emerald-100 dark:bg-emerald-900/40 border-emerald-300 text-emerald-800 dark:text-emerald-200",
+    deadline: "bg-red-100 dark:bg-red-900/40 border-red-300 text-red-800 dark:text-red-200",
+  };
+
+  const eventsForDay = (day: Date) =>
+    (events || [])
+      .filter(e => e.start_time && new Date(e.start_time).toDateString() === day.toDateString())
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+
+  return (
+    <Card className="h-full flex flex-col">
+      <CardContent className="p-0 flex-1 overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30">
+          <div className="flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-primary" />
+            <h3 className="font-semibold text-xs">Team Calendar</h3>
+            <span className="text-[10px] text-muted-foreground">· {wkLabel}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" className="h-6 px-1.5 text-xs" onClick={() => setWeekOffset(o => o - 1)} data-testid="btn-cal-prev">‹</Button>
+            <Button variant="ghost" size="sm" className="h-6 px-1.5 text-xs" onClick={() => setWeekOffset(0)} data-testid="btn-cal-today">Today</Button>
+            <Button variant="ghost" size="sm" className="h-6 px-1.5 text-xs" onClick={() => setWeekOffset(o => o + 1)} data-testid="btn-cal-next">›</Button>
+          </div>
+        </div>
+        <p className="text-[10px] text-muted-foreground px-3 py-1 border-b">The BGP account team's diary for your portfolio — synced from their calendars.</p>
+        <div className="flex-1 overflow-auto">
+          <div className="grid min-w-[640px]" style={{ gridTemplateColumns: "44px repeat(5, minmax(0, 1fr))" }}>
+            <div />
+            {days.map(d => (
+              <div key={d.toISOString()} className={`text-center py-1.5 border-b border-l text-xs ${d.toDateString() === todayStr ? "bg-primary/5 font-semibold" : ""}`}>
+                <span className="text-[10px] text-muted-foreground uppercase mr-1">{d.toLocaleDateString("en-GB", { weekday: "short" })}</span>
+                {d.getDate()}
+              </div>
+            ))}
+            <div className="relative border-r">
+              {hours.map(h => (
+                <div key={h} className="text-[9px] text-muted-foreground text-right pr-1" style={{ height: ROW_H }}>{String(h).padStart(2, "0")}:00</div>
+              ))}
+            </div>
+            {days.map(d => {
+              const dayEvents = eventsForDay(d);
+              return (
+                <div key={d.toISOString()} className={`relative border-l ${d.toDateString() === todayStr ? "bg-primary/5" : ""}`} style={{ height: hours.length * ROW_H }}>
+                  {hours.map(h => <div key={h} className="border-b border-border/40" style={{ height: ROW_H }} />)}
+                  {dayEvents.map((ev: any) => {
+                    const start = new Date(ev.start_time);
+                    const end = ev.end_time ? new Date(ev.end_time) : new Date(start.getTime() + 3600000);
+                    const startH = Math.max(start.getHours() + start.getMinutes() / 60, HOUR_START);
+                    const endH = Math.min(Math.max(end.getHours() + end.getMinutes() / 60, startH + 0.5), HOUR_END);
+                    if (startH >= HOUR_END) return null;
+                    const type = (ev.event_type || "meeting").toLowerCase();
+                    return (
+                      <div
+                        key={ev.id}
+                        className={`absolute left-0.5 right-0.5 rounded border px-1 py-0.5 text-[9px] leading-tight overflow-hidden ${chipColor[type] || chipColor.meeting}`}
+                        style={{ top: (startH - HOUR_START) * ROW_H, height: Math.max((endH - startH) * ROW_H - 2, 16) }}
+                        title={`${ev.title}${ev.location ? ` · ${ev.location}` : ""}`}
+                      >
+                        <span className="font-medium block truncate">{ev.title}</span>
+                        {(ev.property_name || ev.location) && <span className="truncate block opacity-80">{ev.property_name || ev.location}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Dashboard() {
   const { data: user } = useQuery<User>({ queryKey: ["/api/auth/me"] });
   const { activeTeam } = useTeam();
@@ -863,7 +959,7 @@ export default function Dashboard() {
   // Clients DEFAULT to the Letting Tracker + Tasks widgets (Woody,
   // 2026-08-03: "letting tracker and tasks should be near the top") — a
   // saved widget list still wins, so removals stick.
-  const requested = (user?.dashboardWidgets ?? (isClientUser ? ["available-units", "my-tasks"] : DEFAULT_WIDGETS))
+  const requested = (user?.dashboardWidgets ?? (isClientUser ? ["available-units", "my-tasks", "news-summary"] : DEFAULT_WIDGETS))
     .map((id: string) => id === "recent-properties" ? "key-instructions" : id);
   const withDefaults = isClientUser
     ? requested
@@ -1467,58 +1563,8 @@ export default function Dashboard() {
           {
             id: "portfolio-calendar",
             label: "Team Calendar",
-            defaultW: 6, defaultH: 12, minW: 3, minH: 6,
-            content: (() => {
-              const evs = ((portfolioData.calendarEvents || []) as any[])
-                .filter(e => e.start_time && new Date(e.start_time).getTime() >= Date.now() - 86400000)
-                .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
-              const byDay = new Map<string, any[]>();
-              for (const e of evs) {
-                const day = new Date(e.start_time).toDateString();
-                if (!byDay.has(day)) byDay.set(day, []);
-                byDay.get(day)!.push(e);
-              }
-              return (
-                <Card className="h-full flex flex-col">
-                  <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
-                    <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                      <CalendarDays className="w-3.5 h-3.5 text-teal-500" />
-                      Team Calendar
-                    </h3>
-                    <p className="text-[10px] text-muted-foreground -mt-1">The BGP account team's diary for your portfolio, day by day.</p>
-                    {byDay.size === 0 ? (
-                      <p className="text-xs text-muted-foreground">Nothing in the diary for the next month.</p>
-                    ) : (
-                      <div className="flex-1 overflow-y-auto pr-1 space-y-2">
-                        {Array.from(byDay.entries()).map(([day, dayEvents]) => (
-                          <div key={day}>
-                            <div className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground sticky top-0 bg-card mb-0.5">
-                              {new Date(day).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" })}
-                            </div>
-                            <div className="space-y-0.5">
-                              {dayEvents.map((ev: any) => (
-                                <div key={ev.id} className="flex items-start gap-2 px-1.5 py-1 rounded hover:bg-muted/40 text-xs min-w-0">
-                                  <span className="text-[10px] text-muted-foreground tabular-nums shrink-0 mt-0.5 w-9">
-                                    {new Date(ev.start_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
-                                  </span>
-                                  <div className="flex-1 min-w-0">
-                                    <span className="truncate block leading-snug">{ev.title}</span>
-                                    {(ev.location || ev.property_name) && (
-                                      <span className="text-[10px] text-muted-foreground truncate block">{ev.location || ev.property_name}</span>
-                                    )}
-                                  </div>
-                                  {ev.event_type && <Badge variant="outline" className="text-[9px] shrink-0">{ev.event_type}</Badge>}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              );
-            })(),
+            defaultW: 12, defaultH: 14, minW: 6, minH: 8,
+            content: <ClientTeamWeekCalendar events={(portfolioData.calendarEvents || []) as any[]} />,
           },
           isClientUser ? {
             id: "portfolio-files",
@@ -2676,7 +2722,8 @@ export default function Dashboard() {
           const DEFAULT_ORDER = [
             "portfolio-kpis",
             "available-units", "my-tasks",
-            "portfolio-events", "portfolio-calendar",
+            "portfolio-events", "news-summary",
+            "portfolio-calendar",
             "portfolio-deals", "portfolio-vacancy-pipeline",
             "portfolio-map",
             "portfolio-files", "portfolio-relationship",
@@ -2684,7 +2731,6 @@ export default function Dashboard() {
             "portfolio-team",
             "portfolio-contacts", "portfolio-company",
             "portfolio-properties",
-            "news-summary",
           ];
           const rank = (id: string) => { const i = DEFAULT_ORDER.indexOf(id); return i === -1 ? DEFAULT_ORDER.length : i; };
           gridItems = [...gridItems].sort((a: any, b: any) => rank(a.id) - rank(b.id));
