@@ -18,7 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Mail, Phone, Users, Activity, CalendarDays, MapPin } from "lucide-react";
+import { Mail, Phone, Users, Activity, CalendarDays, MapPin, Handshake } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 
 type UpcomingEvent = {
@@ -41,7 +41,7 @@ function timeAgo(date: string): string {
   return `${days}d ago`;
 }
 
-const KIND_ICON: Record<string, typeof Mail> = { email: Mail, call: Phone, meeting: Users };
+const KIND_ICON: Record<string, typeof Mail> = { email: Mail, call: Phone, meeting: Users, deal: Handshake };
 
 export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
   propertyId?: string;

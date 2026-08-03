@@ -17,6 +17,7 @@ import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { resolveCompanyScope, isPropertyInScope } from "./company-scope";
+import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 
 const router = Router();
 
@@ -153,7 +154,37 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
       );
     }
 
-    const [upcoming, recent] = await Promise.all([upcomingQ, recentQ]);
+    // ── Deal movements: recently created / status-changed deals in scope —
+    //    folds the old "Recent Activity (deal movements)" board into this
+    //    feed (Woody, 2026-08-03). Name + canonical status only, no fees. ──
+    const movesWhere = propertyId
+      ? `AND d.property_id = $1`
+      : companyId
+        ? `AND (d.landlord_id = $1 OR d.tenant_id = $1 OR p.landlord_id = $1)`
+        : "";
+    const movesQ = pool.query(
+      `SELECT d.id, d.name, d.status, COALESCE(d.updated_at, d.created_at) AS at, p.name AS property_name
+         FROM crm_deals d
+         LEFT JOIN crm_properties p ON p.id = d.property_id
+        WHERE COALESCE(d.updated_at, d.created_at) > NOW() - INTERVAL '14 days'
+          ${movesWhere}
+        ORDER BY at DESC
+        LIMIT 15`,
+      propertyId ? [propertyId] : companyId ? [companyId] : []
+    );
+
+    const [upcoming, recent, moves] = await Promise.all([upcomingQ, recentQ, movesQ]);
+    const moveRows = moves.rows
+      .filter((m: any) => legacyToCode(m.status) !== null)
+      .map((m: any) => ({
+        id: `deal-${m.id}`,
+        kind: "deal",
+        date: m.at,
+        summary: `${m.name} — ${DEAL_STATUS_LABELS[legacyToCode(m.status)!]}${m.property_name ? ` at ${m.property_name}` : ""}`,
+        contact_id: null,
+        deal_id: m.id,
+        deal_name: m.name,
+      }));
     res.json({
       upcoming: upcoming.rows
         .sort((a: any, b: any) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
@@ -162,15 +193,18 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
           start_time: e.start_time, end_time: e.end_time, location: e.location,
           property_id: e.property_id, property_name: e.property_name, deal_id: e.deal_id,
         })),
-      recent: recent.rows.map((a: any) => ({
-        id: a.id,
-        kind: a.type,
-        date: a.interaction_date,
-        summary: summarise(a),
-        contact_id: a.contact_id,
-        deal_id: a.deal_id,
-        deal_name: a.deal_name,
-      })),
+      recent: [
+        ...recent.rows.map((a: any) => ({
+          id: a.id,
+          kind: a.type,
+          date: a.interaction_date,
+          summary: summarise(a),
+          contact_id: a.contact_id,
+          deal_id: a.deal_id,
+          deal_name: a.deal_name,
+        })),
+        ...moveRows,
+      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 30),
     });
   } catch (err: any) {
     console.error("[activity-summary]", err?.message);

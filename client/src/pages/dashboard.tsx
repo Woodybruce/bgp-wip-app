@@ -12,6 +12,7 @@ import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { PropertiesSummary } from "@/components/properties-summary";
 import { ActivitySummary } from "@/components/activity-summary";
+import { ClientPropertyFoldersPanel } from "@/pages/properties";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import { AIActivityCard } from "@/components/ai-activity-card";
 import {
@@ -653,7 +654,9 @@ export default function Dashboard() {
     },
   });
 
-  const LAYOUT_VERSION = 13;
+  // v14: Landsec portfolio re-arranged (tracker + tasks top, calendar +
+  // files boards added, deal-movements board folded into Activity).
+  const LAYOUT_VERSION = 14;
   const rawSavedLayout = (user as any)?.dashboardLayout || null;
   const savedLayoutVersion = rawSavedLayout?._version || 1;
   const validSaved = savedLayoutVersion >= LAYOUT_VERSION ? rawSavedLayout : null;
@@ -857,7 +860,10 @@ export default function Dashboard() {
   const isClientUser = user?.role === "Client" || !!(user as any)?.companyScopeId;
   // Migrate one renamed legacy id, then ensure the three always-on widgets are
   // present (staff only — clients fully control their own safe widget set).
-  const requested = (user?.dashboardWidgets ?? (isClientUser ? [] : DEFAULT_WIDGETS))
+  // Clients DEFAULT to the Letting Tracker + Tasks widgets (Woody,
+  // 2026-08-03: "letting tracker and tasks should be near the top") — a
+  // saved widget list still wins, so removals stick.
+  const requested = (user?.dashboardWidgets ?? (isClientUser ? ["available-units", "my-tasks"] : DEFAULT_WIDGETS))
     .map((id: string) => id === "recent-properties" ? "key-instructions" : id);
   const withDefaults = isClientUser
     ? requested
@@ -883,14 +889,15 @@ export default function Dashboard() {
   // handle so each board says what it does.
   const PORTFOLIO_DESCRIPTIONS: Record<string, string> = {
     "portfolio-company": "Your landlord entity and account summary",
-    "portfolio-events": "Portfolio meetings, viewings and calls from the BGP account team's diaries",
+    "portfolio-events": "Upcoming diary events and recent emails / calls / meetings across your portfolio",
+    "portfolio-calendar": "The BGP account team's diary for your portfolio, day by day",
+    "portfolio-files": "Your document library — the account folder tree, browsable in place",
     "portfolio-kpis": "Headline metrics across your portfolio",
     "portfolio-team": "The BGP people working across your portfolio and their properties",
     "portfolio-properties": "Every property linked to your account",
     "portfolio-map": "Your whole portfolio on a map — click a pin to open the property",
     "portfolio-relationship": "Your account with BGP — coverage, contacts, last touch and live deals",
     "portfolio-leasing": "Every unit — tenant, occupancy, rent and expiry",
-    "portfolio-activity": "The latest deal movements across your portfolio",
     "portfolio-contacts": "Your key contacts on the account",
     "portfolio-deals": "Live deals across your properties",
     "portfolio-lease-expiry": "Units with leases expiring over the next five years, by quarter",
@@ -1453,43 +1460,78 @@ export default function Dashboard() {
               </Card>
             ),
           } : null,
+          // The old "Recent Activity (deal movements)" board is retired —
+          // deal movements now flow into the canonical Activity board's
+          // Recent feed (Woody, 2026-08-03). Two boards replace it:
+          // the BGP team calendar and the account Files tree.
           {
-            id: "portfolio-activity",
-            label: "Recent Activity",
-            defaultW: 6, defaultH: 10, minW: 3, minH: 6,
-            content: (
-              <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
-                  <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                    <Clock className="w-3.5 h-3.5 text-teal-500" />
-                    Recent Activity
-                  </h3>
-                  <p className="text-[10px] text-muted-foreground -mt-1">The latest deal movements across your portfolio.</p>
-                  {portfolioData.activity?.length > 0 ? (
-                    <ScrollArea className="flex-1">
-                      <div className="space-y-0.5 pr-2">
-                        {portfolioData.activity.map((item: any, i: number) => (
-                          <div key={i} className="flex items-start gap-2 px-2 py-1.5 text-xs">
-                            <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${item.type === "deal" ? "bg-purple-500" : "bg-blue-500"}`} />
-                            <div>
-                              <p className="font-medium">{item.title}</p>
-                              <p className="text-muted-foreground">
-                                {item.property_name && <span>{item.property_name} · </span>}
-                                {item.status && <span className="capitalize">{item.status} · </span>}
-                                {new Date(item.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                              </p>
+            id: "portfolio-calendar",
+            label: "Team Calendar",
+            defaultW: 6, defaultH: 12, minW: 3, minH: 6,
+            content: (() => {
+              const evs = ((portfolioData.calendarEvents || []) as any[])
+                .filter(e => e.start_time && new Date(e.start_time).getTime() >= Date.now() - 86400000)
+                .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+              const byDay = new Map<string, any[]>();
+              for (const e of evs) {
+                const day = new Date(e.start_time).toDateString();
+                if (!byDay.has(day)) byDay.set(day, []);
+                byDay.get(day)!.push(e);
+              }
+              return (
+                <Card className="h-full flex flex-col">
+                  <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
+                    <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                      <CalendarDays className="w-3.5 h-3.5 text-teal-500" />
+                      Team Calendar
+                    </h3>
+                    <p className="text-[10px] text-muted-foreground -mt-1">The BGP account team's diary for your portfolio, day by day.</p>
+                    {byDay.size === 0 ? (
+                      <p className="text-xs text-muted-foreground">Nothing in the diary for the next month.</p>
+                    ) : (
+                      <div className="flex-1 overflow-y-auto pr-1 space-y-2">
+                        {Array.from(byDay.entries()).map(([day, dayEvents]) => (
+                          <div key={day}>
+                            <div className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground sticky top-0 bg-card mb-0.5">
+                              {new Date(day).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" })}
+                            </div>
+                            <div className="space-y-0.5">
+                              {dayEvents.map((ev: any) => (
+                                <div key={ev.id} className="flex items-start gap-2 px-1.5 py-1 rounded hover:bg-muted/40 text-xs min-w-0">
+                                  <span className="text-[10px] text-muted-foreground tabular-nums shrink-0 mt-0.5 w-9">
+                                    {new Date(ev.start_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                                  </span>
+                                  <div className="flex-1 min-w-0">
+                                    <span className="truncate block leading-snug">{ev.title}</span>
+                                    {(ev.location || ev.property_name) && (
+                                      <span className="text-[10px] text-muted-foreground truncate block">{ev.location || ev.property_name}</span>
+                                    )}
+                                  </div>
+                                  {ev.event_type && <Badge variant="outline" className="text-[9px] shrink-0">{ev.event_type}</Badge>}
+                                </div>
+                              ))}
                             </div>
                           </div>
                         ))}
                       </div>
-                    </ScrollArea>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">No recent activity</p>
-                  )}
-                </CardContent>
-              </Card>
-            ),
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })(),
           },
+          isClientUser ? {
+            id: "portfolio-files",
+            label: "Files",
+            defaultW: 6, defaultH: 12, minW: 3, minH: 6,
+            content: (
+              // Whole-account jailed SharePoint browser — empty propertyName
+              // starts at the client's root folder (per-property trees inside).
+              <div className="h-full overflow-y-auto">
+                <ClientPropertyFoldersPanel propertyName="" />
+              </div>
+            ),
+          } : null,
           {
             id: "portfolio-contacts",
             label: "Contacts",
@@ -1534,49 +1576,21 @@ export default function Dashboard() {
           (dealsByProperty.size > 0 || unlinkedDeals.length > 0) ? {
             id: "portfolio-deals",
             label: "Properties & Deals",
-            defaultW: 8, defaultH: 14, minW: 4, minH: 6,
+            defaultW: 6, defaultH: 12, minW: 4, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
                 <CardContent className="p-3 space-y-3 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
                     <BarChart3 className="w-3.5 h-3.5 text-teal-500" />
-                    Properties & Deals ({portfolioData.deals?.length || 0} deal{(portfolioData.deals?.length || 0) !== 1 ? "s" : ""} across {dealsByProperty.size} propert{dealsByProperty.size !== 1 ? "ies" : "y"})
+                    Properties & Deals
                   </h3>
-                  <p className="text-[10px] text-muted-foreground -mt-1">Each property with its live deals — status and type at a glance.</p>
+                  <p className="text-[10px] text-muted-foreground -mt-1">Active properties with live lettings and deals — chips open each board pre-filtered.</p>
                   <ScrollArea className="flex-1">
                     <div className="pr-2">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                    {Array.from(dealsByProperty.values()).map(({ property, deals }) => (
-                      <div key={property.id} className="border rounded-lg overflow-hidden" data-testid={`property-group-${property.id}`}>
-                        <Link href={`/properties/${property.id}`}>
-                          <div className="flex items-center gap-2 p-2 bg-teal-50 dark:bg-teal-900/20 hover:bg-teal-100 dark:hover:bg-teal-900/30 transition-colors cursor-pointer border-b border-teal-100 dark:border-teal-800">
-                            <Building2 className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-medium truncate text-teal-700 dark:text-teal-300">{property.name}</p>
-                            </div>
-                            <Badge className="text-[9px] shrink-0 bg-teal-100 text-teal-700 dark:bg-teal-800 dark:text-teal-300 border-0">{deals.length} deal{deals.length !== 1 ? "s" : ""}</Badge>
-                          </div>
-                        </Link>
-                        <div className="divide-y max-h-[150px] overflow-y-auto">
-                          {deals.map((deal: any) => (
-                            <Link key={deal.id} href={`/deals/${deal.id}`}>
-                              <div className="flex items-center justify-between px-2 py-1.5 hover:bg-muted/30 transition-colors cursor-pointer" data-testid={`link-deal-${deal.id}`}>
-                                <div className="min-w-0 flex-1">
-                                  <p className="text-xs truncate">{deal.name}</p>
-                                  <p className="text-[10px] text-muted-foreground">{deal.status}</p>
-                                </div>
-                                <div className="flex items-center gap-1 shrink-0">
-                                  {deal.dealType && (
-                                    <Badge variant="secondary" className={`text-[9px] ${deal.dealType === "Leasing" ? "bg-teal-100 text-teal-700 dark:bg-teal-800 dark:text-teal-300" : ""}`}>{deal.dealType}</Badge>
-                                  )}
-                                </div>
-                              </div>
-                            </Link>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                    </div>
+                    {/* Canonical PropertiesSummary (Woody, 2026-08-03) — the
+                        same board design as the staff dashboard and property
+                        pages; this was the last bespoke copy. */}
+                    <PropertiesSummary companyId={resolvedCompanyId!} role="landlord" onlyActive />
                     {unlinkedDeals.length > 0 && (
                       <div className="border rounded-lg overflow-hidden mt-2">
                         <div className="flex items-center gap-2 p-2 bg-muted/50">
@@ -2653,7 +2667,28 @@ export default function Dashboard() {
         // share the grid with the widgets (combined layout key); plain staff
         // dashboards keep their existing widgets layout untouched.
         const hasPortfolioBoards = portfolioBoardsForGrid.length > 0;
-        const gridItems = [...portfolioBoardsForGrid, ...widgetGridItems];
+        let gridItems = [...portfolioBoardsForGrid, ...widgetGridItems];
+        // Client-portfolio default order (Woody, 2026-08-03: "letting tracker
+        // and tasks should be near the top"): the grid packs sequentially, so
+        // this list IS the default layout. Users can still drag; unknown ids
+        // keep their relative order at the end.
+        if (hasPortfolioBoards) {
+          const DEFAULT_ORDER = [
+            "portfolio-kpis",
+            "available-units", "my-tasks",
+            "portfolio-events", "portfolio-calendar",
+            "portfolio-deals", "portfolio-vacancy-pipeline",
+            "portfolio-map",
+            "portfolio-files", "portfolio-relationship",
+            "portfolio-leasing", "portfolio-lease-expiry",
+            "portfolio-team",
+            "portfolio-contacts", "portfolio-company",
+            "portfolio-properties",
+            "news-summary",
+          ];
+          const rank = (id: string) => { const i = DEFAULT_ORDER.indexOf(id); return i === -1 ? DEFAULT_ORDER.length : i; };
+          gridItems = [...gridItems].sort((a: any, b: any) => rank(a.id) - rank(b.id));
+        }
 
         return (
           <DraggableGrid

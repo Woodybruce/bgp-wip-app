@@ -95,13 +95,14 @@ export function PropertiesSummary({ companyId, role = "landlord", propertyIds, o
   }, [deals]);
 
   const rows: SummaryRow[] = useMemo(() => {
-    if (companyId) return companyRows;
-    let base: SummaryRow[] = allProperties.map((p: any) => ({
-      id: p.id, name: p.name, asset_class: p.assetClass ?? p.asset_class ?? null, units_occupied: null,
-    }));
-    if (propertyIds && propertyIds.length) base = base.filter(p => propertyIds.includes(p.id));
+    let base: SummaryRow[] = companyId
+      ? companyRows
+      : allProperties.map((p: any) => ({
+          id: p.id, name: p.name, asset_class: p.assetClass ?? p.asset_class ?? null, units_occupied: null,
+        }));
+    if (!companyId && propertyIds && propertyIds.length) base = base.filter(p => propertyIds.includes(p.id));
     if (onlyActive) base = base.filter(p => (lettingCounts.get(p.id) || 0) > 0 || (dealCounts.get(p.id) || 0) > 0);
-    return base.sort((a, b) =>
+    return [...base].sort((a, b) =>
       ((lettingCounts.get(b.id) || 0) + (dealCounts.get(b.id) || 0)) -
       ((lettingCounts.get(a.id) || 0) + (dealCounts.get(a.id) || 0)) || a.name.localeCompare(b.name));
   }, [companyId, companyRows, allProperties, propertyIds, onlyActive, lettingCounts, dealCounts]);
