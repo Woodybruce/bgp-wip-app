@@ -510,7 +510,7 @@ router.post("/api/properties/:id/bgp-commentary/regenerate", requireAuth, async 
     const { isClientRequestUser, resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
     if (await isClientRequestUser(req as any)) {
       const scope = await resolveCompanyScope(req as any);
-      if (!scope || !(await isPropertyInScope(scope, req.params.id))) {
+      if (!scope || !(await isPropertyInScope(scope, String(req.params.id)))) {
         return res.status(403).json({ error: "Read-only access for client accounts" });
       }
     }
