@@ -1142,6 +1142,25 @@ async function markRound(page, cross) {
     if (r.status !== 403) throw new Error(`client reached admin password reset (expected 403, got ${r.status})`);
   });
 
+  // ActivitySummary board (terminal, 2026-08-03): the dashboard's upcoming/
+  // recent feed must serve client-scoped content only — never another
+  // landlord's deals — and the board must render.
+  await step(page, p, 'client-activity-summary-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/activity-summary', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = JSON.stringify(await res.json().catch(() => ({})));
+      return { ok: true, rival: /hammerson|brent cross/i.test(body) };
+    });
+    if (!r.ok) throw new Error(`client activity-summary unhealthy (${r.status})`);
+    if (r.rival) throw new Error("rival landlord content leaked into the client's activity summary");
+    await page.goto(`${BASE}/`);
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(3000);
+    if (!(await page.locator('[data-testid="activity-summary"]').count())) throw new Error('activity-summary board missing from the client dashboard');
+  });
+
   // Org-wide feeds are BGP-internal: the activity feed hard-empties for
   // client logins (Landsec audit) even when staff sees rows, and
   // notifications/daily-digest must never 4xx/5xx or leak org-wide rows.
