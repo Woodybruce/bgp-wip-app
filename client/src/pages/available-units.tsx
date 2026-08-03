@@ -2875,11 +2875,49 @@ function HotsDialog({ unit, propertyName, isClient, onClose }: {
   const [template, setTemplate] = useState("");
   const [editTemplate, setEditTemplate] = useState(false);
   const [busy, setBusy] = useState(false);
-  const { data, refetch } = useQuery<{ content: string | null; template: string | null; updatedAt: string | null }>({
+  const { data, refetch } = useQuery<{ content: string | null; template: string | null; updatedAt: string | null; templateDocx?: boolean; templateDocxName?: string | null }>({
     queryKey: ["/api/available-units", unit?.id, "hots"],
     queryFn: () => fetch(`/api/available-units/${unit!.id}/hots`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
     enabled: !!unit,
   });
+  const docxInputRef = useRef<HTMLInputElement>(null);
+  const [wordBusy, setWordBusy] = useState(false);
+  const uploadDocx = async (file: File) => {
+    setWordBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch(`/api/properties/${unit!.propertyId}/hots-docx`, { method: "POST", credentials: "include", headers: getAuthHeaders(), body: fd });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `HTTP ${r.status}`);
+      toast({ title: "Standard HOTs document saved for this property" });
+      refetch();
+    } catch (e: any) { toast({ title: "Upload failed", description: e.message, variant: "destructive" }); }
+    finally { setWordBusy(false); }
+  };
+  const populateDocx = async (destination: "word" | "download") => {
+    setWordBusy(true);
+    try {
+      const r = await fetch(`/api/available-units/${unit!.id}/hots-docx-populate`, {
+        method: "POST", credentials: "include",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ destination }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || `HTTP ${r.status}`);
+      if (destination === "word") {
+        const out = await r.json();
+        window.open(out.webUrl, "_blank");
+        toast({ title: "HOTs populated from the offer", description: "Opened in Word — saved to SharePoint" });
+      } else {
+        const blob = await r.blob();
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `HOTs — ${propertyName} ${unit!.unitName || ""}.docx`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }
+    } catch (e: any) { toast({ title: "Populate failed", description: e.message, variant: "destructive" }); }
+    finally { setWordBusy(false); }
+  };
   useEffect(() => {
     setContent(data?.content || "");
     setTemplate(data?.template || "");
@@ -2907,6 +2945,36 @@ function HotsDialog({ unit, propertyName, isClient, onClose }: {
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
+          {/* Word-document flow: the standard set uploaded once per property,
+              populated per unit from the best offer, edited in Word Online. */}
+          <div className="flex items-center gap-2 flex-wrap rounded-md border border-dashed px-3 py-2">
+            <FileText className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            {data?.templateDocx ? (
+              <>
+                <span className="text-xs text-muted-foreground truncate max-w-[220px]" title={data.templateDocxName || ""}>
+                  {data.templateDocxName || "Standard HOTs.docx"}
+                </span>
+                <Button size="sm" className="h-7 text-xs" disabled={wordBusy} onClick={() => populateDocx("word")} data-testid="hots-docx-word">
+                  {wordBusy ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
+                  Populate from offer → open in Word
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-xs" disabled={wordBusy} onClick={() => populateDocx("download")} data-testid="hots-docx-download">
+                  Download .docx
+                </Button>
+              </>
+            ) : (
+              <span className="text-xs text-muted-foreground">No standard HOTs document for this property yet</span>
+            )}
+            {!isClient && (
+              <>
+                <button type="button" className="text-[11px] text-blue-600 hover:underline ml-auto" onClick={() => docxInputRef.current?.click()} data-testid="hots-docx-upload">
+                  {data?.templateDocx ? "Replace document" : "Upload standard HOTs (.docx)"}
+                </button>
+                <input ref={docxInputRef} type="file" accept=".docx" className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadDocx(f); e.target.value = ""; }} />
+              </>
+            )}
+          </div>
           <div className="flex items-center gap-2 flex-wrap">
             <Button
               size="sm" variant="outline" className="h-7 text-xs" disabled={busy}

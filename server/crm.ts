@@ -4470,11 +4470,12 @@ Return a JSON object with these fields (use null for any field you cannot find):
         const { callClaude: callClaudeFable } = await import("./chatbgp");
         const completion = await callClaudeFable({
           model: "claude-fable-5",
-          max_completion_tokens: 1600,
+          max_completion_tokens: 4000,
           messages: [
             {
               role: "system",
               content:
+                "Respond with the JSON array immediately — no preamble. " +
                 "You rank brand targets for a specific vacant retail/leisure unit for a UK leasing team. Prefer live " +
                 "requirements with a genuine size fit, then strong use+location alignment, then well-matched tracked brands. " +
                 "Output STRICT JSON only: [{\"i\":number,\"score\":0-100,\"reason\":\"one short sentence naming the concrete fit\"}].",
@@ -4486,7 +4487,10 @@ Return a JSON object with these fields (use null for any field you cannot find):
           ],
         });
         const text = completion.choices?.[0]?.message?.content || "";
-        const js = JSON.parse(text.slice(text.indexOf("["), text.lastIndexOf("]") + 1)) as Array<{ i: number; score: number; reason: string }>;
+        const start = text.indexOf("["), end = text.lastIndexOf("]");
+        if (start < 0 || end <= start) throw new Error(`no JSON array in response (head: ${JSON.stringify(text.slice(0, 120))})`);
+        const js = JSON.parse(text.slice(start, end + 1)) as Array<{ i: number; score: number; reason: string }>;
+        console.log(`[brand-suggestions] ranked ${js.length}/${ranked.length} for unit ${unit.unit_name}`);
         for (const v of js) if (ranked[v.i]) { ranked[v.i].aiScore = v.score; ranked[v.i].reason = v.reason; }
         ranked = ranked.filter((c) => (c.aiScore ?? 50) >= 25).sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
       } catch (e: any) {
