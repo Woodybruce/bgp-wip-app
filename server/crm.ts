@@ -4386,7 +4386,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
                 p.id AS property_id, p.name AS property_name, p.address::text AS address
            FROM available_units au
            JOIN crm_properties p ON p.id = au.property_id
-          WHERE au.marketing_status IN ('AVA','NEG') AND au.sqft IS NOT NULL
+          WHERE au.marketing_status IN ('AVA','NEG')
             AND ($1::text IS NULL OR p.landlord_id = $1
                  OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))`,
         [scopeCompanyId]
@@ -4405,17 +4405,30 @@ Return a JSON object with these fields (use null for any field you cannot find):
           .filter((l: string) => l.length > 2 && !/^(london|greater london|central london \(zone 1\))$/i.test(l));
         const hits: any[] = [];
         for (const u of unitRows.rows) {
-          const sqft = Number(u.sqft);
-          if (!(sqft >= range.min && sqft <= range.max)) continue;
           const unitText = `${u.unit_name || ""} ${u.use_class || ""}`;
           const useHint = USE_HINTS.some(([reqRe, unitRe]) => reqRe.test(uses) && unitRe.test(unitText));
           const propText = `${u.property_name || ""} ${u.address || ""}`.toLowerCase();
           const locationHit = locs.some((l: string) => propText.includes(l));
-          hits.push({
-            unitId: u.id, unitName: u.unit_name, sqft,
-            propertyId: u.property_id, propertyName: u.property_name,
-            useHint, locationHit, score: 1 + (useHint ? 1 : 0) + (locationHit ? 1 : 0),
-          });
+          if (u.sqft != null) {
+            // Size-verified fit: the area must sit inside the requirement's
+            // (tolerance-widened) range.
+            const sqft = Number(u.sqft);
+            if (!(sqft >= range.min && sqft <= range.max)) continue;
+            hits.push({
+              unitId: u.id, unitName: u.unit_name, sqft, sizeUnknown: false,
+              propertyId: u.property_id, propertyName: u.property_name,
+              useHint, locationHit, score: 2 + (useHint ? 1 : 0) + (locationHit ? 1 : 0),
+            });
+          } else if (useHint || locationHit) {
+            // No recorded area (most of the tracker) — still a candidate
+            // when the use or location lines up, ranked below every
+            // size-verified fit and flagged so the UI can say "size?".
+            hits.push({
+              unitId: u.id, unitName: u.unit_name, sqft: null, sizeUnknown: true,
+              propertyId: u.property_id, propertyName: u.property_name,
+              useHint, locationHit, score: (useHint ? 1 : 0) + (locationHit ? 1 : 0) - 1,
+            });
+          }
         }
         if (!hits.length) continue;
         hits.sort((a, b) => b.score - a.score || a.sqft - b.sqft);

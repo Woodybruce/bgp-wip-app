@@ -2440,11 +2440,11 @@ function LeasingSection({
                                 <button
                                   className="text-[11px] text-emerald-700 hover:underline truncate max-w-[150px] text-left"
                                   onClick={() => navigate(`/properties/${m.propertyId}`)}
-                                  title={`${m.unitName} · ${m.propertyName} · ${Number(m.sqft).toLocaleString()} sq ft${m.locationHit ? " · location match" : ""}`}
+                                  title={`${m.unitName} · ${m.propertyName} · ${m.sizeUnknown ? "size not recorded" : Number(m.sqft).toLocaleString() + " sq ft"}${m.locationHit ? " · location match" : ""}`}
                                 >
                                   {m.unitName} · {m.propertyName}
                                 </button>
-                                <span className="text-[9px] text-muted-foreground tabular-nums shrink-0">{Number(m.sqft).toLocaleString()}</span>
+                                <span className="text-[9px] text-muted-foreground tabular-nums shrink-0">{m.sizeUnknown ? "size?" : Number(m.sqft).toLocaleString()}</span>
                                 {onBrief && (
                                   <button
                                     className="text-[9px] text-blue-600 hover:underline opacity-0 group-hover/fit:opacity-100 shrink-0"

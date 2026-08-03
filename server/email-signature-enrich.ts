@@ -220,6 +220,12 @@ export function isolateSignatureText(htmlBody: string): string {
     /this e-?mail (transmission )?(may )?contains? (confidential|proprietary)/i,
     /-----Original Message-----/i,
     /from:.*\nsent:.*\nto:/i,           // Outlook quoted reply header
+    // HTML→text flattening often collapses the Outlook header onto one
+    // line ("From: X Sent: Monday To: Y") — without this cut the quoted
+    // sender's signature survives and the fallback attributes THEIR
+    // phone number to the wrong contact.
+    /from:\s\S.{0,120}?\bsent:\s.{0,60}?\bto:\s/i,
+    /_{10,}/,                            // Outlook's reply divider line
     /On .+ wrote:/i,                     // Gmail-style quoted reply
     /www\.landsec\.com/i,                // bottom-of-email web banner
     /follow us on/i,
@@ -283,7 +289,10 @@ async function extractFieldsFromSignature(signatureText: string, email: string):
         `You extract contact details from email signature blocks. Output ONLY a JSON object with these keys: ` +
         `fullName (string or null), title (string or null — exact job title), phone (string or null — direct office line), ` +
         `mobile (string or null), address (string or null — full postal address as one line), linkedin (URL or null). ` +
-        `Set a field to null if not present. Do NOT include the email address. Do NOT invent values. No prose, no markdown.`,
+        `Set a field to null if not present. Do NOT include the email address. Do NOT invent values. No prose, no markdown. ` +
+        `CRITICAL: the signature must belong to the OWNER of the email address given. Email threads quote other people's ` +
+        `signatures — if the name in the block does not plausibly match the email address (e.g. block says "Jane Smith" but ` +
+        `the address is tom.brown@...), return ALL fields as null rather than attributing someone else's details.`,
       messages: [
         {
           role: "user",
@@ -296,6 +305,17 @@ async function extractFieldsFromSignature(signatureText: string, email: string):
     const jsonEnd = text.lastIndexOf("}");
     if (jsonStart < 0 || jsonEnd <= jsonStart) return null;
     const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+    // Deterministic identity guard on top of the prompt rule: if the
+    // extracted name shares no token with the email's local part
+    // (first.last@ pattern), the block is someone else's signature from
+    // a quoted thread — discard rather than mis-attribute.
+    const local = email.split("@")[0].toLowerCase();
+    const localTokens = local.split(/[._-]+/).filter((t) => t.length > 2);
+    const nameTokens = String(parsed.fullName || "").toLowerCase().split(/\s+/).filter((t: string) => t.length > 2);
+    if (parsed.fullName && localTokens.length && nameTokens.length
+        && !nameTokens.some((n: string) => localTokens.some((l) => l.includes(n) || n.includes(l)))) {
+      return { fullName: null, title: null, phone: null, mobile: null, address: null, linkedin: null };
+    }
     return {
       fullName: parsed.fullName || null,
       title: parsed.title || null,

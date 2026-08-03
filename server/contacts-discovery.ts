@@ -342,6 +342,24 @@ async function handleBgpKnownContactsForCompanyId(companyId: string, monthsBack:
       };
     });
 
+  // Cross-contamination guard: a direct/mobile number that shows up on
+  // more than one person is either a switchboard or a mis-attributed
+  // quoted-thread signature (seen live: two Landsec contacts sharing one
+  // mobile). We can't know whose it is, so blank it everywhere — a
+  // missing number is better than the wrong person's.
+  const numberOwners = new Map<string, number>();
+  const normNum = (v: string | null) => (v || "").replace(/[^\d]/g, "").replace(/^44/, "0");
+  for (const c of contacts) {
+    for (const v of [c.phone, c.mobile]) {
+      const n = normNum(v);
+      if (n.length >= 10) numberOwners.set(n, (numberOwners.get(n) || 0) + 1);
+    }
+  }
+  for (const c of contacts) {
+    if (c.phone && (numberOwners.get(normNum(c.phone)) || 0) > 1) c.phone = null;
+    if (c.mobile && (numberOwners.get(normNum(c.mobile)) || 0) > 1) c.mobile = null;
+  }
+
   // Fire-and-forget enrichment for any unenriched contacts. First call
   // for a brand returns the basic data fast; subsequent calls (within
   // ~minutes, on the same brand) hit the cache and surface signatures.
