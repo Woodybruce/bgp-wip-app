@@ -7225,6 +7225,71 @@ These terms are indicative only and do not constitute a binding agreement.`;
     }
   });
 
+  // Grouped contacts for a company's account board (Woody, 2026-08-03:
+  // "include brands and agents" on the dashboard Contacts card). Three
+  // evidence groups: the company's own people, one contact per BRAND with a
+  // deal on the portfolio, and the AGENTS working those deals. Client
+  // logins may only request their own company.
+  app.get("/api/crm/companies/:companyId/contact-summary", requireAuth, async (req, res) => {
+    try {
+      const { companyId } = req.params;
+      const scopeCompanyId = await resolveCompanyScope(req);
+      if (scopeCompanyId && scopeCompanyId !== companyId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+
+      const yoursQ = pool.query(
+        `SELECT DISTINCT ON (lower(trim(name))) id, name, role, email, avatar_url,
+                (SELECT name FROM crm_companies WHERE id = $1) AS company_name
+           FROM crm_contacts WHERE company_id = $1
+          ORDER BY lower(trim(name)), last_interaction DESC NULLS LAST`,
+        [companyId]
+      );
+      const brandsQ = pool.query(
+        `WITH pdeals AS (
+           SELECT d.* FROM crm_deals d
+           LEFT JOIN crm_properties p ON p.id = d.property_id
+          WHERE d.landlord_id = $1 OR p.landlord_id = $1
+             OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+         )
+         SELECT DISTINCT ON (c.company_id) c.id, c.name, c.role, c.email, c.avatar_url, co.name AS company_name
+           FROM crm_contacts c
+           JOIN crm_companies co ON co.id = c.company_id
+          WHERE c.company_id IN (SELECT DISTINCT tenant_id FROM pdeals WHERE tenant_id IS NOT NULL)
+          ORDER BY c.company_id, c.last_interaction DESC NULLS LAST
+          LIMIT 20`,
+        [companyId]
+      );
+      const agentsQ = pool.query(
+        `WITH pdeals AS (
+           SELECT d.* FROM crm_deals d
+           LEFT JOIN crm_properties p ON p.id = d.property_id
+          WHERE d.landlord_id = $1 OR p.landlord_id = $1
+             OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+         ),
+         agent_contact_ids AS (
+           SELECT DISTINCT cid FROM pdeals
+           CROSS JOIN LATERAL unnest(ARRAY[
+             vendor_agent_contact_id, acquisition_agent_contact_id,
+             purchaser_agent_contact_id, leasing_agent_contact_id
+           ]) AS cid WHERE cid IS NOT NULL
+         )
+         SELECT DISTINCT c.id, c.name, c.role, c.email, c.avatar_url, co.name AS company_name
+           FROM crm_contacts c
+           LEFT JOIN crm_companies co ON co.id = c.company_id
+          WHERE c.id IN (SELECT cid FROM agent_contact_ids)
+          LIMIT 20`,
+        [companyId]
+      );
+
+      const [yours, brands, agents] = await Promise.all([yoursQ, brandsQ, agentsQ]);
+      res.json({ yours: yours.rows, brands: brands.rows, agents: agents.rows });
+    } catch (err: any) {
+      console.error("[contact-summary]", err?.message);
+      res.status(500).json({ message: err?.message || "contact summary failed" });
+    }
+  });
+
   app.get("/api/company-portfolio/:companyId", requireAuth, async (req, res) => {
     try {
       const { companyId } = req.params;

@@ -19,6 +19,8 @@ import {
   Building2,
   CalendarDays,
   Users,
+  Eye,
+  Phone,
   Sparkles,
   FileText,
   ArrowRight,
@@ -443,58 +445,91 @@ function LoadingSkeleton() {
 
 
 // Week-grid team calendar for the client portfolio dashboard (Woody,
-// 2026-08-03: "similar to [the staff diary] but a reflection of the
-// SharePoint team calendar"). Same visual language as the staff diary —
-// Mon–Fri columns, hour slots, colour-coded event chips — but fed by the
+// 2026-08-03: "same as [the staff National Leasing Diary]") — mini month,
+// event-type legend, today's schedule and the Mon–Fri hour grid, fed by the
 // synced team_events for the client's portfolio (no Microsoft token needed).
+// Types are Viewing / Meeting / Call / Deadline only: inspections count as
+// viewings and valuations aren't a BGP-client thing (Woody, 2026-08-03).
 function ClientTeamWeekCalendar({ events }: { events: any[] }) {
   const [weekOffset, setWeekOffset] = useState(0);
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
-  const monday = new Date();
+  const now = new Date();
+  const todayStr = now.toDateString();
+  const monday = new Date(now);
   monday.setHours(0, 0, 0, 0);
   monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7) + weekOffset * 7);
   const days: Date[] = Array.from({ length: 5 }, (_, i) => {
     const d = new Date(monday); d.setDate(monday.getDate() + i); return d;
   });
-  const HOUR_START = 8, HOUR_END = 18, ROW_H = 34;
+  const HOUR_START = 7, HOUR_END = 19, ROW_H = 30;
   const hours = Array.from({ length: HOUR_END - HOUR_START }, (_, i) => i + HOUR_START);
   const wkLabel = `${days[0].getDate()} – ${days[4].getDate()} ${days[4].toLocaleDateString("en-GB", { month: "long", year: "numeric" })}`;
-  const todayStr = new Date().toDateString();
 
-  // Client-sync events classify into viewing / meeting / call ONLY (Woody,
-  // 2026-08-03: "not the others though") — anything unrecognised is a meeting.
-  const classify = (ev: any): "viewing" | "meeting" | "call" => {
+  const classify = (ev: any): "viewing" | "meeting" | "call" | "deadline" => {
     const t = (ev.event_type || "").toLowerCase();
-    if (t === "viewing" || t === "call") return t as any;
+    if (t === "viewing" || t === "inspection") return "viewing";
+    if (t === "call") return "call";
+    if (t === "deadline") return "deadline";
     if (t === "meeting") return "meeting";
     const s = (ev.title || "").toLowerCase();
-    if (s.includes("viewing") || s.includes("walk around") || s.includes("walk-around") || s.includes("site tour")) return "viewing";
+    if (s.includes("viewing") || s.includes("inspection") || s.includes("walk around") || s.includes("walk-around") || s.includes("site tour") || s.includes("walk ")) return "viewing";
     if (s.includes("call") || s.includes("phone")) return "call";
+    if (s.includes("deadline") || s.includes("expiry")) return "deadline";
     return "meeting";
   };
   const chipColor: Record<string, string> = {
     viewing: "bg-blue-100 dark:bg-blue-900/40 border-blue-300 text-blue-800 dark:text-blue-200",
     meeting: "bg-amber-100 dark:bg-amber-900/40 border-amber-300 text-amber-800 dark:text-amber-200",
     call: "bg-purple-100 dark:bg-purple-900/40 border-purple-300 text-purple-800 dark:text-purple-200",
+    deadline: "bg-red-100 dark:bg-red-900/40 border-red-300 text-red-800 dark:text-red-200",
   };
-  const dotColor: Record<string, string> = { viewing: "bg-blue-500", meeting: "bg-amber-500", call: "bg-purple-500" };
+  const dotColor: Record<string, string> = { viewing: "bg-blue-500", meeting: "bg-amber-500", call: "bg-purple-500", deadline: "bg-red-500" };
+  const typeIcon: Record<string, typeof Eye> = { viewing: Eye, meeting: Users, call: Phone, deadline: AlertTriangle };
+  const TYPE_KEYS = ["viewing", "meeting", "call", "deadline"] as const;
 
   const typed = (events || []).filter(e => e.start_time).map(e => ({ ...e, _type: classify(e) }));
-  const typeCounts: Record<string, number> = { viewing: 0, meeting: 0, call: 0 };
+  const typeCounts: Record<string, number> = { viewing: 0, meeting: 0, call: 0, deadline: 0 };
   for (const e of typed) typeCounts[e._type]++;
 
-  // Intelligence strip — same read the full calendar page carries.
-  const todayCount = typed.filter(e => new Date(e.start_time).toDateString() === todayStr).length;
+  const todaysEvents = typed
+    .filter(e => new Date(e.start_time).toDateString() === todayStr)
+    .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
   const next30 = typed.filter(e => { const t = new Date(e.start_time).getTime(); return t >= Date.now() && t <= Date.now() + 30 * 86400000; }).length;
   const dayTotals = new Map<string, number>();
+  const eventDays = new Set<string>();
   for (const e of typed) {
-    const t = new Date(e.start_time).getTime();
+    const d = new Date(e.start_time);
+    eventDays.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
+    const t = d.getTime();
     if (t >= Date.now() - 30 * 86400000 && t <= Date.now() + 30 * 86400000) {
-      const k = new Date(e.start_time).toDateString();
+      const k = d.toDateString();
       dayTotals.set(k, (dayTotals.get(k) || 0) + 1);
     }
   }
   const busiest = Array.from(dayTotals.entries()).sort((a, b) => b[1] - a[1])[0] || null;
+
+  // Mini month — the month the visible week starts in; a dot marks days
+  // with synced events; clicking a day jumps the grid to that week.
+  const calMonth = new Date(days[0].getFullYear(), days[0].getMonth(), 1);
+  const startDow = (calMonth.getDay() + 6) % 7;
+  const daysInMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 0).getDate();
+  const miniCells: (number | null)[] = [];
+  for (let i = 0; i < startDow; i++) miniCells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) miniCells.push(d);
+  const jumpToDay = (dayNum: number) => {
+    const target = new Date(calMonth.getFullYear(), calMonth.getMonth(), dayNum);
+    target.setHours(0, 0, 0, 0);
+    const targetMonday = new Date(target);
+    targetMonday.setDate(target.getDate() - ((target.getDay() + 6) % 7));
+    const baseMonday = new Date(now);
+    baseMonday.setHours(0, 0, 0, 0);
+    baseMonday.setDate(baseMonday.getDate() - ((baseMonday.getDay() + 6) % 7));
+    setWeekOffset(Math.round((targetMonday.getTime() - baseMonday.getTime()) / (7 * 86400000)));
+  };
+  const inVisibleWeek = (dayNum: number) => {
+    const d = new Date(calMonth.getFullYear(), calMonth.getMonth(), dayNum);
+    return days.some(w => w.toDateString() === d.toDateString());
+  };
 
   const eventsForDay = (day: Date) =>
     typed
@@ -517,64 +552,111 @@ function ClientTeamWeekCalendar({ events }: { events: any[] }) {
             <Button variant="ghost" size="sm" className="h-6 px-1.5 text-xs" onClick={() => setWeekOffset(o => o + 1)} data-testid="btn-cal-next">›</Button>
           </div>
         </div>
-        <div className="flex items-center justify-between px-3 py-1 border-b gap-2 flex-wrap">
-          <p className="text-[10px] text-muted-foreground">The BGP account team's diary for your portfolio — synced from their calendars.</p>
-          <div className="flex items-center gap-1.5">
-            {(["viewing", "meeting", "call"] as const).map(t => (
-              <button
-                key={t}
-                onClick={() => setTypeFilter(f => f === t ? null : t)}
-                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] hover:opacity-80 ${typeFilter === t ? "border-primary bg-primary/5 font-semibold" : typeFilter ? "opacity-40" : "bg-card"}`}
-                data-testid={`cal-type-${t}`}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${dotColor[t]}`} />
-                <span className="tabular-nums font-semibold">{typeCounts[t]}</span>
-                <span className="text-muted-foreground capitalize">{t}{typeCounts[t] === 1 ? "" : "s"}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="flex-1 overflow-auto">
-          <div className="grid min-w-[640px]" style={{ gridTemplateColumns: "44px repeat(5, minmax(0, 1fr))" }}>
-            <div />
-            {days.map(d => (
-              <div key={d.toISOString()} className={`text-center py-1.5 border-b border-l text-xs ${d.toDateString() === todayStr ? "bg-primary/5 font-semibold" : ""}`}>
-                <span className="text-[10px] text-muted-foreground uppercase mr-1">{d.toLocaleDateString("en-GB", { weekday: "short" })}</span>
-                {d.getDate()}
+        <div className="flex-1 overflow-hidden flex">
+          {/* Sidebar — mini month, event types, today's schedule (staff-diary layout) */}
+          <div className="w-44 shrink-0 border-r p-2.5 space-y-3 overflow-y-auto hidden md:block">
+            <div>
+              <div className="text-[10px] font-semibold mb-1">{calMonth.toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</div>
+              <div className="grid grid-cols-7 gap-y-0.5 text-center text-[9px] text-muted-foreground">
+                {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => <div key={i}>{d}</div>)}
+                {miniCells.map((d, i) => {
+                  if (d == null) return <div key={i} />;
+                  const cellDate = new Date(calMonth.getFullYear(), calMonth.getMonth(), d);
+                  const isToday = cellDate.toDateString() === todayStr;
+                  const hasEvents = eventDays.has(`${cellDate.getFullYear()}-${cellDate.getMonth()}-${d}`);
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => jumpToDay(d)}
+                      className={`relative rounded-full w-5 h-5 mx-auto leading-5 hover:bg-muted ${isToday ? "bg-primary text-primary-foreground font-semibold" : inVisibleWeek(d) ? "bg-primary/10" : "text-foreground"}`}
+                      data-testid={`cal-mini-${d}`}
+                    >
+                      {d}
+                      {hasEvents && !isToday && <span className="absolute left-1/2 -translate-x-1/2 bottom-0 w-0.5 h-0.5 rounded-full bg-primary" />}
+                    </button>
+                  );
+                })}
               </div>
-            ))}
-            <div className="relative border-r">
-              {hours.map(h => (
-                <div key={h} className="text-[9px] text-muted-foreground text-right pr-1" style={{ height: ROW_H }}>{String(h).padStart(2, "0")}:00</div>
-              ))}
             </div>
-            {days.map(d => {
-              const dayEvents = eventsForDay(d);
-              return (
-                <div key={d.toISOString()} className={`relative border-l ${d.toDateString() === todayStr ? "bg-primary/5" : ""}`} style={{ height: hours.length * ROW_H }}>
-                  {hours.map(h => <div key={h} className="border-b border-border/40" style={{ height: ROW_H }} />)}
-                  {dayEvents.map((ev: any) => {
-                    const start = new Date(ev.start_time);
-                    const end = ev.end_time ? new Date(ev.end_time) : new Date(start.getTime() + 3600000);
-                    const startH = Math.max(start.getHours() + start.getMinutes() / 60, HOUR_START);
-                    const endH = Math.min(Math.max(end.getHours() + end.getMinutes() / 60, startH + 0.5), HOUR_END);
-                    if (startH >= HOUR_END) return null;
-                    const type = ev._type;
-                    return (
-                      <div
-                        key={ev.id}
-                        className={`absolute left-0.5 right-0.5 rounded border px-1 py-0.5 text-[9px] leading-tight overflow-hidden ${chipColor[type] || chipColor.meeting}`}
-                        style={{ top: (startH - HOUR_START) * ROW_H, height: Math.max((endH - startH) * ROW_H - 2, 16) }}
-                        title={`${ev.title}${ev.location ? ` · ${ev.location}` : ""}`}
-                      >
-                        <span className="font-medium block truncate">{ev.title}</span>
-                        {(ev.property_name || ev.location) && <span className="truncate block opacity-80">{ev.property_name || ev.location}</span>}
-                      </div>
-                    );
-                  })}
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Event types</div>
+              <div className="space-y-0.5">
+                {TYPE_KEYS.map(t => {
+                  const Icon = typeIcon[t];
+                  return (
+                    <button
+                      key={t}
+                      onClick={() => setTypeFilter(f => f === t ? null : t)}
+                      className={`w-full flex items-center gap-1.5 px-1 py-0.5 rounded text-[10px] hover:bg-muted ${typeFilter === t ? "bg-primary/10 font-semibold" : typeFilter ? "opacity-40" : ""}`}
+                      data-testid={`cal-type-${t}`}
+                    >
+                      <Icon className="w-3 h-3 text-muted-foreground" />
+                      <span className="capitalize flex-1 text-left">{t}</span>
+                      <span className={`w-4 h-4 rounded-full text-[9px] leading-4 text-white text-center ${dotColor[t]}`}>{typeCounts[t]}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div>
+              <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Today's schedule <span className="text-primary">{todaysEvents.length}</span></div>
+              {todaysEvents.length === 0 ? (
+                <p className="text-[10px] text-muted-foreground">Nothing scheduled</p>
+              ) : (
+                <div className="space-y-0.5">
+                  {todaysEvents.slice(0, 6).map((ev: any) => (
+                    <div key={ev.id} className="text-[10px] leading-snug">
+                      <span className="font-medium tabular-nums">{new Date(ev.start_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</span>{" "}
+                      <span className="text-muted-foreground">{ev.title}</span>
+                    </div>
+                  ))}
                 </div>
-              );
-            })}
+              )}
+            </div>
+          </div>
+          {/* Week grid */}
+          <div className="flex-1 overflow-auto">
+            <div className="grid min-w-[560px]" style={{ gridTemplateColumns: "44px repeat(5, minmax(0, 1fr))" }}>
+              <div />
+              {days.map(d => (
+                <div key={d.toISOString()} className={`text-center py-1.5 border-b border-l text-xs ${d.toDateString() === todayStr ? "bg-primary/5 font-semibold" : ""}`}>
+                  <span className="text-[10px] text-muted-foreground uppercase mr-1">{d.toLocaleDateString("en-GB", { weekday: "short" })}</span>
+                  {d.getDate()}
+                </div>
+              ))}
+              <div className="relative border-r">
+                {hours.map(h => (
+                  <div key={h} className="text-[9px] text-muted-foreground text-right pr-1" style={{ height: ROW_H }}>{String(h).padStart(2, "0")}:00</div>
+                ))}
+              </div>
+              {days.map(d => {
+                const dayEvents = eventsForDay(d);
+                return (
+                  <div key={d.toISOString()} className={`relative border-l ${d.toDateString() === todayStr ? "bg-primary/5" : ""}`} style={{ height: hours.length * ROW_H }}>
+                    {hours.map(h => <div key={h} className="border-b border-border/40" style={{ height: ROW_H }} />)}
+                    {dayEvents.map((ev: any) => {
+                      const start = new Date(ev.start_time);
+                      const end = ev.end_time ? new Date(ev.end_time) : new Date(start.getTime() + 3600000);
+                      const startH = Math.max(start.getHours() + start.getMinutes() / 60, HOUR_START);
+                      const endH = Math.min(Math.max(end.getHours() + end.getMinutes() / 60, startH + 0.5), HOUR_END);
+                      if (startH >= HOUR_END) return null;
+                      const type = ev._type;
+                      return (
+                        <div
+                          key={ev.id}
+                          className={`absolute left-0.5 right-0.5 rounded border px-1 py-0.5 text-[9px] leading-tight overflow-hidden ${chipColor[type] || chipColor.meeting}`}
+                          style={{ top: (startH - HOUR_START) * ROW_H, height: Math.max((endH - startH) * ROW_H - 2, 16) }}
+                          title={`${ev.title}${ev.location ? ` · ${ev.location}` : ""}`}
+                        >
+                          <span className="font-medium block truncate">{ev.title}</span>
+                          {(ev.property_name || ev.location) && <span className="truncate block opacity-80">{ev.property_name || ev.location}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
         {/* Intelligence strip — the calendar page's bottom read, board-sized. */}
@@ -582,12 +664,77 @@ function ClientTeamWeekCalendar({ events }: { events: any[] }) {
           <span className="inline-flex items-center gap-1 font-semibold uppercase tracking-wider text-muted-foreground">
             <Sparkles className="w-3 h-3" /> Intelligence
           </span>
-          <span><span className="font-semibold uppercase text-muted-foreground mr-1">Today</span>{todayCount} event{todayCount === 1 ? "" : "s"}</span>
+          <span><span className="font-semibold uppercase text-muted-foreground mr-1">Today</span>{todaysEvents.length} event{todaysEvents.length === 1 ? "" : "s"}</span>
           {busiest && (
             <span><span className="font-semibold uppercase text-muted-foreground mr-1">Busiest day</span>{new Date(busiest[0]).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })} — {busiest[1]} event{busiest[1] === 1 ? "" : "s"}</span>
           )}
           <span><span className="font-semibold uppercase text-muted-foreground mr-1">Next 30 days</span>{next30} event{next30 === 1 ? "" : "s"}</span>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// Grouped account contacts for the client portfolio dashboard (Woody,
+// 2026-08-03: "include brands and agents"): the company's own people, one
+// contact per brand with a deal on the portfolio, and the agents working
+// those deals. Backed by /api/crm/companies/:id/contact-summary.
+function PortfolioContactsBoard({ companyId }: { companyId: string }) {
+  const { data, isLoading } = useQuery<{ yours: any[]; brands: any[]; agents: any[] }>({
+    queryKey: ["/api/crm/companies", companyId, "contact-summary"],
+    queryFn: async () => {
+      const r = await fetch(`/api/crm/companies/${companyId}/contact-summary`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return { yours: [], brands: [], agents: [] };
+      return r.json();
+    },
+    staleTime: 5 * 60_000,
+  });
+  const groups = [
+    { key: "yours", title: "Your team", rows: data?.yours || [], tint: "text-teal-700" },
+    { key: "brands", title: "Brands on your deals", rows: data?.brands || [], tint: "text-blue-700" },
+    { key: "agents", title: "Agents", rows: data?.agents || [], tint: "text-amber-700" },
+  ];
+  const total = groups.reduce((n, g) => n + g.rows.length, 0);
+  return (
+    <Card className="h-full flex flex-col">
+      <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
+        <h3 className="font-semibold text-xs flex items-center gap-1.5">
+          <Users className="w-3.5 h-3.5 text-teal-500" />
+          Contacts {total > 0 && <Badge variant="secondary" className="text-[10px]">{total}</Badge>}
+        </h3>
+        <p className="text-[10px] text-muted-foreground -mt-1">Your people, the brands doing deals with you, and the agents working them.</p>
+        {isLoading ? (
+          <div className="space-y-1.5">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
+        ) : total === 0 ? (
+          <p className="text-xs text-muted-foreground">No contacts linked yet.</p>
+        ) : (
+          <div className="flex-1 overflow-y-auto pr-1 space-y-3">
+            {groups.filter(g => g.rows.length > 0).map(g => (
+              <div key={g.key}>
+                <div className={`text-[10px] uppercase tracking-wide font-semibold mb-1 sticky top-0 bg-card ${g.tint}`}>{g.title} · {g.rows.length}</div>
+                <div className="space-y-0.5">
+                  {g.rows.map((contact: any) => (
+                    <Link key={contact.id} href={`/contacts/${contact.id}`}>
+                      <div className="flex items-center gap-2 px-2 py-1 rounded hover:bg-muted/50 transition-colors cursor-pointer min-w-0" data-testid={`link-contact-${contact.id}`}>
+                        {contact.avatar_url ? (
+                          <img src={contact.avatar_url} alt={contact.name} className="w-6 h-6 rounded-full flex-shrink-0 object-cover" />
+                        ) : (
+                          <div className="w-6 h-6 rounded-full flex-shrink-0 bg-teal-100 dark:bg-teal-900 flex items-center justify-center text-[10px] font-semibold text-teal-700 dark:text-teal-300">
+                            {contact.name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium truncate">{contact.name}</p>
+                          <p className="text-[10px] text-muted-foreground truncate">{[contact.role, contact.company_name].filter(Boolean).join(" · ") || contact.email}</p>
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -1053,11 +1200,10 @@ export default function Dashboard() {
     "portfolio-kpis": "Headline metrics across your portfolio",
     "portfolio-team": "The BGP people working across your portfolio and their properties",
     "portfolio-properties": "Every property linked to your account",
-    "portfolio-map": "Your whole portfolio on a map — click a pin to open the property",
     "portfolio-relationship": "Your account with BGP — coverage, contacts, last touch and live deals",
     "portfolio-leasing": "Every unit — tenant, occupancy, rent and expiry",
     "portfolio-contacts": "Your key contacts on the account",
-    "portfolio-deals": "Live deals across your properties",
+    "portfolio-deals": "Your portfolio on the map with active properties and live deals below",
     "portfolio-lease-expiry": "Units with leases expiring over the next five years, by quarter",
     "portfolio-vacancy-pipeline": "Vacant units per property vs the letting deals working to fill them",
   };
@@ -1531,50 +1677,9 @@ export default function Dashboard() {
               );
             })(),
           },
-          // Portfolio map — the same map the landlord pages use, scoped to the
-          // client's own properties, with the canonical property rows attached
-          // beneath it (Woody, 2026-08-03: the map and the properties board
-          // travel together, like the Properties page).
-          (portfolioData.properties || []).some((p: any) => p.lat != null && p.lng != null) ? {
-            id: "portfolio-map",
-            label: "Portfolio Map & Properties",
-            defaultW: 12, defaultH: 16, minW: 6, minH: 8,
-            content: (
-              <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
-                  <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                    <MapPin className="w-3.5 h-3.5 text-teal-500" />
-                    Portfolio Map & Properties
-                  </h3>
-                  <p className="text-[10px] text-muted-foreground -mt-1">
-                    Every property in your portfolio — click a pin or a row to open the property; chips open the boards pre-filtered.
-                  </p>
-                  <div className="flex-none h-[45%] min-h-[180px] rounded-lg overflow-hidden border">
-                    <BrandPortfolioMap
-                      alwaysRender
-                      height="100%"
-                      stores={(portfolioData.properties || [])
-                        .filter((p: any) => p.lat != null && p.lng != null)
-                        .map((p: any) => ({
-                          id: `crm:${p.id}`,
-                          name: p.name,
-                          address: typeof p.address === "string" ? p.address : null,
-                          lat: Number(p.lat),
-                          lng: Number(p.lng),
-                          status: p.status ?? null,
-                          tone: "linked" as const,
-                          href: `/properties/${p.id}`,
-                        })) as any}
-                      onSelect={(s: any) => { if (s?.href) window.location.assign(s.href); }}
-                    />
-                  </div>
-                  <div className="flex-1 overflow-y-auto">
-                    <PropertiesSummary companyId={resolvedCompanyId!} role="landlord" />
-                  </div>
-                </CardContent>
-              </Card>
-            ),
-          } : null,
+          // The standalone Portfolio Map board is folded into Properties &
+          // Deals below (Woody, 2026-08-03: "same as properties and deals
+          // but with map above").
           totalLeasingUnits > 0 ? {
             id: "portfolio-leasing",
             label: "Leasing Schedule",
@@ -1649,55 +1754,41 @@ export default function Dashboard() {
             id: "portfolio-contacts",
             label: "Contacts",
             defaultW: 4, defaultH: 14, minW: 3, minH: 6,
+            content: <PortfolioContactsBoard companyId={resolvedCompanyId!} />,
+          },
+          {
+            id: "portfolio-deals",
+            label: "Properties & Deals",
+            defaultW: 12, defaultH: 18, minW: 6, minH: 8,
             content: (
               <Card className="h-full flex flex-col">
                 <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
                   <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-teal-500" />
-                    Contacts ({portfolioData.contacts?.length || 0})
-                  </h3>
-                  <p className="text-[10px] text-muted-foreground -mt-1">Your company's people on the account — click through for details.</p>
-                  {portfolioData.contacts?.length > 0 ? (
-                    <ScrollArea className="flex-1 overflow-y-auto">
-                      <div className="space-y-0.5 pr-2">
-                        {portfolioData.contacts.map((contact: any) => (
-                          <Link key={contact.id} href={`/contacts/${contact.id}`}>
-                            <div className="flex items-center gap-2 px-2 py-1 rounded hover:bg-teal-50 dark:hover:bg-teal-900/20 transition-colors cursor-pointer" data-testid={`link-contact-${contact.id}`}>
-                              {contact.avatar_url ? (
-                                <img src={contact.avatar_url} alt={contact.name} className="w-6 h-6 rounded-full flex-shrink-0 object-cover" />
-                              ) : (
-                                <div className="w-6 h-6 rounded-full flex-shrink-0 bg-teal-100 dark:bg-teal-900 flex items-center justify-center text-[10px] font-semibold text-teal-700 dark:text-teal-300">
-                                  {contact.name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
-                                </div>
-                              )}
-                              <div>
-                                <p className="text-xs font-medium text-teal-700 dark:text-teal-300">{contact.name}</p>
-                                <p className="text-[10px] text-muted-foreground">{contact.role || contact.email}</p>
-                              </div>
-                            </div>
-                          </Link>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">No contacts linked</p>
-                  )}
-                </CardContent>
-              </Card>
-            ),
-          },
-          (dealsByProperty.size > 0 || unlinkedDeals.length > 0) ? {
-            id: "portfolio-deals",
-            label: "Properties & Deals",
-            defaultW: 6, defaultH: 12, minW: 4, minH: 6,
-            content: (
-              <Card className="h-full flex flex-col">
-                <CardContent className="p-3 space-y-3 flex-1 overflow-hidden flex flex-col">
-                  <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                    <BarChart3 className="w-3.5 h-3.5 text-teal-500" />
+                    <MapPin className="w-3.5 h-3.5 text-teal-500" />
                     Properties & Deals
                   </h3>
-                  <p className="text-[10px] text-muted-foreground -mt-1">Active properties with live lettings and deals — chips open each board pre-filtered.</p>
+                  <p className="text-[10px] text-muted-foreground -mt-1">Your portfolio on the map, with active properties and their live lettings and deals below — pins and chips open everything pre-filtered.</p>
+                  {(portfolioData.properties || []).some((p: any) => p.lat != null && p.lng != null) && (
+                    <div className="flex-none h-[42%] min-h-[180px] rounded-lg overflow-hidden border">
+                      <BrandPortfolioMap
+                        alwaysRender
+                        height="100%"
+                        stores={(portfolioData.properties || [])
+                          .filter((p: any) => p.lat != null && p.lng != null)
+                          .map((p: any) => ({
+                            id: `crm:${p.id}`,
+                            name: p.name,
+                            address: typeof p.address === "string" ? p.address : null,
+                            lat: Number(p.lat),
+                            lng: Number(p.lng),
+                            status: p.status ?? null,
+                            tone: "linked" as const,
+                            href: `/properties/${p.id}`,
+                          })) as any}
+                        onSelect={(s: any) => { if (s?.href) window.location.assign(s.href); }}
+                      />
+                    </div>
+                  )}
                   <ScrollArea className="flex-1">
                     <div className="pr-2">
                     {/* Canonical PropertiesSummary (Woody, 2026-08-03) — the
@@ -1730,7 +1821,7 @@ export default function Dashboard() {
                 </CardContent>
               </Card>
             ),
-          } : null,
+          },
           // === Feature 1: Lease Expiry Waterfall Chart ===
           (() => {
             const WATERFALL_COLORS = [
@@ -2791,9 +2882,9 @@ export default function Dashboard() {
             "available-units", "my-tasks",
             "portfolio-events", "news-summary",
             "portfolio-calendar",
-            "portfolio-deals", "portfolio-vacancy-pipeline",
-            "portfolio-map",
-            "portfolio-files", "portfolio-relationship",
+            "portfolio-deals",
+            "portfolio-vacancy-pipeline", "portfolio-files",
+            "portfolio-relationship",
             "portfolio-leasing", "portfolio-lease-expiry",
             "portfolio-team",
             "portfolio-contacts", "portfolio-company",

@@ -14,6 +14,7 @@
 // profiles); no scope = the viewer's book (client logins are forced to
 // their own portfolio server-side). The AI relationship commentary strips
 // are deliberately NOT part of this — they sit above the feed, unchanged.
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
@@ -63,6 +64,12 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
     staleTime: 60_000,
   });
 
+  // Header filters (Woody, 2026-08-03: "similar to letting tracker can have
+  // some filters or headings above") — section chips jump straight to
+  // Upcoming or Recent without scrolling; kind chips narrow the feed.
+  const [section, setSection] = useState<"all" | "upcoming" | "recent">("all");
+  const [kind, setKind] = useState<string | null>(null);
+
   if (isLoading) {
     return (
       <div className="space-y-1.5" data-testid="activity-summary">
@@ -71,10 +78,14 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
     );
   }
 
-  const upcoming = variant === "recent" ? [] : (data?.upcoming || []);
-  const recent = variant === "upcoming" ? [] : (data?.recent || []);
+  const allUpcoming = variant === "recent" ? [] : (data?.upcoming || []);
+  const allRecent = variant === "upcoming" ? [] : (data?.recent || []);
+  const kindCounts: Record<string, number> = {};
+  for (const a of allRecent) kindCounts[a.kind] = (kindCounts[a.kind] || 0) + 1;
+  const upcoming = (section === "recent" ? [] : allUpcoming);
+  const recent = (section === "upcoming" ? [] : allRecent).filter(a => !kind || a.kind === kind);
 
-  if (upcoming.length === 0 && recent.length === 0) {
+  if (allUpcoming.length === 0 && allRecent.length === 0) {
     return (
       <div className="text-center py-4" data-testid="activity-summary">
         <Activity className="w-6 h-6 mx-auto mb-1 text-muted-foreground/30" />
@@ -85,8 +96,47 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
     );
   }
 
+  const KIND_LABEL: Record<string, string> = { email: "emails", meeting: "meetings", call: "calls", deal: "deal moves" };
   return (
-    <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1" data-testid="activity-summary">
+    <div className="space-y-2" data-testid="activity-summary">
+      {variant === "both" && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <button
+            onClick={() => setSection(s => s === "upcoming" ? "all" : "upcoming")}
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${section === "upcoming" ? "border-primary bg-primary/5 font-semibold" : "bg-card"}`}
+            data-testid="activity-chip-upcoming"
+          >
+            <CalendarDays className="w-3 h-3 text-muted-foreground" />
+            <span className="font-semibold tabular-nums">{allUpcoming.length}</span>
+            <span className="text-muted-foreground">upcoming</span>
+          </button>
+          <button
+            onClick={() => setSection(s => s === "recent" ? "all" : "recent")}
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${section === "recent" ? "border-primary bg-primary/5 font-semibold" : "bg-card"}`}
+            data-testid="activity-chip-recent"
+          >
+            <Activity className="w-3 h-3 text-muted-foreground" />
+            <span className="font-semibold tabular-nums">{allRecent.length}</span>
+            <span className="text-muted-foreground">recent</span>
+          </button>
+          {(["email", "meeting", "call", "deal"] as const).filter(k => kindCounts[k]).map(k => {
+            const Icon = KIND_ICON[k] || Activity;
+            return (
+              <button
+                key={k}
+                onClick={() => setKind(f => f === k ? null : k)}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${kind === k ? "border-primary bg-primary/5 font-semibold" : kind ? "opacity-40" : "bg-card"}`}
+                data-testid={`activity-kind-${k}`}
+              >
+                <Icon className="w-3 h-3 text-muted-foreground" />
+                <span className="font-semibold tabular-nums">{kindCounts[k]}</span>
+                <span className="text-muted-foreground">{KIND_LABEL[k]}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
       {upcoming.length > 0 && (
         <div>
           {variant === "both" && (
@@ -107,18 +157,24 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
                     </div>
                   </div>
                   {ev.event_type && <Badge variant="outline" className="text-[9px] shrink-0">{ev.event_type}</Badge>}
+                  {ev.deal_id && (
+                    <Link href={`/deals/${ev.deal_id}`} onClick={e => e.stopPropagation()}>
+                      <Badge variant="outline" className="text-[9px] shrink-0 cursor-pointer hover:bg-muted">deal →</Badge>
+                    </Link>
+                  )}
                   {ev.property_name && !propertyId && (
                     ev.property_id
-                      ? <Badge variant="outline" className="text-[9px] shrink-0 max-w-[110px] truncate">{ev.property_name}</Badge>
+                      ? <Badge variant="outline" className="text-[9px] shrink-0 max-w-[110px] truncate cursor-pointer hover:bg-muted">{ev.property_name} →</Badge>
                       : <span className="text-[9px] text-muted-foreground shrink-0 max-w-[110px] truncate">{ev.property_name}</span>
                   )}
                 </>
               );
               const cls = "flex items-start gap-2 px-1.5 py-1 rounded hover:bg-muted/40 min-w-0";
+              const tip = `${ev.title}${ev.location ? ` · ${ev.location}` : ""}${ev.property_name ? ` · ${ev.property_name}` : ""}`;
               return ev.property_id && !propertyId ? (
-                <Link key={ev.id} href={`/properties/${ev.property_id}`} className={cls} data-testid={`activity-upcoming-${ev.id}`}>{inner}</Link>
+                <Link key={ev.id} href={`/properties/${ev.property_id}`} className={cls} title={tip} data-testid={`activity-upcoming-${ev.id}`}>{inner}</Link>
               ) : (
-                <div key={ev.id} className={cls} data-testid={`activity-upcoming-${ev.id}`}>{inner}</div>
+                <div key={ev.id} className={cls} title={tip} data-testid={`activity-upcoming-${ev.id}`}>{inner}</div>
               );
             })}
           </div>
@@ -155,6 +211,7 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

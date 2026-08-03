@@ -199,7 +199,38 @@ export function registerActivityRoutes(app: Express) {
     if (!VALID_TYPES.includes(subjectType)) return res.status(400).json({ error: "invalid subject type" });
     try {
       const cache = await readCache(subjectType, subjectId);
-      const inFlight = pendingCurations.has(curationKey(subjectType, subjectId));
+      const key = curationKey(subjectType, subjectId);
+      let inFlight = pendingCurations.has(key);
+
+      // Stale-while-revalidate (Woody, 2026-08-03 — the Landsec board was
+      // serving an "analysed 17 May" read in August). A cache older than
+      // 7 days kicks a background re-curation on read, server-initiated —
+      // client viewers can't POST /curate themselves, but they shouldn't be
+      // stuck with a months-old relationship read either. The pending-job
+      // map dedupes concurrent kicks; failures keep the old cache.
+      const STALE_MS = 7 * 24 * 60 * 60 * 1000;
+      const cacheAge = cache?.generatedAt ? Date.now() - new Date(cache.generatedAt).getTime() : null;
+      if (cache && cacheAge !== null && cacheAge > STALE_MS && !inFlight) {
+        const subject = await buildSubject(subjectType, subjectId);
+        if (subject) {
+          const job = (async () => {
+            try {
+              const curated = await curateActivity(subject, req);
+              if (curated) {
+                await writeCache(subjectType, subjectId, curated);
+                await writeLastInteraction(subjectType, subjectId, curated.latestActivityDate);
+              }
+            } catch (err: any) {
+              console.error(`[activity auto-refresh ${subjectType}/${subjectId}]`, err?.message || err);
+            } finally {
+              pendingCurations.delete(key);
+            }
+          })();
+          pendingCurations.set(key, job);
+          inFlight = true;
+        }
+      }
+
       res.json({
         ...(cache || { fromCache: false, markdown: "", emailHits: [], meetingHits: [], generatedAt: null, latestActivityDate: null }),
         inFlight,
