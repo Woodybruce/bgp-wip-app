@@ -2360,8 +2360,11 @@ export default function Comps() {
     <TooltipProvider delayDuration={200}>
     <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col" data-testid="leasing-comps-page">
       <div className="border-b px-4 py-3 shrink-0">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3 min-w-0">
+        {/* flex-wrap, not a col/row switch: at half-window widths the fixed
+            action strip rode OVER the icon + subtitle. Wrapping drops the
+            buttons onto their own line instead. */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-3 min-w-0">
             <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
               <Scale className="w-5 h-5 text-primary" />
@@ -2383,40 +2386,9 @@ export default function Comps() {
               </p>
             </div>
             </div>
-            <TabsList className="ml-0 sm:ml-4 max-w-full overflow-x-auto self-start">
-              <TabsTrigger value="table" data-testid="tab-comps-table">
-                <Scale className="w-3.5 h-3.5 mr-1.5" />
-                Leasing
-              </TabsTrigger>
-              <TabsTrigger value="investment" data-testid="tab-comps-investment">
-                <TrendingUp className="w-3.5 h-3.5 mr-1.5" />
-                Investment
-              </TabsTrigger>
-              {activeTab === "leads" && (
-              <TabsTrigger value="leads" data-testid="tab-comps-leads">
-                <Inbox className="w-3.5 h-3.5 mr-1.5" />
-                Leads
-                {leadComps.length > 0 && (
-                  <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
-                    {leadComps.length}
-                  </span>
-                )}
-              </TabsTrigger>
-              )}
-              {!isMobile && !isClientComps && (<>
-              <TabsTrigger value="lease-events" data-testid="tab-comps-lease-events">
-                <Bell className="w-3.5 h-3.5 mr-1.5" />
-                Lease Events
-              </TabsTrigger>
-              <TabsTrigger value="pdf-template" data-testid="tab-comps-pdf-template">
-                <Presentation className="w-3.5 h-3.5 mr-1.5" />
-                PDF Template
-              </TabsTrigger>
-              </>)}
-            </TabsList>
           </div>
           {activeTab === "table" && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {!isMobile && (<>
             {!isClientComps && (
             <Button
@@ -2506,6 +2478,40 @@ export default function Comps() {
           </div>
           )}
         </div>
+
+        {/* Mode tabs live on their own row — inlined next to the title they
+            overlapped the heading/subtitle at mid widths. */}
+        <TabsList className="mb-3 max-w-full overflow-x-auto">
+          <TabsTrigger value="table" data-testid="tab-comps-table">
+            <Scale className="w-3.5 h-3.5 mr-1.5" />
+            Leasing
+          </TabsTrigger>
+          <TabsTrigger value="investment" data-testid="tab-comps-investment">
+            <TrendingUp className="w-3.5 h-3.5 mr-1.5" />
+            Investment
+          </TabsTrigger>
+          {activeTab === "leads" && (
+          <TabsTrigger value="leads" data-testid="tab-comps-leads">
+            <Inbox className="w-3.5 h-3.5 mr-1.5" />
+            Leads
+            {leadComps.length > 0 && (
+              <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                {leadComps.length}
+              </span>
+            )}
+          </TabsTrigger>
+          )}
+          {!isMobile && !isClientComps && (<>
+          <TabsTrigger value="lease-events" data-testid="tab-comps-lease-events">
+            <Bell className="w-3.5 h-3.5 mr-1.5" />
+            Lease Events
+          </TabsTrigger>
+          <TabsTrigger value="pdf-template" data-testid="tab-comps-pdf-template">
+            <Presentation className="w-3.5 h-3.5 mr-1.5" />
+            PDF Template
+          </TabsTrigger>
+          </>)}
+        </TabsList>
 
         {activeTab === "table" && (
         <>
