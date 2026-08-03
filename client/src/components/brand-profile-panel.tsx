@@ -3828,6 +3828,9 @@ function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId
   const { data: kcViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const kcIsClient = !kcViewer || kcViewer.role === "Client" || !!kcViewer.companyScopeId;
   const [showAll, setShowAll] = useState(false);
+  const [addedEmails, setAddedEmails] = useState<Set<string>>(new Set());
+  const [addingEmail, setAddingEmail] = useState<string | null>(null);
+  const companyName = data.company?.name || "";
 
   // Property-relevant roles only by default. Most of what RocketReach imports
   // is C-suite + store-dev — but historical Apollo data has store managers,
@@ -3840,73 +3843,169 @@ function SidebarKeyContacts({ data, companyId }: { data: BrandProfile; companyId
       || /(founder|ceo|coo|cfo|cmo|managing director|chief executive|chief operating|chief financial|chief marketing|md\b)/.test(r);
   };
 
-  const allContacts = data.contacts || [];
-  const propertyContacts = allContacts.filter((c: any) => isPropertyTier(c.role));
-  const visible = showAll ? allContacts : propertyContacts;
-
-  const refresh = useMutation({
-    mutationFn: async () => {
-      const r = await apiRequest("POST", `/api/brand/${companyId}/rocketreach/discover`, {});
-      const out = await r.json();
-      if (!r.ok) throw new Error(out?.error || "Contact discovery failed");
-      const people = out.people || [];
-      if (people.length > 0) {
-        await apiRequest("POST", `/api/brand/${companyId}/rocketreach/import`, { people });
-      }
-      return { found: people.length };
+  // Discovery cascade (BGP email archaeology + RocketReach premium lookups +
+  // Apollo + AI judge) runs AUTOMATICALLY on open for staff — no button
+  // press, same as the rest of the brand AI (Woody, 2026-08-03).
+  const { data: cascade, isFetching: scanning, refetch: rescan } = useQuery<any>({
+    queryKey: ["/api/brand", companyId, "contacts-cascade"],
+    queryFn: async () => {
+      const res = await fetch(`/api/brand/${companyId}/contacts-cascade`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("scan failed");
+      return res.json();
     },
-    onSuccess: (r) => {
-      toast({ title: r.found ? `${r.found} new contacts found` : "No new contacts found" });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-    },
-    onError: (e: any) => toast({ title: "Contact discovery error", description: e.message, variant: "destructive" }),
+    enabled: !kcIsClient,
+    staleTime: 10 * 60 * 1000,
+    retry: 1,
   });
+
+  // ONE deduped list: CRM contacts first, then discovered candidates that
+  // don't match a CRM row (matched by email, falling back to name).
+  const allContacts = data.contacts || [];
+  const normEmail = (e: any) => String(e || "").toLowerCase().trim();
+  const normName = (n: any) => String(n || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const crmEmailSet = new Set(allContacts.map((c: any) => normEmail(c.email)).filter(Boolean));
+  const crmNameSet = new Set(allContacts.map((c: any) => normName(c.name)).filter(Boolean));
+  const seenDiscovered = new Set<string>();
+  const discovered = (cascade?.contacts || [])
+    .filter((k: any) => k.ai?.verdict !== "drop" && !k.bgp?.inCrm)
+    .filter((k: any) => {
+      const e = normEmail(k.email);
+      const n = normName(k.name);
+      if (e && crmEmailSet.has(e)) return false;
+      if (!e && n && crmNameSet.has(n)) return false;
+      const dupKey = e || n;
+      if (!dupKey || seenDiscovered.has(dupKey)) return false;
+      seenDiscovered.add(dupKey);
+      return true;
+    });
+
+  const crmVisible = showAll ? allContacts : allContacts.filter((c: any) => isPropertyTier(c.role));
+  const discoveredVisible = showAll ? discovered : discovered.filter((k: any) => isPropertyTier(k.title));
+  const hiddenCount = (allContacts.length - crmVisible.length) + (discovered.length - discoveredVisible.length);
+  const summary = cascade?.summary;
+
+  const addToCrm = async (k: any) => {
+    const rowKey = normEmail(k.email) || normName(k.name);
+    setAddingEmail(rowKey);
+    try {
+      await apiRequest("POST", "/api/crm/contacts", {
+        name: k.name || (k.email ? k.email.split("@")[0].replace(/\./g, " ").replace(/\b\w/g, (ch: string) => ch.toUpperCase()) : "Unknown"),
+        email: k.email || undefined,
+        phone: k.phone || k.mobile || undefined,
+        role: k.title || undefined,
+        companyId,
+        companyName,
+      });
+      setAddedEmails((prev) => new Set(prev).add(rowKey));
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      toast({ title: `${k.name || k.email} added to CRM`, description: `Linked to ${companyName}` });
+    } catch (e: any) {
+      toast({ title: "Couldn't add contact", description: e?.message, variant: "destructive" });
+    } finally {
+      setAddingEmail(null);
+    }
+  };
+
+  // Provenance label for the right-hand side of each discovered row:
+  // "known" = BGP has real email history with them; otherwise the provider
+  // that surfaced them.
+  const provenance = (k: any): { label: string; cls: string } => {
+    if (k.bgp?.threadCount) return { label: `known · ${k.bgp.threadCount} threads`, cls: "text-emerald-700 border-emerald-200" };
+    if (k.sources?.includes("rocketreach")) return { label: "RocketReach", cls: "text-blue-700 border-blue-200" };
+    if (k.sources?.includes("apollo")) return { label: "Apollo", cls: "text-violet-700 border-violet-200" };
+    return { label: k.sources?.[0] || "discovered", cls: "" };
+  };
 
   return (
     <Card>
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
           <Users className="w-3.5 h-3.5" /> Key contacts
-          <Badge variant="outline" className="text-[10px]">{visible.length}{!showAll && allContacts.length > propertyContacts.length ? ` / ${allContacts.length}` : ""}</Badge>
+          <Badge variant="outline" className="text-[10px]">{crmVisible.length + discoveredVisible.length}{hiddenCount > 0 ? ` / ${allContacts.length + discovered.length}` : ""}</Badge>
         </CardTitle>
         {!kcIsClient && (
         <button
-          onClick={() => refresh.mutate()}
-          disabled={refresh.isPending}
-          className="text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
-          title="Discover key contacts"
+          onClick={() => rescan()}
+          disabled={scanning}
+          className="text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1"
+          title="Re-run the contact discovery engine (BGP email + RocketReach + Apollo + AI check)"
         >
-          {refresh.isPending ? "Searching…" : "Refresh"}
+          {scanning ? <><Loader2 className="w-3 h-3 animate-spin" /> Scanning…</> : <><RefreshCw className="w-3 h-3" /> Rescan</>}
         </button>
         )}
       </CardHeader>
       <CardContent className="p-3 pt-0">
-        {visible.length === 0 ? (
+        {crmVisible.length === 0 && discoveredVisible.length === 0 ? (
           <p className="text-xs text-muted-foreground italic">
-            {allContacts.length === 0
-              ? "No contacts logged yet. Click Refresh to discover."
-              : "No property-tier contacts. Click Show all below."}
+            {scanning
+              ? "Mining BGP email, searching RocketReach + Apollo, AI-checking every candidate — 20-40s on first open…"
+              : allContacts.length + discovered.length === 0
+                ? "No contacts found yet. Click Rescan to run discovery again."
+                : "No property-tier contacts. Click Show all below."}
           </p>
         ) : (
-          <div className="max-h-[280px] overflow-y-auto pr-1 space-y-1.5">
-            {visible.map((dm: any) => (
+          <div className="max-h-[340px] overflow-y-auto pr-1 space-y-1.5">
+            {crmVisible.map((dm: any) => (
               <KeyContactRow key={dm.id} contact={dm} companyId={companyId} />
             ))}
+            {discoveredVisible.map((k: any) => {
+              const rowKey = normEmail(k.email) || normName(k.name);
+              const added = addedEmails.has(rowKey);
+              const conf = k.ai?.confidence;
+              const confCls = conf == null ? "" : conf >= 70 ? "text-emerald-700 border-emerald-200" : conf >= 40 ? "text-amber-700 border-amber-200" : "text-red-600 border-red-200";
+              const src = provenance(k);
+              return (
+                <div key={rowKey} className="flex items-start gap-2 text-xs rounded p-1 -mx-1 hover:bg-muted/50 transition-colors">
+                  <span className="w-6 h-6 rounded-full bg-muted/70 border border-dashed flex items-center justify-center text-[9px] font-medium shrink-0">
+                    {(k.name || k.email || "?").split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium truncate">{k.name || k.email}</p>
+                    <p className="text-[10px] text-muted-foreground truncate" title={k.ai?.reason || ""}>
+                      {[k.title, k.email, k.phone || k.mobile].filter(Boolean).join(" · ") || "—"}
+                    </p>
+                  </div>
+                  {conf != null && (
+                    <Badge variant="outline" className={`text-[9px] shrink-0 tabular-nums ${confCls}`} title={k.ai?.reason || ""}>{conf}</Badge>
+                  )}
+                  <Badge variant="outline" className={`text-[9px] shrink-0 ${src.cls}`}>{src.label}</Badge>
+                  {added ? (
+                    <Badge variant="outline" className="text-[9px] shrink-0 text-emerald-700 border-emerald-200">in CRM</Badge>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-6 px-2 text-[10px] shrink-0"
+                      onClick={() => addToCrm(k)}
+                      disabled={addingEmail === rowKey}
+                      data-testid={`button-add-known-${rowKey}`}
+                    >
+                      {addingEmail === rowKey ? <Loader2 className="w-3 h-3 animate-spin" /> : "+ Add"}
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
-        {allContacts.length > propertyContacts.length && (
+        {summary && !kcIsClient && (
+          <p className="text-[10px] text-muted-foreground mt-1.5">
+            {allContacts.length} in CRM · {discovered.length} discovered
+            {summary.revealed ? ` (${summary.revealed} emails revealed)` : ""}
+            {summary.aiJudged ? " · AI-checked" : ""}
+            {scanning ? " · rescanning…" : ""}
+          </p>
+        )}
+        {hiddenCount > 0 && (
           <button
             onClick={() => setShowAll(v => !v)}
-            className="mt-2 text-[10px] text-primary hover:underline"
+            className="mt-1.5 text-[10px] text-primary hover:underline"
           >
-            {showAll ? `Show property-tier only (${propertyContacts.length})` : `Show all ${allContacts.length} contacts`}
+            {showAll ? "Show property-tier only" : `Show all ${allContacts.length + discovered.length} contacts`}
           </button>
         )}
         <PendingSendersList data={data} companyId={companyId} />
-        {/* Discovered-contacts engine (BGP email archaeology + RocketReach +
-            Apollo + AI judge) folded into this board — one contacts surface
-            instead of two cards (Woody, 2026-08-03). Staff-only inside. */}
-        <KnownContactsSection companyId={companyId} companyName={data.company?.name || ""} />
       </CardContent>
     </Card>
   );
@@ -4328,143 +4427,6 @@ function PortfolioActivityBlock({ companyId }: { companyId: string }) {
 }
 
 // "Known contacts" — surfaces the BGP email archaeology on the profile:
-// everyone BGP has actually emailed at this company's domain in the last two
-// years, with signature-mined roles/phones, and one-click add-to-CRM for the
-// ones we never logged. The data existed behind an admin diagnostic endpoint;
-// this makes it a working surface (Woody, 2026-08-02: "contacts are critical").
-// Renders as a section inside the Key contacts board (one combined board;
-// Woody, 2026-08-03) rather than its own card.
-function KnownContactsSection({ companyId, companyName }: { companyId: string; companyName: string }) {
-  const [open, setOpen] = useState(false);
-  // The engine mines BGP's own email + burns provider credits — staff only.
-  const { data: kcUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const kcIsClient = !kcUser || kcUser.role === "Client" || !!kcUser.companyScopeId;
-  const [addedEmails, setAddedEmails] = useState<Set<string>>(new Set());
-  const [addingEmail, setAddingEmail] = useState<string | null>(null);
-  const { toast } = useToast();
-
-  const { data, isFetching, refetch } = useQuery<any>({
-    // The full contact engine: BGP email archaeology + RocketReach targeted
-    // search with premium lookups (emails revealed server-side) + Apollo
-    // fallback, every candidate judged by Fable with a confidence + reason.
-    queryKey: ["/api/brand", companyId, "contacts-cascade"],
-    queryFn: async () => {
-      const res = await fetch(`/api/brand/${companyId}/contacts-cascade`, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("scan failed");
-      return res.json();
-    },
-    enabled: open,
-    staleTime: 5 * 60 * 1000,
-  });
-  const contacts: any[] = data?.contacts || [];
-  const summary = data?.summary;
-
-  const addToCrm = async (k: any) => {
-    const rowKey = k.email || k.name;
-    setAddingEmail(rowKey);
-    try {
-      await apiRequest("POST", "/api/crm/contacts", {
-        name: k.name || (k.email ? k.email.split("@")[0].replace(/\./g, " ").replace(/\b\w/g, (ch: string) => ch.toUpperCase()) : "Unknown"),
-        email: k.email || undefined,
-        phone: k.phone || k.mobile || undefined,
-        role: k.title || undefined,
-        companyId,
-        companyName,
-      });
-      setAddedEmails((prev) => new Set(prev).add(rowKey));
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
-      toast({ title: `${k.name || k.email} added to CRM`, description: `Linked to ${companyName}` });
-    } catch (e: any) {
-      toast({ title: "Couldn't add contact", description: e?.message, variant: "destructive" });
-    } finally {
-      setAddingEmail(null);
-    }
-  };
-
-  if (kcIsClient) return null;
-  return (
-    <div className="mt-3 pt-2 border-t">
-      <div className="flex flex-row items-center justify-between gap-2 mb-1">
-        <span className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <Mail className="w-3.5 h-3.5" /> Known contacts
-          {summary && <span className="normal-case tracking-normal text-[10px]">({summary.total} found)</span>}
-        </span>
-        <button
-          type="button"
-          className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
-          onClick={() => { if (!open) setOpen(true); else refetch(); }}
-          data-testid="button-scan-known-contacts"
-        >
-          {isFetching ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-          {open ? "Rescan" : "Find contacts"}
-        </button>
-      </div>
-      {open && (
-        <div>
-          {isFetching && !contacts.length ? (
-            <p className="text-xs text-muted-foreground py-3 text-center">Mining BGP email, searching RocketReach, AI-checking every candidate — 20-40s…</p>
-          ) : contacts.length === 0 ? (
-            <p className="text-xs text-muted-foreground py-3 text-center">No emailed contacts found at this company's domain.</p>
-          ) : (
-            <>
-              {summary && (
-                <p className="text-[10px] text-muted-foreground mb-2">
-                  {summary.total} candidates · {summary.bgpTouched} from BGP email · {summary.rocketreachOnly} via RocketReach
-                  {summary.revealed ? ` (${summary.revealed} emails revealed)` : ""}
-                  {summary.aiJudged ? ` · AI-checked` : ""}
-                </p>
-              )}
-              <div className="max-h-[320px] overflow-y-auto space-y-1 pr-1" data-testid="known-contacts-list">
-                {contacts.filter((k: any) => k.ai?.verdict !== "drop").map((k: any) => {
-                  const rowKey = k.email || k.name;
-                  const added = k.bgp?.inCrm || addedEmails.has(rowKey);
-                  const conf = k.ai?.confidence;
-                  const confCls = conf == null ? "" : conf >= 70 ? "text-emerald-700 border-emerald-200" : conf >= 40 ? "text-amber-700 border-amber-200" : "text-red-600 border-red-200";
-                  return (
-                    <div key={rowKey} className="flex items-center gap-2 text-xs py-1 border-b border-border/40 last:border-0">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium truncate">
-                          {k.name || k.email}
-                          {k.bgp && <span className="text-[9px] text-muted-foreground font-normal"> · {k.bgp.threadCount} threads</span>}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground truncate" title={k.ai?.reason || ""}>
-                          {[k.title, k.email, k.phone || k.mobile].filter(Boolean).join(" · ") || "—"}
-                        </p>
-                      </div>
-                      {conf != null && (
-                        <Badge variant="outline" className={`text-[9px] shrink-0 tabular-nums ${confCls}`} title={k.ai?.reason || ""}>
-                          {conf}
-                        </Badge>
-                      )}
-                      <span className="text-[8px] text-muted-foreground shrink-0 uppercase">
-                        {k.sources?.includes("bgp_email") ? "email" : k.sources?.includes("rocketreach") ? "RR" : k.sources?.[0] || ""}
-                      </span>
-                      {added ? (
-                        <Badge variant="outline" className="text-[9px] shrink-0 text-emerald-700 border-emerald-200">in CRM</Badge>
-                      ) : (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-6 px-2 text-[10px] shrink-0"
-                          onClick={() => addToCrm(k)}
-                          disabled={addingEmail === rowKey}
-                          data-testid={`button-add-known-${rowKey}`}
-                        >
-                          {addingEmail === rowKey ? <Loader2 className="w-3 h-3 animate-spin" /> : "+ Add"}
-                        </Button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // Embedded, scrollable chat about this company — lives on the profile so a
 // conversation doesn't mean losing the page. Reuses the group-chat machinery:
 // one thread per company (linked_id), ChatBGP as a member, so plain message
