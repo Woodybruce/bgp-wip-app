@@ -285,7 +285,10 @@ async function syncEmailsForUser(
       }
     }
   } catch (e: any) {
-    console.log(`Sync emails for ${userEmail}: ${e.message}`);
+    // Surface per-mailbox failures to the caller — swallowing them here made
+    // every diagnostic read "0 synced, 0 errors" even when Graph was
+    // refusing a mailbox (Woody, 2026-08-03).
+    throw new Error(`emails: ${e.message}`);
   }
 
   return count;
@@ -385,7 +388,7 @@ async function syncCalendarForUser(
       }
     }
   } catch (e: any) {
-    console.log(`Sync calendar for ${userEmail}: ${e.message}`);
+    throw new Error(`calendar: ${e.message}`);
   }
 
   return count;
