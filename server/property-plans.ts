@@ -38,6 +38,10 @@ interface PolygonData {
 
 router.get("/api/properties/:propertyId/plans", requireAuth, async (req: Request, res: Response) => {
   try {
+    const { clientBlockedForProperty } = await import("./company-scope");
+    if (await clientBlockedForProperty(req, String(req.params.propertyId))) {
+      return res.status(403).json({ error: "Read-only access for client accounts" });
+    }
     const { rows } = await pool.query(
       `SELECT id, property_id, floor, display_order, storage_key, width, height, source, notes, created_at, updated_at
          FROM property_plans
@@ -53,6 +57,12 @@ router.get("/api/properties/:propertyId/plans", requireAuth, async (req: Request
 
 router.post("/api/properties/:propertyId/plans", requireAuth, upload.single("file"), async (req: Request, res: Response) => {
   try {
+    // Clients may upload plans on their OWN properties (board parity,
+    // Woody 2026-08-03) — the panel shows Upload to them now.
+    const { clientBlockedForProperty } = await import("./company-scope");
+    if (await clientBlockedForProperty(req, String(req.params.propertyId))) {
+      return res.status(403).json({ error: "Read-only access for client accounts" });
+    }
     const file = (req as any).file;
     if (!file) return res.status(400).json({ error: "file required" });
     const floor = String(req.body?.floor || "Ground").trim();
@@ -114,11 +124,15 @@ router.delete("/api/plans/:planId", requireAuth, async (req: Request, res: Respo
 // Stream the plan image. Public-within-app: any authed user can view.
 router.get("/api/plans/:planId/image", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { rows } = await pool.query<{ storage_key: string }>(
-      `SELECT storage_key FROM property_plans WHERE id = $1`,
+    const { rows } = await pool.query<{ storage_key: string; property_id: string }>(
+      `SELECT storage_key, property_id FROM property_plans WHERE id = $1`,
       [req.params.planId]
     );
     if (rows.length === 0) return res.status(404).json({ error: "plan not found" });
+    const { clientBlockedForProperty } = await import("./company-scope");
+    if (await clientBlockedForProperty(req, rows[0].property_id)) {
+      return res.status(403).json({ error: "Read-only access for client accounts" });
+    }
     const file = await getFile(rows[0].storage_key);
     if (!file) return res.status(404).json({ error: "image missing" });
     res.setHeader("Content-Type", file.contentType || "image/png");
@@ -135,6 +149,11 @@ router.get("/api/plans/:planId/image", requireAuth, async (req: Request, res: Re
 // the client can render colours, tooltips, and drawers in one round trip.
 router.get("/api/plans/:planId/units", requireAuth, async (req: Request, res: Response) => {
   try {
+    const own = await pool.query(`SELECT property_id FROM property_plans WHERE id = $1`, [req.params.planId]);
+    const { clientBlockedForProperty } = await import("./company-scope");
+    if (own.rows[0] && await clientBlockedForProperty(req, own.rows[0].property_id)) {
+      return res.status(403).json({ error: "Read-only access for client accounts" });
+    }
     const { rows } = await pool.query(
       `SELECT
          ppu.id, ppu.plan_id, ppu.unit_id, ppu.label, ppu.polygon, ppu.status_override,
@@ -489,6 +508,10 @@ async function ensurePropertyUnitsFromSchedule(propertyId: string): Promise<numb
 // property_units table isn't fully seeded.
 router.get("/api/properties/:propertyId/plan-pickable-units", requireAuth, async (req: Request, res: Response) => {
   try {
+    const { clientBlockedForProperty } = await import("./company-scope");
+    if (await clientBlockedForProperty(req, String(req.params.propertyId))) {
+      return res.status(403).json({ error: "Read-only access for client accounts" });
+    }
     // Auto-promote every tenancy-schedule unit into property_units
     // before listing. Bluewater + most other shopping centres have
     // their schedule loaded but property_units empty/sparse — without

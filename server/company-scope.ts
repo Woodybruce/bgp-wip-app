@@ -221,6 +221,16 @@ export async function assertInScope(req: Request, entityType: string, checkFn: (
   return checkFn(scopeCompanyId);
 }
 
+// True when the request is a client login whose scope does NOT cover the
+// property — the standard guard for property-keyed routes that were opened
+// to clients in the board-parity work (plans / brochures / tasks).
+export async function clientBlockedForProperty(req: Request, propertyId: string): Promise<boolean> {
+  if (!(await isClientRequestUser(req))) return false;
+  const scope = await resolveCompanyScope(req);
+  if (!scope || scope === NO_ACCESS_SCOPE) return true;
+  return !(await isPropertyInScope(scope, propertyId));
+}
+
 export async function isPropertyInScope(scopeCompanyId: string, propertyId: string): Promise<boolean> {
   const result = await pool.query(
     `SELECT 1 FROM crm_company_properties WHERE company_id = $1 AND property_id = $2

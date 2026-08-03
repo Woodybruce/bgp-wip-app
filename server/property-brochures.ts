@@ -155,6 +155,10 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // when asked.
   app.get("/api/properties/:id/brochures", requireAuth, async (req: Request, res: Response) => {
     try {
+      const { clientBlockedForProperty } = await import("./company-scope");
+      if (await clientBlockedForProperty(req, String(req.params.id))) {
+        return res.status(403).json({ error: "Read-only access for client accounts" });
+      }
       const { rows } = await pool.query<BrochureRow>(
         `SELECT * FROM property_brochures
           WHERE property_id = $1
@@ -197,6 +201,15 @@ export function registerPropertyBrochureRoutes(app: Express) {
     upload.single("file"),
     async (req: Request, res: Response) => {
       try {
+        // Clients may upload brochures on their OWN properties (board
+        // parity, Woody 2026-08-03); anything out of scope stays blocked.
+        const { isClientRequestUser, resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+        if (await isClientRequestUser(req as any)) {
+          const scope = await resolveCompanyScope(req as any);
+          if (!scope || !(await isPropertyInScope(scope, String(req.params.id)))) {
+            return res.status(403).json({ error: "Read-only access for client accounts" });
+          }
+        }
         await ensureIngestColumns();
         const file = (req as any).file as Express.Multer.File | undefined;
         if (!file) return res.status(400).json({ error: "No file uploaded" });
@@ -289,6 +302,10 @@ export function registerPropertyBrochureRoutes(app: Express) {
   // and the download button (download=1 adds Content-Disposition).
   app.get("/api/properties/:id/brochures/:bid/file", requireAuth, async (req: Request, res: Response) => {
     try {
+      const { clientBlockedForProperty } = await import("./company-scope");
+      if (await clientBlockedForProperty(req, String(req.params.id))) {
+        return res.status(403).json({ error: "Read-only access for client accounts" });
+      }
       const { rows } = await pool.query<BrochureRow>(
         `SELECT * FROM property_brochures WHERE id = $1 AND property_id = $2`,
         [req.params.bid, req.params.id],

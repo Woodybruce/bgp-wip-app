@@ -3376,6 +3376,10 @@ app.use("/api/branding/assets", express.static(
     "/api/portfolio/", "/api/company-portfolio", "/api/leasing-schedule/",
     "/api/tenancy-schedule/", "/api/properties/", "/api/property/",
     "/api/property-intelligence", "/api/land-registry", "/api/business-rates",
+    // Plan images + unit polygons for the Plans board — property-page board
+    // parity for clients (Woody, 2026-08-03). Plan ids are UUIDs; writes
+    // (upload, polygon editing, auto-detect) stay staff-only.
+    "/api/plans/",
     "/api/voa", "/api/map-layers", "/api/os-data", "/api/edozo",
     "/api/image-studio", "/api/ai-briefing",
     "/api/notifications", "/api/daily-digest", "/api/activity-feed",
@@ -3511,7 +3515,10 @@ app.use("/api/branding/assets", express.static(
     // tenancy-schedule /links is no longer blocked: the client unified
     // schedule (editable since the Tenancy→Tracker parity work) needs the
     // deal/letting link map, and the handler now scope-checks the property.
-    /^\/api\/properties\/[^/]+\/(360|brochures|tasks|orphan-deals|instructions|project-files|duplicate-units|plan-pickable-units|plans|unresolved-tenants|linkage-audit)\b/,
+    // brochures / tasks / plans / plan-pickable-units came OFF this list in
+    // the board-parity work (Woody, 2026-08-03) — their handlers now
+    // scope-check the property via clientBlockedForProperty.
+    /^\/api\/properties\/[^/]+\/(360|orphan-deals|instructions|project-files|duplicate-units|unresolved-tenants|linkage-audit)\b/,
     /^\/api\/image-studio\/orphans/,
   ];
   app.use("/api", async (req: any, res, next) => {
@@ -3567,6 +3574,10 @@ app.use("/api/branding/assets", express.static(
         // property-asset-brief.ts confines clients to in-scope properties
         // and the prompt never carries fee figures.
         if (req.method === "POST" && /^\/api\/properties\/[^/]+\/bgp-commentary\/regenerate$/.test(p)) return next();
+        // Brochure + plan uploads on the client's own property — handlers
+        // scope-check via clientBlockedForProperty.
+        if (req.method === "POST" && /^\/api\/properties\/[^/]+\/brochures\/upload$/.test(p)) return next();
+        if (req.method === "POST" && /^\/api\/properties\/[^/]+\/plans$/.test(p)) return next();
         // Same prefix-matching rule as the read allowlist: entries ending in
         // "/" match by prefix, others match exactly or as a path segment.
         if (CLIENT_ALLOWED_WRITES.some(w =>

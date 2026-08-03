@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import {
   Target, Handshake, Activity, AlertTriangle, BarChart3, Building2,
   Pencil, Plus, Trash2, ChevronRight, Mail, Phone, Users,
@@ -89,7 +89,7 @@ function useAssetBrief(propertyId: string) {
   return useQuery<AssetBrief>({
     queryKey: ["/api/properties", propertyId, "asset-brief"],
     queryFn: async () => {
-      const res = await fetch(`/api/properties/${propertyId}/asset-brief`, { credentials: "include" });
+      const res = await fetch(`/api/properties/${propertyId}/asset-brief`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },

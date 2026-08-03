@@ -905,12 +905,19 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
         ].map(s => (
           <div
             key={s.label}
-            className={`bg-gray-50 dark:bg-gray-800 rounded-lg p-2 text-center ${s.filter ? "cursor-pointer hover:ring-1 ring-blue-400" : ""} ${statusFilter === s.filter ? "ring-2 ring-blue-500" : ""}`}
+            // The active-ring test was `statusFilter === s.filter`, which is
+            // true for every NON-filterable tile whenever no filter is set
+            // (null === null) — so Total NIA / Passing Rent / Service Charge
+            // all rendered with a permanent bright-blue ring. Filterable
+            // tiles only.
+            className={`bg-gray-50 dark:bg-gray-800 rounded-lg p-2 text-center min-w-0 ${s.filter ? "cursor-pointer hover:ring-1 ring-blue-400" : ""} ${s.filter && statusFilter === s.filter ? "ring-2 ring-blue-500" : ""}`}
             onClick={() => s.filter && setStatusFilter(statusFilter === s.filter ? null : s.filter)}
             data-testid={`tenancy-stat-${s.label.toLowerCase().replace(/\s/g, "-")}`}
           >
             <div className="text-[10px] text-gray-500 uppercase">{s.label}</div>
-            <div className="text-sm font-semibold">{s.value}</div>
+            {/* break-words so long single tokens (£11,370,076) wrap inside
+                the tile instead of clipping at its edge. */}
+            <div className="text-sm font-semibold tabular-nums leading-tight break-words">{s.value}</div>
           </div>
         ))}
       </div>
@@ -958,7 +965,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                 leaving the table. Numeric / currency columns skip the
                 filter (range-filtering them adds noise for little win). */}
             <tr className="bg-gray-100 dark:bg-gray-800 border-b">
-              {visibleColumns.map((c) => {
+              {visibleColumns.map((c, ci) => {
                 const filterable = !c.type || c.type === "text";
                 let distinct: string[] = [];
                 if (filterable) {
@@ -971,8 +978,12 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                   }
                   distinct = [...seen].sort((a, b) => a.localeCompare(b));
                 }
+                // First column (Unit) pins left so you always know which
+                // row you're on while scrolling the wide sheet — mirrors
+                // the sticky delete column on the right.
+                const stickyCls = ci === 0 ? " sticky left-0 bg-gray-100 dark:bg-gray-800 border-r z-10" : "";
                 return (
-                  <th key={c.field} className={`p-2 font-medium whitespace-nowrap text-${c.align || "left"}`} style={{ minWidth: c.width }}>
+                  <th key={c.field} className={`p-2 font-medium whitespace-nowrap text-${c.align || "left"}${stickyCls}`} style={{ minWidth: c.width }}>
                     <span className="inline-flex items-center">
                       {c.label}
                       {filterable && (
@@ -1159,11 +1170,6 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
                 </Badge>
               </a>
             )}
-            <a href={`/deals/letting?propertyId=${unit.property_id}`} className="inline-flex items-center" title="Open in Letting Tracker">
-              <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-green-50">
-                <ExternalLink className="w-2.5 h-2.5" />LT
-              </Badge>
-            </a>
           </div>
         </td>
         <td className="p-1 text-center text-muted-foreground">—</td>
@@ -1173,7 +1179,10 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
 
   return (
     <tr className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800/50 ${isVacant ? "bg-amber-50/30 dark:bg-amber-900/10" : ""}`} data-testid={`tenancy-row-${unit.id}`}>
-      {columns.map((c) => {
+      {columns.map((c, ci) => {
+        // First column (Unit) stays pinned left while the sheet scrolls —
+        // solid background so the moving columns slide underneath it.
+        const stickyCls = ci === 0 ? " sticky left-0 bg-background border-r z-[5]" : "";
         const raw = (unit as any)[c.field];
         // Date fields arrive as ISO strings from the API (or as timestamptz
         // strings with the T00:00 suffix). Format for display, hand the
@@ -1325,7 +1334,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
         }
 
         return (
-          <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
+          <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}`}>
             <InlineEdit
               value={displayVal}
               field={c.field as string}
@@ -1337,17 +1346,10 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
         );
       })}
       <td className="p-1 text-center">
+        {/* Tracker leads the actions; the old LT letting badge is retired —
+            it duplicated what the Tracker state already tells you
+            (Woody, 2026-08-03). */}
         <div className="flex gap-1 justify-center">
-          {deal && (
-            <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Deal: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-${unit.id}`}>
-              <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-blue-50"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
-            </a>
-          )}
-          {letting && (
-            <a href={`/available`} className="inline-flex items-center" title={`Letting: ${letting.unit_name} (${letting.marketing_status})`} data-testid={`tenancy-letting-link-${unit.id}`}>
-              <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-green-50"><ExternalLink className="w-2.5 h-2.5" />LT</Badge>
-            </a>
-          )}
           {!letting && !unit.is_vacant && onSendToTracker && (
             <button
               onClick={onSendToTracker}
@@ -1358,6 +1360,11 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
             >
               <Plus className="w-2.5 h-2.5" />{sendingToTracker ? "Adding…" : "Tracker"}
             </button>
+          )}
+          {deal && (
+            <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Deal: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-${unit.id}`}>
+              <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-blue-50"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
+            </a>
           )}
           {/* View this unit on the plan — sets the URL hash so the
               PropertyPlansPanel pulses the matching polygon and scrolls

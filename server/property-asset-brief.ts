@@ -813,6 +813,10 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
 router.get("/api/properties/:id/tasks", requireAuth, async (req: Request, res: Response) => {
   try {
     const propertyId = req.params.id;
+    const { clientBlockedForProperty } = await import("./company-scope");
+    if (await clientBlockedForProperty(req, String(req.params.id))) {
+      return res.status(403).json({ error: "Read-only access for client accounts" });
+    }
     const status = (req.query.status as string) || "active";
     const statusFilter = status === "all" ? "" : "AND t.status <> 'done'";
     // profile_pic_url is added by auto-migrate but production may not

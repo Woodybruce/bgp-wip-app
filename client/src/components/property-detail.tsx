@@ -735,13 +735,13 @@ export function PropertyDetail({ id }: { id: string }) {
               {/* Hidden for clients: the tasks GET is blocked for client
                   accounts, so the card showed empty while still accepting
                   input that silently vanished. */}
-              {!isClientViewer && (
+              {/* Clients see + edit the focus list on their own property —
+                  board parity with the BGP view (Woody, 2026-08-03). */}
               <ErrorBoundary compact name="Weekly focus">
                 <div className="flex-1 flex flex-col min-h-0 [&>div]:flex-1 [&>div]:flex [&>div]:flex-col">
                   <WeeklyFocusCard propertyId={property.id} />
                 </div>
               </ErrorBoundary>
-              )}
               </div>
 
               {/* Right column stack: News + Risk Register. Risk
@@ -773,11 +773,9 @@ export function PropertyDetail({ id }: { id: string }) {
                 slot; Risk Register went up so the operational watch
                 list reads alongside the news ticker. */}
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-              {!isClientViewer && (
               <ErrorBoundary compact name="Property brochures">
                 <PropertyBrochuresPanel propertyId={property.id} />
               </ErrorBoundary>
-              )}
               {/* Property Decks panel hidden for the Monday demo —
                   feature not yet ready for the firm. See PRESENTATION_BACKLOG.md.
               <ErrorBoundary compact name="Property decks">
@@ -861,15 +859,13 @@ export function PropertyDetail({ id }: { id: string }) {
                 The deal-CRM letting-tracker function it sourced from
                 (available_units) is untouched. */}
 
-            {/* Plans GET is client-blocked — the panel rendered an empty
-                card with a dead Upload button for clients. */}
-            {!isClientViewer && (
+            {/* Plans render for clients too — the GET is opened server-side
+                for in-scope properties (board parity, Woody 2026-08-03). */}
             <ErrorBoundary compact name="Property plans">
               <CollapsibleCard open={mainSections.plans} onToggle={() => toggleMain("plans")} icon={MapIcon} title="Plans" testId="toggle-plans">
                 <PropertyPlansPanel propertyId={property.id} />
               </CollapsibleCard>
             </ErrorBoundary>
-            )}
 
             {/* Schedule — unified view (Lettings / Tenancy lens toggle)
                 rendered for every property. Bluewater was the rollout
@@ -969,7 +965,8 @@ export function PropertyDetail({ id }: { id: string }) {
                 <LinkedContactsPanel propertyId={property.id} />
               </ReferenceSection>
 
-              {!isClientViewer && (
+              {/* Visible to clients — same decision as the brand-profile
+                  KYC panel (landlords need tenant AML/financial standing). */}
               <ReferenceSection
                 title="Compliance & KYC"
                 icon={ShieldCheck}
@@ -981,7 +978,6 @@ export function PropertyDetail({ id }: { id: string }) {
                   <PropertyComplianceBoardWrapper property={property} allCompanies={allCompanies} embedded />
                 </ErrorBoundary>
               </ReferenceSection>
-              )}
 
               <ReferenceSection
                 title="Recent activity"
@@ -1006,7 +1002,6 @@ export function PropertyDetail({ id }: { id: string }) {
                 <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={isClientViewer} />
               </ReferenceSection>
 
-              {!isClientViewer && (
               <ReferenceSection
                 title="Client Board"
                 icon={Users}
@@ -1016,7 +1011,6 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <ClientBoardPanel propertyId={property.id} landlordId={property.landlordId} allCompanies={allCompanies} />
               </ReferenceSection>
-              )}
 
               <ReferenceSection
                 title="Deals"
@@ -1036,10 +1030,9 @@ export function PropertyDetail({ id }: { id: string }) {
                 onToggle={() => toggleSection("availableUnits")}
                 testId="toggle-available-units-section"
               >
-                <AvailableUnitsPanel propertyId={property.id} readOnly={isClientViewer} />
+                <AvailableUnitsPanel propertyId={property.id} />
               </ReferenceSection>
 
-              {!isClientViewer && (
               <ReferenceSection
                 title="Land Registry"
                 icon={Landmark}
@@ -1049,7 +1042,6 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <LinkedLandRegistryPanel propertyId={property.id} />
               </ReferenceSection>
-              )}
 
               {!isClientViewer && (
               <ReferenceSection
