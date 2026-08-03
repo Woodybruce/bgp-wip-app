@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { CovenantBadgeByCompany } from "@/components/covenant-badge";
+import { BrandSearchInput, type BrandPick } from "@/components/brand-search-input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -234,8 +235,11 @@ const COLUMNS: Col[] = [
   { field: "break_notice",     label: "Break Notice",   band: "Lease Details", width: 100, align: "center", type: "date" },
   { field: "lease_expiry",     label: "Expiry",         band: "Lease Details", width: 100, align: "center", type: "date" },
   { field: "term_years",       label: "Term",           band: "Lease Details", width: 70,  align: "right", type: "num" },
+  // The three Unexp columns are server-computed from their dates on every
+  // render (months) — read-only in the grid, no manual drift.
   { field: "unexpired_term_break", label: "Unexp (Break)", band: "Lease Details", width: 90, align: "right", type: "num" },
   { field: "unexpired_term",   label: "Unexp (Expiry)", band: "Lease Details", width: 90,  align: "right", type: "num" },
+  { field: "unexpired_term_review" as any, label: "Unexp (Review)", band: "Lease Details", width: 95, align: "right", type: "num" },
   { field: "next_review_date", label: "Next Review",    band: "Lease Details", width: 100, align: "center", type: "date" },
   { field: "outside_lt_act",   label: "L&T Act",        band: "Lease Details", width: 100, align: "left" },
   { field: "area_basement_gia", label: "Basement",      band: "Areas — GIA", width: 90,  align: "right", type: "num" },
@@ -254,7 +258,10 @@ const COLUMNS: Col[] = [
   { field: "passing_rent_pa",   label: "Passing Rent",  band: "Rental Income", width: 110, align: "right", type: "currency" },
   { field: "marketing_rent_pa", label: "Quoting Rent",  band: "Rental Income", width: 120, align: "right", type: "currency" },
   { field: "turnover_rent_payable", label: "T/O Rent",  band: "Rental Income", width: 110, align: "right", type: "currency" },
-  { field: "erv_profile",       label: "ERV Profile",   band: "Rental Income", width: 100, align: "left" },
+  { field: "turnover_percent" as any, label: "T/O %",   band: "Rental Income", width: 80,  align: "right", type: "num" },
+  // Populated from Landsec's "Review Basis" column — renamed from the old
+  // "ERV Profile" label to match the source (Woody, 2026-08-03).
+  { field: "erv_profile",       label: "Review Basis",  band: "Rental Income", width: 100, align: "left" },
   { field: "erv_pa",            label: "ERV (pa)",      band: "Rental Income", width: 110, align: "right", type: "currency" },
   { field: "rent_free_value",   label: "Rent Free",     band: "Rental Income", width: 110, align: "right", type: "currency" },
   { field: "capex_value",       label: "Capex",         band: "Rental Income", width: 110, align: "right", type: "currency" },
@@ -271,9 +278,11 @@ const COLUMNS: Col[] = [
   { field: "deposit_held" as any,    label: "Deposit Held",        band: "Covenant", width: 110, align: "right", type: "currency" },
   { field: "arrears_balance" as any, label: "Arrears",             band: "Covenant", width: 110, align: "right", type: "currency" },
   { field: "comments",          label: "Comments",      band: "Comments", width: 200, align: "left" },
-  { field: "leasing_comments",  label: "Leasing Comments", band: "Comments", width: 200, align: "left" },
-  { field: "target_tenants",    label: "Target Tenants", band: "Comments", width: 180, align: "left" },
-  { field: "underwriting_comments", label: "Underwriting Comments", band: "Comments", width: 200, align: "left" },
+  // Target Tenants: tracker targets when the unit is linked to the Letting
+  // Tracker (adds go straight to the tracker brief), else picker-managed on
+  // the tenancy row. Leasing/Underwriting Comments retired (Woody,
+  // 2026-08-03) — Comments is the one free-text column.
+  { field: "target_tenants",    label: "Target Tenants", band: "Comments", width: 220, align: "left" },
 ];
 
 // Per-column filter pill — small Filter icon next to each header label.
@@ -334,6 +343,82 @@ function HeaderFilter({ field, label, distinctValues, active, onChange }: {
 // Small inline T / L / M chip that sits next to the break date — cycles
 // through Tenant / Landlord / Mutual via a native select. Tinted so the
 // party-to-break is readable at a glance.
+// Target Tenants cell: when the row is linked to the Letting Tracker the
+// chips are the tracker brief's targets and the picker adds straight to the
+// tracker; otherwise chips/adds live on the tenancy row's own
+// target_company_ids + target_tenants fields.
+function TargetTenantsCell({ unit, letting, onUpdate }: {
+  unit: TenancyUnit;
+  letting?: LettingLink;
+  onUpdate: (unitId: string, field: string, value: any) => void;
+}) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { data: brief } = useQuery<any>({
+    queryKey: ["/api/available-units", letting?.id, "brief"],
+    queryFn: async () => {
+      const r = await fetch(`/api/available-units/${letting!.id}/brief`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return null;
+      return r.json();
+    },
+    enabled: !!letting?.id,
+    staleTime: 60_000,
+  });
+  const trackerTargets: Array<{ id: string; operatorName: string; companyId: string | null }> =
+    (brief?.targets || []).map((t: any) => ({ id: t.id, operatorName: t.operatorName ?? t.operator_name, companyId: t.companyId ?? t.company_id ?? null }));
+
+  const addToTracker = async (pick: BrandPick) => {
+    try {
+      let briefId = brief?.id;
+      if (!briefId) {
+        const r = await apiRequest("POST", `/api/available-units/${letting!.id}/brief`, { title: `Operator Targeting — ${letting!.unit_name}` });
+        briefId = (await r.json()).id;
+      }
+      await apiRequest("POST", `/api/unit-briefs/${briefId}/targets`, {
+        operatorName: pick.name, companyId: pick.companyId, category: pick.companyType || undefined, priority: "B",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units", letting!.id, "brief"] });
+      toast({ title: "Target added to Letting Tracker", description: pick.name });
+    } catch (e: any) {
+      toast({ title: "Couldn't add target", description: e?.message, variant: "destructive" });
+    }
+  };
+
+  const rowNames = (unit.target_tenants || "").split(/,|;/).map(s => s.trim()).filter(Boolean);
+  const addToRow = (pick: BrandPick) => {
+    if (rowNames.some(n => n.toLowerCase() === pick.name.toLowerCase())) return;
+    const nextNames = [...rowNames, pick.name].join(", ");
+    onUpdate(unit.id, "target_tenants", nextNames);
+    if (pick.companyId) {
+      const ids = new Set([...(unit.target_company_ids || []), pick.companyId]);
+      onUpdate(unit.id, "target_company_ids", [...ids]);
+    }
+  };
+
+  const chips = letting ? trackerTargets.map(t => ({ key: t.id, name: t.operatorName, companyId: t.companyId })) : rowNames.map(n => ({ key: n, name: n, companyId: null as string | null }));
+  return (
+    <div className="flex items-center gap-1 flex-wrap min-w-0">
+      {chips.map(c => c.companyId ? (
+        <a key={c.key} href={`/companies/${c.companyId}`} className="inline-flex">
+          <Badge variant="outline" className="text-[9px] cursor-pointer hover:bg-muted max-w-[130px] truncate">{c.name}</Badge>
+        </a>
+      ) : (
+        <Badge key={c.key} variant="outline" className="text-[9px] max-w-[130px] truncate">{c.name}</Badge>
+      ))}
+      {letting && (
+        <a href="/available" className="text-[9px] text-muted-foreground hover:text-foreground shrink-0" title="Targets live on the Letting Tracker brief for this unit">LT</a>
+      )}
+      <BrandSearchInput
+        iconOnly
+        placeholder="Add target tenant…"
+        value=""
+        onPick={p => (letting ? addToTracker(p) : addToRow(p))}
+        testId={`tenancy-target-add-${unit.id}`}
+      />
+    </div>
+  );
+}
+
 function BreakTypeChip({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const tint =
     value === "T" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" :
@@ -442,10 +527,10 @@ const LETTINGS_HIDDEN_BANDS = new Set([
 const LETTINGS_HIDDEN_FIELDS = new Set([
   "passing_rent_pa",         // tenancy view
   "turnover_rent_payable",   // tenancy view
+  "turnover_percent",        // tenancy view
   "rent_free_value",         // tenancy view
   "capex_value",             // tenancy view
-  "comments",                // generic; leasing_comments is the lettings version
-  "underwriting_comments",   // tenancy view
+  "comments",                // generic free-text column
 ]);
 
 export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { propertyId: string; lens?: "lettings" | "tenancy"; readOnly?: boolean }) {
@@ -799,6 +884,13 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           )}
         </div>
         <div className="flex gap-2 flex-wrap">
+          {/* Tracker leads the toolbar — live lettings are worked THERE, not
+              on this board (the Lettings lens is retired; Woody 2026-08-03). */}
+          <Button size="sm" className="h-7 text-xs" asChild data-testid="btn-open-letting-tracker">
+            <a href={`/deals/letting?propertyId=${propertyId}`}>
+              <ExternalLink className="w-3 h-3 mr-1" />Letting Tracker
+            </a>
+          </Button>
           <div className="relative">
             <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." className="h-7 text-xs pl-7 w-40" data-testid="tenancy-search" />
@@ -1248,6 +1340,30 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
             </td>
           );
         }
+        if (c.field === "target_tenants") {
+          return (
+            <td key={c.field} className={`p-1 text-${c.align || "left"}`}>
+              <TargetTenantsCell unit={unit} letting={letting} onUpdate={onUpdate} />
+            </td>
+          );
+        }
+        // L&T Act is a two-state choice, not free text — the import
+        // canonicalises Landsec's True/False into these values too
+        // (True = Inside; Woody, 2026-08-03).
+        if (c.field === "outside_lt_act") {
+          return (
+            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
+              <InlineEdit
+                value={displayVal}
+                field="outside_lt_act"
+                unitId={unit.id}
+                onSave={onUpdate}
+                type="select"
+                options={["Inside", "Outside"]}
+              />
+            </td>
+          );
+        }
         if (c.field === "permitted_use") {
           return (
             <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
@@ -1336,6 +1452,14 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
         }
 
         return (
+          // The Unexp columns are server-computed from break / expiry /
+          // review dates on every render — display-only, no manual edits
+          // to drift out of date.
+          c.field === "unexpired_term" || c.field === "unexpired_term_break" || (c.field as string) === "unexpired_term_review" ? (
+            <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap text-muted-foreground${stickyCls}`} title="Auto-calculated from the lease dates">
+              {displayVal || "—"}
+            </td>
+          ) :
           <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}`}>
             <InlineEdit
               value={displayVal}

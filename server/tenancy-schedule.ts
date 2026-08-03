@@ -137,11 +137,14 @@ router.get("/api/tenancy-schedule/property/:propertyId", requireAuth, async (req
     };
     const withComputed = occupied.rows.map((r: any) => ({
       ...r,
-      unexpired_term: r.unexpired_term ?? monthsBetween(r.lease_expiry),
-      // Client expects `unexpired_term_break` — months to the earliest of
-      // expiry / tenant break / landlord break. Always recomputed so today's
-      // value is current.
+      // ALL unexpired terms are auto-calculated from their dates on every
+      // render — stored/imported values no longer win, so the numbers can't
+      // go stale (Woody, 2026-08-03). unexpired_term runs to expiry,
+      // _break to the earliest of expiry / tenant break / landlord break,
+      // _review to the next rent review.
+      unexpired_term: monthsBetween(r.lease_expiry),
       unexpired_term_break: monthsBetween(earliest(r.lease_expiry, r.break_date, r.landlord_break_date)),
+      unexpired_term_review: monthsBetween(r.next_review_date),
       term_years: (r.term_years && Number(r.term_years) > 0) ? r.term_years : yearsBetween(r.lease_start, r.lease_expiry),
     }));
 
@@ -208,6 +211,20 @@ const DATE_FIELDS = new Set([
   "break_notice",
 ]);
 
+// L&T Act arrives in wildly different shapes: Landsec's "L&T Act" column
+// is True/False where True = INSIDE the 1954 Act (Woody, 2026-08-03);
+// legacy "Outside L&T Act" sheets are Yes/No where Yes = OUTSIDE. The grid
+// offers exactly two states, so canonicalise every import to those.
+function canonicalLtAct(raw: any, headerMeansOutside: boolean): string | null {
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (!v) return null;
+  if (/inside|protected/.test(v)) return "Inside";
+  if (/outside|excluded|contracted/.test(v)) return "Outside";
+  if (/^(true|yes|y|1|x|✓)$/.test(v)) return headerMeansOutside ? "Outside" : "Inside";
+  if (/^(false|no|n|0)$/.test(v)) return headerMeansOutside ? "Inside" : "Outside";
+  return String(raw).trim();
+}
+
 function normaliseFieldValue(field: string, raw: any): any {
   if (raw === undefined) return undefined;
   if (raw === null || raw === "") {
@@ -215,7 +232,9 @@ function normaliseFieldValue(field: string, raw: any): any {
   }
   if (NUMERIC_FIELDS.has(field)) {
     if (typeof raw === "number") return raw;
-    const n = Number(String(raw).replace(/[£,]/g, ""));
+    // "%" included: T/O % cells arrive as "7.5%" and were parsing to NaN →
+    // null, which is why turnover percentages never survived the import.
+    const n = Number(String(raw).replace(/[£,%\s]/g, ""));
     return isNaN(n) ? null : n;
   }
   if (DATE_FIELDS.has(field)) {
@@ -555,7 +574,14 @@ const HEADER_ALIASES: Record<string, string> = {
   "unexp term break": "unexpired_term_break",
   "unexp term expiry": "unexpired_term",
   "months to expiry": "unexpired_term",  // Landsec feed gives months not years
+  // Virtual capture columns — consumed during import, never inserted.
+  "property": "__property",           // whole-portfolio files carry every asset
+  "next leasing event date": "__event_date",
+  "next leasing event type": "__event_type",
+  "break type": "break_type",
+  "break party": "break_type",
   "next review": "next_review_date",
+  "next review date": "next_review_date",  // Landsec Bluewater feed
   "review basis": "erv_profile",   // Landsec Bluewater feed
   "l t act": "outside_lt_act",
   "outside l t act": "outside_lt_act",
@@ -587,7 +613,10 @@ const HEADER_ALIASES: Record<string, string> = {
   "target rent": "erv_pa",            // Landsec Bluewater feed — ERV not passing
   "marketing rent pa": "marketing_rent_pa",
   "t o rent payable": "turnover_rent_payable",
-  "t o": "turnover_percent",          // Landsec "T/O %" column
+  "t o": "turnover_percent",          // Landsec "T/O %" column ("%" strips in normalise)
+  "t o percent": "turnover_percent",
+  "t o rent percent": "turnover_percent",
+  "turnover rent percent": "turnover_percent",
   "erv profile": "erv_profile",
   "erv pa": "erv_pa",
   "rent free value": "rent_free_value",
@@ -706,12 +735,44 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
     const headerRow = data[bestHeaderIdx] || [];
     const colToField: Record<number, string> = {};
     const unmatchedHeaders: string[] = [];
+    // For L&T Act columns, remember whether the header itself says
+    // "outside" — that flips what a True/Yes value means.
+    const ltActHeaderOutside: Record<number, boolean> = {};
     for (let c = 0; c < headerRow.length; c++) {
       const raw = headerRow[c];
       if (raw == null || String(raw).trim() === "") continue;
-      const field = HEADER_ALIASES[normaliseHeader(raw)];
-      if (field) colToField[c] = field;
+      const norm = normaliseHeader(raw);
+      const field = HEADER_ALIASES[norm];
+      if (field) {
+        colToField[c] = field;
+        if (field === "outside_lt_act") ltActHeaderOutside[c] = /outside/.test(norm);
+      }
       else unmatchedHeaders.push(String(raw).trim());
+    }
+
+    // Whole-portfolio guard: Landsec's Full Portfolio Data Set carries all
+    // ~70 assets in one sheet. When a Property column exists with multiple
+    // values, only rows matching the TARGET property import; the rest are
+    // counted and reported, not silently dumped into this schedule.
+    const propColIdx = Object.entries(colToField).find(([, f]) => f === "__property")?.[0];
+    let propMatcher: ((v: any) => boolean) | null = null;
+    let skippedOtherProperties = 0;
+    if (propColIdx !== undefined) {
+      const distinct = new Set<string>();
+      for (let i = bestHeaderIdx + 1; i < data.length; i++) {
+        const v = (data[i] || [])[Number(propColIdx)];
+        if (v != null && String(v).trim()) distinct.add(String(v).trim());
+      }
+      if (distinct.size > 1) {
+        const tn = await pool.query(`SELECT name FROM crm_properties WHERE id = $1`, [propertyId]);
+        const canon = (x: string) => String(x || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+        const target = canon(tn.rows[0]?.name || "");
+        propMatcher = (v: any) => {
+          const sheetVal = canon(String(v ?? ""));
+          if (!sheetVal || !target) return false;
+          return target.includes(sheetVal) || sheetVal.includes(target);
+        };
+      }
     }
 
     const clearExisting = req.body.clearExisting === "true";
@@ -742,7 +803,42 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
             continue;
           }
         }
+        if (field === "outside_lt_act") {
+          rec[field] = canonicalLtAct(raw, ltActHeaderOutside[colIdx] === true);
+          continue;
+        }
         rec[field] = normaliseFieldValue(field, raw);
+      }
+
+      // Whole-portfolio file: drop rows that belong to a different asset.
+      if (propMatcher && rec.__property != null && !propMatcher(rec.__property)) {
+        skippedOtherProperties++;
+        continue;
+      }
+
+      // Next review comes as a typed leasing event in the Landsec feed
+      // ("Next Leasing Event Date" + "Type") — only the Rent Review type
+      // fills next_review_date; breaks/expiries already have columns.
+      if (!rec.next_review_date && rec.__event_date != null && /review/i.test(String(rec.__event_type || ""))) {
+        const ev = rec.__event_date;
+        // Excel serials survive normaliseFieldValue as STRINGS ("46989") —
+        // treat all-digit values as serials, anything else as a date string.
+        const serial = typeof ev === "number" ? ev : (/^\d+(\.\d+)?$/.test(String(ev).trim()) ? Number(ev) : null);
+        const dt = serial != null ? new Date((serial - 25569) * 86400 * 1000) : new Date(String(ev));
+        if (!isNaN(dt.getTime())) rec.next_review_date = dt.toISOString().slice(0, 10);
+      }
+      delete rec.__property; delete rec.__event_date; delete rec.__event_type;
+
+      // Auto-derive the break party (T/L/M chip) when the sheet doesn't
+      // carry it explicitly — Landsec feeds have separate Earliest Tenant
+      // Break / Earliest Landlord Break columns, which is all we need:
+      // both on the same date = Mutual; otherwise whichever side has a
+      // date drives the chip (Woody, 2026-08-03).
+      if (!rec.break_type) {
+        const tb = rec.break_date, lb = rec.landlord_break_date;
+        if (tb && lb) rec.break_type = tb === lb ? "M" : "T";
+        else if (tb) rec.break_type = "T";
+        else if (lb) rec.break_type = "L";
       }
 
       // Grouping row carry-forward — if only the grouping cell has a value
@@ -806,11 +902,12 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
       : "";
     res.json({
       imported,
+      skippedOtherProperties,
       headerRow: bestHeaderIdx + 1,
       mappedColumns: Object.values(colToField),
       unmatchedHeaders,
       resolution,
-      message: `${imported} units imported${resolution ? ` · ${resolution.resolved}/${resolution.total} tenants resolved` : ""}${unmatchedNote}`,
+      message: `${imported} units imported${skippedOtherProperties ? ` · ${skippedOtherProperties} rows for other properties skipped` : ""}${resolution ? ` · ${resolution.resolved}/${resolution.total} tenants resolved` : ""}${unmatchedNote}`,
     });
   } catch (e: any) {
     console.error("[tenancy-import] failed:", e);
