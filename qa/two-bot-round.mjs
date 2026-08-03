@@ -1073,6 +1073,33 @@ async function markRound(page, cross) {
     if (r.addOutStatus !== 403) throw new Error(`client added a contact to an out-of-slice brand (expected 403, got ${r.addOutStatus})`);
   });
 
+  // Global search must respect the client's scope: their own portfolio and
+  // in-slice brands are findable, a rival landlord and out-of-slice brands
+  // return nothing. (Staff search sees everything — differential covered by
+  // the staff round using search implicitly.)
+  await step(page, p, 'client-search-scoping', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const q = async (term) => {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(term)}`, { headers: auth }).catch(() => ({ ok: false }));
+        if (!res.ok) return null;
+        const d = await res.json().catch(() => ({}));
+        return Array.isArray(d.results) ? d.results.length : null;
+      };
+      return {
+        own: await q('Bluewater'),
+        inSlice: await q('Honi'),
+        rival: await q('Hammerson'),
+        outOfSlice: await q('QA Retail'),
+      };
+    });
+    if (r.own === null) throw new Error('client search request failed');
+    if (!r.own) throw new Error("client search can't find their own property");
+    if (!r.inSlice) throw new Error("client search can't find an in-slice brand");
+    if (r.rival) throw new Error(`rival landlord surfaced in client search (${r.rival} results)`);
+    if (r.outOfSlice) throw new Error(`out-of-slice brand surfaced in client search (${r.outOfSlice} results)`);
+  });
+
   // Client contact management asymmetry: a client MAY edit a contact on their
   // own account (task-12 feature) but MUST NOT delete it ("managed by your
   // BGP team"). Create on own company, edit ok, delete refused, survives.
