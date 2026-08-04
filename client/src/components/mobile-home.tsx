@@ -5,8 +5,10 @@ import { mobileOverlayItems } from "@/components/app-sidebar";
 import {
   Sparkles, BarChart3, FileText, Handshake, Calendar as CalendarIcon,
   AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun, Wallet, RefreshCw,
-  Receipt, Image as ImageIcon,
+  Receipt, Image as ImageIcon, Building2, Store, ClipboardList,
 } from "lucide-react";
+import { legacyToCode } from "@shared/deal-status";
+import { IntelligenceFooter } from "@/components/intelligence-footer";
 
 type BriefingData = { briefing: string; generatedAt: string };
 
@@ -144,6 +146,20 @@ export default function MobileHome() {
   });
   // Team/firm total billing — the WIP roll-up (same figure the desktop WIP
   // card shows as "Total net fees"). amtWip/amtInvoice are in pounds.
+  // Client homes (Landsec): letting-tracker roll-up — the endpoint is
+  // company-scoped server-side, so these are THEIR units only.
+  const { data: clientUnitsRaw } = useQuery<any[]>({
+    queryKey: ["/api/available-units"],
+    staleTime: 2 * 60 * 1000,
+    enabled: isClientHome,
+  });
+  const clientUnits = Array.isArray(clientUnitsRaw) ? clientUnitsRaw : [];
+  const unitStats = {
+    available: clientUnits.filter(u => legacyToCode(u.marketingStatus) === "AVA").length,
+    underOffer: clientUnits.filter(u => legacyToCode(u.marketingStatus) === "SOL").length,
+    let: clientUnits.filter(u => legacyToCode(u.marketingStatus) === "COM").length,
+    total: clientUnits.length,
+  };
   const { data: wipResp } = useQuery<any>({ queryKey: ["/api/wip"], staleTime: 5 * 60 * 1000, enabled: !isClientHome });
   const wipEntries = Array.isArray(wipResp) ? wipResp : (wipResp?.entries || []);
   const totalBilling = wipEntries.reduce((s: number, e: any) => s + (e.amtWip || 0) + (e.amtInvoice || 0), 0);
@@ -195,6 +211,61 @@ export default function MobileHome() {
         <span className="text-base font-semibold">Ask ChatBGP…</span>
         <ChevronRight className="w-4 h-4 ml-auto opacity-70" />
       </button>
+
+      {/* Client homes (Landsec): portfolio letting roll-up + jump-offs —
+          the phone version of the Landsec dashboard. Staff never see this
+          (they get commission/WIP below instead). */}
+      {isClientHome && (
+        <>
+          <Link
+            href="/available"
+            className="block rounded-2xl bg-[#1C1917] text-white shadow-sm active:opacity-90 px-4 py-3.5"
+            data-testid="mobile-home-portfolio"
+          >
+            <div className="flex items-center gap-2 mb-2.5">
+              <Building2 className="w-4 h-4 opacity-80" />
+              <span className="text-xs font-semibold uppercase tracking-wider opacity-80">My portfolio — letting tracker</span>
+              <ChevronRight className="w-4 h-4 ml-auto opacity-60" />
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              <div>
+                <p className="text-lg font-bold tabular-nums leading-tight text-emerald-400">{unitStats.available}</p>
+                <p className="text-[10px] opacity-70">Available</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold tabular-nums leading-tight text-amber-300">{unitStats.underOffer}</p>
+                <p className="text-[10px] opacity-70">Under offer</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold tabular-nums leading-tight text-sky-300">{unitStats.let}</p>
+                <p className="text-[10px] opacity-70">Let</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold tabular-nums leading-tight">{unitStats.total}</p>
+                <p className="text-[10px] opacity-70">Units</p>
+              </div>
+            </div>
+          </Link>
+
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { label: "Tracker", icon: ClipboardList, to: "/available", tint: "bg-emerald-100 text-emerald-700" },
+              { label: "Requirements", icon: FileText, to: "/requirements", tint: "bg-violet-100 text-violet-700" },
+              { label: "Brands", icon: Store, to: "/brands", tint: "bg-amber-100 text-amber-700" },
+            ].map(q => (
+              <Link key={q.to} href={q.to} className="flex flex-col items-center gap-1.5 py-3 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] active:bg-gray-50" data-testid={`mobile-home-portfolio-${q.label.toLowerCase()}`}>
+                <span className={`w-9 h-9 rounded-full flex items-center justify-center ${q.tint}`}><q.icon className="w-4 h-4" /></span>
+                <span className="text-[11px] font-medium">{q.label}</span>
+              </Link>
+            ))}
+          </div>
+
+          {/* Intelligence — same strip as desktop dashboard/calendar, scrolls sideways */}
+          <div className="rounded-2xl border border-[#E7E5E4] bg-white dark:bg-card shadow-sm overflow-hidden">
+            <IntelligenceFooter />
+          </div>
+        </>
+      )}
 
       {/* My billing & commission — the number everyone wants to see */}
       {commission && (
@@ -318,7 +389,7 @@ export default function MobileHome() {
             <Link key={b.url} href={b.url} className="relative flex flex-col items-center gap-1.5 py-3 px-1 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] active:bg-gray-50" data-testid={`mobile-home-board-${b.title.toLowerCase().replace(/\s+/g, "-")}`}>
               <span className="w-9 h-9 rounded-full flex items-center justify-center bg-gray-100 text-gray-700 dark:bg-muted"><b.icon className="w-4 h-4" /></span>
               <span className="text-[10px] font-medium text-center leading-tight">{b.title}</span>
-              {b.badge && <span className="absolute top-1 right-1 text-[7px] px-1 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">{b.badge}</span>}
+              {b.badge && <span className="absolute top-1 right-1 text-[9px] px-1 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">{b.badge}</span>}
             </Link>
           ))}
         </div>

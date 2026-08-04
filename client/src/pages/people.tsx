@@ -255,7 +255,7 @@ function LandlordsTab({
                             <button onClick={(e) => { e.stopPropagation(); onScopeLandlord(company.id); }} className="text-xs text-primary hover:text-primary/80 font-medium whitespace-nowrap">View People</button>
                           )}
                           {onDeleteCompany && (
-                            <button onClick={(e) => { e.stopPropagation(); onDeleteCompany(company.id, company.name); }} className="p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all">
+                            <button onClick={(e) => { e.stopPropagation(); onDeleteCompany(company.id, company.name); }} className="p-1 rounded-full opacity-60 md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all">
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           )}
@@ -281,7 +281,7 @@ function LandlordsTab({
                 {onDeleteCompany && (
                   <button
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDeleteCompany(company.id, company.name); }}
-                    className="absolute top-2 right-2 p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
+                    className="absolute top-2 right-2 p-1 rounded-full opacity-60 md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
                     title="Delete"
                     data-testid={`button-delete-landlord-${company.id}`}
                   >
@@ -605,7 +605,7 @@ function AgentsTab({
                 {onDeleteCompany && (
                   <button
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDeleteCompany(company.id, company.name); }}
-                    className="absolute top-2 right-2 p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
+                    className="absolute top-2 right-2 p-1 rounded-full opacity-60 md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
                     title="Delete"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -1243,7 +1243,7 @@ function ClientCrmHub() {
                               )}
                               <button
                                 onClick={() => setContactDialog({ companyId: b.id, companyName: b.name, contact: c })}
-                                className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+                                className="opacity-60 md:opacity-0 md:group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
                                 title="Edit contact"
                                 data-testid={`client-edit-contact-${c.id}`}
                               >
@@ -1379,7 +1379,7 @@ function ClientCrmHub() {
                     </Link>
                     <button
                       onClick={() => setContactDialog({ companyId: c.companyId, companyName: hubUser?.team || "Your company", contact: c })}
-                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity shrink-0"
+                      className="opacity-60 md:opacity-0 md:group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity shrink-0"
                       title="Edit contact"
                       data-testid={`client-edit-own-contact-${c.id}`}
                     >

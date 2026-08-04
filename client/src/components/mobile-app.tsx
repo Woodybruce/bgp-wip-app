@@ -2792,8 +2792,18 @@ function MobileDocumentStudio() {
 export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" | "ai" | "today" | "menu" }) {
   const { theme, toggleTheme, colorScheme, setColorScheme } = useTheme();
   const [tab, setTab] = useState<"chats" | "ai" | "today" | "menu">(initialTab);
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
-  const [activeThreadAi, setActiveThreadAi] = useState(initialTab === "ai");
+  // Restore the open thread across remounts — tapping out to a brand page
+  // and back to ChatBGP was landing on a fresh chat, losing the thread.
+  // sessionStorage (not local) so a new browser session starts clean.
+  const restored = (() => {
+    if (initialTab !== "ai") return null;
+    try { return sessionStorage.getItem("mobile-chat-thread"); } catch { return null; }
+  })();
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(restored);
+  const [activeThreadAi, setActiveThreadAi] = useState(() => {
+    if (restored) { try { return sessionStorage.getItem("mobile-chat-thread-ai") !== "0"; } catch { return true; } }
+    return initialTab === "ai";
+  });
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [showChat, setShowChat] = useState(initialTab === "ai");
   // True only when the chat was opened from MobileApp's own conversation
@@ -2825,6 +2835,23 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
+  // Client logins (Landsec) have no internal team chats — hide the
+  // switch-to-chats affordances, matching the desktop shell.
+  const isClientUser = currentUser?.role === "Client" || !!(currentUser as any)?.companyScopeId;
+
+  // Keep the open-thread marker current so back-from-a-brand restores it.
+  // Backing out to the list (showChat false) is an explicit exit — clear.
+  useEffect(() => {
+    try {
+      if (showChat && activeThreadId) {
+        sessionStorage.setItem("mobile-chat-thread", activeThreadId);
+        sessionStorage.setItem("mobile-chat-thread-ai", activeThreadAi ? "1" : "0");
+      } else {
+        sessionStorage.removeItem("mobile-chat-thread");
+        sessionStorage.removeItem("mobile-chat-thread-ai");
+      }
+    } catch {}
+  }, [showChat, activeThreadId, activeThreadAi]);
 
   const { data: threads } = useQuery<ThreadData[]>({
     queryKey: ["/api/chat/threads"],
@@ -3330,7 +3357,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
           setTab(wasAi ? "ai" : "chats");
         }}
         onNewChat={openNewAiChat}
-        onTeamChats={() => {
+        onTeamChats={isClientUser ? undefined : () => {
           // Jump from ChatBGP to the internal team chats list.
           queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
           setActiveThreadId(null);
@@ -3374,7 +3401,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             </h1>
           </div>
           <div className="flex items-center gap-2">
-            {tab === "ai" && (
+            {tab === "ai" && !isClientUser && (
               <button onClick={() => { setTab("chats"); setChatSearch(""); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-switch-team-chats" aria-label="Team chats">
                 <Users className="w-5 h-5" />
               </button>
