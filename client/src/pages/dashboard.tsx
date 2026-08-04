@@ -716,13 +716,18 @@ function PortfolioContactsBoard({ companyId }: { companyId: string }) {
                   {g.rows.map((contact: any) => (
                     <Link key={contact.id} href={`/contacts/${contact.id}`}>
                       <div className="flex items-center gap-2 px-2 py-1 rounded hover:bg-muted/50 transition-colors cursor-pointer min-w-0" data-testid={`link-contact-${contact.id}`}>
-                        {contact.avatar_url ? (
-                          <img src={contact.avatar_url} alt={contact.name} className="w-6 h-6 rounded-full flex-shrink-0 object-cover" />
-                        ) : (
-                          <div className="w-6 h-6 rounded-full flex-shrink-0 bg-teal-100 dark:bg-teal-900 flex items-center justify-center text-[10px] font-semibold text-teal-700 dark:text-teal-300">
-                            {contact.name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
-                          </div>
-                        )}
+                        <div className="w-6 h-6 rounded-full flex-shrink-0 bg-teal-100 dark:bg-teal-900 flex items-center justify-center text-[10px] font-semibold text-teal-700 dark:text-teal-300 overflow-hidden">
+                          {contact.avatar_url ? (
+                            <img
+                              src={contact.avatar_url}
+                              alt={contact.name}
+                              className="w-full h-full object-cover"
+                              onError={(e) => { e.currentTarget.style.display = "none"; }}
+                            />
+                          ) : (
+                            contact.name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()
+                          )}
+                        </div>
                         <div className="min-w-0">
                           <p className="text-xs font-medium truncate">{contact.name}</p>
                           <p className="text-[10px] text-muted-foreground truncate">{[contact.role, contact.company_name].filter(Boolean).join(" · ") || contact.email}</p>
@@ -972,8 +977,17 @@ export default function Dashboard() {
   const rawTemplate = templateData?.template;
   const templateLayout = (rawTemplate?._version >= LAYOUT_VERSION) ? rawTemplate : null;
 
-  const widgetSavedLayout = validSaved?.widgets || templateLayout?.widgets || null;
-  const hiddenPortfolioBoards: string[] = validSaved?.hiddenPortfolio ?? templateLayout?.hiddenPortfolio ?? ["portfolio-properties"];
+  // The client-team dashboard is standardised: in Landsec view (client
+  // logins AND staff switched into the team) the org template — set from
+  // Mark Warne's arrangement — beats any personal layout, so everyone sees
+  // the same board (Woody, 2026-08-04: "should be the same"). Personal
+  // layouts still win on the staff dashboard.
+  const preferTemplate = isLandsecTeam || isClientViewer;
+  const firstLayout = preferTemplate ? (templateLayout || validSaved) : (validSaved || templateLayout);
+  const secondLayout = preferTemplate ? validSaved : templateLayout;
+
+  const widgetSavedLayout = firstLayout?.widgets || secondLayout?.widgets || null;
+  const hiddenPortfolioBoards: string[] = firstLayout?.hiddenPortfolio ?? secondLayout?.hiddenPortfolio ?? ["portfolio-properties"];
 
   // Portfolio boards and widgets used to live in two separate grids stacked
   // on the page, so a widget (e.g. My Tasks & Briefing) could never be
@@ -981,9 +995,9 @@ export default function Dashboard() {
   // back. When the portfolio section is present they now render as ONE grid,
   // laid out from `combined` — seeded by stacking the two legacy layouts so
   // existing arrangements carry over.
-  const combinedSavedLayout = validSaved?.combined || templateLayout?.combined || (() => {
-    const p = (validSaved?.portfolio || templateLayout?.portfolio)?.lg as any[] | undefined;
-    const w = (validSaved?.widgets || templateLayout?.widgets)?.lg as any[] | undefined;
+  const combinedSavedLayout = firstLayout?.combined || secondLayout?.combined || (() => {
+    const p = (firstLayout?.portfolio || secondLayout?.portfolio)?.lg as any[] | undefined;
+    const w = (firstLayout?.widgets || secondLayout?.widgets)?.lg as any[] | undefined;
     if (!p && !w) return null;
     const maxY = (p || []).reduce((m: number, l: any) => Math.max(m, l.y + l.h), 0);
     return { lg: [...(p || []), ...(w || []).map((l: any) => ({ ...l, y: l.y + maxY }))] };
