@@ -47,7 +47,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-task-assign-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -596,6 +596,22 @@ async function victoriaRound(page, cross) {
     if (!r.ok) throw new Error(`agent could not log an offer (${r.why})`);
     cross.offerStamp = stamp;
     cross.offerId = r.offerId;
+  });
+
+  // Comps parity: a comp Victoria logs against the client's scheme must show
+  // in the client's scheme-scoped comps table. Kept alive for mark's round;
+  // swept by the QA-COMP purge.
+  await step(page, p, 'agent-add-scheme-comp', async () => {
+    const stamp = `QA-COMP R${ROUND}, Bluewater Shopping Centre`;
+    const r = await page.evaluate(async (needle) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const create = await fetch('/api/crm/comps', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: needle, tenantName: 'QA Comp Tenant', area: 'Bluewater' }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      return { ok: true };
+    }, stamp);
+    if (!r.ok) throw new Error(`agent could not log a scheme comp (${r.why})`);
+    cross.compStamp = stamp;
   });
 
   // Offer deletion parity: offers have no edit route (create/delete only),
@@ -1199,6 +1215,63 @@ async function markRound(page, cross) {
     if (r.sweep < 400) throw new Error(`client triggered the AI task-suggestions sweep (${r.sweep})`);
   });
 
+  // Turnover Board slice scoping: the client's /api/turnover read includes
+  // the in-slice fixture row (Honi Poke) and never the out-of-slice one
+  // (QA Retail Brand) — the clientBrandSliceSql filter on turnover_data.
+  await step(page, p, 'client-turnover-slice', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/turnover', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = JSON.stringify(await res.json().catch(() => []));
+      return { ok: true, inSlice: body.includes('Honi Poke'), outOfSlice: body.includes('QA Retail Brand') };
+    });
+    if (!r.ok) throw new Error(`client turnover read unhealthy (${r.status})`);
+    if (!r.inSlice) throw new Error('in-slice turnover row missing from the client board');
+    if (r.outOfSlice) throw new Error('out-of-slice turnover row leaked to the client board');
+  });
+
+  // Firm-wide reporting (the board report + reporting summary — whole-book
+  // revenue, pipeline, agent performance) is BGP-internal; a client login
+  // must be refused.
+  await step(page, p, 'client-firm-reporting-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { board: await g('/api/board-report'), reporting: await g('/api/reporting/summary') };
+    });
+    if (r.board !== 403) throw new Error(`client reached the board report (expected 403, got ${r.board})`);
+    if (r.reporting !== 403) throw new Error(`client reached the reporting summary (expected 403, got ${r.reporting})`);
+  });
+
+  // The Lease Events board is BGP's lease-advisory BD pipeline (rent reviews,
+  // breaks, expiries across the whole book) — staff-only intel; a client
+  // login must be refused on the list and the digest.
+  await step(page, p, 'client-lease-events-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { list: await g('/api/lease-events'), digest: await g('/api/lease-events/digest') };
+    });
+    if (r.list !== 403) throw new Error(`client reached the lease-events board (expected 403, got ${r.list})`);
+    if (r.digest !== 403) throw new Error(`client reached the lease-events digest (expected 403, got ${r.digest})`);
+  });
+
+  // The Hunters boards are BGP's BD prospecting engine — the letting hunter
+  // ranks landlords with stale competitor agents / upcoming lease events to
+  // pitch, and the investment hunter surfaces acquisition targets. That's
+  // pure new-business intel across the whole book; a client login must never
+  // reach either board (enforced by the server gateway allowlist).
+  await step(page, p, 'client-hunters-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { letting: await g('/api/hunters/letting'), investment: await g('/api/hunters/investment') };
+    });
+    if (r.letting !== 403) throw new Error(`client reached the letting hunter (expected 403, got ${r.letting})`);
+    if (r.investment !== 403) throw new Error(`client reached the investment hunter (expected 403, got ${r.investment})`);
+  });
+
   // ActivitySummary board (terminal, 2026-08-03): the dashboard's upcoming/
   // recent feed must serve client-scoped content only — never another
   // landlord's deals — and the board must render.
@@ -1434,6 +1507,55 @@ async function markRound(page, cross) {
     if (r.foreignStatus !== 403) throw new Error(`client read matches on a foreign unit (expected 403, got ${r.foreignStatus})`);
   });
 
+  // Brand-suggestions is the operator-pitch engine for a vacant unit —
+  // "who should we target for this space" (live requirements + tracked
+  // brands, AI-ranked). Distinct from the requirement-matches list above.
+  // A client sees it for their own unit (AI rank degrades gracefully with
+  // no key, so a healthy call is a 200 with a suggestions array) and is
+  // refused on a foreign landlord's unit.
+  await step(page, p, 'client-brand-suggestions-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = Array.isArray(units) ? units[0] : null;
+      if (!unit) return { skip: true };
+      const own = await fetch(`/api/available-units/${unit.id}/brand-suggestions`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const ownBody = own.ok ? await own.json().catch(() => null) : null;
+      const foreign = await fetch('/api/available-units/99999999-3333-3333-3333-333333333333/brand-suggestions', { headers: auth }).catch(() => ({ status: 0, ok: false }));
+      return { ownOk: own.ok, ownArray: Array.isArray(ownBody?.suggestions), foreignStatus: foreign.status };
+    });
+    if (r.skip) return;
+    if (!r.ownOk || !r.ownArray) throw new Error('client cannot read brand suggestions on their own unit');
+    if (r.foreignStatus !== 403) throw new Error(`client read brand suggestions on a foreign unit (expected 403, got ${r.foreignStatus})`);
+  });
+
+  // The global requirements↔units matches board (/crm/requirements-leasing/
+  // matches) scopes its unit pool to the caller's company. A client login
+  // must see a healthy board whose every referenced unit is one they can
+  // actually reach via /available-units — no rival landlord's unit may
+  // surface as a match target.
+  await step(page, p, 'client-requirement-matches-board-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth }).catch(() => null))?.json().catch(() => null);
+      const allowed = new Set((Array.isArray(units) ? units : []).map((u) => String(u.id)));
+      const res = await fetch('/api/crm/requirements-leasing/matches', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = await res.json().catch(() => null);
+      const matches = body && typeof body.matches === 'object' ? body.matches : null;
+      if (!matches || typeof body.unitPool !== 'number') return { ok: false, status: res.status, shape: true };
+      const leaked = [];
+      for (const key of Object.keys(matches)) {
+        for (const hit of (matches[key]?.top || [])) {
+          if (!allowed.has(String(hit.unitId))) leaked.push(String(hit.unitId));
+        }
+      }
+      return { ok: true, unitPool: body.unitPool, leaked: leaked.slice(0, 3) };
+    });
+    if (!r.ok) throw new Error(r.shape ? 'requirement-matches board returned an unexpected shape' : `client requirement-matches board unhealthy (${r.status})`);
+    if (r.leaked && r.leaked.length) throw new Error(`rival unit leaked into the client matches board: ${r.leaked.join(', ')}`);
+  });
+
   await step(page, p, 'client-viewings-offers', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
@@ -1471,10 +1593,14 @@ async function markRound(page, cross) {
       const rows = Array.isArray(list) ? list : (list?.data || []);
       const inList = rows.some((r) => JSON.stringify(r).includes(stamp));
       const byId = id ? (await fetch(`/api/crm/requirements-leasing/${id}`, { headers: auth }).catch(() => ({ status: 0 }))).status : null;
-      return { inList, byId };
+      // The matches sub-resource is a separate route that takes a raw
+      // requirement id — it must refuse clients too (BGP intel by id).
+      const matches = id ? (await fetch(`/api/requirements/matches/${id}`, { headers: auth }).catch(() => ({ status: 0 }))).status : null;
+      return { inList, byId, matches };
     }, [cross.reqStamp, cross.reqId]);
     if (api.inList) throw new Error(`agent-only requirement "${cross.reqStamp}" leaked into the client's requirements list`);
     if (cross.reqId && api.byId !== 404 && api.byId !== 403) throw new Error(`client read a BGP-intel requirement by id (expected 404/403, got ${api.byId})`);
+    if (cross.reqId && api.matches !== 403 && api.matches !== 404) throw new Error(`client read requirement MATCHES by id (expected 403/404, got ${api.matches})`);
     // UI: the stamp must not render on the client's requirements page either.
     await page.goto(`${BASE}/requirements`);
     await page.waitForLoadState('domcontentloaded');
@@ -1808,6 +1934,18 @@ async function markRound(page, cross) {
     }, [cross.briefUnitId, cross.briefId, cross.briefStamp]);
     if (!r.ok) throw new Error(`client cannot read the agent's brief on their own unit (${r.status})`);
     if (!r.matches) throw new Error("agent-authored brief not visible on the client's unit");
+  });
+
+  // Parity for comps: the scheme comp Victoria logged must appear in the
+  // client's scheme-scoped comps table.
+  await step(page, p, 'client-sees-agent-comp', async () => {
+    if (!cross.compStamp) return;
+    const r = await page.evaluate(async (marker) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const c = await (await fetch('/api/crm/comps', { headers: auth })).json().catch(() => []);
+      return { seen: JSON.stringify(c).includes(marker) };
+    }, cross.compStamp);
+    if (!r.seen) throw new Error("agent-logged scheme comp not visible in the client's comps table");
   });
 
   // Parity for offers: the offer Victoria logged on a Landsec unit must show
@@ -2231,6 +2369,20 @@ async function samRound(page, cross) {
   // Rival client WRITE attempts against Landsec assets by id must be refused
   // — read guards exist; this locks the write side (viewing, offer, HOTs,
   // unit PATCH, brief create on a Landsec unit).
+  // Bidirectional isolation on the ActivitySummary feed: the rival client
+  // must never see Landsec content (mirror of client-activity-summary-scoped).
+  await step(page, p, 'rival-activity-summary-isolated', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/activity-summary', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = JSON.stringify(await res.json().catch(() => ({})));
+      return { ok: true, landsec: /landsec|bluewater/i.test(body) };
+    });
+    if (!r.ok) throw new Error(`rival activity-summary unhealthy (${r.status})`);
+    if (r.landsec) throw new Error("Landsec content leaked into the rival client's activity summary");
+  });
+
   await step(page, p, 'rival-client-write-guards', async () => {
     const landsecUnit = await page.evaluate(async () => {
       // Resolve a Landsec unit id via fixture convention (Bluewater unit is

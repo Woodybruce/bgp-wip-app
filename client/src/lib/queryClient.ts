@@ -70,9 +70,18 @@ export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       queryFn: getQueryFn({ on401: "throw" }),
-      refetchInterval: false,
+      // Keep the app live while several people edit at once: poll every 30s
+      // (only while the tab is actually visible — refetchIntervalInBackground
+      // stays false — so background tabs and expensive endpoints aren't
+      // hammered), and treat data as stale after 15s so navigating, mounting
+      // a board, or refocusing the window pulls a colleague's change straight
+      // away instead of serving a minutes-old cache.
+      refetchInterval: 30 * 1000,
+      refetchIntervalInBackground: false,
       refetchOnWindowFocus: true,
-      staleTime: 5 * 60 * 1000,
+      refetchOnReconnect: true,
+      refetchOnMount: true,
+      staleTime: 15 * 1000,
       retry: (failureCount, error) => {
         if (error instanceof Error) {
           const match = error.message.match(/^(\d{3}):/);
