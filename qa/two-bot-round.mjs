@@ -32,6 +32,7 @@ const IGNORED_RESPONSES = [
   /\/api\/ai-briefing/,                  // 503 locally (no AI key) by design
   /\/api\/brand\/[^/]+\/ai-take\//,      // 503 locally (no AI key) by design
   /\/api\/brand\/[^/]+\/(competitors\/research|rocketreach-company\/refresh)/, // 503 locally, no keys
+  /\/api\/property\/[^/]+\/brand-gaps\/(commentary|international)/, // Brand Gap v2 AI reads — 500 locally with no AI key (the base /brand-gaps is keyless and stays checked); works in prod. The scope gate is covered by client-brand-gaps-scoped.
   /\/api\/activity\/(brand|landlord)\/[^/]+$/, // AI relationship activity is own-company-only for clients (deliberate gateway rule); the client brand-profile panel fires it on slice brands and gets a safe 403. Own-company returns 200; cross-tenant isolation is covered by the rival-* scenarios.
   /\/api\/interactions\//,               // raw correspondence (meetings/emails) is staff-only for clients — the client correspondence drawer fires /api/interactions/company/:id and gets a safe 403. The client-interactions-guard scenario is the authoritative lock that this stays blocked.
   /fonts|\.woff|\.map$/,
@@ -49,7 +50,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1281,6 +1282,31 @@ async function markRound(page, cross) {
     });
     if (!r.ownOk || !r.ownArray) throw new Error('client cannot read the Plans board on their own property');
     if (r.foreign !== 403) throw new Error(`client read the Plans board on a foreign property (expected 403, got ${r.foreign})`);
+  });
+
+  // Brand Gap v2 (competing-centre operator-gap analysis) is a property-scoped
+  // Brand Intelligence read: a client may run it on their OWN property (the
+  // gate admits them — locally a missing GOOGLE_API_KEY yields a 400 geocode
+  // error rather than a 403, which still proves admission) but must be refused
+  // on a foreign landlord's property across the gaps, commentary and
+  // international views.
+  await step(page, p, 'client-brand-gaps-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      const own = 'property/22222222-2222-2222-2222-222222222222';
+      const foreign = 'property/99999999-2222-2222-2222-222222222222';
+      return {
+        own: await g(`/api/${own}/brand-gaps`),
+        gaps: await g(`/api/${foreign}/brand-gaps`),
+        commentary: await g(`/api/${foreign}/brand-gaps/commentary`),
+        international: await g(`/api/${foreign}/brand-gaps/international`),
+      };
+    });
+    if (r.own === 403) throw new Error('client blocked from Brand Gap on their own property (scope gate over-refused)');
+    if (r.gaps !== 403) throw new Error(`client ran Brand Gap on a foreign property (expected 403, got ${r.gaps})`);
+    if (r.commentary !== 403) throw new Error(`client read foreign Brand Gap commentary (expected 403, got ${r.commentary})`);
+    if (r.international !== 403) throw new Error(`client read foreign Brand Gap international view (expected 403, got ${r.international})`);
   });
 
   // A client must never reach the admin password-reset (account takeover
