@@ -690,6 +690,25 @@ async function victoriaRound(page, cross) {
     cross.compStamp = stamp;
   });
 
+  // Agent books a deal on a Landsec property WITH a BGP fee. The client round
+  // then confirms the deal shows up on Mark's board (cross-persona visibility)
+  // but every fee field is stripped from his view — staff set fees, clients
+  // see the deal, never the fee. (Read-side complement to the write-side
+  // client-deal-fee-injection-guard.)
+  await step(page, p, 'agent-create-deal-with-fee', async () => {
+    const name = `QA-R${ROUND} FeeVisibility`;
+    const r = await page.evaluate(async (dealName) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const create = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: dealName, landlordId: '11111111-1111-1111-1111-111111111111', fee: 456789, feePercentage: 12, commission: 456789 }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const made = await create.json().catch(() => ({}));
+      return { ok: true, id: made?.id };
+    }, name);
+    if (!r.ok) throw new Error(`agent could not create a fee-bearing Landsec deal (${r.why})`);
+    cross.feeDealName = name;
+  });
+
   // Offer deletion parity: offers have no edit route (create/delete only),
   // so the lifecycle that matters is a deleted offer vanishing everywhere —
   // staff letting activity now, the client's view cross-checked later.
@@ -2141,6 +2160,24 @@ async function markRound(page, cross) {
       return { seen: JSON.stringify(c).includes(marker) };
     }, cross.compStamp);
     if (!r.seen) throw new Error("agent-logged scheme comp not visible in the client's comps table");
+  });
+
+  // Fee-visibility parity: the deal Victoria booked on a Landsec property
+  // (with a BGP fee) must appear on the client's board, but every fee field
+  // must be stripped from his view — clients see the deal, never the fee.
+  await step(page, p, 'client-sees-agent-deal-fee-stripped', async () => {
+    if (!cross.feeDealName) return;
+    const r = await page.evaluate(async (name) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json().catch(() => []);
+      const deal = (Array.isArray(deals) ? deals : []).find((d) => (d.name || '') === name);
+      if (!deal) return { seen: false };
+      const feeExposed = [deal.fee, deal.feePercentage, deal.feeNotes, deal.commission]
+        .some((v) => v !== null && v !== undefined && v !== 0 && v !== '');
+      return { seen: true, feeExposed };
+    }, cross.feeDealName);
+    if (!r.seen) throw new Error("agent-created Landsec deal not visible on the client's board");
+    if (r.feeExposed) throw new Error("BGP fee leaked to the client on an agent-created deal");
   });
 
   // Parity for offers: the offer Victoria logged on a Landsec unit must show
