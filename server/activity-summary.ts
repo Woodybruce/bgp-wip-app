@@ -38,8 +38,18 @@ function summarise(a: any): string {
   return `${by}${verb} ${who}${dealRef}`.trim();
 }
 
+// Cached per-interaction AI summary — written by the summarise endpoint
+// below, surfaced straight into the feed on later loads.
+let aiSummaryEnsured = false;
+async function ensureAiSummaryColumn() {
+  if (aiSummaryEnsured) return;
+  await pool.query(`ALTER TABLE crm_interactions ADD COLUMN IF NOT EXISTS ai_summary TEXT`).catch(() => {});
+  aiSummaryEnsured = true;
+}
+
 router.get("/api/activity-summary", requireAuth, async (req: Request, res: Response) => {
   try {
+    await ensureAiSummaryColumn();
     const scopeCompanyId = await resolveCompanyScope(req);
     let propertyId = req.query.propertyId ? String(req.query.propertyId) : null;
     let companyId = req.query.companyId ? String(req.query.companyId) : null;
@@ -98,6 +108,7 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
 
     // ── Recent: last 14 days of interactions in scope, sanitised ──
     const recentSelect = `SELECT i.id, i.type, i.direction, i.interaction_date,
+              i.subject, i.ai_summary,
               COALESCE(bu.name, i.bgp_user) AS bgp_user,
               c.name AS contact_name, c.id AS contact_id,
               co.name AS company_name,
@@ -199,6 +210,10 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
           kind: a.type,
           date: a.interaction_date,
           summary: summarise(a),
+          // The meeting/email REASON — subject line, cleaned of reply
+          // prefixes (Woody, 2026-08-04: "show what the meeting was about").
+          subject: (a.subject || "").replace(/^((re|fw|fwd):\s*)+/i, "").trim() || null,
+          ai_summary: a.ai_summary || null,
           contact_id: a.contact_id,
           deal_id: a.deal_id,
           deal_name: a.deal_name,
@@ -209,6 +224,59 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
   } catch (err: any) {
     console.error("[activity-summary]", err?.message);
     res.status(500).json({ message: err?.message || "activity summary failed" });
+  }
+});
+
+// Click-to-summarise (Woody, 2026-08-04: "a click to summarise") — one
+// Haiku call per interaction, cached on the row so every later viewer
+// gets it instantly. Clients may summarise interactions on their own
+// account/brand slice only.
+router.post("/api/interactions/:id/summarise", requireAuth, async (req: Request, res: Response) => {
+  try {
+    await ensureAiSummaryColumn();
+    const id = String(req.params.id);
+    const { rows } = await pool.query(
+      `SELECT i.id, i.type, i.direction, i.subject, i.preview, i.ai_summary, i.interaction_date,
+              COALESCE(bu.name, i.bgp_user) AS bgp_user, c.name AS contact_name,
+              c.company_id AS contact_company_id, co.name AS company_name
+         FROM crm_interactions i
+         LEFT JOIN users bu ON lower(bu.email) = lower(i.bgp_user)
+         LEFT JOIN crm_contacts c ON c.id = i.contact_id
+         LEFT JOIN crm_companies co ON co.id = c.company_id
+        WHERE i.id = $1`,
+      [id]
+    );
+    const it = rows[0];
+    if (!it) return res.status(404).json({ error: "Interaction not found" });
+
+    const { resolveCompanyScope: resolveScope, isClientRequestUser, isClientVisibleBrand } = await import("./company-scope");
+    if (await isClientRequestUser(req)) {
+      const scope = await resolveScope(req);
+      const ok = !!scope && (it.contact_company_id === scope || (await isClientVisibleBrand(it.contact_company_id, scope)));
+      if (!ok) return res.status(403).json({ error: "Not available for client accounts" });
+    }
+
+    if (it.ai_summary && req.query.refresh !== "1") {
+      return res.json({ summary: it.ai_summary, cached: true });
+    }
+
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const msg = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 220,
+      messages: [{
+        role: "user",
+        content: `Summarise this ${it.type} between BGP's ${it.bgp_user || "team"} and ${it.contact_name || "a contact"}${it.company_name ? ` (${it.company_name})` : ""} on ${new Date(it.interaction_date).toLocaleDateString("en-GB")} in 1-2 plain sentences: what it was about and any follow-up implied. British English, no preamble.\n\nSubject: ${it.subject || "(none)"}\nPreview: ${(it.preview || "").slice(0, 800) || "(no body captured — infer from the subject only, and say so if it's unclear)"}`,
+      }],
+    });
+    const summary = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
+    if (!summary) return res.status(502).json({ error: "Empty summary" });
+    await pool.query(`UPDATE crm_interactions SET ai_summary = $1 WHERE id = $2`, [summary, id]).catch(() => {});
+    res.json({ summary, cached: false });
+  } catch (err: any) {
+    console.error("[interaction-summarise]", err?.message);
+    res.status(500).json({ error: err?.message || "summarise failed" });
   }
 });
 

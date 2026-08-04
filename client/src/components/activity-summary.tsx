@@ -15,12 +15,13 @@
 // their own portfolio server-side). The AI relationship commentary strips
 // are deliberately NOT part of this — they sit above the feed, unchanged.
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Mail, Phone, Users, Activity, CalendarDays, MapPin, Handshake } from "lucide-react";
-import { getAuthHeaders } from "@/lib/queryClient";
+import { Mail, Phone, Users, Activity, CalendarDays, MapPin, Handshake, Sparkles, Plus, Loader2 } from "lucide-react";
+import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 type UpcomingEvent = {
   id: number; title: string; event_type: string | null;
@@ -29,6 +30,7 @@ type UpcomingEvent = {
 };
 type RecentItem = {
   id: string; kind: string; date: string; summary: string;
+  subject?: string | null; ai_summary?: string | null;
   contact_id: string | null; deal_id: string | null; deal_name: string | null;
 };
 
@@ -43,6 +45,102 @@ function timeAgo(date: string): string {
 }
 
 const KIND_ICON: Record<string, typeof Mail> = { email: Mail, call: Phone, meeting: Users, deal: Handshake };
+
+// One feed row — the meeting/email REASON leads, the who-met-whom line
+// sits under it, and each interaction can be AI-summarised inline, jumped
+// to the contact, or turned into a follow-up task (Woody, 2026-08-04).
+function RecentRow({ a, propertyId, summaries, setSummaries }: {
+  a: RecentItem;
+  propertyId?: string;
+  summaries: Record<string, string>;
+  setSummaries: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+}) {
+  const { toast } = useToast();
+  const Icon = KIND_ICON[a.kind] || Activity;
+  const isDealMove = a.kind === "deal";
+  const aiText = summaries[a.id] || a.ai_summary || null;
+
+  const summarise = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", `/api/interactions/${a.id}/summarise`);
+      return r.json();
+    },
+    onSuccess: (j: any) => { if (j.summary) setSummaries(prev => ({ ...prev, [a.id]: j.summary })); },
+    onError: (e: any) => toast({ title: "Couldn't summarise", description: e?.message, variant: "destructive" }),
+  });
+  const addTask = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/tasks", {
+        title: `Follow up: ${a.subject || a.summary}`,
+        priority: "medium",
+        ...(propertyId ? { linkedPropertyId: propertyId } : {}),
+        ...(a.contact_id ? { linkedContactId: a.contact_id } : {}),
+        ...(a.deal_id ? { linkedDealId: a.deal_id } : {}),
+      });
+      return r.json();
+    },
+    onSuccess: () => toast({ title: "Task added", description: "It's on My Tasks and this property's weekly focus." }),
+    onError: (e: any) => toast({ title: "Couldn't add task", description: e?.message, variant: "destructive" }),
+  });
+
+  return (
+    <div className="px-1.5 py-1 rounded hover:bg-muted/40 min-w-0 group/row" data-testid={`activity-recent-${a.id}`}>
+      <div className="flex items-start gap-2 min-w-0">
+        <Icon className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
+        <div className="flex-1 min-w-0">
+          {a.subject ? (
+            <>
+              <div className="text-xs leading-snug font-medium truncate" title={a.subject}>{a.subject}</div>
+              <div className="text-[10px] text-muted-foreground truncate">{a.summary} · {timeAgo(a.date)}</div>
+            </>
+          ) : (
+            <>
+              <div className="text-xs leading-snug">{a.summary}</div>
+              <div className="text-[10px] text-muted-foreground">{timeAgo(a.date)}</div>
+            </>
+          )}
+        </div>
+        {!isDealMove && (
+          <button
+            onClick={() => summarise.mutate()}
+            disabled={summarise.isPending}
+            className="shrink-0 p-0.5 rounded hover:bg-muted opacity-60 md:opacity-0 md:group-hover/row:opacity-100 transition-opacity"
+            title="AI summary — what was this about?"
+            data-testid={`activity-summarise-${a.id}`}
+          >
+            {summarise.isPending ? <Loader2 className="w-3 h-3 animate-spin text-purple-500" /> : <Sparkles className="w-3 h-3 text-purple-500" />}
+          </button>
+        )}
+        {!isDealMove && (
+          <button
+            onClick={() => addTask.mutate()}
+            disabled={addTask.isPending}
+            className="shrink-0 p-0.5 rounded hover:bg-muted opacity-60 md:opacity-0 md:group-hover/row:opacity-100 transition-opacity"
+            title="Add a follow-up task for this"
+            data-testid={`activity-task-${a.id}`}
+          >
+            <Plus className="w-3 h-3 text-muted-foreground" />
+          </button>
+        )}
+        {a.deal_id && (
+          <Link href={`/deals/${a.deal_id}`}>
+            <Badge variant="outline" className="text-[9px] shrink-0 cursor-pointer hover:bg-muted" title={a.deal_name || undefined}>deal →</Badge>
+          </Link>
+        )}
+        {a.contact_id && (
+          <Link href={`/contacts/${a.contact_id}`}>
+            <Badge variant="outline" className="text-[9px] shrink-0 cursor-pointer hover:bg-muted">contact →</Badge>
+          </Link>
+        )}
+      </div>
+      {aiText && (
+        <div className="ml-5 mt-0.5 text-[11px] leading-snug rounded border border-purple-200/70 bg-purple-50/50 dark:bg-purple-950/20 dark:border-purple-900 px-2 py-1">
+          <Sparkles className="w-2.5 h-2.5 inline mr-1 text-purple-500" />{aiText}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
   propertyId?: string;
@@ -69,6 +167,9 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
   // Upcoming or Recent without scrolling; kind chips narrow the feed.
   const [section, setSection] = useState<"all" | "upcoming" | "recent">("all");
   const [kind, setKind] = useState<string | null>(null);
+  // On-demand AI summaries fetched this session, keyed by interaction id
+  // (server also caches, so re-visits render them without a click).
+  const [summaries, setSummaries] = useState<Record<string, string>>({});
 
   if (isLoading) {
     return (
@@ -186,28 +287,9 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
             <div className="text-[10px] uppercase tracking-wide font-semibold mb-1 sticky top-0 bg-card text-muted-foreground">Recent · {recent.length}</div>
           )}
           <div className="space-y-0.5">
-            {recent.map(a => {
-              const Icon = KIND_ICON[a.kind] || Activity;
-              return (
-                <div key={a.id} className="flex items-start gap-2 px-1.5 py-1 rounded hover:bg-muted/40 min-w-0" data-testid={`activity-recent-${a.id}`}>
-                  <Icon className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs leading-snug">{a.summary}</div>
-                    <div className="text-[10px] text-muted-foreground">{timeAgo(a.date)}</div>
-                  </div>
-                  {a.deal_id && (
-                    <Link href={`/deals/${a.deal_id}`}>
-                      <Badge variant="outline" className="text-[9px] shrink-0 cursor-pointer hover:bg-muted" title={a.deal_name || undefined}>deal →</Badge>
-                    </Link>
-                  )}
-                  {a.contact_id && (
-                    <Link href={`/contacts/${a.contact_id}`}>
-                      <Badge variant="outline" className="text-[9px] shrink-0 cursor-pointer hover:bg-muted">contact →</Badge>
-                    </Link>
-                  )}
-                </div>
-              );
-            })}
+            {recent.map(a => (
+              <RecentRow key={a.id} a={a} propertyId={propertyId} summaries={summaries} setSummaries={setSummaries} />
+            ))}
           </div>
         </div>
       )}
