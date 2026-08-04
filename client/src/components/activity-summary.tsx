@@ -14,7 +14,7 @@
 // profiles); no scope = the viewer's book (client logins are forced to
 // their own portfolio server-side). The AI relationship commentary strips
 // are deliberately NOT part of this — they sit above the feed, unchanged.
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
@@ -31,7 +31,8 @@ type UpcomingEvent = {
 type RecentItem = {
   id: string; kind: string; date: string; summary: string;
   subject?: string | null; ai_summary?: string | null;
-  contact_id: string | null; deal_id: string | null; deal_name: string | null;
+  contact_id: string | null; contact_email?: string | null;
+  deal_id: string | null; deal_name: string | null;
 };
 
 function timeAgo(date: string): string {
@@ -122,6 +123,21 @@ function RecentRow({ a, propertyId, summaries, setSummaries }: {
             <Plus className="w-3 h-3 text-muted-foreground" />
           </button>
         )}
+        {!isDealMove && (
+          <button
+            onClick={() => {
+              const subject = encodeURIComponent(`Follow-up: ${a.subject || a.summary}`);
+              const body = encodeURIComponent(aiText || a.summary || "");
+              const to = a.contact_email ? `&to=${encodeURIComponent(a.contact_email)}` : "";
+              window.open(`https://outlook.office.com/calendar/0/deeplink/compose?subject=${subject}&body=${body}${to}`, "_blank", "noopener");
+            }}
+            className="shrink-0 p-0.5 rounded hover:bg-muted opacity-60 md:opacity-0 md:group-hover/row:opacity-100 transition-opacity"
+            title={`Book a follow-up in Outlook${a.contact_email ? ` with ${a.contact_email}` : ""}`}
+            data-testid={`activity-book-${a.id}`}
+          >
+            <CalendarDays className="w-3 h-3 text-muted-foreground" />
+          </button>
+        )}
         {a.deal_id && (
           <Link href={`/deals/${a.deal_id}`}>
             <Badge variant="outline" className="text-[9px] shrink-0 cursor-pointer hover:bg-muted" title={a.deal_name || undefined}>deal →</Badge>
@@ -170,6 +186,30 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
   // On-demand AI summaries fetched this session, keyed by interaction id
   // (server also caches, so re-visits render them without a click).
   const [summaries, setSummaries] = useState<Record<string, string>>({});
+
+  // Auto-summarise the top of a SCOPED feed so it reads as briefing lines
+  // without clicking (Woody, 2026-08-04, "go ahead"). Reuses the same
+  // cached endpoint — rows already summarised cost nothing, and one run
+  // per data load keeps it from re-firing. Global (unscoped) feeds skip it.
+  const autoRanFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!data || (!propertyId && !companyId)) return;
+    const scopeKey = `${propertyId || ""}:${companyId || ""}:${data.recent?.length || 0}`;
+    if (autoRanFor.current === scopeKey) return;
+    autoRanFor.current = scopeKey;
+    const targets = (data.recent || [])
+      .filter(a => a.kind !== "deal" && !a.ai_summary)
+      .slice(0, 5);
+    (async () => {
+      for (const a of targets) {
+        try {
+          const r = await apiRequest("POST", `/api/interactions/${a.id}/summarise`);
+          const j = await r.json();
+          if (j.summary) setSummaries(prev => ({ ...prev, [a.id]: j.summary }));
+        } catch { /* quiet — the manual button still works */ }
+      }
+    })();
+  }, [data, propertyId, companyId]);
 
   if (isLoading) {
     return (

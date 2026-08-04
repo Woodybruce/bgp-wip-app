@@ -110,7 +110,7 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
     const recentSelect = `SELECT i.id, i.type, i.direction, i.interaction_date,
               i.subject, i.ai_summary,
               COALESCE(bu.name, i.bgp_user) AS bgp_user,
-              c.name AS contact_name, c.id AS contact_id,
+              c.name AS contact_name, c.id AS contact_id, c.email AS contact_email,
               co.name AS company_name,
               d.id AS deal_id, d.name AS deal_name
          FROM crm_interactions i
@@ -215,6 +215,7 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
           subject: (a.subject || "").replace(/^((re|fw|fwd):\s*)+/i, "").trim() || null,
           ai_summary: a.ai_summary || null,
           contact_id: a.contact_id,
+          contact_email: a.contact_email || null,
           deal_id: a.deal_id,
           deal_name: a.deal_name,
         })),
