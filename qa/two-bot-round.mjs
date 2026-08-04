@@ -32,6 +32,7 @@ const IGNORED_RESPONSES = [
   /\/api\/ai-briefing/,                  // 503 locally (no AI key) by design
   /\/api\/brand\/[^/]+\/ai-take\//,      // 503 locally (no AI key) by design
   /\/api\/brand\/[^/]+\/(competitors\/research|rocketreach-company\/refresh)/, // 503 locally, no keys
+  /\/api\/activity\/(brand|landlord)\/[^/]+$/, // AI relationship activity is own-company-only for clients (deliberate gateway rule); the client brand-profile panel fires it on slice brands and gets a safe 403. Own-company returns 200; cross-tenant isolation is covered by the rival-* scenarios.
   /fonts|\.woff|\.map$/,
 ];
 
@@ -1536,26 +1537,33 @@ async function markRound(page, cross) {
     if (r.foreign !== 403) throw new Error(`client read suggested-pitches on an out-of-slice brand (expected 403, got ${r.foreign})`);
   });
 
-  // CLAUDE.md decision (2026-08-01): the Compliance & KYC panel STAYS visible
-  // on client brand profiles (landlords need tenant AML/financial standing),
-  // but the staff-only KYC ACTION buttons (run checks) are refused. Assert
-  // both halves on an in-slice brand.
+  // Compliance & KYC panel STAYS visible on client brand profiles (2026-08-01
+  // — landlords need tenant AML/financial standing). KYC action gating, as
+  // decided 2026-08-04 ("allow Landsec to hit the enrichment button — use the
+  // app the same way we can"): the Companies-House auto-KYC enrichment IS now
+  // allowed for a brand in the client's slice, but must still be refused on an
+  // out-of-slice brand, and the full staff KYC sweep (run-all-checks) stays
+  // staff-only. Assert all four halves.
   await step(page, p, 'client-brand-kyc-visible-actions-blocked', async () => {
     const r = await page.evaluate(async () => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const honi = '77777777-7777-7777-7777-777777777777';
+      const honi = '77777777-7777-7777-7777-777777777777';      // in the hospitality slice
+      const outOfSlice = '88888888-1111-1111-1111-111111111111'; // QA Retail Brand
       const prof = await fetch(`/api/brand/${honi}/profile`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       const kycVisible = prof.ok ? ((await prof.json().catch(() => ({}))).kyc !== undefined) : false;
       const runChecks = (await fetch('/api/kyc/run-all-checks', { method: 'POST', credentials: 'include', headers: auth,
         body: JSON.stringify({ companyId: honi }) }).catch(() => ({ status: 0 }))).status;
-      const autoKyc = (await fetch(`/api/companies-house/auto-kyc/${honi}`, { method: 'POST', credentials: 'include', headers: auth,
+      const autoKycSlice = (await fetch(`/api/companies-house/auto-kyc/${honi}`, { method: 'POST', credentials: 'include', headers: auth,
         body: '{}' }).catch(() => ({ status: 0 }))).status;
-      return { profileOk: prof.ok, kycVisible, runChecks, autoKyc };
+      const autoKycForeign = (await fetch(`/api/companies-house/auto-kyc/${outOfSlice}`, { method: 'POST', credentials: 'include', headers: auth,
+        body: '{}' }).catch(() => ({ status: 0 }))).status;
+      return { profileOk: prof.ok, kycVisible, runChecks, autoKycSlice, autoKycForeign };
     });
     if (!r.profileOk) throw new Error('client cannot load an in-slice brand profile');
     if (!r.kycVisible) throw new Error('KYC/compliance panel data missing from the client brand profile (decision regressed)');
-    if (r.runChecks !== 403) throw new Error(`client ran a staff KYC check (expected 403, got ${r.runChecks})`);
-    if (r.autoKyc !== 403) throw new Error(`client triggered staff auto-KYC (expected 403, got ${r.autoKyc})`);
+    if (r.runChecks !== 403) throw new Error(`client ran the staff KYC sweep (expected 403, got ${r.runChecks})`);
+    if (r.autoKycSlice === 403) throw new Error('client blocked from the auto-KYC enrichment button on an in-slice brand (2026-08-04 decision regressed)');
+    if (r.autoKycForeign !== 403) throw new Error(`client triggered auto-KYC on an out-of-slice brand (expected 403, got ${r.autoKycForeign})`);
   });
 
   // The client CRM shows the hospitality/leisure/fitness category slice
