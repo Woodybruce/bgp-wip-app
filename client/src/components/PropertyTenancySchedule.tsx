@@ -1525,21 +1525,10 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
         );
       })}
       <td className="p-1 text-center">
-        {/* Tracker leads the actions; the old LT letting badge is retired —
-            it duplicated what the Tracker state already tells you
-            (Woody, 2026-08-03). */}
+        {/* The Tracker action moved to the pinned Unit cell at the front of
+            the row (Woody, 2026-08-04) — this cell keeps the deal link and
+            plan jump only. */}
         <div className="flex gap-1 justify-center">
-          {!letting && !unit.is_vacant && onSendToTracker && (
-            <button
-              onClick={onSendToTracker}
-              disabled={sendingToTracker}
-              className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
-              title="Create a Letting Tracker listing for this unit"
-              data-testid={`tenancy-to-tracker-${unit.id}`}
-            >
-              <Plus className="w-2.5 h-2.5" />{sendingToTracker ? "Adding…" : "Tracker"}
-            </button>
-          )}
           {deal && (
             <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Deal: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-${unit.id}`}>
               <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-blue-50"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
