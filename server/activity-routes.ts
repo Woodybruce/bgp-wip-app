@@ -221,10 +221,10 @@ export function registerActivityRoutes(app: Express) {
         if (subject) {
           const job = (async () => {
             try {
-              // 12-min budget: the mailbox+calendar sweep across every BGP inbox
-              // routinely outruns the 5-min default and the whole result was
-              // thrown away (Landsec read stuck on stale error text, 2026-08-04).
-              const curated = await curateActivity(subject, req, { timeoutMs: 12 * 60 * 1000 });
+              // 25-min budget: matches the POST /curate path — a big landlord
+              // sweep (Landsec) outran the earlier 12-min budget and the
+              // finished result was binned (2026-08-04).
+              const curated = await curateActivity(subject, req, { timeoutMs: 25 * 60 * 1000 });
               if (curated) {
                 await writeCache(subjectType, subjectId, curated);
                 await writeLastInteraction(subjectType, subjectId, curated.latestActivityDate);
@@ -318,10 +318,11 @@ export function registerActivityRoutes(app: Express) {
 
     const job = (async () => {
       try {
-        // 12-min budget: the mailbox+calendar sweep across every BGP inbox
-              // routinely outruns the 5-min default and the whole result was
-              // thrown away (Landsec read stuck on stale error text, 2026-08-04).
-              const curated = await curateActivity(subject, req, { timeoutMs: 12 * 60 * 1000 });
+        // 25-min budget: the mailbox+calendar sweep outran 5 minutes, and a
+        // big landlord (Landsec: 12 mailboxes + calendars) outran 12 too —
+        // both times the finished sweep was binned and the stale cache
+        // survived (2026-08-04).
+        const curated = await curateActivity(subject, req, { timeoutMs: 25 * 60 * 1000 });
         if (!curated) {
           console.warn(`[activity curate ${subjectType}/${subjectId}] ChatBGP returned nothing`);
           return;
