@@ -47,7 +47,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -601,6 +601,27 @@ async function victoriaRound(page, cross) {
     });
     if (!r.ok) throw new Error(`staff property-pathway board unhealthy (${r.status})`);
     if (!r.isArray) throw new Error('staff property-pathway board did not return a runs array');
+  });
+
+  // Seed a staff-authored chat message so the client round can prove it
+  // CANNOT delete someone else's message (the delete guard is own-message-or-
+  // thread-creator only — recently surfaced in the brand-chat hover actions).
+  await step(page, p, 'agent-chat-msg-for-delete-guard', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const create = await fetch('/api/chat/threads', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ isAiChat: true, title: `QA-CHATDEL staff R${round}` }) });
+      if (!create.ok) return { ok: false, why: `thread ${create.status}` };
+      const thread = await create.json();
+      const post = await fetch(`/api/chat/threads/${thread.id}/messages`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ content: `QA staff message R${round}` }) });
+      if (!post.ok) return { ok: false, why: `message ${post.status}` };
+      const msg = await post.json();
+      return { ok: true, threadId: thread.id, msgId: msg?.id };
+    }, ROUND);
+    if (!r.ok) throw new Error(`agent could not seed a chat message (${r.why})`);
+    cross.chatThreadId = r.threadId;
+    cross.chatMsgId = r.msgId;
   });
 
   // 4k. Agent logs a viewing on a Landsec unit — the client round then checks
@@ -2160,6 +2181,32 @@ async function markRound(page, cross) {
     }, title);
     if (!r.ok) throw new Error(`client chat thread create failed (${r.why})`);
     if (!r.found) throw new Error('created chat thread absent from the client thread list');
+  });
+
+  // Chat message delete is own-message-or-thread-creator only. A client must
+  // be able to delete their OWN message but never a staff-authored one in a
+  // thread they didn't create (the agent seeded cross.chatMsgId above).
+  await step(page, p, 'client-chat-delete-own-only', async () => {
+    const r = await page.evaluate(async (foreign) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      let foreignStatus = null;
+      if (foreign?.threadId && foreign?.msgId) {
+        foreignStatus = (await fetch(`/api/chat/threads/${foreign.threadId}/messages/${foreign.msgId}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => ({ status: 0 }))).status;
+      }
+      const create = await fetch('/api/chat/threads', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ isAiChat: true, title: 'QA-CHATDEL own' }) });
+      if (!create.ok) return { ok: false, why: `own thread ${create.status}` };
+      const thread = await create.json();
+      const post = await fetch(`/api/chat/threads/${thread.id}/messages`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ content: 'QA own message' }) });
+      if (!post.ok) return { ok: false, why: `own message ${post.status}` };
+      const msg = await post.json();
+      const del = await fetch(`/api/chat/threads/${thread.id}/messages/${msg.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      return { ok: true, foreignStatus, ownDeleteOk: del.ok, ownDeleteStatus: del.status };
+    }, { threadId: cross.chatThreadId, msgId: cross.chatMsgId });
+    if (!r.ok) throw new Error(`client chat-delete setup failed (${r.why})`);
+    if (r.foreignStatus !== null && r.foreignStatus !== 403) throw new Error(`client deleted a staff-authored chat message (expected 403, got ${r.foreignStatus})`);
+    if (!r.ownDeleteOk) throw new Error(`client could not delete their own chat message (${r.ownDeleteStatus})`);
   });
 
   // Client logs an OFFER (interest) on their own unit and it appears in the
