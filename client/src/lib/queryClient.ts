@@ -100,6 +100,16 @@ export const queryClient = new QueryClient({
   },
 });
 
+// Session validity doesn't change every 30 seconds — exempt auth/me from the
+// live-refresh polling above. Without this the poll + per-token API rate
+// limiter combine badly: a busy page burns the 200/min budget, the next
+// auth/me gets 429'd, and the app dumps a logged-in user at the sign-in
+// screen mid-session.
+queryClient.setQueryDefaults(["/api/auth/me"], {
+  refetchInterval: false,
+  staleTime: 5 * 60 * 1000,
+});
+
 /**
  * Invalidate every cache that derives from crm_deals so an edit on the Deals
  * page, WIP report, deal detail panel, etc. propagates to all the other

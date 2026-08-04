@@ -660,16 +660,22 @@ function ClientTeamWeekCalendar({ events }: { events: any[] }) {
             </div>
           </div>
         </div>
-        {/* Intelligence strip — the calendar page's bottom read, board-sized. */}
-        <div className="flex items-center gap-4 px-3 py-1.5 border-t bg-muted/30 text-[10px] flex-wrap" data-testid="cal-intelligence">
-          <span className="inline-flex items-center gap-1 font-semibold uppercase tracking-wider text-muted-foreground">
-            <Sparkles className="w-3 h-3" /> Intelligence
-          </span>
-          <span><span className="font-semibold uppercase text-muted-foreground mr-1">Today</span>{todaysEvents.length} event{todaysEvents.length === 1 ? "" : "s"}</span>
-          {busiest && (
-            <span><span className="font-semibold uppercase text-muted-foreground mr-1">Busiest day</span>{new Date(busiest[0]).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })} — {busiest[1]} event{busiest[1] === 1 ? "" : "s"}</span>
-          )}
-          <span><span className="font-semibold uppercase text-muted-foreground mr-1">Next 30 days</span>{next30} event{next30 === 1 ? "" : "s"}</span>
+        {/* Intelligence strip — the shared footer board, living INSIDE the
+            calendar board rather than orphaned at the page bottom
+            (Woody, 2026-08-04). Local calendar reads lead; the CRM/diary
+            insights follow from the shared component. */}
+        <div data-testid="cal-intelligence" className="border-t">
+          <div className="flex items-center gap-4 px-3 py-1 bg-muted/30 text-[10px] flex-wrap">
+            <span className="inline-flex items-center gap-1 font-semibold uppercase tracking-wider text-muted-foreground">
+              <Sparkles className="w-3 h-3" /> Intelligence
+            </span>
+            <span><span className="font-semibold uppercase text-muted-foreground mr-1">Today</span>{todaysEvents.length} event{todaysEvents.length === 1 ? "" : "s"}</span>
+            {busiest && (
+              <span><span className="font-semibold uppercase text-muted-foreground mr-1">Busiest day</span>{new Date(busiest[0]).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })} — {busiest[1]} event{busiest[1] === 1 ? "" : "s"}</span>
+            )}
+            <span><span className="font-semibold uppercase text-muted-foreground mr-1">Next 30 days</span>{next30} event{next30 === 1 ? "" : "s"}</span>
+          </div>
+          <IntelligenceFooter />
         </div>
       </CardContent>
     </Card>
@@ -1004,16 +1010,25 @@ export default function Dashboard() {
     return { lg: [...(p || []), ...(w || []).map((l: any) => ({ ...l, y: l.y + maxY }))] };
   })();
 
-  // The Letting Tracker sits beside My Tasks & Briefing at the top — keep
-  // the pair the same height even in older saved layouts where the tracker
-  // was dragged/seeded taller (Woody, 2026-08-04).
+  // Side-by-side board pairs stay the same height even in saved layouts
+  // where one was dragged/seeded taller (Woody, 2026-08-04): the Letting
+  // Tracker follows My Tasks & Briefing; Your BGP Team follows
+  // Properties & Deals.
+  const HEIGHT_PAIRS: Array<[follower: string, leader: string]> = [
+    ["available-units", "my-tasks"],
+    ["portfolio-team", "portfolio-deals"],
+  ];
   const matchTrackerToTasks = (layout: any) => {
     const lg = layout?.lg;
     if (!Array.isArray(lg)) return layout;
-    const tasks = lg.find((l: any) => l.i === "my-tasks");
-    const tracker = lg.find((l: any) => l.i === "available-units");
-    if (!tasks || !tracker || tracker.h === tasks.h) return layout;
-    return { ...layout, lg: lg.map((l: any) => (l.i === "available-units" ? { ...l, h: tasks.h } : l)) };
+    let next = lg;
+    for (const [followerId, leaderId] of HEIGHT_PAIRS) {
+      const leader = next.find((l: any) => l.i === leaderId);
+      const follower = next.find((l: any) => l.i === followerId);
+      if (!leader || !follower || follower.h === leader.h) continue;
+      next = next.map((l: any) => (l.i === followerId ? { ...l, h: leader.h } : l));
+    }
+    return next === lg ? layout : { ...layout, lg: next };
   };
   const combinedSavedLayout = combinedSavedLayoutRaw ? matchTrackerToTasks(combinedSavedLayoutRaw) : combinedSavedLayoutRaw;
   const widgetSavedLayout = widgetSavedLayoutRaw ? matchTrackerToTasks(widgetSavedLayoutRaw) : widgetSavedLayoutRaw;
@@ -1585,7 +1600,7 @@ export default function Dashboard() {
           {
             id: "portfolio-team",
             label: "Your BGP Team",
-            defaultW: 12, defaultH: 12, minW: 6, minH: 6,
+            defaultW: 12, defaultH: 18, minW: 6, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
                 <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
@@ -2945,14 +2960,6 @@ export default function Dashboard() {
         </Card>
       )}
 
-      {/* Same Intelligence strip as the calendar footer — one board, rolled
-          across (Woody, 2026-08-04). Landsec view only; insights come back
-          company-scoped for client viewers server-side. */}
-      {isLandsecTeam && (
-        <Card className="overflow-hidden">
-          <IntelligenceFooter />
-        </Card>
-      )}
     </div>
   );
 }

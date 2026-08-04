@@ -123,6 +123,7 @@ router.get("/api/client-teams/:clientCompanyId", requireAuth, async (req, res) =
              u.name AS full_name,
              u.email,
              u.role            AS bgp_title,
+             u.profile_pic_url,
              sp.cv_summary,
              sp.cv_specialisms,
              sp.bio,

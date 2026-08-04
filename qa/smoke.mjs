@@ -91,7 +91,7 @@ async function apiGet(context, token, path) {
   return r.status();
 }
 
-async function settle(page, ms = 4000) {
+async function settle(page, ms = 6000) {
   await page.waitForLoadState('networkidle').catch(() => {});
   await page.waitForTimeout(ms);
 }
@@ -134,28 +134,33 @@ console.log('── staff (Victoria) ──');
 
     // Tracker deep link lands filtered.
     await page.goto(`${BASE}/deals/letting?propertyId=${BLUEWATER}&status=AVA`, { waitUntil: 'networkidle' }).catch(() => {});
-    await settle(page);
+    await settle(page, 7000);
     await noCrash(page, 'staff letting tracker');
-    check('tracker: unit rows render', await page.locator('table tbody tr').count() > 0);
+    const trackerRows = await page.locator('table tbody tr').first().waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
+    check('tracker: unit rows render', trackerRows);
 
     // Deals board deep link.
     await page.goto(`${BASE}/deals/list?propertyId=${BLUEWATER}`, { waitUntil: 'networkidle' }).catch(() => {});
     await settle(page);
     await noCrash(page, 'staff deals board');
-    check('deals: property filter chip', await page.locator('[data-testid="chip-property-filter"]').count() > 0);
+    const dealsChip = await page.locator('[data-testid="chip-property-filter"]').waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
+    check('deals: property filter chip', dealsChip);
 
     // Properties board — strip + map header.
     await page.goto(`${BASE}/properties`, { waitUntil: 'networkidle' }).catch(() => {});
     await settle(page);
     await noCrash(page, 'staff properties board');
-    check('properties: board header (strip + map toggle)', await page.locator('[data-testid="properties-board-header"]').count() > 0);
+    const propsHeader = await page.locator('[data-testid="properties-board-header"]').waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
+    check('properties: board header (strip + map toggle)', propsHeader);
 
     // Brand profile — expansion intelligence + signals + key contacts.
     await page.goto(`${BASE}/companies/${BRAND_CO}`, { waitUntil: 'networkidle' }).catch(() => {});
-    await settle(page, 6000);
+    await settle(page, 9000);
     await noCrash(page, 'staff brand profile');
-    check('brand: expansion intelligence zone', await page.locator('text=Expansion intelligence').count() > 0);
-    check('brand: key contacts card', await page.locator('text=Key contacts').count() > 0);
+    const expZone = await page.locator('text=Expansion intelligence').first().waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
+    check('brand: expansion intelligence zone', expZone);
+    const keyContacts = await page.locator('text=Key contacts').first().waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
+    check('brand: key contacts card', keyContacts);
     await page.screenshot({ path: `${SHOTS}/staff-brand.png` }).catch(() => {});
 
     // Tasks page.
