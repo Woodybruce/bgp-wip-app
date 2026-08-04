@@ -47,7 +47,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1197,6 +1197,23 @@ async function markRound(page, cross) {
     });
     if (r.own === 403 || r.own === 404) throw new Error(`client blocked from regenerating commentary on their own property (${r.own})`);
     if (r.foreign !== 403) throw new Error(`client regenerated commentary on a foreign property (expected 403, got ${r.foreign})`);
+  });
+
+  // Plans board parity (Woody, 2026-08-03): a client may read the floor/lease
+  // plans on their OWN property (the board shows the plans panel to them now),
+  // but the same read on a foreign landlord's property must refuse. Guards the
+  // recently client-exposed /api/properties/:id/plans read via
+  // clientBlockedForProperty.
+  await step(page, p, 'client-plans-board-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const own = await fetch('/api/properties/22222222-2222-2222-2222-222222222222/plans', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const ownBody = own.ok ? await own.json().catch(() => null) : null;
+      const foreign = (await fetch('/api/properties/99999999-2222-2222-2222-222222222222/plans', { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { ownOk: own.ok, ownArray: Array.isArray(ownBody?.plans), foreign };
+    });
+    if (!r.ownOk || !r.ownArray) throw new Error('client cannot read the Plans board on their own property');
+    if (r.foreign !== 403) throw new Error(`client read the Plans board on a foreign property (expected 403, got ${r.foreign})`);
   });
 
   // A client must never reach the admin password-reset (account takeover
