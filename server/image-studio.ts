@@ -605,6 +605,49 @@ async function requireAdmin(req: Request, res: Response, next: Function) {
   }
 }
 
+// ── Client-parity scoping ──────────────────────────────────────────────────
+// Clients get the full Image Studio (Woody, 2026-08-04: "the image studio
+// needs the full functionality of the BGP image studio"), confined to their
+// own world. Staff with no company scope pass through unchanged; scoped
+// callers (client logins + staff in a client team view) are jailed to
+// imagery and collections on their own properties or company. Hard delete,
+// dedupe, sync and the firm-wide sweeps stay admin-only.
+const SCOPED_PROPS_SQL = `SELECT id FROM crm_properties WHERE landlord_id = $1
+   UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`;
+
+async function requestScope(req: Request): Promise<string | null> {
+  const { resolveCompanyScope } = await import("./company-scope");
+  return resolveCompanyScope(req as any);
+}
+
+async function imageIdsInScope(scope: string, ids: string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const r = await pool.query(
+    `SELECT id FROM image_studio_images
+      WHERE id = ANY($2)
+        AND (company_id = $1 OR property_id IN (${SCOPED_PROPS_SQL}))`,
+    [scope, ids]
+  );
+  return new Set(r.rows.map((x: any) => x.id));
+}
+
+async function imageInScope(req: Request, imageId: string): Promise<boolean> {
+  const scope = await requestScope(req);
+  if (!scope) return true;
+  return (await imageIdsInScope(scope, [imageId])).has(imageId);
+}
+
+async function collectionInScope(req: Request, collectionId: string): Promise<boolean> {
+  const scope = await requestScope(req);
+  if (!scope) return true;
+  const r = await pool.query(
+    `SELECT 1 FROM image_studio_collections
+      WHERE id = $2 AND (company_id = $1 OR property_id IN (${SCOPED_PROPS_SQL}))`,
+    [scope, collectionId]
+  );
+  return r.rows.length > 0;
+}
+
 // ─── Stage 8 bulk image sweep ─────────────────────────────────────────────
 // Runs after the business plan and Excel model are agreed. Harvests Google
 // Places photos of the building + neighbours and any embedded images from
@@ -1334,15 +1377,16 @@ export function registerImageStudioRoutes(app: Express) {
   });
 
   app.post("/api/image-studio/upload", requireAuth, uploadImagesMw, async (req: Request, res: Response) => {
-    // Clients may upload photos, but only filed against a property in their
-    // own scope — no orphan firm-wide uploads. (Client does as much as the
-    // agent; unit/scheme photo authoring.)
-    const { isClientRequestUser, resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
-    if (await isClientRequestUser(req as any)) {
-      const scope = await resolveCompanyScope(req as any);
+    // Scoped callers can upload freely, but never into the firm-wide pool:
+    // a property link must be one of their own buildings, and an unlinked
+    // upload is stamped with their company so it stays in (and only in)
+    // their scoped gallery. (Client does as much as the agent.)
+    const { resolveCompanyScope, isPropertyInScope } = await import("./company-scope");
+    const uploadScope = await resolveCompanyScope(req as any);
+    {
       const linkId = (req.body?.propertyId as string) || "";
-      if (!scope || !linkId || !(await isPropertyInScope(scope, linkId))) {
-        return res.status(403).json({ error: "Clients may only upload photos to their own buildings — select one of your properties first." });
+      if (uploadScope && linkId && !(await isPropertyInScope(uploadScope, linkId))) {
+        return res.status(403).json({ error: "You can only file photos against your own buildings." });
       }
     }
     const t0 = Date.now();
@@ -1409,6 +1453,11 @@ export function registerImageStudioRoutes(app: Express) {
             tags,
             description: null,
             source: "upload",
+            // Stamp the property on the image row itself — the scoped
+            // gallery filters on image.property_id/company_id, so without
+            // this a scoped uploader could never see their own upload.
+            propertyId: linkPropertyId || undefined,
+            companyId: !linkPropertyId && uploadScope ? uploadScope : undefined,
             area,
             address,
             brandName,
@@ -1483,16 +1532,19 @@ export function registerImageStudioRoutes(app: Express) {
 
   // MUST be registered before /:id — Express matches in order and "bulk-categorize"
   // would otherwise be captured as an :id parameter.
-  app.patch("/api/image-studio/bulk-categorize", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.patch("/api/image-studio/bulk-categorize", requireAuth, async (req: Request, res: Response) => {
     try {
       const { ids, category } = req.body;
       if (!Array.isArray(ids) || !ids.length || !category) {
         return res.status(400).json({ error: "ids (array) and category (string) required" });
       }
-      const placeholders = ids.map((_: string, i: number) => `$${i + 1}`).join(", ");
+      const bcScope = await requestScope(req);
+      const allowedIds = bcScope ? [...(await imageIdsInScope(bcScope, ids))] : ids;
+      if (!allowedIds.length) return res.status(403).json({ error: "None of these images are in your portfolio" });
+      const placeholders = allowedIds.map((_: string, i: number) => `$${i + 1}`).join(", ");
       const r = await pool.query(
-        `UPDATE image_studio_images SET category = $${ids.length + 1} WHERE id IN (${placeholders})`,
-        [...ids, category]
+        `UPDATE image_studio_images SET category = $${allowedIds.length + 1} WHERE id IN (${placeholders})`,
+        [...allowedIds, category]
       );
       res.json({ success: true, updated: r.rowCount ?? 0 });
     } catch (e: any) {
@@ -1501,8 +1553,18 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/image-studio/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.patch("/api/image-studio/:id", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (!(await imageInScope(req, req.params.id as string))) {
+        return res.status(403).json({ error: "Not in your portfolio" });
+      }
+      if (req.body.propertyId) {
+        const patchScope = await requestScope(req);
+        const { isPropertyInScope } = await import("./company-scope");
+        if (patchScope && !(await isPropertyInScope(patchScope, String(req.body.propertyId)))) {
+          return res.status(403).json({ error: "You can only file images against your own buildings" });
+        }
+      }
       const updates: Record<string, any> = {};
       if (req.body.fileName !== undefined) updates.fileName = req.body.fileName;
       if (req.body.category !== undefined) updates.category = req.body.category;
@@ -1876,8 +1938,8 @@ export function registerImageStudioRoutes(app: Express) {
   // it but the bytes survive long enough to undo. Hard delete is the
   // existing route below.
   app.post("/api/image-studio/:id/trash", requireAuth, async (req: Request, res: Response) => {
-    if (await (await import("./company-scope")).isClientRequestUser(req as any)) {
-      return res.status(403).json({ error: "Read-only access for client accounts" });
+    if (!(await imageInScope(req, req.params.id as string))) {
+      return res.status(403).json({ error: "Not in your portfolio" });
     }
     try {
       const [image] = await db.select({ tags: imageStudioImages.tags })
@@ -1891,8 +1953,8 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
   app.post("/api/image-studio/:id/restore", requireAuth, async (req: Request, res: Response) => {
-    if (await (await import("./company-scope")).isClientRequestUser(req as any)) {
-      return res.status(403).json({ error: "Read-only access for client accounts" });
+    if (!(await imageInScope(req, req.params.id as string))) {
+      return res.status(403).json({ error: "Not in your portfolio" });
     }
     try {
       const [image] = await db.select({ tags: imageStudioImages.tags })
@@ -1934,7 +1996,7 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.post("/api/image-studio/ai-generate", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/ai-generate", requireAuth, async (req: Request, res: Response) => {
     try {
       const { prompt, category, area, tags, size } = req.body;
       const trimmedPrompt = (prompt || "").trim();
@@ -1942,6 +2004,7 @@ export function registerImageStudioRoutes(app: Express) {
       if (trimmedPrompt.length > 1000) return res.status(400).json({ error: "Prompt too long (max 1000 characters)" });
 
       const userId = req.session?.userId || (req as any).tokenUserId;
+      const genScope = await requestScope(req);
 
       const fullPrompt = `Professional, high quality property photography style: ${trimmedPrompt}. Suitable for a premium London commercial property agency. Clean, modern, 4K resolution.`;
       const sizeHint = size || "landscape";
@@ -1986,6 +2049,7 @@ export function registerImageStudioRoutes(app: Express) {
         tags: [...(tags || []), "AI Generated", provider].filter((v: any, i: any, a: any) => a.indexOf(v) === i),
         description: trimmedPrompt,
         source: "ai-generated",
+        companyId: genScope || undefined,
         area: area || null,
         mimeType: "image/png",
         fileSize: imageBuffer.length,
@@ -2009,6 +2073,7 @@ export function registerImageStudioRoutes(app: Express) {
       const trimmedEdit = (editPrompt || "").trim();
       if (!imageId || !trimmedEdit) return res.status(400).json({ error: "imageId and editPrompt required" });
       if (trimmedEdit.length > 1000) return res.status(400).json({ error: "Edit prompt too long (max 1000 characters)" });
+      if (!(await imageInScope(req, imageId))) return res.status(403).json({ error: "Not in your portfolio" });
       // Provider selection: honour an explicit preferProvider, otherwise
       // default to Gemini (Nano Banana Pro) — now the strongest option for
       // both atmospheric tweaks and placemaking CGI work (compositional
@@ -2135,6 +2200,7 @@ export function registerImageStudioRoutes(app: Express) {
       const trimmedEdit = (editPrompt || "").trim();
       if (!imageId || !trimmedEdit) return res.status(400).json({ error: "imageId and editPrompt required" });
       if (trimmedEdit.length > 1000) return res.status(400).json({ error: "Edit prompt too long (max 1000 characters)" });
+      if (!(await imageInScope(req, imageId))) return res.status(403).json({ error: "Not in your portfolio" });
 
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, imageId));
       if (!image) return res.status(404).json({ error: "Image not found" });
@@ -2176,6 +2242,20 @@ export function registerImageStudioRoutes(app: Express) {
 
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
       if (!image) return res.status(404).json({ error: "Image not found" });
+
+      // Scoped callers: only their own images, attached to their own
+      // property or company (pathway attach stays staff-only).
+      const attachScope = await requestScope(req);
+      if (attachScope) {
+        if (!(await imageIdsInScope(attachScope, [id])).has(id)) {
+          return res.status(403).json({ error: "Not in your portfolio" });
+        }
+        const { isPropertyInScope } = await import("./company-scope");
+        const targetOk =
+          (targetType === "property" && (await isPropertyInScope(attachScope, targetId))) ||
+          ((targetType === "brand" || targetType === "company") && targetId === attachScope);
+        if (!targetOk) return res.status(403).json({ error: "You can only attach images to your own properties or company" });
+      }
 
       if (targetType === "property") {
         await db.insert(propertyImageryAssets).values({
@@ -2225,6 +2305,7 @@ export function registerImageStudioRoutes(app: Express) {
   app.post("/api/image-studio/:id/revert", requireAuth, async (req: Request, res: Response) => {
     try {
       const id = req.params.id as string;
+      if (!(await imageInScope(req, id))) return res.status(403).json({ error: "Not in your portfolio" });
       // Pop the most-recent snapshot off the stack (newest is last). Fall back
       // to the legacy single-snapshot file for images edited before this change.
       const stack = undoStackPaths(id);
@@ -2280,10 +2361,11 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.post("/api/image-studio/ai-tag", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/ai-tag", requireAuth, async (req: Request, res: Response) => {
     try {
       const { imageId } = req.body;
       if (!imageId) return res.status(400).json({ error: "imageId required" });
+      if (!(await imageInScope(req, imageId))) return res.status(403).json({ error: "Not in your portfolio" });
 
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, imageId));
       if (!image) return res.status(404).json({ error: "Not found" });
@@ -2547,7 +2629,7 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
-  app.post("/api/image-studio/stock-search", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/stock-search", requireAuth, async (req: Request, res: Response) => {
     try {
       const { query, page = 1 } = req.body;
       if (!query) return res.status(400).json({ error: "Query required" });
@@ -2722,7 +2804,7 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
     }
   });
 
-  app.post("/api/image-studio/import-stock", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/import-stock", requireAuth, async (req: Request, res: Response) => {
     const t0 = Date.now();
     try {
       const { imageUrl, fileName, photographer, category, area, tags } = req.body;
@@ -2748,6 +2830,7 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
       }
 
       const userId = req.session?.userId || (req as any).tokenUserId;
+      const stockScope = await requestScope(req);
 
       const resp = await fetch(imageUrl);
       if (!resp.ok) {
@@ -2776,6 +2859,7 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
         tags: [...(tags || []), "Stock", photographer ? `Photo: ${photographer}` : ""].filter(Boolean),
         description: `Stock photo by ${photographer || "Unknown"}`,
         source: "stock",
+        companyId: stockScope || undefined,
         area: area || null,
         mimeType: "image/jpeg",
         fileSize: buffer.length,
@@ -2794,14 +2878,23 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
     }
   });
 
-  app.get("/api/image-studio/categories", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  app.get("/api/image-studio/categories", requireAuth, async (req: Request, res: Response) => {
     try {
-      const result = await pool.query(`
-        SELECT category, COUNT(*)::int as count 
-        FROM image_studio_images 
-        GROUP BY category 
-        ORDER BY count DESC
-      `);
+      const catScope = await requestScope(req);
+      const result = catScope
+        ? await pool.query(`
+            SELECT category, COUNT(*)::int as count
+            FROM image_studio_images
+            WHERE company_id = $1 OR property_id IN (${SCOPED_PROPS_SQL})
+            GROUP BY category
+            ORDER BY count DESC
+          `, [catScope])
+        : await pool.query(`
+            SELECT category, COUNT(*)::int as count
+            FROM image_studio_images
+            GROUP BY category
+            ORDER BY count DESC
+          `);
       res.json(result.rows);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -2873,6 +2966,7 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
         tags: [...(tags || []), "Street View", "Google", "Exterior"].filter((v: any, i: any, a: any) => a.indexOf(v) === i),
         description: `Google Street View capture of ${location} (heading: ${heading || 0}°)`,
         source: "streetview",
+        companyId: (await requestScope(req)) || undefined,
         area: area || location,
         mimeType: "image/jpeg",
         fileSize: buffer.length,
@@ -2969,12 +3063,14 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
 
       const baseTags = [...(tags || []), "Street View", "Google", "Exterior"].filter((v: any, i: any, a: any) => a.indexOf(v) === i);
 
+      const svScope = await requestScope(req);
       const [rawRecord] = await db.insert(imageStudioImages).values({
         fileName: `Street View (Raw) - ${location}`,
         category: category || "Street Views",
         tags: baseTags,
         description: `Raw Google Street View capture of ${location} (heading: ${heading || 0}deg)`,
         source: "streetview",
+        companyId: svScope || undefined,
         area: area || location,
         mimeType: "image/jpeg",
         fileSize: rawBuffer.length,
@@ -3033,6 +3129,7 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
           tags: [...baseTags, "AI Enhanced", enhanceProvider],
           description: `AI-enhanced Street View of ${location} (from raw capture, enhanced with ${enhanceProvider})`,
           source: "ai-edited",
+          companyId: svScope || undefined,
           area: area || location,
           mimeType: enhExt === ".png" ? "image/png" : "image/jpeg",
           fileSize: enhancedBuffer.length,
@@ -3127,25 +3224,28 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
   });
 
   // Bulk tag endpoint
-  app.post("/api/image-studio/bulk-tag", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/bulk-tag", requireAuth, async (req: Request, res: Response) => {
     try {
       const { ids, tags } = req.body;
       if (!Array.isArray(ids) || !ids.length || !Array.isArray(tags) || !tags.length) {
         return res.status(400).json({ error: "ids (array) and tags (array) required" });
       }
+      const btScope = await requestScope(req);
+      const allowedIds = btScope ? [...(await imageIdsInScope(btScope, ids))] : ids;
+      if (!allowedIds.length) return res.status(403).json({ error: "None of these images are in your portfolio" });
       const cleanTags = tags.map((t: string) => t.trim()).filter(Boolean);
       // Append tags to existing tags (unique)
-      const placeholders = ids.map((_: string, i: number) => `$${i + 1}`).join(", ");
-      const tagArray = `ARRAY[${cleanTags.map((_: string, i: number) => `$${ids.length + i + 1}`).join(", ")}]::TEXT[]`;
+      const placeholders = allowedIds.map((_: string, i: number) => `$${i + 1}`).join(", ");
+      const tagArray = `ARRAY[${cleanTags.map((_: string, i: number) => `$${allowedIds.length + i + 1}`).join(", ")}]::TEXT[]`;
       await pool.query(
         `UPDATE image_studio_images
          SET tags = (
            SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(tags, '{}'::TEXT[]) || ${tagArray}))
          )
          WHERE id IN (${placeholders})`,
-        [...ids, ...cleanTags]
+        [...allowedIds, ...cleanTags]
       );
-      res.json({ success: true, updated: ids.length });
+      res.json({ success: true, updated: allowedIds.length });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -3243,6 +3343,7 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
   // that has images, and link all their images. The "do the whole thing" button.
   app.post("/api/image-studio/collections/rebuild-properties", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (await requestScope(req)) return res.status(403).json({ error: "Staff only" });
       const userId = req.session?.userId || (req as any).tokenUserId;
       const result = await backfillAllPropertyCollections(userId);
       res.json({ success: true, ...result });
@@ -3274,15 +3375,19 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
     }
   });
 
-  app.post("/api/image-studio/collections", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/collections", requireAuth, async (req: Request, res: Response) => {
     try {
       const { name, description } = req.body;
       if (!name?.trim()) return res.status(400).json({ error: "Collection name required" });
       const userId = req.session?.userId || (req as any).tokenUserId;
+      // Scoped callers' folders are stamped with their company so they
+      // appear in (and only in) their own collections list.
+      const newScope = await requestScope(req);
       const [collection] = await db.insert(imageStudioCollections).values({
         name: name.trim(),
         description: description?.trim() || null,
         createdBy: userId,
+        companyId: newScope || undefined,
       }).returning();
       res.json(collection);
     } catch (e: any) {
@@ -3290,8 +3395,9 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
     }
   });
 
-  app.get("/api/image-studio/collections", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  app.get("/api/image-studio/collections", requireAuth, async (req: Request, res: Response) => {
     try {
+      const listScope = await requestScope(req);
       const result = await pool.query(`
         SELECT c.*,
           (SELECT COUNT(*)::int FROM image_studio_collection_images ci WHERE ci.collection_id = c.id) as image_count,
@@ -3300,17 +3406,19 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
            WHERE ci.collection_id = c.id
            ORDER BY ci.added_at DESC LIMIT 1) as cover_thumbnail
         FROM image_studio_collections c
+        ${listScope ? `WHERE c.company_id = $1 OR c.property_id IN (${SCOPED_PROPS_SQL})` : ""}
         ORDER BY c.created_at DESC
-      `);
+      `, listScope ? [listScope] : []);
       res.json(result.rows);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });
 
-  app.get("/api/image-studio/collections/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.get("/api/image-studio/collections/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const collectionId = req.params.id as string;
+      if (!(await collectionInScope(req, collectionId))) return res.status(404).json({ error: "Collection not found" });
       const [collection] = await db.select().from(imageStudioCollections).where(eq(imageStudioCollections.id, collectionId));
       if (!collection) return res.status(404).json({ error: "Collection not found" });
 
@@ -3334,12 +3442,18 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
     }
   });
 
-  app.post("/api/image-studio/collections/:id/images", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.post("/api/image-studio/collections/:id/images", requireAuth, async (req: Request, res: Response) => {
     try {
       const collectionId = req.params.id as string;
-      const { imageIds } = req.body;
+      let { imageIds } = req.body;
       if (!Array.isArray(imageIds) || !imageIds.length) {
         return res.status(400).json({ error: "imageIds (array) required" });
+      }
+      if (!(await collectionInScope(req, collectionId))) return res.status(404).json({ error: "Collection not found" });
+      const addScope = await requestScope(req);
+      if (addScope) {
+        imageIds = [...(await imageIdsInScope(addScope, imageIds))];
+        if (!imageIds.length) return res.status(403).json({ error: "None of these images are in your portfolio" });
       }
       const [collection] = await db.select().from(imageStudioCollections).where(eq(imageStudioCollections.id, collectionId));
       if (!collection) return res.status(404).json({ error: "Collection not found" });
@@ -3360,9 +3474,10 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
     }
   });
 
-  app.delete("/api/image-studio/collections/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.delete("/api/image-studio/collections/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       const collectionId = req.params.id as string;
+      if (!(await collectionInScope(req, collectionId))) return res.status(404).json({ error: "Collection not found" });
       await pool.query("DELETE FROM image_studio_collection_images WHERE collection_id = $1", [collectionId]);
       await db.delete(imageStudioCollections).where(eq(imageStudioCollections.id, collectionId));
       res.json({ success: true });
@@ -3371,8 +3486,9 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
     }
   });
 
-  app.delete("/api/image-studio/collections/:id/images/:imageId", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  app.delete("/api/image-studio/collections/:id/images/:imageId", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (!(await collectionInScope(req, req.params.id as string))) return res.status(404).json({ error: "Collection not found" });
       await pool.query(
         "DELETE FROM image_studio_collection_images WHERE collection_id = $1 AND image_id = $2",
         [req.params.id, req.params.imageId]

@@ -171,6 +171,11 @@ const UK_CITIES = [
 
 export default function ImageStudio() {
   const { toast } = useToast();
+  // Client viewers get the full studio (parity — the server scope-jails
+  // every endpoint to their own portfolio) but not hard delete or the
+  // firm-wide maintenance tools; those stay staff-side.
+  const { data: viewerMe } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = viewerMe?.role === "Client" || !!viewerMe?.companyScopeId;
   const fileInputRef = useRef<HTMLInputElement>(null);
   const searchString = useSearch();
   const queryParams = new URLSearchParams(searchString);
@@ -1297,7 +1302,7 @@ export default function ImageStudio() {
                         setAiEditPrompt("");
                         setAiEditOpen(true);
                       }}
-                      onDelete={() => { if (confirm("Delete this brand image?")) deleteMutation.mutate(img.id); }}
+                      onDelete={isClientViewer ? undefined : () => { if (confirm("Delete this brand image?")) deleteMutation.mutate(img.id); }}
                       selectMode={selectMode}
                       selected={selectedIds.has(img.id)}
                       onToggleSelect={() => toggleSelect(img.id)}
@@ -1444,6 +1449,7 @@ export default function ImageStudio() {
                       Categorise
                     </Button>
                   </div>
+                  {!isClientViewer && (
                   <Button
                     variant="destructive"
                     size="sm"
@@ -1458,6 +1464,7 @@ export default function ImageStudio() {
                     {bulkDeleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Trash2 className="h-4 w-4 mr-1" />}
                     Delete {selectedIds.size}
                   </Button>
+                  )}
                 </>
               )}
             </div>
@@ -1546,6 +1553,7 @@ export default function ImageStudio() {
                     >
                       <FolderPlus className="h-4 w-4 mr-1" /> Add to Collection
                     </Button>
+                    {!isClientViewer && (
                     <Button
                       variant="destructive"
                       size="sm"
@@ -1560,6 +1568,7 @@ export default function ImageStudio() {
                       {bulkDeleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Trash2 className="h-4 w-4 mr-1" />}
                       Delete {selectedIds.size}
                     </Button>
+                    )}
                   </div>
                 )}
                 {viewingCollectionLoading ? (
@@ -1635,6 +1644,7 @@ export default function ImageStudio() {
                     <p className="text-sm text-muted-foreground">{collections.length} {collections.length === 1 ? "collection" : "collections"}</p>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
+                    {!isClientViewer && (<>
                     <Button size="sm" variant="outline" data-testid="button-ai-tag-uncategorised"
                       onClick={async () => {
                         // Tagging runs as a server-side background job (the old
@@ -1721,6 +1731,7 @@ export default function ImageStudio() {
                       }}>
                       {rebuilding ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Sparkles className="h-4 w-4 mr-1" />} Rebuild property folders
                     </Button>
+                    </>)}
                     <Button size="sm" onClick={() => setCreateCollectionOpen(true)} data-testid="button-create-collection">
                       <Plus className="h-4 w-4 mr-1" /> New Collection
                     </Button>
@@ -1883,7 +1894,7 @@ export default function ImageStudio() {
                       onEdit={() => openEdit(img)}
                       onAiTag={() => aiTagMutation.mutate(img.id)}
                       onAiEdit={() => { setAiEditImageId(img.id); setAiEditImageName(img.fileName || ""); setAiEditPrompt(""); setAiEditOpen(true); }}
-                      onDelete={() => { if (confirm("Delete this image?")) deleteMutation.mutate(img.id); }}
+                      onDelete={isClientViewer ? undefined : () => { if (confirm("Delete this image?")) deleteMutation.mutate(img.id); }}
                       aiTagging={aiTagMutation.isPending}
                       selectMode={selectMode}
                       selected={selectedIds.has(img.id)}
@@ -1933,7 +1944,7 @@ export default function ImageStudio() {
                       setAiEditPrompt("");
                       setAiEditOpen(true);
                     }}
-                    onDelete={() => {
+                    onDelete={isClientViewer ? undefined : () => {
                       if (confirm("Delete this image?")) deleteMutation.mutate(img.id);
                     }}
                     aiTagging={aiTagMutation.isPending}
@@ -1963,7 +1974,7 @@ export default function ImageStudio() {
                       setAiEditPrompt("");
                       setAiEditOpen(true);
                     }}
-                    onDelete={() => {
+                    onDelete={isClientViewer ? undefined : () => {
                       if (confirm("Delete this image?")) deleteMutation.mutate(img.id);
                     }}
                     selectMode={selectMode}
@@ -2758,6 +2769,7 @@ export default function ImageStudio() {
                     <Download className="h-3 w-3 mr-1" /> Download
                   </Button>
                 </a>
+                {!isClientViewer && (
                 <Button
                   size="sm"
                   variant="destructive"
@@ -2768,6 +2780,7 @@ export default function ImageStudio() {
                 >
                   <Trash2 className="h-3 w-3 mr-1" /> Delete
                 </Button>
+                )}
               </div>
             </div>
           </div>
@@ -3041,7 +3054,7 @@ function ImageCard({
   onEdit: () => void;
   onAiTag: () => void;
   onAiEdit: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
   aiTagging: boolean;
   selectMode?: boolean;
   selected?: boolean;
@@ -3122,9 +3135,11 @@ function ImageCard({
         <Button size="icon" variant="secondary" className="h-5 w-5 rounded-sm" onClick={(e) => { e.stopPropagation(); onAiEdit(); }} data-testid={`button-ai-edit-${image.id}`}>
           <Sparkles className="h-2.5 w-2.5" />
         </Button>
-        <Button size="icon" variant="destructive" className="h-5 w-5 rounded-sm" onClick={(e) => { e.stopPropagation(); onDelete(); }} data-testid={`button-delete-${image.id}`}>
-          <Trash2 className="h-2.5 w-2.5" />
-        </Button>
+        {onDelete && (
+          <Button size="icon" variant="destructive" className="h-5 w-5 rounded-sm" onClick={(e) => { e.stopPropagation(); onDelete(); }} data-testid={`button-delete-${image.id}`}>
+            <Trash2 className="h-2.5 w-2.5" />
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -3148,7 +3163,7 @@ function ImageListRow({
   onEdit: () => void;
   onAiTag: () => void;
   onAiEdit: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
   selectMode?: boolean;
   selected?: boolean;
   onToggleSelect?: () => void;
@@ -3210,9 +3225,11 @@ function ImageListRow({
         <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onAiEdit} data-testid={`button-ai-edit-list-${image.id}`}>
           <Sparkles className="h-3 w-3" />
         </Button>
-        <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={onDelete} data-testid={`button-delete-list-${image.id}`}>
-          <Trash2 className="h-3 w-3" />
-        </Button>
+        {onDelete && (
+          <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={onDelete} data-testid={`button-delete-list-${image.id}`}>
+            <Trash2 className="h-3 w-3" />
+          </Button>
+        )}
       </div>
     </div>
   );

@@ -441,11 +441,11 @@ export function AppSidebar() {
             // client's own buildings.
             .filter(i => !(isClientUser && ["/cad-measure"].includes(i.url)))
             .map(i =>
-              // The full /image-studio page is admin-only (it calls admin
-              // endpoints). Non-admins (e.g. CGI partners like Luke) and
-              // client viewers get the lightweight images page that works
-              // on auth alone.
-              i.url === "/image-studio" && (!user?.isAdmin || isClientUser) ? { ...i, url: "/m/images" } : i
+              // The full /image-studio page is for admins and client
+              // viewers (client parity — the server scope-jails every
+              // endpoint). Non-admin staff (e.g. CGI partners like Luke)
+              // keep the lightweight images page that works on auth alone.
+              i.url === "/image-studio" && !user?.isAdmin && !isClientUser ? { ...i, url: "/m/images" } : i
             )}
           storageKey="ai"
         />
