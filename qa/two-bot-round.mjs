@@ -1529,6 +1529,33 @@ async function markRound(page, cross) {
     if (r.foreignStatus !== 403) throw new Error(`client read brand suggestions on a foreign unit (expected 403, got ${r.foreignStatus})`);
   });
 
+  // The global requirements↔units matches board (/crm/requirements-leasing/
+  // matches) scopes its unit pool to the caller's company. A client login
+  // must see a healthy board whose every referenced unit is one they can
+  // actually reach via /available-units — no rival landlord's unit may
+  // surface as a match target.
+  await step(page, p, 'client-requirement-matches-board-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth }).catch(() => null))?.json().catch(() => null);
+      const allowed = new Set((Array.isArray(units) ? units : []).map((u) => String(u.id)));
+      const res = await fetch('/api/crm/requirements-leasing/matches', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = await res.json().catch(() => null);
+      const matches = body && typeof body.matches === 'object' ? body.matches : null;
+      if (!matches || typeof body.unitPool !== 'number') return { ok: false, status: res.status, shape: true };
+      const leaked = [];
+      for (const key of Object.keys(matches)) {
+        for (const hit of (matches[key]?.top || [])) {
+          if (!allowed.has(String(hit.unitId))) leaked.push(String(hit.unitId));
+        }
+      }
+      return { ok: true, unitPool: body.unitPool, leaked: leaked.slice(0, 3) };
+    });
+    if (!r.ok) throw new Error(r.shape ? 'requirement-matches board returned an unexpected shape' : `client requirement-matches board unhealthy (${r.status})`);
+    if (r.leaked && r.leaked.length) throw new Error(`rival unit leaked into the client matches board: ${r.leaked.join(', ')}`);
+  });
+
   await step(page, p, 'client-viewings-offers', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
