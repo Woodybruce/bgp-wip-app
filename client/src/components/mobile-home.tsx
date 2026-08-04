@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { legacyToCode } from "@shared/deal-status";
 import { IntelligenceFooter } from "@/components/intelligence-footer";
+import { useTeam } from "@/lib/team-context";
 
 type BriefingData = { briefing: string; generatedAt: string };
 
@@ -137,6 +138,10 @@ export default function MobileHome() {
   // Client logins (e.g. Landsec): no Expenses tile, and skip the BGP
   // commission/WIP queries entirely — they're staff-only and would 403.
   const isClientHome = user?.role === "Client" || !!(user as any)?.companyScopeId;
+  // Staff previewing the client experience via the team switcher see the
+  // same portfolio section (mirrors the desktop Landsec dashboard).
+  const { activeTeam } = useTeam();
+  const showPortfolioHome = isClientHome || activeTeam === "Landsec";
   const { data: alerts = [] } = useQuery<Alert[]>({ queryKey: ["/api/daily-digest"] });
   const { data: tasks = [] } = useQuery<Task[]>({ queryKey: ["/api/tasks"] });
   const { data: commission } = useQuery<Commission>({
@@ -151,7 +156,7 @@ export default function MobileHome() {
   const { data: clientUnitsRaw } = useQuery<any[]>({
     queryKey: ["/api/available-units"],
     staleTime: 2 * 60 * 1000,
-    enabled: isClientHome,
+    enabled: showPortfolioHome,
   });
   const clientUnits = Array.isArray(clientUnitsRaw) ? clientUnitsRaw : [];
   const unitStats = {
@@ -212,10 +217,10 @@ export default function MobileHome() {
         <ChevronRight className="w-4 h-4 ml-auto opacity-70" />
       </button>
 
-      {/* Client homes (Landsec): portfolio letting roll-up + jump-offs —
-          the phone version of the Landsec dashboard. Staff never see this
-          (they get commission/WIP below instead). */}
-      {isClientHome && (
+      {/* Client homes (Landsec) — and staff previewing in the Landsec team
+          view: portfolio letting roll-up + jump-offs, the phone version of
+          the Landsec dashboard. */}
+      {showPortfolioHome && (
         <>
           <Link
             href="/available"
