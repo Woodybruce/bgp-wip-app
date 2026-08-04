@@ -114,7 +114,13 @@ function RecentRow({ a, propertyId, summaries, setSummaries }: {
               {a.subject && <p className="text-xs font-semibold leading-snug">{a.subject}</p>}
               <p className="text-[11px] leading-snug">{a.summary}</p>
               {aiText && <p className="text-[11px] leading-snug opacity-80">{aiText}</p>}
-              <p className="text-[10px] opacity-60">{timeAgo(a.date)}</p>
+              <p className="text-[10px] opacity-60">
+                {new Date(a.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
+                {" · "}
+                {new Date(a.date).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                {" · "}
+                {timeAgo(a.date)}
+              </p>
             </div>
           </TooltipContent>
         </Tooltip>
