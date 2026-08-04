@@ -163,6 +163,20 @@ async function loadIntelSlice(companyId: string) {
       ORDER BY n.published_at DESC NULLS LAST LIMIT 6`,
     [companyId]
   ).catch(() => ({ rows: [] }));
+  // Every firmographic API we pay for feeds the same read, with fetch
+  // dates so the model can weigh freshness and call out stale feeds
+  // (Woody, 2026-08-04: "include ai to manage the whole info feedback
+  // including our current apis").
+  const [apollo, rocketreach, covenant, expansion] = await Promise.all([
+    pool.query(`SELECT payload, fetched_at FROM brand_apollo_data WHERE company_id = $1`, [companyId]).catch(() => ({ rows: [] as any[] })),
+    pool.query(`SELECT payload, fetched_at FROM brand_rocketreach_data WHERE company_id = $1`, [companyId]).catch(() => ({ rows: [] as any[] })),
+    pool.query(
+      `SELECT cr.grade, cr.computed_at FROM covenant_reports cr
+        JOIN crm_companies co ON co.companies_house_number = cr.company_number
+       WHERE co.id = $1 ORDER BY cr.computed_at DESC LIMIT 1`, [companyId]).catch(() => ({ rows: [] as any[] })),
+    pool.query(`SELECT employee_count, industry, store_count FROM crm_companies WHERE id = $1`, [companyId]).catch(() => ({ rows: [] as any[] })),
+  ]);
+  const daysOld = (t: any) => t ? Math.floor((Date.now() - new Date(t).getTime()) / 86400000) : null;
   return {
     name: company.rows[0].name,
     hunter_flagged: company.rows[0].hunter_flag,
@@ -173,6 +187,12 @@ async function loadIntelSlice(companyId: string) {
       title: r.title, source: r.source_name,
       days_ago: r.published_at ? Math.floor((Date.now() - new Date(r.published_at).getTime()) / 86400000) : null,
     })),
+    api_feeds: {
+      apollo: apollo.rows[0] ? { ...apollo.rows[0].payload, days_old: daysOld(apollo.rows[0].fetched_at) } : "never fetched",
+      rocketreach: rocketreach.rows[0] ? { ...rocketreach.rows[0].payload, days_old: daysOld(rocketreach.rows[0].fetched_at) } : "never fetched",
+      covenant: covenant.rows[0] ? { grade: covenant.rows[0].grade, days_old: daysOld(covenant.rows[0].computed_at) } : "no covenant report",
+      crm_record: expansion.rows[0] || null,
+    },
   };
 }
 
@@ -221,15 +241,17 @@ Tone: direct, broker-to-broker. Plain text. No bullets or headers.`;
 }
 
 function intelPrompt(d: any): string {
-  return `You are a senior BGP retail-property broker writing a one-paragraph fortnight-in-review on a tracked brand for our team.
+  return `You are a senior BGP retail-property broker writing a short intel read on a tracked brand for our team. You are also the data steward: the api_feeds block shows what each of our paid data feeds (Apollo firmographics, RocketReach, covenant engine) currently holds and how old it is.
 
 Data:
 ${JSON.stringify(d, null, 2)}
 
-Write a single 60-90 word paragraph covering:
-- What changed about this brand recently (signals + news)
+Write ONE 60-90 word paragraph covering:
+- What changed about this brand recently (signals + news + firmographic momentum like headcount growth or funding)
 - The pattern (expansion mode / quiet / contracting / leadership shake-up)
 - What it means for BGP (e.g. "good moment to pitch new sites", "watch for distressed exits")
+
+Then, ONLY if warranted, add one final sentence starting "Data note:" flagging the single most important data problem — sources that disagree (e.g. Apollo employee count vs the CRM record), or a feed that is stale (90+ days) or never fetched. If the feeds agree and are fresh, no Data note.
 
 Tone: direct, broker-to-broker, decisive. Plain text only.`;
 }

@@ -1809,6 +1809,11 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 fn is kept in the file for re-use if/when we buy company
                 lookup credits and the rich payload becomes available. */}
 
+            {/* Momentum — Apollo firmographics (headcount growth, funding).
+                Refresh fills company gaps and feeds growth/funding into
+                brand_signals → Expansion Intelligence. */}
+            {!isLandlord && <ApolloIntelCard companyId={c.id} companyName={c.name} />}
+
             {/* ── Stores — brand-side only. Landlords get the Ownership
                  block below instead. UK/Global toggle was rolled back
                  May 2026; backend + brand_stores.country schema kept in
@@ -3415,6 +3420,95 @@ function RocketReachIntelCard({ companyId, companyName }: { companyId: string; c
               </div>
             )}
             {p.ticker_symbol && <div className="col-span-2"><span className="text-muted-foreground">Ticker:</span> <span className="font-medium">{p.ticker_symbol}</span></div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Apollo firmographics — the momentum feed (headcount growth, funding).
+// Same visual family as RocketReachIntelCard above; refresh also fills
+// company gaps server-side and feeds growth/funding into brand_signals so
+// the Expansion Intelligence score picks it up.
+function ApolloIntelCard({ companyId, companyName }: { companyId: string; companyName: string }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data: apViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const apIsClient = !apViewer || apViewer.role === "Client" || !!apViewer.companyScopeId;
+  const { data, isLoading } = useQuery<{ payload: any | null; fetchedAt?: string | null }>({
+    queryKey: ["/api/brand", companyId, "apollo-company"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/brand/${companyId}/apollo-company`);
+      return res.json();
+    },
+    staleTime: 5 * 60_000,
+  });
+  const refresh = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/brand/${companyId}/apollo-company/refresh`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Apollo lookup failed");
+      return json;
+    },
+    onSuccess: (json: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "apollo-company"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      toast({ title: "Apollo firmographics updated", description: json.gapsFilled ? `${json.gapsFilled} company field${json.gapsFilled === 1 ? "" : "s"} auto-filled` : companyName });
+    },
+    onError: (e: any) => toast({ title: "Apollo error", description: e.message, variant: "destructive" }),
+  });
+  if (isLoading) return null;
+  const p = data?.payload;
+  const growth = p?.headcountGrowth12m ?? p?.headcountGrowth6m;
+  const growthPct = growth != null ? Math.round(Number(growth) * 100) : null;
+  return (
+    <div className="border-t border-border/40 mt-3 pt-2 order-3">
+      <div className="flex items-center gap-1.5 mb-2">
+        <TrendingUp className="w-3.5 h-3.5 text-muted-foreground" />
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Momentum (Apollo)</span>
+        {data?.fetchedAt && (
+          <span className="text-[10px] text-muted-foreground ml-1">· {new Date(data.fetchedAt).toLocaleDateString("en-GB")}</span>
+        )}
+        {!apIsClient && (
+          <button
+            onClick={() => refresh.mutate()}
+            disabled={refresh.isPending}
+            className="ml-auto text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50"
+            data-testid="apollo-refresh"
+          >
+            {refresh.isPending ? "Fetching…" : p ? "Refresh" : "Fetch"}
+          </button>
+        )}
+      </div>
+      {!p ? null : (
+        <div className="space-y-1.5 text-xs">
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+            {p.employees != null && (
+              <div>
+                <span className="text-muted-foreground">Employees:</span>{" "}
+                <span className="font-medium tabular-nums">{Number(p.employees).toLocaleString()}</span>
+              </div>
+            )}
+            {growthPct != null && (
+              <div>
+                <span className="text-muted-foreground">Headcount:</span>{" "}
+                <span className={`font-semibold tabular-nums ${growthPct >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                  {growthPct >= 0 ? "↑" : "↓"} {Math.abs(growthPct)}%
+                </span>
+                <span className="text-[10px] text-muted-foreground"> {p.headcountGrowth12m != null ? "12m" : "6m"}</span>
+              </div>
+            )}
+            {p.totalFunding && <div><span className="text-muted-foreground">Funding:</span> <span className="font-medium">{p.totalFunding}</span></div>}
+            {p.latestFundingStage && <div><span className="text-muted-foreground">Latest round:</span> <span className="font-medium">{p.latestFundingStage}</span></div>}
+            {p.annualRevenue && <div><span className="text-muted-foreground">Revenue:</span> <span className="font-medium">{p.annualRevenue}</span></div>}
+            {p.foundedYear && <div><span className="text-muted-foreground">Founded:</span> <span className="font-medium">{p.foundedYear}</span></div>}
+            {p.hq && <div className="col-span-2"><span className="text-muted-foreground">HQ:</span> <span className="font-medium">{p.hq}</span></div>}
+            {p.linkedinUrl && (
+              <div className="col-span-2">
+                <a href={p.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">LinkedIn company page →</a>
+              </div>
+            )}
           </div>
         </div>
       )}
