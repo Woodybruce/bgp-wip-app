@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { IntelligenceFooter } from "@/components/intelligence-footer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -2927,6 +2928,15 @@ export default function Dashboard() {
             <p className="text-sm font-medium mb-1">No widgets selected</p>
             <p className="text-xs text-muted-foreground mb-4">Use the Customise button to add boards to your dashboard</p>
           </CardContent>
+        </Card>
+      )}
+
+      {/* Same Intelligence strip as the calendar footer — one board, rolled
+          across (Woody, 2026-08-04). Landsec view only; insights come back
+          company-scoped for client viewers server-side. */}
+      {isLandsecTeam && (
+        <Card className="overflow-hidden">
+          <IntelligenceFooter />
         </Card>
       )}
     </div>
