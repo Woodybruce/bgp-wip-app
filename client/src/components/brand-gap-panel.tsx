@@ -3,6 +3,7 @@
 // local market lenses; sector coverage with missing-sector callouts;
 // AI gap read; international watchlist). Retail is excluded throughout —
 // the server slices to hospitality/F&B/wellness/café/leisure.
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -261,6 +262,22 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
   const missing = sectors.filter(s => s.missing);
   const present = sectors.filter(s => !s.missing);
   const competing = data.competingCentres || [];
+  return (
+    <BrandGapBody data={data} sectors={sectors} missing={missing} present={present} competing={competing} propertyId={propertyId} />
+  );
+}
+
+function BrandGapBody({ data, sectors, missing, present, competing, propertyId }: {
+  data: BrandGapResult;
+  sectors: NonNullable<BrandGapResult["sectors"]>;
+  missing: NonNullable<BrandGapResult["sectors"]>;
+  present: NonNullable<BrandGapResult["sectors"]>;
+  competing: NonNullable<BrandGapResult["competingCentres"]>;
+  propertyId: string;
+}) {
+  // Minimise everything below the AI read (Woody, 2026-08-04: "create a
+  // minimise after the commentary so can reduce if need to").
+  const [detailsOpen, setDetailsOpen] = useState(true);
 
   return (
     <Card data-testid="brand-gap-panel">
@@ -283,6 +300,18 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
         {/* AI gap read */}
         <GapCommentary propertyId={propertyId} />
 
+        {/* Minimise everything below the read */}
+        <button
+          onClick={() => setDetailsOpen(o => !o)}
+          className="w-full flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground py-0.5"
+          data-testid="gap-details-toggle"
+        >
+          <ChevronRight className={`w-3 h-3 transition-transform ${detailsOpen ? "rotate-90" : ""}`} />
+          {detailsOpen ? "Minimise detail" : "Show detail — gaps, sectors, watchlist"}
+          <span className="flex-1 border-t border-border/60 ml-1" />
+        </button>
+
+        {detailsOpen && (<>
         {/* Matching brand requirements — active leasing reqs that fit available units */}
         {data.matchingRequirements && data.matchingRequirements.length > 0 && (
           <div className="rounded-md border border-purple-200 bg-purple-50/60 dark:bg-purple-950/20 dark:border-purple-900 p-2">
@@ -443,6 +472,7 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
             No hospitality store data nearby yet. Populate stores for tracked brands via "Find stores" on each brand page.
           </p>
         )}
+        </>)}
       </CardContent>
     </Card>
   );
