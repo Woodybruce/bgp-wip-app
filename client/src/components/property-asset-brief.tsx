@@ -359,23 +359,42 @@ export function RiskRegisterCard({ propertyId }: { propertyId: string }) {
   if (isLoading || !data) {
     return <Card><CardContent className="p-3"><Skeleton className="h-16 w-full" /></CardContent></Card>;
   }
+  const high = data.risks.filter(r => r.severity === "high");
+  const med = data.risks.filter(r => r.severity !== "high");
   return (
-    <Card>
-      <CardHeader className="p-3 pb-2">
+    <Card className="overflow-hidden">
+      <CardHeader className="p-3 pb-2 bg-gradient-to-r from-rose-500/[0.06] to-transparent">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <AlertTriangle className="w-3.5 h-3.5" /> Risk register
-          <Badge variant="secondary" className="text-[10px]">{data.risks.length}</Badge>
+          <span className="w-6 h-6 rounded-full bg-rose-500/10 flex items-center justify-center shrink-0">
+            <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+          </span>
+          Risk register
+          {high.length > 0 && (
+            <Badge className="text-[10px] bg-rose-100 text-rose-700 hover:bg-rose-100 dark:bg-rose-950 dark:text-rose-300 border-transparent">{high.length} urgent</Badge>
+          )}
+          {med.length > 0 && (
+            <Badge className="text-[10px] bg-amber-100 text-amber-700 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300 border-transparent">{med.length} watch</Badge>
+          )}
         </CardTitle>
       </CardHeader>
-      <CardContent className="p-3 pt-0">
+      <CardContent className="p-3 pt-2">
         {data.risks.length === 0 ? (
           <p className="text-xs text-muted-foreground italic">No flagged risks. All long-expiry tenants have live deals.</p>
         ) : (
           <div className="space-y-1 max-h-[260px] overflow-y-auto pr-1">
-            {data.risks.map((r, i) => (
-              <div key={i} className="flex items-start gap-2 text-sm px-1.5 py-1 rounded leading-snug">
-                <span className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${r.severity === "high" ? "bg-rose-500" : "bg-amber-500"}`} />
+            {[...high, ...med].map((r, i) => (
+              <div
+                key={i}
+                className={`flex items-start gap-2 text-xs px-2 py-1.5 rounded-md border-l-2 leading-snug ${
+                  r.severity === "high"
+                    ? "border-l-rose-500 bg-rose-50/60 dark:bg-rose-950/20"
+                    : "border-l-amber-400 bg-amber-50/50 dark:bg-amber-950/15"
+                }`}
+              >
                 <div className="flex-1 min-w-0">{r.message}</div>
+                <span className={`text-[9px] font-semibold uppercase tracking-wide shrink-0 mt-0.5 ${
+                  r.severity === "high" ? "text-rose-600" : "text-amber-600"
+                }`}>{r.severity === "high" ? "Urgent" : "Watch"}</span>
               </div>
             ))}
           </div>
@@ -1194,11 +1213,14 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
   });
 
   return (
-    <Card>
-      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
+    <Card className="overflow-hidden">
+      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between bg-gradient-to-r from-violet-500/[0.07] to-transparent">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <Target className="w-3.5 h-3.5" /> This week's focus
-          <Badge variant="secondary" className="text-[10px]">{tasks.length}</Badge>
+          <span className="w-6 h-6 rounded-full bg-violet-500/10 flex items-center justify-center shrink-0">
+            <Target className="w-3.5 h-3.5 text-violet-600" />
+          </span>
+          This week's focus
+          <Badge className="text-[10px] bg-violet-100 text-violet-700 hover:bg-violet-100 dark:bg-violet-950 dark:text-violet-300 border-transparent">{tasks.length}</Badge>
         </CardTitle>
         <Link href="/tasks">
           <Button size="sm" variant="ghost" className="h-6 text-[10px]">
@@ -1206,7 +1228,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
           </Button>
         </Link>
       </CardHeader>
-      <CardContent className="p-3 pt-0 space-y-1.5">
+      <CardContent className="p-3 pt-2 space-y-1.5">
         {tasks.length === 0 && (
           <p className="text-[11px] text-muted-foreground italic">No open tasks on this property. Add the things being pushed this week below — they'll appear on My Tasks too.</p>
         )}
@@ -1214,7 +1236,13 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
           {tasks.slice(0, 10).map(t => {
             const due = dueLabel(t.due_date);
             return (
-              <div key={t.id} className="flex items-start gap-2 text-[12px] px-1.5 py-1 rounded hover:bg-muted/40 group">
+              <div key={t.id} className={`flex items-start gap-2 text-[12px] px-2 py-1.5 rounded-md border-l-2 group ${
+                t.priority === "high"
+                  ? "border-l-rose-400 bg-rose-50/50 dark:bg-rose-950/15 hover:bg-rose-50 dark:hover:bg-rose-950/25"
+                  : t.priority === "low"
+                    ? "border-l-slate-300 dark:border-l-slate-700 hover:bg-muted/40"
+                    : "border-l-violet-300 dark:border-l-violet-800 bg-violet-50/30 dark:bg-violet-950/10 hover:bg-violet-50/60 dark:hover:bg-violet-950/20"
+              }`}>
                 <button
                   onClick={() => completeTask.mutate(t.id)}
                   disabled={completeTask.isPending}

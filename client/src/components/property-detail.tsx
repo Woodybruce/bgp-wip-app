@@ -756,17 +756,11 @@ export function PropertyDetail({ id }: { id: string }) {
                   is visible at a glance alongside the news ticker.
                   Brochures moved down to share a row with Brand Gap. */}
               <div className="flex flex-col gap-3 h-full min-h-0">
-                <Card>
-                  <CardContent className="p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Newspaper className="w-3.5 h-3.5 text-muted-foreground" />
-                      <span className="text-xs font-semibold">Property News</span>
-                    </div>
-                    <ErrorBoundary compact name="Property news (top-strip preview)">
-                      <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
-                    </ErrorBoundary>
-                  </CardContent>
-                </Card>
+                {/* PropertyNewsPanel renders its own card + "News Feed"
+                    header — the old outer Card double-framed it. */}
+                <ErrorBoundary compact name="Property news (top-strip preview)">
+                  <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
+                </ErrorBoundary>
                 <ErrorBoundary compact name="Risk register">
                   <div className="flex-1 min-h-[280px]">
                     <RiskRegisterCard propertyId={property.id} />

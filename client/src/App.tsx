@@ -203,6 +203,9 @@ const CLIENT_ALLOWED_ROUTES = [
   // Task-25 client surfaces — the nav showed these but this guard bounced
   // the click back to the dashboard ("still bounces", 2026-08-02).
   "/calendar", "/sharepoint",
+  // Tenancy schedule "Full Board" pop-out — the guard bounced it to the
+  // dashboard (Woody, 2026-08-04); the page's API is property-scoped.
+  "/tenancy-schedule",
 ];
 function ClientRouteGuard() {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });

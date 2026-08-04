@@ -1782,6 +1782,31 @@ export function setupNewsFeedRoutes(app: Express) {
         return distinctiveWords.length > 0 && distinctiveWords.some((w: string) => text.includes(w));
       }).slice(0, 10);
 
+      // Thumbnail the matched slice — DB pipeline articles often land with
+      // image_url NULL, which left this panel as bare globe favicons while
+      // the News page (whose backfill had run) showed real thumbnails. Same
+      // og:image enrichment as backfillArticleThumbnails, persisted so each
+      // article costs one fetch ever.
+      await Promise.all(matchedArticles
+        .filter(a => !a.imageUrl || a.imageUrl.startsWith("/api/brand-logo/"))
+        .map(async a => {
+          try {
+            let articleUrl = a.url || "";
+            if (/^https?:\/\/(news\.)?google\.com\//i.test(articleUrl)) {
+              const real = await resolveGoogleNewsUrl(articleUrl);
+              if (real) { articleUrl = real; (a as any).url = real; }
+            }
+            if (/^https?:\/\/(news\.)?google\.com\//i.test(articleUrl)) return;
+            const img = await fetchOgImage(articleUrl) || faviconForUrl(articleUrl);
+            if (img) {
+              (a as any).imageUrl = img;
+              await db.update(newsArticles)
+                .set({ imageUrl: img, url: articleUrl })
+                .where(eq(newsArticles.id, a.id));
+            }
+          } catch { /* panel still renders without a thumbnail */ }
+        }));
+
       const searchQuery = `"${propertyName}"`;
 
       // Live search via Google News RSS — a stable XML feed, unlike the old
