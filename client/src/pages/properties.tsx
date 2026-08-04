@@ -1,4 +1,5 @@
 import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
+import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 import { DEAL_STATUS_BADGE_COLORS } from "@/lib/deal-status-colors";
 import { guessDomain, localBrandLogoUrl } from "@/lib/company-logos";
@@ -3748,6 +3749,13 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
     },
   });
 
+  // Same AI brand-suggestions dialog as the Letting Tracker — one structure,
+  // every surface a unit appears on (Woody, 2026-08-04). Staff-only: the
+  // target write is a research POST clients can't make.
+  const [suggestUnit, setSuggestUnit] = useState<{ id: string; unitName: string } | null>(null);
+  const { data: ltsViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const ltsIsClient = !ltsViewer || ltsViewer.role === "Client" || !!ltsViewer.companyScopeId;
+
   const { data: viewingCounts } = useQuery<Record<string, number>>({
     queryKey: ["/api/available-units/all-viewings-counts"],
   });
@@ -3838,12 +3846,24 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
                       {unit.askingRent && <span className="text-[10px] text-muted-foreground">£{unit.askingRent.toLocaleString()}/pa</span>}
                       {vc > 0 && <span className="text-[10px] text-muted-foreground flex items-center gap-0.5"><Eye className="w-2.5 h-2.5" />{vc}</span>}
                       {oc > 0 && <span className="text-[10px] text-muted-foreground flex items-center gap-0.5"><FileText className="w-2.5 h-2.5" />{oc}</span>}
+                      {!ltsIsClient && legacyToCode(unit.marketingStatus || "AVA") === "AVA" && (
+                        <button
+                          onClick={() => setSuggestUnit({ id: unit.id, unitName: unit.unitName })}
+                          className="text-purple-500 hover:text-purple-700 transition-colors"
+                          title="AI: which brands should we pitch this unit to?"
+                          data-testid={`button-suggest-brands-${unit.id}`}
+                        >
+                          <Sparkles className="w-3 h-3" />
+                        </button>
+                      )}
                       <Badge className={`text-[10px] ${statusColor(unit.marketingStatus || "AVA")}`}>{(() => { const c = legacyToCode(unit.marketingStatus); return c ? DEAL_STATUS_LABELS[c] : (unit.marketingStatus || "Available"); })()}</Badge>
                     </div>
                   </div>
                 );
               })}
             </div>
+
+            <SuggestTargetsDialog unit={suggestUnit} onClose={() => setSuggestUnit(null)} />
 
             <Link href={`/deals/letting?propertyId=${propertyId}`}>
               <Button variant="outline" size="sm" className="w-full h-7 text-[11px] gap-1" data-testid="button-view-leasing-tracker">
