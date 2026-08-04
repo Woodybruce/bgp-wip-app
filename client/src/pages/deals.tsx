@@ -5088,6 +5088,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   useEffect(() => {
     if (!teamFilterInitialised) {
+      // Wait for the viewer to load — isClientDeals is false while /me is
+      // in flight, and a client's pinned activeTeam ("Landsec") raced in as
+      // a team filter that matches no BGP deal rows ("0 deals — Landsec",
+      // Mark Warne, 2026-08-04).
+      if (!currentUserForViews) return;
       // Restored session filters already carry the user's team choice — only
       // seed a default when there is no snapshot, but let ?team= always win.
       const teamToSet = isClientDeals ? null : (urlTeamParam || (!savedListFilters && activeTeam && activeTeam !== "all" ? activeTeam : null));
@@ -5096,7 +5101,16 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       }
       setTeamFilterInitialised(true);
     }
-  }, [activeTeam, teamFilterInitialised, urlTeamParam, isClientDeals, savedListFilters]);
+  }, [activeTeam, teamFilterInitialised, urlTeamParam, isClientDeals, savedListFilters, currentUserForViews]);
+
+  // Self-heal: client sessions that already carry a poisoned team filter
+  // (seeded by the race above and persisted in the session snapshot) get
+  // it stripped as soon as the viewer resolves.
+  useEffect(() => {
+    if (isClientDeals && columnFilters["team"]?.length) {
+      setColumnFilters(prev => { const { team, ...rest } = prev; return rest; });
+    }
+  }, [isClientDeals, columnFilters]);
 
   useEffect(() => {
     if (isClientDeals) return;
