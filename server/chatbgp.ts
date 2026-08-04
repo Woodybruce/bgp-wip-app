@@ -11361,8 +11361,12 @@ export async function handleCrmToolCall(
   const { db } = await import("./db");
 
   try {
-    const gateScope = await resolveCompanyScope(req);
-    if (gateScope && !CLIENT_SAFE_TOOLS.has(fnName)) {
+    // Gate on the ACTUAL account role, not scope — staff previewing a client
+    // team (Woody as MD "Viewing as Landsec") kept losing mailbox/calendar
+    // tools because the team switch sets a scope (2026-08-04). Real client
+    // logins stay on the allowlist; staff keep full tools in any view.
+    const { isClientRequestUser } = await import("./company-scope");
+    if (await isClientRequestUser(req) && !CLIENT_SAFE_TOOLS.has(fnName)) {
       return { handled: true, response: { reply: "That capability isn't available on client accounts — your account covers your own portfolio only. Contact your BGP team for anything further." } };
     }
   } catch {}
@@ -13216,9 +13220,11 @@ export function setupChatBGPRoutes(app: Express) {
   ): Promise<{ data: any; action?: any }> {
     // Hard gate: external client logins (e.g. Landsec) may only run the
     // client-safe allowlist, regardless of what the model asked for.
+    // Keyed on the ACTUAL account role — staff previewing a client team
+    // ("Viewing as Landsec") keep their full toolset (2026-08-04).
     try {
-      const gateScope = await resolveCompanyScope(req);
-      if (gateScope && !CLIENT_SAFE_TOOLS.has(tcName)) {
+      const { isClientRequestUser } = await import("./company-scope");
+      if (await isClientRequestUser(req) && !CLIENT_SAFE_TOOLS.has(tcName)) {
         return { data: { success: false, error: "This capability is not available on client accounts. Your account covers your own portfolio only — contact your BGP team for anything further." } };
       }
     } catch {}

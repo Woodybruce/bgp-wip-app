@@ -7196,8 +7196,18 @@ These terms are indicative only and do not constitute a binding agreement.`;
 
   app.get("/api/company-by-name/:name", requireAuth, async (req, res) => {
     try {
+      // Duplicate-name safe: prefer the record that actually anchors a
+      // portfolio (landlord/linked properties), then the oldest. A bare
+      // LIMIT 1 started resolving "Landsec" to an empty Contact dupe and
+      // blanked the client dashboard (Woody, 2026-08-04).
       const result = await pool.query(
-        "SELECT id, name FROM crm_companies WHERE LOWER(name) = LOWER($1) LIMIT 1",
+        `SELECT c.id, c.name,
+                (SELECT COUNT(*) FROM crm_properties p WHERE p.landlord_id = c.id)
+              + (SELECT COUNT(*) FROM crm_company_properties cp WHERE cp.company_id = c.id) AS link_count
+           FROM crm_companies c
+          WHERE LOWER(c.name) = LOWER($1)
+          ORDER BY link_count DESC, c.created_at ASC NULLS LAST
+          LIMIT 1`,
         [req.params.name]
       );
       if (result.rows.length === 0) return res.status(404).json({ message: "Not found" });

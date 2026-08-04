@@ -32,6 +32,8 @@ const IGNORED_RESPONSES = [
   /\/api\/ai-briefing/,                  // 503 locally (no AI key) by design
   /\/api\/brand\/[^/]+\/ai-take\//,      // 503 locally (no AI key) by design
   /\/api\/brand\/[^/]+\/(competitors\/research|rocketreach-company\/refresh)/, // 503 locally, no keys
+  /\/api\/activity\/(brand|landlord)\/[^/]+$/, // AI relationship activity is own-company-only for clients (deliberate gateway rule); the client brand-profile panel fires it on slice brands and gets a safe 403. Own-company returns 200; cross-tenant isolation is covered by the rival-* scenarios.
+  /\/api\/interactions\//,               // raw correspondence (meetings/emails) is staff-only for clients — the client correspondence drawer fires /api/interactions/company/:id and gets a safe 403. The client-interactions-guard scenario is the authoritative lock that this stays blocked.
   /fonts|\.woff|\.map$/,
 ];
 
@@ -47,13 +49,18 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-interactions-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
     if (msg.type() === 'error') {
       const t = msg.text();
       if (/net::|Failed to load resource/.test(t)) return; // captured via response hook
+      // External map providers (OS Places/NGD, Overpass) need API keys that
+      // aren't set locally, and their tile/site fetches abort when a test hops
+      // routes mid-request — benign env noise, not an app fault. (Internal
+      // "[map] …" errors like CRM-pin/PDF failures are NOT suppressed.)
+      if (/\[(os-sites|os-buildings)\] (fetch error|Reverse geocode error)|\[edozo\] Overpass error/i.test(t)) return;
       logIssue(persona, currentScenario[persona], 'console-error', t);
     }
   });
@@ -683,6 +690,25 @@ async function victoriaRound(page, cross) {
     cross.compStamp = stamp;
   });
 
+  // Agent books a deal on a Landsec property WITH a BGP fee. The client round
+  // then confirms the deal shows up on Mark's board (cross-persona visibility)
+  // but every fee field is stripped from his view — staff set fees, clients
+  // see the deal, never the fee. (Read-side complement to the write-side
+  // client-deal-fee-injection-guard.)
+  await step(page, p, 'agent-create-deal-with-fee', async () => {
+    const name = `QA-R${ROUND} FeeVisibility`;
+    const r = await page.evaluate(async (dealName) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const create = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: dealName, landlordId: '11111111-1111-1111-1111-111111111111', fee: 456789, feePercentage: 12, commission: 456789 }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const made = await create.json().catch(() => ({}));
+      return { ok: true, id: made?.id };
+    }, name);
+    if (!r.ok) throw new Error(`agent could not create a fee-bearing Landsec deal (${r.why})`);
+    cross.feeDealName = name;
+  });
+
   // Offer deletion parity: offers have no edit route (create/delete only),
   // so the lifecycle that matters is a deleted offer vanishing everywhere —
   // staff letting activity now, the client's view cross-checked later.
@@ -1128,8 +1154,12 @@ async function markRound(page, cross) {
   // engagement is client-allowed; the fetch/scrape trigger stays staff-only).
   await step(page, p, 'client-news-feed', async () => {
     await page.goto(`${BASE}/news`);
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1800);
+    // domcontentloaded, not networkidle: the feed streams external article
+    // thumbnails/social previews continuously, so the network never goes idle
+    // for 500ms and networkidle times out. The blank/dead-route checks below
+    // still catch a genuinely broken page.
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(3000);
     if (await page.getByText('Page not found').count()) throw new Error('news is a dead route for client');
     const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
     if (body.length < 40) throw new Error('news feed rendered blank for client');
@@ -1330,6 +1360,29 @@ async function markRound(page, cross) {
     if (r.reporting !== 403) throw new Error(`client reached the reporting summary (expected 403, got ${r.reporting})`);
   });
 
+  // The interactions surface is BGP's raw correspondence store — logged
+  // meetings and synced Outlook emails, per-company and per-contact, plus the
+  // BD engagement leaderboards. It's fully staff-only for clients (even their
+  // OWN company): a Landsec login only ever sees the curated AI activity
+  // summary on their own company, never the underlying meeting/email log or
+  // another firm's. All of /api/interactions/* must refuse a client.
+  await step(page, p, 'client-interactions-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return {
+        own: await g('/api/interactions/company/11111111-1111-1111-1111-111111111111'),
+        rival: await g('/api/interactions/company/99999999-1111-1111-1111-111111111111'),
+        summary: await g('/api/interactions/summary'),
+        leaderboard: await g('/api/interactions/leaderboard'),
+      };
+    });
+    if (r.own !== 403) throw new Error(`client read raw correspondence for their own company (expected 403, got ${r.own})`);
+    if (r.rival !== 403) throw new Error(`client read a rival's correspondence log (expected 403, got ${r.rival})`);
+    if (r.summary !== 403) throw new Error(`client reached the interactions summary (expected 403, got ${r.summary})`);
+    if (r.leaderboard !== 403) throw new Error(`client reached the BD engagement leaderboard (expected 403, got ${r.leaderboard})`);
+  });
+
   // The Lease Events board is BGP's lease-advisory BD pipeline (rent reviews,
   // breaks, expiries across the whole book) — staff-only intel; a client
   // login must be refused on the list and the digest.
@@ -1513,26 +1566,51 @@ async function markRound(page, cross) {
     if (body.length < 40) throw new Error('brand profile rendered blank for client');
   });
 
-  // CLAUDE.md decision (2026-08-01): the Compliance & KYC panel STAYS visible
-  // on client brand profiles (landlords need tenant AML/financial standing),
-  // but the staff-only KYC ACTION buttons (run checks) are refused. Assert
-  // both halves on an in-slice brand.
+  // Suggested-pitches is the brand-profile "which of my vacant units could
+  // this operator take" engine (live requirement + AI-ranked available units
+  // in the viewer's scope). A client sees it for a brand in their hospitality
+  // slice (200 with {brandName, suggestions[]}) but is refused on an
+  // out-of-slice brand — the handler's isClientVisibleBrand gate.
+  await step(page, p, 'client-brand-suggested-pitches-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const inSlice = await fetch('/api/brands/77777777-7777-7777-7777-777777777777/suggested-pitches', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const body = inSlice.ok ? await inSlice.json().catch(() => null) : null;
+      const shapeOk = !!body && typeof body.brandName === 'string' && Array.isArray(body.suggestions);
+      const foreign = (await fetch('/api/brands/88888888-1111-1111-1111-111111111111/suggested-pitches', { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { inSliceOk: inSlice.ok, shapeOk, foreign };
+    });
+    if (!r.inSliceOk || !r.shapeOk) throw new Error('client cannot read suggested-pitches on an in-slice brand');
+    if (r.foreign !== 403) throw new Error(`client read suggested-pitches on an out-of-slice brand (expected 403, got ${r.foreign})`);
+  });
+
+  // Compliance & KYC panel STAYS visible on client brand profiles (2026-08-01
+  // — landlords need tenant AML/financial standing). KYC action gating, as
+  // decided 2026-08-04 ("allow Landsec to hit the enrichment button — use the
+  // app the same way we can"): the Companies-House auto-KYC enrichment IS now
+  // allowed for a brand in the client's slice, but must still be refused on an
+  // out-of-slice brand, and the full staff KYC sweep (run-all-checks) stays
+  // staff-only. Assert all four halves.
   await step(page, p, 'client-brand-kyc-visible-actions-blocked', async () => {
     const r = await page.evaluate(async () => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const honi = '77777777-7777-7777-7777-777777777777';
+      const honi = '77777777-7777-7777-7777-777777777777';      // in the hospitality slice
+      const outOfSlice = '88888888-1111-1111-1111-111111111111'; // QA Retail Brand
       const prof = await fetch(`/api/brand/${honi}/profile`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       const kycVisible = prof.ok ? ((await prof.json().catch(() => ({}))).kyc !== undefined) : false;
       const runChecks = (await fetch('/api/kyc/run-all-checks', { method: 'POST', credentials: 'include', headers: auth,
         body: JSON.stringify({ companyId: honi }) }).catch(() => ({ status: 0 }))).status;
-      const autoKyc = (await fetch(`/api/companies-house/auto-kyc/${honi}`, { method: 'POST', credentials: 'include', headers: auth,
+      const autoKycSlice = (await fetch(`/api/companies-house/auto-kyc/${honi}`, { method: 'POST', credentials: 'include', headers: auth,
         body: '{}' }).catch(() => ({ status: 0 }))).status;
-      return { profileOk: prof.ok, kycVisible, runChecks, autoKyc };
+      const autoKycForeign = (await fetch(`/api/companies-house/auto-kyc/${outOfSlice}`, { method: 'POST', credentials: 'include', headers: auth,
+        body: '{}' }).catch(() => ({ status: 0 }))).status;
+      return { profileOk: prof.ok, kycVisible, runChecks, autoKycSlice, autoKycForeign };
     });
     if (!r.profileOk) throw new Error('client cannot load an in-slice brand profile');
     if (!r.kycVisible) throw new Error('KYC/compliance panel data missing from the client brand profile (decision regressed)');
-    if (r.runChecks !== 403) throw new Error(`client ran a staff KYC check (expected 403, got ${r.runChecks})`);
-    if (r.autoKyc !== 403) throw new Error(`client triggered staff auto-KYC (expected 403, got ${r.autoKyc})`);
+    if (r.runChecks !== 403) throw new Error(`client ran the staff KYC sweep (expected 403, got ${r.runChecks})`);
+    if (r.autoKycSlice === 403) throw new Error('client blocked from the auto-KYC enrichment button on an in-slice brand (2026-08-04 decision regressed)');
+    if (r.autoKycForeign !== 403) throw new Error(`client triggered auto-KYC on an out-of-slice brand (expected 403, got ${r.autoKycForeign})`);
   });
 
   // The client CRM shows the hospitality/leisure/fitness category slice
@@ -2084,6 +2162,24 @@ async function markRound(page, cross) {
     if (!r.seen) throw new Error("agent-logged scheme comp not visible in the client's comps table");
   });
 
+  // Fee-visibility parity: the deal Victoria booked on a Landsec property
+  // (with a BGP fee) must appear on the client's board, but every fee field
+  // must be stripped from his view — clients see the deal, never the fee.
+  await step(page, p, 'client-sees-agent-deal-fee-stripped', async () => {
+    if (!cross.feeDealName) return;
+    const r = await page.evaluate(async (name) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json().catch(() => []);
+      const deal = (Array.isArray(deals) ? deals : []).find((d) => (d.name || '') === name);
+      if (!deal) return { seen: false };
+      const feeExposed = [deal.fee, deal.feePercentage, deal.feeNotes, deal.commission]
+        .some((v) => v !== null && v !== undefined && v !== 0 && v !== '');
+      return { seen: true, feeExposed };
+    }, cross.feeDealName);
+    if (!r.seen) throw new Error("agent-created Landsec deal not visible on the client's board");
+    if (r.feeExposed) throw new Error("BGP fee leaked to the client on an agent-created deal");
+  });
+
   // Parity for offers: the offer Victoria logged on a Landsec unit must show
   // on the client's own letting activity (scoped all-offers).
   await step(page, p, 'client-sees-agent-offer', async () => {
@@ -2591,6 +2687,22 @@ async function samRound(page, cross) {
       return { hasOwn: list.some((x) => /brent cross/i.test(x.name || '')) };
     });
     if (!r.hasOwn) throw new Error("rival client can't see their own property (over-scoped)");
+  });
+
+  // Cross-tenant team isolation: a rival client (Sam/Hammerson) may read
+  // THEIR OWN account team but must be refused the Landsec team board —
+  // otherwise one landlord sees another's BGP staff assignments, names,
+  // emails and CVs. (The GET route scopes a client to their own company.)
+  await step(page, p, 'rival-team-board-isolated', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const own = await fetch('/api/client-teams/99999999-1111-1111-1111-111111111111', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const ownArray = own.ok ? Array.isArray(await own.json().catch(() => null)) : false;
+      const foreign = (await fetch('/api/client-teams/11111111-1111-1111-1111-111111111111', { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { ownOk: own.ok, ownArray, foreign };
+    });
+    if (!r.ownOk || !r.ownArray) throw new Error("rival client can't read their own team board");
+    if (r.foreign !== 403) throw new Error(`rival client read the Landsec team board (expected 403, got ${r.foreign})`);
   });
 }
 
