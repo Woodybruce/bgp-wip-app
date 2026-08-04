@@ -4045,6 +4045,30 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         }
       }
 
+      // One live listing per unit (Woody, 2026-08-04 — "sort the double
+      // counting"). Every add-to-tracker path funnels through this POST, and
+      // the client-side "already listed" guards miss when names differ in
+      // format ("MSU9" vs "MSU9, Bluewater, Bluewater"), so the server is
+      // the guard: an existing non-closed listing on the same property whose
+      // first name segment matches returns that listing instead of creating
+      // a duplicate.
+      if (parsed.propertyId && parsed.unitName?.trim()) {
+        const seg = parsed.unitName.split(",")[0].trim().toLowerCase();
+        if (seg.length >= 2) {
+          const dupe = await pool.query(
+            `SELECT * FROM available_units
+             WHERE property_id = $1
+               AND lower(trim(split_part(coalesce(unit_name, ''), ',', 1))) = $2
+               AND coalesce(marketing_status, '') NOT IN ('Withdrawn', 'WIT')
+             LIMIT 1`,
+            [parsed.propertyId, seg]
+          );
+          if (dupe.rows.length > 0) {
+            return res.status(200).json({ ...dupe.rows[0], alreadyListed: true });
+          }
+        }
+      }
+
       // Ensure a property_units master row exists for this (property, unit name).
       // Create one if missing, then set unit_id on the listing.
       let unitMasterId: string | null = (parsed as any).unitId || null;

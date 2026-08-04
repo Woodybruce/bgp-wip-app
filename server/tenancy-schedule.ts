@@ -1567,6 +1567,70 @@ router.post("/api/admin/resync-mirror-all", requireAuth, async (_req, res) => {
   }
 });
 
+// Merge duplicate Letting Tracker listings — same property, same unit name
+// (first comma segment), created by the add-to-tracker paths before the
+// POST-level guard existed (Woody, 2026-08-04: "sort the double counting").
+// Keeper per group: a row with a deal link wins, then the oldest. Losers'
+// viewings / offers / targets / briefs / marketing files repoint to the
+// keeper, tenancy rows re-anchor, untouched auto-created shell deals on
+// losers are removed, then the loser rows are deleted. Dry-run by default;
+// POST ?apply=1 to execute.
+router.post("/api/admin/dedupe-tracker", requireAuth, async (req, res) => {
+  const apply = String(req.query.apply || "") === "1";
+  try {
+    const pool = await getPool();
+    const groups = await pool.query(
+      `SELECT property_id, lower(trim(split_part(coalesce(unit_name, ''), ',', 1))) AS seg,
+              array_agg(id ORDER BY (deal_id IS NOT NULL) DESC, created_at ASC) AS ids,
+              array_agg(unit_name ORDER BY (deal_id IS NOT NULL) DESC, created_at ASC) AS names
+         FROM available_units
+        WHERE coalesce(marketing_status, '') NOT IN ('Withdrawn', 'WIT')
+          AND length(trim(split_part(coalesce(unit_name, ''), ',', 1))) >= 2
+        GROUP BY property_id, seg
+       HAVING count(*) > 1`
+    );
+    const report: any[] = [];
+    let merged = 0;
+    for (const g of groups.rows) {
+      const [keeper, ...losers] = g.ids as string[];
+      report.push({ propertyId: g.property_id, unit: g.names[0], keeper, losers });
+      if (!apply) continue;
+      for (const loser of losers) {
+        for (const [table, col] of [
+          ["unit_viewings", "unit_id"], ["unit_offers", "unit_id"],
+          ["target_tenants", "unit_id"], ["unit_briefs", "unit_id"],
+          ["unit_marketing_files", "unit_id"],
+        ] as const) {
+          await pool.query(`UPDATE ${table} SET ${col} = $1 WHERE ${col} = $2`, [keeper, loser]).catch(() => {});
+        }
+        await pool.query(
+          `UPDATE tenancy_schedule_units SET letting_tracker_unit_id = $1 WHERE letting_tracker_unit_id = $2`,
+          [keeper, loser]
+        ).catch(() => {});
+        // Untouched auto-created shell deal on the loser (AVA/no fee/no
+        // tenant) goes too — otherwise it pops up on the deals board as an
+        // orphan. Anything richer is kept, just no longer tracker-linked.
+        const loserRow = await pool.query(`SELECT deal_id FROM available_units WHERE id = $1`, [loser]);
+        const loserDeal = loserRow.rows[0]?.deal_id;
+        if (loserDeal) {
+          await pool.query(
+            `DELETE FROM crm_deals
+              WHERE id = $1 AND coalesce(status, 'AVA') IN ('AVA', 'Available')
+                AND fee IS NULL AND tenant_id IS NULL`,
+            [loserDeal]
+          ).catch(() => {});
+        }
+        await pool.query(`DELETE FROM available_units WHERE id = $1`, [loser]);
+        merged++;
+      }
+    }
+    res.json({ ok: true, applied: apply, duplicateGroups: groups.rows.length, listingsRemoved: merged, report });
+  } catch (e: any) {
+    console.error("[dedupe-tracker]", e?.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 
 // into another (crm_companies.merged_into_id set), every tenancy /
 // leasing / available row that still points at the merged-away
