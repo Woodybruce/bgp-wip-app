@@ -2913,6 +2913,7 @@ import brandScraperRouter, { runDailyBrandScraper } from "./brand-scraper";
 import brandSocialScraperRouter, { runWeeklySocialScrape } from "./brand-social-scraper";
 import rocketreachContactsRouter, { rocketreachHealth } from "./rocketreach-contacts";
 import rocketreachCompanyRouter from "./rocketreach-company";
+import apolloCompanyRouter from "./apollo-company";
 import brandCompetitorsRouter from "./brand-competitors";
 import bulkBrandLogosRouter from "./bulk-brand-logos";
 import brandImagesRouter from "./brand-images";
@@ -3762,6 +3763,7 @@ app.use("/api/branding/assets", express.static(
   app.use(brandSocialScraperRouter);
   app.use(rocketreachContactsRouter);
   app.use(rocketreachCompanyRouter);
+  app.use(apolloCompanyRouter);
   app.use(brandCompetitorsRouter);
   app.use(bulkBrandLogosRouter);
   app.use(brandImagesRouter);

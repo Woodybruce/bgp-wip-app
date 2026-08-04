@@ -4780,6 +4780,26 @@ Return a JSON object with these fields (use null for any field you cannot find):
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Whenever a requirement names an agent, make sure that person actually
+  // shows up in the Agents view: type the contact (and their firm) as Agent
+  // when the field is empty. Fills the "represented by X but X isn't on the
+  // agents list" gap (Woody, 2026-08-04: "should be automatic").
+  async function ensureAgentTyped(contactId: string | null | undefined): Promise<void> {
+    if (!contactId) return;
+    try {
+      const c = await pool.query(`SELECT company_id, contact_type FROM crm_contacts WHERE id = $1`, [contactId]);
+      if (!c.rows[0]) return;
+      if (!c.rows[0].contact_type) {
+        await pool.query(`UPDATE crm_contacts SET contact_type = 'Agent' WHERE id = $1`, [contactId]);
+      }
+      if (c.rows[0].company_id) {
+        await pool.query(
+          `UPDATE crm_companies SET company_type = 'Agent' WHERE id = $1 AND (company_type IS NULL OR company_type = '')`,
+          [c.rows[0].company_id]);
+      }
+    } catch (e: any) { console.warn("[requirements] ensureAgentTyped failed:", e?.message); }
+  }
+
   app.post("/api/crm/requirements-leasing", async (req, res) => {
     try {
       const parsed = insertCrmReqLeasingSchema.parse(req.body);
@@ -4787,6 +4807,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
       if (created.dealId && created.companyId) {
         await storage.linkCompanyDeal(created.companyId, created.dealId);
       }
+      await ensureAgentTyped(created.agentContactId);
       res.status(201).json(created);
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });
@@ -4799,7 +4820,40 @@ Return a JSON object with these fields (use null for any field you cannot find):
       if (dealId && companyId) {
         await storage.linkCompanyDeal(companyId, dealId);
       }
+      await ensureAgentTyped(updated.agentContactId);
       res.json(updated);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // One-shot repair sweep for existing rows (staff): types untyped agent
+  // contacts/firms so they appear in the Agents view, and clears dangling
+  // agent_contact_id references left behind by deleted contacts.
+  app.post("/api/crm/requirements-leasing/agent-audit", requireAuth, async (req, res) => {
+    try {
+      const { isClientRequestUser } = await import("./company-scope");
+      if (await isClientRequestUser(req as any)) return res.status(403).json({ error: "Not available for client accounts" });
+      const typedContacts = await pool.query(`
+        UPDATE crm_contacts c SET contact_type = 'Agent'
+         WHERE (c.contact_type IS NULL OR c.contact_type = '')
+           AND EXISTS (SELECT 1 FROM crm_requirements_leasing r WHERE r.agent_contact_id = c.id)
+        RETURNING c.id, c.name`);
+      const typedCompanies = await pool.query(`
+        UPDATE crm_companies co SET company_type = 'Agent'
+         WHERE (co.company_type IS NULL OR co.company_type = '')
+           AND EXISTS (SELECT 1 FROM crm_contacts c
+                        JOIN crm_requirements_leasing r ON r.agent_contact_id = c.id
+                       WHERE c.company_id = co.id)
+        RETURNING co.id, co.name`);
+      const dangling = await pool.query(`
+        UPDATE crm_requirements_leasing r SET agent_contact_id = NULL
+         WHERE r.agent_contact_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM crm_contacts c WHERE c.id = r.agent_contact_id)
+        RETURNING r.id, r.name`);
+      res.json({
+        contactsTyped: typedContacts.rows,
+        companiesTyped: typedCompanies.rows,
+        danglingCleared: dangling.rows,
+      });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
