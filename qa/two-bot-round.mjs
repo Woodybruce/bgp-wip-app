@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1699,6 +1699,25 @@ async function markRound(page, cross) {
     if (r.watchlist !== 403) throw new Error(`client reached the covenant watchlist (expected 403, got ${r.watchlist})`);
     if (r.alerts !== 403) throw new Error(`client reached covenant alerts (expected 403, got ${r.alerts})`);
     if (r.watchRun !== 403) throw new Error(`client triggered a covenant watch run (expected 403, got ${r.watchRun})`);
+  });
+
+  // The CRM truth engine (AI contact verification + the data-health review
+  // queue + firm-wide sweep) is a data-steward tool — it surfaces flagged
+  // contact-quality issues across the whole CRM and rewrites contact records.
+  // It lives under the client-allowed /api/crm/ prefix, so this guard proves
+  // it's still sealed: a client login is refused on the review queue, the
+  // sweep trigger, and per-contact AI verification.
+  await step(page, p, 'client-crm-truth-engine-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const dataHealth = (await fetch('/api/crm/data-health', { headers: auth }).catch(() => ({ status: 0 }))).status;
+      const sweep = (await fetch('/api/crm/data-health/sweep', { method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status;
+      const verify = (await fetch('/api/crm/contacts/00000000-0000-0000-0000-000000000000/verify', { method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status;
+      return { dataHealth, sweep, verify };
+    });
+    if (r.dataHealth !== 403) throw new Error(`client reached the CRM data-health review queue (expected 403, got ${r.dataHealth})`);
+    if (r.sweep !== 403) throw new Error(`client triggered a CRM data-health sweep (expected 403, got ${r.sweep})`);
+    if (r.verify !== 403) throw new Error(`client triggered AI contact verification (expected 403, got ${r.verify})`);
   });
 
   // The client CRM shows the hospitality/leisure/fitness category slice
