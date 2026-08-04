@@ -972,7 +972,7 @@ export default function Dashboard() {
   const rawTemplate = templateData?.template;
   const templateLayout = (rawTemplate?._version >= LAYOUT_VERSION) ? rawTemplate : null;
 
-  const widgetSavedLayout = validSaved?.widgets || templateLayout?.widgets || null;
+  const widgetSavedLayoutRaw = validSaved?.widgets || templateLayout?.widgets || null;
   const hiddenPortfolioBoards: string[] = validSaved?.hiddenPortfolio ?? templateLayout?.hiddenPortfolio ?? ["portfolio-properties"];
 
   // Portfolio boards and widgets used to live in two separate grids stacked
@@ -981,13 +981,27 @@ export default function Dashboard() {
   // back. When the portfolio section is present they now render as ONE grid,
   // laid out from `combined` — seeded by stacking the two legacy layouts so
   // existing arrangements carry over.
-  const combinedSavedLayout = validSaved?.combined || templateLayout?.combined || (() => {
+  const combinedSavedLayoutRaw = validSaved?.combined || templateLayout?.combined || (() => {
     const p = (validSaved?.portfolio || templateLayout?.portfolio)?.lg as any[] | undefined;
     const w = (validSaved?.widgets || templateLayout?.widgets)?.lg as any[] | undefined;
     if (!p && !w) return null;
     const maxY = (p || []).reduce((m: number, l: any) => Math.max(m, l.y + l.h), 0);
     return { lg: [...(p || []), ...(w || []).map((l: any) => ({ ...l, y: l.y + maxY }))] };
   })();
+
+  // The Letting Tracker sits beside My Tasks & Briefing at the top — keep
+  // the pair the same height even in older saved layouts where the tracker
+  // was dragged/seeded taller (Woody, 2026-08-04).
+  const matchTrackerToTasks = (layout: any) => {
+    const lg = layout?.lg;
+    if (!Array.isArray(lg)) return layout;
+    const tasks = lg.find((l: any) => l.i === "my-tasks");
+    const tracker = lg.find((l: any) => l.i === "available-units");
+    if (!tasks || !tracker || tracker.h === tasks.h) return layout;
+    return { ...layout, lg: lg.map((l: any) => (l.i === "available-units" ? { ...l, h: tasks.h } : l)) };
+  };
+  const combinedSavedLayout = combinedSavedLayoutRaw ? matchTrackerToTasks(combinedSavedLayoutRaw) : combinedSavedLayoutRaw;
+  const widgetSavedLayout = widgetSavedLayoutRaw ? matchTrackerToTasks(widgetSavedLayoutRaw) : widgetSavedLayoutRaw;
 
   const isAdmin = (user as any)?.isAdmin || (user as any)?.is_admin;
 
