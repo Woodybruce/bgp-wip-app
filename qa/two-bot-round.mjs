@@ -47,7 +47,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -585,6 +585,22 @@ async function victoriaRound(page, cross) {
     });
     if (!r.ok) throw new Error(`staff WIP report unhealthy (${r.status})`);
     if (!r.hasEntries) throw new Error('staff WIP report returned no entries array (shape broken)');
+  });
+
+  // Property Pathway is BGP's acquisition-underwriting engine (Why-Buy runs:
+  // off-market sourcing, title/RICS analysis, market intel, deck output). It
+  // must be a live staff board — a 200 with an array of runs — so the client
+  // guard below is sealing real underwriting IP, not a dead route.
+  await step(page, p, 'staff-property-pathway-board', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/property-pathway', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = await res.json().catch(() => null);
+      return { ok: true, isArray: Array.isArray(body) };
+    });
+    if (!r.ok) throw new Error(`staff property-pathway board unhealthy (${r.status})`);
+    if (!r.isArray) throw new Error('staff property-pathway board did not return a runs array');
   });
 
   // 4k. Agent logs a viewing on a Landsec unit — the client round then checks
@@ -1304,6 +1320,21 @@ async function markRound(page, cross) {
     });
     if (r.list !== 403) throw new Error(`client reached the lease-events board (expected 403, got ${r.list})`);
     if (r.digest !== 403) throw new Error(`client reached the lease-events digest (expected 403, got ${r.digest})`);
+  });
+
+  // Property Pathway (Why-Buy acquisition underwriting) is a staff-only
+  // sourcing/underwriting engine — off-market intel, title analysis, deck
+  // generation. A client login must never reach the board or the latest-run
+  // shortcut (sealed by the server gateway allowlist, which omits
+  // /api/property-pathway).
+  await step(page, p, 'client-property-pathway-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { board: await g('/api/property-pathway'), latest: await g('/api/property-pathway/latest') };
+    });
+    if (r.board !== 403) throw new Error(`client reached the property-pathway board (expected 403, got ${r.board})`);
+    if (r.latest !== 403) throw new Error(`client reached the property-pathway latest run (expected 403, got ${r.latest})`);
   });
 
   // WIP Report is the firm's internal fee/work-in-progress pipeline — deal
