@@ -41,7 +41,9 @@ const FNB_SECTORS: Array<{ key: string; label: string; rx: RegExp }> = [
   { key: "competitive_social", label: "Competitive socialising", rx: /golf|darts|bowling|escape room|karaoke|boom battle|puttshack|flight club|arcade|gravity|trampoline|climb|activity centre|social gaming/i },
   { key: "gyms_fitness", label: "Gyms & fitness", rx: /\bgym\b|fitness|pilates|yoga|cycle\b|barry'?s|f45|1rebel|puregym|nuffield/i },
   { key: "wellness_beauty", label: "Wellness & beauty", rx: /\bspa\b|wellness|beauty|nail|barber|hair salon|salon\b|massage|therapy/i },
-  { key: "leisure_entertainment", label: "Leisure & entertainment", rx: /cinema|entertainment|bingo|casino|soft play|leisure/i },
+  // NB: no bare "leisure" — every hospitality brand's industry string says
+  // "Leisure & Hospitality", which mis-bucketed restaurants here.
+  { key: "leisure_entertainment", label: "Leisure & entertainment", rx: /cinema|entertainment|bingo|casino|soft play/i },
   { key: "casual_dining", label: "Casual dining", rx: /restaurant|dining|kitchen\b|eatery|bistro|brasserie|food hall/i },
 ];
 const SECTOR_LABELS: Record<string, string> = Object.fromEntries(FNB_SECTORS.map(s => [s.key, s.label]));
