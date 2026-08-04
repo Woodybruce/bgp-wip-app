@@ -4782,16 +4782,15 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
 
   const runCreditCheck = async () => {
     try {
-      const r = await fetch(`/api/brand/${companyId}/credit-check`, { method: "POST", credentials: "include" });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        toast({ title: body.error || "Couldn't run", description: body.message || "", variant: "destructive" });
-        return;
-      }
+      // apiRequest carries the bearer token — this was the one raw fetch in
+      // the file without it, so the desktop shell (token auth, no session
+      // cookie) always got a 401 (Woody, 2026-08-04).
+      const r = await apiRequest("POST", `/api/brand/${companyId}/credit-check`, {});
+      await r.json().catch(() => ({}));
       toast({ title: "Covenant check complete" });
       queryClient.invalidateQueries({ queryKey: ["covenant"] });
     } catch (e: any) {
-      toast({ title: "Failed", description: e?.message, variant: "destructive" });
+      toast({ title: "Couldn't run covenant check", description: e?.message, variant: "destructive" });
     }
   };
   const ragColor = cov?.trafficLight === "green"
