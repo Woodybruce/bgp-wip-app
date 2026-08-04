@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { IntelligenceFooter } from "@/components/intelligence-footer";
+import { CompanyContactsBoard } from "@/components/company-contacts-board";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -681,7 +682,7 @@ function ClientTeamWeekCalendar({ events }: { events: any[] }) {
 // contact per brand with a deal on the portfolio, and the agents working
 // those deals. Backed by /api/crm/companies/:id/contact-summary.
 function PortfolioContactsBoard({ companyId }: { companyId: string }) {
-  const { data, isLoading } = useQuery<{ yours: any[]; brands: any[]; agents: any[] }>({
+  const { data } = useQuery<{ yours: any[]; brands: any[]; agents: any[] }>({
     queryKey: ["/api/crm/companies", companyId, "contact-summary"],
     queryFn: async () => {
       const r = await fetch(`/api/crm/companies/${companyId}/contact-summary`, { credentials: "include", headers: getAuthHeaders() });
@@ -690,61 +691,24 @@ function PortfolioContactsBoard({ companyId }: { companyId: string }) {
     },
     staleTime: 5 * 60_000,
   });
-  const groups = [
-    { key: "yours", title: "Your team", rows: data?.yours || [], tint: "text-teal-700" },
-    { key: "brands", title: "Brands on your deals", rows: data?.brands || [], tint: "text-blue-700" },
-    { key: "agents", title: "Agents", rows: data?.agents || [], tint: "text-amber-700" },
-  ];
-  const total = groups.reduce((n, g) => n + g.rows.length, 0);
+  // The canonical contacts board (same component as the brand profile) with
+  // the dashboard's extra groups; discovery off — this widget is read-heavy
+  // and shouldn't burn provider credits on every dashboard load.
   return (
-    <Card className="h-full flex flex-col">
-      <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
-        <h3 className="font-semibold text-xs flex items-center gap-1.5">
-          <Users className="w-3.5 h-3.5 text-teal-500" />
-          Contacts {total > 0 && <Badge variant="secondary" className="text-[10px]">{total}</Badge>}
-        </h3>
-        <p className="text-[10px] text-muted-foreground -mt-1">Your people, the brands doing deals with you, and the agents working them.</p>
-        {isLoading ? (
-          <div className="space-y-1.5">{[1, 2, 3].map(i => <Skeleton key={i} className="h-8" />)}</div>
-        ) : total === 0 ? (
-          <p className="text-xs text-muted-foreground">No contacts linked yet.</p>
-        ) : (
-          <div className="flex-1 overflow-y-auto pr-1 space-y-3">
-            {groups.filter(g => g.rows.length > 0).map(g => (
-              <div key={g.key}>
-                <div className={`text-[10px] uppercase tracking-wide font-semibold mb-1 sticky top-0 bg-card ${g.tint}`}>{g.title} · {g.rows.length}</div>
-                <div className="space-y-0.5">
-                  {g.rows.map((contact: any) => (
-                    <Link key={contact.id} href={`/contacts/${contact.id}`}>
-                      <div className="flex items-center gap-2 px-2 py-1 rounded hover:bg-muted/50 transition-colors cursor-pointer min-w-0" data-testid={`link-contact-${contact.id}`}>
-                        <div className="w-6 h-6 rounded-full flex-shrink-0 bg-teal-100 dark:bg-teal-900 flex items-center justify-center text-[10px] font-semibold text-teal-700 dark:text-teal-300 overflow-hidden">
-                          {contact.avatar_url ? (
-                            <img
-                              src={contact.avatar_url}
-                              alt={contact.name}
-                              className="w-full h-full object-cover"
-                              onError={(e) => { e.currentTarget.style.display = "none"; }}
-                            />
-                          ) : (
-                            contact.name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-xs font-medium truncate">{contact.name}</p>
-                          <p className="text-[10px] text-muted-foreground truncate">{[contact.role, contact.company_name].filter(Boolean).join(" · ") || contact.email}</p>
-                        </div>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+    <CompanyContactsBoard
+      companyId={companyId}
+      companyName={data?.yours?.[0]?.company_name || "your company"}
+      contacts={data?.yours || []}
+      extraSections={[
+        { key: "brands", title: "Brands on your deals", tint: "text-blue-700", rows: data?.brands || [] },
+        { key: "agents", title: "Agents", tint: "text-amber-700", rows: data?.agents || [] },
+      ]}
+      discovery={false}
+      filterPropertyTier={false}
+    />
   );
 }
+
 
 export default function Dashboard() {
   const { data: user } = useQuery<User>({ queryKey: ["/api/auth/me"] });
