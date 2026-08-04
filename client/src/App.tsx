@@ -192,13 +192,26 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// The full Image Studio is open to admins AND client viewers (Woody,
+// 2026-08-04: "the image studio needs the full functionality of the BGP
+// image studio" — client parity; the server scope-jails every endpoint).
+// Non-admin staff keep the lightweight /m/images page.
+function StudioRoute({ children }: { children: React.ReactNode }) {
+  const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
+  const [, navigate] = useLocation();
+  const allowed = !!user && (user.isAdmin || user.role === "Client" || !!(user as any).companyScopeId);
+  useEffect(() => { if (user && !allowed) navigate("/m/images"); }, [user, allowed, navigate]);
+  if (!user || !allowed) return <PageLoader />;
+  return <>{children}</>;
+}
+
 // Prefixes a client login (role='Client', e.g. Landsec) is allowed to open.
 // Everything else redirects home — nav hiding alone doesn't stop a pasted URL.
 const CLIENT_ALLOWED_ROUTES = [
   "/", "/properties", "/property-intelligence", "/map", "/brands",
   "/contacts", "/companies", "/comps", "/chatbgp", "/requirements",
   "/deals", "/tasks", "/today", "/leasing-schedule", "/land-registry",
-  "/business-rates", "/m/images", "/cad-measure", "/settings/profile",
+  "/business-rates", "/m/images", "/image-studio", "/cad-measure", "/settings/profile",
   "/news", "/available",
   // Task-25 client surfaces — the nav showed these but this guard bounced
   // the click back to the dashboard ("still bounces", 2026-08-02).
@@ -260,7 +273,7 @@ function Router() {
       <Route path="/templates">{() => <StudioTabRedirect tab="templates" />}</Route>
       <Route path="/decks">{() => <StudioTabRedirect tab="decks" />}</Route>
       <Route path="/decks/:id" component={DeckDetail} />
-      <Route path="/image-studio">{() => <AdminRoute><ImageStudio /></AdminRoute>}</Route>
+      <Route path="/image-studio">{() => <StudioRoute><ImageStudio /></StudioRoute>}</Route>
       <Route path="/settings" component={SettingsPage} />
       {/* /settings/profile is on the client allow-list (mobile shell links
           it) but had no route — pasted links landed on NotFound. */}

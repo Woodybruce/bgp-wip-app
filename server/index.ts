@@ -3619,6 +3619,21 @@ app.use("/api/branding/assets", express.static(
         // property-asset-brief.ts confines clients to in-scope properties
         // and the prompt never carries fee figures.
         if (req.method === "POST" && /^\/api\/properties\/[^/]+\/bgp-commentary\/regenerate$/.test(p)) return next();
+        // Image Studio client parity (Woody, 2026-08-04: "the image studio
+        // needs the full functionality of the BGP image studio"). Creative
+        // writes are opened to clients — every handler in image-studio.ts
+        // scope-jails the image / collection / property to the caller's
+        // company. Hard delete, bulk-delete, dedupe, sync, capture-pdf and
+        // the firm-wide AI sweeps stay staff-only (requireAdmin or scope
+        // 403 at the route, and no allowance here).
+        if (/^\/api\/image-studio\//.test(p)) {
+          const allowedStudioWrite =
+            /^\/api\/image-studio\/(ai-edit|ai-edit-async|ai-generate|stock-search|import-stock|ai-tag|capture-streetview|capture-and-enhance|bulk-tag|bulk-categorize|bulk-assign-property)$/.test(p) ||
+            (/^\/api\/image-studio\/collections(\/|$)/.test(p) && !/rebuild-properties/.test(p)) ||
+            (req.method === "PATCH" && /^\/api\/image-studio\/[^/]+$/.test(p) && !/^\/api\/image-studio\/(bulk-|dedupe|trigger-sync|clear-deleted)/.test(p)) ||
+            (req.method === "POST" && /^\/api\/image-studio\/[^/]+\/(trash|restore|revert|attach)$/.test(p));
+          if (allowedStudioWrite) return next();
+        }
         // Enrichment buttons on a client-visible brand — covenant refresh +
         // Companies House enrich (Woody, 2026-08-04: "allow for Landsec to
         // hit the enrichment button — they need to be able to use the app
