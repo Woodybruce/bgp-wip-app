@@ -13,8 +13,92 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { isClientCrmCategory } from "../shared/tenant-categories";
 
 const router = Router();
+
+// ── Hospitality sector taxonomy ──────────────────────────────────────────
+// The gap analysis speaks Landsec's language: hospitality / F&B / wellness /
+// cafés / leisure only — "they didn't want to see normal retail" (Woody,
+// 2026-08-04). Sectors power the missing-sector board ("no Mexican, no fine
+// dining"). Heuristic keyword classification gives instant answers; a
+// background Haiku sweep writes the definitive label to
+// crm_companies.fnb_sector so it hardens over time.
+const FNB_SECTORS: Array<{ key: string; label: string; rx: RegExp }> = [
+  { key: "mexican", label: "Mexican", rx: /mexic|taco\b|burrito|tortilla|wahaca|chipotle|cantina/i },
+  { key: "fine_dining", label: "Fine dining", rx: /fine dining|hawksmoor|the ivy|ivy asia|gaucho|sexy fish|zuma\b|roka\b|sushisamba|caprice|michelin/i },
+  { key: "steak_grill", label: "Steak & grill", rx: /steak|flat iron|blacklock|miller & carter|grill house/i },
+  { key: "burgers", label: "Burgers", rx: /burger|five guys|shake shack|byron\b|smashburger/i },
+  { key: "chicken", label: "Chicken", rx: /chicken|nando|wingstop|popeyes|kfc\b|chick\b/i },
+  { key: "pizza_italian", label: "Pizza & Italian", rx: /pizza|italian|zizzi|prezzo|franco manca|vapiano|pasta|carluccio/i },
+  { key: "asian", label: "Asian & sushi", rx: /sushi|japan|ramen|wagamama|itsu\b|noodle|thai\b|viet|pho\b|korean|chinese|dim sum|bao\b|poke\b|katsu|asian/i },
+  { key: "indian", label: "Indian", rx: /indian|curry|dishoom|mowgli|bundobust|tandoor/i },
+  { key: "middle_eastern", label: "Mediterranean & Middle Eastern", rx: /greek|lebanese|turkish|shawarma|kebab|comptoir|falafel|mediterran/i },
+  { key: "bakery_dessert", label: "Bakery & dessert", rx: /bakery|bake\b|doughnut|donut|cookie|dessert|gelato|ice cream|creams\b|cinnabon|wenzel|gail'?s|patisserie|crepe|waffle|pretzel/i },
+  { key: "coffee_cafe", label: "Coffee & café", rx: /coffee|caf[eé]|costa\b|starbucks|nero\b|espresso|roastery/i },
+  { key: "grab_go", label: "Grab & go", rx: /grab|sandwich|greggs|pret\b|leon\b|subway|salad|deli\b|wrap\b|juice|smoothie/i },
+  { key: "pubs_bars", label: "Pubs & bars", rx: /\bpub\b|\bbar\b|tavern|brewdog|\binn\b|brewery|cocktail|taproom/i },
+  { key: "competitive_social", label: "Competitive socialising", rx: /golf|darts|bowling|escape room|karaoke|boom battle|puttshack|flight club|arcade|gravity|trampoline|climb|activity centre|social gaming/i },
+  { key: "gyms_fitness", label: "Gyms & fitness", rx: /\bgym\b|fitness|pilates|yoga|cycle\b|barry'?s|f45|1rebel|puregym|nuffield/i },
+  { key: "wellness_beauty", label: "Wellness & beauty", rx: /\bspa\b|wellness|beauty|nail|barber|hair salon|salon\b|massage|therapy/i },
+  { key: "leisure_entertainment", label: "Leisure & entertainment", rx: /cinema|entertainment|bingo|casino|soft play|leisure/i },
+  { key: "casual_dining", label: "Casual dining", rx: /restaurant|dining|kitchen\b|eatery|bistro|brasserie|food hall/i },
+];
+const SECTOR_LABELS: Record<string, string> = Object.fromEntries(FNB_SECTORS.map(s => [s.key, s.label]));
+
+function heuristicSector(name: string, industry: string | null, companyType: string | null): string | null {
+  const hay = `${name} ${industry || ""} ${companyType || ""}`;
+  for (const s of FNB_SECTORS) if (s.rx.test(hay)) return s.key;
+  return null;
+}
+
+// Definitive sector label written by the Haiku sweep; commentary cache on
+// the property row. Boot-DDL, same pattern as brand_signals.ai_relevant.
+let gapColumnsEnsured = false;
+async function ensureGapColumns() {
+  if (gapColumnsEnsured) return;
+  await pool.query(`ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS fnb_sector TEXT`).catch(() => {});
+  await pool.query(`ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS gap_commentary TEXT`).catch(() => {});
+  await pool.query(`ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS gap_commentary_at TIMESTAMPTZ`).catch(() => {});
+  gapColumnsEnsured = true;
+}
+
+// Background sector classification — one batch per sweep, in-process
+// cooldown so a busy property page doesn't stampede Haiku.
+let lastSectorSweepAt = 0;
+async function sweepSectorClassification() {
+  if (Date.now() - lastSectorSweepAt < 30 * 60 * 1000) return;
+  lastSectorSweepAt = Date.now();
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, name, industry, company_type, description FROM crm_companies
+        WHERE fnb_sector IS NULL AND merged_into_id IS NULL AND is_tracked_brand = true
+        LIMIT 50`
+    );
+    const candidates = rows.filter((r: any) => isClientCrmCategory(r.company_type));
+    if (!candidates.length) return;
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const keys = FNB_SECTORS.map(s => s.key).join(", ");
+    const list = candidates.map((r: any) => `${r.id} | ${r.name} | ${r.industry || ""} | ${(r.description || "").slice(0, 120)}`).join("\n");
+    const msg = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 2000,
+      messages: [{ role: "user", content: `Classify each UK hospitality/leisure brand into exactly one sector key from: ${keys}.\n\nBrands (id | name | industry | description):\n${list}\n\nReply with one line per brand: id|sector_key. Nothing else.` }],
+    });
+    const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("");
+    const valid = new Set(FNB_SECTORS.map(s => s.key));
+    for (const line of text.split("\n")) {
+      const [id, key] = line.split("|").map(s => s?.trim());
+      if (id && key && valid.has(key) && candidates.some((c: any) => c.id === id)) {
+        await pool.query(`UPDATE crm_companies SET fnb_sector = $1 WHERE id = $2`, [key, id]).catch(() => {});
+      }
+    }
+    console.log(`[gap-sectors] classified batch of ${candidates.length}`);
+  } catch (e: any) {
+    console.warn("[gap-sectors] sweep failed:", e?.message);
+  }
+}
 
 // Haversine distance in km between two lat/lng pairs
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
@@ -164,6 +248,10 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       return res.status(400).json({ error: reasons[location.reason] || "Couldn't resolve property location", reason: location.reason });
     }
 
+    await ensureGapColumns();
+    // Fire-and-forget: harden heuristic sector labels with Haiku over time.
+    sweepSectorClassification();
+
     // Pull all brand stores with geocoded locations. brand_stores is
     // created lazily by brand-profile when that module loads — if it
     // hasn't yet on this prod instance, degrade to "no stores yet"
@@ -171,7 +259,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     const stores: any[] = await pool.query(
       `SELECT s.brand_company_id, s.name AS store_name, s.address, s.lat, s.lng, s.status,
               c.name AS brand_name, c.domain, c.rollout_status, c.company_type,
-              c.is_tracked_brand, c.store_count, c.brand_group_id
+              c.is_tracked_brand, c.store_count, c.brand_group_id, c.industry, c.fnb_sector
          FROM brand_stores s
          JOIN crm_companies c ON c.id = s.brand_company_id
         WHERE s.lat IS NOT NULL AND s.lng IS NOT NULL
@@ -207,6 +295,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       nearest_store: { name: string; address: string | null; lat: number; lng: number };
       brand_group_id: string | null;
       peer_scheme_set: Set<string>;
+      sector: string | null;
     }>();
 
     for (const s of stores) {
@@ -225,6 +314,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
           nearest_store: { name: s.store_name, address: s.address, lat: s.lat, lng: s.lng },
           brand_group_id: s.brand_group_id,
           peer_scheme_set: new Set<string>(),
+          sector: (s.fnb_sector as string | null) || heuristicSector(s.brand_name, s.industry, s.company_type),
         };
         brandMap.set(s.brand_company_id, entry);
       } else {
@@ -245,18 +335,23 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     }
 
     const allBrands = Array.from(brandMap.values());
+    // The whole board speaks hospitality/F&B/wellness/café/leisure only —
+    // "they didn't want to see normal retail; hide those, work in the
+    // background" (Woody, 2026-08-04). Retail stays in brand_stores for
+    // other consumers; it just never renders here.
+    const hospitality = allBrands.filter(b => isClientCrmCategory(b.company_type));
 
-    const onScheme = allBrands
+    const onScheme = hospitality
       .filter(b => b.nearest_distance_km <= onSchemeRadiusKm)
       .sort((a, b) => a.nearest_distance_km - b.nearest_distance_km);
 
-    const wider = allBrands
+    const wider = hospitality
       .filter(b => b.nearest_distance_km > onSchemeRadiusKm && b.nearest_distance_km <= widerRadiusKm)
       .sort((a, b) => a.nearest_distance_km - b.nearest_distance_km);
 
     // Gap: peer brands with >= 3 stores but nearest is > widerRadiusKm from subject.
     // These are brands that have chosen similar UK locations but not this one.
-    const gap = allBrands
+    const gap = hospitality
       .filter(b => b.nearest_distance_km > widerRadiusKm && b.total_stores >= 3)
       // Prioritise scaling brands + those with reasonable proximity somewhere (active in the region)
       .map(b => ({
@@ -304,7 +399,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     const reqCompanyIds = new Set(
       matchingRequirements.map((r: any) => String(r.company_id || "")).filter(Boolean)
     );
-    const peerGaps = allBrands
+    const peerGaps = hospitality
       .filter(b => b.peer_scheme_set.size > 0 && b.nearest_distance_km > onSchemeRadiusKm)
       .map(b => ({
         ...b,
@@ -319,6 +414,60 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       .sort((a, b) => b.peer_gap_score - a.peer_gap_score)
       .slice(0, limit);
 
+    // ── Competing centres — the peer schemes within striking distance
+    //    (Bluewater → Lakeside). Presence there but not here is the
+    //    sharpest pitch evidence Landsec asked for (Woody, 2026-08-04).
+    const competingCentres = peerSchemes
+      .map(ps => ({ name: ps.name, distance_km: Number(haversineKm(location.lat, location.lng, ps.lat, ps.lng).toFixed(1)) }))
+      .filter(ps => ps.distance_km <= 60)
+      .sort((a, b) => a.distance_km - b.distance_km)
+      .slice(0, 4);
+    const competingNames = new Set(competingCentres.map(c => c.name));
+    const competitorGaps = hospitality
+      .filter(b => b.nearest_distance_km > onSchemeRadiusKm && Array.from(b.peer_scheme_set).some(n => competingNames.has(n)))
+      .map(b => ({
+        ...b,
+        peer_schemes: Array.from(b.peer_scheme_set).sort(),
+        competing_at: Array.from(b.peer_scheme_set).filter(n => competingNames.has(n)).sort(),
+        has_live_requirement: reqCompanyIds.has(String(b.brand_company_id)),
+      }))
+      .sort((a, b) => (b.has_live_requirement ? 1 : 0) - (a.has_live_requirement ? 1 : 0) || b.peer_scheme_set.size - a.peer_scheme_set.size)
+      .slice(0, limit);
+
+    // ── Local market — trading in the surrounding town/city (0.5–5km)
+    //    but not on scheme: the in-town operators a scheme could poach.
+    const localMarket = hospitality
+      .filter(b => b.nearest_distance_km > onSchemeRadiusKm && b.nearest_distance_km <= 5)
+      .map(b => ({ ...b, peer_schemes: Array.from(b.peer_scheme_set).sort(), has_live_requirement: reqCompanyIds.has(String(b.brand_company_id)) }))
+      .sort((a, b) => a.nearest_distance_km - b.nearest_distance_km)
+      .slice(0, limit);
+
+    // ── Sector coverage — which hospitality sectors the scheme has vs the
+    //    peer set, surfacing whole missing cuisines ("no Mexican, no fine
+    //    dining" — Landsec, 2026-08-04).
+    const sectors = FNB_SECTORS.map(def => {
+      const inSector = hospitality.filter(b => b.sector === def.key);
+      const here = inSector.filter(b => b.nearest_distance_km <= onSchemeRadiusKm);
+      const atCompeting = inSector.filter(b => Array.from(b.peer_scheme_set).some(n => competingNames.has(n)));
+      const atPeers = inSector.filter(b => b.peer_scheme_set.size > 0);
+      const examples = inSector
+        .filter(b => b.nearest_distance_km > onSchemeRadiusKm && b.peer_scheme_set.size > 0)
+        .sort((a, b) => b.peer_scheme_set.size - a.peer_scheme_set.size)
+        .slice(0, 4)
+        .map(b => ({ id: b.brand_company_id, name: b.brand_name, peers: b.peer_scheme_set.size, live_req: reqCompanyIds.has(String(b.brand_company_id)) }));
+      return {
+        key: def.key,
+        label: def.label,
+        on_scheme: here.length,
+        on_scheme_names: here.slice(0, 6).map(b => b.brand_name),
+        at_competing: atCompeting.length,
+        at_peers: atPeers.length,
+        examples,
+        missing: here.length === 0 && atPeers.length >= 2,
+      };
+    }).filter(s => s.on_scheme > 0 || s.at_peers > 0);
+    const missingSectors = sectors.filter(s => s.missing).sort((a, b) => b.at_peers - a.at_peers);
+
     // Clients get the gap analysis focused on THEIR brand slice (hospitality/
     // leisure/fitness + self-adds — the standing Landsec decision), not the
     // full brand universe (Woody, 2026-08-03).
@@ -326,7 +475,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     if (gapScope) {
       const { clientBrandSliceSql, isClientRequestUser } = await import("./company-scope");
       if (await isClientRequestUser(req as any)) {
-        const candidateIds = [...new Set([...onScheme, ...wider, ...gap, ...peerGaps].map(b => String(b.brand_company_id)))];
+        const candidateIds = [...new Set([...onScheme, ...wider, ...gap, ...peerGaps, ...competitorGaps, ...localMarket].map(b => String(b.brand_company_id)))];
         if (candidateIds.length) {
           const sliceSql = await clientBrandSliceSql(gapScope);
           const visible = await pool.query(
@@ -357,18 +506,168 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       wider: sliced(wider).map(publish),
       gap: sliced(gap).map(publish),
       peerGaps: sliced(peerGaps).map(publish),
+      competingCentres,
+      competitorGaps: sliced(competitorGaps).map(publish),
+      localMarket: sliced(localMarket).map(publish),
+      sectors,
+      missingSectors,
+      sectorLabels: SECTOR_LABELS,
       peerSchemesConsidered: peerSchemes.length,
       matchingRequirements: slicedReqs,
       categorySignature,
       radii: { onScheme: onSchemeRadiusKm, wider: widerRadiusKm, peerPresence: PEER_PRESENCE_KM },
       stats: {
         totalBrands: allBrands.length,
+        hospitalityBrands: hospitality.length,
         brandsWithStores: stores.length,
       },
     });
   } catch (err: any) {
     console.error("[brand-gaps]", err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ── AI gap read — cached commentary over the whole picture (Woody,
+//    2026-08-04: "more AI commentary to consider"). GET returns the cache;
+//    ?refresh=1 regenerates. Clients may read AND refresh on their own
+//    properties (parity rule); the prompt carries no BGP fees.
+router.get("/api/property/:propertyId/brand-gaps/commentary", requireAuth, async (req: Request, res: Response) => {
+  try {
+    await ensureGapColumns();
+    const propertyId = String(req.params.propertyId);
+    const { resolveCompanyScope, isPropertyInScope, isClientRequestUser } = await import("./company-scope");
+    if (await isClientRequestUser(req as any)) {
+      const scope = await resolveCompanyScope(req as any);
+      if (!scope || !(await isPropertyInScope(scope, propertyId))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+    }
+    const force = req.query.refresh === "1";
+    const cached = await pool.query(
+      `SELECT name, gap_commentary, gap_commentary_at FROM crm_properties WHERE id = $1`, [propertyId]
+    );
+    if (!cached.rows[0]) return res.status(404).json({ error: "Property not found" });
+    const row = cached.rows[0];
+    const ageMs = row.gap_commentary_at ? Date.now() - new Date(row.gap_commentary_at).getTime() : null;
+    if (row.gap_commentary && !force && ageMs !== null && ageMs < 7 * 24 * 60 * 60 * 1000) {
+      return res.json({ text: row.gap_commentary, generatedAt: row.gap_commentary_at, cached: true });
+    }
+
+    // Re-hit our own gap route with the requester's auth so the commentary
+    // is generated from exactly what they see (same pattern as
+    // bgp-commentary/regenerate).
+    const baseUrl = `http://127.0.0.1:${process.env.PORT || "5000"}`;
+    const cookie = (req.headers?.cookie as string) || "";
+    const auth = (req.headers?.authorization as string) || "";
+    const gapsRes = await fetch(`${baseUrl}/api/property/${propertyId}/brand-gaps`, {
+      headers: { ...(cookie ? { Cookie: cookie } : {}), ...(auth ? { Authorization: auth } : {}) },
+    });
+    if (!gapsRes.ok) {
+      if (row.gap_commentary) return res.json({ text: row.gap_commentary, generatedAt: row.gap_commentary_at, cached: true });
+      return res.status(gapsRes.status).json({ error: "Couldn't load gap analysis" });
+    }
+    const g: any = await gapsRes.json();
+
+    const fmtList = (arr: any[], n = 8) => arr.slice(0, n).map((b: any) =>
+      `${b.brand_name}${b.has_live_requirement ? " (LIVE REQUIREMENT)" : ""}${b.competing_at?.length ? ` — at ${b.competing_at.join(", ")}` : b.peer_schemes?.length ? ` — at ${b.peer_schemes.slice(0, 3).join(", ")}` : ""}`
+    ).join("\n") || "(none)";
+    const sectorLines = (g.sectors || []).map((s: any) =>
+      `${s.label}: ${s.on_scheme} on scheme${s.on_scheme ? ` (${s.on_scheme_names.slice(0, 3).join(", ")})` : ""}, at ${s.at_peers} peer schemes${s.missing ? " — MISSING HERE" : ""}${s.examples?.length ? ` [targets: ${s.examples.map((e: any) => e.name).join(", ")}]` : ""}`
+    ).join("\n");
+
+    const prompt = `You are a BGP leasing analyst writing the hospitality & leisure gap read for ${row.name}, for the asset owner (Landsec-grade client). British English, no hype, no fees. Data:
+
+Competing centres nearby: ${(g.competingCentres || []).map((c: any) => `${c.name} (${c.distance_km}km)`).join(", ") || "none within range"}
+
+Brands at competing centres but NOT here:
+${fmtList(g.competitorGaps || [])}
+
+Brands trading in the local market (within 5km) but not on scheme:
+${fmtList(g.localMarket || [], 6)}
+
+Strongest national peer-scheme gaps:
+${fmtList(g.peerGaps || [], 6)}
+
+Sector coverage (hospitality/F&B/wellness/leisure):
+${sectorLines}
+
+Live brand requirements matching an available unit: ${(g.matchingRequirements || []).map((r: any) => r.company_name || r.name).filter(Boolean).slice(0, 10).join(", ") || "none"}
+
+Write 4-6 sentences: (1) the sharpest competitive gaps — name brands and which competing centre they trade at; (2) whole sectors missing versus the peer set, with the obvious target brands; (3) which of these are actionable NOW because a live requirement fits an available unit; (4) one forward-looking line on mix strategy. Prose only, no headings, no preamble.`;
+
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const msg = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 500,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
+    if (!text) {
+      if (row.gap_commentary) return res.json({ text: row.gap_commentary, generatedAt: row.gap_commentary_at, cached: true });
+      return res.status(502).json({ error: "Empty commentary" });
+    }
+    await pool.query(
+      `UPDATE crm_properties SET gap_commentary = $1, gap_commentary_at = NOW() WHERE id = $2`,
+      [text, propertyId]
+    ).catch(() => {});
+    res.json({ text, generatedAt: new Date().toISOString(), cached: false });
+  } catch (err: any) {
+    console.error("[gap-commentary]", err?.message);
+    res.status(500).json({ error: err?.message || "failed" });
+  }
+});
+
+// ── International watchlist — for larger schemes: overseas concepts not
+//    yet (or barely) in the UK, by hospitality/leisure sector (Woody,
+//    2026-08-04: "international gap analysis — AREA15 for leisure as an
+//    example"). AI-researched, cached, clearly labelled as research.
+router.get("/api/property/:propertyId/brand-gaps/international", requireAuth, async (req: Request, res: Response) => {
+  try {
+    await ensureGapColumns();
+    await pool.query(`ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS gap_intl JSONB`).catch(() => {});
+    await pool.query(`ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS gap_intl_at TIMESTAMPTZ`).catch(() => {});
+    const propertyId = String(req.params.propertyId);
+    const { resolveCompanyScope, isPropertyInScope, isClientRequestUser } = await import("./company-scope");
+    if (await isClientRequestUser(req as any)) {
+      const scope = await resolveCompanyScope(req as any);
+      if (!scope || !(await isPropertyInScope(scope, propertyId))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+    }
+    const force = req.query.refresh === "1";
+    const { rows } = await pool.query(`SELECT name, gap_intl, gap_intl_at FROM crm_properties WHERE id = $1`, [propertyId]);
+    if (!rows[0]) return res.status(404).json({ error: "Property not found" });
+    const row = rows[0];
+    const ageMs = row.gap_intl_at ? Date.now() - new Date(row.gap_intl_at).getTime() : null;
+    if (row.gap_intl && !force && ageMs !== null && ageMs < 30 * 24 * 60 * 60 * 1000) {
+      return res.json({ items: row.gap_intl, generatedAt: row.gap_intl_at, cached: true });
+    }
+
+    const prompt = `You are a BGP international retail & leisure analyst. For ${row.name}, a major UK shopping destination, list 10 INTERNATIONAL hospitality/F&B/leisure/experiential concepts that are NOT yet established in the UK (or have at most 1-2 UK sites) and would suit a top-four UK shopping centre. Think AREA15/Meow Wolf-style experiential leisure, international F&B groups expanding into Europe, competitive-socialising formats, wellness concepts. As of your knowledge, be factual about where they currently trade; do not invent brands.
+
+Reply as strict JSON array only: [{"name": "...", "sector": "...", "origin": "...", "trades_in": "...", "uk_status": "none|entering|1-2 sites", "why": "one sentence on the fit"}]`;
+
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const msg = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1400,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
+    let items: any[] = [];
+    try { items = JSON.parse(text.replace(/^```(json)?/m, "").replace(/```$/m, "").trim()); } catch {}
+    if (!Array.isArray(items) || !items.length) {
+      if (row.gap_intl) return res.json({ items: row.gap_intl, generatedAt: row.gap_intl_at, cached: true });
+      return res.status(502).json({ error: "No watchlist generated" });
+    }
+    await pool.query(`UPDATE crm_properties SET gap_intl = $1, gap_intl_at = NOW() WHERE id = $2`, [JSON.stringify(items), propertyId]).catch(() => {});
+    res.json({ items, generatedAt: new Date().toISOString(), cached: false });
+  } catch (err: any) {
+    console.error("[gap-international]", err?.message);
+    res.status(500).json({ error: err?.message || "failed" });
   }
 });
 

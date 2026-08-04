@@ -775,29 +775,23 @@ export function PropertyDetail({ id }: { id: string }) {
               </div>
             </div>
 
-            {/* Brochures + Brand Gap — two side-by-side boards below
-                the top strip. Brochures swapped down from the top-right
-                slot; Risk Register went up so the operational watch
-                list reads alongside the news ticker. */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-              <ErrorBoundary compact name="Property brochures">
-                <PropertyBrochuresPanel propertyId={property.id} />
-              </ErrorBoundary>
-              {/* Property Decks panel hidden for the Monday demo —
-                  feature not yet ready for the firm. See PRESENTATION_BACKLOG.md.
-              <ErrorBoundary compact name="Property decks">
-                <PropertyDecksPanel propertyId={property.id} />
-              </ErrorBoundary>
-              */}
-              {/* Brand Gap renders for clients too — the server slices the
-                  analysis to their brand categories + self-adds (Woody,
-                  2026-08-03), so Landsec sees the hospitality/leisure view. */}
-              <ErrorBoundary compact name="Brand gap">
-                <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
-                  <BrandGapPanel propertyId={property.id} />
-                </CollapsibleCard>
-              </ErrorBoundary>
-            </div>
+            {/* Brochures row. Property Decks panel hidden for the Monday
+                demo — feature not yet ready for the firm. See
+                PRESENTATION_BACKLOG.md. */}
+            <ErrorBoundary compact name="Property brochures">
+              <PropertyBrochuresPanel propertyId={property.id} />
+            </ErrorBoundary>
+
+            {/* Brand Gap — full-width board (Woody, 2026-08-04: "gap
+                analysis display needs a proper rework, full width to
+                start"). Renders for clients too — the server slices the
+                analysis to their brand categories + self-adds, so Landsec
+                sees the hospitality/leisure view. */}
+            <ErrorBoundary compact name="Brand gap">
+              <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
+                <BrandGapPanel propertyId={property.id} />
+              </CollapsibleCard>
+            </ErrorBoundary>
 
             {/* Pipeline + Performance combined — single 'how's the
                 building doing' tile that sits above Plans, giving
