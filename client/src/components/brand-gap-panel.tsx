@@ -52,23 +52,28 @@ interface BrandGapResult {
   stats: { totalBrands: number; hospitalityBrands?: number; brandsWithStores: number };
 }
 
+// Two-line row: the brand NAME owns the first line (badges after it, name
+// never crushed to "W…"), the scheme evidence sits underneath (Woody,
+// 2026-08-04: "design issues on the brand names").
 function BrandRow({ b, context }: { b: GapBrand; context?: string }) {
   return (
     <Link
       href={`/companies/${b.brand_company_id}`}
-      className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 min-w-0"
+      className="block text-xs hover:bg-muted/50 rounded px-1 py-1 min-w-0"
     >
-      <span className="font-medium truncate flex-1 min-w-0">{b.brand_name}</span>
-      {b.has_live_requirement && (
-        <Badge className="text-[9px] bg-violet-100 text-violet-700 border-violet-200 shrink-0">live req</Badge>
-      )}
-      {(b.rollout_status === "scaling" || b.rollout_status === "entering_uk") && (
-        <Badge className="text-[9px] bg-emerald-100 text-emerald-700 border-emerald-200 shrink-0">
-          <TrendingUp className="w-2 h-2 mr-0.5" />{b.rollout_status === "scaling" ? "scaling" : "entering UK"}
-        </Badge>
-      )}
+      <span className="flex items-center gap-1.5 min-w-0">
+        <span className="font-medium truncate min-w-0" title={b.brand_name}>{b.brand_name}</span>
+        {b.has_live_requirement && (
+          <Badge className="text-[9px] bg-violet-100 text-violet-700 border-violet-200 shrink-0">live req</Badge>
+        )}
+        {(b.rollout_status === "scaling" || b.rollout_status === "entering_uk") && (
+          <Badge className="text-[9px] bg-emerald-100 text-emerald-700 border-emerald-200 shrink-0">
+            <TrendingUp className="w-2 h-2 mr-0.5" />{b.rollout_status === "scaling" ? "scaling" : "entering UK"}
+          </Badge>
+        )}
+      </span>
       {context && (
-        <span className="text-[10px] text-muted-foreground shrink-0 truncate max-w-[150px]" title={context}>
+        <span className="block text-[10px] text-muted-foreground truncate mt-0.5" title={context}>
           {context}
         </span>
       )}
