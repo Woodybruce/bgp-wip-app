@@ -7,7 +7,7 @@ const addins = [
   {
     name: "Outlook",
     icon: Mail,
-    description: "CRM sidebar that automatically looks up email senders — see contacts, companies, and deals without leaving Outlook.",
+    description: "CRM sidebar that looks up email senders automatically — the BGP relationship read, matched contacts/companies/deals with links into the app, and one-click Log to CRM. Sign in once with Microsoft; the pane is pinnable.",
     manifest: "/manifests/outlook-addin.xml",
     preview: "/addin/outlook",
     adminSteps: "Microsoft 365 Admin Centre → Settings → Integrated Apps → Upload custom apps",
