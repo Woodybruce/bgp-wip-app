@@ -3250,10 +3250,17 @@ export default function Comps() {
                     )}
                   </td>
                   <td className="px-2 py-1.5 text-center">
+                    {/* Verification is a staff action — clients just see the
+                        state, no dead disabled circle (Woody, 2026-08-04). */}
+                    {isClientComps ? (
+                      comp.verified
+                        ? <CheckCircle2 className="w-4 h-4 text-green-600 inline-block" />
+                        : <span className="text-muted-foreground/40">—</span>
+                    ) : (
                     <button
                       onClick={() => updateMutation.mutate({ id: comp.id, field: "verified", value: !comp.verified })}
-                      disabled={isClientComps}
                       className="transition-colors"
+                      title={comp.verified ? "Verified — click to unverify" : "Mark comp as verified"}
                       data-testid={`toggle-verified-${comp.id}`}
                     >
                       {comp.verified ? (
@@ -3262,16 +3269,20 @@ export default function Comps() {
                         <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/30" />
                       )}
                     </button>
+                    )}
                   </td>
                   <td className="px-2 py-1.5 align-top">
+                    {/* Real column width + clamp — comments were crushed into
+                        a sliver and long ones ballooned the row. Full text on
+                        hover and in the comp detail. */}
                     {isClientComps
-                      ? <span className="block max-w-[230px] whitespace-normal text-xs px-1.5 py-0.5">{comp.comments || "—"}</span>
+                      ? <span title={comp.comments || ""} className="block min-w-[240px] max-w-[340px] whitespace-normal line-clamp-3 text-xs px-1.5 py-0.5">{comp.comments || "—"}</span>
                       : <InlineText
                           value={comp.comments || ""}
                           onSave={v => updateMutation.mutate({ id: comp.id, field: "comments", value: v })}
                           multiline
                           maxLines={2}
-                          className="block max-w-[230px] whitespace-normal"
+                          className="block min-w-[240px] max-w-[340px] whitespace-normal"
                         />}
                   </td>
                 </tr>
