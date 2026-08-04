@@ -8,7 +8,6 @@ import {
   Receipt, Image as ImageIcon, Building2, Store, ClipboardList,
 } from "lucide-react";
 import { legacyToCode } from "@shared/deal-status";
-import { IntelligenceFooter } from "@/components/intelligence-footer";
 import { useTeam } from "@/lib/team-context";
 
 type BriefingData = { briefing: string; generatedAt: string };
@@ -178,7 +177,9 @@ export default function MobileHome() {
   // Default to the core daily boards; the rest (admin / WIP tools) sit behind
   // "Show all" so Home stays focused. Admins still get their extra tools.
   const visibleBoards = (mobileOverlayItems as any[]).filter(b => (user?.isAdmin || !b.adminOnly) && b.url !== "/mail");
-  const boards = visibleBoards.filter(b => CORE_BOARD_URLS.has(b.url));
+  // Portfolio homes already have a Brands tile in the quick trio above, so
+  // drop the Brand Intelligence board there to avoid showing /brands twice.
+  const boards = visibleBoards.filter(b => CORE_BOARD_URLS.has(b.url) && !(showPortfolioHome && b.url === "/brands"));
   const openTasks = (tasks || []).filter(t => t.status !== "done").slice(0, 6);
   // Count-gated approvals link — mirrors the desktop sidebar entry so Wendy/
   // Layla + directors can reach their queue from the phone.
@@ -263,11 +264,6 @@ export default function MobileHome() {
                 <span className="text-[11px] font-medium">{q.label}</span>
               </Link>
             ))}
-          </div>
-
-          {/* Intelligence — same strip as desktop dashboard/calendar, scrolls sideways */}
-          <div className="rounded-2xl border border-[#E7E5E4] bg-white dark:bg-card shadow-sm overflow-hidden">
-            <IntelligenceFooter />
           </div>
         </>
       )}
