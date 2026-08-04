@@ -1487,10 +1487,14 @@ async function markRound(page, cross) {
       const rows = Array.isArray(list) ? list : (list?.data || []);
       const inList = rows.some((r) => JSON.stringify(r).includes(stamp));
       const byId = id ? (await fetch(`/api/crm/requirements-leasing/${id}`, { headers: auth }).catch(() => ({ status: 0 }))).status : null;
-      return { inList, byId };
+      // The matches sub-resource is a separate route that takes a raw
+      // requirement id — it must refuse clients too (BGP intel by id).
+      const matches = id ? (await fetch(`/api/requirements/matches/${id}`, { headers: auth }).catch(() => ({ status: 0 }))).status : null;
+      return { inList, byId, matches };
     }, [cross.reqStamp, cross.reqId]);
     if (api.inList) throw new Error(`agent-only requirement "${cross.reqStamp}" leaked into the client's requirements list`);
     if (cross.reqId && api.byId !== 404 && api.byId !== 403) throw new Error(`client read a BGP-intel requirement by id (expected 404/403, got ${api.byId})`);
+    if (cross.reqId && api.matches !== 403 && api.matches !== 404) throw new Error(`client read requirement MATCHES by id (expected 403/404, got ${api.matches})`);
     // UI: the stamp must not render on the client's requirements page either.
     await page.goto(`${BASE}/requirements`);
     await page.waitForLoadState('domcontentloaded');
