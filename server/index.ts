@@ -3521,6 +3521,11 @@ app.use("/api/branding/assets", express.static(
     // files, deal link. Every handler scope-checks the unit's property
     // against the client's company and strips BGP fee fields.
     "/api/available-units",
+    // Clients may add events to their own calendar — the POST forces
+    // company_name to the caller's company and created_by to the caller,
+    // so events land on their (company-scoped) calendar only; delete is
+    // creator-only in the handler.
+    "/api/team-events",
   ];
   // Sub-routes to block even though a parent prefix is allowed (BGP intel /
   // brand pipeline that isn't the client's own profile; OneNote task import
