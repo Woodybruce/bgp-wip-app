@@ -386,6 +386,13 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
                 length(trim(co.name)) > 8
                 OR (co.domain_url IS NOT NULL AND n.url ILIKE '%' || regexp_replace(co.domain_url, '^https?://(www\.)?', '', 'i') || '%')
                 OR (co.industry IS NOT NULL AND n.title ILIKE '%' || split_part(co.industry, ' ', 1) || '%')
+                -- Possessive form is a strong signal for short names: real
+                -- coverage writes "Bill's" (apostrophe), NFL noise writes
+                -- "Bills" — accept the exact apostrophized variant. Only
+                -- applies to names ending in s, so "Next" etc. stay strict.
+                OR (regexp_replace(co.name, 's$', '''s') <> co.name
+                    AND (n.title ILIKE '%' || regexp_replace(co.name, 's$', '''s') || '%'
+                         OR coalesce(n.summary, '') ILIKE '%' || regexp_replace(co.name, 's$', '''s') || '%'))
               )
             ORDER BY n.url, n.published_at DESC NULLS LAST
          ) deduped

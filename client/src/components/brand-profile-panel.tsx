@@ -1911,16 +1911,18 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 unified Properties board (CompanyPropertiesBoard) on the
                 company page — the board owns the map and the auto-scrape now. */}
 
-            {/* ── Zone 4: BGP Relationship ──────────────────── */}
+            {/* ── Zone 4: BGP Relationship — now client-visible too (Woody,
+                2026-08-04: "BGP relationship still not on Landsec viewing
+                for Bills / brands"). Clients get the AI read, coverage,
+                relationship strip and activity summary; team editing and
+                the raw correspondence drawer stay staff-only. */}
             <div className="border-t border-border/40 mt-3 pt-2 order-6">
-            {!isClientViewer && (
             <div className="flex items-center gap-1.5 mb-2">
               <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
               <span className="text-xs font-semibold uppercase tracking-wider text-foreground">BGP Relationship</span>
             </div>
-            )}
             <div className="space-y-2.5">
-            {!isClientViewer && (<>
+            <>
             {/* AI relationship read — the calendar/interaction commentary.
                 Consolidated away in the single-strip pass, missed and asked
                 back (Woody, 2026-07-30). */}
@@ -1933,7 +1935,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               {(data.coverers || []).map((cov: any) => (
                 <CovererChip key={cov.id} cov={cov} companyId={companyId} />
               ))}
-              <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />
+              {!isClientViewer && <BgpTeamMenu companyId={companyId} coverers={data.coverers || []} />}
             </div>
 
             {/* Relationship strip — lead broker, last touchpoint, active contacts */}
@@ -2006,7 +2008,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
             {/* Interactions — the AI Activity card above is the primary view;
                 the full raw list duplicates it and includes system noise, so
-                it's tucked into an expandable "All correspondence" drawer. */}
+                it's tucked into an expandable "All correspondence" drawer.
+                Staff-only: raw internal emails don't go to client logins. */}
+            {!isClientViewer && (
             <details className="border-t pt-2 group/corr">
               <summary className="text-[11px] uppercase tracking-wider text-muted-foreground cursor-pointer list-none flex items-center gap-1 hover:text-foreground">
                 <ChevronRight className="w-3 h-3 transition-transform group-open/corr:rotate-90" />
@@ -2016,7 +2020,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 <InteractionsBoard scope="company" contextId={companyId} />
               </div>
             </details>
-            </>)}
+            )}
+            </>
 
             {/* Lease-expiry radar — tenant's upcoming lease events on our schedule */}
             {leaseEvents.length > 0 && (
@@ -4975,9 +4980,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           above, the Deal ledger zone and the header's Tracked-brand badge.
           Team membership is now edited in Zone 4's Coverage row (BgpTeamMenu). */}
 
-      {/* News full-width — its old pair partner (Instagram) now renders
-          full-width below. */}
-      <div className="space-y-3">
+      {/* News + Instagram side by side (Woody, 2026-08-04: "reverse and
+          add news back in alongside instagram"). */}
+      <div className={pairCls}>
       {/* News & Media */}
       {data.news && data.news.length > 0 && (() => {
         const newsSourceColor = (name: string | null): string => {
@@ -5177,11 +5182,8 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         );
       })()}
 
-      </div>
-
-      {/* Instagram — full width (Woody, 2026-08-04: "can the instagram
-          board go full width"), out of the old News pair. */}
       <BrandInstagramCard companyId={companyId} />
+      </div>
 
       {/* Menu / Best-sellers moved up — paired with Key contacts
           (Woody, 2026-08-03). */}
