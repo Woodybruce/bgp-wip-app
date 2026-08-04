@@ -19,6 +19,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Mail, Phone, Users, Activity, CalendarDays, MapPin, Handshake, Sparkles, Plus, Loader2 } from "lucide-react";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -88,19 +89,35 @@ function RecentRow({ a, propertyId, summaries, setSummaries }: {
     <div className="px-1.5 py-1 rounded hover:bg-muted/40 min-w-0 group/row" data-testid={`activity-recent-${a.id}`}>
       <div className="flex items-start gap-2 min-w-0">
         <Icon className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
-        <div className="flex-1 min-w-0">
-          {a.subject ? (
-            <>
-              <div className="text-xs leading-snug font-medium truncate" title={a.subject}>{a.subject}</div>
-              <div className="text-[10px] text-muted-foreground truncate">{a.summary} · {timeAgo(a.date)}</div>
-            </>
-          ) : (
-            <>
-              <div className="text-xs leading-snug">{a.summary}</div>
-              <div className="text-[10px] text-muted-foreground">{timeAgo(a.date)}</div>
-            </>
-          )}
-        </div>
+        {/* Radix tooltip, not the native title attr — the 30s live-refresh
+            re-renders these rows, which killed the native tooltip after its
+            first show (Woody, 2026-08-04). This one fires on every hover
+            and carries the full untruncated detail. */}
+        <Tooltip delayDuration={250}>
+          <TooltipTrigger asChild>
+            <div className="flex-1 min-w-0 cursor-default">
+              {a.subject ? (
+                <>
+                  <div className="text-xs leading-snug font-medium truncate">{a.subject}</div>
+                  <div className="text-[10px] text-muted-foreground truncate">{a.summary} · {timeAgo(a.date)}</div>
+                </>
+              ) : (
+                <>
+                  <div className="text-xs leading-snug">{a.summary}</div>
+                  <div className="text-[10px] text-muted-foreground">{timeAgo(a.date)}</div>
+                </>
+              )}
+            </div>
+          </TooltipTrigger>
+          <TooltipContent side="top" align="start" className="max-w-[340px]">
+            <div className="space-y-1">
+              {a.subject && <p className="text-xs font-semibold leading-snug">{a.subject}</p>}
+              <p className="text-[11px] leading-snug">{a.summary}</p>
+              {aiText && <p className="text-[11px] leading-snug opacity-80">{aiText}</p>}
+              <p className="text-[10px] opacity-60">{timeAgo(a.date)}</p>
+            </div>
+          </TooltipContent>
+        </Tooltip>
         {!isDealMove && (
           <button
             onClick={() => summarise.mutate()}
@@ -311,11 +328,28 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
                 </>
               );
               const cls = "flex items-start gap-2 px-1.5 py-1 rounded hover:bg-muted/40 min-w-0";
-              const tip = `${ev.title}${ev.location ? ` · ${ev.location}` : ""}${ev.property_name ? ` · ${ev.property_name}` : ""}`;
-              return ev.property_id && !propertyId ? (
-                <Link key={ev.id} href={`/properties/${ev.property_id}`} className={cls} title={tip} data-testid={`activity-upcoming-${ev.id}`}>{inner}</Link>
+              const tip = (
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold leading-snug">{ev.title}</p>
+                  <p className="text-[10px] opacity-80">
+                    {new Date(ev.start_time).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
+                    {" · "}
+                    {new Date(ev.start_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                  {ev.location && <p className="text-[10px] opacity-80">{ev.location}</p>}
+                  {ev.property_name && <p className="text-[10px] opacity-80">{ev.property_name}</p>}
+                </div>
+              );
+              const row = ev.property_id && !propertyId ? (
+                <Link href={`/properties/${ev.property_id}`} className={cls} data-testid={`activity-upcoming-${ev.id}`}>{inner}</Link>
               ) : (
-                <div key={ev.id} className={cls} title={tip} data-testid={`activity-upcoming-${ev.id}`}>{inner}</div>
+                <div className={cls} data-testid={`activity-upcoming-${ev.id}`}>{inner}</div>
+              );
+              return (
+                <Tooltip key={ev.id} delayDuration={250}>
+                  <TooltipTrigger asChild>{row}</TooltipTrigger>
+                  <TooltipContent side="top" align="start" className="max-w-[340px]">{tip}</TooltipContent>
+                </Tooltip>
               );
             })}
           </div>

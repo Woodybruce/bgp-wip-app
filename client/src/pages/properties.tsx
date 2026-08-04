@@ -4634,11 +4634,13 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
   const articles = data?.articles || [];
 
   return (
-    <Card data-testid="property-news-panel">
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+    <Card data-testid="property-news-panel" className="overflow-hidden">
+      <CardContent className="p-4 pt-3">
+        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap -mx-4 -mt-3 px-4 pt-3 pb-2 bg-gradient-to-r from-sky-500/[0.07] to-transparent">
           <div className="flex items-center gap-2 min-w-0">
-            <Newspaper className="h-4 w-4 text-primary shrink-0" />
+            <span className="w-6 h-6 rounded-full bg-sky-500/10 flex items-center justify-center shrink-0">
+              <Newspaper className="h-3.5 w-3.5 text-sky-600" />
+            </span>
             <span className="text-sm font-semibold shrink-0">News Feed</span>
             {/* Property name in the badge is redundant with the page
                 header — only render it when there's plenty of room
@@ -4677,14 +4679,19 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
           <ScrollArea className="h-[360px] pr-2">
             <div className="divide-y">
               {articles.map(article => {
-                // Derive a source domain for the favicon fallback. Web
-                // results (DuckDuckGo) don't carry an imageUrl, so we
-                // render the source's favicon via Google's free API
-                // rather than show a naked text row.
+                // Derive a source domain for the favicon fallback. The URL
+                // hostname is authoritative — sourceName is a display label
+                // ("UK Retail Expansion (Google News)") and feeding it to the
+                // favicon API returned the anonymous globe on every row.
                 let faviconDomain: string | null = null;
                 try {
-                  faviconDomain = article.sourceName || new URL(article.url).hostname.replace(/^www\./, "");
-                } catch { /* leave null */ }
+                  const host = new URL(article.url).hostname.replace(/^www\./, "");
+                  faviconDomain = /google\.com$/.test(host)
+                    ? (article.sourceName && article.sourceName.includes(".") ? article.sourceName : null)
+                    : host;
+                } catch {
+                  if (article.sourceName?.includes(".")) faviconDomain = article.sourceName;
+                }
                 return (
                 <a key={article.id} href={article.url} target="_blank" rel="noopener noreferrer" className="block" data-testid={`news-article-${article.id}`}>
                   <div className="flex gap-2.5 p-2 rounded-md hover:bg-muted/50 transition-colors cursor-pointer">
