@@ -116,6 +116,13 @@ body {
   width: 8px;
   height: 0;
 }
+/* Safari (classic scrollbars mode) ignores height:0 for the horizontal bar,
+   so the tracker showed two bars — the container's own plus the synced
+   bottom bar (Woody, 2026-08-04). Kill the horizontal one explicitly. */
+.table-scroll-container::-webkit-scrollbar:horizontal {
+  height: 0;
+  display: none;
+}
 .table-scroll-container::-webkit-scrollbar-track {
   background: transparent;
 }

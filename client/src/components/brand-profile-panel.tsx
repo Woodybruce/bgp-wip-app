@@ -4975,7 +4975,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           above, the Deal ledger zone and the header's Tracked-brand badge.
           Team membership is now edited in Zone 4's Coverage row (BgpTeamMenu). */}
 
-      <div className={pairCls}>
+      {/* News full-width — its old pair partner (Instagram) now renders
+          full-width below. */}
+      <div className="space-y-3">
       {/* News & Media */}
       {data.news && data.news.length > 0 && (() => {
         const newsSourceColor = (name: string | null): string => {
@@ -5175,8 +5177,11 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         );
       })()}
 
-      <BrandInstagramCard companyId={companyId} />
       </div>
+
+      {/* Instagram — full width (Woody, 2026-08-04: "can the instagram
+          board go full width"), out of the old News pair. */}
+      <BrandInstagramCard companyId={companyId} />
 
       {/* Menu / Best-sellers moved up — paired with Key contacts
           (Woody, 2026-08-03). */}
