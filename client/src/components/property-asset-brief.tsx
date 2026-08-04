@@ -1035,6 +1035,21 @@ export function PropertyRecentActivityCard({ propertyId }: { propertyId: string 
 // BGP Commentary — purple AI panel matching the brand_analysis
 // design pattern. Reads from data.bgp_commentary; refresh button
 // regenerates via Claude from the live asset-brief context.
+// Minimal markdown for the AI commentary — paragraph spacing + **bold**
+// (Landsec, 2026-08-04: the prose wall was "hard to read"). Same treatment
+// as the mobile briefing renderer.
+export function renderAiCommentary(text: string) {
+  return text.split(/\n+/).filter(l => l.trim()).map((para, i) => (
+    <p key={i} className="text-sm leading-relaxed text-foreground/90 mb-2 last:mb-0">
+      {para.split(/(\*\*[^*]+\*\*)/g).map((p, j) =>
+        p.startsWith("**") && p.endsWith("**")
+          ? <strong key={j}>{p.slice(2, -2)}</strong>
+          : <span key={j}>{p}</span>
+      )}
+    </p>
+  ));
+}
+
 export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { propertyId: string; commentary: string | null; updatedAt: string | null }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -1076,7 +1091,7 @@ export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { prope
       <CardContent className="p-3 pt-0">
         {commentary ? (
           <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-3">
-            <p className="text-sm leading-relaxed text-foreground/90">{commentary}</p>
+            {renderAiCommentary(commentary)}
           </div>
         ) : (
           <div className="rounded-md border border-dashed border-purple-200 dark:border-purple-900 p-3 text-center">

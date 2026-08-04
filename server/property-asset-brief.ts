@@ -570,13 +570,13 @@ ${focusLines}
 
 Performance: ${(brief.performance.vacancy_rate * 100).toFixed(1)}% vacancy${brief.performance.wault_years != null ? `, WAULT ${brief.performance.wault_years.toFixed(1)} yrs` : ""}.
 
-Write a 3-5 sentence operational paragraph for the asset owner reading this. Cover:
-1. What's actively moving on the property right now — live deals AND Letting Tracker units in play; only say nothing is transacting if BOTH lists are empty.
+Write the operational commentary for the asset owner reading this, as FOUR SHORT paragraphs separated by blank lines, each opening with a bold lead-in exactly like this: **Live activity.** / **Momentum.** / **Risks.** / **BGP focus.** Cover in order:
+1. What's actively moving right now — live deals AND Letting Tracker units in play; only say nothing is transacting if BOTH lists are empty.
 2. What the recent email/meeting activity shows about momentum.
 3. The risks worth flagging (vacancies / expiries / covenant).
 4. Where BGP's focus is this week + a forward-looking line.
 
-Rules: British English, partner-tone, no hype, no "I'm pleased to". Reference the actual tenants / units / rent figures above — don't generalise. Never state BGP fees or commissions. No bullet points or headings, prose only. No preamble or "here is".`;
+Rules: British English, partner-tone, no hype, no "I'm pleased to". Keep each paragraph to 1-3 sentences. Bold the key tenant and unit names with **double asterisks**. Reference the actual tenants / units / figures above — don't generalise. Never state BGP fees or commissions. No headings beyond the bold lead-ins, no lists. No preamble or "here is".`;
 
     const msg = await client.messages.create({
       model: "claude-sonnet-4-6",

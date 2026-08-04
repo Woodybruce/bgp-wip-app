@@ -594,7 +594,7 @@ ${sectorLines}
 
 Live brand requirements matching an available unit: ${(g.matchingRequirements || []).map((r: any) => r.company_name || r.name).filter(Boolean).slice(0, 10).join(", ") || "none"}
 
-Write 4-6 sentences: (1) the sharpest competitive gaps — name brands and which competing centre they trade at; (2) whole sectors missing versus the peer set, with the obvious target brands; (3) which of these are actionable NOW because a live requirement fits an available unit; (4) one forward-looking line on mix strategy. Prose only, no headings, no preamble.`;
+Write FOUR SHORT paragraphs separated by blank lines, each opening with a bold lead-in exactly like: **Competitive gaps.** / **Missing sectors.** / **Actionable now.** / **Mix strategy.** — covering (1) the sharpest competitive gaps, naming brands and which competing centre they trade at; (2) whole sectors missing versus the peer set with the obvious target brands; (3) what's actionable NOW because a live requirement fits an available unit; (4) one forward-looking line on mix strategy. Keep each paragraph to 1-3 sentences; bold key brand names with **double asterisks**. No headings beyond the lead-ins, no lists, no preamble.`;
 
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });

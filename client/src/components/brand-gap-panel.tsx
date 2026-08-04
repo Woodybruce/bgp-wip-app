@@ -8,6 +8,7 @@ import { Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { getAuthHeaders } from "@/lib/queryClient";
+import { renderAiCommentary } from "@/components/property-asset-brief";
 import {
   Target, MapPin, TrendingUp, AlertCircle, FileText, Sparkles, RefreshCw,
   Swords, Globe2, Store, ChevronRight, Loader2,
@@ -146,7 +147,7 @@ function GapCommentary({ propertyId }: { propertyId: string }) {
           <Loader2 className="w-3 h-3 animate-spin" /> Reading the gaps — competing centres, sectors, live demand…
         </p>
       ) : data?.text ? (
-        <p className="text-xs leading-relaxed whitespace-pre-wrap">{data.text}</p>
+        <div className="text-xs leading-relaxed [&_p]:text-xs">{renderAiCommentary(data.text)}</div>
       ) : (
         <p className="text-xs text-muted-foreground italic">No read yet — hit refresh to generate.</p>
       )}
