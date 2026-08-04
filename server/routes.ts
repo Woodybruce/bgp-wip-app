@@ -7268,7 +7268,8 @@ These terms are indicative only and do not constitute a binding agreement.`;
       }
 
       const yoursQ = pool.query(
-        `SELECT DISTINCT ON (lower(trim(name))) id, name, role, email, avatar_url,
+        `SELECT DISTINCT ON (lower(trim(name))) id, name, role, email,
+                CASE WHEN avatar_url ~ '^(https?://|/)' THEN avatar_url END AS avatar_url,
                 (SELECT name FROM crm_companies WHERE id = $1) AS company_name
            FROM crm_contacts WHERE company_id = $1
           ORDER BY lower(trim(name)), last_interaction DESC NULLS LAST`,
@@ -7281,7 +7282,8 @@ These terms are indicative only and do not constitute a binding agreement.`;
           WHERE d.landlord_id = $1 OR p.landlord_id = $1
              OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1)
          )
-         SELECT DISTINCT ON (c.company_id) c.id, c.name, c.role, c.email, c.avatar_url, co.name AS company_name
+         SELECT DISTINCT ON (c.company_id) c.id, c.name, c.role, c.email,
+                CASE WHEN c.avatar_url ~ '^(https?://|/)' THEN c.avatar_url END AS avatar_url, co.name AS company_name
            FROM crm_contacts c
            JOIN crm_companies co ON co.id = c.company_id
           WHERE c.company_id IN (SELECT DISTINCT tenant_id FROM pdeals WHERE tenant_id IS NOT NULL)
@@ -7303,7 +7305,8 @@ These terms are indicative only and do not constitute a binding agreement.`;
              purchaser_agent_contact_id, leasing_agent_contact_id
            ]) AS cid WHERE cid IS NOT NULL
          )
-         SELECT DISTINCT c.id, c.name, c.role, c.email, c.avatar_url, co.name AS company_name
+         SELECT DISTINCT c.id, c.name, c.role, c.email,
+                CASE WHEN c.avatar_url ~ '^(https?://|/)' THEN c.avatar_url END AS avatar_url, co.name AS company_name
            FROM crm_contacts c
            LEFT JOIN crm_companies co ON co.id = c.company_id
           WHERE c.id IN (SELECT cid FROM agent_contact_ids)

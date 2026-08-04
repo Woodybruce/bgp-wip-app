@@ -716,13 +716,18 @@ function PortfolioContactsBoard({ companyId }: { companyId: string }) {
                   {g.rows.map((contact: any) => (
                     <Link key={contact.id} href={`/contacts/${contact.id}`}>
                       <div className="flex items-center gap-2 px-2 py-1 rounded hover:bg-muted/50 transition-colors cursor-pointer min-w-0" data-testid={`link-contact-${contact.id}`}>
-                        {contact.avatar_url ? (
-                          <img src={contact.avatar_url} alt={contact.name} className="w-6 h-6 rounded-full flex-shrink-0 object-cover" />
-                        ) : (
-                          <div className="w-6 h-6 rounded-full flex-shrink-0 bg-teal-100 dark:bg-teal-900 flex items-center justify-center text-[10px] font-semibold text-teal-700 dark:text-teal-300">
-                            {contact.name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
-                          </div>
-                        )}
+                        <div className="w-6 h-6 rounded-full flex-shrink-0 bg-teal-100 dark:bg-teal-900 flex items-center justify-center text-[10px] font-semibold text-teal-700 dark:text-teal-300 overflow-hidden">
+                          {contact.avatar_url ? (
+                            <img
+                              src={contact.avatar_url}
+                              alt={contact.name}
+                              className="w-full h-full object-cover"
+                              onError={(e) => { e.currentTarget.style.display = "none"; }}
+                            />
+                          ) : (
+                            contact.name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()
+                          )}
+                        </div>
                         <div className="min-w-0">
                           <p className="text-xs font-medium truncate">{contact.name}</p>
                           <p className="text-[10px] text-muted-foreground truncate">{[contact.role, contact.company_name].filter(Boolean).join(" · ") || contact.email}</p>
