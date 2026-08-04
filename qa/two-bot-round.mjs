@@ -47,7 +47,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -2614,6 +2614,22 @@ async function samRound(page, cross) {
       return { hasOwn: list.some((x) => /brent cross/i.test(x.name || '')) };
     });
     if (!r.hasOwn) throw new Error("rival client can't see their own property (over-scoped)");
+  });
+
+  // Cross-tenant team isolation: a rival client (Sam/Hammerson) may read
+  // THEIR OWN account team but must be refused the Landsec team board —
+  // otherwise one landlord sees another's BGP staff assignments, names,
+  // emails and CVs. (The GET route scopes a client to their own company.)
+  await step(page, p, 'rival-team-board-isolated', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const own = await fetch('/api/client-teams/99999999-1111-1111-1111-111111111111', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const ownArray = own.ok ? Array.isArray(await own.json().catch(() => null)) : false;
+      const foreign = (await fetch('/api/client-teams/11111111-1111-1111-1111-111111111111', { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { ownOk: own.ok, ownArray, foreign };
+    });
+    if (!r.ownOk || !r.ownArray) throw new Error("rival client can't read their own team board");
+    if (r.foreign !== 403) throw new Error(`rival client read the Landsec team board (expected 403, got ${r.foreign})`);
   });
 }
 
