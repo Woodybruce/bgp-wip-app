@@ -188,7 +188,10 @@ export default function PDFViewer({ url, fileName, open, onClose, propertyName }
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
-      <DialogContent className="max-w-full sm:max-w-5xl w-full h-[100dvh] sm:h-[90vh] rounded-none sm:rounded-lg flex flex-col p-0 gap-0">
+      {/* 95vw, not max-w-5xl — landscape brochure spreads were fit-bound
+          by the 1024px dialog and rendered small in a sea of white
+          (Woody, 2026-08-04 "isn't filling the space"). */}
+      <DialogContent className="max-w-full sm:max-w-[95vw] xl:max-w-[1600px] w-full h-[100dvh] sm:h-[92vh] rounded-none sm:rounded-lg flex flex-col p-0 gap-0">
         <div
           className="flex items-center justify-between pl-4 pr-12 py-3 border-b shrink-0"
           style={{ paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}

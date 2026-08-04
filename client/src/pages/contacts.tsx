@@ -592,6 +592,56 @@ function formatInteractionDate(dateStr: string) {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined });
 }
 
+// Provenance + AI verification for a contact (staff only). Shows where the
+// record came from, and runs the multi-source check (RocketReach + O365
+// footprint + web news → Claude verdict) on demand. Verdicts land in the
+// data-health review queue; nothing is auto-applied.
+function ContactSourcePanel({ contact }: { contact: any }) {
+  const { toast } = useToast();
+  const [result, setResult] = useState<any>(null);
+  const verify = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", `/api/crm/contacts/${contact.id}/verify`);
+      return r.json();
+    },
+    onSuccess: (v: any) => {
+      setResult(v);
+      if (v.status === "mismatch") {
+        toast({ title: "Possible mismatch", description: v.reasoning, variant: "destructive" });
+      } else {
+        toast({ title: v.status === "confirmed" ? "Employer confirmed" : "Inconclusive", description: v.reasoning });
+      }
+    },
+    onError: (e: any) => toast({ title: "Verification failed", description: e?.message, variant: "destructive" }),
+  });
+  const src = contact.enrichmentSource || "manual entry";
+  const when = contact.lastEnrichedAt ? new Date(contact.lastEnrichedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : null;
+  const status = result?.status;
+  return (
+    <div className="pt-2 border-t flex items-center justify-between gap-2 flex-wrap" data-testid="contact-source-panel">
+      <div className="min-w-0">
+        <p className="text-xs text-muted-foreground">Data source</p>
+        <p className="text-sm flex items-center gap-1.5 flex-wrap">
+          <span>{src}</span>
+          {when && <span className="text-xs text-muted-foreground">· {when}</span>}
+          {status && (
+            <Badge className={`text-[10px] border-transparent ${
+              status === "confirmed" ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+              : status === "mismatch" ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+              : "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+            }`}>{status === "confirmed" ? "Verified ✓" : status === "mismatch" ? "Mismatch — in review queue" : "Inconclusive"}</Badge>
+          )}
+        </p>
+        {result?.reasoning && <p className="text-[11px] text-muted-foreground mt-0.5">{result.reasoning}</p>}
+      </div>
+      <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => verify.mutate()} disabled={verify.isPending} data-testid="button-verify-contact">
+        {verify.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Sparkles className="w-3 h-3 mr-1" />}
+        {verify.isPending ? "Checking sources…" : "Verify with AI"}
+      </Button>
+    </div>
+  );
+}
+
 function ContactDetail({ id }: { id: string }) {
   const { toast } = useToast();
   const { data: cdViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -842,6 +892,7 @@ function ContactDetail({ id }: { id: string }) {
                   <p className="text-sm whitespace-pre-wrap" data-testid="text-contact-notes">{contact.notes}</p>
                 </div>
               )}
+              {!cdIsClient && <ContactSourcePanel contact={contact} />}
             </CardContent>
           </Card>
 
