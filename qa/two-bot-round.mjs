@@ -47,7 +47,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -553,6 +553,54 @@ async function victoriaRound(page, cross) {
     if (tripped) throw new Error(`${tripped} error boundary(ies) tripped on the staff brand profile`);
     const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
     if (body.length < 100) throw new Error('staff brand profile rendered nearly blank');
+  });
+
+  // Document Studio catalog (KYC / PLA / Why-Buy brief generation) is a live
+  // staff feature — the catalog must list at least one brief type, so the
+  // client-side guard below is proving a real surface is sealed, not a dead
+  // route.
+  await step(page, p, 'staff-document-briefs-catalog', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/document-briefs', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = await res.json().catch(() => null);
+      return { ok: true, count: Array.isArray(body) ? body.length : 0 };
+    });
+    if (!r.ok) throw new Error(`staff document-briefs catalog unhealthy (${r.status})`);
+    if (!r.count) throw new Error('staff document-briefs catalog is empty (feature dead?)');
+  });
+
+  // WIP Report is BGP's internal work-in-progress fee pipeline (every deal's
+  // fee, agent split, completion value across the whole firm). It must be a
+  // live staff surface — a 200 with an entries array — so the client guard
+  // below is sealing real fee intel, not a dead route.
+  await step(page, p, 'staff-wip-report-render', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/wip', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = await res.json().catch(() => null);
+      return { ok: true, hasEntries: Array.isArray(body?.entries) };
+    });
+    if (!r.ok) throw new Error(`staff WIP report unhealthy (${r.status})`);
+    if (!r.hasEntries) throw new Error('staff WIP report returned no entries array (shape broken)');
+  });
+
+  // Property Pathway is BGP's acquisition-underwriting engine (Why-Buy runs:
+  // off-market sourcing, title/RICS analysis, market intel, deck output). It
+  // must be a live staff board — a 200 with an array of runs — so the client
+  // guard below is sealing real underwriting IP, not a dead route.
+  await step(page, p, 'staff-property-pathway-board', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/property-pathway', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = await res.json().catch(() => null);
+      return { ok: true, isArray: Array.isArray(body) };
+    });
+    if (!r.ok) throw new Error(`staff property-pathway board unhealthy (${r.status})`);
+    if (!r.isArray) throw new Error('staff property-pathway board did not return a runs array');
   });
 
   // 4k. Agent logs a viewing on a Landsec unit — the client round then checks
@@ -1167,6 +1215,23 @@ async function markRound(page, cross) {
     if (r.foreign !== 403) throw new Error(`client regenerated commentary on a foreign property (expected 403, got ${r.foreign})`);
   });
 
+  // Plans board parity (Woody, 2026-08-03): a client may read the floor/lease
+  // plans on their OWN property (the board shows the plans panel to them now),
+  // but the same read on a foreign landlord's property must refuse. Guards the
+  // recently client-exposed /api/properties/:id/plans read via
+  // clientBlockedForProperty.
+  await step(page, p, 'client-plans-board-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const own = await fetch('/api/properties/22222222-2222-2222-2222-222222222222/plans', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const ownBody = own.ok ? await own.json().catch(() => null) : null;
+      const foreign = (await fetch('/api/properties/99999999-2222-2222-2222-222222222222/plans', { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { ownOk: own.ok, ownArray: Array.isArray(ownBody?.plans), foreign };
+    });
+    if (!r.ownOk || !r.ownArray) throw new Error('client cannot read the Plans board on their own property');
+    if (r.foreign !== 403) throw new Error(`client read the Plans board on a foreign property (expected 403, got ${r.foreign})`);
+  });
+
   // A client must never reach the admin password-reset (account takeover
   // vector) — and the target's password must be untouched by the attempt.
   await step(page, p, 'client-password-reset-guard', async () => {
@@ -1255,6 +1320,56 @@ async function markRound(page, cross) {
     });
     if (r.list !== 403) throw new Error(`client reached the lease-events board (expected 403, got ${r.list})`);
     if (r.digest !== 403) throw new Error(`client reached the lease-events digest (expected 403, got ${r.digest})`);
+  });
+
+  // Property Pathway (Why-Buy acquisition underwriting) is a staff-only
+  // sourcing/underwriting engine — off-market intel, title analysis, deck
+  // generation. A client login must never reach the board or the latest-run
+  // shortcut (sealed by the server gateway allowlist, which omits
+  // /api/property-pathway).
+  await step(page, p, 'client-property-pathway-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { board: await g('/api/property-pathway'), latest: await g('/api/property-pathway/latest') };
+    });
+    if (r.board !== 403) throw new Error(`client reached the property-pathway board (expected 403, got ${r.board})`);
+    if (r.latest !== 403) throw new Error(`client reached the property-pathway latest run (expected 403, got ${r.latest})`);
+  });
+
+  // WIP Report is the firm's internal fee/work-in-progress pipeline — deal
+  // fees, agent splits, completion values, fee reconciliation. A client
+  // login must never reach the report, the per-agent summary, or the fee
+  // reconciliation (double-sealed: explicit isClientRequestUser 403 in the
+  // handler + the server gateway allowlist, which omits /api/wip).
+  await step(page, p, 'client-wip-report-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return {
+        wip: await g('/api/wip'),
+        summary: await g('/api/wip/agent-summary'),
+        recon: await g('/api/wip/fee-reconciliation'),
+      };
+    });
+    if (r.wip !== 403) throw new Error(`client reached the WIP report (expected 403, got ${r.wip})`);
+    if (r.summary !== 403) throw new Error(`client reached the WIP agent-summary (expected 403, got ${r.summary})`);
+    if (r.recon !== 403) throw new Error(`client reached WIP fee-reconciliation (expected 403, got ${r.recon})`);
+  });
+
+  // Document Studio (KYC / PLA / Why-Buy brief generation) is a staff
+  // advisory tool — a client login must never list the catalog nor run a
+  // brief (would expose BGP's internal document-generation pipeline). Sealed
+  // by the server gateway allowlist (document-briefs isn't client-allowed).
+  await step(page, p, 'client-document-briefs-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = (await fetch('/api/document-briefs', { headers: auth }).catch(() => ({ status: 0 }))).status;
+      const run = (await fetch('/api/document-briefs/kyc/run', { method: 'POST', headers: auth, body: JSON.stringify({ propertyId: '22222222-2222-2222-2222-222222222222' }) }).catch(() => ({ status: 0 }))).status;
+      return { list, run };
+    });
+    if (r.list !== 403) throw new Error(`client listed the document-briefs catalog (expected 403, got ${r.list})`);
+    if (r.run !== 403) throw new Error(`client ran a document brief (expected 403, got ${r.run})`);
   });
 
   // The Hunters boards are BGP's BD prospecting engine — the letting hunter

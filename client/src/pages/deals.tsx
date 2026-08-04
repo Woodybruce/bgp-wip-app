@@ -5020,6 +5020,21 @@ const NEGOTIATION_STATUS_CODES: DealStatusCode[] = ["NEG"];
 const COMPLETED_STATUS_CODES: DealStatusCode[] = ["EXC", "COM", "INV"];
 const INTERNAL_BGP_TEAMS = new Set<string>(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
 
+interface SavedDealListFilters {
+  search: string;
+  activeGroup: string;
+  columnFilters: Record<string, string[]>;
+}
+
+function loadSavedDealListFilters(key: string): SavedDealListFilters | null {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as SavedDealListFilters) : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "negotiations" } = {}) {
   const isCompsMode = mode === "comps";
   const isNegotiationsMode = mode === "negotiations";
@@ -5039,10 +5054,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const myName = (currentUserForViews?.name || "").trim().toLowerCase();
   const urlParams = new URLSearchParams(window.location.search);
   const urlTeamParam = urlParams.get("team");
-  const [search, setSearch] = useState("");
+  const listFiltersKey = `bgp-deals-list-filters:${mode}`;
+  const [savedListFilters] = useState(() => loadSavedDealListFilters(listFiltersKey));
+  const [search, setSearch] = useState(savedListFilters?.search || "");
   // Deep links from DealsSummary (the Deals twin of the tracker summary):
   // /deals/list?status=NEG&propertyId=… lands here pre-filtered.
-  const [activeGroup, setActiveGroup] = useState(() => legacyToCode(urlParams.get("status")) || "all");
+  const [activeGroup, setActiveGroup] = useState(() => legacyToCode(urlParams.get("status")) || savedListFilters?.activeGroup || "all");
   const [propertyIdFilter, setPropertyIdFilter] = useState<string | null>(urlParams.get("propertyId"));
   const [createOpen, setCreateOpen] = useState(false);
   const [aiMatchOpen, setAiMatchOpen] = useState(false);
@@ -5055,7 +5072,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const dealsSort = useTableSort(null, "asc");
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [hotsChecklistDeal, setHotsChecklistDeal] = useState<CrmDeal | null>(null);
-  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
+  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>(savedListFilters?.columnFilters || {});
   const [teamFilterInitialised, setTeamFilterInitialised] = useState(false);
   const isMobile = useIsMobile();
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
@@ -5071,13 +5088,15 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   useEffect(() => {
     if (!teamFilterInitialised) {
-      const teamToSet = isClientDeals ? null : (urlTeamParam || (activeTeam && activeTeam !== "all" ? activeTeam : null));
+      // Restored session filters already carry the user's team choice — only
+      // seed a default when there is no snapshot, but let ?team= always win.
+      const teamToSet = isClientDeals ? null : (urlTeamParam || (!savedListFilters && activeTeam && activeTeam !== "all" ? activeTeam : null));
       if (teamToSet) {
         setColumnFilters(prev => ({ ...prev, team: [teamToSet] }));
       }
       setTeamFilterInitialised(true);
     }
-  }, [activeTeam, teamFilterInitialised, urlTeamParam, isClientDeals]);
+  }, [activeTeam, teamFilterInitialised, urlTeamParam, isClientDeals, savedListFilters]);
 
   useEffect(() => {
     if (isClientDeals) return;
@@ -5089,6 +5108,16 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       }
     }
   }, [activeTeam, isClientDeals]);
+
+  useEffect(() => {
+    if (!teamFilterInitialised) return;
+    try {
+      const snapshot: SavedDealListFilters = { search, activeGroup, columnFilters };
+      sessionStorage.setItem(listFiltersKey, JSON.stringify(snapshot));
+    } catch {
+      // storage unavailable — filters just won't survive navigation
+    }
+  }, [search, activeGroup, columnFilters, teamFilterInitialised, listFiltersKey]);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
     unit: false,
     // 'landlord' (renders as 'Client') is folded into clientXero by default

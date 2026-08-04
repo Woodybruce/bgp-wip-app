@@ -2154,7 +2154,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   )}
                   {requirements.filter(r => r.status === "Active").length > 0 && (
                     <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px]">
-                      {requirements.filter(r => r.status === "Active").length} active req
+                      {requirements.filter(r => r.status === "Active").length} active requirement{requirements.filter(r => r.status === "Active").length !== 1 ? "s" : ""}
                     </Badge>
                   )}
                 </div>
@@ -2406,17 +2406,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     )}
                   </div>
                 )}
-            {/* Expansion flags */}
-            {hunter && hunter.expansionFlags && hunter.expansionFlags.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {hunter.expansionFlags.map((flag) => (
-                  <Badge key={flag} variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
-                    {flag}
-                  </Badge>
-                ))}
-              </div>
-            )}
-
             {/* Active internal requirements — what this brand has on our books */}
             {requirements.filter(r => r.status === "Active").length > 0 && (
               <div>
@@ -4287,6 +4276,28 @@ function CompanyMiniChat({ companyId, companyName, fill }: { companyId: string; 
 
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [showEmoji, setShowEmoji] = useState(false);
+
+  const deleteMsg = async (messageId: string) => {
+    if (!threadId) return;
+    try {
+      await apiRequest("DELETE", `/api/chat/threads/${threadId}/messages/${messageId}`);
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
+    } catch (e: any) {
+      mcToast({ title: "Couldn't delete message", description: e?.message, variant: "destructive" });
+    } finally {
+      setConfirmDeleteId(null);
+    }
+  };
+
+  const insertEmoji = (emoji: string) => {
+    const el = inputRef.current;
+    const pos = el?.selectionStart ?? draft.length;
+    setDraft(draft.slice(0, pos) + emoji + draft.slice(pos));
+    setShowEmoji(false);
+    setTimeout(() => { el?.focus(); el?.setSelectionRange(pos + emoji.length, pos + emoji.length); }, 0);
+  };
   const saveEdit = async (messageId: string) => {
     const body = editDraft.trim();
     if (!body || !threadId) { setEditingMsgId(null); return; }
@@ -4477,6 +4488,17 @@ function CompanyMiniChat({ companyId, companyName, fill }: { companyId: string; 
                     useless if you can't tell who said what (Woody, 2026-08-04). */}
                 <span className="font-semibold text-[10px] block text-muted-foreground">
                   {m.role === "assistant" ? "ChatBGP" : (isOwn ? "You" : (m.userName || "Team"))}
+                  {(() => {
+                    const ts = m.createdAt || m.created_at;
+                    if (!ts) return null;
+                    const d = new Date(ts);
+                    if (isNaN(d.getTime())) return null;
+                    const today = new Date().toDateString() === d.toDateString();
+                    const label = today
+                      ? d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+                      : `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+                    return <span className="font-normal opacity-60"> · {label}</span>;
+                  })()}
                   {m.editedAt || m.edited_at ? <span className="font-normal opacity-60"> · edited</span> : null}
                 </span>
                 {editingMsgId === m.id ? (
@@ -4499,14 +4521,35 @@ function CompanyMiniChat({ companyId, companyName, fill }: { companyId: string; 
                   renderContent(m.content)
                 )}
                 {isOwn && editingMsgId !== m.id && (
-                  <button
-                    className="absolute top-1 right-1 opacity-0 group-hover/msg:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
-                    title="Edit message"
-                    onClick={() => { setEditingMsgId(m.id); setEditDraft(m.content); }}
-                    data-testid={`button-minichat-edit-${m.id}`}
-                  >
-                    <Pencil className="w-3 h-3" />
-                  </button>
+                  <span className="absolute top-1 right-1 flex items-center gap-1.5 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                    <button
+                      className="text-muted-foreground hover:text-foreground"
+                      title="Edit message"
+                      onClick={() => { setEditingMsgId(m.id); setEditDraft(m.content); }}
+                      data-testid={`button-minichat-edit-${m.id}`}
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                    {confirmDeleteId === m.id ? (
+                      <button
+                        className="text-[9px] font-semibold text-red-600 hover:text-red-700"
+                        onClick={() => deleteMsg(m.id)}
+                        onMouseLeave={() => setConfirmDeleteId(null)}
+                        data-testid={`button-minichat-delete-confirm-${m.id}`}
+                      >
+                        Delete?
+                      </button>
+                    ) : (
+                      <button
+                        className="text-muted-foreground hover:text-red-600"
+                        title="Delete message"
+                        onClick={() => setConfirmDeleteId(m.id)}
+                        data-testid={`button-minichat-delete-${m.id}`}
+                      >
+                        <XIcon className="w-3 h-3" />
+                      </button>
+                    )}
+                  </span>
                 )}
               </div>
             );
@@ -4532,6 +4575,21 @@ function CompanyMiniChat({ companyId, companyName, fill }: { companyId: string; 
               ))}
             </div>
           )}
+          {showEmoji && (
+            <div className="absolute bottom-full right-10 mb-1 rounded-md border bg-popover shadow-md z-20 p-1.5 grid grid-cols-8 gap-0.5 w-[232px]">
+              {["👍","✅","🙌","🎉","🔥","💪","😀","😂","😅","🤝","👏","🙏","❤️","⭐","⚡","💡","📌","📍","🏢","🏪","🍽️","☕","💷","📈"].map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  className="w-6 h-6 text-base leading-none rounded hover:bg-muted"
+                  onMouseDown={(ev) => { ev.preventDefault(); insertEmoji(e); }}
+                  data-testid={`minichat-emoji-${e}`}
+                >
+                  {e}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="flex items-center gap-1.5">
             <input
               ref={inputRef}
@@ -4546,6 +4604,15 @@ function CompanyMiniChat({ companyId, companyName, fill }: { companyId: string; 
               }}
               data-testid="input-minichat"
             />
+            <button
+              type="button"
+              className={`h-8 w-8 shrink-0 rounded-md border bg-background text-base leading-none hover:bg-muted ${showEmoji ? "ring-1 ring-ring" : ""}`}
+              onClick={() => setShowEmoji((v) => !v)}
+              title="Insert emoji"
+              data-testid="button-minichat-emoji"
+            >
+              😊
+            </button>
             <Button size="sm" className="h-8 px-3 text-xs" onClick={sendWithTags} disabled={sending || !draft.trim()} data-testid="button-minichat-send">
               {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Send"}
             </Button>
@@ -5342,6 +5409,45 @@ function BrandInstagramCard({ companyId }: { companyId: string }) {
   if (!profile || profile.status) {
     const status: string | undefined = profile?.status;
     const handle: string | null = profile?.handle ?? null;
+    // While Meta's "Instagram Public Content Access" approval is pending,
+    // lookups fail by design. Show the populated layout with clearly
+    // labelled sample numbers instead of a bare error — users (and Meta's
+    // reviewers, via the App Review screencast) see exactly where the live
+    // data will appear (Woody, 2026-08-04).
+    if (status === "lookup_failed" || (status && status !== "not_configured" && status !== "no_handle")) {
+      return (
+        <Card>
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+              <Instagram className="w-3.5 h-3.5" /> Instagram
+              <Badge variant="outline" className="text-[9px] text-violet-700 border-violet-200 normal-case tracking-normal">sample preview</Badge>
+              {handle && (
+                <a href={`https://instagram.com/${handle}`} target="_blank" rel="noreferrer" className="ml-auto text-[10px] text-muted-foreground hover:text-foreground normal-case font-normal">
+                  @{handle}
+                </a>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0 space-y-2">
+            <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+              <span><strong className="text-foreground">128.4k</strong> followers</span>
+              <span><strong className="text-foreground">1.2k</strong> posts</span>
+              <span><strong className="text-foreground">312</strong> following</span>
+            </div>
+            <div className="grid grid-cols-3 gap-1">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="aspect-square rounded border border-border/60 bg-muted/60 flex items-center justify-center text-[10px] text-muted-foreground">
+                  post
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground italic">
+              Sample layout — live follower counts and recent posts appear here automatically once Meta approves the app's Instagram Public Content Access.
+            </p>
+          </CardContent>
+        </Card>
+      );
+    }
     const message =
       status === "not_configured" ? "Meta Graph API credentials not set on server."
       : status === "no_handle" ? "No Instagram handle on this brand. Add via Edit, or run the homepage backfill."
