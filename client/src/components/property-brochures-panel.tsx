@@ -234,7 +234,10 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
             Drag a PDF here or click <span className="font-medium text-foreground">Add</span> above.
           </div>
         ) : isHero ? (
-          <div className="flex-1 min-h-0">
+          // Full-width row placement: give the hero preview real depth so
+          // the brochure is actually readable on the property page
+          // (Woody, 2026-08-04: "make the brochure depth larger").
+          <div className="flex-1 min-h-[460px]">
             <BrochureTile
               brochure={active[0]}
               hero
@@ -246,7 +249,7 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
             />
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
             {active.map(b => (
               <BrochureTile
                 key={b.id}

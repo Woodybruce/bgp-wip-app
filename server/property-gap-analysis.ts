@@ -41,7 +41,9 @@ const FNB_SECTORS: Array<{ key: string; label: string; rx: RegExp }> = [
   { key: "competitive_social", label: "Competitive socialising", rx: /golf|darts|bowling|escape room|karaoke|boom battle|puttshack|flight club|arcade|gravity|trampoline|climb|activity centre|social gaming/i },
   { key: "gyms_fitness", label: "Gyms & fitness", rx: /\bgym\b|fitness|pilates|yoga|cycle\b|barry'?s|f45|1rebel|puregym|nuffield/i },
   { key: "wellness_beauty", label: "Wellness & beauty", rx: /\bspa\b|wellness|beauty|nail|barber|hair salon|salon\b|massage|therapy/i },
-  { key: "leisure_entertainment", label: "Leisure & entertainment", rx: /cinema|entertainment|bingo|casino|soft play|leisure/i },
+  // NB: no bare "leisure" — every hospitality brand's industry string says
+  // "Leisure & Hospitality", which mis-bucketed restaurants here.
+  { key: "leisure_entertainment", label: "Leisure & entertainment", rx: /cinema|entertainment|bingo|casino|soft play/i },
   { key: "casual_dining", label: "Casual dining", rx: /restaurant|dining|kitchen\b|eatery|bistro|brasserie|food hall/i },
 ];
 const SECTOR_LABELS: Record<string, string> = Object.fromEntries(FNB_SECTORS.map(s => [s.key, s.label]));
@@ -340,6 +342,27 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     // background" (Woody, 2026-08-04). Retail stays in brand_stores for
     // other consumers; it just never renders here.
     const hospitality = allBrands.filter(b => isClientCrmCategory(b.company_type));
+
+    // The tenancy schedule is the on-scheme truth — store geocodes cluster
+    // outside the 500m centroid ring on big out-of-town schemes, which had
+    // "Chicken — missing" showing on a centre with Nando's in occupation.
+    // A tenancy FK or tenant-name prefix match beats the geocode.
+    const occ = await pool.query(
+      `SELECT DISTINCT tenant_company_id::text AS id,
+              lower(replace(coalesce(tenant_name, ''), '''', '')) AS name
+         FROM leasing_schedule_units
+        WHERE property_id = $1 AND (tenant_company_id IS NOT NULL OR tenant_name IS NOT NULL)`,
+      [propertyId]
+    ).then(r => r.rows).catch(() => [] as any[]);
+    const occIds = new Set(occ.map((r: any) => r.id).filter(Boolean));
+    const occNames = occ.map((r: any) => r.name).filter(Boolean);
+    for (const b of hospitality) {
+      if (b.nearest_distance_km <= onSchemeRadiusKm) continue;
+      const bn = b.brand_name.toLowerCase().replace(/'/g, "");
+      const inOccupation = occIds.has(String(b.brand_company_id))
+        || occNames.some((n: string) => n === bn || n.startsWith(bn + " "));
+      if (inOccupation) b.nearest_distance_km = 0.01;
+    }
 
     const onScheme = hospitality
       .filter(b => b.nearest_distance_km <= onSchemeRadiusKm)
