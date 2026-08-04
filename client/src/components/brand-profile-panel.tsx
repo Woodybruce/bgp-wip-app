@@ -2406,17 +2406,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     )}
                   </div>
                 )}
-            {/* Expansion flags */}
-            {hunter && hunter.expansionFlags && hunter.expansionFlags.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {hunter.expansionFlags.map((flag) => (
-                  <Badge key={flag} variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
-                    {flag}
-                  </Badge>
-                ))}
-              </div>
-            )}
-
             {/* Active internal requirements — what this brand has on our books */}
             {requirements.filter(r => r.status === "Active").length > 0 && (
               <div>
