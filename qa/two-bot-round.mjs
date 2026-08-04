@@ -47,7 +47,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -569,6 +569,22 @@ async function victoriaRound(page, cross) {
     });
     if (!r.ok) throw new Error(`staff document-briefs catalog unhealthy (${r.status})`);
     if (!r.count) throw new Error('staff document-briefs catalog is empty (feature dead?)');
+  });
+
+  // WIP Report is BGP's internal work-in-progress fee pipeline (every deal's
+  // fee, agent split, completion value across the whole firm). It must be a
+  // live staff surface — a 200 with an entries array — so the client guard
+  // below is sealing real fee intel, not a dead route.
+  await step(page, p, 'staff-wip-report-render', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/wip', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = await res.json().catch(() => null);
+      return { ok: true, hasEntries: Array.isArray(body?.entries) };
+    });
+    if (!r.ok) throw new Error(`staff WIP report unhealthy (${r.status})`);
+    if (!r.hasEntries) throw new Error('staff WIP report returned no entries array (shape broken)');
   });
 
   // 4k. Agent logs a viewing on a Landsec unit — the client round then checks
@@ -1271,6 +1287,26 @@ async function markRound(page, cross) {
     });
     if (r.list !== 403) throw new Error(`client reached the lease-events board (expected 403, got ${r.list})`);
     if (r.digest !== 403) throw new Error(`client reached the lease-events digest (expected 403, got ${r.digest})`);
+  });
+
+  // WIP Report is the firm's internal fee/work-in-progress pipeline — deal
+  // fees, agent splits, completion values, fee reconciliation. A client
+  // login must never reach the report, the per-agent summary, or the fee
+  // reconciliation (double-sealed: explicit isClientRequestUser 403 in the
+  // handler + the server gateway allowlist, which omits /api/wip).
+  await step(page, p, 'client-wip-report-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return {
+        wip: await g('/api/wip'),
+        summary: await g('/api/wip/agent-summary'),
+        recon: await g('/api/wip/fee-reconciliation'),
+      };
+    });
+    if (r.wip !== 403) throw new Error(`client reached the WIP report (expected 403, got ${r.wip})`);
+    if (r.summary !== 403) throw new Error(`client reached the WIP agent-summary (expected 403, got ${r.summary})`);
+    if (r.recon !== 403) throw new Error(`client reached WIP fee-reconciliation (expected 403, got ${r.recon})`);
   });
 
   // Document Studio (KYC / PLA / Why-Buy brief generation) is a staff
