@@ -221,7 +221,10 @@ export function registerActivityRoutes(app: Express) {
         if (subject) {
           const job = (async () => {
             try {
-              const curated = await curateActivity(subject, req);
+              // 12-min budget: the mailbox+calendar sweep across every BGP inbox
+              // routinely outruns the 5-min default and the whole result was
+              // thrown away (Landsec read stuck on stale error text, 2026-08-04).
+              const curated = await curateActivity(subject, req, { timeoutMs: 12 * 60 * 1000 });
               if (curated) {
                 await writeCache(subjectType, subjectId, curated);
                 await writeLastInteraction(subjectType, subjectId, curated.latestActivityDate);
@@ -315,7 +318,10 @@ export function registerActivityRoutes(app: Express) {
 
     const job = (async () => {
       try {
-        const curated = await curateActivity(subject, req);
+        // 12-min budget: the mailbox+calendar sweep across every BGP inbox
+              // routinely outruns the 5-min default and the whole result was
+              // thrown away (Landsec read stuck on stale error text, 2026-08-04).
+              const curated = await curateActivity(subject, req, { timeoutMs: 12 * 60 * 1000 });
         if (!curated) {
           console.warn(`[activity curate ${subjectType}/${subjectId}] ChatBGP returned nothing`);
           return;
