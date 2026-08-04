@@ -153,7 +153,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     //     2026-08-03). Surface every unit not yet completed/invoiced.
     const lettingsQ = await pool.query<any>(
       `SELECT au.id, au.unit_name, au.marketing_status, au.sqft, au.asking_rent,
-              au.viewings_count, au.last_viewing_date, tc.name AS operator_name
+              au.deal_id, au.viewings_count, au.last_viewing_date, tc.name AS operator_name
          FROM available_units au
          LEFT JOIN crm_companies tc ON tc.id = au.tenant_company_id
         WHERE au.property_id = $1
@@ -187,6 +187,17 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     for (const d of activeDeals) {
       const bucket = d.stage_bucket;
       if (pipeline[bucket] !== undefined) pipeline[bucket]++;
+    }
+    // Letting Tracker units progressing WITHOUT a crm_deals row were
+    // invisible here — the funnel said "0 in legals" while seven units sat
+    // with solicitors (Woody, 2026-08-04: "are these pipeline lozenges
+    // working?"). Fold un-dealed units in by marketing status; units with
+    // a linked deal are already counted above.
+    for (const u of lettingsQ.rows as any[]) {
+      if (u.deal_id) continue;
+      const s = (u.marketing_status || "").toLowerCase();
+      if (s === "neg" || s === "negotiating" || s === "under_offer" || s === "und") pipeline.hots++;
+      else if (s === "sol" || s === "solicitors" || s === "exc" || s === "exchanged") pipeline.legals++;
     }
 
     // 4. Activity feed — interactions on deals scoped to this property.
