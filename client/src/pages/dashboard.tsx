@@ -463,7 +463,10 @@ function ClientTeamWeekCalendar({ events }: { events: any[] }) {
   const days: Date[] = Array.from({ length: 5 }, (_, i) => {
     const d = new Date(monday); d.setDate(monday.getDate() + i); return d;
   });
-  const HOUR_START = 7, HOUR_END = 19, ROW_H = 30;
+  // 6–22 to match the staff diary grid — 19:00 cap hid evening events
+  // (Woody, 2026-08-04: "calendar scroll stops at 6pm").
+  const HOUR_START = 6, HOUR_END = 22, ROW_H = 30;
+  const [selectedEvent, setSelectedEvent] = useState<any | null>(null);
   const hours = Array.from({ length: HOUR_END - HOUR_START }, (_, i) => i + HOUR_START);
   const wkLabel = `${days[0].getDate()} – ${days[4].getDate()} ${days[4].toLocaleDateString("en-GB", { month: "long", year: "numeric" })}`;
 
@@ -644,15 +647,18 @@ function ClientTeamWeekCalendar({ events }: { events: any[] }) {
                       if (startH >= HOUR_END) return null;
                       const type = ev._type;
                       return (
-                        <div
+                        <button
+                          type="button"
                           key={ev.id}
-                          className={`absolute left-0.5 right-0.5 rounded border px-1 py-0.5 text-[9px] leading-tight overflow-hidden ${chipColor[type] || chipColor.meeting}`}
+                          onClick={() => setSelectedEvent(ev)}
+                          className={`absolute left-0.5 right-0.5 rounded border px-1 py-0.5 text-[9px] leading-tight overflow-hidden text-left cursor-pointer hover:ring-1 hover:ring-primary/50 ${chipColor[type] || chipColor.meeting}`}
                           style={{ top: (startH - HOUR_START) * ROW_H, height: Math.max((endH - startH) * ROW_H - 2, 16) }}
                           title={`${ev.title}${ev.location ? ` · ${ev.location}` : ""}`}
+                          data-testid={`cal-event-${ev.id}`}
                         >
                           <span className="font-medium block truncate">{ev.title}</span>
                           {(ev.property_name || ev.location) && <span className="truncate block opacity-80">{ev.property_name || ev.location}</span>}
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -661,6 +667,38 @@ function ClientTeamWeekCalendar({ events }: { events: any[] }) {
             </div>
           </div>
         </div>
+        {/* Event details — chips were inert divs; clicking anywhere on the
+            calendar did nothing (Woody, 2026-08-04). */}
+        {selectedEvent && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={() => setSelectedEvent(null)}>
+            <div className="bg-card border rounded-xl shadow-lg w-[340px] max-w-[90vw] p-4 space-y-2" onClick={e => e.stopPropagation()} data-testid="cal-event-detail">
+              <div className="flex items-start justify-between gap-2">
+                <h4 className="text-sm font-semibold leading-snug">{selectedEvent.title}</h4>
+                <Badge variant="outline" className="text-[10px] capitalize shrink-0">{selectedEvent._type}</Badge>
+              </div>
+              <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+                <Clock className="w-3 h-3" />
+                {new Date(selectedEvent.start_time).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                {selectedEvent.end_time && <> – {new Date(selectedEvent.end_time).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</>}
+              </div>
+              {(selectedEvent.location || selectedEvent.property_name) && (
+                <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <MapPin className="w-3 h-3" />
+                  {selectedEvent.property_name || selectedEvent.location}
+                </div>
+              )}
+              {selectedEvent.property_id && (
+                <Link href={`/properties/${selectedEvent.property_id}`} className="text-xs text-primary hover:underline inline-block">
+                  Open property →
+                </Link>
+              )}
+              {selectedEvent.description && <p className="text-xs leading-relaxed max-h-[140px] overflow-y-auto whitespace-pre-wrap">{selectedEvent.description}</p>}
+              <div className="pt-1 text-right">
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setSelectedEvent(null)}>Close</Button>
+              </div>
+            </div>
+          </div>
+        )}
         {/* Intelligence strip — the shared footer board, living INSIDE the
             calendar board rather than orphaned at the page bottom
             (Woody, 2026-08-04). Local calendar reads lead; the CRM/diary
