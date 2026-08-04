@@ -2041,6 +2041,9 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     try {
       const parsed = insertCrmContactSchema.parse(req.body);
       const scopeCompanyId = await resolveCompanyScope(req);
+      // A scoped client adding a contact with no company gets their own
+      // company by default rather than a 403 — the person is theirs.
+      if (scopeCompanyId && !(parsed as any).companyId) (parsed as any).companyId = scopeCompanyId;
       if (scopeCompanyId && !(await clientCanTouchCompany(scopeCompanyId, (parsed as any).companyId))) {
         return res.status(403).json({ error: "Contacts can only be added to your company or to brands in your directory" });
       }

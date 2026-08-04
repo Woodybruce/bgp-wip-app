@@ -1176,7 +1176,10 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
   const { data: tasksRes } = useQuery<{ tasks: PropertyTask[] }>({
     queryKey: ["/api/properties", propertyId, "tasks"],
     queryFn: async () => {
-      const res = await fetch(`/api/properties/${propertyId}/tasks?status=active`, { credentials: "include" });
+      // Bearer header too, not just cookies — token-auth contexts (the
+      // mobile app) got a 401 here and the focus list rendered empty even
+      // though task creation worked.
+      const res = await fetch(`/api/properties/${propertyId}/tasks?status=active`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
