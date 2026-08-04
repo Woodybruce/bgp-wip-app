@@ -208,9 +208,15 @@ export function registerActivityRoutes(app: Express) {
       // client viewers can't POST /curate themselves, but they shouldn't be
       // stuck with a months-old relationship read either. The pending-job
       // map dedupes concurrent kicks; failures keep the old cache.
+      //
+      // A MISSING cache kicks too (Woody, 2026-08-04 — the Bills panel sat
+      // on "analysis taking longer than expected" forever): a never-analysed
+      // subject opened by a client-scoped viewer had no path to a first
+      // read, since only staff can POST /curate.
       const STALE_MS = 7 * 24 * 60 * 60 * 1000;
       const cacheAge = cache?.generatedAt ? Date.now() - new Date(cache.generatedAt).getTime() : null;
-      if (cache && cacheAge !== null && cacheAge > STALE_MS && !inFlight) {
+      const needsCuration = !cache || (cacheAge !== null && cacheAge > STALE_MS);
+      if (needsCuration && !inFlight) {
         const subject = await buildSubject(subjectType, subjectId);
         if (subject) {
           const job = (async () => {
