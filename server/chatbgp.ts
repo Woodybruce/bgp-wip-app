@@ -1879,7 +1879,7 @@ export const CLIENT_SYSTEM_PROMPT = `You are ChatBGP, the AI assistant of Bruce 
 
 Strict rules:
 - You may only discuss this client's own properties, units, deals and the tenants on them. You have NO access to other clients' data, BGP's wider pipeline, BGP fees, or internal firm information — never speculate about or acknowledge details of any other client or BGP internal matters.
-- Use search_crm to look up the client's properties, available units, deals and tenants. Results are already filtered to their portfolio.
+- Use search_crm to look up the client's properties, available units, deals, tenants and comp evidence on their schemes. Results are already filtered to their portfolio — the same slice their Comps board shows.
 - You can create operator targeting briefs for the client's units with create_targeting_brief. Gather the objective, target operator criteria, priority categories, named target operators, deliverable deadlines and success measures conversationally first, then call the tool once. The branded brief document is saved to the unit's Letting Tracker files and filed to SharePoint automatically — include the download link the tool returns.
 - **You can drive the app on their behalf, not just answer questions.** You have the same app tooling an agent has for their portfolio: update properties and units, maintain the tenancy/leasing schedule, log viewings and offers, create and update deals, requirements, comps, companies and contacts, run the Property Pathway, generate documents/decks/PDFs/Word/Excel, create and edit images and file them to a building, manage tasks and diary entries, run KYC/covenant checks and look up market data. If a request maps to a tool, DO IT rather than telling them to ask their BGP team.
 - Two things you genuinely cannot do: (a) anything in BGP's own systems — SharePoint/OneDrive filing, BGP mailboxes, BGP diaries; and (b) raw database, bulk/merge/delete or app-administration operations. For those, say plainly that it's a BGP-team action and offer to do the in-app equivalent (e.g. attach the document to the property/unit record instead of a SharePoint folder).
@@ -1955,8 +1955,9 @@ export async function getClientCrmContext(scopeCompanyId: string): Promise<strin
 
 // Scoped replacement for search_crm when the requester is a client login.
 // Searches ONLY the client's own properties, units on them, deals on them,
-// and the tenant companies on those deals. No contacts, no fees, no
-// investment pipeline, no comps, no requirements.
+// the tenant companies on those deals, and comp evidence on their schemes
+// (same scope as the client Comps page). No contacts, no fees, no
+// investment pipeline, no requirements.
 export async function clientScopedCrmSearch(scopeCompanyId: string, rawQuery: string): Promise<any> {
   const q = `%${rawQuery.trim()}%`;
   const words = rawQuery.trim().split(/\s+/).filter(w => w.length >= 2).map(w => `%${w}%`);
@@ -2008,6 +2009,34 @@ export async function clientScopedCrmSearch(scopeCompanyId: string, rawQuery: st
     [scopeCompanyId, ...patterns]
   ).catch(() => ({ rows: [] }));
   results.companies = tenants.rows;
+
+  // Comp evidence on the client's own schemes — same scope the Comps page
+  // applies for client viewers (crm.ts GET /api/crm/comps): linked to a
+  // portfolio property, landlord = the client, or (legacy free-text comps)
+  // the scheme name appears in the comp's name/address. The chat used to
+  // skip comps entirely, so it claimed "no comps" while the Comps board
+  // showed dozens (Woody, 2026-08-04).
+  const comps = await pool.query(
+    `SELECT c.id, c.name, c.tenant, c.landlord, c.deal_type AS "dealType",
+            c.headline_rent AS "headlineRent", c.completion_date AS "completionDate",
+            p.name AS "propertyName"
+     FROM crm_comps c LEFT JOIN crm_properties p ON p.id = c.property_id
+     WHERE (
+        c.property_id IN (${scopedPropsSql})
+        OR c.landlord_company_id = $1
+        OR EXISTS (
+          SELECT 1 FROM crm_properties sp
+          WHERE (sp.landlord_id = $1 OR sp.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
+            AND length(split_part(sp.name, ',', 1)) >= 5
+            AND (c.name || ' ' || COALESCE(c.address::text, '')) ILIKE '%' || split_part(sp.name, ',', 1) || '%'
+        )
+     )
+       AND (${like("c.name", 2)} OR ${like("c.tenant", 2 + patterns.length)} OR ${like("c.landlord", 2 + 2 * patterns.length)})
+     ORDER BY c.completion_date DESC NULLS LAST
+     LIMIT 25`,
+    [scopeCompanyId, ...patterns, ...patterns, ...patterns]
+  ).catch(() => ({ rows: [] }));
+  results.comps = comps.rows;
 
   const totalFound = Object.values(results).reduce((sum: number, arr: any) => sum + (arr?.length || 0), 0);
   return { success: true, query: rawQuery, totalFound, results, note: "Results are limited to your own portfolio." };
