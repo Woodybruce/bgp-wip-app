@@ -656,6 +656,7 @@ thead th.sticky {
 .scheme-claude .bg-blue-50 { background-color: hsl(30 25% 96%) !important; }
 .scheme-claude .border-blue-200 { border-color: hsl(30 20% 84%) !important; }
 .scheme-claude .text-sky-600, .scheme-claude .text-sky-500 { color: hsl(25 35% 48%) !important; }
+.scheme-claude .text-sky-700 { color: hsl(28 30% 40%) !important; }
 .scheme-claude .bg-sky-100, .scheme-claude .bg-sky-50 { background-color: hsl(30 25% 94%) !important; }
 .scheme-claude .bg-sky-600 { background-color: hsl(25 45% 42%) !important; }
 

@@ -5,7 +5,7 @@ import { mobileOverlayItems } from "@/components/app-sidebar";
 import {
   Sparkles, BarChart3, FileText, Handshake, Calendar as CalendarIcon,
   AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun, Wallet, RefreshCw,
-  Receipt, Image as ImageIcon, Building2, Store, ClipboardList,
+  Receipt, Image as ImageIcon, Building2, Store, ClipboardList, Newspaper,
 } from "lucide-react";
 import { legacyToCode } from "@shared/deal-status";
 import { useTeam } from "@/lib/team-context";
@@ -114,8 +114,22 @@ function fmtMoney(pence: number | undefined | null): string {
 const QUICK_LINKS = [
   { label: "Deals", icon: BarChart3, to: "/deals", tint: "bg-purple-100 text-purple-700" },
   { label: "Expenses", icon: Receipt, to: "/m/expenses", tint: "bg-rose-100 text-rose-700" },
-  { label: "Images", icon: ImageIcon, to: "/m/images", tint: "bg-sky-100 text-sky-700" },
+  { label: "Images", icon: ImageIcon, to: "/m/images", tint: "bg-blue-100 text-blue-700" },
   { label: "CRM", icon: Handshake, to: "/contacts", tint: "bg-emerald-100 text-emerald-700" },
+];
+
+// Portfolio (client) homes: one uniform 4×2 grid instead of a 3-wide row
+// stacked on a 4-wide row — same tile size, same chip treatment, and only
+// tint classes every colour scheme remaps (no stray blue Images icon).
+const PORTFOLIO_LINKS = [
+  { label: "Tracker", icon: ClipboardList, to: "/available", tint: "bg-emerald-100 text-emerald-700" },
+  { label: "Requirements", icon: FileText, to: "/requirements", tint: "bg-violet-100 text-violet-700" },
+  { label: "Brands", icon: Store, to: "/brands", tint: "bg-amber-100 text-amber-700" },
+  { label: "Deals", icon: BarChart3, to: "/deals", tint: "bg-purple-100 text-purple-700" },
+  { label: "Images", icon: ImageIcon, to: "/m/images", tint: "bg-blue-100 text-blue-700" },
+  { label: "CRM", icon: Handshake, to: "/contacts", tint: "bg-emerald-100 text-emerald-700" },
+  { label: "Calendar", icon: CalendarIcon, to: "/calendar", tint: "bg-amber-100 text-amber-700" },
+  { label: "News", icon: Newspaper, to: "/news", tint: "bg-orange-100 text-orange-700" },
 ];
 
 const SEV: Record<string, { cls: string; icon: any }> = {
@@ -253,18 +267,6 @@ export default function MobileHome() {
             </div>
           </Link>
 
-          <div className="grid grid-cols-3 gap-2">
-            {[
-              { label: "Tracker", icon: ClipboardList, to: "/available", tint: "bg-emerald-100 text-emerald-700" },
-              { label: "Requirements", icon: FileText, to: "/requirements", tint: "bg-violet-100 text-violet-700" },
-              { label: "Brands", icon: Store, to: "/brands", tint: "bg-amber-100 text-amber-700" },
-            ].map(q => (
-              <Link key={q.to} href={q.to} className="flex flex-col items-center gap-1.5 py-3 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] active:bg-gray-50" data-testid={`mobile-home-portfolio-${q.label.toLowerCase()}`}>
-                <span className={`w-9 h-9 rounded-full flex items-center justify-center ${q.tint}`}><q.icon className="w-4 h-4" /></span>
-                <span className="text-[11px] font-medium">{q.label}</span>
-              </Link>
-            ))}
-          </div>
         </>
       )}
 
@@ -371,10 +373,7 @@ export default function MobileHome() {
           swap the staff-only Expenses tile for the team calendar, which the
           Calendar page already pins to the client's own team. */}
       <div className="grid grid-cols-4 gap-2">
-        {(isClientHome
-          ? [...QUICK_LINKS.filter(q => q.label !== "Expenses"), { label: "Calendar", icon: CalendarIcon, to: "/calendar", tint: "bg-amber-100 text-amber-700" }]
-          : QUICK_LINKS
-        ).map(q => (
+        {(showPortfolioHome ? PORTFOLIO_LINKS : QUICK_LINKS).map(q => (
           <Link key={q.to} href={q.to} className="flex flex-col items-center gap-1.5 py-3 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] active:bg-gray-50" data-testid={`mobile-home-link-${q.label.toLowerCase()}`}>
             <span className={`w-9 h-9 rounded-full flex items-center justify-center ${q.tint}`}><q.icon className="w-4 h-4" /></span>
             <span className="text-[11px] font-medium">{q.label}</span>
@@ -388,7 +387,7 @@ export default function MobileHome() {
         <div className="grid grid-cols-4 gap-2">
           {boards.map((b: any) => (
             <Link key={b.url} href={b.url} className="relative flex flex-col items-center gap-1.5 py-3 px-1 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] active:bg-gray-50" data-testid={`mobile-home-board-${b.title.toLowerCase().replace(/\s+/g, "-")}`}>
-              <span className="w-9 h-9 rounded-full flex items-center justify-center bg-gray-100 text-gray-700 dark:bg-muted"><b.icon className="w-4 h-4" /></span>
+              <span className="w-9 h-9 rounded-full flex items-center justify-center bg-muted text-foreground/70"><b.icon className="w-4 h-4" /></span>
               <span className="text-[10px] font-medium text-center leading-tight">{b.title}</span>
               {b.badge && <span className="absolute top-1 right-1 text-[9px] px-1 py-0.5 rounded-full bg-primary/10 text-primary font-semibold">{b.badge}</span>}
             </Link>
