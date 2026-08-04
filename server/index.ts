@@ -3663,6 +3663,24 @@ app.use("/api/branding/assets", express.static(
       const allowed = CLIENT_ALLOWED_API.some(pre =>
         pre.endsWith("/") ? p.startsWith(pre) : (p === pre || p.startsWith(pre + "/") || p.startsWith(pre + "?"))
       );
+      // Covenant badge + commentary reads for clients (Woody, 2026-08-04:
+      // "open up covenant for Mark") — the per-company report only, and only
+      // for the client's own company or a brand in their visible slice.
+      // Watchlist, alerts, watch writes and runs stay staff-only (they don't
+      // match these shapes and fall through to the default block).
+      const covCrm = req.method === "GET" ? p.match(/^\/api\/covenant\/by-crm\/([^/]+)$/) : null;
+      const covNum = req.method === "GET" ? p.match(/^\/api\/covenant\/((?=[A-Za-z0-9]*\d)[A-Za-z0-9]{6,10})$/) : null;
+      if (covCrm || covNum) {
+        const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+        const covScope = await resolveCompanyScope(req);
+        if (covCrm && (covCrm[1] === covScope || (await isClientVisibleBrand(covCrm[1], covScope)))) return next();
+        if (covNum && covScope) {
+          const hit = await pool.query(`SELECT id FROM crm_companies WHERE companies_house_number = $1 LIMIT 1`, [covNum[1]]);
+          const covCid = hit.rows[0]?.id;
+          if (covCid && (covCid === covScope || (await isClientVisibleBrand(covCid, covScope)))) return next();
+        }
+        return res.status(403).json({ error: "Not available for client accounts" });
+      }
       // Full Brand Intelligence reads (profile, hunter-score, competitors,
       // suggested-units, ai-take, pack…) for the client's own company or any
       // brand in the hospitality slice; everything else stays blocked.

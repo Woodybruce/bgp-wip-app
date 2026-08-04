@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { ChevronRight, Cloud, Download, Folder, File as FileIcon, Home } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronRight, Cloud, Download, Folder, File as FileIcon, Home } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 
 interface SpItem {
@@ -30,6 +30,17 @@ function formatSize(bytes: number | null): string {
 export function ClientSharePointBrowser() {
   // Breadcrumb trail from the root; the last entry is the open folder.
   const [trail, setTrail] = useState<Array<{ id: string; name: string }>>([]);
+  // Column sorting — A–Z, largest, most recent. Folders always group first.
+  const [sortKey, setSortKey] = useState<"name" | "size" | "modified">("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const toggleSort = (k: "name" | "size" | "modified") => {
+    if (sortKey === k) setSortDir(d => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(k); setSortDir(k === "name" ? "asc" : "desc"); }
+  };
+  const SortIcon = ({ col }: { col: "name" | "size" | "modified" }) =>
+    sortKey !== col
+      ? <ArrowUpDown className="w-3 h-3 opacity-40" />
+      : sortDir === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />;
 
   const { data: root, isLoading: rootLoading, error: rootError } = useQuery<{ id: string; name: string }>({
     queryKey: ["/api/client/sharepoint/root"],
@@ -71,7 +82,20 @@ export function ClientSharePointBrowser() {
     );
   }
 
-  const items = listing?.items || [];
+  const items = [...(listing?.items || [])].sort((a, b) => {
+    if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+    const mul = sortDir === "asc" ? 1 : -1;
+    if (sortKey === "name") return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }) * mul;
+    if (sortKey === "size") {
+      // Folders have no size — order them by item count instead so the
+      // "largest" sort still means something at folder level.
+      if (a.isFolder && b.isFolder) return ((a.childCount ?? 0) - (b.childCount ?? 0)) * mul;
+      return ((a.size ?? 0) - (b.size ?? 0)) * mul;
+    }
+    const ta = a.lastModified ? new Date(a.lastModified).getTime() : 0;
+    const tb = b.lastModified ? new Date(b.lastModified).getTime() : 0;
+    return (ta - tb) * mul;
+  });
   return (
     <div className="p-4 md:p-6 space-y-4" data-testid="client-sharepoint-page">
       <div>
@@ -102,9 +126,21 @@ export function ClientSharePointBrowser() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead className="w-[110px]">Size</TableHead>
-              <TableHead className="w-[160px]">Modified</TableHead>
+              <TableHead>
+                <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort("name")} data-testid="sp-sort-name">
+                  Name <SortIcon col="name" />
+                </button>
+              </TableHead>
+              <TableHead className="w-[110px]">
+                <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort("size")} data-testid="sp-sort-size">
+                  Size <SortIcon col="size" />
+                </button>
+              </TableHead>
+              <TableHead className="w-[160px]">
+                <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort("modified")} data-testid="sp-sort-modified">
+                  Modified <SortIcon col="modified" />
+                </button>
+              </TableHead>
               <TableHead className="w-[90px]" />
             </TableRow>
           </TableHeader>

@@ -1678,12 +1678,10 @@ async function markRound(page, cross) {
     if (r.match !== 403) throw new Error(`client reached the KYC company matcher (expected 403, got ${r.match})`);
   });
 
-  // The covenant ENGINE (CH + Gazette + payment-practices credit analysis:
-  // per-company report, CRM lookup, watchlist, alerts, watch writes) is staff
-  // BD/credit intel and stays staff-only for clients — including a brand in
-  // their own slice. (The covenant badge UI now renders for client viewers,
-  // but it is fed from the brand-profile payload; direct covenant-API reads
-  // stay sealed. If Woody later opens covenant to clients, relax this guard.)
+  // Covenant reads are open to clients for THEIR OWN visible brands only
+  // (Woody, 2026-08-04: "open up covenant for Mark" — badge + commentary on
+  // slice brands). The rest of the engine — rival companies, watchlist,
+  // alerts, watch runs — stays staff-only.
   await step(page, p, 'client-covenant-guard', async () => {
     const r = await page.evaluate(async () => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
@@ -1696,7 +1694,7 @@ async function markRound(page, cross) {
         watchRun: (await fetch('/api/covenant/watch/run', { method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status,
       };
     });
-    if (r.byCrmSlice !== 403) throw new Error(`client read the covenant engine for a slice brand (expected 403, got ${r.byCrmSlice})`);
+    if (![200, 204, 400].includes(r.byCrmSlice)) throw new Error(`client covenant read on a slice brand should be allowed (expected 200/204, got ${r.byCrmSlice})`);
     if (r.byCrmRival !== 403) throw new Error(`client read a rival's covenant report (expected 403, got ${r.byCrmRival})`);
     if (r.watchlist !== 403) throw new Error(`client reached the covenant watchlist (expected 403, got ${r.watchlist})`);
     if (r.alerts !== 403) throw new Error(`client reached covenant alerts (expected 403, got ${r.alerts})`);
