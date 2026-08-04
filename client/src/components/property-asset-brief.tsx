@@ -28,6 +28,7 @@ import {
   Wand2, Search, X, Check, Loader2,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface AssetBrief {
   property: { id: string; name: string; postcode: string | null; last_updated_at: string };
@@ -1146,6 +1147,12 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [draft, setDraft] = useState("");
+  // Same abilities as My Tasks on create (Woody, 2026-08-04: "same level
+  // of ability?") — assign to a colleague and set priority inline.
+  const [assigneeId, setAssigneeId] = useState("");
+  const [priority, setPriority] = useState("medium");
+  const { data: allUsersRaw } = useQuery<{ id: string; name: string }[]>({ queryKey: ["/api/users"] });
+  const allUsers = Array.isArray(allUsersRaw) ? allUsersRaw : [];
 
   const { data: tasksRes } = useQuery<{ tasks: PropertyTask[] }>({
     queryKey: ["/api/properties", propertyId, "tasks"],
@@ -1159,12 +1166,20 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
 
   const addTask = useMutation({
     mutationFn: async (title: string) => {
-      const res = await apiRequest("POST", "/api/tasks", { title, linkedPropertyId: propertyId, priority: "medium" });
+      const res = await apiRequest("POST", "/api/tasks", {
+        title,
+        linkedPropertyId: propertyId,
+        priority,
+        ...(assigneeId ? { assigneeUserId: assigneeId } : {}),
+      });
       return res.json();
     },
     onSuccess: () => {
       setDraft("");
+      setAssigneeId("");
+      setPriority("medium");
       queryClient.invalidateQueries({ queryKey: ["/api/properties", propertyId, "tasks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
     },
     onError: (e: any) => toast({ title: "Couldn't add task", description: e?.message, variant: "destructive" }),
   });
@@ -1185,7 +1200,7 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
           <Target className="w-3.5 h-3.5" /> This week's focus
           <Badge variant="secondary" className="text-[10px]">{tasks.length}</Badge>
         </CardTitle>
-        <Link href="/my-tasks">
+        <Link href="/tasks">
           <Button size="sm" variant="ghost" className="h-6 text-[10px]">
             All tasks →
           </Button>
@@ -1238,14 +1253,33 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
             </div>
           )}
         </div>
-        <div className="flex items-center gap-1.5 pt-1 border-t mt-1.5">
+        <div className="flex items-center gap-1.5 pt-1 border-t mt-1.5 flex-wrap">
           <Input
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && draft.trim()) addTask.mutate(draft.trim()); }}
             placeholder="Add a task — e.g. Pizza Express HOTs to legals by Friday"
-            className="text-xs h-7"
+            className="text-xs h-7 flex-1 min-w-[180px]"
           />
+          <Select value={assigneeId || "me"} onValueChange={(v) => setAssigneeId(v === "me" ? "" : v)}>
+            <SelectTrigger className="h-7 w-[110px] text-[10px]" data-testid="focus-task-assignee">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="me">Me</SelectItem>
+              {allUsers.map(u => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={priority} onValueChange={setPriority}>
+            <SelectTrigger className="h-7 w-[80px] text-[10px]" data-testid="focus-task-priority">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="low">Low</SelectItem>
+              <SelectItem value="medium">Medium</SelectItem>
+              <SelectItem value="high">High</SelectItem>
+            </SelectContent>
+          </Select>
           <Button
             size="sm"
             variant="outline"
