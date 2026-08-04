@@ -10,14 +10,14 @@ import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, A
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useTeam } from "@/lib/team-context";
 import type { User } from "@shared/schema";
 import {
   Building2, Users, Crown, Search, Globe, MapPin,
   ChevronRight, ChevronDown, Building, Briefcase,
   Phone, Mail, X, TrendingUp, Trash2, Pencil, Plus, Target,
-  Handshake, ClipboardList, Landmark,
+  Handshake, ClipboardList, Landmark, AlertCircle,
 } from "lucide-react";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -1489,6 +1489,69 @@ function ContactQuickDialog({ companyId, companyName, contact, onClose }: {
   );
 }
 
+// Staff review queue for AI contact verifications — only renders when the
+// weekly sweep (or a manual Verify) has flagged employer mismatches. Apply
+// re-links the contact to the verified employer; Dismiss keeps the CRM as-is.
+function DataHealthQueue() {
+  const { toast } = useToast();
+  const { data } = useQuery<{ pending: any[]; stats: any[] }>({
+    queryKey: ["/api/crm/data-health"],
+    queryFn: getQueryFn({ on401: "returnNull", on403: "returnNull" } as any),
+    staleTime: 5 * 60 * 1000,
+  });
+  const act = useMutation({
+    mutationFn: async ({ id, action }: { id: number; action: "apply" | "dismiss" }) => {
+      const r = await apiRequest("POST", `/api/crm/data-health/${id}/${action}`);
+      return r.json();
+    },
+    onSuccess: (j: any, vars) => {
+      toast({ title: vars.action === "apply" ? (j.linkedCompany ? `Re-linked to ${j.linkedCompany}` : "Finding noted on the contact") : "Dismissed" });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/data-health"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+    },
+    onError: (e: any) => toast({ title: "Action failed", description: e?.message, variant: "destructive" }),
+  });
+  const pending = data?.pending || [];
+  if (!pending.length) return null;
+  return (
+    <Card className="border-amber-300 dark:border-amber-800 overflow-hidden" data-testid="data-health-queue">
+      <CardContent className="p-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="w-6 h-6 rounded-full bg-amber-500/15 flex items-center justify-center shrink-0">
+            <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+          </span>
+          <h2 className="text-sm font-semibold">Data health — {pending.length} contact{pending.length === 1 ? "" : "s"} may be at the wrong company</h2>
+        </div>
+        <div className="space-y-1.5">
+          {pending.slice(0, 6).map((v: any) => (
+            <div key={v.id} className="flex items-start gap-2 rounded-md border-l-2 border-l-amber-400 bg-amber-50/50 dark:bg-amber-950/15 px-2.5 py-1.5 text-xs flex-wrap">
+              <div className="flex-1 min-w-[220px]">
+                <Link href={`/contacts/${v.contact_id}`}>
+                  <span className="font-semibold hover:underline cursor-pointer">{v.contact_name}</span>
+                </Link>
+                <span className="text-muted-foreground"> — CRM says </span>
+                <span className="font-medium">{v.live_company_name || v.current_company_name || "—"}</span>
+                {v.suggested_company_name && (
+                  <>
+                    <span className="text-muted-foreground">, sources say </span>
+                    <span className="font-medium">{v.suggested_company_name}</span>
+                  </>
+                )}
+                <p className="text-[11px] text-muted-foreground mt-0.5">{v.reasoning}</p>
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <Button size="sm" variant="outline" className="h-6 text-[11px]" disabled={act.isPending || !v.suggested_company_name} onClick={() => act.mutate({ id: v.id, action: "apply" })} data-testid={`dh-apply-${v.id}`}>Apply</Button>
+                <Button size="sm" variant="ghost" className="h-6 text-[11px]" disabled={act.isPending} onClick={() => act.mutate({ id: v.id, action: "dismiss" })} data-testid={`dh-dismiss-${v.id}`}>Dismiss</Button>
+              </div>
+            </div>
+          ))}
+          {pending.length > 6 && <p className="text-[11px] text-muted-foreground">+ {pending.length - 6} more in the queue.</p>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function PeopleHub() {
   const { activeTeam } = useTeam();
   const { toast } = useToast();
@@ -1583,6 +1646,7 @@ function PeopleHub() {
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-[1600px] mx-auto">
+      <DataHealthQueue />
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">

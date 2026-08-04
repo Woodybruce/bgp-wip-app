@@ -3679,6 +3679,7 @@ app.use("/api/branding/assets", express.static(
   setupArchivistRoutes(app);
   setupNewsIntelligenceRoutes(app);
   setupNewsFeedRoutes(app);
+  import("./contact-verify").then(m => { m.setupContactVerifyRoutes(app); m.startContactVerifySweep(); }).catch(e => console.warn("[contact-verify] setup failed:", e?.message));
   setupModelsRoutes(app);
   setupDocumentTemplateRoutes(app);
   setupCanvaRoutes(app);

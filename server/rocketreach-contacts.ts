@@ -456,6 +456,17 @@ router.post("/api/brand/:companyId/rocketreach/import", requireAuth, async (req:
       }
       if (p.location) notesParts.push(`Based in ${p.location}`);
       if (p.bio) notesParts.push(p.bio);
+      // RocketReach sometimes returns people who have MOVED ON from the
+      // brand being browsed (Neville Maling: imported from Wagamama's page
+      // while RocketReach itself said current employer = Wasabi). Surface
+      // the disagreement instead of silently stamping the browsed brand.
+      if (p.current_employer) {
+        const browsed = company.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const actual = p.current_employer.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (browsed && actual && !browsed.includes(actual) && !actual.includes(browsed)) {
+          notesParts.push(`⚠ RocketReach lists current employer as ${p.current_employer} — imported from the ${company.name} page, needs review`);
+        }
+      }
       const notes = notesParts.length ? notesParts.join(" · ") : null;
 
       const phoneMobile = p.mobile_phone || null;
