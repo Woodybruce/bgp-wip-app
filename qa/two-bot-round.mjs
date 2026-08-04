@@ -1080,6 +1080,32 @@ async function markRound(page, cross) {
     if (calUrl.pathname !== '/calendar') throw new Error(`client bounced off /calendar to ${calUrl.pathname} (route guard)`);
   });
 
+  // Client "Add event" (Woody, 2026-08-04): a client may create a calendar
+  // event, but the server forces company_name to their OWN scope whatever the
+  // body claims — so a client can't plant an event on another landlord's
+  // calendar. Create one attributed (in the body) to a rival, assert it comes
+  // back company-jailed to the client, shows on their own calendar, then
+  // clean up.
+  await step(page, p, 'client-calendar-add-event', async () => {
+    const title = `QA-CAL-R${ROUND} client-add`;
+    const r = await page.evaluate(async (t) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const start = new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();
+      const end = new Date(Date.now() + 3 * 24 * 3600 * 1000 + 3600 * 1000).toISOString();
+      const post = await fetch('/api/team-events', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ title: t, event_type: 'meeting', start_time: start, end_time: end, company_name: 'QA-RIVAL-Hammerson' }) });
+      if (!post.ok) return { ok: false, why: `POST ${post.status}` };
+      const made = await post.json();
+      const list = await (await fetch('/api/team-events', { headers: auth })).json().catch(() => []);
+      const seen = (Array.isArray(list) ? list : []).some((e) => (e.title || '') === t);
+      if (made?.id) await fetch(`/api/team-events/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      return { ok: true, company: made?.company_name ?? null, seen };
+    }, title);
+    if (!r.ok) throw new Error(`client could not add a calendar event (${r.why})`);
+    if (r.company === 'QA-RIVAL-Hammerson' || !r.company) throw new Error(`client calendar event not company-jailed to their scope (got ${JSON.stringify(r.company)})`);
+    if (!r.seen) throw new Error('client-created event absent from their own calendar');
+  });
+
   // Calendar intelligence for clients: insights and the meeting briefing are
   // company-jailed and FEE-FREE (both used to 500 on phantom columns, and the
   // briefing was session-gated so client tokens always failed).
