@@ -972,8 +972,17 @@ export default function Dashboard() {
   const rawTemplate = templateData?.template;
   const templateLayout = (rawTemplate?._version >= LAYOUT_VERSION) ? rawTemplate : null;
 
-  const widgetSavedLayout = validSaved?.widgets || templateLayout?.widgets || null;
-  const hiddenPortfolioBoards: string[] = validSaved?.hiddenPortfolio ?? templateLayout?.hiddenPortfolio ?? ["portfolio-properties"];
+  // The client-team dashboard is standardised: in Landsec view (client
+  // logins AND staff switched into the team) the org template — set from
+  // Mark Warne's arrangement — beats any personal layout, so everyone sees
+  // the same board (Woody, 2026-08-04: "should be the same"). Personal
+  // layouts still win on the staff dashboard.
+  const preferTemplate = isLandsecTeam || isClientViewer;
+  const firstLayout = preferTemplate ? (templateLayout || validSaved) : (validSaved || templateLayout);
+  const secondLayout = preferTemplate ? validSaved : templateLayout;
+
+  const widgetSavedLayout = firstLayout?.widgets || secondLayout?.widgets || null;
+  const hiddenPortfolioBoards: string[] = firstLayout?.hiddenPortfolio ?? secondLayout?.hiddenPortfolio ?? ["portfolio-properties"];
 
   // Portfolio boards and widgets used to live in two separate grids stacked
   // on the page, so a widget (e.g. My Tasks & Briefing) could never be
@@ -981,9 +990,9 @@ export default function Dashboard() {
   // back. When the portfolio section is present they now render as ONE grid,
   // laid out from `combined` — seeded by stacking the two legacy layouts so
   // existing arrangements carry over.
-  const combinedSavedLayout = validSaved?.combined || templateLayout?.combined || (() => {
-    const p = (validSaved?.portfolio || templateLayout?.portfolio)?.lg as any[] | undefined;
-    const w = (validSaved?.widgets || templateLayout?.widgets)?.lg as any[] | undefined;
+  const combinedSavedLayout = firstLayout?.combined || secondLayout?.combined || (() => {
+    const p = (firstLayout?.portfolio || secondLayout?.portfolio)?.lg as any[] | undefined;
+    const w = (firstLayout?.widgets || secondLayout?.widgets)?.lg as any[] | undefined;
     if (!p && !w) return null;
     const maxY = (p || []).reduce((m: number, l: any) => Math.max(m, l.y + l.h), 0);
     return { lg: [...(p || []), ...(w || []).map((l: any) => ({ ...l, y: l.y + maxY }))] };
