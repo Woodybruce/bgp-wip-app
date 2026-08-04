@@ -1215,6 +1215,22 @@ async function markRound(page, cross) {
     if (r.sweep < 400) throw new Error(`client triggered the AI task-suggestions sweep (${r.sweep})`);
   });
 
+  // Turnover Board slice scoping: the client's /api/turnover read includes
+  // the in-slice fixture row (Honi Poke) and never the out-of-slice one
+  // (QA Retail Brand) — the clientBrandSliceSql filter on turnover_data.
+  await step(page, p, 'client-turnover-slice', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/turnover', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = JSON.stringify(await res.json().catch(() => []));
+      return { ok: true, inSlice: body.includes('Honi Poke'), outOfSlice: body.includes('QA Retail Brand') };
+    });
+    if (!r.ok) throw new Error(`client turnover read unhealthy (${r.status})`);
+    if (!r.inSlice) throw new Error('in-slice turnover row missing from the client board');
+    if (r.outOfSlice) throw new Error('out-of-slice turnover row leaked to the client board');
+  });
+
   // ActivitySummary board (terminal, 2026-08-03): the dashboard's upcoming/
   // recent feed must serve client-scoped content only — never another
   // landlord's deals — and the board must render.

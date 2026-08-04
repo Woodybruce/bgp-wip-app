@@ -38,6 +38,13 @@ SELECT 'aaaaaaaa-5555-5555-5555-555555555555', 'qa.resettable@bgp.test', u.passw
 FROM users u WHERE u.email = 'mark.warne@landsec.com'
 ON CONFLICT (id) DO NOTHING;
 
+-- Turnover fixtures: one in-slice brand row (client-visible) and one
+-- out-of-slice row (must be filtered by clientBrandSliceSql for clients).
+INSERT INTO turnover_data (id, company_id, company_name, period, source, confidence)
+VALUES ('aaaaaaaa-7777-7777-7777-777777777771', '77777777-7777-7777-7777-777777777777', 'Honi Poke', 'FY2025', 'qa-fixture', 'high'),
+       ('aaaaaaaa-7777-7777-7777-777777777772', '88888888-1111-1111-1111-111111111111', 'QA Retail Brand', 'FY2025', 'qa-fixture', 'high')
+ON CONFLICT (id) DO NOTHING;
+
 -- A Hammerson sub-entity so the sub-companies cross-tenant read guard is
 -- actually testable (carries AML/KYC data a rival client must never see).
 INSERT INTO crm_companies (id, name, company_type, parent_company_id, kyc_status, aml_risk_level)
