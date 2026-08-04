@@ -48,12 +48,19 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
 
   const c = data.company;
   const isLandlord = /landlord|client/i.test(c.company_type || "");
-  const heroImg = (data.images || []).find((i: any) => Array.isArray(i.tags) && i.tags.includes("brand-hero")) || (data.images || [])[0];
-  const heroSrc = heroImg
-    ? (heroImg.thumbnail_data
-        ? (heroImg.thumbnail_data.startsWith("data:") ? heroImg.thumbnail_data : `data:${heroImg.mime_type || "image/jpeg"};base64,${heroImg.thumbnail_data}`)
-        : `/api/brand/gallery-image/${heroImg.id}`)
-    : null;
+  // Same hero cascade as the desktop banner: pinned "brand-hero" tag →
+  // flagship street view (when stores have coords) → first gallery image.
+  const srcFor = (img: any) => img.thumbnail_data
+    ? (img.thumbnail_data.startsWith("data:") ? img.thumbnail_data : `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`)
+    : `/api/brand/gallery-image/${img.id}`;
+  const heroTagged = (data.images || []).find((i: any) => Array.isArray(i.tags) && i.tags.includes("brand-hero"));
+  const hasStreetView = (data.stores || []).some((s: any) => typeof s.lat === "number" && typeof s.lng === "number");
+  const firstImg = (data.images || [])[0];
+  const heroSrc = heroTagged
+    ? srcFor(heroTagged)
+    : hasStreetView
+      ? `/api/brand/${companyId}/flagship-image${firstImg ? `?exclude=${encodeURIComponent(firstImg.id)}` : ""}`
+      : firstImg ? srcFor(firstImg) : null;
   const trackerComments: any[] = trackerData?.comments || [];
   const signals: any[] = (data.signals || []).slice(0, 6);
 
