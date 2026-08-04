@@ -445,7 +445,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
          FROM crm_contacts ct
         WHERE ct.company_id = $1
         ORDER BY ct.name ASC
-        LIMIT 20`,
+        LIMIT 100`,
       [companyId]
     );
 

@@ -4285,6 +4285,21 @@ function CompanyMiniChat({ companyId, companyName, fill }: { companyId: string; 
     return created.id;
   };
 
+  const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const saveEdit = async (messageId: string) => {
+    const body = editDraft.trim();
+    if (!body || !threadId) { setEditingMsgId(null); return; }
+    try {
+      await apiRequest("PUT", `/api/chat/threads/${threadId}/messages/${messageId}`, { content: body });
+      queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
+    } catch (e: any) {
+      mcToast({ title: "Couldn't edit message", description: e?.message, variant: "destructive" });
+    } finally {
+      setEditingMsgId(null);
+    }
+  };
+
   const memberIds = new Set<string>((thread?.members || []).map((m: any) => m.id));
   const addMember = async (userId: string, name: string) => {
     try {
@@ -4452,14 +4467,50 @@ function CompanyMiniChat({ companyId, companyName, fill }: { companyId: string; 
               Ask anything about {companyName} — @ tags properties and deals, and teammates you @ join the conversation.
             </p>
           ) : (
-            messages.map((m: any) => (
-              <div key={m.id} className={`text-xs rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${
+            messages.map((m: any) => {
+              const isOwn = m.role === "user" && mcMe?.id && m.userId === mcMe.id;
+              return (
+              <div key={m.id} className={`group/msg relative text-xs rounded-lg px-2.5 py-1.5 whitespace-pre-wrap break-words ${
                 m.role === "assistant" ? "bg-muted/60" : "bg-primary/10 ml-6"
               }`}>
-                {m.role === "assistant" && <span className="font-semibold text-[10px] block text-muted-foreground">ChatBGP</span>}
-                {renderContent(m.content)}
+                {/* Every message carries its author — a shared brand chat is
+                    useless if you can't tell who said what (Woody, 2026-08-04). */}
+                <span className="font-semibold text-[10px] block text-muted-foreground">
+                  {m.role === "assistant" ? "ChatBGP" : (isOwn ? "You" : (m.userName || "Team"))}
+                  {m.editedAt || m.edited_at ? <span className="font-normal opacity-60"> · edited</span> : null}
+                </span>
+                {editingMsgId === m.id ? (
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <input
+                      autoFocus
+                      className="flex-1 h-7 rounded border bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+                      value={editDraft}
+                      onChange={(e) => setEditDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") saveEdit(m.id);
+                        if (e.key === "Escape") setEditingMsgId(null);
+                      }}
+                      data-testid={`input-minichat-edit-${m.id}`}
+                    />
+                    <button className="text-[10px] px-1.5 py-1 rounded border bg-card hover:bg-muted" onClick={() => saveEdit(m.id)}>Save</button>
+                    <button className="text-[10px] px-1 text-muted-foreground" onClick={() => setEditingMsgId(null)}>✕</button>
+                  </div>
+                ) : (
+                  renderContent(m.content)
+                )}
+                {isOwn && editingMsgId !== m.id && (
+                  <button
+                    className="absolute top-1 right-1 opacity-0 group-hover/msg:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+                    title="Edit message"
+                    onClick={() => { setEditingMsgId(m.id); setEditDraft(m.content); }}
+                    data-testid={`button-minichat-edit-${m.id}`}
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                )}
               </div>
-            ))
+            );
+            })
           )}
         </div>
         )}
@@ -4731,16 +4782,15 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
 
   const runCreditCheck = async () => {
     try {
-      const r = await fetch(`/api/brand/${companyId}/credit-check`, { method: "POST", credentials: "include" });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        toast({ title: body.error || "Couldn't run", description: body.message || "", variant: "destructive" });
-        return;
-      }
+      // apiRequest carries the bearer token — this was the one raw fetch in
+      // the file without it, so the desktop shell (token auth, no session
+      // cookie) always got a 401 (Woody, 2026-08-04).
+      const r = await apiRequest("POST", `/api/brand/${companyId}/credit-check`, {});
+      await r.json().catch(() => ({}));
       toast({ title: "Covenant check complete" });
       queryClient.invalidateQueries({ queryKey: ["covenant"] });
     } catch (e: any) {
-      toast({ title: "Failed", description: e?.message, variant: "destructive" });
+      toast({ title: "Couldn't run covenant check", description: e?.message, variant: "destructive" });
     }
   };
   const ragColor = cov?.trafficLight === "green"
