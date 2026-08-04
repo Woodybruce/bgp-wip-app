@@ -47,7 +47,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-task-assign-guard', 'client-lease-events-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1229,6 +1229,19 @@ async function markRound(page, cross) {
     if (!r.ok) throw new Error(`client turnover read unhealthy (${r.status})`);
     if (!r.inSlice) throw new Error('in-slice turnover row missing from the client board');
     if (r.outOfSlice) throw new Error('out-of-slice turnover row leaked to the client board');
+  });
+
+  // Firm-wide reporting (the board report + reporting summary — whole-book
+  // revenue, pipeline, agent performance) is BGP-internal; a client login
+  // must be refused.
+  await step(page, p, 'client-firm-reporting-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { board: await g('/api/board-report'), reporting: await g('/api/reporting/summary') };
+    });
+    if (r.board !== 403) throw new Error(`client reached the board report (expected 403, got ${r.board})`);
+    if (r.reporting !== 403) throw new Error(`client reached the reporting summary (expected 403, got ${r.reporting})`);
   });
 
   // The Lease Events board is BGP's lease-advisory BD pipeline (rent reviews,
