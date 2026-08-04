@@ -26,6 +26,52 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): nu
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
+// Major UK shopping centres / retail destinations used as the peer set for
+// the "at other schemes, not here" comparison (Woody, 2026-08-04: "can we
+// look at other shopping centres for the brand gap analysis"). Approximate
+// centre points; presence = any brand store within PEER_PRESENCE_KM.
+const PEER_PRESENCE_KM = 0.7;
+const PEER_SCHEMES: Array<{ name: string; lat: number; lng: number }> = [
+  { name: "Bluewater", lat: 51.4389, lng: 0.2705 },
+  { name: "Lakeside", lat: 51.489, lng: 0.2848 },
+  { name: "Westfield London", lat: 51.5074, lng: -0.221 },
+  { name: "Westfield Stratford", lat: 51.5439, lng: -0.0079 },
+  { name: "Brent Cross", lat: 51.5766, lng: -0.2237 },
+  { name: "Canary Wharf", lat: 51.5054, lng: -0.0192 },
+  { name: "Battersea Power Station", lat: 51.4818, lng: -0.1445 },
+  { name: "The Glades Bromley", lat: 51.4029, lng: 0.0159 },
+  { name: "Trafford Centre", lat: 53.4669, lng: -2.3486 },
+  { name: "Manchester Arndale", lat: 53.4831, lng: -2.2416 },
+  { name: "Meadowhall", lat: 53.4139, lng: -1.4119 },
+  { name: "Metrocentre", lat: 54.9575, lng: -1.665 },
+  { name: "Eldon Square", lat: 54.9744, lng: -1.6153 },
+  { name: "Merry Hill", lat: 52.4818, lng: -2.1207 },
+  { name: "Bullring", lat: 52.4778, lng: -1.8942 },
+  { name: "Touchwood Solihull", lat: 52.4123, lng: -1.7767 },
+  { name: "centre:mk", lat: 52.0416, lng: -0.7558 },
+  { name: "Rushden Lakes", lat: 52.2926, lng: -0.5813 },
+  { name: "Liverpool ONE", lat: 53.4043, lng: -2.9865 },
+  { name: "Trinity Leeds", lat: 53.7969, lng: -1.5437 },
+  { name: "White Rose Leeds", lat: 53.758, lng: -1.5738 },
+  { name: "St David's Cardiff", lat: 51.4796, lng: -3.1748 },
+  { name: "Cabot Circus", lat: 51.4586, lng: -2.5852 },
+  { name: "Cribbs Causeway", lat: 51.5252, lng: -2.5983 },
+  { name: "Highcross Leicester", lat: 52.636, lng: -1.1359 },
+  { name: "Victoria Centre Nottingham", lat: 52.957, lng: -1.1482 },
+  { name: "The Oracle Reading", lat: 51.4525, lng: -0.9689 },
+  { name: "Festival Place", lat: 51.267, lng: -1.087 },
+  { name: "WestQuay", lat: 50.9034, lng: -1.4059 },
+  { name: "Gunwharf Quays", lat: 50.7953, lng: -1.1077 },
+  { name: "Churchill Square Brighton", lat: 50.8225, lng: -0.1445 },
+  { name: "The Lexicon Bracknell", lat: 51.416, lng: -0.753 },
+  { name: "Westgate Oxford", lat: 51.75, lng: -1.2607 },
+  { name: "Braintree Village", lat: 51.864, lng: 0.5457 },
+  { name: "Braehead", lat: 55.8768, lng: -4.3651 },
+  { name: "Silverburn", lat: 55.8214, lng: -4.3441 },
+  { name: "St James Quarter", lat: 55.954, lng: -3.1852 },
+  { name: "Buchanan Galleries", lat: 55.8631, lng: -4.252 },
+];
+
 type LocResolveResult =
   | { ok: true; lat: number; lng: number; postcode: string | null; name: string }
   | { ok: false; reason: "no_property" | "no_coords_no_postcode" | "geocode_failed" | "no_google_key"; name?: string; postcode?: string | null };
@@ -141,6 +187,13 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
         throw e;
       });
 
+    // Peer schemes for the "at other shopping centres, not here" comparison —
+    // drop any that ARE this property (or share its site) so the subject
+    // never counts as its own peer.
+    const peerSchemes = PEER_SCHEMES.filter(
+      ps => haversineKm(location.lat, location.lng, ps.lat, ps.lng) > 1.5
+    );
+
     // Group by brand — calculate nearest store distance per brand
     const brandMap = new Map<string, {
       brand_company_id: string;
@@ -153,13 +206,14 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       nearest_distance_km: number;
       nearest_store: { name: string; address: string | null; lat: number; lng: number };
       brand_group_id: string | null;
+      peer_scheme_set: Set<string>;
     }>();
 
     for (const s of stores) {
       const dist = haversineKm(location.lat, location.lng, s.lat, s.lng);
-      const existing = brandMap.get(s.brand_company_id);
-      if (!existing) {
-        brandMap.set(s.brand_company_id, {
+      let entry = brandMap.get(s.brand_company_id);
+      if (!entry) {
+        entry = {
           brand_company_id: s.brand_company_id,
           brand_name: s.brand_name,
           domain: s.domain,
@@ -170,12 +224,22 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
           nearest_distance_km: dist,
           nearest_store: { name: s.store_name, address: s.address, lat: s.lat, lng: s.lng },
           brand_group_id: s.brand_group_id,
-        });
+          peer_scheme_set: new Set<string>(),
+        };
+        brandMap.set(s.brand_company_id, entry);
       } else {
-        existing.total_stores++;
-        if (dist < existing.nearest_distance_km) {
-          existing.nearest_distance_km = dist;
-          existing.nearest_store = { name: s.store_name, address: s.address, lat: s.lat, lng: s.lng };
+        entry.total_stores++;
+        if (dist < entry.nearest_distance_km) {
+          entry.nearest_distance_km = dist;
+          entry.nearest_store = { name: s.store_name, address: s.address, lat: s.lat, lng: s.lng };
+        }
+      }
+      // Which peer scheme (if any) is this store at? A store sits at one
+      // scheme at most, so stop at the first hit.
+      for (const ps of peerSchemes) {
+        if (haversineKm(ps.lat, ps.lng, s.lat, s.lng) <= PEER_PRESENCE_KM) {
+          entry.peer_scheme_set.add(ps.name);
+          break;
         }
       }
     }
@@ -233,6 +297,28 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       [propertyId]
     ).then(r => r.rows).catch(() => [] as any[]);
 
+    // "At other shopping centres, not here" — the peer-scheme comparison
+    // (Woody, 2026-08-04). A brand qualifies when it trades at one or more
+    // peer schemes but has no store on/near THIS scheme. Ranked by breadth
+    // of peer presence, live requirement, rollout momentum, then estate size.
+    const reqCompanyIds = new Set(
+      matchingRequirements.map((r: any) => String(r.company_id || "")).filter(Boolean)
+    );
+    const peerGaps = allBrands
+      .filter(b => b.peer_scheme_set.size > 0 && b.nearest_distance_km > onSchemeRadiusKm)
+      .map(b => ({
+        ...b,
+        peer_schemes: Array.from(b.peer_scheme_set).sort(),
+        has_live_requirement: reqCompanyIds.has(String(b.brand_company_id)),
+        peer_gap_score:
+          b.peer_scheme_set.size * 10 +
+          (reqCompanyIds.has(String(b.brand_company_id)) ? 25 : 0) +
+          (b.rollout_status === "scaling" || b.rollout_status === "entering_uk" ? 15 : 0) +
+          Math.min(b.total_stores, 30) / 3,
+      }))
+      .sort((a, b) => b.peer_gap_score - a.peer_gap_score)
+      .slice(0, limit);
+
     // Clients get the gap analysis focused on THEIR brand slice (hospitality/
     // leisure/fitness + self-adds — the standing Landsec decision), not the
     // full brand universe (Woody, 2026-08-03).
@@ -240,7 +326,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     if (gapScope) {
       const { clientBrandSliceSql, isClientRequestUser } = await import("./company-scope");
       if (await isClientRequestUser(req as any)) {
-        const candidateIds = [...new Set([...onScheme, ...wider, ...gap].map(b => String(b.brand_company_id)))];
+        const candidateIds = [...new Set([...onScheme, ...wider, ...gap, ...peerGaps].map(b => String(b.brand_company_id)))];
         if (candidateIds.length) {
           const sliceSql = await clientBrandSliceSql(gapScope);
           const visible = await pool.query(
@@ -260,14 +346,21 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       ? matchingRequirements.filter((r: any) => !r.company_id || sliceFilter!(String(r.company_id)))
       : matchingRequirements;
 
+    // Sets don't survive JSON — strip the working field from every bucket.
+    const publish = (b: any) => {
+      const { peer_scheme_set, ...rest } = b;
+      return { ...rest, nearest_distance_km: Number(b.nearest_distance_km.toFixed(2)) };
+    };
     res.json({
       property: { id: propertyId, name: location.name, postcode: location.postcode, lat: location.lat, lng: location.lng },
-      onScheme: sliced(onScheme).map(b => ({ ...b, nearest_distance_km: Number(b.nearest_distance_km.toFixed(2)) })),
-      wider: sliced(wider).map(b => ({ ...b, nearest_distance_km: Number(b.nearest_distance_km.toFixed(2)) })),
-      gap: sliced(gap).map(b => ({ ...b, nearest_distance_km: Number(b.nearest_distance_km.toFixed(2)) })),
+      onScheme: sliced(onScheme).map(publish),
+      wider: sliced(wider).map(publish),
+      gap: sliced(gap).map(publish),
+      peerGaps: sliced(peerGaps).map(publish),
+      peerSchemesConsidered: peerSchemes.length,
       matchingRequirements: slicedReqs,
       categorySignature,
-      radii: { onScheme: onSchemeRadiusKm, wider: widerRadiusKm },
+      radii: { onScheme: onSchemeRadiusKm, wider: widerRadiusKm, peerPresence: PEER_PRESENCE_KM },
       stats: {
         totalBrands: allBrands.length,
         brandsWithStores: stores.length,

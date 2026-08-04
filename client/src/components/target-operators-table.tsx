@@ -115,13 +115,24 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
     enabled: !!clientCompanyId,
     staleTime: 60_000,
   });
-  const clientContactOptions = useMemo(
-    () => clientContacts
-      .map((c: any) => ({ id: String(c.id), name: c.name || [c.firstName, c.lastName].filter(Boolean).join(" ") }))
-      .filter(c => c.name)
-      .sort((a, b) => a.name.localeCompare(b.name)),
-    [clientContacts]
-  );
+  const clientContactOptions = useMemo(() => {
+    const all = clientContacts
+      .map((c: any) => ({ id: String(c.id), name: c.name || [c.firstName, c.lastName].filter(Boolean).join(" "), role: String(c.role || "").trim().toLowerCase() }))
+      .filter(c => c.name);
+    // The tracker's client contact is the client-side DIRECTOR running the
+    // account (Landsec: Mark Warne / Jonny Rushton — Woody, 2026-08-04:
+    // "should just be Mark Warne or Jonathan Rushton"), not all 20+ people
+    // on the company. Clients with no Director-role contact keep the full
+    // list, and an already-saved contact stays selectable either way.
+    const directors = all.filter(c => c.role === "director");
+    let pool = directors.length > 0 ? directors : all;
+    const savedId = (t as any).clientContactId ? String((t as any).clientContactId) : null;
+    if (savedId && !pool.some(c => c.id === savedId)) {
+      const cur = all.find(c => c.id === savedId);
+      if (cur) pool = [...pool, cur];
+    }
+    return pool.map(({ id, name }) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [clientContacts, (t as any).clientContactId]);
 
   const patchTarget = async (data: Record<string, unknown>) => {
     try {

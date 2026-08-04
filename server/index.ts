@@ -3614,6 +3614,18 @@ app.use("/api/branding/assets", express.static(
         // property-asset-brief.ts confines clients to in-scope properties
         // and the prompt never carries fee figures.
         if (req.method === "POST" && /^\/api\/properties\/[^/]+\/bgp-commentary\/regenerate$/.test(p)) return next();
+        // Enrichment buttons on a client-visible brand — covenant refresh +
+        // Companies House enrich (Woody, 2026-08-04: "allow for Landsec to
+        // hit the enrichment button — they need to be able to use the app
+        // in the same way we can"). Both only refresh derived/public data
+        // on the brand record; gated on the client's brand slice.
+        const enrichTarget = p.match(/^\/api\/(?:brand\/([^/]+)\/credit-check|companies-house\/auto-kyc\/([^/]+))$/);
+        if (req.method === "POST" && enrichTarget) {
+          const { isClientVisibleBrand, resolveCompanyScope } = await import("./company-scope");
+          const scope = await resolveCompanyScope(req);
+          if (await isClientVisibleBrand(enrichTarget[1] || enrichTarget[2], scope)) return next();
+          return res.status(403).json({ error: "Not available for client accounts" });
+        }
         // Brochure + plan uploads on the client's own property — handlers
         // scope-check via clientBlockedForProperty.
         if (req.method === "POST" && /^\/api\/properties\/[^/]+\/brochures\/upload$/.test(p)) return next();

@@ -431,10 +431,10 @@ export function ClientTeamOrgChart({ clientCompanyId }: { clientCompanyId: strin
           <div className="text-xs mt-1">{readOnly ? "Your BGP team hasn't been set up yet — ask your BGP team." : 'Click "Add to team" to get started'}</div>
         </div>
       ) : (
+        // auto-fit grid: columns stretch to fill the board's width and wrap
+        // onto new rows instead of forcing a horizontal scrollbar (Woody,
+        // 2026-08-04: "fit the team horizontally — has space").
         <div className="pb-2">
-          {/* auto-fit grid: columns stretch to fill the board's width and wrap
-              onto new rows instead of forcing a horizontal scrollbar (Woody,
-              2026-08-04: "fit the team horizontally — has space"). */}
           <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(185px,1fr))]">
             {columnList
               // Hide the auto-added Unassigned column when nothing's
