@@ -35,6 +35,7 @@ const IGNORED_RESPONSES = [
   /\/api\/property\/[^/]+\/brand-gaps\/(commentary|international)/, // Brand Gap v2 AI reads — 500 locally with no AI key (the base /brand-gaps is keyless and stays checked); works in prod. The scope gate is covered by client-brand-gaps-scoped.
   /\/api\/activity\/(brand|landlord)\/[^/]+$/, // AI relationship activity is own-company-only for clients (deliberate gateway rule); the client brand-profile panel fires it on slice brands and gets a safe 403. Own-company returns 200; cross-tenant isolation is covered by the rival-* scenarios.
   /\/api\/interactions\//,               // raw correspondence (meetings/emails) is staff-only for clients — the client correspondence drawer fires /api/interactions/company/:id and gets a safe 403. The client-interactions-guard scenario is the authoritative lock that this stays blocked.
+  /\/api\/covenant\//,                    // covenant engine (credit analysis) is staff-only — the client covenant badge fires /api/covenant/by-crm/:id and gets a safe 403. client-covenant-guard is the authoritative lock.
   /fonts|\.woff|\.map$/,
 ];
 
@@ -50,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1675,6 +1676,31 @@ async function markRound(page, cross) {
     if (r.board !== 403) throw new Error(`client reached the firm-wide KYC board (expected 403, got ${r.board})`);
     if (r.deals !== 403) throw new Error(`client reached the KYC board deals view (expected 403, got ${r.deals})`);
     if (r.match !== 403) throw new Error(`client reached the KYC company matcher (expected 403, got ${r.match})`);
+  });
+
+  // The covenant ENGINE (CH + Gazette + payment-practices credit analysis:
+  // per-company report, CRM lookup, watchlist, alerts, watch writes) is staff
+  // BD/credit intel and stays staff-only for clients — including a brand in
+  // their own slice. (The covenant badge UI now renders for client viewers,
+  // but it is fed from the brand-profile payload; direct covenant-API reads
+  // stay sealed. If Woody later opens covenant to clients, relax this guard.)
+  await step(page, p, 'client-covenant-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return {
+        byCrmSlice: await g('/api/covenant/by-crm/77777777-7777-7777-7777-777777777777'),
+        byCrmRival: await g('/api/covenant/by-crm/99999999-1111-1111-1111-111111111111'),
+        watchlist: await g('/api/covenant/watchlist'),
+        alerts: await g('/api/covenant/alerts'),
+        watchRun: (await fetch('/api/covenant/watch/run', { method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status,
+      };
+    });
+    if (r.byCrmSlice !== 403) throw new Error(`client read the covenant engine for a slice brand (expected 403, got ${r.byCrmSlice})`);
+    if (r.byCrmRival !== 403) throw new Error(`client read a rival's covenant report (expected 403, got ${r.byCrmRival})`);
+    if (r.watchlist !== 403) throw new Error(`client reached the covenant watchlist (expected 403, got ${r.watchlist})`);
+    if (r.alerts !== 403) throw new Error(`client reached covenant alerts (expected 403, got ${r.alerts})`);
+    if (r.watchRun !== 403) throw new Error(`client triggered a covenant watch run (expected 403, got ${r.watchRun})`);
   });
 
   // The client CRM shows the hospitality/leisure/fitness category slice
