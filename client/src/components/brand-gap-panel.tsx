@@ -35,6 +35,17 @@ interface BrandGapResult {
     nearest_store: { name: string; address: string | null };
     gap_score: number;
   }>;
+  peerGaps?: Array<{
+    brand_company_id: string;
+    brand_name: string;
+    nearest_distance_km: number;
+    total_stores: number;
+    rollout_status: string | null;
+    company_type: string | null;
+    peer_schemes: string[];
+    has_live_requirement: boolean;
+  }>;
+  peerSchemesConsidered?: number;
   categorySignature: Record<string, number>;
   matchingRequirements?: Array<{
     id: string;
@@ -206,9 +217,47 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
             )}
           </div>
 
-          {/* Gap brands — missing from area. Sits to the right of the
-              chip lists on desktop so it doesn't stretch the card. */}
-          {data.gap.length > 0 && (
+          {/* Peer-scheme comparison — brands trading at other major UK
+              shopping centres but not at this one (Woody, 2026-08-04).
+              Falls back to the old distance-based list when store data
+              hasn't put anything at a peer scheme yet. */}
+          {(data.peerGaps?.length ? (
+            <div>
+              <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                <AlertCircle className="w-3 h-3 text-amber-500" />
+                At other shopping centres, not here ({data.peerGaps.length})
+                {data.peerSchemesConsidered ? <span className="text-muted-foreground/60">· vs {data.peerSchemesConsidered} UK schemes</span> : null}
+              </div>
+              <div className="space-y-0.5 max-h-[260px] overflow-y-auto pr-1">
+                {data.peerGaps.slice(0, 15).map(b => (
+                  <Link
+                    key={b.brand_company_id}
+                    href={`/companies/${b.brand_company_id}`}
+                    className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 min-w-0"
+                  >
+                    <span className="font-medium truncate flex-1 min-w-0">{b.brand_name}</span>
+                    {b.has_live_requirement && (
+                      <Badge className="text-[9px] bg-violet-100 text-violet-700 border-violet-200 shrink-0">live req</Badge>
+                    )}
+                    {(b.rollout_status === "scaling" || b.rollout_status === "entering_uk") && (
+                      <Badge className="text-[9px] bg-emerald-100 text-emerald-700 border-emerald-200 shrink-0">
+                        <TrendingUp className="w-2 h-2 mr-0.5" />{b.rollout_status === "scaling" ? "scaling" : "entering UK"}
+                      </Badge>
+                    )}
+                    <span
+                      className="text-[10px] text-muted-foreground shrink-0 truncate max-w-[150px]"
+                      title={b.peer_schemes.join(", ")}
+                    >
+                      {b.peer_schemes.slice(0, 2).join(", ")}{b.peer_schemes.length > 2 ? ` +${b.peer_schemes.length - 2}` : ""}
+                    </span>
+                  </Link>
+                ))}
+                {data.peerGaps.length > 15 && (
+                  <p className="text-[10px] text-muted-foreground pl-1">+{data.peerGaps.length - 15} more peer-scheme gaps</p>
+                )}
+              </div>
+            </div>
+          ) : data.gap.length > 0 && (
             <div>
               <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
                 <AlertCircle className="w-3 h-3 text-amber-500" />
@@ -245,7 +294,7 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
                 )}
               </div>
             </div>
-          )}
+          ))}
         </div>
 
         {data.onScheme.length === 0 && data.wider.length === 0 && data.gap.length === 0 && (
