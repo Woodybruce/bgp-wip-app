@@ -47,7 +47,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1505,6 +1505,28 @@ async function markRound(page, cross) {
     if (r.skip) return;
     if (!r.ownOk || !r.ownArray) throw new Error('client cannot read requirement matches on their own unit');
     if (r.foreignStatus !== 403) throw new Error(`client read matches on a foreign unit (expected 403, got ${r.foreignStatus})`);
+  });
+
+  // Brand-suggestions is the operator-pitch engine for a vacant unit —
+  // "who should we target for this space" (live requirements + tracked
+  // brands, AI-ranked). Distinct from the requirement-matches list above.
+  // A client sees it for their own unit (AI rank degrades gracefully with
+  // no key, so a healthy call is a 200 with a suggestions array) and is
+  // refused on a foreign landlord's unit.
+  await step(page, p, 'client-brand-suggestions-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = Array.isArray(units) ? units[0] : null;
+      if (!unit) return { skip: true };
+      const own = await fetch(`/api/available-units/${unit.id}/brand-suggestions`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const ownBody = own.ok ? await own.json().catch(() => null) : null;
+      const foreign = await fetch('/api/available-units/99999999-3333-3333-3333-333333333333/brand-suggestions', { headers: auth }).catch(() => ({ status: 0, ok: false }));
+      return { ownOk: own.ok, ownArray: Array.isArray(ownBody?.suggestions), foreignStatus: foreign.status };
+    });
+    if (r.skip) return;
+    if (!r.ownOk || !r.ownArray) throw new Error('client cannot read brand suggestions on their own unit');
+    if (r.foreignStatus !== 403) throw new Error(`client read brand suggestions on a foreign unit (expected 403, got ${r.foreignStatus})`);
   });
 
   await step(page, p, 'client-viewings-offers', async () => {
