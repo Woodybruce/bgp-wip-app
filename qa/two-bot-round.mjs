@@ -33,6 +33,7 @@ const IGNORED_RESPONSES = [
   /\/api\/brand\/[^/]+\/ai-take\//,      // 503 locally (no AI key) by design
   /\/api\/brand\/[^/]+\/(competitors\/research|rocketreach-company\/refresh)/, // 503 locally, no keys
   /\/api\/activity\/(brand|landlord)\/[^/]+$/, // AI relationship activity is own-company-only for clients (deliberate gateway rule); the client brand-profile panel fires it on slice brands and gets a safe 403. Own-company returns 200; cross-tenant isolation is covered by the rival-* scenarios.
+  /\/api\/interactions\//,               // raw correspondence (meetings/emails) is staff-only for clients — the client correspondence drawer fires /api/interactions/company/:id and gets a safe 403. The client-interactions-guard scenario is the authoritative lock that this stays blocked.
   /fonts|\.woff|\.map$/,
 ];
 
@@ -48,7 +49,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-interactions-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1134,8 +1135,12 @@ async function markRound(page, cross) {
   // engagement is client-allowed; the fetch/scrape trigger stays staff-only).
   await step(page, p, 'client-news-feed', async () => {
     await page.goto(`${BASE}/news`);
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1800);
+    // domcontentloaded, not networkidle: the feed streams external article
+    // thumbnails/social previews continuously, so the network never goes idle
+    // for 500ms and networkidle times out. The blank/dead-route checks below
+    // still catch a genuinely broken page.
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(3000);
     if (await page.getByText('Page not found').count()) throw new Error('news is a dead route for client');
     const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
     if (body.length < 40) throw new Error('news feed rendered blank for client');
@@ -1334,6 +1339,29 @@ async function markRound(page, cross) {
     });
     if (r.board !== 403) throw new Error(`client reached the board report (expected 403, got ${r.board})`);
     if (r.reporting !== 403) throw new Error(`client reached the reporting summary (expected 403, got ${r.reporting})`);
+  });
+
+  // The interactions surface is BGP's raw correspondence store — logged
+  // meetings and synced Outlook emails, per-company and per-contact, plus the
+  // BD engagement leaderboards. It's fully staff-only for clients (even their
+  // OWN company): a Landsec login only ever sees the curated AI activity
+  // summary on their own company, never the underlying meeting/email log or
+  // another firm's. All of /api/interactions/* must refuse a client.
+  await step(page, p, 'client-interactions-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return {
+        own: await g('/api/interactions/company/11111111-1111-1111-1111-111111111111'),
+        rival: await g('/api/interactions/company/99999999-1111-1111-1111-111111111111'),
+        summary: await g('/api/interactions/summary'),
+        leaderboard: await g('/api/interactions/leaderboard'),
+      };
+    });
+    if (r.own !== 403) throw new Error(`client read raw correspondence for their own company (expected 403, got ${r.own})`);
+    if (r.rival !== 403) throw new Error(`client read a rival's correspondence log (expected 403, got ${r.rival})`);
+    if (r.summary !== 403) throw new Error(`client reached the interactions summary (expected 403, got ${r.summary})`);
+    if (r.leaderboard !== 403) throw new Error(`client reached the BD engagement leaderboard (expected 403, got ${r.leaderboard})`);
   });
 
   // The Lease Events board is BGP's lease-advisory BD pipeline (rent reviews,
