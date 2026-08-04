@@ -3164,7 +3164,7 @@ function AskChatBGPInline({ brandName }: { brandName: string }) {
 // brand actually sells. Auto-switches between "Menu Highlights"
 // (restaurants / cafés / F&B) and "Best Sellers" (retail) using a
 // keyword check against company_type + industry.
-function MenuIntelCard({
+export function MenuIntelCard({
   companyId,
   companyName,
   industry,
@@ -4088,7 +4088,7 @@ export function BrandComplianceCard({
 // a tenant, where they're on a target list (letting tracker + leasing
 // schedule), what's actually been pitched (with the evidence), and which
 // available units we should pitch them next.
-function PortfolioActivityBlock({ companyId }: { companyId: string }) {
+export function PortfolioActivityBlock({ companyId }: { companyId: string }) {
   const { data: act } = useQuery<any>({
     queryKey: ["/api/brands", companyId, "portfolio-activity"],
     queryFn: async () => {
@@ -4187,7 +4187,7 @@ function PortfolioActivityBlock({ companyId }: { companyId: string }) {
 // conversation doesn't mean losing the page. Reuses the group-chat machinery:
 // one thread per company (linked_id), ChatBGP as a member, so plain message
 // POSTs get a real Fable answer server-side and we just poll the thread.
-function CompanyMiniChat({ companyId, companyName, fill }: { companyId: string; companyName: string; fill?: boolean }) {
+export function CompanyMiniChat({ companyId, companyName, fill }: { companyId: string; companyName: string; fill?: boolean }) {
   const [threadId, setThreadId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);

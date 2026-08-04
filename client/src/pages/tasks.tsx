@@ -265,7 +265,7 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
         </div>
       </div>
 
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+      <div className="flex items-center gap-1 opacity-60 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex-shrink-0">
         <Button variant="ghost" size="sm" className={`h-7 w-7 p-0 ${task.is_pinned ? "text-amber-500 opacity-100" : ""}`} onClick={onPin} title={task.is_pinned ? "Unpin" : "Pin to top"} data-testid={`task-pin-${task.id}`}>
           <Pin className="w-3.5 h-3.5" />
         </Button>

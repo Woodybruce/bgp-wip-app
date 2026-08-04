@@ -943,6 +943,77 @@ export function registerInteractionRoutes(app: Express) {
     res.status(202).json({ started: true, startedAt: interactionSyncState.startedAt });
   });
 
+  // Manual capture from the Outlook add-in: file the open email as an
+  // interaction against a matched contact/company/deal. The Graph sync
+  // covers passive capture; this is the in-the-moment path. microsoft_id
+  // (the Outlook item id) dedupes repeat clicks and overlap with the sync.
+  app.post("/api/interactions/log", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { contactId, companyId, dealId, subject, preview, senderEmail, senderName, microsoftId, interactionDate, direction } = req.body || {};
+      if (!contactId && !companyId && !dealId) {
+        return res.status(400).json({ error: "link the interaction to a contact, company, or deal" });
+      }
+      if (microsoftId) {
+        const dupe = await pool.query(
+          `SELECT id FROM crm_interactions WHERE microsoft_id = $1 LIMIT 1`, [String(microsoftId)]
+        );
+        if (dupe.rows[0]) return res.json({ logged: false, alreadyLogged: true, id: dupe.rows[0].id });
+      }
+
+      // crm_interactions.contact_id is NOT NULL — resolve the sender to a
+      // contact: the picked one, else an email match, else a new contact row
+      // on the matched company (mirrors what the Graph sync does for
+      // unknown-but-relevant senders).
+      let resolvedContactId = contactId || null;
+      if (!resolvedContactId && senderEmail) {
+        const byEmail = await pool.query(
+          `SELECT id FROM crm_contacts WHERE lower(email) = lower($1) LIMIT 1`, [String(senderEmail)]
+        );
+        resolvedContactId = byEmail.rows[0]?.id || null;
+      }
+      let contactCreated = false;
+      if (!resolvedContactId) {
+        if (!senderEmail) return res.status(400).json({ error: "no contact match and no sender email to create one from" });
+        let companyName: string | null = null;
+        if (companyId) {
+          const co = await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId]);
+          companyName = co.rows[0]?.name || null;
+        }
+        const created = await pool.query(
+          `INSERT INTO crm_contacts (name, email, company_id, company_name, notes)
+           VALUES ($1, $2, $3, $4, 'Added from the Outlook add-in')
+           RETURNING id`,
+          [String(senderName || senderEmail).slice(0, 200), String(senderEmail).slice(0, 200), companyId || null, companyName]
+        );
+        resolvedContactId = created.rows[0].id;
+        contactCreated = true;
+      }
+
+      const ins = await pool.query(
+        `INSERT INTO crm_interactions
+           (contact_id, company_id, deal_id, type, direction, subject, preview, participants, microsoft_id, match_method, interaction_date, bgp_user)
+         VALUES ($1, $2, $3, 'email', $4, $5, $6, $7, $8, 'outlook-addin', $9, $10)
+         RETURNING id`,
+        [
+          resolvedContactId,
+          companyId || null,
+          dealId || null,
+          direction === "outbound" ? "outbound" : "inbound",
+          String(subject || "").slice(0, 500) || "(no subject)",
+          String(preview || "").slice(0, 1000) || null,
+          JSON.stringify(senderEmail ? [String(senderEmail)] : []),
+          microsoftId ? String(microsoftId) : null,
+          interactionDate ? new Date(interactionDate) : new Date(),
+          (req as any).user?.name || (req as any).user?.username || null,
+        ]
+      );
+      res.json({ logged: true, id: ins.rows[0].id, contactId: resolvedContactId, contactCreated });
+    } catch (err: any) {
+      console.error("[interactions/log]", err?.message);
+      res.status(500).json({ error: err?.message || "failed to log interaction" });
+    }
+  });
+
   app.get("/api/interactions/sync-status", requireAuth, async (_req: Request, res: Response) => {
     res.json({
       running: interactionSyncState.running,

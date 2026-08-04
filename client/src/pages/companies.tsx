@@ -61,6 +61,8 @@ import { EntityPicker } from "@/components/entity-picker";
 import { InlineAddress } from "@/components/address-autocomplete";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty } from "@shared/schema";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
+import { MobileBrandView } from "@/components/mobile-brand-view";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { LenderPanel } from "@/components/lender-panel";
 import { PropertiesSummary } from "@/components/properties-summary";
 
@@ -1076,6 +1078,7 @@ function getCompanyBgpContacts(company: CrmCompany): string[] {
 function CompanyDetail({ id }: { id: string }) {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const isMobile = useIsMobile();
   const [editOpen, setEditOpen] = useState(false);
   // Client logins get a read-only view — hide BGP staff editing controls.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -1267,6 +1270,33 @@ function CompanyDetail({ id }: { id: string }) {
   const globalAddressText = globalAddress ? [globalAddress.street, globalAddress.city, globalAddress.country].filter(Boolean).join(", ") : "";
   const addressText = ukAddressText || globalAddressText;
   const hasGlobalHq = !!ukAddressText && !!globalAddressText && ukAddressText !== globalAddressText;
+
+  // Phone widths get the stacked MobileBrandView — the desktop three-column
+  // brand profile renders effectively blank on a phone. Lenders keep the
+  // desktop panel (staff-only surface, no mobile equivalent yet).
+  if (isMobile && !isLenderCo) {
+    return (
+      <div className="overflow-x-hidden" data-testid="company-detail-mobile">
+        <div className="flex items-center gap-2 px-4 pt-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="shrink-0 px-2"
+            data-testid="button-back-companies-mobile"
+            onClick={() => {
+              if (window.history.length > 1) window.history.back();
+              else navigate("/companies");
+            }}
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <CompanyLogoImg domain={company.domainUrl || company.domain} name={company.name} size={32} />
+          <h1 className="text-base font-bold truncate min-w-0" data-testid="text-company-detail-name">{company.name}</h1>
+        </div>
+        <MobileBrandView companyId={id} />
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 sm:p-6 space-y-6 overflow-x-hidden" data-testid="company-detail">

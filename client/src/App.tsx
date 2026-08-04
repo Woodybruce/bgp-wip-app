@@ -199,7 +199,7 @@ const CLIENT_ALLOWED_ROUTES = [
   "/contacts", "/companies", "/comps", "/chatbgp", "/requirements",
   "/deals", "/tasks", "/today", "/leasing-schedule", "/land-registry",
   "/business-rates", "/m/images", "/cad-measure", "/settings/profile",
-  "/news",
+  "/news", "/available",
   // Task-25 client surfaces — the nav showed these but this guard bounced
   // the click back to the dashboard ("still bounces", 2026-08-02).
   "/calendar", "/sharepoint",
@@ -259,6 +259,9 @@ function Router() {
       <Route path="/decks/:id" component={DeckDetail} />
       <Route path="/image-studio">{() => <AdminRoute><ImageStudio /></AdminRoute>}</Route>
       <Route path="/settings" component={SettingsPage} />
+      {/* /settings/profile is on the client allow-list (mobile shell links
+          it) but had no route — pasted links landed on NotFound. */}
+      <Route path="/settings/profile" component={SettingsPage} />
       <Route path="/comps" component={Comps} />
       <Route path="/comps/:id" component={Comps} />
       <Route path="/admin/comps-leads">{() => <AdminRoute><CompsLeadsRedirect /></AdminRoute>}</Route>
