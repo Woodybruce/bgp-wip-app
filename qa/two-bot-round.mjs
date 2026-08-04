@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1744,6 +1744,31 @@ async function markRound(page, cross) {
     if (r.dataHealth !== 403) throw new Error(`client reached the CRM data-health review queue (expected 403, got ${r.dataHealth})`);
     if (r.sweep !== 403) throw new Error(`client triggered a CRM data-health sweep (expected 403, got ${r.sweep})`);
     if (r.verify !== 403) throw new Error(`client triggered AI contact verification (expected 403, got ${r.verify})`);
+  });
+
+  // Apollo org enrichment (firmographics on a brand): a client may READ the
+  // cached enrichment for a brand in their own slice (it's brand intelligence,
+  // like the rest of the profile), but must NOT be able to trigger the paid
+  // /refresh (it burns Apollo API credits) and must not read or refresh a
+  // brand outside their scope. Proves the read is scope-gated and the paid
+  // write stays staff-only.
+  await step(page, p, 'client-apollo-enrichment-scope', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const slice = '77777777-7777-7777-7777-777777777777';
+      const rival = '99999999-1111-1111-1111-111111111111';
+      const g = async (url, opts) => (await fetch(url, opts || { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return {
+        readSlice: await g(`/api/brand/${slice}/apollo-company`),
+        readRival: await g(`/api/brand/${rival}/apollo-company`),
+        refreshSlice: await g(`/api/brand/${slice}/apollo-company/refresh`, { method: 'POST', credentials: 'include', headers: auth, body: '{}' }),
+        refreshRival: await g(`/api/brand/${rival}/apollo-company/refresh`, { method: 'POST', credentials: 'include', headers: auth, body: '{}' }),
+      };
+    });
+    if (![200, 204].includes(r.readSlice)) throw new Error(`client apollo read on a slice brand should be allowed (expected 200/204, got ${r.readSlice})`);
+    if (r.readRival !== 403) throw new Error(`client read apollo enrichment on a rival brand (expected 403, got ${r.readRival})`);
+    if (r.refreshSlice !== 403) throw new Error(`client triggered a paid apollo refresh on a slice brand (expected 403, got ${r.refreshSlice})`);
+    if (r.refreshRival !== 403) throw new Error(`client triggered a paid apollo refresh on a rival brand (expected 403, got ${r.refreshRival})`);
   });
 
   // The client CRM shows the hospitality/leisure/fitness category slice
