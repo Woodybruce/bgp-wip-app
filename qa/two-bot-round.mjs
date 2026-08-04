@@ -47,7 +47,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -553,6 +553,22 @@ async function victoriaRound(page, cross) {
     if (tripped) throw new Error(`${tripped} error boundary(ies) tripped on the staff brand profile`);
     const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
     if (body.length < 100) throw new Error('staff brand profile rendered nearly blank');
+  });
+
+  // Document Studio catalog (KYC / PLA / Why-Buy brief generation) is a live
+  // staff feature — the catalog must list at least one brief type, so the
+  // client-side guard below is proving a real surface is sealed, not a dead
+  // route.
+  await step(page, p, 'staff-document-briefs-catalog', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/document-briefs', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = await res.json().catch(() => null);
+      return { ok: true, count: Array.isArray(body) ? body.length : 0 };
+    });
+    if (!r.ok) throw new Error(`staff document-briefs catalog unhealthy (${r.status})`);
+    if (!r.count) throw new Error('staff document-briefs catalog is empty (feature dead?)');
   });
 
   // 4k. Agent logs a viewing on a Landsec unit — the client round then checks
@@ -1255,6 +1271,21 @@ async function markRound(page, cross) {
     });
     if (r.list !== 403) throw new Error(`client reached the lease-events board (expected 403, got ${r.list})`);
     if (r.digest !== 403) throw new Error(`client reached the lease-events digest (expected 403, got ${r.digest})`);
+  });
+
+  // Document Studio (KYC / PLA / Why-Buy brief generation) is a staff
+  // advisory tool — a client login must never list the catalog nor run a
+  // brief (would expose BGP's internal document-generation pipeline). Sealed
+  // by the server gateway allowlist (document-briefs isn't client-allowed).
+  await step(page, p, 'client-document-briefs-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = (await fetch('/api/document-briefs', { headers: auth }).catch(() => ({ status: 0 }))).status;
+      const run = (await fetch('/api/document-briefs/kyc/run', { method: 'POST', headers: auth, body: JSON.stringify({ propertyId: '22222222-2222-2222-2222-222222222222' }) }).catch(() => ({ status: 0 }))).status;
+      return { list, run };
+    });
+    if (r.list !== 403) throw new Error(`client listed the document-briefs catalog (expected 403, got ${r.list})`);
+    if (r.run !== 403) throw new Error(`client ran a document brief (expected 403, got ${r.run})`);
   });
 
   // The Hunters boards are BGP's BD prospecting engine — the letting hunter
