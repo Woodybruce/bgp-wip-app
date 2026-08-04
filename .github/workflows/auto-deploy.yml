@@ -74,7 +74,7 @@ jobs:
           echo "app did not come up"; tail -50 /tmp/smoke-app.log; exit 1
 
       - name: Run smoke suite
-        run: SMOKE_BASE=http://localhost:5000 node qa/smoke.mjs
+        run: SMOKE_BASE=http://localhost:5000 DATABASE_URL="postgresql://postgres@localhost:5432/bgpsmoke" node qa/smoke.mjs
 
       - name: App log on failure
         if: failure()

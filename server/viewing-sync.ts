@@ -41,7 +41,9 @@ const BGP_DOMAIN = "@brucegillinghampollard.com";
 export function looksLikeViewing(subject: string | null | undefined, categories?: string[] | null): boolean {
   const s = (subject || "").toLowerCase();
   if ((categories || []).some(c => (c || "").toLowerCase().includes("viewing"))) return true;
-  return /\bview(ing)?\b/.test(s);
+  // Site tours, walk-arounds and inspections ARE viewings — same rule the
+  // dashboard Team Calendar uses (Woody, 2026-08-04: inspection = viewing).
+  return /\bview(ing)?\b|\bsite tour\b|\bwalk ?(a)?round\b|\binspection\b/.test(s);
 }
 
 function norm(s: string | null | undefined): string {
@@ -72,38 +74,81 @@ async function loadTrackerUnits(): Promise<TrackerUnit[]> {
   }));
 }
 
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 // Resolve the tracker unit an event refers to, or null if it can't be
-// anchored confidently.
-function resolveUnit(hay: string, units: TrackerUnit[]): TrackerUnit | null {
+// anchored confidently. companyId (the matched external contact's company)
+// breaks ties on multi-unit properties: if that company has exactly one
+// live deal-linked unit at the property, that's the unit being viewed.
+async function resolveUnit(hay: string, units: TrackerUnit[], companyId?: string | null): Promise<TrackerUnit | null> {
   // Property first — longest matching name wins (≥5 chars, comma-tail
-  // stripped, same rule as the client team-events sync).
+  // stripped, same rule as the client team-events sync). Full names rarely
+  // appear verbatim in diary subjects ("Bluewater" not "Bluewater Shopping
+  // Centre"), so a distinctive first word (≥6 chars, unique across
+  // properties) matches too.
   const byProperty = new Map<string, { name: string; units: TrackerUnit[] }>();
   for (const u of units) {
     if (!byProperty.has(u.propertyId)) byProperty.set(u.propertyId, { name: u.propertyName, units: [] });
     byProperty.get(u.propertyId)!.units.push(u);
   }
-  let prop: { name: string; units: TrackerUnit[] } | null = null;
-  let bestLen = 0;
+  const firstWordCounts = new Map<string, number>();
   for (const p of byProperty.values()) {
+    const w = norm(p.name).split(/[\s,]+/)[0] || "";
+    firstWordCounts.set(w, (firstWordCounts.get(w) || 0) + 1);
+  }
+  let prop: { id: string; name: string; units: TrackerUnit[] } | null = null;
+  let bestLen = 0;
+  for (const [pid, p] of byProperty.entries()) {
     const needle = norm(p.name.replace(/,.*$/, "").trim());
     if (needle.length >= 5 && hay.includes(needle) && needle.length > bestLen) {
-      prop = p; bestLen = needle.length;
+      prop = { id: pid, ...p }; bestLen = needle.length;
+      continue;
+    }
+    const firstWord = norm(p.name).split(/[\s,]+/)[0] || "";
+    if (
+      firstWord.length >= 6 &&
+      firstWordCounts.get(firstWord) === 1 &&
+      new RegExp(`\\b${escapeRe(firstWord)}\\b`).test(hay) &&
+      firstWord.length > bestLen
+    ) {
+      prop = { id: pid, ...p }; bestLen = firstWord.length;
     }
   }
   if (!prop) return null;
 
-  // Unit name within the property — longest named match wins.
+  // Unit name within the property — unit names are stored with the scheme
+  // appended ("MSU9, Bluewater, Bluewater"), so match on the first comma
+  // segment, word-bounded ("U1" must not hit "U124"). Longest match wins.
   let unit: TrackerUnit | null = null;
   let bestUnitLen = 0;
   for (const u of prop.units) {
-    const needle = norm(u.unitName.trim());
-    if (needle.length >= 2 && hay.includes(needle) && needle.length > bestUnitLen) {
+    const needle = norm((u.unitName.split(",")[0] || "").trim());
+    if (needle.length >= 2 && new RegExp(`\\b${escapeRe(needle)}\\b`).test(hay) && needle.length > bestUnitLen) {
       unit = u; bestUnitLen = needle.length;
     }
   }
   if (unit) return unit;
   // No unit named but the property only has one tracker unit → unambiguous.
-  return prop.units.length === 1 ? prop.units[0] : null;
+  if (prop.units.length === 1) return prop.units[0];
+  // Multi-unit property: anchor via the attendee's company — the unit whose
+  // linked deal has that company as tenant, when there's exactly one.
+  if (companyId) {
+    try {
+      const r = await pool.query(
+        `SELECT au.id FROM available_units au
+           JOIN crm_deals d ON d.id = au.deal_id
+          WHERE au.property_id = $1 AND d.tenant_id = $2
+          LIMIT 2`,
+        [prop.id, companyId]
+      );
+      if (r.rows.length === 1) {
+        return prop.units.find(u => u.id === r.rows[0].id) || null;
+      }
+    } catch { /* tiebreak is best-effort */ }
+  }
+  return null;
 }
 
 export async function syncDiaryViewings(events: DiaryEvent[], mailboxEmail: string): Promise<number> {
@@ -119,10 +164,9 @@ export async function syncDiaryViewings(events: DiaryEvent[], mailboxEmail: stri
   for (const event of candidates) {
     try {
       const hay = norm(`${event.subject || ""} ${event.location?.displayName || ""} ${event.bodyPreview || ""}`);
-      const unit = resolveUnit(hay, units);
-      if (!unit) continue;
 
-      // External attendees → tenant contact/company.
+      // External attendees → tenant contact/company. Resolved BEFORE the
+      // unit so the company can break ties on multi-unit properties.
       const external = [
         event.organizer?.emailAddress,
         ...(event.attendees || []).map(a => a?.emailAddress),
@@ -146,6 +190,9 @@ export async function syncDiaryViewings(events: DiaryEvent[], mailboxEmail: stri
           };
         }
       }
+
+      const unit = await resolveUnit(hay, units, contact?.companyId);
+      if (!unit) continue;
 
       const { date, time } = londonDateTime(event.start!);
       const attendeeText = external
@@ -222,12 +269,12 @@ export async function syncOfferEmails(messages: InboxMessage[], mailboxEmail: st
   for (const msg of candidates) {
     try {
       const hay = norm(`${msg.subject || ""} ${msg.bodyPreview || ""}`);
-      const unit = resolveUnit(hay, units);
-      if (!unit) continue;
 
       // The offering party: a non-BGP participant we know in the CRM. No
       // known external contact → too weak a signal, skip (keeps "special
       // offer" newsletters that happen to name a scheme out of the tracker).
+      // Resolved BEFORE the unit so the company can break ties on
+      // multi-unit properties.
       const external = [
         msg.from?.emailAddress,
         ...(msg.toRecipients || []).map(r => r?.emailAddress),
@@ -246,6 +293,9 @@ export async function syncOfferEmails(messages: InboxMessage[], mailboxEmail: st
       );
       if (!contactRes.rows.length) continue;
       const contact = contactRes.rows[0];
+
+      const unit = await resolveUnit(hay, units, contact.company_id);
+      if (!unit) continue;
 
       // Already logged? Same unit + company with an offer in the last 60
       // days (manual or synced) means the tracker is up to date — skip.

@@ -15,6 +15,7 @@
 
 import { chromium } from '../node_modules/playwright/index.mjs';
 import { mkdirSync } from 'fs';
+import { spawnSync } from 'child_process';
 
 const BASE = process.env.SMOKE_BASE || 'http://localhost:5000';
 const SHOTS = new URL('./smoke-shots/', import.meta.url).pathname;
@@ -219,6 +220,21 @@ console.log('── client (Mark, Landsec) ──');
 }
 
 await browser.close();
+
+// ─── O365 → tracker auto-collection (viewings + offers) ──────────────────
+// Deterministic matcher/dedupe check against the fixture DB — the piece
+// that silently produced zero tracker viewings in production. Needs direct
+// DB access, so it only runs when DATABASE_URL is provided (CI does).
+if (process.env.DATABASE_URL) {
+  console.log('── tracker sync (viewings + offers) ──');
+  const r = spawnSync('npx', ['tsx', new URL('./tracker-sync-check.ts', import.meta.url).pathname], {
+    env: process.env, encoding: 'utf8', timeout: 120000,
+  });
+  if (r.stdout) process.stdout.write(r.stdout.split('\n').map(l => l ? '  ' + l : l).join('\n'));
+  check('tracker sync: viewing + offer auto-collection', r.status === 0, r.status === 0 ? '' : (r.stderr || '').slice(0, 200));
+} else {
+  console.log('── tracker sync check skipped (no DATABASE_URL) ──');
+}
 
 console.log(`\n── smoke complete: ${checks} checks, ${failures.length} failure${failures.length === 1 ? '' : 's'} ──`);
 for (const f of failures) console.log(`  ✗ ${f.name}${f.detail ? ` — ${f.detail}` : ''}`);

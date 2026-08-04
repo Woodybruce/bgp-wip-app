@@ -41,4 +41,4 @@ curl -s -o /dev/null --max-time 2 "http://localhost:$PORT/" \
   || { echo "[smoke] app did not come up on :$PORT — see /tmp/smoke-app.log"; exit 2; }
 
 # 4. Run the suite (exit code propagates).
-SMOKE_BASE="http://localhost:$PORT" node qa/smoke.mjs
+SMOKE_BASE="http://localhost:$PORT" DATABASE_URL="postgresql://postgres@127.0.0.1:5432/$DB" node qa/smoke.mjs
