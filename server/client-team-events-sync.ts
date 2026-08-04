@@ -84,75 +84,98 @@ export async function syncClientTeamEvents(clientCompanyId: string): Promise<{
   type Ev = { title: string; start: string; end: string; location: string; propertyId: string | null; uid: string; attendees: string[] };
   const matchedEvents = new Map<string, Ev>();
 
+  const isClientAddress = (addr: string): boolean => {
+    if (!addr) return false;
+    if (contactEmails.has(addr)) return true;
+    const dom = addr.split("@")[1];
+    return !!dom && clientDomains.has(dom);
+  };
+
+  const considerEvent = (e: any): void => {
+    stats.scanned++;
+    const subject = e.subject || "";
+    const location = e.location?.displayName || "";
+    const hay = norm(subject + " " + location);
+    if (!hay.trim()) return;
+    if (PERSONAL_PATTERNS.some(re => re.test(subject))) return;
+
+    // Match 1: client property name or the word "landsec" in subject/location.
+    let propertyId: string | null = null;
+    let matched = hay.includes(norm(companyName));
+    if (!matched) {
+      const hit = propMatchers.find(m => hay.includes(m.needle));
+      if (hit) { matched = true; propertyId = hit.id; }
+    }
+    // Match 2 (broader): a client contact is the organiser or an attendee,
+    // or ANY attendee is on the client's email domain (new joiners aren't
+    // in CRM yet). Organiser matters for invite-mailbox events — a meeting
+    // Mark creates has him as organiser, not attendee.
+    if (!matched) matched = isClientAddress(norm(e.organizer?.emailAddress?.address));
+    if (!matched && Array.isArray(e.attendees)) {
+      matched = e.attendees.some((a: any) => isClientAddress(norm(a?.emailAddress?.address)));
+    }
+    if (!matched) return;
+
+    stats.matched++;
+    const uid2 = e.iCalUId || `${subject}|${e.start?.dateTime}`;
+    if (!matchedEvents.has(uid2)) {
+      // "Name <email>" per attendee so the client's Event Details can
+      // show who is in the room.
+      const attendeeList: string[] = Array.isArray(e.attendees)
+        ? e.attendees
+            .map((a: any) => {
+              const nm = a?.emailAddress?.name || "";
+              const ad = a?.emailAddress?.address || "";
+              return nm && ad ? `${nm} <${ad}>` : (nm || ad);
+            })
+            .filter(Boolean)
+            .slice(0, 30)
+        : [];
+      matchedEvents.set(uid2, {
+        title: subject || "Meeting",
+        start: e.start?.dateTime,
+        end: e.end?.dateTime,
+        location,
+        propertyId,
+        uid: uid2,
+        attendees: attendeeList,
+      });
+    }
+  };
+
+  const CAL_SELECT = "$select=subject,start,end,location,attendees,organizer,iCalUId,isAllDay,showAs";
+
   for (const uid of teamUserIds) {
     const token = await getDelegatedGraphTokenForUser(uid).catch(() => null);
     if (!token) continue;
     stats.connected++;
     try {
-      const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${start.toISOString()}&endDateTime=${end.toISOString()}&$top=100&$orderby=start/dateTime&$select=subject,start,end,location,attendees,iCalUId,isAllDay,showAs`;
+      const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${start.toISOString()}&endDateTime=${end.toISOString()}&$top=100&$orderby=start/dateTime&${CAL_SELECT}`;
       const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}`, Prefer: 'outlook.timezone="Europe/London"' },
       });
       if (!res.ok) continue;
       const data = await res.json();
-      const events = data.value || [];
-      for (const e of events) {
-        stats.scanned++;
-        const subject = e.subject || "";
-        const location = e.location?.displayName || "";
-        const hay = norm(subject + " " + location);
-        if (!hay.trim()) continue;
-        if (PERSONAL_PATTERNS.some(re => re.test(subject))) continue;
-
-        // Match 1: client property name or the word "landsec" in subject/location.
-        let propertyId: string | null = null;
-        let matched = hay.includes(norm(companyName));
-        if (!matched) {
-          const hit = propMatchers.find(m => hay.includes(m.needle));
-          if (hit) { matched = true; propertyId = hit.id; }
-        }
-        // Match 2 (broader): a client contact is an attendee, or ANY attendee
-        // is on the client's email domain (new joiners aren't in CRM yet).
-        if (!matched && Array.isArray(e.attendees)) {
-          matched = e.attendees.some((a: any) => {
-            const addr = norm(a?.emailAddress?.address);
-            if (!addr) return false;
-            if (contactEmails.has(addr)) return true;
-            const dom = addr.split("@")[1];
-            return !!dom && clientDomains.has(dom);
-          });
-        }
-        if (!matched) continue;
-
-        stats.matched++;
-        const uid2 = e.iCalUId || `${subject}|${e.start?.dateTime}`;
-        if (!matchedEvents.has(uid2)) {
-          // "Name <email>" per attendee so the client's Event Details can
-          // show who is in the room.
-          const attendeeList: string[] = Array.isArray(e.attendees)
-            ? e.attendees
-                .map((a: any) => {
-                  const nm = a?.emailAddress?.name || "";
-                  const ad = a?.emailAddress?.address || "";
-                  return nm && ad ? `${nm} <${ad}>` : (nm || ad);
-                })
-                .filter(Boolean)
-                .slice(0, 30)
-            : [];
-          matchedEvents.set(uid2, {
-            title: subject || "Meeting",
-            start: e.start?.dateTime,
-            end: e.end?.dateTime,
-            location,
-            propertyId,
-            uid: uid2,
-            attendees: attendeeList,
-          });
-        }
-      }
+      for (const e of data.value || []) considerEvent(e);
     } catch (err: any) {
       console.warn(`[client-events-sync] member ${uid} failed:`, err?.message);
     }
+  }
+
+  // Invite-mailbox leg: the client can put a meeting on the app with NO BGP
+  // human invited by adding the shared ChatBGP mailbox as an attendee —
+  // Exchange drops the invite onto that mailbox's calendar (tentative, no
+  // acceptance needed) and this sweep picks it up. Same match rules as the
+  // team diaries, so a stray invite from a non-client never leaks through.
+  try {
+    const { graphRequest } = await import("./shared-mailbox");
+    const data = await graphRequest(
+      `/users/chatbgp@brucegillinghampollard.com/calendarView?startDateTime=${start.toISOString()}&endDateTime=${end.toISOString()}&$top=100&$orderby=start/dateTime&${CAL_SELECT}`,
+      { headers: { Prefer: 'outlook.timezone="Europe/London"' } }
+    );
+    for (const e of data?.value || []) considerEvent(e);
+  } catch (err: any) {
+    console.warn("[client-events-sync] invite-mailbox sweep failed:", err?.message);
   }
 
   // Idempotent replace: clear this client's previously-synced events, reinsert.

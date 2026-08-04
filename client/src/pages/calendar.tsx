@@ -4,7 +4,11 @@ import { CRM_OPTIONS } from "@/lib/crm-options";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiRequest, getQueryFn, getAuthHeaders } from "@/lib/queryClient";
+import { apiRequest, getQueryFn, getAuthHeaders, queryClient } from "@/lib/queryClient";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import {
   Calendar as CalendarIcon,
   Clock,
@@ -41,6 +45,7 @@ import {
   Shield,
   ArrowRight,
   Loader2,
+  Plus,
 } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Link } from "wouter";
@@ -1245,6 +1250,88 @@ function UpcomingList({ events, selectedDate, onSelectEvent }: { events: Calenda
 }
 
 
+// Client "+ Add event": writes a team_events row (the server forces the
+// caller's company attribution), so the meeting shows on this company's
+// calendar for every login immediately — no Outlook involvement.
+function AddEventDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [title, setTitle] = useState("");
+  const [date, setDate] = useState(today);
+  const [startTime, setStartTime] = useState("10:00");
+  const [endTime, setEndTime] = useState("11:00");
+  const [location, setLocation] = useState("");
+  const [notes, setNotes] = useState("");
+
+  const reset = () => { setTitle(""); setDate(today); setStartTime("10:00"); setEndTime("11:00"); setLocation(""); setNotes(""); };
+
+  const create = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/team-events", {
+        title: title.trim(),
+        event_type: "meeting",
+        start_time: `${date}T${startTime}:00`,
+        end_time: `${date}T${endTime}:00`,
+        location: location.trim() || null,
+        notes: notes.trim() || null,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/team-events"] });
+      onOpenChange(false);
+      reset();
+    },
+  });
+
+  const valid = title.trim().length > 0 && date && startTime && endTime && endTime > startTime;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md" data-testid="add-event-dialog">
+        <DialogHeader>
+          <DialogTitle>Add event</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="ae-title">Title</Label>
+            <Input id="ae-title" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Portfolio review — Liverpool ONE" data-testid="add-event-title" />
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="ae-date">Date</Label>
+              <Input id="ae-date" type="date" value={date} onChange={e => setDate(e.target.value)} data-testid="add-event-date" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ae-start">Start</Label>
+              <Input id="ae-start" type="time" value={startTime} onChange={e => setStartTime(e.target.value)} data-testid="add-event-start" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ae-end">End</Label>
+              <Input id="ae-end" type="time" value={endTime} onChange={e => setEndTime(e.target.value)} data-testid="add-event-end" />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ae-location">Location <span className="text-muted-foreground font-normal">(optional)</span></Label>
+            <Input id="ae-location" value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. Bluewater management suite" data-testid="add-event-location" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ae-notes">Notes <span className="text-muted-foreground font-normal">(optional)</span></Label>
+            <Textarea id="ae-notes" value={notes} onChange={e => setNotes(e.target.value)} rows={2} data-testid="add-event-notes" />
+          </div>
+          {create.isError && <p className="text-xs text-red-600">Couldn't save the event — please try again.</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button size="sm" disabled={!valid || create.isPending} onClick={() => create.mutate()} data-testid="add-event-save">
+            {create.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />}
+            Add event
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function Calendar() {
   const { data: currentUser } = useQuery<{ team?: string; name?: string; email?: string }>({
     queryKey: ["/api/auth/me"],
@@ -1257,6 +1344,7 @@ export default function Calendar() {
   // A 5-column week grid is unreadable on a phone — mobile starts in Day view.
   const [viewMode, setViewMode] = useState<ViewMode>(isMobile ? "day" : "workWeek");
   const [showCrmEvents, setShowCrmEvents] = useState(true);
+  const [showAddEvent, setShowAddEvent] = useState(false);
   const [showOutlookEvents, setShowOutlookEvents] = useState(true);
   const [showTeam, setShowTeam] = useState(true);
   const [teamFilter, setTeamFilter] = useState<string | null>(null);
@@ -1433,6 +1521,11 @@ export default function Calendar() {
             <ChevronRight className="w-4 h-4" />
           </Button>
           <Button variant="outline" size="sm" className="text-xs h-7 px-3" onClick={() => setSelectedDate(new Date())} data-testid="button-today">Today</Button>
+          {isClientViewer && (
+            <Button size="sm" className="text-xs h-7 px-3" onClick={() => setShowAddEvent(true)} data-testid="button-add-event">
+              <Plus className="w-3.5 h-3.5 mr-1" />Add event
+            </Button>
+          )}
           <span className="text-sm font-semibold ml-2 hidden sm:inline">{headerLabel}</span>
         </div>
 
@@ -1566,6 +1659,8 @@ export default function Calendar() {
           </div>
         </div>
       )}
+
+      <AddEventDialog open={showAddEvent} onOpenChange={setShowAddEvent} />
     </div>
   );
 }

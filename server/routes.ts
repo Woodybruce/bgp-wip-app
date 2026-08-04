@@ -1365,9 +1365,20 @@ export async function registerRoutes(
   app.post("/api/team-events", requireAuth, async (req, res) => {
     try {
       const { pool } = await import("./db");
-      const { title, event_type, start_time, end_time, property_id, property_name, deal_id, company_name, location, attendees, notes, created_by } = req.body;
+      const { title, event_type, start_time, end_time, property_id, property_name, deal_id, location, attendees, notes } = req.body;
+      let { company_name, created_by } = req.body;
       if (!title || typeof title !== "string" || !start_time || !end_time) {
         return res.status(400).json({ message: "Title, start_time, and end_time are required" });
+      }
+      // Client logins (and staff in client view) can only create events on
+      // their own company's calendar — force the attribution so the event
+      // shows up for (and only for) their company, whatever the body says.
+      const scope = await resolveCompanyScope(req);
+      if (scope) {
+        const c = await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [scope]);
+        if (!c.rows[0]?.name) return res.status(403).json({ message: "Company scope not found" });
+        company_name = c.rows[0].name;
+        created_by = req.session?.userId || (req as any).tokenUserId;
       }
       const result = await pool.query(
         `INSERT INTO team_events (title, event_type, start_time, end_time, property_id, property_name, deal_id, company_name, location, attendees, notes, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
