@@ -243,11 +243,20 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         ]}
       />
       <div className="flex items-center gap-2 flex-wrap">
-        <Link href={isComps ? "/comps" : "/deals"}>
-          <Button variant="ghost" size="icon" data-testid="button-back-deals">
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
-        </Link>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => {
+            if (window.history.length > 1) {
+              window.history.back();
+            } else {
+              navigate(isComps ? "/comps" : "/deals");
+            }
+          }}
+          data-testid="button-back-deals"
+        >
+          <ArrowLeft className="w-4 h-4" />
+        </Button>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-xl font-bold truncate" data-testid="text-deal-name">{linkedProperty?.name || deal.name}</h1>

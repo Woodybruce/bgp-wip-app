@@ -99,6 +99,28 @@ type ClickFilter = {
   value: string;
 } | null;
 
+const WIP_FILTERS_STORAGE_KEY = "bgp-wip-report-filters";
+
+interface SavedWipFilters {
+  activeTab: "report" | "reconciliation" | "agent-summary";
+  teams: string[];
+  months: string[];
+  agents: string[];
+  statuses: string[];
+  fiscalYears: number[];
+  clickFilter: ClickFilter;
+  detailSort: { column: string; direction: SortDirection };
+}
+
+function loadSavedWipFilters(): SavedWipFilters | null {
+  try {
+    const raw = sessionStorage.getItem(WIP_FILTERS_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as SavedWipFilters) : null;
+  } catch {
+    return null;
+  }
+}
+
 function formatCurrency(value: number): string {
   if (value >= 1_000_000) return `£${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `£${(value / 1_000).toFixed(0)}K`;
@@ -747,7 +769,8 @@ export default function WipReport() {
   const { toast } = useToast();
   const { activeTeam } = useTeam();
   const { brand, isLandsec } = useBrand();
-  const [activeTab, setActiveTab] = useState<"report" | "reconciliation" | "agent-summary">("report");
+  const [savedFilters] = useState(loadSavedWipFilters);
+  const [activeTab, setActiveTab] = useState<"report" | "reconciliation" | "agent-summary">(savedFilters?.activeTab || "report");
 
   const { data: user } = useQuery<{ id: string; name: string; email: string; team: string; isAdmin?: boolean }>({
     queryKey: ["/api/auth/me"],
@@ -809,12 +832,12 @@ export default function WipReport() {
   }, [rawEntries, isLandsecView, activeTeam, isWipAdmin]);
 
   const INVOICED_STATUSES = useMemo(() => ["Invoiced", "Billed"], []);
-  const [selectedTeams, setSelectedTeams] = useState<Set<string>>(new Set());
-  const [selectedMonths, setSelectedMonths] = useState<Set<string>>(new Set());
-  const [selectedAgents, setSelectedAgents] = useState<Set<string>>(new Set());
-  const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(new Set());
-  const [selectedFiscalYears, setSelectedFiscalYears] = useState<Set<number>>(new Set());
-  const [clickFilter, setClickFilter] = useState<ClickFilter>(null);
+  const [selectedTeams, setSelectedTeams] = useState<Set<string>>(() => new Set(savedFilters?.teams || []));
+  const [selectedMonths, setSelectedMonths] = useState<Set<string>>(() => new Set(savedFilters?.months || []));
+  const [selectedAgents, setSelectedAgents] = useState<Set<string>>(() => new Set(savedFilters?.agents || []));
+  const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(() => new Set(savedFilters?.statuses || []));
+  const [selectedFiscalYears, setSelectedFiscalYears] = useState<Set<number>>(() => new Set(savedFilters?.fiscalYears || []));
+  const [clickFilter, setClickFilter] = useState<ClickFilter>(savedFilters?.clickFilter ?? null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
   const [appendUploading, setAppendUploading] = useState(false);
@@ -869,10 +892,9 @@ export default function WipReport() {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
-  const [detailSort, setDetailSort] = useState<{ column: string; direction: SortDirection }>({
-    column: "amtWip",
-    direction: "desc",
-  });
+  const [detailSort, setDetailSort] = useState<{ column: string; direction: SortDirection }>(
+    savedFilters?.detailSort || { column: "amtWip", direction: "desc" },
+  );
 
   const handleClickFilter = useCallback((field: string, value: string) => {
     setClickFilter((prev) => {
@@ -928,7 +950,7 @@ export default function WipReport() {
     return sorted;
   }, [entries]);
 
-  const filtersInitialized = useRef(false);
+  const filtersInitialized = useRef(!!savedFilters);
   useEffect(() => {
     if (!filtersInitialized.current && entries.length > 0 && user) {
       filtersInitialized.current = true;
@@ -942,6 +964,25 @@ export default function WipReport() {
       }
     }
   }, [entries, user, allTeams, allMonths, allAgents, allStatuses, allFiscalYears]);
+
+  useEffect(() => {
+    if (!filtersInitialized.current) return;
+    try {
+      const snapshot: SavedWipFilters = {
+        activeTab,
+        teams: [...selectedTeams],
+        months: [...selectedMonths],
+        agents: [...selectedAgents],
+        statuses: [...selectedStatuses],
+        fiscalYears: [...selectedFiscalYears],
+        clickFilter,
+        detailSort,
+      };
+      sessionStorage.setItem(WIP_FILTERS_STORAGE_KEY, JSON.stringify(snapshot));
+    } catch {
+      // storage unavailable — filters just won't survive navigation
+    }
+  }, [activeTab, selectedTeams, selectedMonths, selectedAgents, selectedStatuses, selectedFiscalYears, clickFilter, detailSort]);
 
   const sidebarFilteredEntries = useMemo(() => {
     return entries.filter((e) => {
