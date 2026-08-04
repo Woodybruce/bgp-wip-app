@@ -47,13 +47,18 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-hunters-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
     if (msg.type() === 'error') {
       const t = msg.text();
       if (/net::|Failed to load resource/.test(t)) return; // captured via response hook
+      // External map providers (OS Places/NGD, Overpass) need API keys that
+      // aren't set locally, and their tile/site fetches abort when a test hops
+      // routes mid-request — benign env noise, not an app fault. (Internal
+      // "[map] …" errors like CRM-pin/PDF failures are NOT suppressed.)
+      if (/\[(os-sites|os-buildings)\] (fetch error|Reverse geocode error)|\[edozo\] Overpass error/i.test(t)) return;
       logIssue(persona, currentScenario[persona], 'console-error', t);
     }
   });
@@ -1511,6 +1516,24 @@ async function markRound(page, cross) {
     if (await page.getByText('Page not found').count()) throw new Error('brand profile is a dead route for client');
     const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
     if (body.length < 40) throw new Error('brand profile rendered blank for client');
+  });
+
+  // Suggested-pitches is the brand-profile "which of my vacant units could
+  // this operator take" engine (live requirement + AI-ranked available units
+  // in the viewer's scope). A client sees it for a brand in their hospitality
+  // slice (200 with {brandName, suggestions[]}) but is refused on an
+  // out-of-slice brand — the handler's isClientVisibleBrand gate.
+  await step(page, p, 'client-brand-suggested-pitches-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const inSlice = await fetch('/api/brands/77777777-7777-7777-7777-777777777777/suggested-pitches', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const body = inSlice.ok ? await inSlice.json().catch(() => null) : null;
+      const shapeOk = !!body && typeof body.brandName === 'string' && Array.isArray(body.suggestions);
+      const foreign = (await fetch('/api/brands/88888888-1111-1111-1111-111111111111/suggested-pitches', { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { inSliceOk: inSlice.ok, shapeOk, foreign };
+    });
+    if (!r.inSliceOk || !r.shapeOk) throw new Error('client cannot read suggested-pitches on an in-slice brand');
+    if (r.foreign !== 403) throw new Error(`client read suggested-pitches on an out-of-slice brand (expected 403, got ${r.foreign})`);
   });
 
   // CLAUDE.md decision (2026-08-01): the Compliance & KYC panel STAYS visible
