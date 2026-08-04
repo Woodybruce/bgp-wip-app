@@ -5342,6 +5342,45 @@ function BrandInstagramCard({ companyId }: { companyId: string }) {
   if (!profile || profile.status) {
     const status: string | undefined = profile?.status;
     const handle: string | null = profile?.handle ?? null;
+    // While Meta's "Instagram Public Content Access" approval is pending,
+    // lookups fail by design. Show the populated layout with clearly
+    // labelled sample numbers instead of a bare error — users (and Meta's
+    // reviewers, via the App Review screencast) see exactly where the live
+    // data will appear (Woody, 2026-08-04).
+    if (status === "lookup_failed" || (status && status !== "not_configured" && status !== "no_handle")) {
+      return (
+        <Card>
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+              <Instagram className="w-3.5 h-3.5" /> Instagram
+              <Badge variant="outline" className="text-[9px] text-violet-700 border-violet-200 normal-case tracking-normal">sample preview</Badge>
+              {handle && (
+                <a href={`https://instagram.com/${handle}`} target="_blank" rel="noreferrer" className="ml-auto text-[10px] text-muted-foreground hover:text-foreground normal-case font-normal">
+                  @{handle}
+                </a>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0 space-y-2">
+            <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+              <span><strong className="text-foreground">128.4k</strong> followers</span>
+              <span><strong className="text-foreground">1.2k</strong> posts</span>
+              <span><strong className="text-foreground">312</strong> following</span>
+            </div>
+            <div className="grid grid-cols-3 gap-1">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="aspect-square rounded border border-border/60 bg-muted/60 flex items-center justify-center text-[10px] text-muted-foreground">
+                  post
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-muted-foreground italic">
+              Sample layout — live follower counts and recent posts appear here automatically once Meta approves the app's Instagram Public Content Access.
+            </p>
+          </CardContent>
+        </Card>
+      );
+    }
     const message =
       status === "not_configured" ? "Meta Graph API credentials not set on server."
       : status === "no_handle" ? "No Instagram handle on this brand. Add via Edit, or run the homepage backfill."
