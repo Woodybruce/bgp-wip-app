@@ -3705,6 +3705,21 @@ const INTERNAL_BGP_TEAMS = new Set([
   "Development", "Lease Advisory", "Office / Corporate",
 ]);
 
+interface SavedDealListFilters {
+  search: string;
+  activeGroup: string;
+  columnFilters: Record<string, string[]>;
+}
+
+function loadSavedDealListFilters(key: string): SavedDealListFilters | null {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as SavedDealListFilters) : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "negotiations" } = {}) {
   const isCompsMode = mode === "comps";
   const isNegotiationsMode = mode === "negotiations";
@@ -3716,8 +3731,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const { activeTeam } = useTeam();
   const urlParams = new URLSearchParams(window.location.search);
   const urlTeamParam = urlParams.get("team");
-  const [search, setSearch] = useState("");
-  const [activeGroup, setActiveGroup] = useState("all");
+  const listFiltersKey = `bgp-deals-list-filters:${mode}`;
+  const [savedListFilters] = useState(() => loadSavedDealListFilters(listFiltersKey));
+  const [search, setSearch] = useState(savedListFilters?.search || "");
+  const [activeGroup, setActiveGroup] = useState(savedListFilters?.activeGroup || "all");
   const [createOpen, setCreateOpen] = useState(false);
   const [aiMatchOpen, setAiMatchOpen] = useState(false);
   const [rentAnalysisRunning, setRentAnalysisRunning] = useState(false);
@@ -3725,7 +3742,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [hotsChecklistDeal, setHotsChecklistDeal] = useState<CrmDeal | null>(null);
-  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
+  const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>(savedListFilters?.columnFilters || {});
   const [teamFilterInitialised, setTeamFilterInitialised] = useState(false);
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
     typeof window !== "undefined" && window.innerWidth < 768 ? "board" : "table"
@@ -3733,13 +3750,15 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   useEffect(() => {
     if (!teamFilterInitialised) {
-      const teamToSet = urlTeamParam || (activeTeam && activeTeam !== "all" ? activeTeam : null);
+      // Restored session filters already carry the user's team choice — only
+      // seed a default when there is no snapshot, but let ?team= always win.
+      const teamToSet = urlTeamParam || (!savedListFilters && activeTeam && activeTeam !== "all" ? activeTeam : null);
       if (teamToSet) {
         setColumnFilters(prev => ({ ...prev, team: [teamToSet] }));
       }
       setTeamFilterInitialised(true);
     }
-  }, [activeTeam, teamFilterInitialised, urlTeamParam]);
+  }, [activeTeam, teamFilterInitialised, urlTeamParam, savedListFilters]);
 
   useEffect(() => {
     if (teamFilterInitialised && activeTeam && !urlTeamParam) {
@@ -3750,6 +3769,16 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       }
     }
   }, [activeTeam]);
+
+  useEffect(() => {
+    if (!teamFilterInitialised) return;
+    try {
+      const snapshot: SavedDealListFilters = { search, activeGroup, columnFilters };
+      sessionStorage.setItem(listFiltersKey, JSON.stringify(snapshot));
+    } catch {
+      // storage unavailable — filters just won't survive navigation
+    }
+  }, [search, activeGroup, columnFilters, teamFilterInitialised, listFiltersKey]);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
     landlord: true,
     status: true,
