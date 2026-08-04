@@ -1518,10 +1518,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               </>)}
             </div>
 
-            {/* Single BGP AI take + Ask ChatBGP question runner — sits above all zones */}
+            {/* Single BGP AI take + Ask ChatBGP question runner — sits above
+                all zones. Client logins get both too (Woody, 2026-08-04:
+                "can't see the pills on ask chat bgp" — parity rule); the
+                chat backend enforces the client tool allowlist. */}
             <div className="mt-2 order-2 space-y-3 empty:hidden">
-              {currentUser?.role !== "Client" && <BgpTakeStrip companyId={companyId} tab="brand" />}
-              {currentUser?.role !== "Client" && <AskChatBGPInline brandName={c.name} />}
+              <BgpTakeStrip companyId={companyId} tab="brand" />
+              <AskChatBGPInline brandName={c.name} />
             </div>
 
             {/* Properties board — for landlords it sits directly under Ask ChatBGP
@@ -2009,8 +2012,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             {/* Interactions — the AI Activity card above is the primary view;
                 the full raw list duplicates it and includes system noise, so
                 it's tucked into an expandable "All correspondence" drawer.
-                Staff-only: raw internal emails don't go to client logins. */}
-            {!isClientViewer && (
+                Client-visible too (Woody, 2026-08-04: "activity still not
+                showing where we show all emails" — parity rule); the server
+                scopes what a client login's interactions query returns. */}
             <details className="border-t pt-2 group/corr">
               <summary className="text-[11px] uppercase tracking-wider text-muted-foreground cursor-pointer list-none flex items-center gap-1 hover:text-foreground">
                 <ChevronRight className="w-3 h-3 transition-transform group-open/corr:rotate-90" />
@@ -2020,7 +2024,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 <InteractionsBoard scope="company" contextId={companyId} />
               </div>
             </details>
-            )}
             </>
 
             {/* Lease-expiry radar — tenant's upcoming lease events on our schedule */}

@@ -1094,6 +1094,15 @@ export function registerInteractionRoutes(app: Express) {
     try {
       const { companyId } = req.params as { companyId: string };
       const limit = Number(req.query.limit) || 50;
+      // Client logins may read correspondence for their OWN company and for
+      // brands in their slice (the All-correspondence drawer is now client-
+      // visible — Woody, 2026-08-04) — never other landlords' companies.
+      const { isClientRequestUser, resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+      if (await isClientRequestUser(req)) {
+        const scope = await resolveCompanyScope(req);
+        const allowed = scope === companyId || (await isClientVisibleBrand(companyId, scope));
+        if (!allowed) return res.status(403).json({ error: "Not available for client accounts" });
+      }
 
       const interactions = await db
         .select()
