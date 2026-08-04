@@ -2154,7 +2154,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   )}
                   {requirements.filter(r => r.status === "Active").length > 0 && (
                     <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px]">
-                      {requirements.filter(r => r.status === "Active").length} active req
+                      {requirements.filter(r => r.status === "Active").length} active requirement{requirements.filter(r => r.status === "Active").length !== 1 ? "s" : ""}
                     </Badge>
                   )}
                 </div>
