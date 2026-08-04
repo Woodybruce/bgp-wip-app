@@ -661,16 +661,22 @@ function ClientTeamWeekCalendar({ events }: { events: any[] }) {
             </div>
           </div>
         </div>
-        {/* Intelligence strip — the calendar page's bottom read, board-sized. */}
-        <div className="flex items-center gap-4 px-3 py-1.5 border-t bg-muted/30 text-[10px] flex-wrap" data-testid="cal-intelligence">
-          <span className="inline-flex items-center gap-1 font-semibold uppercase tracking-wider text-muted-foreground">
-            <Sparkles className="w-3 h-3" /> Intelligence
-          </span>
-          <span><span className="font-semibold uppercase text-muted-foreground mr-1">Today</span>{todaysEvents.length} event{todaysEvents.length === 1 ? "" : "s"}</span>
-          {busiest && (
-            <span><span className="font-semibold uppercase text-muted-foreground mr-1">Busiest day</span>{new Date(busiest[0]).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })} — {busiest[1]} event{busiest[1] === 1 ? "" : "s"}</span>
-          )}
-          <span><span className="font-semibold uppercase text-muted-foreground mr-1">Next 30 days</span>{next30} event{next30 === 1 ? "" : "s"}</span>
+        {/* Intelligence strip — the shared footer board, living INSIDE the
+            calendar board rather than orphaned at the page bottom
+            (Woody, 2026-08-04). Local calendar reads lead; the CRM/diary
+            insights follow from the shared component. */}
+        <div data-testid="cal-intelligence" className="border-t">
+          <div className="flex items-center gap-4 px-3 py-1 bg-muted/30 text-[10px] flex-wrap">
+            <span className="inline-flex items-center gap-1 font-semibold uppercase tracking-wider text-muted-foreground">
+              <Sparkles className="w-3 h-3" /> Intelligence
+            </span>
+            <span><span className="font-semibold uppercase text-muted-foreground mr-1">Today</span>{todaysEvents.length} event{todaysEvents.length === 1 ? "" : "s"}</span>
+            {busiest && (
+              <span><span className="font-semibold uppercase text-muted-foreground mr-1">Busiest day</span>{new Date(busiest[0]).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })} — {busiest[1]} event{busiest[1] === 1 ? "" : "s"}</span>
+            )}
+            <span><span className="font-semibold uppercase text-muted-foreground mr-1">Next 30 days</span>{next30} event{next30 === 1 ? "" : "s"}</span>
+          </div>
+          <IntelligenceFooter />
         </div>
       </CardContent>
     </Card>
@@ -951,7 +957,7 @@ export default function Dashboard() {
   const firstLayout = preferTemplate ? (templateLayout || validSaved) : (validSaved || templateLayout);
   const secondLayout = preferTemplate ? validSaved : templateLayout;
 
-  const widgetSavedLayout = firstLayout?.widgets || secondLayout?.widgets || null;
+  const widgetSavedLayoutRaw = firstLayout?.widgets || secondLayout?.widgets || null;
   const hiddenPortfolioBoards: string[] = firstLayout?.hiddenPortfolio ?? secondLayout?.hiddenPortfolio ?? ["portfolio-properties"];
 
   // Portfolio boards and widgets used to live in two separate grids stacked
@@ -960,13 +966,36 @@ export default function Dashboard() {
   // back. When the portfolio section is present they now render as ONE grid,
   // laid out from `combined` — seeded by stacking the two legacy layouts so
   // existing arrangements carry over.
-  const combinedSavedLayout = firstLayout?.combined || secondLayout?.combined || (() => {
+  const combinedSavedLayoutRaw = firstLayout?.combined || secondLayout?.combined || (() => {
     const p = (firstLayout?.portfolio || secondLayout?.portfolio)?.lg as any[] | undefined;
     const w = (firstLayout?.widgets || secondLayout?.widgets)?.lg as any[] | undefined;
     if (!p && !w) return null;
     const maxY = (p || []).reduce((m: number, l: any) => Math.max(m, l.y + l.h), 0);
     return { lg: [...(p || []), ...(w || []).map((l: any) => ({ ...l, y: l.y + maxY }))] };
   })();
+
+  // Side-by-side board pairs stay the same height even in saved layouts
+  // where one was dragged/seeded taller (Woody, 2026-08-04): the Letting
+  // Tracker follows My Tasks & Briefing; Your BGP Team follows
+  // Properties & Deals.
+  const HEIGHT_PAIRS: Array<[follower: string, leader: string]> = [
+    ["available-units", "my-tasks"],
+    ["portfolio-team", "portfolio-deals"],
+  ];
+  const matchTrackerToTasks = (layout: any) => {
+    const lg = layout?.lg;
+    if (!Array.isArray(lg)) return layout;
+    let next = lg;
+    for (const [followerId, leaderId] of HEIGHT_PAIRS) {
+      const leader = next.find((l: any) => l.i === leaderId);
+      const follower = next.find((l: any) => l.i === followerId);
+      if (!leader || !follower || follower.h === leader.h) continue;
+      next = next.map((l: any) => (l.i === followerId ? { ...l, h: leader.h } : l));
+    }
+    return next === lg ? layout : { ...layout, lg: next };
+  };
+  const combinedSavedLayout = combinedSavedLayoutRaw ? matchTrackerToTasks(combinedSavedLayoutRaw) : combinedSavedLayoutRaw;
+  const widgetSavedLayout = widgetSavedLayoutRaw ? matchTrackerToTasks(widgetSavedLayoutRaw) : widgetSavedLayoutRaw;
 
   const isAdmin = (user as any)?.isAdmin || (user as any)?.is_admin;
 
@@ -1535,7 +1564,7 @@ export default function Dashboard() {
           {
             id: "portfolio-team",
             label: "Your BGP Team",
-            defaultW: 12, defaultH: 12, minW: 6, minH: 6,
+            defaultW: 12, defaultH: 18, minW: 6, minH: 6,
             content: (
               <Card className="h-full flex flex-col">
                 <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
@@ -2895,14 +2924,6 @@ export default function Dashboard() {
         </Card>
       )}
 
-      {/* Same Intelligence strip as the calendar footer — one board, rolled
-          across (Woody, 2026-08-04). Landsec view only; insights come back
-          company-scoped for client viewers server-side. */}
-      {isLandsecTeam && (
-        <Card className="overflow-hidden">
-          <IntelligenceFooter />
-        </Card>
-      )}
     </div>
   );
 }

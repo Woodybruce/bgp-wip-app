@@ -5210,7 +5210,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const { data: properties = [] } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties", { excludeComps: true }],
     queryFn: async () => {
-      const res = await fetch("/api/crm/properties?excludeComps=true");
+      const res = await fetch("/api/crm/properties?excludeComps=true", { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load properties");
       const data = await res.json();
       return Array.isArray(data) ? data : (data?.data ?? []);
@@ -5220,7 +5220,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const { data: companies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies", { includeBillingEntities: true }],
     queryFn: async () => {
-      const res = await fetch("/api/crm/companies?includeBillingEntities=true");
+      const res = await fetch("/api/crm/companies?includeBillingEntities=true", { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load companies");
       return res.json();
     },

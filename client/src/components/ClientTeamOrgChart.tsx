@@ -24,11 +24,43 @@ interface TeamMember {
   full_name: string | null;
   email: string | null;
   bgp_title: string | null;
+  profile_pic_url?: string | null;
   cv_summary: string | null;
   cv_specialisms: string[] | null;
   bio: string | null;
   property_count: number;
   properties?: string[] | null;
+}
+
+// Headshot with two fallbacks: users.profile_pic_url (what HR shows) →
+// the uploaded-photo stream → initials. The old <img>-only version went
+// invisible whenever neither source had a photo.
+function MemberAvatar({ member, className }: { member: TeamMember; className: string }) {
+  const displayName = member.full_name || member.username || "?";
+  const initials = displayName.split(/\s+/).map(w => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
+  const [src, setSrc] = useState<string | null>(member.profile_pic_url || `/api/hr/photo/${member.user_id}`);
+  useEffect(() => {
+    setSrc(member.profile_pic_url || `/api/hr/photo/${member.user_id}`);
+  }, [member.profile_pic_url, member.user_id]);
+  if (!src) {
+    return (
+      <div className={`${className} rounded-full bg-primary/10 flex items-center justify-center font-semibold text-primary shrink-0`}>
+        {initials}
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={displayName}
+      className={`${className} rounded-full object-cover border bg-muted shrink-0`}
+      onError={() => {
+        // profile_pic_url failed → try the HR photo stream; that failed too → initials.
+        if (member.profile_pic_url && src === member.profile_pic_url) setSrc(`/api/hr/photo/${member.user_id}`);
+        else setSrc(null);
+      }}
+    />
+  );
 }
 
 interface Candidate {
@@ -97,7 +129,6 @@ function MemberCard({ member, onClick, onDragStart, isLead, onDragOver, onDrop, 
   onDrop?: () => void;
   readOnly?: boolean;
 }) {
-  const photoUrl = `/api/hr/photo/${member.user_id}`;
   const displayName = member.full_name || member.username || "Unknown";
   return (
     <button
@@ -122,12 +153,7 @@ function MemberCard({ member, onClick, onDragStart, isLead, onDragOver, onDrop, 
       )}
       <div className="flex items-center gap-2">
         {!readOnly && <GripVertical className="w-3 h-3 text-muted-foreground/40 group-hover:text-muted-foreground shrink-0" />}
-        <img
-          src={photoUrl}
-          alt={displayName}
-          className="w-9 h-9 rounded-full object-cover border bg-muted shrink-0"
-          onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
-        />
+        <MemberAvatar member={member} className="w-9 h-9 text-xs" />
         <div className="flex-1 min-w-0">
           <div className="font-semibold text-[12px] leading-tight truncate" title={displayName}>{displayName}</div>
           {member.bgp_title && <div className="text-[10px] text-muted-foreground truncate" title={member.bgp_title}>{member.bgp_title}</div>}
@@ -567,7 +593,6 @@ function MemberSheet({ member, allMembers, clientCompanyId, columnNames, onClose
     setReportsTo(member.reports_to_user_id || "");
   }, [member.id]);
 
-  const photoUrl = `/api/hr/photo/${member.user_id}`;
   const displayName = member.full_name || member.username || "Unknown";
 
   // "pa-…" rows are synthesized from property assignments — there's no
@@ -656,12 +681,7 @@ function MemberSheet({ member, allMembers, clientCompanyId, columnNames, onClose
         </SheetHeader>
         <div className="space-y-4 mt-3">
           <div className="flex items-start gap-3">
-            <img
-              src={photoUrl}
-              alt={displayName}
-              className="w-20 h-20 rounded-full object-cover border bg-gray-100 dark:bg-gray-800 flex-shrink-0"
-              onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
-            />
+            <MemberAvatar member={member} className="w-20 h-20 text-xl" />
             <div className="flex-1 min-w-0 space-y-1">
               {member.bgp_title && <div className="text-sm">{member.bgp_title}</div>}
               {member.email && (

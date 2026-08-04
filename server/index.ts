@@ -3218,7 +3218,10 @@ app.use("/api/auth/register", loginLimiter);
 
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 200,
+  // 200 predates the 30s live-refresh polling (queryClient defaults) — a
+  // busy page now legitimately re-fires its whole query set twice a minute,
+  // so 200 self-429'd ordinary browsing and knocked users back to sign-in.
+  max: 600,
   standardHeaders: true,
   legacyHeaders: false,
   // The whole office sits behind one NAT'd public IP, so per-IP buckets

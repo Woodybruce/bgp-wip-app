@@ -705,7 +705,19 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
 
   const inlineUpdate = useCallback((unitId: string | number, field: string, value: string) => {
     updateMutation.mutate({ id: unitId, [field]: value });
-  }, [updateMutation]);
+    // Converting a unit to an Opportunity puts it straight onto the
+    // Letting Tracker (Woody, 2026-08-04) — skipped when the row is
+    // already linked to a tracker listing.
+    if (field === "status" && value === "Opportunity") {
+      const unit = units.find(u => String(u.id) === String(unitId));
+      const uname = unit?.unit_number?.toLowerCase() || "";
+      const linked = !!unit && (
+        !!unit.letting_tracker_unit_id ||
+        (!!uname && !!links?.lettingUnits.some(l => l.unit_name?.toLowerCase().includes(uname)))
+      );
+      if (unit && !linked) sendToTrackerMutation.mutate(unit);
+    }
+  }, [updateMutation, units, links, sendToTrackerMutation]);
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1466,6 +1478,41 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
             </td>
           ) :
           <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap${stickyCls}`}>
+            {ci === 0 ? (
+              // Unit cell leads the row and stays pinned, so the Tracker
+              // action lives here — visible without scrolling to the
+              // actions column (Woody, 2026-08-04).
+              <div className="flex items-center gap-1.5">
+                <InlineEdit
+                  value={displayVal}
+                  field={c.field as string}
+                  unitId={unit.id}
+                  onSave={onUpdate}
+                  type={editType}
+                />
+                {!letting && !unit.is_vacant && onSendToTracker && (
+                  <button
+                    onClick={onSendToTracker}
+                    disabled={sendingToTracker}
+                    className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded border border-emerald-400 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 shrink-0"
+                    title="Create a Letting Tracker listing for this unit"
+                    data-testid={`tenancy-to-tracker-${unit.id}`}
+                  >
+                    <Plus className="w-2.5 h-2.5" />{sendingToTracker ? "Adding…" : "Tracker"}
+                  </button>
+                )}
+                {letting && (
+                  <a
+                    href="/deals/letting"
+                    className="shrink-0"
+                    title={`On the Letting Tracker (${letting.marketing_status || "listed"})`}
+                    data-testid={`tenancy-on-tracker-${unit.id}`}
+                  >
+                    <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer border-emerald-300 text-emerald-700 hover:bg-emerald-50">LT</Badge>
+                  </a>
+                )}
+              </div>
+            ) : (
             <InlineEdit
               value={displayVal}
               field={c.field as string}
@@ -1473,6 +1520,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
               onSave={onUpdate}
               type={editType}
             />
+            )}
           </td>
         );
       })}
