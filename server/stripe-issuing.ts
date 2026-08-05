@@ -1372,9 +1372,14 @@ export function setupStripeIssuingRoutes(app: Express) {
           if (Object.keys(updates).length > 0) {
             await db.update(expenses).set({ ...updates, updatedAt: new Date() }).where(eq(expenses.id, expenseId));
           }
-          const { submitForApproval } = await import("./expense-approval");
-          const userIdForSubmit = (req as any).session?.userId || (req as any).tokenUserId || null;
-          await submitForApproval(expenseId, userIdForSubmit);
+          // Don't auto-submit on upload — leave the expense as a
+          // "receipt_uploaded" draft so the submitter can add details and
+          // submit when they're ready (Woody, 2026-08). Only advance a fresh
+          // pending_receipt row; never touch one already submitted/approved
+          // (e.g. when an extra photo is added to an in-flight expense).
+          if (exp.status === "pending_receipt") {
+            await db.update(expenses).set({ status: "receipt_uploaded", updatedAt: new Date() }).where(eq(expenses.id, expenseId));
+          }
         } catch (e: any) {
           console.error("[receipt-upload] background processing failed:", e?.message);
         }
@@ -2390,6 +2395,28 @@ export function setupStripeIssuingRoutes(app: Express) {
       res.json({ success: true });
     } catch (e: any) {
       console.error("[expenses] resubmit error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Submit a "receipt_uploaded" draft for approval — the explicit "I've added
+  // the details, send it" action. Photo uploads now land as a draft rather
+  // than auto-submitting, so nothing reaches Wendy / Layla until this fires.
+  app.post("/api/expenses/:id/submit-for-approval", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      const [exp] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
+      if (!exp) return res.status(404).json({ error: "Expense not found" });
+      if (exp.status !== "receipt_uploaded") {
+        return res.status(409).json({ error: "Only a receipt_uploaded draft can be submitted for approval." });
+      }
+      const userId = (req as any).session?.userId || (req as any).tokenUserId || exp.submitterUserId || null;
+      const { submitForApproval } = await import("./expense-approval");
+      await submitForApproval(id, userId);
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error("[expenses] submit-for-approval error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });

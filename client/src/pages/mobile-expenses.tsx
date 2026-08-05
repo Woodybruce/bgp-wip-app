@@ -36,7 +36,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   Camera, Receipt, CheckCircle2, AlertCircle, Loader2, ChevronLeft,
   X, Search, Tag, Users, Building2, Briefcase, UserX, Save, Sparkles, Trash2, UserPlus,
-  CreditCard, Eye, EyeOff, Copy, Check, RefreshCw,
+  CreditCard, Eye, EyeOff, Copy, Check, RefreshCw, Send,
 } from "lucide-react";
 import { Link } from "wouter";
 import ReceiptViewer from "@/components/receipt-viewer";
@@ -1135,6 +1135,25 @@ export default function MobileExpenses() {
     },
   });
 
+  // Submit a receipt_uploaded draft for approval — the explicit "I've added
+  // the details, send it" action. Photo uploads land as a draft now, so
+  // nothing goes to Wendy & Layla until this is tapped.
+  const submitForApprovalMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await fetch(`/api/expenses/${id}/submit-for-approval`, { method: "POST", credentials: "include", headers: { ...getAuthHeaders() } });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body?.error || "Failed");
+      return body;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      toast({ title: "Submitted", description: "Sent to Wendy & Layla for review." });
+    },
+    onError: (e: any) => {
+      toast({ title: "Couldn't submit", description: e?.message, variant: "destructive" });
+    },
+  });
+
   const askDelete = (e: Expense) => {
     if (!window.confirm(`Delete this ${fmtPence(e.amountPence)} expense at ${e.merchant || "unknown merchant"}?`)) return;
     deleteMutation.mutate(e.id);
@@ -1521,6 +1540,25 @@ export default function MobileExpenses() {
                       <RefreshCw className="w-3 h-3" />
                     )}
                     Resubmit
+                  </button>
+                )}
+                {/* Receipt_uploaded drafts get an explicit Submit — the photo
+                    upload no longer auto-submits, so this is what sends it for
+                    approval once details are added. */}
+                {e.status === "receipt_uploaded" && (
+                  <button
+                    type="button"
+                    onClick={() => submitForApprovalMutation.mutate(e.id)}
+                    disabled={submitForApprovalMutation.isPending && submitForApprovalMutation.variables === e.id}
+                    className="shrink-0 px-2.5 py-1.5 text-[11px] rounded-full border border-blue-200 text-blue-600 active:bg-blue-50 disabled:opacity-50 flex items-center gap-1"
+                    data-testid={`mobile-expense-submit-${e.id}`}
+                  >
+                    {submitForApprovalMutation.isPending && submitForApprovalMutation.variables === e.id ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Send className="w-3 h-3" />
+                    )}
+                    Submit
                   </button>
                 )}
                 {/* Delete only for non-card expenses. Revolut (and legacy

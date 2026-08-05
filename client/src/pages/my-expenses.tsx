@@ -15,7 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   CreditCard, Eye, EyeOff, Copy, Check, Upload, Receipt, AlertCircle,
-  CheckCircle2, Loader2, RefreshCw, Sparkles, Camera, ImagePlus, Pencil,
+  CheckCircle2, Loader2, RefreshCw, Sparkles, Camera, ImagePlus, Pencil, Send,
   Users as UsersIcon, Building2, Briefcase, X as XIcon, ChevronsUpDown, CalendarClock, Trash2,
 } from "lucide-react";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
@@ -75,6 +75,7 @@ function StatusBadge({ status, isPersonal }: { status: string; isPersonal: boole
   if (isPersonal) return <Badge variant="outline" className="text-amber-600 border-amber-600/30">Personal</Badge>;
   if (status === "posted_to_xero") return <Badge variant="outline" className="text-emerald-600 border-emerald-600/30">In Xero</Badge>;
   if (status === "pending_receipt") return <Badge variant="outline" className="text-amber-600 border-amber-600/30">Receipt needed</Badge>;
+  if (status === "receipt_uploaded") return <Badge variant="outline" className="text-blue-600 border-blue-600/30">Receipt added</Badge>;
   if (status === "pending_approval") return <Badge variant="outline" className="text-blue-600 border-blue-600/30">Pending</Badge>;
   if (status === "approved") return <Badge variant="outline" className="text-blue-600 border-blue-600/30">Approved</Badge>;
   if (status === "rejected") return <Badge variant="outline" className="text-red-600 border-red-600/30">Rejected</Badge>;
@@ -174,6 +175,21 @@ export default function MyExpenses() {
       toast({ title: "Resubmitted", description: "Sent back to Wendy & Layla for approval." });
     },
     onError: (e: any) => toast({ title: "Resubmit failed", description: e?.message, variant: "destructive" }),
+  });
+
+  // Submit a receipt_uploaded draft for approval — the explicit "details added,
+  // send it" action, now that photo uploads land as a draft instead of
+  // auto-submitting.
+  const submitForApprovalMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await apiRequest("POST", `/api/expenses/${id}/submit-for-approval`, {});
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+      toast({ title: "Submitted", description: "Sent to Wendy & Layla for review." });
+    },
+    onError: (e: any) => toast({ title: "Submit failed", description: e?.message, variant: "destructive" }),
   });
 
   const noReceiptMutation = useMutation({
@@ -601,6 +617,21 @@ export default function MyExpenses() {
                                 ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
                                 : <RefreshCw className="w-3 h-3 mr-1" />}
                               Resubmit
+                            </Button>
+                          )}
+                          {e.status === "receipt_uploaded" && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs text-blue-600"
+                              disabled={submitForApprovalMutation.isPending && submitForApprovalMutation.variables === e.id}
+                              onClick={() => submitForApprovalMutation.mutate(e.id)}
+                              data-testid={`button-submit-expense-${e.id}`}
+                            >
+                              {submitForApprovalMutation.isPending && submitForApprovalMutation.variables === e.id
+                                ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                                : <Send className="w-3 h-3 mr-1" />}
+                              Submit
                             </Button>
                           )}
                           {!e.isPersonal && e.status !== "posted_to_xero" && (

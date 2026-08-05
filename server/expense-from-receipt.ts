@@ -162,16 +162,25 @@ export async function createExpenseFromReceipt(args: CreateFromReceiptArgs): Pro
       updatedAt: new Date(),
     } as any).where(eq(expenses.id, inserted.id));
 
-    // Transition to pending_approval — computes flag reasons + assigns
-    // the approver from the submitter's manager.
-    const { submitForApproval } = await import("./expense-approval");
-    await submitForApproval(inserted.id, args.submitter.userId || null);
+    // A single interactive dashboard upload lands as a "receipt_uploaded"
+    // draft so the submitter can add purpose / attendees / category and submit
+    // when ready — auto-submitting on upload didn't leave time to fill the
+    // details in (Woody, 2026-08). Bulk uploads, WhatsApp and email have no
+    // interactive follow-up, so they still go straight to approval.
+    const draftFirst = args.source === "dashboard";
+    if (draftFirst) {
+      await db.update(expenses).set({ status: "receipt_uploaded", updatedAt: new Date() } as any).where(eq(expenses.id, inserted.id));
+    } else {
+      const { submitForApproval } = await import("./expense-approval");
+      await submitForApproval(inserted.id, args.submitter.userId || null);
+    }
 
-    // 6. No auto-post. Policy: the initial pass goes via Wendy first, so the
-    // row sits at pending_approval (set by submitForApproval above) and only
-    // posts to Xero once it clears approval.
+    // No auto-post: the initial pass goes via Wendy first, so nothing posts to
+    // Xero until it clears approval.
     const xeroPosted = false;
-    const xeroError = isPersonal ? "marked personal — not posted to Xero" : "awaiting approval";
+    const xeroError = isPersonal
+      ? "marked personal — not posted to Xero"
+      : draftFirst ? "draft — submit for approval when ready" : "awaiting approval";
 
     return {
       ok: true,
