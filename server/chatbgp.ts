@@ -15,8 +15,8 @@ import { getFile, saveFile, findChatMediaByOriginalName } from "./file-storage";
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
-const CHATBGP_MODEL = "claude-opus-4-6";        // Main chat: Opus for intelligence
-const CHATBGP_OPUS_MODEL = "claude-opus-4-6";   // Same
+const CHATBGP_MODEL = "claude-fable-5";         // Main chat: Fable 5 (Anthropic's most capable model)
+const CHATBGP_OPUS_MODEL = "claude-fable-5";    // Same
 const CHATBGP_HELPER_MODEL = "claude-haiku-4-5-20251001"; // Background tasks: Haiku for cost savings
 
 function sanitiseForPdf(text: string): string {
@@ -711,6 +711,15 @@ export async function callClaude(params: any): Promise<any> {
     claudeParams.tool_choice = { type: "auto" };
   }
 
+  // Fable 5 runs safety classifiers that can decline a request outright
+  // (stop_reason "refusal"). Opt into the server-side fallback so a false
+  // positive is transparently re-served by Opus 4.8 inside the same call.
+  const useFableFallback = model.startsWith("claude-fable");
+  if (useFableFallback) {
+    claudeParams.betas = ["server-side-fallback-2026-06-01"];
+    claudeParams.fallbacks = [{ model: "claude-opus-4-8" }];
+  }
+
   const MAX_RETRIES = 3;
   const RETRY_DELAYS = [2000, 4000, 8000];
 
@@ -721,7 +730,9 @@ export async function callClaude(params: any): Promise<any> {
     try {
       const client = attempt === 0 ? anthropic : getAnthropicClient(false);
       if (attempt > 0) claudeParams.model = model;
-      response = await client.messages.create(claudeParams);
+      response = useFableFallback
+        ? await client.beta.messages.create(claudeParams)
+        : await client.messages.create(claudeParams);
       break;
     } catch (err: any) {
       lastErr = err;
@@ -815,6 +826,13 @@ export async function callClaudeStreaming(
     claudeParams.tool_choice = { type: "auto" };
   }
 
+  // Refusal fallback — see callClaude comment.
+  const useFableFallback = model.startsWith("claude-fable");
+  if (useFableFallback) {
+    claudeParams.betas = ["server-side-fallback-2026-06-01"];
+    claudeParams.fallbacks = [{ model: "claude-opus-4-8" }];
+  }
+
   const MAX_RETRIES = 2;
   const RETRY_DELAYS = [2000, 4000];
 
@@ -828,9 +846,11 @@ export async function callClaudeStreaming(
       let fullText = "";
       const toolCalls: any[] = [];
 
-      const stream = client.messages.stream(claudeParams);
+      const stream: any = useFableFallback
+        ? client.beta.messages.stream(claudeParams)
+        : client.messages.stream(claudeParams);
 
-      stream.on("text", (text) => {
+      stream.on("text", (text: string) => {
         fullText += text;
         onDelta(text);
       });

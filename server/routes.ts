@@ -163,8 +163,9 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
 
     console.log(`[ai-group] Prepared in ${Date.now() - startTime}ms (${groupTools.length} tools, mention=${mentionsChatBGP})`);
 
+    // Group chat answers on Fable 5, same as the main ChatBGP window.
     const completionOptions: any = {
-      model: "claude-sonnet-4-6",
+      model: "claude-fable-5",
       messages: [
         { role: "system", content: groupSystemPrompt },
         ...recentMessages,
