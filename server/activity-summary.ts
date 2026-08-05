@@ -155,10 +155,27 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
         [propertyId]
       );
     } else if (companyId) {
+      // Company feed = the company's own touches PLUS everything happening
+      // across their property portfolio (Woody, 2026-08-05: "activity
+      // should be a collection of all properties") — deals at their
+      // schemes count even when the interaction is with the tenant side.
       recentQ = pool.query(
         `${recentSelect}
+         LEFT JOIN property_units pu ON pu.id = d.unit_id
+         LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
         WHERE i.interaction_date > NOW() - INTERVAL '14 days'
-          AND (c.company_id = $1 OR i.company_id = $1 OR d.landlord_id = $1 OR d.tenant_id = $1)
+          AND (
+            c.company_id = $1 OR i.company_id = $1 OR d.landlord_id = $1 OR d.tenant_id = $1
+            OR d.property_id IN (
+              SELECT id FROM crm_properties WHERE landlord_id = $1
+              UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+            OR pu.property_id IN (
+              SELECT id FROM crm_properties WHERE landlord_id = $1
+              UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+            OR ts.property_id IN (
+              SELECT id FROM crm_properties WHERE landlord_id = $1
+              UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+          )
         ORDER BY i.interaction_date DESC
         LIMIT 30`,
         [companyId]
@@ -178,7 +195,8 @@ router.get("/api/activity-summary", requireAuth, async (req: Request, res: Respo
     const movesWhere = propertyId
       ? `AND d.property_id = $1`
       : companyId
-        ? `AND (d.landlord_id = $1 OR d.tenant_id = $1 OR p.landlord_id = $1)`
+        ? `AND (d.landlord_id = $1 OR d.tenant_id = $1 OR p.landlord_id = $1
+             OR d.property_id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))`
         : "";
     const movesQ = pool.query(
       `SELECT d.id, d.name, d.status, COALESCE(d.updated_at, d.created_at) AS at, p.name AS property_name
