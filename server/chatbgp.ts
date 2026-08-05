@@ -8573,7 +8573,7 @@ export async function executeCrmToolRaw(
         }
       } else if (isExcel) {
         try {
-          const ExcelJS = await import("exceljs");
+          const ExcelJS = (await import("exceljs")).default;
           const wb = new ExcelJS.Workbook();
           await wb.xlsx.load(buffer);
           const lines: string[] = [];
@@ -8619,7 +8619,7 @@ export async function executeCrmToolRaw(
 
   if (fnName === "export_to_excel") {
     try {
-      const ExcelJS = await import("exceljs");
+      const ExcelJS = (await import("exceljs")).default;
       const crypto = (await import("crypto")).default;
       const { saveFile } = await import("./file-storage");
 
@@ -12668,7 +12668,7 @@ export async function handleCrmToolCall(
         }
       } else if (isExcel) {
         try {
-          const ExcelJS = await import("exceljs");
+          const ExcelJS = (await import("exceljs")).default;
           const wb = new ExcelJS.Workbook();
           await wb.xlsx.load(buffer);
           const lines: string[] = [];

@@ -186,7 +186,7 @@ async function extractSpreadsheetText(buffer: Buffer, ext: string): Promise<stri
   if (ext === "csv") {
     return buffer.toString("utf-8");
   }
-  const ExcelJS = await import("exceljs");
+  const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buffer);
   const lines: string[] = [];

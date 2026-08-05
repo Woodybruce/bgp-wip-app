@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-firm-internal-guard', 'client-property-tenants-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-firm-internal-guard', 'client-property-tenants-scoped', 'client-tenancy-export-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -2218,6 +2218,26 @@ async function markRound(page, cross) {
     if (r.ownStatus !== 200 || !r.ownIsArray) throw new Error(`client own property tenant list unhealthy (status ${r.ownStatus}, array ${r.ownIsArray})`);
     if (r.foreign !== 403) throw new Error(`client read a foreign property's rent roll (expected 403, got ${r.foreign})`);
     if (r.del !== 403) throw new Error(`client removed a tenant from a property (expected 403, got ${r.del})`);
+  });
+
+  // A client can export their OWN scheme's tenancy schedule to Excel, but not
+  // another landlord's. Regression guard: the export route built the workbook
+  // via `new ExcelJS.Workbook()` off a dynamic import whose constructor lives
+  // on `.default`, so it 500'd ("ExcelJS.Workbook is not a constructor") for
+  // everyone until fixed — assert a real xlsx comes back, and foreign 403s.
+  await step(page, p, 'client-tenancy-export-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const own = '22222222-2222-2222-2222-222222222222';
+      const foreign = '44444444-4444-4444-4444-444444444444';
+      const ownRes = await fetch(`/api/tenancy-schedule/property/${own}/export-excel`, { headers: auth }).catch(() => ({ ok: false, status: 0, headers: { get: () => '' } }));
+      const ct = ownRes.headers && ownRes.headers.get ? (ownRes.headers.get('content-type') || '') : '';
+      const foreignStatus = (await fetch(`/api/tenancy-schedule/property/${foreign}/export-excel`, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { ownStatus: ownRes.status, ct, foreignStatus };
+    });
+    if (r.ownStatus !== 200) throw new Error(`client tenancy-schedule Excel export failed (expected 200, got ${r.ownStatus})`);
+    if (!/spreadsheetml|officedocument/.test(r.ct)) throw new Error(`tenancy export returned a non-xlsx body (content-type ${r.ct || 'none'}) — ExcelJS constructor bug?`);
+    if (r.foreignStatus !== 403) throw new Error(`client exported a foreign scheme's tenancy schedule (expected 403, got ${r.foreignStatus})`);
   });
 
   // Client comps: the scheme-scoped table must render rows AND the devaluation

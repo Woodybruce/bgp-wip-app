@@ -1007,7 +1007,7 @@ router.get("/api/tenancy-schedule/property/:propertyId/export-excel", requireAut
       [propertyId]
     );
 
-    const ExcelJS = await import("exceljs");
+    const ExcelJS = (await import("exceljs")).default;
     const wb = new ExcelJS.Workbook();
     wb.creator = "Bruce Gillingham Pollard";
     wb.created = new Date();
