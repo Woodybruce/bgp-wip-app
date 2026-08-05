@@ -3455,6 +3455,9 @@ app.use("/api/branding/assets", express.static(
     // Calendar intelligence bar — the handler computes insights from the
     // caller's own company only (fees nulled) when scoped.
     "/api/microsoft/calendar/insights",
+    // Insights feed — the handler slices to client-safe audience +
+    // category + own-company rows when scoped.
+    "/api/insights",
   ];
   // Microsoft 365 stays otherwise blocked for clients (mail/files/tokens all
   // 403) — the two calendar-intelligence endpoints above/below are the only
@@ -3681,6 +3684,7 @@ app.use("/api/branding/assets", express.static(
   setupNewsIntelligenceRoutes(app);
   setupNewsFeedRoutes(app);
   import("./contact-verify").then(m => { m.setupContactVerifyRoutes(app); m.startContactVerifySweep(); }).catch(e => console.warn("[contact-verify] setup failed:", e?.message));
+  import("./insights-feed").then(m => { m.setupInsightsRoutes(app); m.startInsightsLoop(); }).catch(e => console.warn("[insights] setup failed:", e?.message));
   setupModelsRoutes(app);
   setupDocumentTemplateRoutes(app);
   setupCanvaRoutes(app);

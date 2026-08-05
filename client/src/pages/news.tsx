@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NewsSourcesTab } from "@/components/news-sources-tab";
 import { NewsTagFilterChips } from "@/components/news-tags-manager";
+import { InsightsFeed } from "@/components/insights-feed";
 import {
   Select,
   SelectContent,
@@ -28,6 +29,7 @@ import {
   Clock,
   Loader2,
   Zap,
+  Lightbulb,
   Rss,
   BarChart3,
   Filter,
@@ -210,11 +212,14 @@ function FeedTab() {
 
   const userTeam = currentUser?.team || "Investment";
   const isSavedTab = activeTeam === "Saved";
+  const isInsightsTab = activeTeam === "Insights";
   // Client logins: articles are never relevance-scored against client teams
   // (e.g. "Landsec"), so "For You" would filter the feed to nothing — give
   // them the whole curated trade feed instead, and skip the BGP team tabs.
   const isClientNews = currentUser?.role === "Client" || !!(currentUser as any)?.companyScopeId;
-  const visibleTeams = isClientNews ? ["For You", "Saved"] : TEAMS;
+  const visibleTeams = isClientNews
+    ? ["For You", "Insights", "Saved"]
+    : ["For You", "Insights", ...TEAMS.filter(t => t !== "For You")];
   const effectiveTeam = activeTeam === "For You" ? (isClientNews ? "All" : userTeam) : activeTeam;
 
   const { data: articles, isLoading } = useQuery<NewsArticle[]>({
@@ -231,7 +236,7 @@ function FeedTab() {
       if (!res.ok) throw new Error("Failed to fetch articles");
       return res.json();
     },
-    enabled: !isSavedTab,
+    enabled: !isSavedTab && !isInsightsTab,
   });
 
   const { data: savedArticlesList, isLoading: isSavedLoading } = useQuery<NewsArticle[]>({
@@ -418,6 +423,7 @@ function FeedTab() {
               data-testid={`tab-team-${team.toLowerCase().replace(/\s/g, "-")}`}
             >
               {team === "For You" && <Zap className="w-3 h-3 mr-1" />}
+              {team === "Insights" && <Lightbulb className="w-3 h-3 mr-1" />}
               {team === "Saved" && <Bookmark className="w-3 h-3 mr-1" />}
               {team}
             </TabsTrigger>
@@ -453,7 +459,9 @@ function FeedTab() {
 
       <NewsTagFilterChips selected={tagFilter} onChange={setTagFilter} />
 
-      {isSavedTab ? (
+      {isInsightsTab ? (
+        <InsightsFeed isStaff={!isClientNews} />
+      ) : isSavedTab ? (
         isSavedLoading ? (
           <div className="space-y-3">
             {[1, 2, 3, 4, 5].map((i) => (
