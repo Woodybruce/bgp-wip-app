@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-firm-internal-guard', 'client-property-tenants-scoped', 'client-contact-override-scoped', 'client-tenancy-export-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-contact-override-scoped', 'client-tenancy-export-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1465,6 +1465,29 @@ async function markRound(page, cross) {
     if (r.compliance !== 403) throw new Error(`client reached the deal compliance audit (expected 403, got ${r.compliance})`);
     if (r.investmentComps !== 403) throw new Error(`client reached the investment comps book (expected 403, got ${r.investmentComps})`);
     if (r.boardExport !== 403) throw new Error(`client exported the board report (expected 403, got ${r.boardExport})`);
+  });
+
+  // The staff expense / Stripe-issuing system is BGP-internal finance: staff's
+  // own expense list, their issued-card details (the card PAN!), the firm
+  // cardholder roster, the admin expense summary, and the nominal-code chart.
+  // A client login must be refused across all of it.
+  await step(page, p, 'client-expenses-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return {
+        mine: await g('/api/expenses/me'),
+        cardDetails: await g('/api/expenses/me/card-details'),
+        cardholders: await g('/api/expenses/cardholders'),
+        adminSummary: await g('/api/expenses/admin/summary'),
+        nominalCodes: await g('/api/expenses/nominal-codes'),
+      };
+    });
+    if (r.mine !== 403) throw new Error(`client reached the staff expense list (expected 403, got ${r.mine})`);
+    if (r.cardDetails !== 403) throw new Error(`client reached issued-card details/PAN (expected 403, got ${r.cardDetails})`);
+    if (r.cardholders !== 403) throw new Error(`client reached the cardholder roster (expected 403, got ${r.cardholders})`);
+    if (r.adminSummary !== 403) throw new Error(`client reached the admin expense summary (expected 403, got ${r.adminSummary})`);
+    if (r.nominalCodes !== 403) throw new Error(`client reached the expense nominal codes (expected 403, got ${r.nominalCodes})`);
   });
 
   // The org-wide operational feeds — /api/notifications (stuck deals, KYC-not-
