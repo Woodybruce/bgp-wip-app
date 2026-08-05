@@ -180,13 +180,21 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     }));
 
     // 3. Pipeline counts — group active deals into the six client-
-    //    friendly buckets the funnel renders.
+    //    friendly buckets the funnel renders. Members ride along so the
+    //    lozenges can drill down (Woody, 2026-08-05: "what look like
+    //    filters but don't actually work").
     const pipeline = {
       engaged: 0, viewed: 0, pitch_out: 0, hots: 0, legals: 0, signed: 0,
     } as Record<string, number>;
+    const pipelineItems: Record<string, Array<{ label: string; sub: string | null }>> = {
+      engaged: [], viewed: [], pitch_out: [], hots: [], legals: [], signed: [],
+    };
     for (const d of activeDeals) {
       const bucket = d.stage_bucket;
-      if (pipeline[bucket] !== undefined) pipeline[bucket]++;
+      if (pipeline[bucket] !== undefined) {
+        pipeline[bucket]++;
+        pipelineItems[bucket].push({ label: d.tenant_name || d.name || "Deal", sub: d.unit_name || d.stage_label || null });
+      }
     }
     // Letting Tracker units progressing WITHOUT a crm_deals row were
     // invisible here — the funnel said "0 in legals" while seven units sat
@@ -196,8 +204,13 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
     for (const u of lettingsQ.rows as any[]) {
       if (u.deal_id) continue;
       const s = (u.marketing_status || "").toLowerCase();
-      if (s === "neg" || s === "negotiating" || s === "under_offer" || s === "und") pipeline.hots++;
-      else if (s === "sol" || s === "solicitors" || s === "exc" || s === "exchanged") pipeline.legals++;
+      if (s === "neg" || s === "negotiating" || s === "under_offer" || s === "und") {
+        pipeline.hots++;
+        pipelineItems.hots.push({ label: u.operator_name || u.unit_name, sub: u.operator_name ? u.unit_name : u.marketing_status });
+      } else if (s === "sol" || s === "solicitors" || s === "exc" || s === "exchanged") {
+        pipeline.legals++;
+        pipelineItems.legals.push({ label: u.operator_name || u.unit_name, sub: u.operator_name ? u.unit_name : u.marketing_status });
+      }
     }
 
     // 4. Activity feed — interactions on deals scoped to this property.
@@ -415,6 +428,7 @@ router.get("/api/properties/:id/asset-brief", requireAuth, async (req: Request, 
       active_deals: briefScope ? activeDeals.map((d: any) => ({ ...d, fee_pence: null })) : activeDeals,
       lettings,
       pipeline,
+      pipeline_items: pipelineItems,
       activity,
       risks,
       performance,

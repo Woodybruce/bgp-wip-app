@@ -224,6 +224,9 @@ export function PropertyCoveringStrip({ propertyId }: { propertyId: string }) {
 // scrolling into the lower brief.
 export function PipelinePerformanceBoard({ propertyId }: { propertyId: string }) {
   const { data, isLoading, isError } = useAssetBrief(propertyId);
+  // Lozenges drill down — tap a stage to see who's in it (Woody,
+  // 2026-08-05: pills that look like filters must do something).
+  const [openStage, setOpenStage] = useState<string | null>(null);
   if (isError) {
     return <Card><CardContent className="p-3"><p className="text-xs text-rose-600 italic">Couldn't load — refresh to retry.</p></CardContent></Card>;
   }
@@ -239,15 +242,34 @@ export function PipelinePerformanceBoard({ propertyId }: { propertyId: string })
         </CardTitle>
       </CardHeader>
       <CardContent className="p-3 pt-0 space-y-3">
-        {/* Pipeline funnel */}
+        {/* Pipeline funnel — tap a stage with members to expand them */}
         <div className="grid grid-cols-6 gap-1.5">
-          {STAGE_BUCKETS.map(b => (
-            <div key={b.key} className={`rounded border ${b.colour} px-1.5 py-1 text-center`}>
-              <div className="text-lg font-bold leading-none">{data.pipeline[b.key] || 0}</div>
-              <div className="text-[9px] uppercase tracking-wider mt-0.5">{b.label}</div>
-            </div>
-          ))}
+          {STAGE_BUCKETS.map(b => {
+            const count = data.pipeline[b.key] || 0;
+            const isOpen = openStage === b.key;
+            return (
+              <button
+                key={b.key}
+                onClick={() => count > 0 && setOpenStage(isOpen ? null : b.key)}
+                className={`rounded border ${b.colour} px-1.5 py-1 text-center transition-shadow ${count > 0 ? "cursor-pointer hover:shadow-sm" : "cursor-default opacity-70"} ${isOpen ? "ring-2 ring-foreground/30" : ""}`}
+                data-testid={`funnel-stage-${b.key}`}
+              >
+                <div className="text-lg font-bold leading-none">{count}</div>
+                <div className="text-[9px] uppercase tracking-wider mt-0.5">{b.label}</div>
+              </button>
+            );
+          })}
         </div>
+        {openStage && ((data as any).pipeline_items?.[openStage]?.length || 0) > 0 && (
+          <div className="rounded border bg-muted/30 p-2 space-y-0.5" data-testid="funnel-stage-items">
+            {((data as any).pipeline_items[openStage] as Array<{ label: string; sub: string | null }>).map((it, i) => (
+              <div key={i} className="flex items-center justify-between text-[11px]">
+                <span className="font-medium truncate">{it.label}</span>
+                {it.sub && <span className="text-muted-foreground shrink-0 ml-2">{it.sub}</span>}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Performance scorecard */}
         <div className="grid grid-cols-3 gap-2 pt-1 border-t">
