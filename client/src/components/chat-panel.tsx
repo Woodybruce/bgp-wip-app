@@ -2022,6 +2022,34 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     const clipData = e.clipboardData;
     if (!clipData) return;
 
+    // A file copied in Finder / Explorer arrives with BOTH the real file
+    // in clipboardData.files AND its filename as text/plain — without this
+    // check the text-preference guard below wins and pasting just inserts
+    // the file's NAME (Woody, 2026-08-05). Copied styled text (Word /
+    // Docs) also carries an image-preview file, so only attach when the
+    // text is nothing more than the copied files' own names/paths.
+    const copiedFiles = Array.from(clipData.files || []).filter(f => f && f.size > 0);
+    const clipText = clipData.getData("text/plain") || "";
+    const textIsJustFileNames = copiedFiles.length > 0 && (
+      !clipText.trim() ||
+      clipText.trim().split(/[\r\n]+/).every(line => {
+        const l = line.trim().toLowerCase();
+        if (!l) return true;
+        if (l.startsWith("file://")) return true;
+        return copiedFiles.some(f => {
+          const n = (f.name || "").toLowerCase();
+          return !!n && (l === n || l.endsWith("/" + n) || l.endsWith("\\" + n));
+        });
+      })
+    );
+    if (copiedFiles.length > 0 && textIsJustFileNames) {
+      e.preventDefault();
+      pasteHandledRef.current = true;
+      setTimeout(() => { pasteHandledRef.current = false; }, 100);
+      addPastedImages(copiedFiles);
+      return;
+    }
+
     // Prefer text. Many apps (macOS Word/Pages, Google Docs, styled web
     // pages) put BOTH text/plain AND an image preview in the clipboard
     // when you copy formatted text. Without this guard, pasting text
