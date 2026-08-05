@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-contact-override-scoped', 'client-tenancy-export-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-contact-override-scoped', 'client-tenancy-export-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1441,6 +1441,20 @@ async function markRound(page, cross) {
     if (r.reporting !== 403) throw new Error(`client reached the reporting summary (expected 403, got ${r.reporting})`);
   });
 
+  // The BGP deal-report generator (recent-deals feed + branded PDF builder) is
+  // a staff sales-collateral tool spanning the firm's whole deal book — a
+  // client login must never pull its recent-deals list nor render a report.
+  await step(page, p, 'client-deal-report-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const recent = (await fetch('/api/deal-report/recent-deals', { headers: auth }).catch(() => ({ status: 0 }))).status;
+      const pdf = (await fetch('/api/deal-report/pdf', { method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status;
+      return { recent, pdf };
+    });
+    if (r.recent !== 403) throw new Error(`client reached the deal-report recent-deals feed (expected 403, got ${r.recent})`);
+    if (r.pdf !== 403) throw new Error(`client rendered a deal-report PDF (expected 403, got ${r.pdf})`);
+  });
+
   // Firm-internal back-office surfaces a client must never touch: HR (staff
   // parental-leave register + Brucey award winners — personal staff data), the
   // Companies House search proxy (BGP's CH lookup credit), the deal compliance
@@ -2129,6 +2143,30 @@ async function markRound(page, cross) {
     if (!r.visibleCount) return; // no units in scope this run — nothing to assert
     if (r.strayOffers.length) throw new Error(`offer-count badge keyed a unit outside client scope: ${r.strayOffers[0]}`);
     if (r.strayViews.length) throw new Error(`viewing-count badge keyed a unit outside client scope: ${r.strayViews[0]}`);
+  });
+
+  // Beyond the count badges, the full viewing/offer RECORD lists
+  // (/api/available-units/all-{viewings,offers}) carry sensitive per-deal
+  // detail — viewer names, offer amounts, acting agents. They must be scoped
+  // the same way: every record's unit_id must belong to a unit in the
+  // client's own available-units list, never another landlord's.
+  await step(page, p, 'client-tracker-records-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const j = async (url) => { const res = await fetch(url, { headers: auth }); return { ok: res.ok, status: res.status, body: res.ok ? await res.json().catch(() => null) : null }; };
+      const units = await j('/api/available-units');
+      const views = await j('/api/available-units/all-viewings');
+      const offers = await j('/api/available-units/all-offers');
+      if (!units.ok || !views.ok || !offers.ok) return { ok: false, why: `units ${units.status} / views ${views.status} / offers ${offers.status}` };
+      const visible = new Set((Array.isArray(units.body) ? units.body : []).map((u) => u.id));
+      const rows = (b) => Array.isArray(b) ? b : (b && Array.isArray(b.data) ? b.data : []);
+      const stray = (b) => rows(b).map((x) => x.unit_id || x.unitId).filter((id) => id && !visible.has(id));
+      return { ok: true, visibleCount: visible.size, strayViews: stray(views.body), strayOffers: stray(offers.body) };
+    });
+    if (!r.ok) throw new Error(`tracker record endpoints failed (${r.why})`);
+    if (!r.visibleCount) return; // no units in scope this run
+    if (r.strayViews.length) throw new Error(`a viewing record for a unit outside client scope leaked: ${r.strayViews[0]}`);
+    if (r.strayOffers.length) throw new Error(`an offer record for a unit outside client scope leaked: ${r.strayOffers[0]}`);
   });
 
   // Client must NOT see the requirement the agent just created for another
