@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-firm-internal-guard', 'client-property-tenants-scoped', 'client-tenancy-export-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-firm-internal-guard', 'client-property-tenants-scoped', 'client-contact-override-scoped', 'client-tenancy-export-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -2251,6 +2251,33 @@ async function markRound(page, cross) {
     if (r.ownStatus !== 200 || !r.ownIsArray) throw new Error(`client own property tenant list unhealthy (status ${r.ownStatus}, array ${r.ownIsArray})`);
     if (r.foreign !== 403) throw new Error(`client read a foreign property's rent roll (expected 403, got ${r.foreign})`);
     if (r.del !== 403) throw new Error(`client removed a tenant from a property (expected 403, got ${r.del})`);
+  });
+
+  // The property contacts map (Linked Contacts v2): a client reads the linked
+  // contacts for their OWN scheme and may pin/hide a contact on it (a
+  // per-property override, not a CRM edit), but the same actions on another
+  // landlord's property are refused. Own read 200 + pin/hide round-trip
+  // (cleaned up), foreign read + override 403.
+  await step(page, p, 'client-contact-override-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const own = '22222222-2222-2222-2222-222222222222';
+      const foreign = '44444444-4444-4444-4444-444444444444';
+      const cid = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      const ownRead = await fetch(`/api/properties/${own}/linked-contacts`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const ownBody = ownRead.ok ? await ownRead.json().catch(() => null) : null;
+      const post = (await fetch(`/api/properties/${own}/contact-override`, { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ contactId: cid, kind: 'hide' }) }).catch(() => ({ status: 0 }))).status;
+      const del = (await fetch(`/api/properties/${own}/contact-override/${cid}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => ({ status: 0 }))).status;
+      const foreignRead = await g(`/api/properties/${foreign}/linked-contacts`);
+      const foreignWrite = (await fetch(`/api/properties/${foreign}/contact-override`, { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ contactId: cid, kind: 'hide' }) }).catch(() => ({ status: 0 }))).status;
+      return { ownReadStatus: ownRead.status, ownIsObj: !!ownBody && typeof ownBody === 'object', post, del, foreignRead, foreignWrite };
+    });
+    if (r.ownReadStatus !== 200 || !r.ownIsObj) throw new Error(`client own linked-contacts unhealthy (status ${r.ownReadStatus})`);
+    if (r.post !== 200) throw new Error(`client could not pin/hide a contact on their own property (expected 200, got ${r.post})`);
+    if (r.del !== 200) throw new Error(`client override cleanup failed (expected 200, got ${r.del})`);
+    if (r.foreignRead !== 403) throw new Error(`client read a foreign property's linked contacts (expected 403, got ${r.foreignRead})`);
+    if (r.foreignWrite !== 403) throw new Error(`client set a contact override on a foreign property (expected 403, got ${r.foreignWrite})`);
   });
 
   // A client can export their OWN scheme's tenancy schedule to Excel, but not
