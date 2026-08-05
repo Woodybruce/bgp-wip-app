@@ -332,6 +332,12 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     );
 
     // Deals where this company is a party
+    // A client sees this brand's deals only where THEIR OWN company is the
+    // counterparty (landlord/vendor/purchaser) — the brand's deals with rival
+    // landlords are BGP intel, not the client's to see. Staff see them all.
+    const dealsClientScope = bpScope
+      ? ` AND (d.landlord_id = $2 OR d.vendor_id = $2 OR d.purchaser_id = $2)`
+      : "";
     const dealsQ = pool.query(
       `SELECT d.id, d.name, d.status, d.deal_type, d.stage, d.updated_at, d.exchanged_at, d.completed_at,
               CASE
@@ -341,9 +347,9 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
                 WHEN d.purchaser_id = $1 THEN 'purchaser'
               END AS role
          FROM crm_deals d
-        WHERE d.landlord_id = $1 OR d.tenant_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1
+        WHERE (d.landlord_id = $1 OR d.tenant_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)${dealsClientScope}
         ORDER BY d.updated_at DESC NULLS LAST LIMIT 20`,
-      [companyId]
+      bpScope ? [companyId, bpScope] : [companyId]
     );
 
     // Parent brand group (if any)
@@ -582,6 +588,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     // BGP relationship history — all deals where this company appears + interactions count.
     // Used to show "we've done 3 deals with them, last email 2 weeks ago".
+    // Same client scope as `deals` above — a client's BGP-relationship-history
+    // panel only counts deals where their own company is the counterparty, not
+    // the brand's deals with rival landlords. (The fee/team/internal_agent
+    // columns are additionally stripped for clients in the response.)
     const bgpDealsQ = pool.query(
       `SELECT d.id, d.name, d.deal_type, d.status, d.fee,
               d.team, d.internal_agent,
@@ -595,9 +605,9 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               p.name AS property_name
          FROM crm_deals d
          LEFT JOIN crm_properties p ON p.id = d.property_id
-        WHERE d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1
+        WHERE (d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1)${dealsClientScope}
         ORDER BY d.updated_at DESC NULLS LAST LIMIT 20`,
-      [companyId]
+      bpScope ? [companyId, bpScope] : [companyId]
     );
     const bgpInteractionsQ = pool.query(
       `SELECT COUNT(*) ::int AS total,
@@ -1063,12 +1073,18 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       covenant,
       coverers,
       pendingContactSuggestions,
-      interactions: bgpInteractionsList.rows,
+      // Raw correspondence (subjects/previews/bgp_user) is staff-only — clients
+      // get no interaction log, matching /api/interactions being sealed.
+      interactions: bpScope ? [] : bgpInteractionsList.rows,
       socialStats,
       rolloutVelocity,
       rentAffordability,
       rentComps: rentComps.rows,
-      bgpDeals: bgpDeals.rows,
+      // Strip BGP fee / internal team columns from the relationship-history
+      // deals for client viewers (query is already counterparty-scoped above).
+      bgpDeals: bpScope
+        ? bgpDeals.rows.map((d: any) => { const { fee, team, internal_agent, ...rest } = d; return rest; })
+        : bgpDeals.rows,
       bgpSummary,
       decisionMakers: decisionMakers.rows,
       leaseEvents: leaseEvents.rows,

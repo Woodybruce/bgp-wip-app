@@ -1933,6 +1933,30 @@ async function markRound(page, cross) {
     if (r.stray.length) throw new Error(`brand pitchedTo leaked a rival scheme to the client: property ${r.stray[0]}`);
   });
 
+  // Companion to pitchedTo: the brand-profile `deals` and `bgpDeals` panels
+  // must be counterparty-scoped for a client (this brand's deals WITH THEM,
+  // not with rival landlords), the BGP fee/internal-agent columns stripped,
+  // and the raw `interactions` log empty (staff-only correspondence). A
+  // persistent fixture — QA-LEAK-DEAL, Honi↔a rival landlord — must never
+  // surface on the Landsec client's Honi profile.
+  await step(page, p, 'client-brand-deals-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/brand/77777777-7777-7777-7777-777777777777/profile', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const d = await res.json().catch(() => null);
+      const deals = Array.isArray(d?.deals) ? d.deals : [];
+      const bgpDeals = Array.isArray(d?.bgpDeals) ? d.bgpDeals : [];
+      const names = [...deals, ...bgpDeals].map((x) => String(x.name || ''));
+      const feeLeak = bgpDeals.some((x) => 'fee' in x || 'internal_agent' in x || 'team' in x);
+      return { ok: true, rivalLeak: names.includes('QA-LEAK-DEAL'), feeLeak, interactions: (d?.interactions || []).length };
+    });
+    if (!r.ok) throw new Error(`client brand profile unhealthy (${r.status})`);
+    if (r.rivalLeak) throw new Error("a rival-landlord deal (QA-LEAK-DEAL) leaked onto the client's brand profile");
+    if (r.feeLeak) throw new Error('BGP fee/internal-agent columns leaked on the client bgpDeals panel');
+    if (r.interactions !== 0) throw new Error(`raw interaction log leaked to the client brand profile (${r.interactions} rows)`);
+  });
+
   // Suggested-pitches is the brand-profile "which of my vacant units could
   // this operator take" engine (live requirement + AI-ranked available units
   // in the viewer's scope). A client sees it for a brand in their hospitality
