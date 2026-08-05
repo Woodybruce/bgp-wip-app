@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1725,6 +1725,31 @@ async function markRound(page, cross) {
     if (r.list !== 403) throw new Error(`client reached the AI leads board (expected 403, got ${r.list})`);
     if (r.stats !== 403) throw new Error(`client reached the leads stats (expected 403, got ${r.stats})`);
     if (r.generate !== 403) throw new Error(`client triggered AI lead generation (expected 403, got ${r.generate})`);
+  });
+
+  // The plain news feed (/api/news-feed/articles) is client-visible, but the
+  // news-INTEL pipeline that mines those articles into BD leads — the intel
+  // inbox, the leads list, and pushing a lead into the CRM — plus the manual
+  // feed-fetch trigger are staff-only. A client login must be refused on all
+  // of them (staff prospecting intel, not the reader's news).
+  await step(page, p, 'client-news-intel-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      const p = async (url) => (await fetch(url, { method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status;
+      return {
+        articles: await g('/api/news-feed/articles'),
+        inbox: await g('/api/news-intel/inbox'),
+        leads: await g('/api/news-intel/leads'),
+        push: await p('/api/news-intel/leads/00000000-0000-0000-0000-000000000000/push'),
+        fetch: await p('/api/news-feed/fetch'),
+      };
+    });
+    if (![200, 204].includes(r.articles)) throw new Error(`client news feed articles should be readable (expected 200, got ${r.articles})`);
+    if (r.inbox !== 403) throw new Error(`client reached the news-intel inbox (expected 403, got ${r.inbox})`);
+    if (r.leads !== 403) throw new Error(`client reached the news-intel leads (expected 403, got ${r.leads})`);
+    if (r.push !== 403) throw new Error(`client pushed a news-intel lead (expected 403, got ${r.push})`);
+    if (r.fetch !== 403) throw new Error(`client triggered a news feed fetch (expected 403, got ${r.fetch})`);
   });
 
   // ActivitySummary board (terminal, 2026-08-03): the dashboard's upcoming/
