@@ -474,11 +474,18 @@ async function renderDealReportPdf(
     doc.font("Helvetica-Oblique").fontSize(10).fillColor("#777").text("No deals were added in the last two weeks.", leftM, y, { width: pageW });
   }
 
+  // Footer sits below the bottom margin — writing there makes pdfkit add a
+  // page unless the margin is zeroed for the stamp (standard pdfkit recipe).
+  // The masthead listener must not fire either, so drop it first.
+  doc.removeAllListeners("pageAdded");
   const range = doc.bufferedPageRange();
   for (let i = 0; i < range.count; i++) {
     doc.switchToPage(range.start + i);
+    const oldBottom = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
     doc.font("Helvetica").fontSize(6.5).fillColor("#999")
-      .text(`Deal Report — Bruce Gillingham Pollard — Confidential — Page ${i + 1} of ${range.count}`, leftM, 810, { width: pageW, align: "center" });
+      .text(`Deal Report — Bruce Gillingham Pollard — Confidential — Page ${i + 1} of ${range.count}`, leftM, 810, { width: pageW, align: "center", lineBreak: false });
+    doc.page.margins.bottom = oldBottom;
   }
 
   doc.end();
