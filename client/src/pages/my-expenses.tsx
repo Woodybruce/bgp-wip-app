@@ -197,9 +197,30 @@ export default function MyExpenses() {
       const r = await apiRequest("POST", `/api/expenses/${id}/no-receipt`, {});
       return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
-      toast({ title: "Submitted without receipt", description: "Sent to Wendy & Layla for review." });
+      // Mis-tap is the common case — offer a one-click undo so an accidental
+      // "no receipt" can be pulled back to awaiting-a-receipt without hunting.
+      toast({
+        title: "Submitted without receipt",
+        description: "Sent to Wendy & Layla for review.",
+        action: (
+          <ToastAction
+            altText="Undo no receipt"
+            onClick={async () => {
+              try {
+                await apiRequest("POST", `/api/expenses/${id}/undo-no-receipt`, {});
+                queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+                toast({ title: "Undone", description: "Back to awaiting a receipt — add the photo when you have it." });
+              } catch (e: any) {
+                toast({ title: "Undo failed", description: e?.message, variant: "destructive" });
+              }
+            }}
+          >
+            Undo
+          </ToastAction>
+        ),
+      });
     },
     onError: (e: any) => toast({ title: "Failed", description: e?.message, variant: "destructive" }),
   });

@@ -27,6 +27,7 @@ import { useState, useRef, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1107,9 +1108,32 @@ export default function MobileExpenses() {
       if (!r.ok) throw new Error(body?.error || "Failed");
       return body;
     },
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
-      toast({ title: "Submitted without receipt", description: "Sent to Wendy & Layla for review." });
+      // Mis-tap is the common case — offer a one-tap undo so an accidental
+      // "no receipt" can be pulled back to awaiting-a-receipt.
+      toast({
+        title: "Submitted without receipt",
+        description: "Sent to Wendy & Layla for review.",
+        action: (
+          <ToastAction
+            altText="Undo no receipt"
+            onClick={async () => {
+              try {
+                const r = await fetch(`/api/expenses/${id}/undo-no-receipt`, { method: "POST", credentials: "include", headers: { ...getAuthHeaders() } });
+                const body = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(body?.error || "Failed");
+                queryClient.invalidateQueries({ queryKey: ["/api/expenses/me"] });
+                toast({ title: "Undone", description: "Back to awaiting a receipt — add the photo when you have it." });
+              } catch (e: any) {
+                toast({ title: "Undo failed", description: e?.message, variant: "destructive" });
+              }
+            }}
+          >
+            Undo
+          </ToastAction>
+        ),
+      });
     },
     onError: (e: any) => {
       toast({ title: "Failed", description: e?.message, variant: "destructive" });

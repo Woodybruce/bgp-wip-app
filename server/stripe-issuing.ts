@@ -1460,6 +1460,37 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // Undo an accidental "No receipt" — send a receipt-less, un-actioned
+  // submission back to pending_receipt so the user can attach the photo they
+  // meant to. Guarded so it can't pull a real (receipt-backed) or already-
+  // reviewed expense out of the approval queue.
+  app.post("/api/expenses/:id/undo-no-receipt", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      const [exp] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
+      if (!exp) return res.status(404).json({ error: "Expense not found" });
+      if (exp.status !== "pending_approval" || exp.receiptUrl || exp.stage1ApprovedByUserId) {
+        return res.status(409).json({ error: "This expense can no longer be reverted to awaiting a receipt." });
+      }
+      await db.update(expenses).set({
+        status: "pending_receipt",
+        approvalStage: 1,
+        approverUserId: null,
+        submittedForApprovalAt: null,
+        stage1ApprovedByUserId: null,
+        stage1ApprovedAt: null,
+        flaggedForReview: false,
+        flagReasons: null,
+        updatedAt: new Date(),
+      }).where(eq(expenses.id, id));
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error("[expenses/undo-no-receipt] error:", e?.message);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // View a receipt (image / PDF) for an expense. Powers the in-app receipt
   // viewer in the approvals inbox + My Expenses so Layla / Wendy can actually
   // see the photo before approving — not just a "receipt attached" badge.
