@@ -1001,15 +1001,8 @@ export function PropertyDetail({ id }: { id: string }) {
                 <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={isClientViewer} />
               </ReferenceSection>
 
-              <ReferenceSection
-                title="Client Board"
-                icon={Users}
-                open={sidebarSections.clients}
-                onToggle={() => toggleSection("clients")}
-                testId="toggle-clients-section"
-              >
-                <ClientBoardPanel propertyId={property.id} landlordId={property.landlordId} allCompanies={allCompanies} />
-              </ReferenceSection>
+              {/* Client Board retired (Woody, 2026-08-05) — Linked Contacts'
+                  Internal team group now carries the client-side people. */}
 
               <ReferenceSection
                 title="Deals"
