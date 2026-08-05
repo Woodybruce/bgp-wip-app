@@ -418,17 +418,23 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // is on the target list (target_company_ids), in target_brands
     // free text, OR already linked via the canonical tenant_company_id
     // FK (deals already in motion). One unified pitched list.
+    // A client must only see this brand pitched to THEIR OWN schemes — the
+    // full cross-landlord pitch list is BGP BD intel. Scope the properties to
+    // the client's estate when the request is client-scoped; staff see all.
+    const pitchedToScope = bpScope
+      ? ` AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))`
+      : "";
     const pitchedToQ = pool.query(
       `SELECT u.id, u.unit_name, u.target_brands, u.status, u.priority, u.updated_at,
               p.id AS property_id, p.name AS property_name, p.address AS property_address
          FROM leasing_schedule_units u
          JOIN crm_properties p ON p.id = u.property_id
-        WHERE u.target_company_ids @> ARRAY[$1]::text[]
+        WHERE (u.target_company_ids @> ARRAY[$1]::text[]
            OR u.tenant_company_id = $1
-           OR u.target_brands ILIKE '%' || (SELECT name FROM crm_companies WHERE id = $1) || '%'
+           OR u.target_brands ILIKE '%' || (SELECT name FROM crm_companies WHERE id = $1) || '%')${pitchedToScope}
         ORDER BY u.updated_at DESC NULLS LAST
         LIMIT 20`,
-      [companyId]
+      bpScope ? [companyId, bpScope] : [companyId]
     );
 
     // Recent contacts — emails/meetings linked to this company

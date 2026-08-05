@@ -1910,6 +1910,29 @@ async function markRound(page, cross) {
     if (body.length < 40) throw new Error('brand profile rendered blank for client');
   });
 
+  // The brand-profile "pitchedTo" panel lists the schemes a brand is being
+  // pitched to. For a client that must be THEIR OWN estate only — the
+  // cross-landlord pitch list is BGP BD intel (a client learning BGP is
+  // pitching this operator into a rival's centre is a leak). Every pitchedTo
+  // entry the client sees must sit on a property in their own portfolio.
+  // (Regression guard: the pitchedTo query had no requesting-company scope.)
+  await step(page, p, 'client-brand-pitchedto-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const props = await (await fetch('/api/crm/properties', { headers: auth }).catch(() => null))?.json().catch(() => null);
+      const mine = new Set((Array.isArray(props) ? props : (props?.properties || props?.rows || [])).map((p) => String(p.id)));
+      const res = await fetch('/api/brand/77777777-7777-7777-7777-777777777777/profile', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = await res.json().catch(() => null);
+      const pitched = (body && Array.isArray(body.pitchedTo)) ? body.pitchedTo : [];
+      const stray = pitched.map((x) => String(x.property_id)).filter((id) => id && mine.size && !mine.has(id));
+      return { ok: true, mineCount: mine.size, pitchedCount: pitched.length, stray: stray.slice(0, 3) };
+    });
+    if (!r.ok) throw new Error(`client brand profile unhealthy (${r.status})`);
+    if (!r.mineCount) return; // couldn't resolve the client's property set this run
+    if (r.stray.length) throw new Error(`brand pitchedTo leaked a rival scheme to the client: property ${r.stray[0]}`);
+  });
+
   // Suggested-pitches is the brand-profile "which of my vacant units could
   // this operator take" engine (live requirement + AI-ranked available units
   // in the viewer's scope). A client sees it for a brand in their hospitality
