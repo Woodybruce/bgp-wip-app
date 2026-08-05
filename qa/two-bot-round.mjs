@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tenancy-export-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tenancy-export-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1487,6 +1487,29 @@ async function markRound(page, cross) {
     if (r.compliance !== 403) throw new Error(`client reached the deal compliance audit (expected 403, got ${r.compliance})`);
     if (r.investmentComps !== 403) throw new Error(`client reached the investment comps book (expected 403, got ${r.investmentComps})`);
     if (r.boardExport !== 403) throw new Error(`client exported the board report (expected 403, got ${r.boardExport})`);
+  });
+
+  // The staff Outlook mailboxes — per-user (/api/user-mail/*) and the shared
+  // team mailbox (/api/shared-mailbox/*) — are BGP internal correspondence. A
+  // client login must never read a folder/message, check status, or send from
+  // them. (The mobile nav's staff-only "Mail" tab is the UI door to this.)
+  await step(page, p, 'client-mailbox-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return {
+        userMsgs: await g('/api/user-mail/messages'),
+        userStatus: await g('/api/user-mail/status'),
+        sharedMsgs: await g('/api/shared-mailbox/messages'),
+        sharedFolders: await g('/api/shared-mailbox/folders'),
+        send: (await fetch('/api/user-mail/send', { method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status,
+      };
+    });
+    if (r.userMsgs !== 403) throw new Error(`client read the staff Outlook inbox (expected 403, got ${r.userMsgs})`);
+    if (r.userStatus !== 403) throw new Error(`client read staff mailbox status (expected 403, got ${r.userStatus})`);
+    if (r.sharedMsgs !== 403) throw new Error(`client read the shared team mailbox (expected 403, got ${r.sharedMsgs})`);
+    if (r.sharedFolders !== 403) throw new Error(`client read shared-mailbox folders (expected 403, got ${r.sharedFolders})`);
+    if (r.send !== 403) throw new Error(`client sent mail from a staff mailbox (expected 403, got ${r.send})`);
   });
 
   // The staff expense / Stripe-issuing system is BGP-internal finance: staff's
