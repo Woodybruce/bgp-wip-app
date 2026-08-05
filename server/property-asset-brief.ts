@@ -1007,6 +1007,42 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       [pid]
     );
 
+    // 3b. Tracker parties — the brands actively negotiating tracker units
+    //     (Woody, 2026-08-05: Bluewater had six units in play and the deals
+    //     group showed nobody, because those live on the tracker rather
+    //     than as formal deal records). Counterparty comes from the unit's
+    //     resolved brand, its linked deal, or its latest offer; freshest
+    //     contact per brand.
+    const trackerQ = pool.query(
+      `WITH active_units AS (
+         SELECT au.id, au.unit_name, au.marketing_status, au.tenant_company_id, au.deal_id
+           FROM available_units au
+          WHERE au.property_id = $1
+            AND lower(COALESCE(au.marketing_status,'')) ~ '(neg|offer|sol|exc|hots|terms)'
+       ),
+       parties AS (
+         SELECT u.unit_name, u.marketing_status, u.tenant_company_id AS company_id
+           FROM active_units u WHERE u.tenant_company_id IS NOT NULL
+         UNION
+         SELECT u.unit_name, u.marketing_status, d.tenant_id
+           FROM active_units u JOIN crm_deals d ON d.id = u.deal_id
+          WHERE d.tenant_id IS NOT NULL
+         UNION
+         SELECT u.unit_name, u.marketing_status, lo.company_id
+           FROM active_units u
+           JOIN LATERAL (
+             SELECT o.company_id FROM unit_offers o
+              WHERE o.unit_id = u.id AND o.company_id IS NOT NULL
+              ORDER BY o.offer_date DESC LIMIT 1
+           ) lo ON true
+       )
+       SELECT DISTINCT ON (c.company_id) c.*, p.unit_name, p.marketing_status
+         FROM parties p JOIN crm_contacts c ON c.company_id = p.company_id
+        ORDER BY c.company_id, c.last_interaction DESC NULLS LAST
+        LIMIT 12`,
+      [pid]
+    );
+
     // 4. Interest — people who actually viewed or offered on the
     //    property's tracker units.
     const interestQ = pool.query(
@@ -1025,8 +1061,10 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       [pid]
     );
 
-    const [landlord, tenants, deals, interest, bgpTeam, clientLeads, consultants] =
-      await Promise.all([landlordQ, tenantsQ, dealsQ, interestQ, bgpTeamQ, clientLeadsQ, consultantsQ]);
+    const [landlord, tenants, deals, interest, bgpTeam, clientLeads, consultants, tracker] =
+      await Promise.all([landlordQ, tenantsQ, dealsQ, interestQ, bgpTeamQ, clientLeadsQ, consultantsQ, trackerQ]);
+    const dealIds = new Set(deals.rows.map((r: any) => r.id));
+    const trackerRows = tracker.rows.filter((r: any) => !dealIds.has(r.id));
     res.json({
       landlord: landlord.rows.map((r: any) => shape(r, "landlord team")),
       // Brand-first occupier rows: the company is the row, the freshest
@@ -1036,7 +1074,10 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
         company_name: r.occ_company_name,
         contact: r.id ? { id: r.id, name: r.name, role: r.role, email: r.email, last_interaction: r.last_interaction } : null,
       })),
-      deals: deals.rows.map((r: any) => shape(r, r.deal_name || "on a deal")),
+      deals: [
+        ...deals.rows.map((r: any) => shape(r, r.deal_name || "on a deal")),
+        ...trackerRows.map((r: any) => shape(r, `${r.marketing_status || "negotiating"} · ${r.unit_name || "tracker"}`)),
+      ],
       interest: interest.rows.map((r: any) => shape(r, r.kind === "offered" ? "made an offer" : "viewed")),
       internal: [
         ...bgpTeam.rows.map((r: any) => ({ id: `u-${r.id}`, user_id: r.id, name: r.name, role: r.agent_role || "Agent", email: r.email, side: "bgp" })),
