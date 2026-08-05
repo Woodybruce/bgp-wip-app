@@ -429,8 +429,11 @@ function BrochureTile({
           any attempt to scroll/click instead popped the modal. Now the
           modal opens only via the Maximize button in the top-right. */}
       <div className={`relative bg-muted/40 overflow-hidden ${hero ? "flex-1 min-h-0" : "aspect-[3/4]"}`}>
+        {/* Hero: fit the WHOLE cover page (view=Fit). FitH fits page width,
+            which on the wide hero zoomed a portrait cover so far in that
+            only the top slice (sky) was visible (Woody, 2026-08-05). */}
         <iframe
-          src={`${brochure.fileUrl}#toolbar=0&navpanes=0&view=FitH`}
+          src={`${brochure.fileUrl}#toolbar=0&navpanes=0&view=${hero ? "Fit" : "FitH"}`}
           className="w-full h-full border-0"
           title={brochure.name}
         />

@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Users, Mail, Linkedin, Loader2, RefreshCw, Plus } from "lucide-react";
+import { Users, Mail, Linkedin, Loader2, RefreshCw, Plus, ChevronDown, ChevronRight } from "lucide-react";
 
 function formatRelativeShort(iso: string): string {
   const then = new Date(iso).getTime();
@@ -173,6 +173,10 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
   const [showAll, setShowAll] = useState(false);
   const [addedEmails, setAddedEmails] = useState<Set<string>>(new Set());
   const [addingEmail, setAddingEmail] = useState<string | null>(null);
+  // Extra sections are collapsed to headers by default — their titles and
+  // counts are visible right under the main list instead of a full page of
+  // scrolling (Woody, 2026-08-05: "can we have headers instead?").
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
   
 
   // Property-relevant roles only by default. Most of what RocketReach imports
@@ -361,16 +365,29 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
             {showAll ? "Show property-tier only" : `Show all ${allContacts.length + discovered.length} contacts`}
           </button>
         )}
-        {extraSections.filter(s => s.rows.length > 0).map(s => (
-          <div key={s.key} className="mt-3 pt-2 border-t border-border/40">
-            <div className={`text-[10px] uppercase tracking-wide font-semibold mb-1 ${s.tint || "text-muted-foreground"}`}>{s.title} · {s.rows.length}</div>
-            <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
-              {s.rows.map((row: any) => (
-                <KeyContactRow key={row.id} contact={row} companyId={companyId} />
-              ))}
+        {extraSections.filter(s => s.rows.length > 0).map(s => {
+          const isOpen = openSections[s.key] ?? false;
+          return (
+            <div key={s.key} className="mt-2 pt-1.5 border-t border-border/40">
+              <button
+                onClick={() => setOpenSections(prev => ({ ...prev, [s.key]: !isOpen }))}
+                className={`w-full flex items-center gap-1.5 text-[10px] uppercase tracking-wide font-semibold py-1 rounded hover:bg-muted/50 transition-colors ${s.tint || "text-muted-foreground"}`}
+                data-testid={`toggle-contacts-section-${s.key}`}
+              >
+                {isOpen ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
+                <span className="text-left flex-1">{s.title}</span>
+                <Badge variant="outline" className="text-[9px] tabular-nums">{s.rows.length}</Badge>
+              </button>
+              {isOpen && (
+                <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1 mt-1">
+                  {s.rows.map((row: any) => (
+                    <KeyContactRow key={row.id} contact={row} companyId={companyId} />
+                  ))}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
         <PendingSendersList suggestions={pendingSenders} companyId={companyId} />
       </CardContent>
     </Card>

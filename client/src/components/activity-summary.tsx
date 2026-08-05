@@ -67,7 +67,10 @@ function RecentRow({ a, propertyId, summaries, setSummaries }: {
       const r = await apiRequest("POST", `/api/interactions/${a.id}/summarise`);
       return r.json();
     },
-    onSuccess: (j: any) => { if (j.summary) setSummaries(prev => ({ ...prev, [a.id]: j.summary })); },
+    onSuccess: (j: any) => {
+      if (j.summary) setSummaries(prev => ({ ...prev, [a.id]: j.summary }));
+      else if (j.skipped) toast({ title: "Nothing to summarise", description: j.reason || "No notes or transcript captured for this one." });
+    },
     onError: (e: any) => toast({ title: "Couldn't summarise", description: e?.message, variant: "destructive" }),
   });
   const addTask = useMutation({
