@@ -335,6 +335,52 @@ export function registerPropertyBrochureRoutes(app: Express) {
     }
   });
 
+  // First-page cover as a PNG — the tile/hero previews were iframe PDF
+  // embeds, which letterbox with the viewer's black chrome (Woody,
+  // 2026-08-05: "still got this brochure issue?"). Rasterised once with
+  // pdftoppm (same tool the vision ingest uses) and cached on disk.
+  app.get("/api/properties/:id/brochures/:bid/cover", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { clientBlockedForProperty } = await import("./company-scope");
+      if (await clientBlockedForProperty(req, String(req.params.id))) {
+        return res.status(403).json({ error: "Read-only access for client accounts" });
+      }
+      const { rows } = await pool.query<BrochureRow>(
+        `SELECT * FROM property_brochures WHERE id = $1 AND property_id = $2`,
+        [req.params.bid, req.params.id],
+      );
+      const r = rows[0];
+      if (!r) return res.status(404).json({ error: "Brochure not found" });
+
+      const fs = await import("fs");
+      const path = await import("path");
+      const os = await import("os");
+      const coverDir = path.join(os.tmpdir(), "brochure-covers");
+      fs.mkdirSync(coverDir, { recursive: true });
+      const coverPath = path.join(coverDir, `${r.id}.png`);
+
+      if (!fs.existsSync(coverPath)) {
+        const file = await getFile(r.storage_key);
+        if (!file) return res.status(404).json({ error: "Brochure file missing from storage" });
+        const pdfPath = path.join(coverDir, `${r.id}.pdf`);
+        fs.writeFileSync(pdfPath, file.data);
+        const { execFile } = await import("child_process");
+        await new Promise<void>((resolve, reject) => {
+          execFile("pdftoppm", ["-png", "-f", "1", "-l", "1", "-r", "100", "-singlefile", pdfPath, coverPath.replace(/\.png$/, "")], { timeout: 30000 }, (err) => err ? reject(err) : resolve());
+        });
+        try { fs.unlinkSync(pdfPath); } catch {}
+        if (!fs.existsSync(coverPath)) return res.status(500).json({ error: "cover render failed" });
+      }
+
+      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+      res.send(fs.readFileSync(coverPath));
+    } catch (e: any) {
+      console.error("[property-brochures cover]", e?.message);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // PATCH — rename, retype (leasing/investment), archive toggle.
   app.patch("/api/properties/:id/brochures/:bid", requireAuth, async (req: Request, res: Response) => {
     try {

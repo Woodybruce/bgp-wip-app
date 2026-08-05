@@ -429,13 +429,26 @@ function BrochureTile({
           any attempt to scroll/click instead popped the modal. Now the
           modal opens only via the Maximize button in the top-right. */}
       <div className={`relative bg-muted/40 overflow-hidden ${hero ? "flex-1 min-h-0" : "aspect-[3/4]"}`}>
-        {/* Hero: fit the WHOLE cover page (view=Fit). FitH fits page width,
-            which on the wide hero zoomed a portrait cover so far in that
-            only the top slice (sky) was visible (Woody, 2026-08-05). */}
-        <iframe
-          src={`${brochure.fileUrl}#toolbar=0&navpanes=0&view=${hero ? "Fit" : "FitH"}`}
-          className="w-full h-full border-0"
-          title={brochure.name}
+        {/* Cover page as a server-rendered PNG on a clean white mount —
+            the iframe PDF embed letterboxed the page with the viewer's
+            black chrome (Woody, 2026-08-05). Full document still opens
+            via the Maximize preview. Falls back to the iframe embed if
+            the cover render isn't available. */}
+        <img
+          src={brochure.fileUrl.replace(/\/file(\?.*)?$/, "/cover")}
+          alt={brochure.name}
+          className="w-full h-full object-contain bg-white"
+          loading="lazy"
+          onError={(e) => {
+            const img = e.currentTarget as HTMLImageElement;
+            if (img.dataset.fallback) return;
+            img.dataset.fallback = "1";
+            const frame = document.createElement("iframe");
+            frame.src = `${brochure.fileUrl}#toolbar=0&navpanes=0&view=Fit`;
+            frame.className = "w-full h-full border-0";
+            frame.title = brochure.name;
+            img.replaceWith(frame);
+          }}
         />
         {ingestBadge(brochure)}
         <button
