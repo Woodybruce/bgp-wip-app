@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tenancy-export-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1006,23 +1006,22 @@ async function markRound(page, cross) {
 
   // Client manages their own tasks: add via quick-add, mark complete, remove.
   // (My Tasks widget + page; every task endpoint is user-scoped.)
-  await step(page, p, 'client-task-create-complete', async () => {
-    const title = `QA Task R${ROUND}`;
+  // /tasks for a client is the READ-ONLY portfolio Tasks board ("who's done
+  // what", Messages Phase 2) — staff keep the personal My Tasks page with
+  // quick-add. So on the client the page must render the board (Tasks heading +
+  // Done section) and must NOT offer a quick-add input. (Task create/complete
+  // over the API is still allowed and is covered by client-task-edit.)
+  await step(page, p, 'client-tasks-board-readonly', async () => {
     await page.goto(`${BASE}/tasks`);
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1500);
-    const add = page.locator('[data-testid="input-add-task"]').first();
-    if (!(await add.count())) throw new Error('no quick-add task input');
-    await add.fill(title);
-    await add.press('Enter');
-    await page.waitForTimeout(1200);
-    const row = page.locator('[data-testid^="task-row-"]', { hasText: title }).first();
-    if (!(await row.count())) throw new Error('task not visible after add');
-    // Complete it, then clean up via the row's delete button.
-    await row.locator('[data-testid^="task-toggle-"]').first().click().catch(() => {});
-    await page.waitForTimeout(600);
-    await row.locator('[data-testid^="task-delete-"]').first().click().catch(() => {});
-    await page.waitForTimeout(400);
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(2000);
+    if (await page.getByText('Page not found').count()) throw new Error('client /tasks is a dead route');
+    if (await page.getByText('something went wrong', { exact: false }).count()) throw new Error('error boundary tripped on the client tasks board');
+    const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
+    if (body.length < 30) throw new Error('client tasks board rendered blank');
+    if (!/tasks/i.test(body)) throw new Error('client tasks board missing its Tasks heading/content');
+    if (await page.locator('[data-testid="input-add-task"]').count())
+      throw new Error('quick-add task input present on the client read-only tasks board');
   });
 
   // Client property-detail page renders (tabs, no blank/crash). Cross-check
@@ -2076,6 +2075,27 @@ async function markRound(page, cross) {
     if (!r.mine) throw new Error('client has no company scope on /api/auth/me');
     if (r.own !== 200) throw new Error(`client own portfolio contact roll-up unhealthy (expected 200, got ${r.own})`);
     if (r.other !== 403) throw new Error(`client read another company's portfolio contact roll-up (expected 403, got ${r.other})`);
+  });
+
+  // The new Client Tasks board reads /api/company-portfolio/:id/tasks, split
+  // into open/done. Scoped like the rest of the portfolio surface: a client
+  // reads their OWN board (200, {open,done} arrays) but another company's task
+  // board is refused.
+  await step(page, p, 'client-tasks-board-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json().catch(() => ({}));
+      const mine = me?.companyScopeId || me?.companyId || null;
+      const foreign = '99999999-1111-1111-1111-111111111111';
+      const ownRes = mine ? await fetch(`/api/company-portfolio/${mine}/tasks`, { headers: auth }).catch(() => ({ ok: false, status: 0 })) : { ok: false, status: 0 };
+      const ownBody = ownRes.ok ? await ownRes.json().catch(() => null) : null;
+      const other = (await fetch(`/api/company-portfolio/${foreign}/tasks`, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { mine, ownStatus: ownRes.status, shape: !!ownBody && Array.isArray(ownBody.open) && Array.isArray(ownBody.done), other };
+    });
+    if (!r.mine) throw new Error('client has no company scope on /api/auth/me');
+    if (r.ownStatus !== 200) throw new Error(`client own tasks board unhealthy (expected 200, got ${r.ownStatus})`);
+    if (!r.shape) throw new Error('client tasks board payload missing open/done arrays');
+    if (r.other !== 403) throw new Error(`client read another company's tasks board (expected 403, got ${r.other})`);
   });
 
   // Client opens the viewings + offers panels on one of their own units — the
