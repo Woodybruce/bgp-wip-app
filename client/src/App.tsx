@@ -212,6 +212,7 @@ const CLIENT_ALLOWED_ROUTES = [
   "/contacts", "/companies", "/comps", "/chatbgp", "/requirements",
   "/deals", "/tasks", "/today", "/leasing-schedule", "/land-registry",
   "/business-rates", "/m/images", "/image-studio", "/cad-measure", "/settings/profile",
+  "/home",
   "/news", "/available",
   // Task-25 client surfaces — the nav showed these but this guard bounced
   // the click back to the dashboard ("still bounces", 2026-08-02).
@@ -238,6 +239,8 @@ function Router() {
     <ClientRouteGuard />
     <Switch>
       <Route path="/" component={Dashboard} />
+      {/* /home is the mobile dashboard tab; on desktop it's just the dashboard. */}
+      <Route path="/home" component={Dashboard} />
       <Route path="/instructions" component={Instructions} />
       {/* Properties list now lives as a tab inside Deals Hub. /properties
           keeps working but mounts DealsHub so the user sees the unified
@@ -453,10 +456,15 @@ function AuthenticatedApp() {
     return <MobileApp initialTab="ai" />;
   }
 
-  // Mobile Home — a focused "what do I do today" dashboard (alerts, tasks,
-  // recent deals, quick links) rather than the ChatBGP screen, so Home and
-  // ChatBGP are distinct destinations.
+  // Mobile home = Messages (Woody, 2026-08-05: WhatsApp-style unified chat
+  // as the landing screen for everyone — "half the company work for
+  // Landsec"). The tile dashboard moved one tab over, to /home.
   if ((isMobile || nativeMobile) && location === "/") {
+    return <MobileApp initialTab="chats" />;
+  }
+
+  // The old mobile dashboard — alerts, tasks, quick links, portfolio tiles.
+  if ((isMobile || nativeMobile) && location === "/home") {
     return (
       <div className="flex flex-col" style={{ height: "100dvh" }}>
         <div

@@ -3428,6 +3428,8 @@ app.use("/api/branding/assets", express.static(
     // portfolio and returns sanitised summaries only.
     "/api/activity-summary",
     "/api/chat/threads", "/api/chat-media/", "/api/brand-logo/",
+    // Unread count for the mobile Messages badge — count only, no content.
+    "/api/chat/notifications",
     // Smart-tag picker + "conversations about X" — both company-scoped for
     // clients server-side (tag-search filters to the caller's own portfolio;
     // threads-tagging is member-scoped), so a Landsec login only ever sees
