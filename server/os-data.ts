@@ -104,44 +104,202 @@ function normaliseDpa(r: any): OsPlacesResult {
   };
 }
 
+// ─── Free fallback providers ────────────────────────────────────────────────
+// OS Places is a paid product and the account doesn't carry it (403 Forbidden;
+// Woody 2026-08-05: too expensive to keep). Address search falls back to
+// Nominatim (OpenStreetMap) and postcode lookup to postcodes.io — both free.
+// If the key ever regains Places access the primary path starts working again
+// on its own; a 403 trips a 12-hour breaker so every lookup doesn't pay a
+// doomed round-trip first. Free rows carry no UPRN.
+
+let placesForbiddenUntil = 0;
+
+function placesAvailable(): boolean {
+  return isOsConfigured() && Date.now() > placesForbiddenUntil;
+}
+
+function tripPlacesBreaker(status: number): void {
+  if (status === 403) placesForbiddenUntil = Date.now() + 12 * 60 * 60 * 1000;
+}
+
+const NOMINATIM_BASE = "https://nominatim.openstreetmap.org";
+const NOMINATIM_HEADERS = {
+  Accept: "application/json",
+  "User-Agent": "BGP-Dashboard/1.0 (internal property tooling; woody@brucegillinghampollard.com)",
+};
+
+// Nominatim usage policy caps us at 1 request/second — serialise calls
+// through a promise chain with spacing; cached() keeps repeats local.
+let nominatimChain: Promise<unknown> = Promise.resolve();
+function nominatimFetch(url: string): Promise<any | null> {
+  const run = async () => {
+    const resp = await fetch(url, { headers: NOMINATIM_HEADERS });
+    if (!resp.ok) return null;
+    return resp.json();
+  };
+  const result = nominatimChain.then(run, run);
+  nominatimChain = result.catch(() => null).then(() => new Promise((r) => setTimeout(r, 1100)));
+  return result;
+}
+
+function normaliseNominatim(r: any): OsPlacesResult {
+  return {
+    address: String(r?.display_name || "").replace(/, United Kingdom$/, ""),
+    postcode: r?.address?.postcode || undefined,
+    latitude: r?.lat != null ? parseFloat(r.lat) : undefined,
+    longitude: r?.lon != null ? parseFloat(r.lon) : undefined,
+    classification: [r?.class, r?.type].filter(Boolean).join("/") || undefined,
+    raw: r,
+  };
+}
+
+// ─── EPC-register UPRN stitch ───────────────────────────────────────────────
+// The gov.uk EPC registers are free (email registration for a key) and carry
+// address + UPRN for every certificated building — which is most commercial
+// stock. When EPC_AUTH is set ("email:api-key" from
+// epc.opendatacommunities.org, or the ready-made base64 token), free lookups
+// get their UPRN back by matching against that postcode's certificates.
+// Without the env var this is a no-op.
+
+function epcAuthHeader(): string | null {
+  const raw = (process.env.EPC_AUTH || "").trim();
+  if (!raw) return null;
+  return `Basic ${raw.includes(":") ? Buffer.from(raw).toString("base64") : raw}`;
+}
+
+async function epcCertificatesForPostcode(postcode: string): Promise<Array<{ address: string; uprn: string }>> {
+  const auth = epcAuthHeader();
+  if (!auth) return [];
+  const clean = postcode.trim().toUpperCase();
+  return cached(`epc-pc:${clean.replace(/\s+/g, "")}`, async () => {
+    const rows: Array<{ address: string; uprn: string }> = [];
+    for (const reg of ["non-domestic", "domestic"]) {
+      try {
+        const resp = await fetch(
+          `https://epc.opendatacommunities.org/api/v1/${reg}/search?postcode=${encodeURIComponent(clean)}&size=200`,
+          { headers: { Accept: "application/json", Authorization: auth } }
+        );
+        if (!resp.ok) continue;
+        const data: any = await resp.json().catch(() => null);
+        for (const r of data?.rows || []) {
+          if (r.uprn) rows.push({ address: [r.address, r.address1, r.address2].filter(Boolean).join(", "), uprn: String(r.uprn) });
+        }
+      } catch {
+        // register unreachable — the lookup still works, just without UPRNs
+      }
+    }
+    return rows;
+  }, 24 * 30);
+}
+
+function epcNormalise(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+async function attachUprnsFromEpc(results: OsPlacesResult[]): Promise<OsPlacesResult[]> {
+  if (!epcAuthHeader()) return results;
+  const wanting = results.filter((r) => !r.uprn && r.postcode);
+  const postcodes = Array.from(new Set(wanting.map((r) => r.postcode as string))).slice(0, 3);
+  if (!postcodes.length) return results;
+  const byPc = new Map<string, Array<{ address: string; uprn: string }>>();
+  for (const pc of postcodes) byPc.set(pc, await epcCertificatesForPostcode(pc));
+  for (const r of wanting) {
+    const certs = byPc.get(r.postcode as string) || [];
+    if (!certs.length) continue;
+    const target = epcNormalise(r.address);
+    const num = (target.match(/\b\d+[a-z]?\b/) || [])[0];
+    const matches = certs.filter((c) => {
+      const ca = epcNormalise(c.address);
+      if (num && !ca.includes(num)) return false;
+      const tokens = target.split(" ").filter((t) => t.length > 3 && t !== num);
+      return tokens.some((t) => ca.includes(t));
+    });
+    const uprns = Array.from(new Set(matches.map((m) => m.uprn)));
+    // Only attach when the match is unambiguous — a wrong UPRN is worse
+    // than no UPRN.
+    if (uprns.length === 1) r.uprn = uprns[0];
+  }
+  return results;
+}
+
+async function freeFind(query: string, maxresults: number): Promise<OsPlacesResult[]> {
+  const url = `${NOMINATIM_BASE}/search?q=${encodeURIComponent(query)}&format=jsonv2&addressdetails=1&countrycodes=gb&limit=${Math.min(maxresults, 40)}`;
+  const data = await nominatimFetch(url);
+  return attachUprnsFromEpc(Array.isArray(data) ? data.map(normaliseNominatim) : []);
+}
+
+async function freeNearest(lat: number, lng: number): Promise<OsPlacesResult[]> {
+  const url = `${NOMINATIM_BASE}/reverse?lat=${lat}&lon=${lng}&format=jsonv2&addressdetails=1&zoom=18`;
+  const data = await nominatimFetch(url);
+  return attachUprnsFromEpc(data && !data.error ? [normaliseNominatim(data)] : []);
+}
+
+async function freePostcode(postcode: string, maxresults: number): Promise<OsPlacesResult[]> {
+  const clean = postcode.trim().toUpperCase().replace(/\s+/g, "");
+  const rows: OsPlacesResult[] = [];
+  try {
+    const resp = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(clean)}`, { headers: { Accept: "application/json" } });
+    if (resp.ok) {
+      const d = (await resp.json())?.result;
+      if (d) {
+        rows.push({
+          address: [d.postcode, d.admin_ward, d.admin_district].filter(Boolean).join(", "),
+          postcode: d.postcode,
+          latitude: d.latitude ?? undefined,
+          longitude: d.longitude ?? undefined,
+          classification: "postcode",
+          raw: d,
+        });
+      }
+    }
+  } catch {
+    // postcodes.io down — Nominatim below still gives us something
+  }
+  const nom = await freeFind(postcode, Math.min(maxresults, 20));
+  return attachUprnsFromEpc(rows.concat(nom.filter((r) => r.address)).slice(0, maxresults));
+}
+
 /**
  * Free-text search — postal address, business name, whatever the user typed.
- * Returns up to `maxresults` normalised rows. Empty if OS isn't configured.
+ * OS Places when available, Nominatim otherwise.
  */
 export async function osPlacesFind(query: string, maxresults = 10): Promise<OsPlacesResult[]> {
-  if (!isOsConfigured() || !query) return [];
+  if (!query) return [];
   const key = `os-find:${query.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 120)}:${maxresults}`;
   return cached(key, async () => {
-    const url = `${PLACES_BASE}/find?query=${encodeURIComponent(query)}&key=${getOsKey()}&maxresults=${maxresults}&dataset=DPA`;
-    const resp = await fetch(url, { headers: { Accept: "application/json" } });
-    if (resp.status === 401) return [] as OsPlacesResult[];
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      throw new Error(`OS Places find error ${resp.status}: ${text.slice(0, 200)}`);
+    if (placesAvailable()) {
+      const url = `${PLACES_BASE}/find?query=${encodeURIComponent(query)}&key=${getOsKey()}&maxresults=${maxresults}&dataset=DPA`;
+      const resp = await fetch(url, { headers: { Accept: "application/json" } });
+      if (resp.ok) {
+        const data = await resp.json();
+        return (data?.results || []).map(normaliseDpa) as OsPlacesResult[];
+      }
+      tripPlacesBreaker(resp.status);
     }
-    const data = await resp.json();
-    return (data?.results || []).map(normaliseDpa) as OsPlacesResult[];
+    return freeFind(query, maxresults);
   }, 24 * 7);
 }
 
 /**
- * Postcode → all addresses in that postcode. Useful for dropdown pickers on
- * property forms (user types the postcode, picks the exact address).
+ * Postcode → addresses/centroid for that postcode. OS Places gives the full
+ * letterbox-level list; the free path returns the postcodes.io centroid plus
+ * whatever addresses Nominatim knows.
  */
 export async function osPlacesByPostcode(postcode: string, maxresults = 100): Promise<OsPlacesResult[]> {
-  if (!isOsConfigured() || !postcode) return [];
+  if (!postcode) return [];
   const clean = postcode.trim().toUpperCase().replace(/\s+/g, "");
   return cached(`os-pc:${clean}:${maxresults}`, async () => {
-    const url = `${PLACES_BASE}/postcode?postcode=${encodeURIComponent(clean)}&key=${getOsKey()}&maxresults=${maxresults}&dataset=DPA`;
-    const resp = await fetch(url, { headers: { Accept: "application/json" } });
-    if (resp.status === 401) return [] as OsPlacesResult[];
-    if (resp.status === 404) return [] as OsPlacesResult[];
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      throw new Error(`OS Places postcode error ${resp.status}: ${text.slice(0, 200)}`);
+    if (placesAvailable()) {
+      const url = `${PLACES_BASE}/postcode?postcode=${encodeURIComponent(clean)}&key=${getOsKey()}&maxresults=${maxresults}&dataset=DPA`;
+      const resp = await fetch(url, { headers: { Accept: "application/json" } });
+      if (resp.ok) {
+        const data = await resp.json();
+        return (data?.results || []).map(normaliseDpa) as OsPlacesResult[];
+      }
+      if (resp.status === 404) return [] as OsPlacesResult[];
+      tripPlacesBreaker(resp.status);
     }
-    const data = await resp.json();
-    return (data?.results || []).map(normaliseDpa) as OsPlacesResult[];
+    return freePostcode(postcode, maxresults);
   }, 24 * 30);
 }
 
@@ -235,11 +393,11 @@ function wgs84ToBng(lat: number, lng: number): { easting: number; northing: numb
  * input WGS84 point so the first row is still the true nearest.
  */
 export async function osPlacesNearest(lat: number, lng: number, radiusMeters = 25): Promise<OsPlacesResult[]> {
-  if (!isOsConfigured()) return [];
   if (!isFinite(lat) || !isFinite(lng)) return [];
   // Round to ~11m precision to maximise cache hits for nearby clicks
   const key = `os-nearest:${lat.toFixed(4)},${lng.toFixed(4)},${radiusMeters}`;
   return cached(key, async () => {
+    if (!placesAvailable()) return freeNearest(lat, lng);
     const bng = wgs84ToBng(lat, lng);
     const params = new URLSearchParams({
       point: `${bng.easting},${bng.northing}`,
@@ -249,10 +407,10 @@ export async function osPlacesNearest(lat: number, lng: number, radiusMeters = 2
     });
     const url = `${PLACES_BASE}/radius?${params.toString()}`;
     const resp = await fetch(url, { headers: { Accept: "application/json" } });
-    if (resp.status === 401 || resp.status === 404) return [] as OsPlacesResult[];
+    if (resp.status === 404) return [] as OsPlacesResult[];
     if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      throw new Error(`OS Places nearest error ${resp.status}: ${text.slice(0, 200)}`);
+      tripPlacesBreaker(resp.status);
+      return freeNearest(lat, lng);
     }
     const data = await resp.json();
     const results = (data?.results || []).map(normaliseDpa) as OsPlacesResult[];
@@ -282,14 +440,16 @@ export async function osPlacesNearest(lat: number, lng: number, radiusMeters = 2
  * UPRN → canonical DPA address. Returns null if not found / not configured.
  */
 export async function osPlacesByUprn(uprn: string): Promise<OsPlacesResult | null> {
-  if (!isOsConfigured() || !uprn) return null;
+  // No free UPRN → address service exists; without Places this quietly
+  // returns null and callers fall back to whatever address text they hold.
+  if (!placesAvailable() || !uprn) return null;
   return cached(`os-uprn:${uprn}`, async () => {
     const url = `${PLACES_BASE}/uprn?uprn=${encodeURIComponent(uprn)}&key=${getOsKey()}&dataset=DPA`;
     const resp = await fetch(url, { headers: { Accept: "application/json" } });
-    if (resp.status === 401 || resp.status === 404) return null;
+    if (resp.status === 404) return null;
     if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      throw new Error(`OS Places UPRN error ${resp.status}: ${text.slice(0, 200)}`);
+      tripPlacesBreaker(resp.status);
+      return null;
     }
     const data = await resp.json();
     const first = (data?.results || [])[0];
@@ -554,9 +714,6 @@ export function registerOSDataRoutes(app: Express): void {
       if (!query || typeof query !== "string") {
         return res.status(400).json({ error: "query parameter required" });
       }
-      if (!getOsKey()) {
-        return res.status(503).json({ error: "OS_PLACES_API_KEY not configured" });
-      }
       const max = maxresults ? Math.min(parseInt(String(maxresults), 10) || 20, 100) : 20;
       const results = await osPlacesFind(query, max);
       res.json({ results });
@@ -571,9 +728,6 @@ export function registerOSDataRoutes(app: Express): void {
     try {
       const postcode = String(req.params.postcode || "").trim();
       if (!postcode) return res.status(400).json({ error: "postcode parameter required" });
-      if (!getOsKey()) {
-        return res.status(503).json({ error: "OS_PLACES_API_KEY not configured" });
-      }
       const results = await osPlacesByPostcode(postcode);
       res.json({ results });
     } catch (err: any) {
@@ -605,9 +759,6 @@ export function registerOSDataRoutes(app: Express): void {
       const { query } = req.query;
       if (!query || typeof query !== "string") {
         return res.status(400).json({ error: "query parameter required" });
-      }
-      if (!getOsKey()) {
-        return res.status(503).json({ error: "OS_PLACES_API_KEY not configured" });
       }
       const result = await resolveToUprn(query);
       if (!result) return res.status(404).json({ error: "No match" });

@@ -8167,6 +8167,44 @@ These terms are indicative only and do not constitute a binding agreement.`;
           url: "/tasks",
         }).catch(() => {});
       }
+      // Messages Phase 2 (Woody, 2026-08-05): completing a property-linked
+      // task drops a line into that property's client-facing threads, so
+      // Landsec sees who has done what without leaving the conversation.
+      // Only threads with at least one Client member — internal group chats
+      // don't need the play-by-play.
+      if (row && req.body.status === "done" && existing.rows[0].status !== "done" && row.linked_property_id) {
+        (async () => {
+          const threads = await pool.query(
+            `SELECT DISTINCT t.id FROM chat_threads t
+              JOIN chat_thread_members tm ON tm.thread_id = t.id
+              JOIN users cu ON cu.id = tm.user_id AND cu.role = 'Client'
+             WHERE t.property_id = $1 AND t.is_ai_chat IS NOT TRUE`,
+            [row.linked_property_id]
+          );
+          if (!threads.rows.length) return;
+          const completer = await storage.getUser(userId);
+          const senderName = completer?.name || "Someone";
+          const line = `✅ Task done: ${row.title}`;
+          for (const t of threads.rows) {
+            const message = await storage.createChatMessage({
+              threadId: t.id, role: "user", content: line, userId,
+              actionData: null, attachments: null,
+            });
+            await storage.markOtherMembersUnseen(t.id, userId);
+            emitNewMessage(t.id, message, senderName);
+            const members = await storage.getChatThreadMembers(t.id);
+            for (const m of members) {
+              if (m.userId !== userId) {
+                emitNotification(m.userId, { type: "new_message", threadId: t.id, senderName, preview: line.slice(0, 80) });
+                sendPushNotification(m.userId, {
+                  title: senderName, body: line.slice(0, 100),
+                  tag: `chat-${t.id}`, url: `/chatbgp?thread=${t.id}`,
+                }).catch(() => {});
+              }
+            }
+          }
+        })().catch((e: any) => console.error("[tasks] thread task-done line failed:", e?.message));
+      }
       res.json(result.rows[0]);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });

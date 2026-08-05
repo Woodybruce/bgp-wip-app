@@ -953,6 +953,187 @@ router.delete("/api/properties/:id/contact-override/:contactId", requireAuth, as
   }
 });
 
+// Portfolio-wide contacts map (Woody, 2026-08-05: "the Landsec board for
+// Contacts should be linked contacts but across all of their properties
+// combined") — the same four groups as the per-property panel, unioned
+// over every property the company owns, with scheme attribution.
+// (Path rides the /api/company-portfolio prefix that's already on the
+// client read allowlist.)
+router.get("/api/company-portfolio/:companyId/linked-contacts", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const cid = String(req.params.companyId);
+    const { resolveCompanyScope } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req as any);
+    if (scope && scope !== cid) return res.status(403).json({ error: "Not available for client accounts" });
+
+    const PROPS = `SELECT id FROM crm_properties WHERE landlord_id = $1
+       UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`;
+    const shape = (r: any, via: string) => ({
+      id: r.id, name: r.name, role: r.role, email: r.email, company_id: r.company_id,
+      company_name: r.company_name, last_interaction: r.last_interaction, via,
+    });
+
+    const bgpTeamQ = pool.query(
+      `SELECT u.id, u.name, u.email,
+              (array_agg(pa.role ORDER BY CASE pa.role WHEN 'Lead' THEN 0 ELSE 1 END))[1] AS agent_role,
+              COUNT(DISTINCT pa.property_id)::int AS property_count
+         FROM crm_property_agents pa JOIN users u ON u.id = pa.user_id
+        WHERE pa.property_id IN (${PROPS})
+        GROUP BY u.id, u.name, u.email
+        ORDER BY MIN(CASE pa.role WHEN 'Lead' THEN 0 WHEN 'Investment' THEN 1 WHEN 'Leasing' THEN 2 ELSE 3 END), u.name`,
+      [cid]
+    );
+    const clientLeadsQ = pool.query(
+      `SELECT c.* FROM crm_contacts c
+        WHERE c.company_id = $1 AND lower(COALESCE(c.role,'')) LIKE '%director%'
+        ORDER BY c.name LIMIT 8`,
+      [cid]
+    );
+    const dealsQ = pool.query(
+      `WITH pdeals AS (
+         SELECT d.id, d.name, d.status, p.name AS property_name,
+                d.client_contact_id, d.tenant_contact_id, d.landlord_contact_id, d.leasing_agent_contact_id,
+                d.tenant_id
+           FROM crm_deals d
+           LEFT JOIN crm_properties p ON p.id = d.property_id
+          WHERE d.property_id IN (${PROPS})
+       ),
+       fk AS (
+         SELECT DISTINCT ON (cid) cid AS contact_id, pd.name AS deal_name, pd.property_name FROM pdeals pd
+         CROSS JOIN LATERAL unnest(ARRAY[pd.client_contact_id, pd.tenant_contact_id, pd.landlord_contact_id, pd.leasing_agent_contact_id]) AS cid
+         WHERE cid IS NOT NULL
+       ),
+       live AS (
+         SELECT DISTINCT ON (c.id) c.id AS contact_id, pd.name AS deal_name, pd.property_name
+           FROM pdeals pd
+           JOIN crm_contacts c ON c.company_id = pd.tenant_id AND c.last_interaction IS NOT NULL
+          WHERE COALESCE(pd.status,'') NOT IN ('WIT','COM','INV')
+          ORDER BY c.id, c.last_interaction DESC
+       ),
+       merged AS (SELECT * FROM fk UNION SELECT * FROM live)
+       SELECT DISTINCT ON (c.id) c.*, m.deal_name, m.property_name
+         FROM crm_contacts c JOIN merged m ON m.contact_id = c.id
+        WHERE c.company_id IS DISTINCT FROM $1
+        ORDER BY c.id, c.last_interaction DESC NULLS LAST
+        LIMIT 20`,
+      [cid]
+    );
+    const trackerQ = pool.query(
+      `WITH active_units AS (
+         SELECT au.id, au.unit_name, au.marketing_status, au.tenant_company_id, p.name AS property_name
+           FROM available_units au JOIN crm_properties p ON p.id = au.property_id
+          WHERE au.property_id IN (${PROPS})
+            AND lower(COALESCE(au.marketing_status,'')) ~ '(neg|offer|sol|exc|hots|terms)'
+       )
+       SELECT DISTINCT ON (c.company_id) c.*, u.unit_name, u.marketing_status, u.property_name
+         FROM active_units u JOIN crm_contacts c ON c.company_id = u.tenant_company_id
+        ORDER BY c.company_id, c.last_interaction DESC NULLS LAST
+        LIMIT 15`,
+      [cid]
+    );
+    // Brands on live deals with NO contactable person yet — shown as
+    // brand-only rows so the group still names who's in play (Shake Shack /
+    // Pizza Express on Bluewater had deals but zero linked contacts).
+    const dealBrandsQ = pool.query(
+      `SELECT DISTINCT ON (co.id) co.id AS brand_id, co.name AS brand_name,
+              d.name AS deal_name, p.name AS property_name
+         FROM crm_deals d
+         JOIN crm_companies co ON co.id = d.tenant_id
+         LEFT JOIN crm_properties p ON p.id = d.property_id
+        WHERE d.property_id IN (${PROPS})
+          AND COALESCE(d.status,'') NOT IN ('WIT','COM','INV')
+        ORDER BY co.id
+        LIMIT 20`,
+      [cid]
+    );
+    const unlinkedQ = pool.query(
+      `SELECT au.unit_name, au.marketing_status, p.name AS property_name
+         FROM available_units au JOIN crm_properties p ON p.id = au.property_id
+        WHERE au.property_id IN (${PROPS})
+          AND lower(COALESCE(au.marketing_status,'')) ~ '(neg|offer|sol|exc|hots|terms)'
+          AND au.tenant_company_id IS NULL AND au.deal_id IS NULL
+        ORDER BY p.name, au.unit_name LIMIT 15`,
+      [cid]
+    );
+    const occupiersQ = pool.query(
+      `WITH occ AS (
+         SELECT co.id, co.name, COUNT(DISTINCT ts.property_id)::int AS scheme_count
+           FROM tenancy_schedule_units ts
+           JOIN crm_companies co
+             ON co.id = ts.tenant_company_id
+             OR lower(co.name) IN (lower(COALESCE(ts.tenant_name,'')), lower(COALESCE(ts.trading_name,'')))
+             OR (length(co.name) >= 5 AND lower(COALESCE(ts.tenant_name,'')) LIKE lower(co.name) || ' %')
+          WHERE ts.property_id IN (${PROPS})
+          GROUP BY co.id, co.name
+       )
+       SELECT occ.id AS occ_company_id, occ.name AS occ_company_name, occ.scheme_count,
+              c.id, c.name, c.role, c.email, c.last_interaction
+         FROM occ
+         LEFT JOIN LATERAL (
+           SELECT c2.id, c2.name, c2.role, c2.email, c2.last_interaction
+             FROM crm_contacts c2 WHERE c2.company_id = occ.id
+            ORDER BY c2.last_interaction DESC NULLS LAST LIMIT 1
+         ) c ON true
+        ORDER BY occ.scheme_count DESC, occ.name
+        LIMIT 200`,
+      [cid]
+    );
+    const consultantsQ = pool.query(
+      `SELECT DISTINCT ON (c.id) c.*, co.company_type AS consultant_type
+         FROM crm_company_properties cp
+         JOIN crm_companies co ON co.id = cp.company_id
+         JOIN crm_contacts c ON c.company_id = co.id
+        WHERE cp.property_id IN (${PROPS})
+          AND (co.company_type ILIKE '%consult%' OR co.company_type ILIKE '%architect%'
+            OR co.company_type ILIKE '%advis%' OR co.company_type ILIKE '%planning%'
+            OR co.company_type ILIKE '%project man%' OR co.company_type ILIKE '%engineer%'
+            OR co.company_type ILIKE '%solicitor%' OR co.company_type ILIKE '%lawyer%')
+        ORDER BY c.id, c.last_interaction DESC NULLS LAST
+        LIMIT 15`,
+      [cid]
+    );
+
+    const [bgpTeam, clientLeads, deals, tracker, unlinked, occupiers, consultants, dealBrands] =
+      await Promise.all([bgpTeamQ, clientLeadsQ, dealsQ, trackerQ, unlinkedQ, occupiersQ, consultantsQ, dealBrandsQ]);
+    const dealIds = new Set(deals.rows.map((r: any) => r.id));
+    const contactedBrandIds = new Set([
+      ...deals.rows.map((r: any) => r.company_id),
+      ...tracker.rows.map((r: any) => r.company_id),
+    ].filter(Boolean));
+    res.json({
+      internal: [
+        ...bgpTeam.rows.map((r: any) => ({
+          id: `u-${r.id}`, name: r.name, email: r.email, side: "bgp",
+          role: `${r.agent_role || "Agent"}${r.property_count > 1 ? ` · ${r.property_count} properties` : ""}`,
+        })),
+        ...clientLeads.rows.map((r: any) => ({ ...shape(r, "client"), side: "client" })),
+      ],
+      deals: [
+        ...deals.rows.map((r: any) => shape(r, [r.deal_name, r.property_name].filter(Boolean).join(" · ") || "on a deal")),
+        ...tracker.rows.filter((r: any) => !dealIds.has(r.id)).map((r: any) =>
+          shape(r, [r.marketing_status || "negotiating", r.unit_name, r.property_name].filter(Boolean).join(" · "))),
+        ...dealBrands.rows.filter((r: any) => !contactedBrandIds.has(r.brand_id)).map((r: any) => ({
+          id: `co-${r.brand_id}`, name: r.brand_name, role: "no contact on file",
+          company_id: r.brand_id, company_name: r.brand_name, last_interaction: null,
+          via: [r.deal_name, r.property_name].filter(Boolean).join(" · ") || "on a deal",
+        })),
+      ],
+      trackerUnlinked: unlinked.rows.map((r: any) => ({
+        unit_name: `${r.unit_name} · ${r.property_name}`, status: r.marketing_status,
+      })),
+      tenants: occupiers.rows.map((r: any) => ({
+        company_id: r.occ_company_id,
+        company_name: r.scheme_count > 1 ? `${r.occ_company_name} · ${r.scheme_count} schemes` : r.occ_company_name,
+        contact: r.id ? { id: r.id, name: r.name, role: r.role, email: r.email, last_interaction: r.last_interaction } : null,
+      })),
+      consultants: consultants.rows.map((r: any) => ({ ...shape(r, r.consultant_type || "consultant") })),
+    });
+  } catch (err: any) {
+    console.error("[portfolio-linked-contacts]", err?.message);
+    res.status(500).json({ error: err?.message || "portfolio contacts failed" });
+  }
+});
+
 router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Request, res: Response) => {
   try {
     await ensureContactOverrides();
@@ -1125,6 +1306,21 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       [pid]
     );
 
+    // 3b-ii. Brands on live deals here with NO contactable person — shown
+    //        as brand-only rows so the group still names who's in play.
+    const dealBrandsPropQ = pool.query(
+      `SELECT DISTINCT ON (co.id) co.id AS brand_id, co.name AS brand_name, d.name AS deal_name
+         FROM crm_deals d
+         JOIN crm_companies co ON co.id = d.tenant_id
+         LEFT JOIN property_units pu ON pu.id = d.unit_id
+         LEFT JOIN tenancy_schedule_units ts2 ON ts2.id = d.tenancy_unit_id
+        WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts2.property_id = $1)
+          AND COALESCE(d.status,'') NOT IN ('WIT','COM','INV')
+        ORDER BY co.id
+        LIMIT 15`,
+      [pid]
+    );
+
     // 3c. Active tracker units with NO counterparty recorded anywhere —
     //     surfaced as a visible gap ("link the brand") instead of the group
     //     silently coming up empty (Bluewater's three NEG units, 2026-08-05).
@@ -1167,8 +1363,8 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
         ORDER BY c.name`, [pid]
     );
 
-    const [landlord, tenants, deals, interest, bgpTeam, clientLeads, consultants, tracker, unlinked, overrides, pinned] =
-      await Promise.all([landlordQ, tenantsQ, dealsQ, interestQ, bgpTeamQ, clientLeadsQ, consultantsQ, trackerQ, unlinkedQ, overridesQ, pinnedQ]);
+    const [landlord, tenants, deals, interest, bgpTeam, clientLeads, consultants, tracker, unlinked, overrides, pinned, dealBrandsProp] =
+      await Promise.all([landlordQ, tenantsQ, dealsQ, interestQ, bgpTeamQ, clientLeadsQ, consultantsQ, trackerQ, unlinkedQ, overridesQ, pinnedQ, dealBrandsPropQ]);
     const hiddenIds = new Set(overrides.rows.filter((r: any) => r.kind === "hide").map((r: any) => r.contact_id));
     const pinnedIds = new Set(overrides.rows.filter((r: any) => r.kind === "pin").map((r: any) => r.contact_id));
     const notHidden = (rows: any[]) => rows.filter((r: any) => !hiddenIds.has(r.id) && !pinnedIds.has(r.id));
@@ -1187,6 +1383,13 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       deals: [
         ...notHidden(deals.rows).map((r: any) => shape(r, r.deal_name || "on a deal")),
         ...notHidden(trackerRows).map((r: any) => shape(r, `${r.marketing_status || "negotiating"} · ${r.unit_name || "tracker"}`)),
+        ...dealBrandsProp.rows
+          .filter((r: any) => !deals.rows.some((d: any) => d.company_id === r.brand_id) && !trackerRows.some((t: any) => t.company_id === r.brand_id))
+          .map((r: any) => ({
+            id: `co-${r.brand_id}`, name: r.brand_name, role: "no contact on file",
+            company_id: r.brand_id, company_name: r.brand_name, last_interaction: null,
+            via: r.deal_name || "on a deal",
+          })),
       ],
       interest: notHidden(interest.rows).map((r: any) => shape(r, r.kind === "offered" ? "made an offer" : "viewed")),
       internal: [
@@ -1366,6 +1569,42 @@ router.post("/api/properties/:id/adopt-deal", requireAuth, async (req: Request, 
       return res.status(409).json({ error: "Deal was adopted by another request in the meantime — refresh and check the deal's current property." });
     }
     res.json({ ok: true, unitId, tenancyUnitId });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// Portfolio tasks — the client-facing "who has done what" board (Messages
+// Phase 2). Titles, owners and outcomes only; task descriptions stay
+// internal to BGP.
+router.get("/api/company-portfolio/:companyId/tasks", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const cid = String(req.params.companyId);
+    const { resolveCompanyScope } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req as any);
+    if (scope && scope !== cid) return res.status(403).json({ error: "Not available for client accounts" });
+
+    const PROPS = `SELECT id FROM crm_properties WHERE landlord_id = $1
+       UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`;
+    const r = await pool.query(
+      `SELECT t.id, t.title, t.status, t.priority, t.category, t.due_date, t.completed_at, t.created_at,
+              u.name AS assignee_name, p.name AS property_name, d.name AS deal_name
+         FROM user_tasks t
+         JOIN users u ON u.id = t.user_id
+         LEFT JOIN crm_properties p ON p.id = t.linked_property_id
+         LEFT JOIN crm_deals d ON d.id = t.linked_deal_id
+        WHERE (t.linked_property_id IN (${PROPS})
+               OR t.linked_deal_id IN (SELECT id FROM crm_deals WHERE property_id IN (${PROPS})))
+          AND (t.status <> 'done' OR t.completed_at > NOW() - INTERVAL '60 days')
+        ORDER BY (t.status = 'done'), COALESCE(t.due_date, t.created_at), t.created_at
+        LIMIT 300`,
+      [cid]
+    );
+    const open = r.rows.filter((t: any) => t.status !== "done");
+    const done = r.rows
+      .filter((t: any) => t.status === "done")
+      .sort((a: any, b: any) => new Date(b.completed_at).getTime() - new Date(a.completed_at).getTime());
+    res.json({ open, done });
   } catch (err: any) {
     res.status(500).json({ error: err?.message });
   }
