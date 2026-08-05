@@ -283,6 +283,17 @@ export function formatDate(val: string | Date | null | undefined): string {
   }
 }
 
+// Target Date drives the WIP report's month / fiscal-year bucket, so it's
+// only ever meaningful to the month — show "Jul 2026", not the exact day.
+export function formatMonthYear(val: string | Date | null | undefined): string {
+  if (!val) return "—";
+  try {
+    return new Date(val).toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+  } catch {
+    return typeof val === "string" ? val : "—";
+  }
+}
+
 // Native datalist of every PO number already seen on a deal or invoice.
 // Mounted alongside the PO number input so the browser surfaces suggestions
 // as the user types — autocomplete without a custom popover. The Input's
@@ -1151,7 +1162,7 @@ function DatesCell({
 }) {
   const [open, setOpen] = useState(false);
   const added = deal.createdAt ? formatDate(deal.createdAt) : null;
-  const target = deal.targetDate ? formatDate(deal.targetDate) : null;
+  const target = deal.targetDate ? formatMonthYear(deal.targetDate) : null;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -5808,6 +5819,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         rentFree: (d: any) => d.rentFree,
         leaseLength: (d: any) => d.leaseLength,
         breakOption: (d: any) => d.breakOption,
+        datesCombined: (d: any) => d.targetDate ? new Date(d.targetDate) : (d.createdAt ? new Date(d.createdAt) : null),
         dateAdded: (d: any) => d.createdAt ? new Date(d.createdAt) : null,
         instructedAt: (d: any) => d.instructedAt ? new Date(d.instructedAt) : null,
         targetDate: (d: any) => d.targetDate ? new Date(d.targetDate) : null,
@@ -6251,7 +6263,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {effectiveColumns.rentFree && <SortableTableHead sortKey="rentFree" sort={dealsSort} align="right" className="min-w-[80px]">Rent Free</SortableTableHead>}
                     {effectiveColumns.leaseLength && <SortableTableHead sortKey="leaseLength" sort={dealsSort} align="right" className="min-w-[80px]">Lease Length</SortableTableHead>}
                     {effectiveColumns.breakOption && <SortableTableHead sortKey="breakOption" sort={dealsSort} align="right" className="min-w-[80px]">Break Option</SortableTableHead>}
-                    {effectiveColumns.datesCombined && <TableHead className="min-w-[140px]">Dates</TableHead>}
+                    {effectiveColumns.datesCombined && <SortableTableHead sortKey="datesCombined" sort={dealsSort} className="min-w-[140px]">Dates</SortableTableHead>}
                     {effectiveColumns.dateAdded && <SortableTableHead sortKey="dateAdded" sort={dealsSort} className="min-w-[110px]">Date Added</SortableTableHead>}
                     {effectiveColumns.instructedAt && <SortableTableHead sortKey="instructedAt" sort={dealsSort} className="min-w-[110px]">Instructed</SortableTableHead>}
                     {effectiveColumns.targetDate && <SortableTableHead sortKey="targetDate" sort={dealsSort} className="min-w-[120px]">Target Date</SortableTableHead>}
