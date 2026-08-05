@@ -1976,6 +1976,30 @@ async function markRound(page, cross) {
     }
   });
 
+  // The Letting Tracker's per-unit offer/viewing count badges come from
+  // /api/available-units/all-{offers,viewings}-counts, which scope by
+  // clientUnitScopeSql. This proves the badge maps never key a unit outside
+  // the client's own available-units list — a regression there would flash
+  // another landlord's deal activity (a count against a foreign unit id) on
+  // the client's tracker.
+  await step(page, p, 'client-tracker-counts-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const j = async (url) => { const res = await fetch(url, { headers: auth }); return { ok: res.ok, status: res.status, body: res.ok ? await res.json().catch(() => null) : null }; };
+      const units = await j('/api/available-units');
+      const offers = await j('/api/available-units/all-offers-counts');
+      const views = await j('/api/available-units/all-viewings-counts');
+      if (!units.ok || !offers.ok || !views.ok) return { ok: false, why: `units ${units.status} / offers ${offers.status} / views ${views.status}` };
+      const visible = new Set((Array.isArray(units.body) ? units.body : []).map((u) => u.id));
+      const stray = (map) => Object.keys(map || {}).filter((id) => !visible.has(id));
+      return { ok: true, visibleCount: visible.size, strayOffers: stray(offers.body), strayViews: stray(views.body) };
+    });
+    if (!r.ok) throw new Error(`tracker count endpoints failed (${r.why})`);
+    if (!r.visibleCount) return; // no units in scope this run — nothing to assert
+    if (r.strayOffers.length) throw new Error(`offer-count badge keyed a unit outside client scope: ${r.strayOffers[0]}`);
+    if (r.strayViews.length) throw new Error(`viewing-count badge keyed a unit outside client scope: ${r.strayViews[0]}`);
+  });
+
   // Client must NOT see the requirement the agent just created for another
   // brand unless it's theirs — guards requirements-board scoping.
   await step(page, p, 'client-requirement-scoping', async () => {
