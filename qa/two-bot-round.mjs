@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-firm-internal-guard', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-firm-internal-guard', 'client-property-tenants-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -2197,6 +2197,27 @@ async function markRound(page, cross) {
     });
     if (!r.ok) throw new Error(`client own tenancy links rejected (${r.status})`);
     if (!r.shape) throw new Error('tenancy links payload missing deals/lettingUnits arrays');
+  });
+
+  // The property tenant list (/api/crm/properties/:id/tenants — the rent roll
+  // of who occupies a scheme) is core client data for their OWN buildings but
+  // another landlord's rent roll is off-limits, and the list is read-only for
+  // a client (removing a tenant is a staff write). Own → 200, foreign → 403,
+  // tenant-unlink DELETE → 403.
+  await step(page, p, 'client-property-tenants-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const own = '22222222-2222-2222-2222-222222222222';
+      const foreign = '44444444-4444-4444-4444-444444444444';
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      const ownRes = await fetch(`/api/crm/properties/${own}/tenants`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const ownBody = ownRes.ok ? await ownRes.json().catch(() => null) : null;
+      const del = (await fetch(`/api/crm/properties/${own}/tenants/77777777-7777-7777-7777-777777777777`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { ownStatus: ownRes.status, ownIsArray: Array.isArray(ownBody), foreign: await g(`/api/crm/properties/${foreign}/tenants`), del };
+    });
+    if (r.ownStatus !== 200 || !r.ownIsArray) throw new Error(`client own property tenant list unhealthy (status ${r.ownStatus}, array ${r.ownIsArray})`);
+    if (r.foreign !== 403) throw new Error(`client read a foreign property's rent roll (expected 403, got ${r.foreign})`);
+    if (r.del !== 403) throw new Error(`client removed a tenant from a property (expected 403, got ${r.del})`);
   });
 
   // Client comps: the scheme-scoped table must render rows AND the devaluation
