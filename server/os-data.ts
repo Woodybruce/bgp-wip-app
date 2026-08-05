@@ -153,16 +153,85 @@ function normaliseNominatim(r: any): OsPlacesResult {
   };
 }
 
+// ─── EPC-register UPRN stitch ───────────────────────────────────────────────
+// The gov.uk EPC registers are free (email registration for a key) and carry
+// address + UPRN for every certificated building — which is most commercial
+// stock. When EPC_AUTH is set ("email:api-key" from
+// epc.opendatacommunities.org, or the ready-made base64 token), free lookups
+// get their UPRN back by matching against that postcode's certificates.
+// Without the env var this is a no-op.
+
+function epcAuthHeader(): string | null {
+  const raw = (process.env.EPC_AUTH || "").trim();
+  if (!raw) return null;
+  return `Basic ${raw.includes(":") ? Buffer.from(raw).toString("base64") : raw}`;
+}
+
+async function epcCertificatesForPostcode(postcode: string): Promise<Array<{ address: string; uprn: string }>> {
+  const auth = epcAuthHeader();
+  if (!auth) return [];
+  const clean = postcode.trim().toUpperCase();
+  return cached(`epc-pc:${clean.replace(/\s+/g, "")}`, async () => {
+    const rows: Array<{ address: string; uprn: string }> = [];
+    for (const reg of ["non-domestic", "domestic"]) {
+      try {
+        const resp = await fetch(
+          `https://epc.opendatacommunities.org/api/v1/${reg}/search?postcode=${encodeURIComponent(clean)}&size=200`,
+          { headers: { Accept: "application/json", Authorization: auth } }
+        );
+        if (!resp.ok) continue;
+        const data: any = await resp.json().catch(() => null);
+        for (const r of data?.rows || []) {
+          if (r.uprn) rows.push({ address: [r.address, r.address1, r.address2].filter(Boolean).join(", "), uprn: String(r.uprn) });
+        }
+      } catch {
+        // register unreachable — the lookup still works, just without UPRNs
+      }
+    }
+    return rows;
+  }, 24 * 30);
+}
+
+function epcNormalise(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+async function attachUprnsFromEpc(results: OsPlacesResult[]): Promise<OsPlacesResult[]> {
+  if (!epcAuthHeader()) return results;
+  const wanting = results.filter((r) => !r.uprn && r.postcode);
+  const postcodes = Array.from(new Set(wanting.map((r) => r.postcode as string))).slice(0, 3);
+  if (!postcodes.length) return results;
+  const byPc = new Map<string, Array<{ address: string; uprn: string }>>();
+  for (const pc of postcodes) byPc.set(pc, await epcCertificatesForPostcode(pc));
+  for (const r of wanting) {
+    const certs = byPc.get(r.postcode as string) || [];
+    if (!certs.length) continue;
+    const target = epcNormalise(r.address);
+    const num = (target.match(/\b\d+[a-z]?\b/) || [])[0];
+    const matches = certs.filter((c) => {
+      const ca = epcNormalise(c.address);
+      if (num && !ca.includes(num)) return false;
+      const tokens = target.split(" ").filter((t) => t.length > 3 && t !== num);
+      return tokens.some((t) => ca.includes(t));
+    });
+    const uprns = Array.from(new Set(matches.map((m) => m.uprn)));
+    // Only attach when the match is unambiguous — a wrong UPRN is worse
+    // than no UPRN.
+    if (uprns.length === 1) r.uprn = uprns[0];
+  }
+  return results;
+}
+
 async function freeFind(query: string, maxresults: number): Promise<OsPlacesResult[]> {
   const url = `${NOMINATIM_BASE}/search?q=${encodeURIComponent(query)}&format=jsonv2&addressdetails=1&countrycodes=gb&limit=${Math.min(maxresults, 40)}`;
   const data = await nominatimFetch(url);
-  return Array.isArray(data) ? data.map(normaliseNominatim) : [];
+  return attachUprnsFromEpc(Array.isArray(data) ? data.map(normaliseNominatim) : []);
 }
 
 async function freeNearest(lat: number, lng: number): Promise<OsPlacesResult[]> {
   const url = `${NOMINATIM_BASE}/reverse?lat=${lat}&lon=${lng}&format=jsonv2&addressdetails=1&zoom=18`;
   const data = await nominatimFetch(url);
-  return data && !data.error ? [normaliseNominatim(data)] : [];
+  return attachUprnsFromEpc(data && !data.error ? [normaliseNominatim(data)] : []);
 }
 
 async function freePostcode(postcode: string, maxresults: number): Promise<OsPlacesResult[]> {
@@ -187,7 +256,7 @@ async function freePostcode(postcode: string, maxresults: number): Promise<OsPla
     // postcodes.io down — Nominatim below still gives us something
   }
   const nom = await freeFind(postcode, Math.min(maxresults, 20));
-  return rows.concat(nom.filter((r) => r.address)).slice(0, maxresults);
+  return attachUprnsFromEpc(rows.concat(nom.filter((r) => r.address)).slice(0, maxresults));
 }
 
 /**

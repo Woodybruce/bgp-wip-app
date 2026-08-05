@@ -92,6 +92,7 @@ const AvailableUnitsPage = lazy(() => import("@/pages/available-units"));
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const BrandsHub = lazy(() => import("@/pages/brands-hub"));
 const TasksPage = lazy(() => import("@/pages/tasks"));
+const ClientTasksPage = lazy(() => import("@/pages/client-tasks"));
 const CadMeasure = lazy(() => import("@/pages/cad-measure"));
 const LeaseEvents = lazy(() => import("@/pages/lease-events"));
 const AmlCompliance = lazy(() => import("@/pages/aml-compliance"));
@@ -221,6 +222,15 @@ const CLIENT_ALLOWED_ROUTES = [
   // dashboard (Woody, 2026-08-04); the page's API is property-scoped.
   "/tenancy-schedule",
 ];
+// Clients get the read-only portfolio Tasks board ("who has done what",
+// Messages Phase 2); staff keep the personal My Tasks page.
+function TasksRoute() {
+  const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
+  if (!user) return <PageLoader />;
+  const isClient = user.role === "Client" || !!(user as any).companyScopeId;
+  return isClient ? <ClientTasksPage /> : <TasksPage />;
+}
+
 function ClientRouteGuard() {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   const [location, navigate] = useLocation();
@@ -296,7 +306,7 @@ function Router() {
       <Route path="/leasing-schedule" component={LeasingSchedule} />
       <Route path="/leasing-schedule/:propertyId" component={LeasingSchedule} />
       <Route path="/tenancy-schedule/:propertyId" component={TenancyScheduleFull} />
-      <Route path="/tasks" component={TasksPage} />
+      <Route path="/tasks">{() => <TasksRoute />}</Route>
       <Route path="/cad-measure" component={CadMeasure} />
       <Route path="/lease-events">{() => <LeaseEvents />}</Route>
       {/* Property Intelligence Hub — unified investigation hub.

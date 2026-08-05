@@ -1574,4 +1574,40 @@ router.post("/api/properties/:id/adopt-deal", requireAuth, async (req: Request, 
   }
 });
 
+// Portfolio tasks — the client-facing "who has done what" board (Messages
+// Phase 2). Titles, owners and outcomes only; task descriptions stay
+// internal to BGP.
+router.get("/api/company-portfolio/:companyId/tasks", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const cid = String(req.params.companyId);
+    const { resolveCompanyScope } = await import("./company-scope");
+    const scope = await resolveCompanyScope(req as any);
+    if (scope && scope !== cid) return res.status(403).json({ error: "Not available for client accounts" });
+
+    const PROPS = `SELECT id FROM crm_properties WHERE landlord_id = $1
+       UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`;
+    const r = await pool.query(
+      `SELECT t.id, t.title, t.status, t.priority, t.category, t.due_date, t.completed_at, t.created_at,
+              u.name AS assignee_name, p.name AS property_name, d.name AS deal_name
+         FROM user_tasks t
+         JOIN users u ON u.id = t.user_id
+         LEFT JOIN crm_properties p ON p.id = t.linked_property_id
+         LEFT JOIN crm_deals d ON d.id = t.linked_deal_id
+        WHERE (t.linked_property_id IN (${PROPS})
+               OR t.linked_deal_id IN (SELECT id FROM crm_deals WHERE property_id IN (${PROPS})))
+          AND (t.status <> 'done' OR t.completed_at > NOW() - INTERVAL '60 days')
+        ORDER BY (t.status = 'done'), COALESCE(t.due_date, t.created_at), t.created_at
+        LIMIT 300`,
+      [cid]
+    );
+    const open = r.rows.filter((t: any) => t.status !== "done");
+    const done = r.rows
+      .filter((t: any) => t.status === "done")
+      .sort((a: any, b: any) => new Date(b.completed_at).getTime() - new Date(a.completed_at).getTime());
+    res.json({ open, done });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
 export default router;
