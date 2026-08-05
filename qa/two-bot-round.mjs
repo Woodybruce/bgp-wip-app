@@ -2585,6 +2585,27 @@ async function markRound(page, cross) {
     if (r.feeExposed) throw new Error("BGP fee leaked to the client on an agent-created deal");
   });
 
+  // Fee-strip must hold on the SINGLE-deal detail fetch too, not just the list
+  // — and cover the fee-agreement document link. Deal 6666… carries a real
+  // fee (£45k) staff-side; the client's GET /api/crm/deals/:id must come back
+  // with every fee field (incl. feeAgreement / feeAgreementUrl / feeNotes)
+  // blanked. A route that strips the list but not the detail would leak the
+  // fee on the deal page.
+  await step(page, p, 'client-deal-detail-fee-stripped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/crm/deals/66666666-6666-6666-6666-666666666666', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const d = await res.json().catch(() => null);
+      if (!d || typeof d !== 'object') return { ok: false, status: -1 };
+      const fields = ['fee', 'feePercentage', 'feeNotes', 'commission', 'feeAgreement', 'feeAgreementUrl'];
+      const leaked = fields.filter((k) => { const v = d[k]; return v !== null && v !== undefined && v !== 0 && v !== ''; });
+      return { ok: true, leaked };
+    });
+    if (!r.ok) throw new Error(`client own deal detail fetch unhealthy (${r.status})`);
+    if (r.leaked.length) throw new Error(`BGP fee data leaked on the client deal-detail fetch: ${r.leaked.join(', ')}`);
+  });
+
   // Parity for offers: the offer Victoria logged on a Landsec unit must show
   // on the client's own letting activity (scoped all-offers).
   await step(page, p, 'client-sees-agent-offer', async () => {
