@@ -730,7 +730,7 @@ function PortfolioContactsBoard({ companyId }: { companyId: string }) {
   // for Contacts should be linked contacts but across all of their
   // properties combined") — the same groups as the per-property panel,
   // unioned over every property, scheme attribution on the badges.
-  type Row = { id: string; name: string; role: string | null; email?: string | null; company_name?: string | null; last_interaction?: string | null; via?: string; side?: string };
+  type Row = { id: string; name: string; role: string | null; email?: string | null; company_id?: string | null; company_name?: string | null; last_interaction?: string | null; via?: string; side?: string };
   type Occ = { company_id: string; company_name: string; contact: { id: string; name: string; role: string | null; last_interaction: string | null } | null };
   const { data } = useQuery<{ internal: Row[]; deals: Row[]; trackerUnlinked: Array<{ unit_name: string; status: string | null }>; tenants: Occ[]; consultants: Row[] }>({
     queryKey: ["/api/company-portfolio", companyId, "linked-contacts"],
@@ -744,13 +744,13 @@ function PortfolioContactsBoard({ companyId }: { companyId: string }) {
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ internal: true, deals: true });
   const groups: Array<{ key: string; title: string; tint: string; count: number; body: React.ReactNode }> = [];
   const personRow = (c: Row) => (
-    <Link key={c.id} href={c.id.startsWith("u-") ? "/hr" : `/contacts/${c.id}`} className="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-muted/50 min-w-0">
+    <Link key={c.id} href={c.id.startsWith("u-") ? "/hr" : c.id.startsWith("co-") ? `/companies/${c.company_id}` : `/contacts/${c.id}`} className="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-muted/50 min-w-0">
       <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-semibold shrink-0 ${c.side === "bgp" ? "bg-foreground text-background" : c.side === "client" ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"}`}>
         {(c.name || "?").split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
       </span>
       <div className="flex-1 min-w-0">
         <span className="text-xs font-medium truncate block">{c.name}</span>
-        <span className="text-[10px] text-muted-foreground truncate block">{[c.role, c.side === "bgp" ? "BGP" : c.company_name].filter(Boolean).join(" · ")}</span>
+        <span className="text-[10px] text-muted-foreground truncate block">{[c.role, c.side === "bgp" ? "BGP" : c.company_name !== c.name ? c.company_name : null].filter(Boolean).join(" · ")}</span>
       </div>
       {c.side === "client" && <Badge variant="outline" className="text-[9px] shrink-0 text-blue-700 border-blue-200">Client</Badge>}
       {c.via && c.side !== "client" && c.side !== "bgp" && <Badge variant="outline" className="text-[9px] shrink-0 max-w-[130px] truncate" title={c.via}>{c.via}</Badge>}
