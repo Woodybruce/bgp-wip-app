@@ -16,6 +16,7 @@ import { requireAuth } from "./auth";
 import { pool } from "./db";
 import * as path from "path";
 import * as fs from "fs";
+import { callClaude, safeParseJSON } from "./utils/anthropic-client";
 
 const router = Router();
 const BGP_GREEN = "#2E5E3F";
@@ -60,6 +61,7 @@ function flattenAddress(address: unknown, postcode?: string | null): string {
 type ReportPhoto = {
   kind: "logo" | "studio" | "streetview" | "url" | "custom";
   url?: string;
+  thumbnail?: string;
   imageId?: string;
   location?: string;
   dataUri?: string;
@@ -70,6 +72,7 @@ async function loadRecentDeals() {
   const { rows } = await pool.query(
     `SELECT d.id, d.name, d.team, d.deal_type, d.status, d.stage, d.asset_class,
             d.pricing, d.rent_pa, d.fee, d.yield_percent, d.total_area_sqft, d.created_at,
+            d.tenant_id, d.internal_agent,
             p.id AS property_id, p.name AS property_name, p.address AS property_address, p.postcode AS property_postcode,
             tc.name AS tenant_name, tc.domain AS tenant_domain, tc.domain_url AS tenant_domain_url, tc.website AS tenant_website,
             lc.name AS landlord_name, vc.name AS vendor_name, pc.name AS purchaser_name
@@ -80,6 +83,16 @@ async function loadRecentDeals() {
        LEFT JOIN crm_companies vc ON vc.id = d.vendor_id
        LEFT JOIN crm_companies pc ON pc.id = d.purchaser_id
       WHERE d.created_at >= now() - interval '${REPORT_DAYS} days'
+        AND d.id NOT IN (
+          -- Same rule as the WIP table (storage.getCrmDeals excludeTrackerDeals):
+          -- hide tracker-backed deals still pre-SOL on the Letting Tracker.
+          SELECT au.deal_id FROM available_units au
+           WHERE au.deal_id IS NOT NULL
+             AND (au.marketing_status IS NULL
+                  OR au.marketing_status IN ('REP', 'SPEC', 'LIVE', 'AVA', 'NEG',
+                                             'Reporting', 'Speculative', 'Live',
+                                             'Available', 'Negotiating'))
+        )
       ORDER BY d.created_at DESC`
   );
   return rows;
@@ -212,11 +225,120 @@ async function resolvePhotoBuffer(photo: ReportPhoto | null | undefined): Promis
       if (!photo.location || !process.env.GOOGLE_API_KEY) return null;
       return fetchImageBuffer(streetViewApiUrl(photo.location));
     case "logo":
-    case "url":
-      return photo.url && /^https:\/\//i.test(photo.url) ? fetchImageBuffer(photo.url) : null;
+    case "url": {
+      const primary = photo.url && /^https:\/\//i.test(photo.url) ? await fetchImageBuffer(photo.url) : null;
+      if (primary) return primary;
+      // Search-result hosts often block hotlink fetches — fall back to the
+      // Google-served thumbnail, which is always fetchable.
+      return photo.thumbnail && /^https:\/\//i.test(photo.thumbnail) ? fetchImageBuffer(photo.thumbnail) : null;
+    }
     default:
       return null;
   }
+}
+
+// ─── AI commentary ────────────────────────────────────────────────────────
+// One upbeat line per deal, grounded ONLY in facts we compute here: repeat
+// business with the tenant, the agent's nth deal this year, activity in the
+// same town. Failure or timeout just means the PDF ships without commentary.
+
+function cityOf(deal: any): string | null {
+  const a = deal.property_address;
+  if (a && typeof a === "object") {
+    const city = (a as Record<string, any>).city || (a as Record<string, any>).town;
+    if (city && typeof city === "string") return city;
+  }
+  return null;
+}
+
+async function buildCommentaryFacts(deals: any[]) {
+  const tenantCounts = new Map<string, number>();
+  const agentCounts = new Map<string, number>();
+  const cityCounts = new Map<string, number>();
+  try {
+    const tenantIds = Array.from(new Set(deals.map(d => d.tenant_id).filter(Boolean)));
+    if (tenantIds.length) {
+      const { rows } = await pool.query(
+        `SELECT tenant_id, COUNT(*)::int AS n FROM crm_deals WHERE tenant_id = ANY($1::varchar[]) GROUP BY tenant_id`,
+        [tenantIds]
+      );
+      for (const r of rows) tenantCounts.set(r.tenant_id, r.n);
+    }
+    const { rows: agentRows } = await pool.query(
+      `SELECT unnest(internal_agent) AS agent, COUNT(*)::int AS n
+         FROM crm_deals
+        WHERE created_at >= date_trunc('year', now())
+        GROUP BY 1`
+    );
+    for (const r of agentRows) if (r.agent) agentCounts.set(r.agent, r.n);
+    const { rows: cityRows } = await pool.query(
+      `SELECT COALESCE(p.address->>'city', p.address->>'town') AS city, COUNT(*)::int AS n
+         FROM crm_deals d
+         JOIN crm_properties p ON p.id = d.property_id
+        WHERE d.created_at >= now() - interval '90 days'
+        GROUP BY 1`
+    );
+    for (const r of cityRows) if (r.city) cityCounts.set(r.city, r.n);
+  } catch (err: any) {
+    console.error("[deal-report] commentary facts error:", err?.message);
+  }
+  return { tenantCounts, agentCounts, cityCounts };
+}
+
+async function generateCommentary(deals: any[]): Promise<Map<string, string>> {
+  const comments = new Map<string, string>();
+  if (!deals.length) return comments;
+  try {
+    const facts = await buildCommentaryFacts(deals);
+    const payload = deals.map(d => ({
+      id: d.id,
+      deal: d.name,
+      team: Array.isArray(d.team) ? d.team[0] : null,
+      type: d.deal_type,
+      tenant: d.tenant_name,
+      totalDealsWithThisTenant: d.tenant_id ? facts.tenantCounts.get(d.tenant_id) ?? null : null,
+      agents: (Array.isArray(d.internal_agent) ? d.internal_agent : []).map((a: string) => ({
+        name: a,
+        dealsThisYear: facts.agentCounts.get(a) ?? null,
+      })),
+      town: cityOf(d),
+      dealsInTownLast90Days: cityOf(d) ? facts.cityCounts.get(cityOf(d)!) ?? null : null,
+      rentPa: d.rent_pa,
+      price: d.pricing,
+    }));
+    const call = callClaude({
+      messages: [
+        {
+          role: "system",
+          content:
+            "You write one-line commentary for Bruce Gillingham Pollard's internal fortnightly new-deals report. " +
+            "For each deal, write ONE short upbeat sentence (max 18 words) — celebratory but professional, like a team round-up. " +
+            "Ground every claim ONLY in the facts provided: totalDealsWithThisTenant (e.g. 'third deal with this tenant'), " +
+            "an agent's dealsThisYear (e.g. 'Lucy's second deal of the year'), or dealsInTownLast90Days (e.g. 'Bristol is looking busy'). " +
+            "Never invent numbers, names or relationships. If no fact stands out, write a simple positive note on the deal itself. " +
+            "No emoji. Return STRICT JSON only: an object mapping each deal id to its sentence.",
+        },
+        { role: "user", content: JSON.stringify(payload) },
+      ],
+      max_completion_tokens: 2048,
+      temperature: 0.6,
+    });
+    const res: any = await Promise.race([
+      call,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("commentary timeout")), 25000)),
+    ]);
+    const text = res?.choices?.[0]?.message?.content || "";
+    const parsed = safeParseJSON(text);
+    if (parsed && typeof parsed === "object") {
+      for (const d of deals) {
+        const c = parsed[d.id];
+        if (typeof c === "string" && c.trim()) comments.set(d.id, pdfSafe(c).slice(0, 160));
+      }
+    }
+  } catch (err: any) {
+    console.error("[deal-report] commentary skipped:", err?.message);
+  }
+  return comments;
 }
 
 // ─── PDF rendering ────────────────────────────────────────────────────────
@@ -233,7 +355,8 @@ function money(v: unknown): string | null {
 
 async function renderDealReportPdf(
   groups: { team: string; deals: { deal: any; photoBuf: Buffer | null }[] }[],
-  window: { since: Date; until: Date }
+  window: { since: Date; until: Date },
+  comments: Map<string, string>
 ): Promise<Buffer> {
   // @ts-ignore — pdfkit has no d.ts
   const PDFDocument = (await import("pdfkit")).default;
@@ -275,40 +398,42 @@ async function renderDealReportPdf(
   doc.font("Helvetica-Bold").fontSize(18).fillColor(BGP_DARK_GREEN).text(String(groups.length), leftM + pageW / 2, y + 22);
   y += 62;
 
-  const PHOTO = 56;
+  // ~5 deals per page: 96px photos with generous row spacing.
+  const PHOTO = 96;
+  const ROW_GAP = 16;
   for (const group of groups) {
-    if (y > 720) { doc.addPage(); y = 60; }
-    doc.font("Helvetica-Bold").fontSize(10).fillColor(BGP_GREEN).text(pdfSafe(group.team).toUpperCase(), leftM, y);
-    y = doc.y + 3;
-    doc.rect(leftM, y, pageW, 1).fill(BGP_GREEN);
-    y += 8;
+    if (y + PHOTO + 40 > 790) { doc.addPage(); y = 60; }
+    doc.font("Helvetica-Bold").fontSize(11).fillColor(BGP_GREEN).text(pdfSafe(group.team).toUpperCase(), leftM, y, { characterSpacing: 1 });
+    y = doc.y + 4;
+    doc.rect(leftM, y, pageW, 1.5).fill(BGP_GREEN);
+    y += 12;
 
     for (const { deal, photoBuf } of group.deals) {
-      if (y + PHOTO + 10 > 780) { doc.addPage(); y = 60; }
+      if (y + PHOTO + ROW_GAP > 790) { doc.addPage(); y = 60; }
 
-      doc.rect(leftM, y, PHOTO, PHOTO).lineWidth(0.5).stroke("#DDDDDD");
+      doc.rect(leftM, y, PHOTO, PHOTO).lineWidth(0.75).stroke("#D8D8D8");
       if (photoBuf) {
         try {
-          doc.image(photoBuf, leftM + 2, y + 2, { fit: [PHOTO - 4, PHOTO - 4], align: "center", valign: "center" });
+          doc.image(photoBuf, leftM + 3, y + 3, { fit: [PHOTO - 6, PHOTO - 6], align: "center", valign: "center" });
         } catch {}
       } else {
         doc.rect(leftM + 1, y + 1, PHOTO - 2, PHOTO - 2).fill("#F4F7F5");
         const initials = pdfSafe(deal.tenant_name || deal.name).split(/\s+/).map((w: string) => w[0]).join("").toUpperCase().slice(0, 2) || "?";
-        doc.font("Helvetica-Bold").fontSize(16).fillColor("#BBBBBB").text(initials, leftM, y + PHOTO / 2 - 8, { width: PHOTO, align: "center" });
+        doc.font("Helvetica-Bold").fontSize(26).fillColor("#C5CFC8").text(initials, leftM, y + PHOTO / 2 - 13, { width: PHOTO, align: "center" });
       }
 
-      const tx = leftM + PHOTO + 12;
-      const tw = pageW - PHOTO - 12;
-      doc.font("Helvetica-Bold").fontSize(10).fillColor("#222").text(pdfSafe(deal.name), tx, y, { width: tw });
-      let ty = doc.y + 1;
+      const tx = leftM + PHOTO + 16;
+      const tw = pageW - PHOTO - 16;
+      doc.font("Helvetica-Bold").fontSize(12).fillColor(BGP_DARK_GREEN).text(pdfSafe(deal.name), tx, y, { width: tw });
+      let ty = doc.y + 3;
 
       const meta: string[] = [];
       if (deal.property_name && deal.property_name !== deal.name) meta.push(pdfSafe(deal.property_name));
       if (deal.deal_type) meta.push(pdfSafe(deal.deal_type));
       if (deal.status) meta.push(pdfSafe(deal.status));
       if (meta.length) {
-        doc.font("Helvetica").fontSize(8.5).fillColor("#666").text(meta.join("  ·  "), tx, ty, { width: tw });
-        ty = doc.y + 1;
+        doc.font("Helvetica").fontSize(9).fillColor("#555").text(meta.join("  ·  "), tx, ty, { width: tw });
+        ty = doc.y + 2;
       }
 
       const parties: string[] = [];
@@ -317,8 +442,8 @@ async function renderDealReportPdf(
       if (deal.vendor_name) parties.push(`Vendor: ${pdfSafe(deal.vendor_name)}`);
       if (deal.purchaser_name) parties.push(`Purchaser: ${pdfSafe(deal.purchaser_name)}`);
       if (parties.length) {
-        doc.font("Helvetica").fontSize(8.5).fillColor("#666").text(parties.join("  ·  "), tx, ty, { width: tw });
-        ty = doc.y + 1;
+        doc.font("Helvetica").fontSize(9).fillColor("#555").text(parties.join("  ·  "), tx, ty, { width: tw });
+        ty = doc.y + 2;
       }
 
       const fin: string[] = [];
@@ -331,11 +456,18 @@ async function renderDealReportPdf(
       if (deal.total_area_sqft) fin.push(`${Number(deal.total_area_sqft).toLocaleString("en-GB")} sq ft`);
       if (fee) fin.push(`Fee ${fee}`);
       fin.push(`Added ${new Date(deal.created_at).toLocaleDateString("en-GB")}`);
-      doc.font("Helvetica").fontSize(8).fillColor("#888").text(fin.join("  ·  "), tx, ty, { width: tw });
+      doc.font("Helvetica").fontSize(9).fillColor("#777").text(fin.join("  ·  "), tx, ty, { width: tw });
+      ty = doc.y + 3;
 
-      y = Math.max(doc.y, y + PHOTO) + 10;
+      const comment = comments.get(deal.id);
+      if (comment) {
+        doc.font("Helvetica-Oblique").fontSize(9.5).fillColor(BGP_GREEN).text(comment, tx, ty, { width: tw });
+      }
+
+      y = Math.max(doc.y, y + PHOTO) + ROW_GAP;
+      doc.rect(leftM, y - ROW_GAP / 2, pageW, 0.5).fill("#EAEAEA");
     }
-    y += 6;
+    y += 8;
   }
 
   if (!totalDeals) {
@@ -439,6 +571,47 @@ router.get("/api/deal-report/streetview", requireAuth, async (req: Request, res:
   }
 });
 
+// Image search for the photo picker — Google CSE (same setup as
+// brand-images.ts), falling back to Unsplash if CSE isn't configured.
+router.get("/api/deal-report/image-search", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    if (!q) return res.status(400).json({ error: "q required" });
+    const key = process.env.GOOGLE_CSE_KEY || process.env.GOOGLE_API_KEY;
+    const cx = process.env.GOOGLE_CSE_ID;
+    if (key && cx) {
+      const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(q)}&searchType=image&imgSize=large&num=9&safe=active`;
+      const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (!r.ok) throw new Error(`Image search failed (${r.status})`);
+      const d = await r.json();
+      const results = ((d?.items as any[]) || [])
+        .filter(it => it.link)
+        .map(it => ({
+          url: it.link,
+          thumbnail: it.image?.thumbnailLink || it.link,
+          title: it.title || "",
+        }));
+      return res.json({ results, source: "google" });
+    }
+    if (process.env.UNSPLASH_ACCESS_KEY) {
+      const url = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(q)}&per_page=9`;
+      const r = await fetch(url, { headers: { Authorization: `Client-ID ${process.env.UNSPLASH_ACCESS_KEY}` }, signal: AbortSignal.timeout(10000) });
+      if (!r.ok) throw new Error(`Image search failed (${r.status})`);
+      const d = await r.json();
+      const results = ((d?.results as any[]) || []).map(p => ({
+        url: p.urls?.regular,
+        thumbnail: p.urls?.thumb,
+        title: p.alt_description || "",
+      })).filter(p => p.url);
+      return res.json({ results, source: "unsplash" });
+    }
+    return res.status(503).json({ error: "Image search not configured — set GOOGLE_CSE_ID (+ GOOGLE_CSE_KEY) or UNSPLASH_ACCESS_KEY" });
+  } catch (err: any) {
+    console.error("[deal-report] image-search error:", err?.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post("/api/deal-report/pdf", requireAuth, async (req: Request, res: Response) => {
   try {
     const requested: { id: string; photo?: ReportPhoto | null }[] = Array.isArray(req.body?.deals) ? req.body.deals : [];
@@ -450,17 +623,20 @@ router.post("/api/deal-report/pdf", requireAuth, async (req: Request, res: Respo
     const propertyIds = Array.from(new Set(selected.map(r => r.property_id).filter(Boolean)));
     const studioByProperty = await loadStudioImagesByProperty(propertyIds as string[]);
 
-    const withPhotos = await Promise.all(selected.map(async (deal) => {
-      const photo = photoById.has(deal.id)
-        ? photoById.get(deal.id)
-        : pickDefaultPhoto(deal, buildCandidates(deal, studioByProperty.get(deal.property_id) || []));
-      return { deal, photoBuf: await resolvePhotoBuffer(photo) };
-    }));
+    const [withPhotos, comments] = await Promise.all([
+      Promise.all(selected.map(async (deal) => {
+        const photo = photoById.has(deal.id)
+          ? photoById.get(deal.id)
+          : pickDefaultPhoto(deal, buildCandidates(deal, studioByProperty.get(deal.property_id) || []));
+        return { deal, photoBuf: await resolvePhotoBuffer(photo) };
+      })),
+      generateCommentary(selected),
+    ]);
 
     const pdf = await renderDealReportPdf(groupByTeam(withPhotos), {
       since: new Date(Date.now() - REPORT_DAYS * 86400000),
       until: new Date(),
-    });
+    }, comments);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="bgp-deal-report-${new Date().toISOString().slice(0, 10)}.pdf"`);
     res.send(pdf);

@@ -72,6 +72,7 @@ import {
   ChevronUp,
   ChevronsUpDown,
   Download,
+  Upload,
   Check,
   RefreshCw,
   Link2,
@@ -93,7 +94,7 @@ import {
   Mail,
   CalendarDays,
 } from "lucide-react";
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { useTeam } from "@/lib/team-context";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -4799,6 +4800,7 @@ export function DealRelatedMeetings({ dealId }: { dealId: string }) {
 type ReportPhoto = {
   kind: "logo" | "studio" | "streetview" | "url" | "custom";
   url?: string;
+  thumbnail?: string;
   imageId?: string;
   location?: string;
   dataUri?: string;
@@ -4860,7 +4862,11 @@ function DealReportDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
   });
   const [overrides, setOverrides] = useState<Record<string, ReportPhoto | null>>({});
   const [customUrls, setCustomUrls] = useState<Record<string, string>>({});
+  const [searchResults, setSearchResults] = useState<Record<string, { url: string; thumbnail: string; title: string }[]>>({});
+  const [searchingId, setSearchingId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadTargetRef = useRef<string | null>(null);
 
   const deals = data?.deals ?? [];
   const groups = useMemo(() => {
@@ -4879,6 +4885,29 @@ function DealReportDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
     const reader = new FileReader();
     reader.onload = () => setOverrides(prev => ({ ...prev, [dealId]: { kind: "custom", dataUri: String(reader.result), label: file.name } }));
     reader.readAsDataURL(file);
+  };
+
+  const queryFor = (d: ReportDeal) => customUrls[d.id] ?? d.tenantName ?? "";
+
+  const searchImages = async (dealId: string, q: string) => {
+    if (!q.trim()) return;
+    setSearchingId(dealId);
+    try {
+      const res = await fetch(`/api/deal-report/image-search?q=${encodeURIComponent(q.trim())}`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as any));
+        throw new Error(err.error || `${res.status}`);
+      }
+      const d = await res.json();
+      setSearchResults(prev => ({ ...prev, [dealId]: d.results || [] }));
+      if (!(d.results || []).length) toast({ title: "No images found", description: "Try a different search" });
+    } catch (err: any) {
+      toast({ title: "Image search failed", description: err?.message, variant: "destructive" });
+    }
+    setSearchingId(null);
   };
 
   const generate = async () => {
@@ -4966,26 +4995,70 @@ function DealReportDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
                         )}
                         <div className="flex gap-1.5">
                           <Input
-                            placeholder="Paste image URL"
+                            placeholder="Search images — tenant, brand, place…"
                             className="h-8 text-xs"
-                            value={customUrls[d.id] || ""}
+                            value={queryFor(d)}
                             onChange={e => setCustomUrls(prev => ({ ...prev, [d.id]: e.target.value }))}
+                            onKeyDown={e => {
+                              if (e.key !== "Enter") return;
+                              e.preventDefault();
+                              const q = queryFor(d);
+                              if (q.startsWith("http")) {
+                                setOverrides(prev => ({ ...prev, [d.id]: { kind: "url", url: q } }));
+                              } else {
+                                searchImages(d.id, q);
+                              }
+                            }}
+                            data-testid={`report-search-input-${d.id}`}
                           />
+                          {queryFor(d).startsWith("http") ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8"
+                              onClick={() => setOverrides(prev => ({ ...prev, [d.id]: { kind: "url", url: queryFor(d) } }))}
+                            >
+                              Use
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8"
+                              disabled={searchingId === d.id || !queryFor(d).trim()}
+                              onClick={() => searchImages(d.id, queryFor(d))}
+                              data-testid={`report-search-button-${d.id}`}
+                            >
+                              {searchingId === d.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                            </Button>
+                          )}
+                        </div>
+                        {(searchResults[d.id] || []).length > 0 && (
+                          <div className="grid grid-cols-3 gap-1.5 max-h-44 overflow-y-auto">
+                            {(searchResults[d.id] || []).map((r, i) => (
+                              <button
+                                key={i}
+                                onClick={() => setOverrides(prev => ({ ...prev, [d.id]: { kind: "url", url: r.url, thumbnail: r.thumbnail, label: r.title } }))}
+                                className="border rounded-md overflow-hidden hover:ring-2 hover:ring-primary"
+                                title={r.title}
+                                data-testid={`report-search-result-${d.id}-${i}`}
+                              >
+                                <img src={r.thumbnail} alt={r.title} className="w-full h-16 object-cover" loading="lazy" />
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between">
                           <Button
                             size="sm"
                             variant="outline"
-                            className="h-8"
-                            disabled={!(customUrls[d.id] || "").startsWith("https://")}
-                            onClick={() => setOverrides(prev => ({ ...prev, [d.id]: { kind: "url", url: customUrls[d.id] } }))}
+                            className="h-7 text-xs"
+                            onClick={() => { uploadTargetRef.current = d.id; fileInputRef.current?.click(); }}
+                            data-testid={`report-upload-${d.id}`}
                           >
-                            Use
+                            <Upload className="w-3 h-3 mr-1.5" />
+                            Upload image
                           </Button>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs text-primary cursor-pointer hover:underline">
-                            Upload image…
-                            <input type="file" accept="image/png,image/jpeg" className="hidden" onChange={e => handleUpload(d.id, e.target.files?.[0])} />
-                          </label>
                           <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setOverrides(prev => ({ ...prev, [d.id]: null }))}>
                             No photo
                           </Button>
@@ -5012,6 +5085,20 @@ function DealReportDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
             ))}
           </div>
         )}
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg"
+          className="hidden"
+          onChange={e => {
+            const file = e.target.files?.[0];
+            const target = uploadTargetRef.current;
+            if (file && target) handleUpload(target, file);
+            e.currentTarget.value = "";
+          }}
+          data-testid="report-upload-input"
+        />
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
