@@ -1006,22 +1006,26 @@ async function markRound(page, cross) {
 
   // Client manages their own tasks: add via quick-add, mark complete, remove.
   // (My Tasks widget + page; every task endpoint is user-scoped.)
-  // /tasks for a client is the READ-ONLY portfolio Tasks board ("who's done
-  // what", Messages Phase 2) — staff keep the personal My Tasks page with
-  // quick-add. So on the client the page must render the board (Tasks heading +
-  // Done section) and must NOT offer a quick-add input. (Task create/complete
-  // over the API is still allowed and is covered by client-task-edit.)
-  await step(page, p, 'client-tasks-board-readonly', async () => {
+  // /tasks gives clients the full My Tasks page — quick-add included (Woody,
+  // "client parity round 3": full My Tasks back for clients). The client must
+  // be able to add a task, see it, complete it, and clean it up from the UI.
+  await step(page, p, 'client-task-create-complete', async () => {
+    const title = `QA Task R${ROUND}`;
     await page.goto(`${BASE}/tasks`);
     await page.waitForLoadState('networkidle').catch(() => {});
     await page.waitForTimeout(2000);
-    if (await page.getByText('Page not found').count()) throw new Error('client /tasks is a dead route');
-    if (await page.getByText('something went wrong', { exact: false }).count()) throw new Error('error boundary tripped on the client tasks board');
-    const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
-    if (body.length < 30) throw new Error('client tasks board rendered blank');
-    if (!/tasks/i.test(body)) throw new Error('client tasks board missing its Tasks heading/content');
-    if (await page.locator('[data-testid="input-add-task"]').count())
-      throw new Error('quick-add task input present on the client read-only tasks board');
+    const add = page.locator('[data-testid="input-add-task"]').first();
+    if (!(await add.count())) throw new Error('no quick-add task input on the client My Tasks page');
+    await add.fill(title);
+    await add.press('Enter');
+    await page.waitForTimeout(1200);
+    const row = page.locator('[data-testid^="task-row-"]', { hasText: title }).first();
+    if (!(await row.count())) throw new Error('task not visible after add');
+    // Complete it, then clean up via the row's delete button.
+    await row.locator('[data-testid^="task-toggle-"]').first().click().catch(() => {});
+    await page.waitForTimeout(600);
+    await row.locator('[data-testid^="task-delete-"]').first().click().catch(() => {});
+    await page.waitForTimeout(400);
   });
 
   // Client property-detail page renders (tabs, no blank/crash). Cross-check
