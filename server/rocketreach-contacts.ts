@@ -146,15 +146,15 @@ export async function searchRocketReach(opts: {
   if (!auth) throw new Error("ROCKETREACH_API_KEY not configured");
 
   const scope = opts.scope || "tenant";
-  // Tenant scope sends the title whitelist; landlord scope omits it so
-  // RocketReach returns every person at the company. Page size also goes
-  // up for landlords because we want broader coverage. A personName search
-  // targets one specific individual (e.g. a Companies House director), so
-  // the title whitelist is skipped — chef-patrons and founders often carry
-  // titles the whitelist doesn't cover.
+  // No API-side current_title filter: RocketReach's title matching silently
+  // broke (2026-08-05 — the filtered query returns total:0 with HTTP 201
+  // while the same query without it returns dozens; same silent-drift class
+  // as the retired current_employer_domain fields). The ROLE_TITLES
+  // whitelist still applies — addIfRelevant() filters results in code —
+  // so page_size stays high to keep the right titles inside the page.
   const body: Record<string, any> = {
-    query: scope === "landlord" || opts.personName ? {} : { current_title: ROLE_TITLES },
-    page_size: scope === "landlord" ? 100 : 25,
+    query: {},
+    page_size: 100,
     start: 1,
   };
   if (opts.personName) body.query.name = [opts.personName];
