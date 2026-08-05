@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
+import { PortfolioTasksBoard } from "@/pages/client-tasks";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { TaskNotesCanvas } from "@/components/task-notes-canvas";
@@ -395,6 +396,7 @@ function AddTaskInline({ onAdd }: { onAdd: (title: string) => void }) {
 
 export default function TasksPage() {
   const { toast } = useToast();
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const [filter, setFilter] = useState<"all" | "todo" | "in_progress" | "done">("all");
   const [viewAssigned, setViewAssigned] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -980,6 +982,16 @@ export default function TasksPage() {
               </CardContent>
             </Card>
 
+            {/* Clients keep their full personal task list above AND the
+                portfolio monitoring board below (Woody, 2026-08-05: "we need
+                the original my tasks to come back... but we need to keep the
+                monitoring of tasks too"). Staff preview with /tasks?client=1. */}
+            {(me?.role === "Client" || !!(me as any)?.companyScopeId ||
+              new URLSearchParams(window.location.search).get("client") === "1") && (
+              <div className="mt-6">
+                <PortfolioTasksBoard />
+              </div>
+            )}
 
           </div>
         </div>

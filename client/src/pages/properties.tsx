@@ -2213,6 +2213,8 @@ export function ClientPropertyFoldersPanel({ propertyName }: { propertyName: str
   // straight into this property's folder. Deliberately shows NO internal
   // team names and no write actions.
   const [trail, setTrail] = useState<Array<{ id: string; name: string }>>([]);
+  const [docQuery, setDocQuery] = useState("");
+  const [docSort, setDocSort] = useState<"name" | "size" | "modified">("name");
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
   const { data: root, isLoading: rootLoading, error: rootError } = useQuery<{ id: string; name: string }>({
@@ -2281,14 +2283,45 @@ export function ClientPropertyFoldersPanel({ propertyName }: { propertyName: str
     );
   }
 
-  const items = listing?.items || [];
+  const rawItems = listing?.items || [];
+  // Filter + sort (Woody, 2026-08-05: "documents board was meant to have a
+  // filter / sort solution"). Folders always sort above files; size sorting
+  // uses childCount for folders like the SharePoint browser does.
+  const q = docQuery.trim().toLowerCase();
+  const items = rawItems
+    .filter((i: any) => !q || (i.name || "").toLowerCase().includes(q))
+    .sort((a: any, b: any) => {
+      if (!!a.isFolder !== !!b.isFolder) return a.isFolder ? -1 : 1;
+      if (docSort === "size") return ((b.isFolder ? b.childCount : b.size) || 0) - ((a.isFolder ? a.childCount : a.size) || 0);
+      if (docSort === "modified") return new Date(b.lastModifiedDateTime || b.lastModified || 0).getTime() - new Date(a.lastModifiedDateTime || a.lastModified || 0).getTime();
+      return (a.name || "").localeCompare(b.name || "", undefined, { numeric: true });
+    });
   return (
     <Card data-testid="client-property-folders-panel">
       <CardContent className="p-4">
         <div className="flex items-center gap-2 mb-2">
           <FolderOpen className="w-4 h-4" />
           <h3 className="text-sm font-semibold">Documents</h3>
+          <div className="ml-auto flex items-center gap-1">
+            {([["name", "A–Z"], ["size", "Largest"], ["modified", "Newest"]] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setDocSort(key)}
+                className={`text-[10px] px-1.5 py-0.5 rounded-full border ${docSort === key ? "bg-foreground text-background border-foreground" : "text-muted-foreground hover:bg-muted/50"}`}
+                data-testid={`docs-sort-${key}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
+        <Input
+          value={docQuery}
+          onChange={(e) => setDocQuery(e.target.value)}
+          placeholder="Filter by name…"
+          className="h-7 text-xs mb-2"
+          data-testid="docs-filter-input"
+        />
         {base && (
           <div className="flex items-center gap-1 mb-2 text-[11px] flex-wrap">
             <button onClick={() => setTrail([])} className={trail.length ? "text-primary hover:underline" : "text-foreground font-medium"} data-testid="client-folders-breadcrumb-root">
@@ -2310,7 +2343,7 @@ export function ClientPropertyFoldersPanel({ propertyName }: { propertyName: str
         {(rootLoading || listLoading) ? (
           <div className="space-y-1">{[1, 2, 3].map(i => <Skeleton key={i} className="h-7" />)}</div>
         ) : items.length === 0 ? (
-          <p className="text-xs text-muted-foreground text-center py-4">This folder is empty.</p>
+          <p className="text-xs text-muted-foreground text-center py-4">{q ? "No files or folders match." : "This folder is empty."}</p>
         ) : (
           <div className="space-y-0.5 max-h-[300px] overflow-y-auto pr-1">
             {items.map((item: any) => item.isFolder ? (

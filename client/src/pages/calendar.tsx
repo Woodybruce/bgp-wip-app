@@ -130,6 +130,17 @@ interface CrmLinks {
   companies: { id: string; name: string }[];
 }
 
+// Synced client events all carry the flat type 'client-sync', which made
+// the Landsec diary's Event Types legend useless (Woody, 2026-08-05: "the
+// main diary needs full usability including the intelligence on event
+// types"). Generic types get the same title classification Outlook events
+// already use; explicit types (viewing, call…) are kept as stored.
+const GENERIC_TEAM_TYPES = new Set(["client-sync", "other", "event", ""]);
+function teamEventType(te: TeamEvent): string {
+  const stored = (te.event_type || "").toLowerCase();
+  return GENERIC_TEAM_TYPES.has(stored) ? classifyOutlookEvent(te.title) : te.event_type;
+}
+
 function teamEventToCalendarEvent(te: TeamEvent): CalendarEvent {
   return {
     id: `crm-${te.id}`,
@@ -140,7 +151,7 @@ function teamEventToCalendarEvent(te: TeamEvent): CalendarEvent {
     bodyPreview: te.notes || undefined,
     isAllDay: false,
     _source: "crm",
-    _eventType: te.event_type,
+    _eventType: teamEventType(te),
     _propertyName: te.property_name || undefined,
     _companyName: te.company_name || undefined,
     _attendeeNames: te.attendees || [],
@@ -1469,7 +1480,7 @@ export default function Calendar() {
   const eventTypeCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     if (teamEventsRaw) {
-      teamEventsRaw.forEach(e => { counts[e.event_type] = (counts[e.event_type] || 0) + 1; });
+      teamEventsRaw.forEach(e => { const t = teamEventType(e); counts[t] = (counts[t] || 0) + 1; });
     }
     if (outlookEvents) {
       outlookEvents.forEach(e => {

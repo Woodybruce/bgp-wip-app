@@ -53,7 +53,7 @@ function TaskRow({ t, done }: { t: PortfolioTask; done: boolean }) {
   );
 }
 
-export default function ClientTasksPage() {
+export function PortfolioTasksBoard() {
   const { data: user } = useQuery<User>({ queryKey: ["/api/auth/me"] });
   const { activeTeam } = useTeam();
   const effectiveTeam = activeTeam && activeTeam !== "all" ? activeTeam : user?.team;
@@ -86,13 +86,13 @@ export default function ClientTasksPage() {
   const done = data?.done || [];
 
   return (
-    <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-4">
+    <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-semibold flex items-center gap-2">
-          <ClipboardList className="w-5 h-5" /> Tasks
-        </h1>
+        <h2 className="text-base font-semibold flex items-center gap-2">
+          <ClipboardList className="w-4 h-4" /> Portfolio activity — BGP team
+        </h2>
         <p className="text-sm text-muted-foreground">
-          What the BGP team is working on across your portfolio — and what's been done.
+          What the BGP team is working on across the portfolio — and what's been done.
         </p>
       </div>
 
@@ -119,6 +119,14 @@ export default function ClientTasksPage() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+export default function ClientTasksPage() {
+  return (
+    <div className="p-4 md:p-6 max-w-3xl mx-auto">
+      <PortfolioTasksBoard />
     </div>
   );
 }

@@ -3661,6 +3661,11 @@ app.use("/api/branding/assets", express.static(
         // scope-check via clientBlockedForProperty.
         if (req.method === "POST" && /^\/api\/properties\/[^/]+\/brochures\/upload$/.test(p)) return next();
         if (req.method === "POST" && /^\/api\/properties\/[^/]+\/plans$/.test(p)) return next();
+        // Activity AI summarise on client feeds (Woody, 2026-08-05: "include
+        // the usability") — the handler company-jails the interaction to the
+        // caller's scope/visible brands; sync + discover-contacts don't match
+        // this shape and stay staff-only.
+        if (req.method === "POST" && /^\/api\/interactions\/[^/]+\/summarise$/.test(p)) return next();
         // Same prefix-matching rule as the read allowlist: entries ending in
         // "/" match by prefix, others match exactly or as a path segment.
         if (CLIENT_ALLOWED_WRITES.some(w =>
