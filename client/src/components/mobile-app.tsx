@@ -2872,22 +2872,6 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
   // grants permission from a user gesture, hence the Enable banner.
   const { subscribe: subscribePush, isSubscribed: pushSubscribed, isSupported: pushSupported, permission: pushPermission } = usePushNotifications();
 
-  // Portfolio strip above the Messages list for Landsec viewers — the
-  // "portfolio at a glance + what's happening" single screen.
-  const showPortfolioStrip = isClientUser || mobileTeam === "Landsec";
-  const { data: stripUnitsRaw } = useQuery<any[]>({
-    queryKey: ["/api/available-units"],
-    staleTime: 2 * 60 * 1000,
-    enabled: showPortfolioStrip,
-  });
-  const stripUnits = Array.isArray(stripUnitsRaw) ? stripUnitsRaw : [];
-  const stripStats = {
-    available: stripUnits.filter(u => legacyToCode(u.marketingStatus) === "AVA").length,
-    underOffer: stripUnits.filter(u => legacyToCode(u.marketingStatus) === "SOL").length,
-    let: stripUnits.filter(u => legacyToCode(u.marketingStatus) === "COM").length,
-    total: stripUnits.length,
-  };
-
   // Push-notification deep link (/chatbgp?thread=<id>) — open that thread
   // once the list has loaded, then clean the URL.
   const deepLinkedRef = useRef(false);
@@ -3574,27 +3558,6 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
 
         {tab === "chats" && (
           <div>
-            {/* Portfolio strip — Landsec viewers see their letting roll-up
-                above the conversation list: one screen for "what's
-                happening + how the portfolio is doing". */}
-            {showPortfolioStrip && stripStats.total > 0 && !chatSearch && (
-              <button
-                onClick={() => navigate("/available")}
-                className="mx-4 mb-2 w-[calc(100%-2rem)] rounded-2xl bg-[#1C1917] text-white px-4 py-2.5 active:opacity-90"
-                data-testid="mobile-messages-portfolio-strip"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-4">
-                    <span className="text-sm font-bold tabular-nums text-emerald-400">{stripStats.available}<span className="ml-1 text-[10px] font-normal opacity-70">Avail</span></span>
-                    <span className="text-sm font-bold tabular-nums text-amber-300">{stripStats.underOffer}<span className="ml-1 text-[10px] font-normal opacity-70">Offer</span></span>
-                    <span className="text-sm font-bold tabular-nums text-sky-300">{stripStats.let}<span className="ml-1 text-[10px] font-normal opacity-70">Let</span></span>
-                    <span className="text-sm font-bold tabular-nums">{stripStats.total}<span className="ml-1 text-[10px] font-normal opacity-70">Units</span></span>
-                  </div>
-                  <ChevronRight className="w-4 h-4 opacity-60 shrink-0" />
-                </div>
-              </button>
-            )}
-
             {/* One-tap notification opt-in — iOS only grants push from a
                 user gesture, so the automatic subscribe can't do it. */}
             {pushSupported && !pushSubscribed && pushPermission !== "denied" && !chatSearch && (

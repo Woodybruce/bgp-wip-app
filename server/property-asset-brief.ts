@@ -900,19 +900,68 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       [pid]
     );
 
-    // 2. Tenants in occupation — one contact per occupier company off the
-    //    tenancy schedule (FK first, name-match fallback), freshest first.
+    // 2. Tenants in occupation — brand-first (Woody, 2026-08-05: "very hard
+    //    to see which tenants they are"). EVERY occupier company off the
+    //    tenancy schedule, A-Z, with its freshest contact attached when one
+    //    exists — the brand is the row, the person hangs off it.
     const tenantsQ = pool.query(
       `WITH occ AS (
-         SELECT DISTINCT co.id FROM tenancy_schedule_units ts
+         SELECT DISTINCT co.id, co.name FROM tenancy_schedule_units ts
          JOIN crm_companies co
            ON co.id = ts.tenant_company_id
            OR lower(co.name) IN (lower(COALESCE(ts.tenant_name,'')), lower(COALESCE(ts.trading_name,'')))
            OR (length(co.name) >= 5 AND lower(COALESCE(ts.tenant_name,'')) LIKE lower(co.name) || ' %')
         WHERE ts.property_id = $1
        )
-       SELECT DISTINCT ON (c.company_id) c.* FROM crm_contacts c JOIN occ ON occ.id = c.company_id
-        ORDER BY c.company_id, c.last_interaction DESC NULLS LAST
+       SELECT occ.id AS occ_company_id, occ.name AS occ_company_name,
+              c.id, c.name, c.role, c.email, c.last_interaction
+         FROM occ
+         LEFT JOIN LATERAL (
+           SELECT c2.id, c2.name, c2.role, c2.email, c2.last_interaction
+             FROM crm_contacts c2 WHERE c2.company_id = occ.id
+            ORDER BY c2.last_interaction DESC NULLS LAST LIMIT 1
+         ) c ON true
+        ORDER BY occ.name
+        LIMIT 150`,
+      [pid]
+    );
+
+    // 5. Internal team — the BGP agents on this property (Lead / Leasing /
+    //    Letting Surveyor pills) plus the landlord's Director-role people
+    //    (the client-side leasing owners, same rule as the tracker's
+    //    client-contact picker).
+    const bgpTeamQ = pool.query(
+      `SELECT u.id, u.name, u.email, pa.role AS agent_role
+         FROM crm_property_agents pa JOIN users u ON u.id = pa.user_id
+        WHERE pa.property_id = $1
+        ORDER BY CASE pa.role WHEN 'Lead' THEN 0 WHEN 'Investment' THEN 1 WHEN 'Leasing' THEN 2 ELSE 3 END, u.name`,
+      [pid]
+    );
+    const clientLeadsQ = pool.query(
+      `WITH owner_cos AS (
+         SELECT landlord_id AS id FROM crm_properties WHERE id = $1 AND landlord_id IS NOT NULL
+         UNION SELECT company_id FROM crm_company_properties WHERE property_id = $1
+       )
+       SELECT c.* FROM crm_contacts c JOIN owner_cos o ON o.id = c.company_id
+        WHERE lower(COALESCE(c.role,'')) LIKE '%director%'
+        ORDER BY c.name LIMIT 6`,
+      [pid]
+    );
+
+    // 6. Consultants — people at advisor-type companies linked to the
+    //    property (architects, planners, project managers, engineers…).
+    const consultantsQ = pool.query(
+      `SELECT DISTINCT ON (c.id) c.*, co.company_type AS consultant_type
+         FROM crm_company_properties cp
+         JOIN crm_companies co ON co.id = cp.company_id
+         JOIN crm_contacts c ON c.company_id = co.id
+        WHERE cp.property_id = $1
+          AND (co.company_type ILIKE '%consult%' OR co.company_type ILIKE '%architect%'
+            OR co.company_type ILIKE '%advis%' OR co.company_type ILIKE '%planning%'
+            OR co.company_type ILIKE '%project man%' OR co.company_type ILIKE '%engineer%'
+            OR co.company_type ILIKE '%solicitor%' OR co.company_type ILIKE '%lawyer%'
+            OR co.industry ILIKE '%consult%' OR co.industry ILIKE '%architect%')
+        ORDER BY c.id, c.last_interaction DESC NULLS LAST
         LIMIT 12`,
       [pid]
     );
@@ -976,12 +1025,24 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       [pid]
     );
 
-    const [landlord, tenants, deals, interest] = await Promise.all([landlordQ, tenantsQ, dealsQ, interestQ]);
+    const [landlord, tenants, deals, interest, bgpTeam, clientLeads, consultants] =
+      await Promise.all([landlordQ, tenantsQ, dealsQ, interestQ, bgpTeamQ, clientLeadsQ, consultantsQ]);
     res.json({
       landlord: landlord.rows.map((r: any) => shape(r, "landlord team")),
-      tenants: tenants.rows.map((r: any) => shape(r, "in occupation")),
+      // Brand-first occupier rows: the company is the row, the freshest
+      // contact (if any) hangs off it.
+      tenants: tenants.rows.map((r: any) => ({
+        company_id: r.occ_company_id,
+        company_name: r.occ_company_name,
+        contact: r.id ? { id: r.id, name: r.name, role: r.role, email: r.email, last_interaction: r.last_interaction } : null,
+      })),
       deals: deals.rows.map((r: any) => shape(r, r.deal_name || "on a deal")),
       interest: interest.rows.map((r: any) => shape(r, r.kind === "offered" ? "made an offer" : "viewed")),
+      internal: [
+        ...bgpTeam.rows.map((r: any) => ({ id: `u-${r.id}`, user_id: r.id, name: r.name, role: r.agent_role || "Agent", email: r.email, side: "bgp" })),
+        ...clientLeads.rows.map((r: any) => ({ ...shape(r, "client"), side: "client" })),
+      ],
+      consultants: consultants.rows.map((r: any) => ({ ...shape(r, r.consultant_type || "consultant") })),
     });
   } catch (err: any) {
     console.error("[linked-contacts]", err?.message);
