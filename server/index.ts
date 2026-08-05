@@ -2925,6 +2925,7 @@ import propertyGapAnalysisRouter from "./property-gap-analysis";
 import brandPackRouter from "./brand-pack";
 import dealDocsRouter from "./deal-docs";
 import weeklyReportRouter, { runWeeklyClientReports } from "./weekly-report";
+import dealReportRouter from "./deal-report";
 import dealStagesRouter from "./deal-stages";
 import leasingPitchRouter from "./leasing-pitch";
 import cadRouter from "./cad";
@@ -3897,6 +3898,7 @@ app.use("/api/branding/assets", express.static(
   app.use(brandPackRouter);
   app.use(dealDocsRouter);
   app.use(weeklyReportRouter);
+  app.use(dealReportRouter);
   app.use(dealStagesRouter);
   app.use(leasingPitchRouter);
   app.use(cadRouter);
