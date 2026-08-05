@@ -2604,11 +2604,11 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
   // scroll. Never the raw company directory.
   type LinkedContact = { id: string; name: string; role: string | null; email: string | null; company_id: string | null; company_name: string | null; last_interaction: string | null; via: string | null; side?: string };
   type OccupierRow = { company_id: string; company_name: string; contact: { id: string; name: string; role: string | null; email: string | null; last_interaction: string | null } | null };
-  const { data } = useQuery<{ landlord: LinkedContact[]; tenants: OccupierRow[]; deals: LinkedContact[]; interest: LinkedContact[]; internal: LinkedContact[]; consultants: LinkedContact[] }>({
+  const { data } = useQuery<{ landlord: LinkedContact[]; tenants: OccupierRow[]; deals: LinkedContact[]; interest: LinkedContact[]; internal: LinkedContact[]; consultants: LinkedContact[]; trackerUnlinked: Array<{ unit_name: string; status: string | null }> }>({
     queryKey: ["/api/properties", propertyId, "linked-contacts"],
     queryFn: async () => {
       const res = await fetch(`/api/properties/${propertyId}/linked-contacts`, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) return { landlord: [], tenants: [], deals: [], interest: [], internal: [], consultants: [] };
+      if (!res.ok) return { landlord: [], tenants: [], deals: [], interest: [], internal: [], consultants: [], trackerUnlinked: [] };
       return res.json();
     },
   });
@@ -2623,7 +2623,8 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
   const landlordActive = (data?.landlord || []).filter(l => !internal.some(i => i.id === l.id));
   const occupiers = data?.tenants || [];
   const consultants = data?.consultants || [];
-  const total = internal.length + dealsAndTracker.length + landlordActive.length + occupiers.length + consultants.length;
+  const trackerUnlinked = data?.trackerUnlinked || [];
+  const total = internal.length + dealsAndTracker.length + trackerUnlinked.length + landlordActive.length + occupiers.length + consultants.length;
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ internal: true, deals: true });
 
@@ -2681,10 +2682,26 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
                 {(openGroups.internal ?? false) && <div className="space-y-0.5 mt-0.5">{internal.map(c => personRow(c, false))}</div>}
               </div>
             )}
-            {dealsAndTracker.length > 0 && (
+            {(dealsAndTracker.length > 0 || trackerUnlinked.length > 0) && (
               <div>
-                {groupHeader("deals", "On deals & tracker", dealsAndTracker.length, "text-emerald-700")}
-                {(openGroups.deals ?? false) && <div className="space-y-0.5 mt-0.5">{dealsAndTracker.map(c => personRow(c, true))}</div>}
+                {groupHeader("deals", "On deals & tracker", dealsAndTracker.length + trackerUnlinked.length, "text-emerald-700")}
+                {(openGroups.deals ?? false) && (
+                  <div className="space-y-0.5 mt-0.5">
+                    {dealsAndTracker.map(c => personRow(c, true))}
+                    {/* Active tracker units with nobody linked — visible gap,
+                        not a silently empty group. Linking the brand on the
+                        tracker makes the contact appear here automatically. */}
+                    {trackerUnlinked.map(u => (
+                      <Link key={u.unit_name} href="/available" className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-amber-50 min-w-0" data-testid={`tracker-unlinked-${u.unit_name}`}>
+                        <span className="w-6 h-6 rounded bg-amber-100 text-amber-700 flex items-center justify-center text-[9px] font-semibold shrink-0">!</span>
+                        <div className="flex-1 min-w-0">
+                          <span className="text-xs font-medium truncate block">{u.unit_name}</span>
+                          <span className="text-[10px] text-amber-700 truncate block">{u.status || "active"} — no brand linked yet, add it on the tracker</span>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             {landlordActive.length > 0 && (

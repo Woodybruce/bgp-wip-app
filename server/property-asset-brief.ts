@@ -1043,6 +1043,19 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       [pid]
     );
 
+    // 3c. Active tracker units with NO counterparty recorded anywhere —
+    //     surfaced as a visible gap ("link the brand") instead of the group
+    //     silently coming up empty (Bluewater's three NEG units, 2026-08-05).
+    const unlinkedQ = pool.query(
+      `SELECT au.unit_name, au.marketing_status FROM available_units au
+        WHERE au.property_id = $1
+          AND lower(COALESCE(au.marketing_status,'')) ~ '(neg|offer|sol|exc|hots|terms)'
+          AND au.tenant_company_id IS NULL AND au.deal_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM unit_offers o WHERE o.unit_id = au.id AND o.company_id IS NOT NULL)
+        ORDER BY au.unit_name LIMIT 8`,
+      [pid]
+    );
+
     // 4. Interest — people who actually viewed or offered on the
     //    property's tracker units.
     const interestQ = pool.query(
@@ -1061,8 +1074,8 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       [pid]
     );
 
-    const [landlord, tenants, deals, interest, bgpTeam, clientLeads, consultants, tracker] =
-      await Promise.all([landlordQ, tenantsQ, dealsQ, interestQ, bgpTeamQ, clientLeadsQ, consultantsQ, trackerQ]);
+    const [landlord, tenants, deals, interest, bgpTeam, clientLeads, consultants, tracker, unlinked] =
+      await Promise.all([landlordQ, tenantsQ, dealsQ, interestQ, bgpTeamQ, clientLeadsQ, consultantsQ, trackerQ, unlinkedQ]);
     const dealIds = new Set(deals.rows.map((r: any) => r.id));
     const trackerRows = tracker.rows.filter((r: any) => !dealIds.has(r.id));
     res.json({
@@ -1084,6 +1097,7 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
         ...clientLeads.rows.map((r: any) => ({ ...shape(r, "client"), side: "client" })),
       ],
       consultants: consultants.rows.map((r: any) => ({ ...shape(r, r.consultant_type || "consultant") })),
+      trackerUnlinked: unlinked.rows.map((r: any) => ({ unit_name: r.unit_name, status: r.marketing_status })),
     });
   } catch (err: any) {
     console.error("[linked-contacts]", err?.message);
