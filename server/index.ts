@@ -3652,6 +3652,10 @@ app.use("/api/branding/assets", express.static(
           if (await isClientVisibleBrand(enrichTarget[1] || enrichTarget[2], scope)) return next();
           return res.status(403).json({ error: "Not available for client accounts" });
         }
+        // Contacts-map pins/hides on the client's own property — the
+        // handlers scope-check via clientBlockedForProperty and only touch
+        // the per-property override table, never CRM rows.
+        if ((req.method === "POST" || req.method === "DELETE") && /^\/api\/properties\/[^/]+\/contact-override(\/|$)/.test(p)) return next();
         // Brochure + plan uploads on the client's own property — handlers
         // scope-check via clientBlockedForProperty.
         if (req.method === "POST" && /^\/api\/properties\/[^/]+\/brochures\/upload$/.test(p)) return next();

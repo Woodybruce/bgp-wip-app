@@ -872,8 +872,76 @@ router.get("/api/properties/:id/linkage-audit", requireAuth, async (req: Request
 // property: active landlord contacts (interaction history, not directory
 // membership), tenants in occupation, parties on live deals, and agents /
 // prospects who actually viewed or offered.
+// Manual overrides on the evidence-based contacts map (Woody, 2026-08-05:
+// "need to be able to add or delete these contacts too"). Pins add a CRM
+// contact the evidence missed; hides suppress a wrong row. Both are
+// per-property and reversible — the underlying CRM data is never touched.
+let contactOverridesEnsured = false;
+async function ensureContactOverrides() {
+  if (contactOverridesEnsured) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS property_contact_overrides (
+      property_id varchar NOT NULL,
+      contact_id varchar NOT NULL,
+      kind text NOT NULL,
+      created_by varchar,
+      created_at timestamptz DEFAULT now(),
+      PRIMARY KEY (property_id, contact_id)
+    )`).catch(() => {});
+  contactOverridesEnsured = true;
+}
+
+router.post("/api/properties/:id/contact-override", requireAuth, async (req: Request, res: Response) => {
+  try {
+    await ensureContactOverrides();
+    const { clientBlockedForProperty } = await import("./company-scope");
+    if (await clientBlockedForProperty(req, String(req.params.id))) {
+      return res.status(403).json({ error: "Not available for client accounts" });
+    }
+    const kind = String(req.body?.kind || "");
+    const contactId = String(req.body?.contactId || "");
+    if (!contactId || !["pin", "hide"].includes(kind)) return res.status(400).json({ error: "contactId and kind (pin|hide) required" });
+    const userId = (req as any).session?.userId || (req as any).tokenUserId;
+    await pool.query(
+      `INSERT INTO property_contact_overrides (property_id, contact_id, kind, created_by)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (property_id, contact_id) DO UPDATE SET kind = $3, created_by = $4`,
+      [String(req.params.id), contactId, kind, userId || null]
+    );
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "override failed" });
+  }
+});
+
+router.delete("/api/properties/:id/contact-override/:contactId", requireAuth, async (req: Request, res: Response) => {
+  try {
+    await ensureContactOverrides();
+    const { clientBlockedForProperty } = await import("./company-scope");
+    if (await clientBlockedForProperty(req, String(req.params.id))) {
+      return res.status(403).json({ error: "Not available for client accounts" });
+    }
+    // "__hidden__" restores every hidden row on the property in one go.
+    if (String(req.params.contactId) === "__hidden__") {
+      await pool.query(
+        `DELETE FROM property_contact_overrides WHERE property_id = $1 AND kind = 'hide'`,
+        [String(req.params.id)]
+      );
+      return res.json({ ok: true });
+    }
+    await pool.query(
+      `DELETE FROM property_contact_overrides WHERE property_id = $1 AND contact_id = $2`,
+      [String(req.params.id), String(req.params.contactId)]
+    );
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "override delete failed" });
+  }
+});
+
 router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Request, res: Response) => {
   try {
+    await ensureContactOverrides();
     const { clientBlockedForProperty } = await import("./company-scope");
     if (await clientBlockedForProperty(req, String(req.params.id))) {
       return res.status(403).json({ error: "Read-only access for client accounts" });
@@ -1074,30 +1142,47 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       [pid]
     );
 
-    const [landlord, tenants, deals, interest, bgpTeam, clientLeads, consultants, tracker, unlinked] =
-      await Promise.all([landlordQ, tenantsQ, dealsQ, interestQ, bgpTeamQ, clientLeadsQ, consultantsQ, trackerQ, unlinkedQ]);
+    const overridesQ = pool.query(
+      `SELECT contact_id, kind FROM property_contact_overrides WHERE property_id = $1`, [pid]
+    );
+    const pinnedQ = pool.query(
+      `SELECT c.*, co.name AS company_name FROM property_contact_overrides o
+         JOIN crm_contacts c ON c.id = o.contact_id
+         LEFT JOIN crm_companies co ON co.id = c.company_id
+        WHERE o.property_id = $1 AND o.kind = 'pin'
+        ORDER BY c.name`, [pid]
+    );
+
+    const [landlord, tenants, deals, interest, bgpTeam, clientLeads, consultants, tracker, unlinked, overrides, pinned] =
+      await Promise.all([landlordQ, tenantsQ, dealsQ, interestQ, bgpTeamQ, clientLeadsQ, consultantsQ, trackerQ, unlinkedQ, overridesQ, pinnedQ]);
+    const hiddenIds = new Set(overrides.rows.filter((r: any) => r.kind === "hide").map((r: any) => r.contact_id));
+    const pinnedIds = new Set(overrides.rows.filter((r: any) => r.kind === "pin").map((r: any) => r.contact_id));
+    const notHidden = (rows: any[]) => rows.filter((r: any) => !hiddenIds.has(r.id) && !pinnedIds.has(r.id));
     const dealIds = new Set(deals.rows.map((r: any) => r.id));
     const trackerRows = tracker.rows.filter((r: any) => !dealIds.has(r.id));
     res.json({
-      landlord: landlord.rows.map((r: any) => shape(r, "landlord team")),
+      landlord: notHidden(landlord.rows).map((r: any) => shape(r, "landlord team")),
       // Brand-first occupier rows: the company is the row, the freshest
-      // contact (if any) hangs off it.
+      // contact (if any) hangs off it. A hidden contact drops off its
+      // brand row but the brand itself stays — it IS in occupation.
       tenants: tenants.rows.map((r: any) => ({
         company_id: r.occ_company_id,
         company_name: r.occ_company_name,
-        contact: r.id ? { id: r.id, name: r.name, role: r.role, email: r.email, last_interaction: r.last_interaction } : null,
+        contact: r.id && !hiddenIds.has(r.id) ? { id: r.id, name: r.name, role: r.role, email: r.email, last_interaction: r.last_interaction } : null,
       })),
       deals: [
-        ...deals.rows.map((r: any) => shape(r, r.deal_name || "on a deal")),
-        ...trackerRows.map((r: any) => shape(r, `${r.marketing_status || "negotiating"} · ${r.unit_name || "tracker"}`)),
+        ...notHidden(deals.rows).map((r: any) => shape(r, r.deal_name || "on a deal")),
+        ...notHidden(trackerRows).map((r: any) => shape(r, `${r.marketing_status || "negotiating"} · ${r.unit_name || "tracker"}`)),
       ],
-      interest: interest.rows.map((r: any) => shape(r, r.kind === "offered" ? "made an offer" : "viewed")),
+      interest: notHidden(interest.rows).map((r: any) => shape(r, r.kind === "offered" ? "made an offer" : "viewed")),
       internal: [
         ...bgpTeam.rows.map((r: any) => ({ id: `u-${r.id}`, user_id: r.id, name: r.name, role: r.agent_role || "Agent", email: r.email, side: "bgp" })),
-        ...clientLeads.rows.map((r: any) => ({ ...shape(r, "client"), side: "client" })),
+        ...notHidden(clientLeads.rows).map((r: any) => ({ ...shape(r, "client"), side: "client" })),
       ],
-      consultants: consultants.rows.map((r: any) => ({ ...shape(r, r.consultant_type || "consultant") })),
+      consultants: notHidden(consultants.rows).map((r: any) => ({ ...shape(r, r.consultant_type || "consultant") })),
       trackerUnlinked: unlinked.rows.map((r: any) => ({ unit_name: r.unit_name, status: r.marketing_status })),
+      pinned: pinned.rows.map((r: any) => shape(r, "added by team")),
+      hiddenCount: hiddenIds.size,
     });
   } catch (err: any) {
     console.error("[linked-contacts]", err?.message);

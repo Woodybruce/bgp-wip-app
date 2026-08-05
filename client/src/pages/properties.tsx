@@ -2604,14 +2604,32 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
   // scroll. Never the raw company directory.
   type LinkedContact = { id: string; name: string; role: string | null; email: string | null; company_id: string | null; company_name: string | null; last_interaction: string | null; via: string | null; side?: string };
   type OccupierRow = { company_id: string; company_name: string; contact: { id: string; name: string; role: string | null; email: string | null; last_interaction: string | null } | null };
-  const { data } = useQuery<{ landlord: LinkedContact[]; tenants: OccupierRow[]; deals: LinkedContact[]; interest: LinkedContact[]; internal: LinkedContact[]; consultants: LinkedContact[]; trackerUnlinked: Array<{ unit_name: string; status: string | null }> }>({
+  const { data } = useQuery<{ landlord: LinkedContact[]; tenants: OccupierRow[]; deals: LinkedContact[]; interest: LinkedContact[]; internal: LinkedContact[]; consultants: LinkedContact[]; trackerUnlinked: Array<{ unit_name: string; status: string | null }>; pinned: LinkedContact[]; hiddenCount: number }>({
     queryKey: ["/api/properties", propertyId, "linked-contacts"],
     queryFn: async () => {
       const res = await fetch(`/api/properties/${propertyId}/linked-contacts`, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) return { landlord: [], tenants: [], deals: [], interest: [], internal: [], consultants: [], trackerUnlinked: [] };
+      if (!res.ok) return { landlord: [], tenants: [], deals: [], interest: [], internal: [], consultants: [], trackerUnlinked: [], pinned: [], hiddenCount: 0 };
       return res.json();
     },
   });
+
+  // Manual overrides — pin a contact the evidence missed, hide a wrong row.
+  const qcOverrides = useQueryClient();
+  const refreshLinked = () => qcOverrides.invalidateQueries({ queryKey: ["/api/properties", propertyId, "linked-contacts"] });
+  const setOverride = async (contactId: string, kind: "pin" | "hide") => {
+    await apiRequest("POST", `/api/properties/${propertyId}/contact-override`, { contactId, kind }).catch(() => {});
+    refreshLinked();
+  };
+  const clearOverride = async (contactId: string) => {
+    await apiRequest("DELETE", `/api/properties/${propertyId}/contact-override/${contactId}`).catch(() => {});
+    refreshLinked();
+  };
+  const [addOpen, setAddOpen] = useState(false);
+  const [addSearch, setAddSearch] = useState("");
+  const { data: allCrmContacts = [] } = useQuery<any[]>({ queryKey: ["/api/crm/contacts"], enabled: addOpen, staleTime: 5 * 60 * 1000 });
+  const addMatches = addSearch.trim().length >= 2
+    ? allCrmContacts.filter(c => (c.name || "").toLowerCase().includes(addSearch.toLowerCase()) || (c.companyName || c.company_name || "").toLowerCase().includes(addSearch.toLowerCase())).slice(0, 8)
+    : [];
 
   // "On deals & tracker" merges deal parties with viewing/offer interest —
   // one place for everyone actively in play, badges say why they're here.
@@ -2628,25 +2646,39 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ internal: true, deals: true });
 
-  const personRow = (contact: LinkedContact, showVia: boolean) => (
-    <Link key={contact.id} href={contact.id.startsWith("u-") ? "/hr" : `/contacts/${contact.id}`} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50 min-w-0" data-testid={`contact-item-${contact.id}`}>
-      <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-semibold shrink-0 ${contact.side === "bgp" ? "bg-foreground text-background" : contact.side === "client" ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"}`}>
-        {(contact.name || "?").split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
-      </span>
-      <div className="flex-1 min-w-0">
-        <span className="text-xs font-medium truncate block">{contact.name}</span>
-        <span className="text-[10px] text-muted-foreground truncate block">
-          {[contact.role, contact.side === "bgp" ? "BGP" : contact.company_name].filter(Boolean).join(" · ")}
+  const personRow = (contact: LinkedContact, showVia: boolean, pinnedRow = false) => (
+    <div key={contact.id} className="group/lcrow relative">
+      <Link href={contact.id.startsWith("u-") ? "/hr" : `/contacts/${contact.id}`} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50 min-w-0" data-testid={`contact-item-${contact.id}`}>
+        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-semibold shrink-0 ${contact.side === "bgp" ? "bg-foreground text-background" : contact.side === "client" ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"}`}>
+          {(contact.name || "?").split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
         </span>
-      </div>
-      {contact.side === "client" && <Badge variant="outline" className="text-[9px] shrink-0 text-blue-700 border-blue-200">Client</Badge>}
-      {showVia && contact.via && contact.side !== "client" && (
-        <Badge variant="outline" className="text-[9px] shrink-0 max-w-[110px] truncate" title={contact.via}>{contact.via}</Badge>
+        <div className="flex-1 min-w-0">
+          <span className="text-xs font-medium truncate block">{contact.name}</span>
+          <span className="text-[10px] text-muted-foreground truncate block">
+            {[contact.role, contact.side === "bgp" ? "BGP" : contact.company_name].filter(Boolean).join(" · ")}
+          </span>
+        </div>
+        {contact.side === "client" && <Badge variant="outline" className="text-[9px] shrink-0 text-blue-700 border-blue-200">Client</Badge>}
+        {showVia && contact.via && contact.side !== "client" && (
+          <Badge variant="outline" className="text-[9px] shrink-0 max-w-[110px] truncate" title={contact.via}>{contact.via}</Badge>
+        )}
+        {contact.last_interaction && (
+          <span className="text-[9px] text-muted-foreground shrink-0">{new Date(contact.last_interaction).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+        )}
+      </Link>
+      {/* Hide (or unpin) — BGP team rows are managed on the property-team
+          map, so they don't get an X here. */}
+      {!contact.id.startsWith("u-") && (
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); pinnedRow ? clearOverride(contact.id) : setOverride(contact.id, "hide"); }}
+          className="absolute right-0 top-1/2 -translate-y-1/2 hidden group-hover/lcrow:flex w-5 h-5 rounded-full bg-background border items-center justify-center text-muted-foreground hover:text-red-600 hover:border-red-300"
+          title={pinnedRow ? "Remove from this property" : "Hide from this property"}
+          data-testid={`contact-hide-${contact.id}`}
+        >
+          <X className="w-3 h-3" />
+        </button>
       )}
-      {contact.last_interaction && (
-        <span className="text-[9px] text-muted-foreground shrink-0">{new Date(contact.last_interaction).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
-      )}
-    </Link>
+    </div>
   );
 
   const groupHeader = (key: string, title: string, count: number, tint: string) => (
@@ -2668,7 +2700,47 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
           <Users className="w-4 h-4" />
           <h3 className="text-sm font-semibold">Linked Contacts</h3>
           {total > 0 && <Badge variant="secondary" className="text-[10px]">{total}</Badge>}
+          <div className="flex-1" />
+          <button
+            onClick={() => { setAddOpen(v => !v); setAddSearch(""); }}
+            className="text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted inline-flex items-center gap-1"
+            data-testid="linked-contacts-add"
+          >
+            <Plus className="w-3 h-3" /> Add
+          </button>
         </div>
+        {addOpen && (
+          <div className="mb-2 border rounded-md p-2 bg-muted/30">
+            <Input
+              autoFocus
+              placeholder="Search CRM contacts…"
+              value={addSearch}
+              onChange={(e) => setAddSearch(e.target.value)}
+              className="h-7 text-xs"
+              data-testid="linked-contacts-add-search"
+            />
+            {addSearch.trim().length >= 2 && (
+              <div className="mt-1.5 space-y-0.5 max-h-[180px] overflow-y-auto">
+                {addMatches.length === 0 ? (
+                  <p className="text-[10px] text-muted-foreground italic px-1 py-1">No matching CRM contacts.</p>
+                ) : addMatches.map((c: any) => (
+                  <button
+                    key={c.id}
+                    onClick={async () => { await setOverride(c.id, "pin"); setAddOpen(false); setAddSearch(""); }}
+                    className="w-full flex items-center gap-2 px-2 py-1 rounded hover:bg-muted text-left"
+                    data-testid={`linked-contacts-add-${c.id}`}
+                  >
+                    <span className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[8px] font-semibold shrink-0">
+                      {(c.name || "?").split(" ").map((p: string) => p[0]).join("").slice(0, 2).toUpperCase()}
+                    </span>
+                    <span className="text-xs truncate">{c.name}</span>
+                    <span className="text-[10px] text-muted-foreground truncate">{c.companyName || c.company_name || ""}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {total === 0 ? (
           <div className="text-center py-6">
             <Users className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
@@ -2680,6 +2752,12 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
               <div>
                 {groupHeader("internal", "Internal team", internal.length, "text-foreground")}
                 {(openGroups.internal ?? false) && <div className="space-y-0.5 mt-0.5">{internal.map(c => personRow(c, false))}</div>}
+              </div>
+            )}
+            {(data?.pinned || []).length > 0 && (
+              <div>
+                {groupHeader("pinned", "Added by team", (data?.pinned || []).length, "text-primary")}
+                {(openGroups.pinned ?? true) && <div className="space-y-0.5 mt-0.5">{(data?.pinned || []).map(c => personRow(c, false, true))}</div>}
               </div>
             )}
             {(dealsAndTracker.length > 0 || trackerUnlinked.length > 0) && (
@@ -2747,6 +2825,15 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
                 {groupHeader("consultants", "Consultants", consultants.length, "text-violet-700")}
                 {(openGroups.consultants ?? false) && <div className="space-y-0.5 mt-0.5">{consultants.map(c => personRow(c, true))}</div>}
               </div>
+            )}
+            {(data?.hiddenCount || 0) > 0 && (
+              <button
+                onClick={() => clearOverride("__hidden__")}
+                className="text-[10px] text-muted-foreground hover:text-foreground hover:underline px-2 pt-1"
+                data-testid="linked-contacts-restore-hidden"
+              >
+                {data!.hiddenCount} hidden — restore
+              </button>
             )}
           </div>
         )}
