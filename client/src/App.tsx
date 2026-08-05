@@ -223,12 +223,14 @@ const CLIENT_ALLOWED_ROUTES = [
   "/tenancy-schedule",
 ];
 // Clients get the read-only portfolio Tasks board ("who has done what",
-// Messages Phase 2); staff keep the personal My Tasks page.
+// Messages Phase 2); staff keep the personal My Tasks page. Staff can
+// preview the client board with /tasks?client=1 while team-switched.
 function TasksRoute() {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
   if (!user) return <PageLoader />;
   const isClient = user.role === "Client" || !!(user as any).companyScopeId;
-  return isClient ? <ClientTasksPage /> : <TasksPage />;
+  const previewClient = new URLSearchParams(window.location.search).get("client") === "1";
+  return isClient || previewClient ? <ClientTasksPage /> : <TasksPage />;
 }
 
 function ClientRouteGuard() {
