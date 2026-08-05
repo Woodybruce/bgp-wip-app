@@ -1467,6 +1467,27 @@ async function markRound(page, cross) {
     if (r.boardExport !== 403) throw new Error(`client exported the board report (expected 403, got ${r.boardExport})`);
   });
 
+  // The org-wide operational feeds — /api/notifications (stuck deals, KYC-not-
+  // approved alerts, unallocated-fee warnings) and /api/activity-feed (system
+  // activity log) — are BGP-internal. Both routes hard-return [] for client
+  // logins; a non-empty response means the firm's operational intel is
+  // bleeding onto the client's briefing.
+  await step(page, p, 'client-ops-feed-isolated', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const j = async (url) => { const res = await fetch(url, { headers: auth }); return { ok: res.ok, status: res.status, body: res.ok ? await res.json().catch(() => null) : null }; };
+      const notif = await j('/api/notifications');
+      const feed = await j('/api/activity-feed');
+      return { notif, feed };
+    });
+    if (!r.notif.ok) throw new Error(`client notifications unhealthy (${r.notif.status})`);
+    if (!r.feed.ok) throw new Error(`client activity-feed unhealthy (${r.feed.status})`);
+    const nLen = Array.isArray(r.notif.body) ? r.notif.body.length : -1;
+    const fLen = Array.isArray(r.feed.body) ? r.feed.body.length : -1;
+    if (nLen !== 0) throw new Error(`firm operational alerts leaked to the client notifications feed (${nLen} items)`);
+    if (fLen !== 0) throw new Error(`system activity log leaked to the client activity-feed (${fLen} items)`);
+  });
+
   // The interactions surface is BGP's raw correspondence store — logged
   // meetings and synced Outlook emails, per-company and per-contact, plus the
   // BD engagement leaderboards. It's fully staff-only for clients (even their
