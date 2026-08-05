@@ -2655,7 +2655,7 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
         <div className="flex-1 min-w-0">
           <span className="text-xs font-medium truncate block">{contact.name}</span>
           <span className="text-[10px] text-muted-foreground truncate block">
-            {[contact.role, contact.side === "bgp" ? "BGP" : contact.company_name].filter(Boolean).join(" · ")}
+            {[contact.role, contact.side === "bgp" ? "BGP" : contact.company_name !== contact.name ? contact.company_name : null].filter(Boolean).join(" · ")}
           </span>
         </div>
         {contact.side === "client" && <Badge variant="outline" className="text-[9px] shrink-0 text-blue-700 border-blue-200">Client</Badge>}

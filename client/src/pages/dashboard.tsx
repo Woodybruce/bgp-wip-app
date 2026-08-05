@@ -750,7 +750,7 @@ function PortfolioContactsBoard({ companyId }: { companyId: string }) {
       </span>
       <div className="flex-1 min-w-0">
         <span className="text-xs font-medium truncate block">{c.name}</span>
-        <span className="text-[10px] text-muted-foreground truncate block">{[c.role, c.side === "bgp" ? "BGP" : c.company_name].filter(Boolean).join(" · ")}</span>
+        <span className="text-[10px] text-muted-foreground truncate block">{[c.role, c.side === "bgp" ? "BGP" : c.company_name !== c.name ? c.company_name : null].filter(Boolean).join(" · ")}</span>
       </div>
       {c.side === "client" && <Badge variant="outline" className="text-[9px] shrink-0 text-blue-700 border-blue-200">Client</Badge>}
       {c.via && c.side !== "client" && c.side !== "bgp" && <Badge variant="outline" className="text-[9px] shrink-0 max-w-[130px] truncate" title={c.via}>{c.via}</Badge>}
