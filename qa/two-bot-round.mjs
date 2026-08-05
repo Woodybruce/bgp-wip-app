@@ -604,6 +604,31 @@ async function victoriaRound(page, cross) {
     if (!r.hasEntries) throw new Error('staff WIP report returned no entries array (shape broken)');
   });
 
+  // Deal-report v2 (BGP-branded 2-week deal PDF): a staff user pulls the
+  // recent-deals feed and renders a real PDF. This exercises the pdfkit/
+  // workbook builder end-to-end — the same class of code that 500'd on the
+  // ExcelJS constructor — so a broken PDF path is caught, not just the client
+  // guard. Assert a genuine application/pdf comes back, not a 500/HTML error.
+  await step(page, p, 'staff-deal-report-pdf', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const rec = await fetch('/api/deal-report/recent-deals', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!rec.ok) return { ok: false, why: `recent-deals ${rec.status}` };
+      const deals = await rec.json().catch(() => null);
+      const list = Array.isArray(deals) ? deals : (deals?.deals || []);
+      const ids = list.slice(0, 2).map((d) => d.id).filter(Boolean);
+      if (!ids.length) return { ok: true, skip: true }; // no deals seeded this run
+      const pdf = await fetch('/api/deal-report/pdf', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ dealIds: ids }) }).catch(() => ({ ok: false, status: 0 }));
+      const ct = pdf.headers && pdf.headers.get ? (pdf.headers.get('content-type') || '') : '';
+      const buf = pdf.ok ? await pdf.arrayBuffer().catch(() => null) : null;
+      return { ok: true, pdfStatus: pdf.status, ct, size: buf ? buf.byteLength : 0 };
+    });
+    if (!r.ok) throw new Error(`staff deal-report feed failed (${r.why})`);
+    if (r.skip) return;
+    if (r.pdfStatus !== 200) throw new Error(`staff deal-report PDF failed (expected 200, got ${r.pdfStatus})`);
+    if (!/pdf/.test(r.ct) || r.size < 1000) throw new Error(`deal-report returned a non-PDF/empty body (content-type ${r.ct || 'none'}, ${r.size} bytes)`);
+  });
+
   // Property Pathway is BGP's acquisition-underwriting engine (Why-Buy runs:
   // off-market sourcing, title/RICS analysis, market intel, deck output). It
   // must be a live staff board — a 200 with an array of runs — so the client
