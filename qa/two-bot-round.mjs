@@ -1400,6 +1400,34 @@ async function markRound(page, cross) {
     if (r.outOfSlice) throw new Error('out-of-slice turnover row leaked to the client board');
   });
 
+  // The Brand Hub overview + Brand Hunter both render for clients but must be
+  // slice-scoped: the Hub's superBrands (a luxury/fashion showcase) is forced
+  // empty for clients, and neither the Hub tiles (hot/turnover) nor the Hunter
+  // list may surface a luxury/fashion brand — those types sit outside the
+  // hospitality/leisure/fitness client slice. Guards the unscoped superBrands
+  // SQL (and any future tile that forgets the slice filter).
+  await step(page, p, 'client-brand-hub-hunter-scoped', async () => {
+    const OUT_OF_SLICE = ['tenant - luxury', 'tenant - luxury accessories', 'tenant - luxury beauty', 'tenant - flagship fashion', 'tenant - fashion'];
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const j = async (url) => { const res = await fetch(url, { headers: auth }); return { ok: res.ok, status: res.status, body: res.ok ? await res.json().catch(() => null) : null }; };
+      const hub = await j('/api/brands/hub');
+      const hunter = await j('/api/brands/hunter');
+      if (!hub.ok || !hunter.ok) return { ok: false, why: `hub ${hub.status} / hunter ${hunter.status}` };
+      const types = (rows) => (Array.isArray(rows) ? rows : []).map((x) => String(x.company_type || x.companyType || '').toLowerCase());
+      return {
+        ok: true,
+        superLen: (hub.body?.superBrands || []).length,
+        hubTypes: [...types(hub.body?.hotBrands), ...types(hub.body?.topTurnover)],
+        hunterTypes: types(hunter.body),
+      };
+    });
+    if (!r.ok) throw new Error(`client brand hub/hunter unhealthy (${r.why})`);
+    if (r.superLen !== 0) throw new Error(`superBrands (luxury showcase) leaked to the client hub — ${r.superLen} rows`);
+    const leak = [...r.hubTypes, ...r.hunterTypes].find((t) => OUT_OF_SLICE.includes(t));
+    if (leak) throw new Error(`out-of-slice brand type leaked into the client hub/hunter: ${leak}`);
+  });
+
   // Firm-wide reporting (the board report + reporting summary — whole-book
   // revenue, pipeline, agent performance) is BGP-internal; a client login
   // must be refused.
