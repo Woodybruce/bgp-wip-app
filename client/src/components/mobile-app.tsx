@@ -31,8 +31,11 @@ import {
   Menu, MessageSquare, FileText, Handshake,
   Newspaper, Mail, Phone, Download, Eye, Star, Upload,
   Mic, Square, Building, Link2,
-  Palette, ChevronRight, Sun, CalendarDays,
+  Palette, ChevronRight, Sun, CalendarDays, Bell,
 } from "lucide-react";
+import { MobileBottomNav } from "@/components/mobile-bottom-nav";
+import { usePushNotifications } from "@/hooks/use-push-notifications";
+import { legacyToCode } from "@shared/deal-status";
 import TodayPage from "@/pages/today";
 import { useTheme, COLOR_SCHEMES } from "@/components/theme-provider";
 import {
@@ -2864,6 +2867,49 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     refetchInterval: 15000,
   });
 
+  // Message push — the server already notifies thread members on every new
+  // message; this makes sure THIS device is actually subscribed. iOS only
+  // grants permission from a user gesture, hence the Enable banner.
+  const { subscribe: subscribePush, isSubscribed: pushSubscribed, isSupported: pushSupported, permission: pushPermission } = usePushNotifications();
+
+  // Portfolio strip above the Messages list for Landsec viewers — the
+  // "portfolio at a glance + what's happening" single screen.
+  const showPortfolioStrip = isClientUser || mobileTeam === "Landsec";
+  const { data: stripUnitsRaw } = useQuery<any[]>({
+    queryKey: ["/api/available-units"],
+    staleTime: 2 * 60 * 1000,
+    enabled: showPortfolioStrip,
+  });
+  const stripUnits = Array.isArray(stripUnitsRaw) ? stripUnitsRaw : [];
+  const stripStats = {
+    available: stripUnits.filter(u => legacyToCode(u.marketingStatus) === "AVA").length,
+    underOffer: stripUnits.filter(u => legacyToCode(u.marketingStatus) === "SOL").length,
+    let: stripUnits.filter(u => legacyToCode(u.marketingStatus) === "COM").length,
+    total: stripUnits.length,
+  };
+
+  // Push-notification deep link (/chatbgp?thread=<id>) — open that thread
+  // once the list has loaded, then clean the URL.
+  const deepLinkedRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkedRef.current || !threads?.length) return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tid = params.get("thread");
+      if (!tid) { deepLinkedRef.current = true; return; }
+      deepLinkedRef.current = true;
+      const t = threads.find(x => x.id === tid);
+      if (t) {
+        returnTabRef.current = "chats";
+        setActiveThreadId(t.id);
+        setActiveThreadAi(t.isAiChat);
+        setChatFromList(true);
+        setShowChat(true);
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    } catch {}
+  }, [threads]);
+
   const { data: allUsers } = useQuery<Array<{ id: string; name: string; username: string; team?: string | null }>>({
     queryKey: ["/api/users"],
     queryFn: getQueryFn({ on401: "throw" }),
@@ -3294,7 +3340,13 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     } catch {}
   };
 
+  // One WhatsApp-style Messages surface (Woody, 2026-08-05, "change it for
+  // everyone"): ChatBGP is the pinned top conversation of the unified list,
+  // and back from any conversation returns to the screen it was opened from.
+  const returnTabRef = useRef<"chats" | "ai">("chats");
+
   const openThread = (thread: ThreadData) => {
+    returnTabRef.current = tab === "ai" ? "ai" : "chats";
     setActiveThreadId(thread.id);
     setActiveThreadAi(thread.isAiChat);
     setChatFromList(true);
@@ -3302,10 +3354,28 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
   };
 
   const openNewAiChat = () => {
+    returnTabRef.current = tab === "ai" ? "ai" : "chats";
     setActiveThreadId(null);
     setActiveThreadAi(true);
     setShowChat(true);
     setShowMobileMarketingFiles(false);
+  };
+
+  // Pinned ChatBGP row — resumes the latest plain AI conversation, or
+  // starts a fresh one on first use.
+  const openChatBgpPinned = () => {
+    returnTabRef.current = "chats";
+    const latestAi = (threads || [])
+      .filter(t => t.isAiChat && !t.linkedType)
+      .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime())[0];
+    if (latestAi) {
+      setActiveThreadId(latestAi.id);
+      setActiveThreadAi(true);
+      setChatFromList(true);
+      setShowChat(true);
+    } else {
+      openNewAiChat();
+    }
   };
 
   const handleCreateMobilePropertyChat = async (data: { linkedType: string; linkedId: string; linkedName: string }) => {
@@ -3347,18 +3417,17 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
         isAiChat={activeThreadAi}
         onBack={() => {
           queryClient.invalidateQueries({ queryKey: ["/api/chat/notifications"] });
-          // Return to the matching history list: ChatBGP (AI) threads for an
-          // AI chat, team conversations for a team chat. The list's header
-          // back arrow then exits to the app.
-          const wasAi = activeThreadAi;
+          // Return to wherever the conversation was opened from — the
+          // unified Messages list normally, the ChatBGP history sub-screen
+          // when browsing old AI threads.
           setActiveThreadId(null);
           setShowChat(false);
           setChatFromList(false);
-          setTab(wasAi ? "ai" : "chats");
+          setTab(returnTabRef.current);
         }}
         onNewChat={openNewAiChat}
-        onTeamChats={isClientUser ? undefined : () => {
-          // Jump from ChatBGP to the internal team chats list.
+        onTeamChats={() => {
+          // Jump from ChatBGP to the unified Messages list.
           queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
           setActiveThreadId(null);
           setShowChat(false);
@@ -3386,29 +3455,24 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
       <div className="bg-[#1C1917] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] shrink-0">
         <div className="flex items-center justify-between px-5 pb-3">
           <div className="flex items-center gap-2 min-w-0">
-            {(tab === "chats" || tab === "ai") && (
+            {tab === "ai" && (
               <button
-                onClick={() => { if (window.history.length > 1) window.history.back(); else navigate("/"); }}
+                onClick={() => { setTab("chats"); setChatSearch(""); }}
                 className="w-9 h-9 -ml-2 rounded-full flex items-center justify-center active:bg-white/10 shrink-0"
                 data-testid="button-mobile-chats-back"
-                aria-label="Back"
+                aria-label="Back to Messages"
               >
                 <ArrowLeft className="w-5 h-5" />
               </button>
             )}
             <h1 className="text-[22px] font-semibold tracking-tight truncate">
-              {tab === "chats" ? "Chats" : tab === "ai" ? (showMobileMarketingFiles ? "Marketing" : "ChatBGP") : tab === "today" ? "Today" : moreSubTab === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : moreSubTab === "reqs" ? "Requirements" : moreSubTab === "news" ? "News" : "Docs"}
+              {tab === "chats" ? "Messages" : tab === "ai" ? (showMobileMarketingFiles ? "Marketing" : "ChatBGP") : tab === "today" ? "Today" : moreSubTab === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : moreSubTab === "reqs" ? "Requirements" : moreSubTab === "news" ? "News" : "Docs"}
             </h1>
           </div>
           <div className="flex items-center gap-2">
-            {tab === "ai" && !isClientUser && (
-              <button onClick={() => { setTab("chats"); setChatSearch(""); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-switch-team-chats" aria-label="Team chats">
-                <Users className="w-5 h-5" />
-              </button>
-            )}
-            {tab === "chats" && (
-              <button onClick={() => { setTab("ai"); setChatSearch(""); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-switch-chatbgp" aria-label="ChatBGP history">
-                <Sparkles className="w-5 h-5" />
+            {tab === "ai" && (
+              <button onClick={() => { setTab("chats"); setChatSearch(""); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-switch-team-chats" aria-label="Messages">
+                <MessageCircle className="w-5 h-5" />
               </button>
             )}
             {tab === "chats" && (
@@ -3510,6 +3574,70 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
 
         {tab === "chats" && (
           <div>
+            {/* Portfolio strip — Landsec viewers see their letting roll-up
+                above the conversation list: one screen for "what's
+                happening + how the portfolio is doing". */}
+            {showPortfolioStrip && stripStats.total > 0 && !chatSearch && (
+              <button
+                onClick={() => navigate("/available")}
+                className="mx-4 mb-2 w-[calc(100%-2rem)] rounded-2xl bg-[#1C1917] text-white px-4 py-2.5 active:opacity-90"
+                data-testid="mobile-messages-portfolio-strip"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-4">
+                    <span className="text-sm font-bold tabular-nums text-emerald-400">{stripStats.available}<span className="ml-1 text-[10px] font-normal opacity-70">Avail</span></span>
+                    <span className="text-sm font-bold tabular-nums text-amber-300">{stripStats.underOffer}<span className="ml-1 text-[10px] font-normal opacity-70">Offer</span></span>
+                    <span className="text-sm font-bold tabular-nums text-sky-300">{stripStats.let}<span className="ml-1 text-[10px] font-normal opacity-70">Let</span></span>
+                    <span className="text-sm font-bold tabular-nums">{stripStats.total}<span className="ml-1 text-[10px] font-normal opacity-70">Units</span></span>
+                  </div>
+                  <ChevronRight className="w-4 h-4 opacity-60 shrink-0" />
+                </div>
+              </button>
+            )}
+
+            {/* One-tap notification opt-in — iOS only grants push from a
+                user gesture, so the automatic subscribe can't do it. */}
+            {pushSupported && !pushSubscribed && pushPermission !== "denied" && !chatSearch && (
+              <div className="mx-4 mb-2 flex items-center gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2" data-testid="mobile-push-banner">
+                <Bell className="w-4 h-4 text-amber-600 shrink-0" />
+                <span className="text-[12px] text-amber-900 flex-1 leading-snug">Get notified when a message arrives</span>
+                <button
+                  onClick={() => subscribePush()}
+                  className="text-[12px] font-semibold text-amber-700 px-2.5 py-1 rounded-lg bg-amber-100 active:bg-amber-200 shrink-0"
+                  data-testid="button-enable-push"
+                >
+                  Enable
+                </button>
+              </div>
+            )}
+
+            {/* ChatBGP — the pinned top conversation of the unified list. */}
+            {!chatSearch && (
+              <div
+                onClick={openChatBgpPinned}
+                className="flex items-center gap-3 px-4 py-3 active:bg-gray-100 border-b border-gray-100 cursor-pointer"
+                data-testid="mobile-pinned-chatbgp"
+              >
+                <span className="w-12 h-12 rounded-full bg-[#1C1917] flex items-center justify-center shrink-0">
+                  <Sparkles className="w-5 h-5 text-white" />
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-[15px] font-semibold">ChatBGP</p>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-semibold uppercase tracking-wide">Pinned</span>
+                  </div>
+                  <p className="text-[13px] text-gray-500 truncate">Ask anything — deals, brands, your portfolio</p>
+                </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setTab("ai"); setChatSearch(""); }}
+                  className="text-[11px] font-medium text-gray-400 px-2 py-1.5 rounded-lg active:bg-gray-100 shrink-0"
+                  data-testid="button-chatbgp-history"
+                >
+                  History
+                </button>
+              </div>
+            )}
+
             {[...filteredTeamThreads, ...filteredOtherThreads].length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 gap-4">
                 <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
@@ -3528,6 +3656,8 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 {filteredOtherThreads.map(t => <MobileThreadCard key={t.id} thread={t} onClick={() => openThread(t)} currentUserId={currentUser?.id} onDelete={handleDeleteThread} userPics={userPics} />)}
               </div>
             )}
+            {/* Clear the fixed bottom nav so the last conversation is reachable. */}
+            <div className="h-20" />
           </div>
         )}
 
@@ -4181,6 +4311,10 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
           </div>
         )}
       </PullToRefresh>
+
+      {/* Messages is the app's home screen — the bottom nav lives on the
+          unified list (conversations and sub-screens are full-bleed). */}
+      {tab === "chats" && <MobileBottomNav />}
 
       {showMobileNewProperty && (
         <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={() => setShowMobileNewProperty(false)}>
