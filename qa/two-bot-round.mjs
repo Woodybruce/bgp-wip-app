@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1482,6 +1482,30 @@ async function markRound(page, cross) {
     if (r.wip !== 403) throw new Error(`client reached the WIP report (expected 403, got ${r.wip})`);
     if (r.summary !== 403) throw new Error(`client reached the WIP agent-summary (expected 403, got ${r.summary})`);
     if (r.recon !== 403) throw new Error(`client reached WIP fee-reconciliation (expected 403, got ${r.recon})`);
+  });
+
+  // The client Agents tab (/api/client/agent-directory) surfaces ONLY
+  // tenant-rep agents — the operators' side, never the landlord's own agents
+  // (task #13). Positive: it renders a scoped list. Guard: the firm-wide
+  // per-agent fee drilldown (/api/wip/agent-drilldown) stays staff-only, so a
+  // client can't pull BGP's fee performance on any named agent.
+  await step(page, p, 'client-agent-directory-tenant-rep', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/client/agent-directory', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = await res.json().catch(() => []);
+      const rows = Array.isArray(body) ? body : (body.agents || body.rows || []);
+      const landlordRep = rows.some((a) => {
+        const t = String(a.agentType || a.agent_type || '').toLowerCase();
+        return t === 'landlord_rep' || t === 'landlord';
+      });
+      const drill = (await fetch('/api/wip/agent-drilldown/CF%20Commercial', { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { ok: true, count: rows.length, landlordRep, drill };
+    });
+    if (!r.ok) throw new Error(`client agent-directory failed (${r.status}) — tenant-rep tab regressed?`);
+    if (r.landlordRep) throw new Error('a landlord-rep agent leaked into the client tenant-rep agent directory');
+    if (r.drill !== 403) throw new Error(`client reached the firm-wide WIP agent fee drilldown (expected 403, got ${r.drill})`);
   });
 
   // Document Studio (KYC / PLA / Why-Buy brief generation) is a staff
