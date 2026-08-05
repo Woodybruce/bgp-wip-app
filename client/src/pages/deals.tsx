@@ -76,7 +76,6 @@ import {
   Link2,
   FileText,
   Sparkles,
-  Brain,
   Receipt,
   ExternalLink,
   Send,
@@ -3471,228 +3470,233 @@ export function DealRelatedMeetings({ dealId }: { dealId: string }) {
 // DealDetail extracted to @/components/deal-detail.tsx
 
 
-interface AiMatchSuggestion {
-  dealId: string;
-  dealName: string;
-  matches: {
-    entityType: "contact" | "company";
-    entityId: string;
-    entityName: string;
-    role: string;
-    confidence: "high" | "medium" | "low";
-    reason: string;
-  }[];
+type ReportPhoto = {
+  kind: "logo" | "studio" | "streetview" | "url" | "custom";
+  url?: string;
+  imageId?: string;
+  location?: string;
+  dataUri?: string;
+  label?: string;
+};
+
+interface ReportDeal {
+  id: string;
+  name: string;
+  team: string[];
+  dealType: string | null;
+  status: string | null;
+  propertyName: string | null;
+  tenantName: string | null;
+  landlordName: string | null;
+  vendorName: string | null;
+  purchaserName: string | null;
+  rentPa: number | null;
+  pricing: number | null;
+  fee: number | null;
+  createdAt: string;
+  isInvestment: boolean;
+  photo: ReportPhoto | null;
+  candidates: ReportPhoto[];
 }
 
-function AiMatchDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+function ReportPhotoImg({ photo, name, size = 48 }: { photo: ReportPhoto | null | undefined; name: string; size?: number }) {
+  const [failed, setFailed] = useState(false);
+  const src = photo?.dataUri || photo?.url;
+  useEffect(() => { setFailed(false); }, [src]);
+  if (!src || failed) {
+    const initials = (name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
+    return (
+      <div
+        className="rounded-md bg-muted border flex items-center justify-center shrink-0 text-xs font-bold text-muted-foreground"
+        style={{ width: size, height: size }}
+        data-testid="report-photo-fallback"
+      >
+        {initials}
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={name}
+      className="rounded-md shrink-0 object-contain bg-white border"
+      style={{ width: size, height: size }}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+function DealReportDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { toast } = useToast();
-  const [suggestions, setSuggestions] = useState<AiMatchSuggestion[]>([]);
-  const [selectedMatches, setSelectedMatches] = useState<Set<string>>(new Set());
-  const [stats, setStats] = useState<{ totalUnlinked: number; totalContacts: number; totalCompanies: number } | null>(null);
-
-  const suggestMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/crm/ai-match/suggest");
-      return res.json();
-    },
-    onSuccess: (data) => {
-      setSuggestions(data.suggestions || []);
-      setStats({ totalUnlinked: data.totalUnlinked, totalContacts: data.totalContacts, totalCompanies: data.totalCompanies });
-      const allKeys = new Set<string>();
-      for (const s of (data.suggestions || [])) {
-        for (const m of s.matches || []) {
-          if (m.confidence === "high") {
-            allKeys.add(`${s.dealId}:${m.entityId}:${m.role}`);
-          }
-        }
-      }
-      setSelectedMatches(allKeys);
-    },
+  const { data, isLoading } = useQuery<{ since: string; until: string; deals: ReportDeal[] }>({
+    queryKey: ["/api/deal-report/recent-deals"],
+    enabled: open,
   });
+  const [overrides, setOverrides] = useState<Record<string, ReportPhoto | null>>({});
+  const [customUrls, setCustomUrls] = useState<Record<string, string>>({});
+  const [generating, setGenerating] = useState(false);
 
-  const applyMutation = useMutation({
-    mutationFn: async (matches: any[]) => {
-      const res = await apiRequest("POST", "/api/crm/ai-match/apply", { matches });
-      return res.json();
-    },
-    onSuccess: (data) => {
-      toast({ title: "Matches applied", description: `${data.applied} links created successfully` });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
-      onOpenChange(false);
-      setSuggestions([]);
-      setSelectedMatches(new Set());
-    },
-  });
+  const deals = data?.deals ?? [];
+  const groups = useMemo(() => {
+    const map = new Map<string, ReportDeal[]>();
+    for (const d of deals) {
+      const team = d.team?.[0] || "Unassigned";
+      map.set(team, [...(map.get(team) || []), d]);
+    }
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [deals]);
 
-  const toggleMatch = (key: string) => {
-    setSelectedMatches(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
-    });
+  const photoFor = (d: ReportDeal) => (d.id in overrides ? overrides[d.id] : d.photo);
+
+  const handleUpload = (dealId: string, file: File | undefined) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setOverrides(prev => ({ ...prev, [dealId]: { kind: "custom", dataUri: String(reader.result), label: file.name } }));
+    reader.readAsDataURL(file);
   };
 
-  const handleApply = () => {
-    const matches: any[] = [];
-    for (const s of suggestions) {
-      for (const m of s.matches) {
-        const key = `${s.dealId}:${m.entityId}:${m.role}`;
-        if (selectedMatches.has(key)) {
-          matches.push({ dealId: s.dealId, entityType: m.entityType, entityId: m.entityId, role: m.role });
-        }
-      }
+  const generate = async () => {
+    setGenerating(true);
+    try {
+      const res = await fetch("/api/deal-report/pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ deals: deals.map(d => ({ id: d.id, photo: photoFor(d) })) }),
+      });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `bgp-deal-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast({ title: "Deal report downloaded" });
+    } catch (err: any) {
+      toast({ title: "Error generating report", description: err?.message, variant: "destructive" });
     }
-    if (matches.length === 0) {
-      toast({ title: "No matches selected", variant: "destructive" });
-      return;
-    }
-    applyMutation.mutate(matches);
+    setGenerating(false);
   };
-
-  const confidenceColor = (c: string) => c === "high" ? "text-green-600" : c === "medium" ? "text-amber-600" : "text-red-500";
-
-  const totalMatches = suggestions.reduce((sum, s) => sum + (s.matches?.length || 0), 0);
-  const selectedCount = selectedMatches.size;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto" data-testid="ai-match-dialog">
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" data-testid="deal-report-dialog">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Brain className="w-5 h-5" />
-            AI Deal Matching
+            <FileText className="w-5 h-5" />
+            Deal Report — last 2 weeks
           </DialogTitle>
           <DialogDescription>
-            Use AI to intelligently match deals to contacts and companies based on names and context.
+            BGP-branded PDF of deals added in the last two weeks, organised by team. Click any photo to swap it before generating — tenant logos are used by default, building photos for investment deals.
           </DialogDescription>
         </DialogHeader>
 
-        {suggestions.length === 0 ? (
-          <div className="py-8 text-center space-y-4">
-            <Sparkles className="w-12 h-12 mx-auto text-muted-foreground opacity-40" />
-            <div>
-              <p className="text-sm font-medium">AI-Powered Deal Matching</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Analyses all unlinked deals against your contacts and companies to find connections.
-              </p>
-            </div>
-            <Button
-              onClick={() => suggestMutation.mutate()}
-              disabled={suggestMutation.isPending}
-              data-testid="button-run-ai-match"
-            >
-              {suggestMutation.isPending ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Analysing deals...
-                </>
-              ) : (
-                <>
-                  <Brain className="w-4 h-4 mr-2" />
-                  Run AI Matching
-                </>
-              )}
-            </Button>
-            {suggestMutation.isPending && (
-              <p className="text-[10px] text-muted-foreground">This may take a minute for large datasets</p>
-            )}
+        {isLoading ? (
+          <div className="py-10 text-center">
+            <Loader2 className="w-6 h-6 mx-auto animate-spin text-muted-foreground" />
+          </div>
+        ) : deals.length === 0 ? (
+          <div className="py-10 text-center text-sm text-muted-foreground">
+            No deals have been added in the last two weeks.
           </div>
         ) : (
           <div className="space-y-4">
-            {stats && (
-              <div className="flex items-center gap-4 text-xs text-muted-foreground border-b pb-3">
-                <span>{stats.totalUnlinked} unlinked deals</span>
-                <span>{stats.totalContacts} contacts</span>
-                <span>{stats.totalCompanies} companies</span>
-                <span className="ml-auto font-medium text-foreground">
-                  {totalMatches} matches found · {selectedCount} selected
-                </span>
-              </div>
-            )}
-
-            <div className="flex items-center gap-2 mb-2">
-              <Button
-                variant="outline" size="sm"
-                onClick={() => {
-                  const allKeys = new Set<string>();
-                  for (const s of suggestions) for (const m of s.matches) allKeys.add(`${s.dealId}:${m.entityId}:${m.role}`);
-                  setSelectedMatches(allKeys);
-                }}
-                data-testid="button-select-all-matches"
-              >
-                Select All
-              </Button>
-              <Button variant="outline" size="sm" onClick={() => setSelectedMatches(new Set())} data-testid="button-deselect-all-matches">
-                Deselect All
-              </Button>
-              <Button
-                variant="outline" size="sm"
-                onClick={() => {
-                  const highKeys = new Set<string>();
-                  for (const s of suggestions) for (const m of s.matches) if (m.confidence === "high") highKeys.add(`${s.dealId}:${m.entityId}:${m.role}`);
-                  setSelectedMatches(highKeys);
-                }}
-                data-testid="button-select-high-confidence"
-              >
-                High Confidence Only
-              </Button>
-            </div>
-
-            <div className="space-y-3 max-h-[400px] overflow-y-auto">
-              {suggestions.map(suggestion => (
-                <div key={suggestion.dealId} className="border rounded-lg p-3">
-                  <p className="text-sm font-medium mb-2">{suggestion.dealName}</p>
-                  <div className="space-y-1.5">
-                    {suggestion.matches.map(match => {
-                      const key = `${suggestion.dealId}:${match.entityId}:${match.role}`;
-                      const isSelected = selectedMatches.has(key);
-                      return (
-                        <div
-                          key={key}
-                          className={`flex items-center gap-2 p-2 rounded text-xs cursor-pointer transition-colors ${
-                            isSelected ? "bg-primary/5 border border-primary/20" : "bg-muted/30 hover:bg-muted/60"
-                          }`}
-                          onClick={() => toggleMatch(key)}
-                          data-testid={`match-${suggestion.dealId}-${match.entityId}`}
-                        >
-                          <div className={`w-4 h-4 rounded border flex items-center justify-center ${isSelected ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
-                            {isSelected && <Check className="w-3 h-3 text-primary-foreground" />}
-                          </div>
-                          <Badge variant="outline" className="text-[10px]">
-                            {match.entityType === "contact" ? "Contact" : "Company"}
-                          </Badge>
-                          <span className="font-medium">{match.entityName}</span>
-                          <Badge variant="secondary" className="text-[10px]">{match.role}</Badge>
-                          <span className={`font-medium ${confidenceColor(match.confidence)}`}>
-                            {match.confidence}
-                          </span>
-                          <span className="text-muted-foreground truncate max-w-[200px] ml-auto">{match.reason}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
+            {groups.map(([team, teamDeals]) => (
+              <div key={team} className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{team}</p>
+                  <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">{teamDeals.length}</Badge>
                 </div>
-              ))}
-            </div>
-
-            <DialogFooter>
-              <Button variant="outline" onClick={() => { setSuggestions([]); setSelectedMatches(new Set()); }} data-testid="button-reset-matches">
-                Reset
-              </Button>
-              <Button
-                onClick={handleApply}
-                disabled={applyMutation.isPending || selectedCount === 0}
-                data-testid="button-apply-matches"
-              >
-                {applyMutation.isPending ? (
-                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Applying...</>
-                ) : (
-                  <>Apply {selectedCount} Match{selectedCount !== 1 ? "es" : ""}</>
-                )}
-              </Button>
-            </DialogFooter>
+                {teamDeals.map(d => (
+                  <div key={d.id} className="flex items-center gap-3 border rounded-lg p-2" data-testid={`report-deal-${d.id}`}>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button className="relative shrink-0 group" title="Change photo" data-testid={`report-photo-${d.id}`}>
+                          <ReportPhotoImg photo={photoFor(d)} name={d.tenantName || d.name} />
+                          <span className="absolute inset-0 rounded-md bg-black/50 text-white text-[9px] font-medium hidden group-hover:flex items-center justify-center">
+                            Change
+                          </span>
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent align="start" className="w-72 space-y-3">
+                        {d.candidates.length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            {d.candidates.map((c, i) => (
+                              <button
+                                key={i}
+                                onClick={() => setOverrides(prev => ({ ...prev, [d.id]: c }))}
+                                className="flex flex-col items-center gap-1"
+                                title={c.label}
+                                data-testid={`report-candidate-${d.id}-${i}`}
+                              >
+                                <ReportPhotoImg photo={c} name={d.name} size={40} />
+                                <span className="text-[9px] text-muted-foreground max-w-[56px] truncate">{c.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex gap-1.5">
+                          <Input
+                            placeholder="Paste image URL"
+                            className="h-8 text-xs"
+                            value={customUrls[d.id] || ""}
+                            onChange={e => setCustomUrls(prev => ({ ...prev, [d.id]: e.target.value }))}
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8"
+                            disabled={!(customUrls[d.id] || "").startsWith("https://")}
+                            onClick={() => setOverrides(prev => ({ ...prev, [d.id]: { kind: "url", url: customUrls[d.id] } }))}
+                          >
+                            Use
+                          </Button>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs text-primary cursor-pointer hover:underline">
+                            Upload image…
+                            <input type="file" accept="image/png,image/jpeg" className="hidden" onChange={e => handleUpload(d.id, e.target.files?.[0])} />
+                          </label>
+                          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setOverrides(prev => ({ ...prev, [d.id]: null }))}>
+                            No photo
+                          </Button>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">{d.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {[d.propertyName !== d.name ? d.propertyName : null, d.dealType, d.status].filter(Boolean).join(" · ")}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {[
+                          d.tenantName && `Tenant: ${d.tenantName}`,
+                          d.purchaserName && `Purchaser: ${d.purchaserName}`,
+                          `Added ${new Date(d.createdAt).toLocaleDateString("en-GB")}`,
+                        ].filter(Boolean).join(" · ")}
+                      </p>
+                    </div>
+                    {d.isInvestment && <Badge variant="secondary" className="text-[10px] shrink-0">Investment</Badge>}
+                  </div>
+                ))}
+              </div>
+            ))}
           </div>
         )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button onClick={generate} disabled={generating || isLoading || deals.length === 0} data-testid="button-generate-deal-report">
+            {generating ? (
+              <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generating…</>
+            ) : (
+              <><Download className="w-4 h-4 mr-2" />Generate PDF</>
+            )}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -3719,7 +3723,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const [search, setSearch] = useState("");
   const [activeGroup, setActiveGroup] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
-  const [aiMatchOpen, setAiMatchOpen] = useState(false);
+  const [dealReportOpen, setDealReportOpen] = useState(false);
   const [rentAnalysisRunning, setRentAnalysisRunning] = useState(false);
   const [deleteListDeal, setDeleteListDeal] = useState<{ id: string; name: string } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -4207,9 +4211,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             {rentAnalysisRunning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <BarChart3 className="w-4 h-4 mr-2" />}
             Rent Analysis
           </Button>
-          <Button variant="outline" onClick={() => setAiMatchOpen(true)} data-testid="button-ai-match">
-            <Brain className="w-4 h-4 mr-2" />
-            AI Match
+          <Button variant="outline" onClick={() => setDealReportOpen(true)} data-testid="button-deal-report">
+            <FileText className="w-4 h-4 mr-2" />
+            Deal Report
           </Button>
           <Button onClick={() => setCreateOpen(true)} data-testid="button-create-deal">
             <Plus className="w-4 h-4 mr-2" />
@@ -5030,9 +5034,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           />
 
 
-          <AiMatchDialog
-            open={aiMatchOpen}
-            onOpenChange={setAiMatchOpen}
+          <DealReportDialog
+            open={dealReportOpen}
+            onOpenChange={setDealReportOpen}
           />
 
           <HotsChecklistDialog
