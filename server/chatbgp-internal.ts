@@ -56,6 +56,10 @@ export async function askChatBgp(question: string, req: Request, opts?: { timeou
       },
       body: JSON.stringify({
         messages: [{ role: "user", content: question }],
+        // Let the chat loop itself run almost as long as our own abort —
+        // the handler's default 10-min deadline was ending big sweeps
+        // with no answer while this wrapper still had budget left.
+        deadlineMs: Math.max(timeoutMs - 30 * 1000, 60 * 1000),
       }),
       signal: controller.signal,
     });

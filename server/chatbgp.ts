@@ -14028,11 +14028,19 @@ export function setupChatBGPRoutes(app: Express) {
     }
 
     const requestStart = Date.now();
-    // Hard deadline = 10 minutes, matching the client's fetch abort.
-    // Beyond this the SSE connection is going to be torn down anyway,
-    // so cutting the loop is the honest move. Inside the deadline,
+    // Hard deadline = 10 minutes by default, matching the client's fetch
+    // abort. Beyond this the SSE connection is going to be torn down
+    // anyway, so cutting the loop is the honest move. Inside the deadline,
     // Claude is free to run as long as it needs.
-    const REQUEST_DEADLINE_MS = 10 * 60 * 1000;
+    // Server-side callers (chatbgp-internal: activity curations) don't have
+    // the browser abort and their sweeps outrun 10 minutes — a big landlord
+    // mailbox+calendar fan-out (Landsec) died at "Deadline reached after 2
+    // loops" four times on 2026-08-04. They pass deadlineMs in the body;
+    // clamped to 30 min so nothing can pin a worker forever.
+    const REQUEST_DEADLINE_MS = Math.min(
+      Math.max(Number((req.body as any)?.deadlineMs) || 10 * 60 * 1000, 60 * 1000),
+      30 * 60 * 1000,
+    );
     let clientDisconnected = false;
     const isOverDeadline = () => clientDisconnected || Date.now() - requestStart > REQUEST_DEADLINE_MS;
 
