@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-contact-override-scoped', 'client-tenancy-export-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tenancy-export-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -2025,6 +2025,26 @@ async function markRound(page, cross) {
       return { n: (d.properties || []).filter((x) => x.lat != null && x.lng != null).length };
     });
     if (!coords.n) throw new Error('portfolio payload returned no property coordinates for the map');
+  });
+
+  // The Landsec dashboard now rolls contacts up across the whole portfolio via
+  // /api/company-portfolio/:id/linked-contacts. That roll-up is scoped: a
+  // client reads it for their OWN company id, but another company's
+  // portfolio-wide contact roll-up is refused. Own → 200, foreign → 403.
+  await step(page, p, 'client-portfolio-rollup-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json().catch(() => ({}));
+      const mine = me?.companyScopeId || me?.companyId || null;
+      const foreign = '99999999-1111-1111-1111-111111111111';
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      const own = mine ? await g(`/api/company-portfolio/${mine}/linked-contacts`) : 0;
+      const other = await g(`/api/company-portfolio/${foreign}/linked-contacts`);
+      return { mine, own, other };
+    });
+    if (!r.mine) throw new Error('client has no company scope on /api/auth/me');
+    if (r.own !== 200) throw new Error(`client own portfolio contact roll-up unhealthy (expected 200, got ${r.own})`);
+    if (r.other !== 403) throw new Error(`client read another company's portfolio contact roll-up (expected 403, got ${r.other})`);
   });
 
   // Client opens the viewings + offers panels on one of their own units — the
