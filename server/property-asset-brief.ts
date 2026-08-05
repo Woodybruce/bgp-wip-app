@@ -1031,6 +1031,21 @@ router.get("/api/company-portfolio/:companyId/linked-contacts", requireAuth, asy
         LIMIT 15`,
       [cid]
     );
+    // Brands on live deals with NO contactable person yet — shown as
+    // brand-only rows so the group still names who's in play (Shake Shack /
+    // Pizza Express on Bluewater had deals but zero linked contacts).
+    const dealBrandsQ = pool.query(
+      `SELECT DISTINCT ON (co.id) co.id AS brand_id, co.name AS brand_name,
+              d.name AS deal_name, p.name AS property_name
+         FROM crm_deals d
+         JOIN crm_companies co ON co.id = d.tenant_id
+         LEFT JOIN crm_properties p ON p.id = d.property_id
+        WHERE d.property_id IN (${PROPS})
+          AND COALESCE(d.status,'') NOT IN ('WIT','COM','INV')
+        ORDER BY co.id
+        LIMIT 20`,
+      [cid]
+    );
     const unlinkedQ = pool.query(
       `SELECT au.unit_name, au.marketing_status, p.name AS property_name
          FROM available_units au JOIN crm_properties p ON p.id = au.property_id
@@ -1078,9 +1093,13 @@ router.get("/api/company-portfolio/:companyId/linked-contacts", requireAuth, asy
       [cid]
     );
 
-    const [bgpTeam, clientLeads, deals, tracker, unlinked, occupiers, consultants] =
-      await Promise.all([bgpTeamQ, clientLeadsQ, dealsQ, trackerQ, unlinkedQ, occupiersQ, consultantsQ]);
+    const [bgpTeam, clientLeads, deals, tracker, unlinked, occupiers, consultants, dealBrands] =
+      await Promise.all([bgpTeamQ, clientLeadsQ, dealsQ, trackerQ, unlinkedQ, occupiersQ, consultantsQ, dealBrandsQ]);
     const dealIds = new Set(deals.rows.map((r: any) => r.id));
+    const contactedBrandIds = new Set([
+      ...deals.rows.map((r: any) => r.company_id),
+      ...tracker.rows.map((r: any) => r.company_id),
+    ].filter(Boolean));
     res.json({
       internal: [
         ...bgpTeam.rows.map((r: any) => ({
@@ -1093,6 +1112,11 @@ router.get("/api/company-portfolio/:companyId/linked-contacts", requireAuth, asy
         ...deals.rows.map((r: any) => shape(r, [r.deal_name, r.property_name].filter(Boolean).join(" · ") || "on a deal")),
         ...tracker.rows.filter((r: any) => !dealIds.has(r.id)).map((r: any) =>
           shape(r, [r.marketing_status || "negotiating", r.unit_name, r.property_name].filter(Boolean).join(" · "))),
+        ...dealBrands.rows.filter((r: any) => !contactedBrandIds.has(r.brand_id)).map((r: any) => ({
+          id: `co-${r.brand_id}`, name: r.brand_name, role: "no contact on file",
+          company_id: r.brand_id, company_name: r.brand_name, last_interaction: null,
+          via: [r.deal_name, r.property_name].filter(Boolean).join(" · ") || "on a deal",
+        })),
       ],
       trackerUnlinked: unlinked.rows.map((r: any) => ({
         unit_name: `${r.unit_name} · ${r.property_name}`, status: r.marketing_status,
@@ -1282,6 +1306,21 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       [pid]
     );
 
+    // 3b-ii. Brands on live deals here with NO contactable person — shown
+    //        as brand-only rows so the group still names who's in play.
+    const dealBrandsPropQ = pool.query(
+      `SELECT DISTINCT ON (co.id) co.id AS brand_id, co.name AS brand_name, d.name AS deal_name
+         FROM crm_deals d
+         JOIN crm_companies co ON co.id = d.tenant_id
+         LEFT JOIN property_units pu ON pu.id = d.unit_id
+         LEFT JOIN tenancy_schedule_units ts2 ON ts2.id = d.tenancy_unit_id
+        WHERE (d.property_id = $1 OR pu.property_id = $1 OR ts2.property_id = $1)
+          AND COALESCE(d.status,'') NOT IN ('WIT','COM','INV')
+        ORDER BY co.id
+        LIMIT 15`,
+      [pid]
+    );
+
     // 3c. Active tracker units with NO counterparty recorded anywhere —
     //     surfaced as a visible gap ("link the brand") instead of the group
     //     silently coming up empty (Bluewater's three NEG units, 2026-08-05).
@@ -1324,8 +1363,8 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
         ORDER BY c.name`, [pid]
     );
 
-    const [landlord, tenants, deals, interest, bgpTeam, clientLeads, consultants, tracker, unlinked, overrides, pinned] =
-      await Promise.all([landlordQ, tenantsQ, dealsQ, interestQ, bgpTeamQ, clientLeadsQ, consultantsQ, trackerQ, unlinkedQ, overridesQ, pinnedQ]);
+    const [landlord, tenants, deals, interest, bgpTeam, clientLeads, consultants, tracker, unlinked, overrides, pinned, dealBrandsProp] =
+      await Promise.all([landlordQ, tenantsQ, dealsQ, interestQ, bgpTeamQ, clientLeadsQ, consultantsQ, trackerQ, unlinkedQ, overridesQ, pinnedQ, dealBrandsPropQ]);
     const hiddenIds = new Set(overrides.rows.filter((r: any) => r.kind === "hide").map((r: any) => r.contact_id));
     const pinnedIds = new Set(overrides.rows.filter((r: any) => r.kind === "pin").map((r: any) => r.contact_id));
     const notHidden = (rows: any[]) => rows.filter((r: any) => !hiddenIds.has(r.id) && !pinnedIds.has(r.id));
@@ -1344,6 +1383,13 @@ router.get("/api/properties/:id/linked-contacts", requireAuth, async (req: Reque
       deals: [
         ...notHidden(deals.rows).map((r: any) => shape(r, r.deal_name || "on a deal")),
         ...notHidden(trackerRows).map((r: any) => shape(r, `${r.marketing_status || "negotiating"} · ${r.unit_name || "tracker"}`)),
+        ...dealBrandsProp.rows
+          .filter((r: any) => !deals.rows.some((d: any) => d.company_id === r.brand_id) && !trackerRows.some((t: any) => t.company_id === r.brand_id))
+          .map((r: any) => ({
+            id: `co-${r.brand_id}`, name: r.brand_name, role: "no contact on file",
+            company_id: r.brand_id, company_name: r.brand_name, last_interaction: null,
+            via: r.deal_name || "on a deal",
+          })),
       ],
       interest: notHidden(interest.rows).map((r: any) => shape(r, r.kind === "offered" ? "made an offer" : "viewed")),
       internal: [

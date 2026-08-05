@@ -2648,7 +2648,7 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
 
   const personRow = (contact: LinkedContact, showVia: boolean, pinnedRow = false) => (
     <div key={contact.id} className="group/lcrow relative">
-      <Link href={contact.id.startsWith("u-") ? "/hr" : `/contacts/${contact.id}`} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50 min-w-0" data-testid={`contact-item-${contact.id}`}>
+      <Link href={contact.id.startsWith("u-") ? "/hr" : contact.id.startsWith("co-") ? `/companies/${contact.company_id}` : `/contacts/${contact.id}`} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50 min-w-0" data-testid={`contact-item-${contact.id}`}>
         <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-semibold shrink-0 ${contact.side === "bgp" ? "bg-foreground text-background" : contact.side === "client" ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"}`}>
           {(contact.name || "?").split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
         </span>
@@ -2668,7 +2668,7 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
       </Link>
       {/* Hide (or unpin) — BGP team rows are managed on the property-team
           map, so they don't get an X here. */}
-      {!contact.id.startsWith("u-") && (
+      {!contact.id.startsWith("u-") && !contact.id.startsWith("co-") && (
         <button
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); pinnedRow ? clearOverride(contact.id) : setOverride(contact.id, "hide"); }}
           className="absolute right-0 top-1/2 -translate-y-1/2 hidden group-hover/lcrow:flex w-5 h-5 rounded-full bg-background border items-center justify-center text-muted-foreground hover:text-red-600 hover:border-red-300"
