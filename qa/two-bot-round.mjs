@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-firm-internal-guard', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1439,6 +1439,32 @@ async function markRound(page, cross) {
     });
     if (r.board !== 403) throw new Error(`client reached the board report (expected 403, got ${r.board})`);
     if (r.reporting !== 403) throw new Error(`client reached the reporting summary (expected 403, got ${r.reporting})`);
+  });
+
+  // Firm-internal back-office surfaces a client must never touch: HR (staff
+  // parental-leave register + Brucey award winners — personal staff data), the
+  // Companies House search proxy (BGP's CH lookup credit), the deal compliance
+  // audit, the investment comps book, and the board-report Excel export. All
+  // staff-only; a client login is refused across the board.
+  await step(page, p, 'client-firm-internal-guard', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return {
+        hrLeave: await g('/api/hr/parental-leave'),
+        hrAwards: await g('/api/hr/brucey-winners/current'),
+        chSearch: await g('/api/companies-house/search?q=tesco'),
+        compliance: await g('/api/deal-compliance-audit'),
+        investmentComps: await g('/api/investment-comps'),
+        boardExport: await g('/api/board-report/export-excel'),
+      };
+    });
+    if (r.hrLeave !== 403) throw new Error(`client reached the HR parental-leave register (expected 403, got ${r.hrLeave})`);
+    if (r.hrAwards !== 403) throw new Error(`client reached the HR Brucey award winners (expected 403, got ${r.hrAwards})`);
+    if (r.chSearch !== 403) throw new Error(`client reached the Companies House search proxy (expected 403, got ${r.chSearch})`);
+    if (r.compliance !== 403) throw new Error(`client reached the deal compliance audit (expected 403, got ${r.compliance})`);
+    if (r.investmentComps !== 403) throw new Error(`client reached the investment comps book (expected 403, got ${r.investmentComps})`);
+    if (r.boardExport !== 403) throw new Error(`client exported the board report (expected 403, got ${r.boardExport})`);
   });
 
   // The interactions surface is BGP's raw correspondence store — logged
