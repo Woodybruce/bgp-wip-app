@@ -73,6 +73,16 @@ export async function generateBriefing(userId: string, msToken: string | null): 
     [userId]
   );
 
+  // Market pulse — the same insights stream the News page shows, so the
+  // email and the app can never disagree. Client-safe: latestInsightsForEmail
+  // only returns audience='all' (public-source) rows.
+  let insightLines = "";
+  try {
+    const { latestInsightsForEmail } = await import("./insights-feed");
+    const ins = await latestInsightsForEmail(3);
+    insightLines = ins.map((i: any) => `- [${i.category}] ${i.headline}${i.theme_strength > 1 ? ` (${i.theme_strength}x signal: ${i.theme_title})` : ""}${i.detail ? ` — ${i.detail}` : ""}`).join("\n");
+  } catch { /* feed not warmed yet */ }
+
   // Staff briefings scope deals by working team. Client briefings must scope
   // by the CLIENT relationship — Landsec deals are worked by London Retail /
   // National Leasing etc. and carry the client on group_name or the property's
@@ -201,7 +211,9 @@ ${calendarContext ? `${userName}'s own calendar today:\n${calendarContext}` : ""
 ACTIVE DEALS (${teamDeals.rows.length} for ${userTeam}):
 ${teamDeals.rows.slice(0, 10).map((d: any) => `- ${d.name} — ${d.status}${d.property_name ? ` @ ${d.property_name}` : ""}${d.tenant_name ? ` (tenant: ${d.tenant_name})` : ""}`).join("\n") || "No active deals."}
 
-${stuckDeals.length > 0 ? `DEALS WITH NO RECENT UPDATE (14+ days):\n${stuckDeals.map((d: any) => `- ${d.name} (${d.status})`).join("\n")}` : ""}`;
+${stuckDeals.length > 0 ? `DEALS WITH NO RECENT UPDATE (14+ days):\n${stuckDeals.map((d: any) => `- ${d.name} (${d.status})`).join("\n")}` : ""}
+
+${insightLines ? `MARKET PULSE (latest distilled insights — include a short "Market pulse" section using these):\n${insightLines}` : ""}`;
 
     const { callClaude } = await import("./utils/anthropic-client");
     const clientResult = await callClaude({
@@ -259,7 +271,9 @@ ${emailContext || "No email data available."}
 ACTIVE DEALS (${teamDeals.rows.length} for ${userTeam} team):
 ${teamDeals.rows.slice(0, 10).map((d: any) => `- ${d.name} — ${d.status}${d.property_name ? ` @ ${d.property_name}` : ""}${d.tenant_name ? ` (tenant: ${d.tenant_name})` : ""}`).join("\n") || "No active deals."}
 
-${stuckDeals.length > 0 ? `DEALS NEEDING ATTENTION (no update 14+ days):\n${stuckDeals.map((d: any) => `- ${d.name} (${d.status}, last updated ${new Date(d.updated_at).toLocaleDateString("en-GB")})`).join("\n")}` : ""}`;
+${stuckDeals.length > 0 ? `DEALS NEEDING ATTENTION (no update 14+ days):\n${stuckDeals.map((d: any) => `- ${d.name} (${d.status}, last updated ${new Date(d.updated_at).toLocaleDateString("en-GB")})`).join("\n")}` : ""}
+
+${insightLines ? `MARKET PULSE (latest distilled insights — include a short "Market pulse" section using these):\n${insightLines}` : ""}`;
 
   const { callClaude } = await import("./utils/anthropic-client");
   const briefingResult = await callClaude({
