@@ -2597,32 +2597,73 @@ export function ClientBoardPanel({ propertyId, landlordId, allCompanies }: { pro
 }
 
 export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
-  // Evidence-based groups (Woody, 2026-08-03): active landlord contacts,
-  // tenants in occupation, parties on deals, and viewing/offer interest —
-  // never the raw company directory (the old version surfaced every
-  // RocketReach import at the landlord).
-  type LinkedContact = { id: string; name: string; role: string | null; email: string | null; company_id: string | null; company_name: string | null; last_interaction: string | null; via: string | null };
-  const { data } = useQuery<{ landlord: LinkedContact[]; tenants: LinkedContact[]; deals: LinkedContact[]; interest: LinkedContact[] }>({
+  // Four evidence-based groups (Woody, 2026-08-05 rework): the internal
+  // team (BGP agents + the client's leasing directors), everyone on deals
+  // or tracker activity, tenants in occupation shown BRAND-FIRST, and
+  // consultants. Collapsible headers so the panel reads as a map, not a
+  // scroll. Never the raw company directory.
+  type LinkedContact = { id: string; name: string; role: string | null; email: string | null; company_id: string | null; company_name: string | null; last_interaction: string | null; via: string | null; side?: string };
+  type OccupierRow = { company_id: string; company_name: string; contact: { id: string; name: string; role: string | null; email: string | null; last_interaction: string | null } | null };
+  const { data } = useQuery<{ landlord: LinkedContact[]; tenants: OccupierRow[]; deals: LinkedContact[]; interest: LinkedContact[]; internal: LinkedContact[]; consultants: LinkedContact[] }>({
     queryKey: ["/api/properties", propertyId, "linked-contacts"],
     queryFn: async () => {
       const res = await fetch(`/api/properties/${propertyId}/linked-contacts`, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) return { landlord: [], tenants: [], deals: [], interest: [] };
+      if (!res.ok) return { landlord: [], tenants: [], deals: [], interest: [], internal: [], consultants: [] };
       return res.json();
     },
   });
 
-  const groups: Array<{ key: string; title: string; rows: LinkedContact[]; tint: string }> = [
-    { key: "landlord", title: "Landlord — active", rows: data?.landlord || [], tint: "text-blue-700" },
-    { key: "deals", title: "Doing deals", rows: data?.deals || [], tint: "text-emerald-700" },
-    { key: "interest", title: "Viewed / offered", rows: data?.interest || [], tint: "text-amber-700" },
-    { key: "tenants", title: "In occupation", rows: data?.tenants || [], tint: "text-muted-foreground" },
+  // "On deals & tracker" merges deal parties with viewing/offer interest —
+  // one place for everyone actively in play, badges say why they're here.
+  const dealsAndTracker: LinkedContact[] = [
+    ...(data?.deals || []),
+    ...(data?.interest || []).filter(i => !(data?.deals || []).some(d => d.id === i.id)),
   ];
-  const total = groups.reduce((n, g) => n + g.rows.length, 0);
+  const internal = data?.internal || [];
+  const landlordActive = (data?.landlord || []).filter(l => !internal.some(i => i.id === l.id));
+  const occupiers = data?.tenants || [];
+  const consultants = data?.consultants || [];
+  const total = internal.length + dealsAndTracker.length + landlordActive.length + occupiers.length + consultants.length;
+
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ internal: true, deals: true });
+
+  const personRow = (contact: LinkedContact, showVia: boolean) => (
+    <Link key={contact.id} href={contact.id.startsWith("u-") ? "/hr" : `/contacts/${contact.id}`} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50 min-w-0" data-testid={`contact-item-${contact.id}`}>
+      <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-semibold shrink-0 ${contact.side === "bgp" ? "bg-foreground text-background" : contact.side === "client" ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"}`}>
+        {(contact.name || "?").split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
+      </span>
+      <div className="flex-1 min-w-0">
+        <span className="text-xs font-medium truncate block">{contact.name}</span>
+        <span className="text-[10px] text-muted-foreground truncate block">
+          {[contact.role, contact.side === "bgp" ? "BGP" : contact.company_name].filter(Boolean).join(" · ")}
+        </span>
+      </div>
+      {contact.side === "client" && <Badge variant="outline" className="text-[9px] shrink-0 text-blue-700 border-blue-200">Client</Badge>}
+      {showVia && contact.via && contact.side !== "client" && (
+        <Badge variant="outline" className="text-[9px] shrink-0 max-w-[110px] truncate" title={contact.via}>{contact.via}</Badge>
+      )}
+      {contact.last_interaction && (
+        <span className="text-[9px] text-muted-foreground shrink-0">{new Date(contact.last_interaction).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+      )}
+    </Link>
+  );
+
+  const groupHeader = (key: string, title: string, count: number, tint: string) => (
+    <button
+      onClick={() => setOpenGroups(prev => ({ ...prev, [key]: !(prev[key] ?? false) }))}
+      className={`w-full flex items-center gap-1.5 text-[10px] uppercase tracking-wide font-semibold py-1 rounded hover:bg-muted/50 transition-colors ${tint}`}
+      data-testid={`linked-contacts-group-${key}`}
+    >
+      {(openGroups[key] ?? false) ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
+      <span className="text-left flex-1">{title}</span>
+      <Badge variant="outline" className="text-[9px] tabular-nums">{count}</Badge>
+    </button>
+  );
 
   return (
     <Card data-testid="linked-contacts-panel">
       <CardContent className="p-4">
-        <div className="flex items-center gap-2 mb-3">
+        <div className="flex items-center gap-2 mb-2">
           <Users className="w-4 h-4" />
           <h3 className="text-sm font-semibold">Linked Contacts</h3>
           {total > 0 && <Badge variant="secondary" className="text-[10px]">{total}</Badge>}
@@ -2630,34 +2671,66 @@ export function LinkedContactsPanel({ propertyId }: { propertyId: string }) {
         {total === 0 ? (
           <div className="text-center py-6">
             <Users className="w-8 h-8 mx-auto mb-2 text-muted-foreground/30" />
-            <p className="text-xs text-muted-foreground">Nobody actively involved yet — contacts appear here from deals, viewings, offers and landlord activity.</p>
+            <p className="text-xs text-muted-foreground">Nobody actively involved yet — contacts appear here from the property team, deals, viewings, offers and the tenancy schedule.</p>
           </div>
         ) : (
-          <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
-            {groups.filter(g => g.rows.length > 0).map(g => (
-              <div key={g.key}>
-                <div className={`text-[10px] uppercase tracking-wide font-semibold mb-1 sticky top-0 bg-card ${g.tint}`}>{g.title} · {g.rows.length}</div>
-                <div className="space-y-0.5">
-                  {g.rows.map(contact => (
-                    <Link key={contact.id} href={`/contacts/${contact.id}`} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50 min-w-0" data-testid={`contact-item-${contact.id}`}>
-                      <Users className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <span className="text-xs font-medium truncate block">{contact.name}</span>
-                        <span className="text-[10px] text-muted-foreground truncate block">
-                          {[contact.role, contact.company_name].filter(Boolean).join(" · ")}
-                        </span>
-                      </div>
-                      {contact.via && g.key !== "landlord" && g.key !== "tenants" && (
-                        <Badge variant="outline" className="text-[9px] shrink-0 max-w-[110px] truncate" title={contact.via}>{contact.via}</Badge>
-                      )}
-                      {contact.last_interaction && (
-                        <span className="text-[9px] text-muted-foreground shrink-0">{new Date(contact.last_interaction).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
-                      )}
-                    </Link>
-                  ))}
-                </div>
+          <div className="space-y-1.5 max-h-[480px] overflow-y-auto pr-1">
+            {internal.length > 0 && (
+              <div>
+                {groupHeader("internal", "Internal team", internal.length, "text-foreground")}
+                {(openGroups.internal ?? false) && <div className="space-y-0.5 mt-0.5">{internal.map(c => personRow(c, false))}</div>}
               </div>
-            ))}
+            )}
+            {dealsAndTracker.length > 0 && (
+              <div>
+                {groupHeader("deals", "On deals & tracker", dealsAndTracker.length, "text-emerald-700")}
+                {(openGroups.deals ?? false) && <div className="space-y-0.5 mt-0.5">{dealsAndTracker.map(c => personRow(c, true))}</div>}
+              </div>
+            )}
+            {landlordActive.length > 0 && (
+              <div>
+                {groupHeader("landlord", "Landlord — active", landlordActive.length, "text-blue-700")}
+                {(openGroups.landlord ?? false) && <div className="space-y-0.5 mt-0.5">{landlordActive.map(c => personRow(c, false))}</div>}
+              </div>
+            )}
+            {occupiers.length > 0 && (
+              <div>
+                {groupHeader("tenants", "In occupation", occupiers.length, "text-muted-foreground")}
+                {(openGroups.tenants ?? false) && (
+                  <div className="space-y-0.5 mt-0.5">
+                    {occupiers.map(o => (
+                      <div key={o.company_id} className="flex items-center gap-2 px-2 py-1 rounded-md hover:bg-muted/50 min-w-0" data-testid={`occupier-item-${o.company_id}`}>
+                        <img
+                          src={localBrandLogoUrl(o.company_name) || ""}
+                          alt=""
+                          className="w-6 h-6 rounded object-contain bg-white border shrink-0"
+                          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <Link href={`/companies/${o.company_id}`} className="text-xs font-semibold truncate block hover:underline">{o.company_name}</Link>
+                          {o.contact ? (
+                            <Link href={`/contacts/${o.contact.id}`} className="text-[10px] text-muted-foreground truncate block hover:underline">
+                              {[o.contact.name, o.contact.role].filter(Boolean).join(" · ")}
+                            </Link>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground/60 italic block">no contact on file</span>
+                          )}
+                        </div>
+                        {o.contact?.last_interaction && (
+                          <span className="text-[9px] text-muted-foreground shrink-0">{new Date(o.contact.last_interaction).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {consultants.length > 0 && (
+              <div>
+                {groupHeader("consultants", "Consultants", consultants.length, "text-violet-700")}
+                {(openGroups.consultants ?? false) && <div className="space-y-0.5 mt-0.5">{consultants.map(c => personRow(c, true))}</div>}
+              </div>
+            )}
           </div>
         )}
       </CardContent>
