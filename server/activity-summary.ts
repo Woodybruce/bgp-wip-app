@@ -44,6 +44,13 @@ let aiSummaryEnsured = false;
 async function ensureAiSummaryColumn() {
   if (aiSummaryEnsured) return;
   await pool.query(`ALTER TABLE crm_interactions ADD COLUMN IF NOT EXISTS ai_summary TEXT`).catch(() => {});
+  // One-time sweep of the "I don't have access to the meeting content…"
+  // refusals that got cached before the nothing-to-say guard existed.
+  await pool.query(
+    `UPDATE crm_interactions SET ai_summary = NULL
+      WHERE ai_summary IS NOT NULL
+        AND ai_summary ~* '(don''t|do not) have access|would need to see|unable to (provide|summari[sz]e)|no meeting content|cannot summari[sz]e'`
+  ).catch(() => {});
   aiSummaryEnsured = true;
 }
 
@@ -261,18 +268,30 @@ router.post("/api/interactions/:id/summarise", requireAuth, async (req: Request,
       return res.json({ summary: it.ai_summary, cached: true });
     }
 
+    // Nothing to say → say nothing (Woody, 2026-08-05). A diary meeting with
+    // no notes/transcript captured has only a subject line — asking the
+    // model to summarise it produced "I don't have access to the meeting
+    // content…" essays that were cached and shown. Skip instead.
+    const previewText = (it.preview || "").trim();
+    if (previewText.length < 40) {
+      return res.json({ summary: null, skipped: true, reason: "No notes or transcript captured for this one yet." });
+    }
+
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const msg = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 220,
       messages: [{
-        role: "user",
-        content: `Summarise this ${it.type} between BGP's ${it.bgp_user || "team"} and ${it.contact_name || "a contact"}${it.company_name ? ` (${it.company_name})` : ""} on ${new Date(it.interaction_date).toLocaleDateString("en-GB")} in 1-2 plain sentences: what it was about and any follow-up implied. British English, no preamble.\n\nSubject: ${it.subject || "(none)"}\nPreview: ${(it.preview || "").slice(0, 800) || "(no body captured — infer from the subject only, and say so if it's unclear)"}`,
+        role: "user" as const,
+        content: `Summarise this ${it.type} between BGP's ${it.bgp_user || "team"} and ${it.contact_name || "a contact"}${it.company_name ? ` (${it.company_name})` : ""} on ${new Date(it.interaction_date).toLocaleDateString("en-GB")} in 1-2 plain sentences: what it was about and any follow-up implied. British English, no preamble. If the content genuinely tells you nothing, reply with exactly: NOTHING\n\nSubject: ${it.subject || "(none)"}\nPreview: ${previewText.slice(0, 800)}`,
       }],
     });
     const summary = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
-    if (!summary) return res.status(502).json({ error: "Empty summary" });
+    // Refusal / nothing-to-say output never gets cached or shown.
+    if (!summary || summary === "NOTHING" || /don't have access|do not have access|would need to see|unable to (provide|summarise|summarize)|no meeting content|cannot summarise|cannot summarize/i.test(summary)) {
+      return res.json({ summary: null, skipped: true, reason: "Not enough content to summarise." });
+    }
     await pool.query(`UPDATE crm_interactions SET ai_summary = $1 WHERE id = $2`, [summary, id]).catch(() => {});
     res.json({ summary, cached: false });
   } catch (err: any) {
