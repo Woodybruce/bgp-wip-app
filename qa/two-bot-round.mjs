@@ -101,7 +101,15 @@ async function visit(page, persona, path, label) {
   await page.waitForTimeout(1000);
   const notFound = await page.getByText('Page not found').count();
   if (notFound) logIssue(persona, `visit ${path}`, 'dead-route', `${label || path} renders "Page not found"`);
-  const bodyText = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
+  let bodyText = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
+  // Hub routes (/investment-tracker et al.) redirect on mount, then the target
+  // hydrates — the innerText can be momentarily empty just past networkidle.
+  // Give a slow render one more chance before calling the page blank, so a
+  // timing hiccup isn't logged as a broken page.
+  if (bodyText.length < 30) {
+    await page.waitForTimeout(2500);
+    bodyText = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
+  }
   if (bodyText.length < 30) {
     await page.screenshot({ path: `${LOGDIR}/r${ROUND}-${persona}-blank-${path.replace(/\W+/g, '_')}.png` });
     logIssue(persona, `visit ${path}`, 'blank-page', `${label || path} rendered <30 chars of content`);
