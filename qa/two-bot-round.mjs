@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-firm-internal-guard', 'client-property-tenants-scoped', 'client-tenancy-export-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-firm-internal-guard', 'client-property-tenants-scoped', 'client-tenancy-export-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1672,6 +1672,39 @@ async function markRound(page, cross) {
     if (r.activity.len !== 0) throw new Error(`org-wide activity leaked to client (${r.activity.len} rows)`);
     if (r.notifications.status !== 200) throw new Error(`client notifications unhealthy (${r.notifications.status})`);
     if (r.digest.status !== 200) throw new Error(`client daily-digest unhealthy (${r.digest.status})`);
+  });
+
+  // The Insights feed (event-driven "market brain") is client-visible but
+  // scoped: a client sees general market insights only in their own
+  // categories (hospitality/retail/leisure/fitness/market) plus client-audience
+  // insights tagged to THEIR company — never a staff-audience item, an
+  // out-of-category general insight, or another landlord's client insight. And
+  // the manual /run trigger is staff-only.
+  await step(page, p, 'client-insights-scoped', async () => {
+    const CLIENT_CATS = ['hospitality', 'retail', 'leisure', 'fitness', 'market'];
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json().catch(() => ({}));
+      const scope = me?.companyScopeId || me?.companyId || null;
+      const res = await fetch('/api/insights', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const body = res.ok ? await res.json().catch(() => null) : null;
+      const rows = body && Array.isArray(body.insights) ? body.insights : null;
+      const run = (await fetch('/api/insights/run', { method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status;
+      return { status: res.status, hasArray: Array.isArray(rows), rows: rows || [], scope, run };
+    });
+    if (r.status !== 200) throw new Error(`client insights feed unhealthy (${r.status})`);
+    if (!r.hasArray) throw new Error('client insights payload missing insights array');
+    for (const i of r.rows) {
+      const aud = String(i.audience || '');
+      if (aud === 'all') {
+        if (!CLIENT_CATS.includes(String(i.category || ''))) throw new Error(`out-of-category general insight leaked to client: ${i.category}`);
+      } else if (aud === 'client') {
+        if (r.scope && String(i.company_id) !== String(r.scope)) throw new Error(`another company's client insight leaked (company_id ${i.company_id})`);
+      } else {
+        throw new Error(`non-client-audience insight leaked to client feed: audience=${aud}`);
+      }
+    }
+    if (r.run !== 403) throw new Error(`client triggered the insights run (expected 403, got ${r.run})`);
   });
 
   // Global search must respect the client's scope: their own portfolio and
