@@ -357,7 +357,9 @@ export function registerPropertyBrochureRoutes(app: Express) {
       const os = await import("os");
       const coverDir = path.join(os.tmpdir(), "brochure-covers");
       fs.mkdirSync(coverDir, { recursive: true });
-      const coverPath = path.join(coverDir, `${r.id}.png`);
+      // JPEG at 80dpi — the first cut used PNG at 100dpi and a single
+      // Bluewater cover came out at 10.6MB, which is unusable on 4G.
+      const coverPath = path.join(coverDir, `${r.id}.jpg`);
 
       if (!fs.existsSync(coverPath)) {
         const file = await getFile(r.storage_key);
@@ -366,13 +368,13 @@ export function registerPropertyBrochureRoutes(app: Express) {
         fs.writeFileSync(pdfPath, file.data);
         const { execFile } = await import("child_process");
         await new Promise<void>((resolve, reject) => {
-          execFile("pdftoppm", ["-png", "-f", "1", "-l", "1", "-r", "100", "-singlefile", pdfPath, coverPath.replace(/\.png$/, "")], { timeout: 30000 }, (err) => err ? reject(err) : resolve());
+          execFile("pdftoppm", ["-jpeg", "-jpegopt", "quality=82", "-f", "1", "-l", "1", "-r", "80", "-singlefile", pdfPath, coverPath.replace(/\.jpg$/, "")], { timeout: 30000 }, (err) => err ? reject(err) : resolve());
         });
         try { fs.unlinkSync(pdfPath); } catch {}
         if (!fs.existsSync(coverPath)) return res.status(500).json({ error: "cover render failed" });
       }
 
-      res.setHeader("Content-Type", "image/png");
+      res.setHeader("Content-Type", "image/jpeg");
       res.setHeader("Cache-Control", "public, max-age=86400, immutable");
       res.send(fs.readFileSync(coverPath));
     } catch (e: any) {
