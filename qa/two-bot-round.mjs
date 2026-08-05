@@ -2131,6 +2131,30 @@ async function markRound(page, cross) {
     if (r.strayViews.length) throw new Error(`viewing-count badge keyed a unit outside client scope: ${r.strayViews[0]}`);
   });
 
+  // Beyond the count badges, the full viewing/offer RECORD lists
+  // (/api/available-units/all-{viewings,offers}) carry sensitive per-deal
+  // detail — viewer names, offer amounts, acting agents. They must be scoped
+  // the same way: every record's unit_id must belong to a unit in the
+  // client's own available-units list, never another landlord's.
+  await step(page, p, 'client-tracker-records-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const j = async (url) => { const res = await fetch(url, { headers: auth }); return { ok: res.ok, status: res.status, body: res.ok ? await res.json().catch(() => null) : null }; };
+      const units = await j('/api/available-units');
+      const views = await j('/api/available-units/all-viewings');
+      const offers = await j('/api/available-units/all-offers');
+      if (!units.ok || !views.ok || !offers.ok) return { ok: false, why: `units ${units.status} / views ${views.status} / offers ${offers.status}` };
+      const visible = new Set((Array.isArray(units.body) ? units.body : []).map((u) => u.id));
+      const rows = (b) => Array.isArray(b) ? b : (b && Array.isArray(b.data) ? b.data : []);
+      const stray = (b) => rows(b).map((x) => x.unit_id || x.unitId).filter((id) => id && !visible.has(id));
+      return { ok: true, visibleCount: visible.size, strayViews: stray(views.body), strayOffers: stray(offers.body) };
+    });
+    if (!r.ok) throw new Error(`tracker record endpoints failed (${r.why})`);
+    if (!r.visibleCount) return; // no units in scope this run
+    if (r.strayViews.length) throw new Error(`a viewing record for a unit outside client scope leaked: ${r.strayViews[0]}`);
+    if (r.strayOffers.length) throw new Error(`an offer record for a unit outside client scope leaked: ${r.strayOffers[0]}`);
+  });
+
   // Client must NOT see the requirement the agent just created for another
   // brand unless it's theirs — guards requirements-board scoping.
   await step(page, p, 'client-requirement-scoping', async () => {
