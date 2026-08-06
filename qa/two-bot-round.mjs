@@ -3483,6 +3483,27 @@ async function samRound(page, cross) {
     if (!r.hasOwn) throw new Error("rival client can't see their own property (over-scoped)");
   });
 
+  // Symmetry check for the brand-profile scoping fixes: the rival client
+  // (Hammerson) viewing the same shared brand (Honi) must see THEIR OWN
+  // counterparty data — Brent Cross pitches/leases, the QA-LEAK-DEAL that is
+  // Honi↔Hammerson — and NEVER a Landsec scheme (Bluewater / O2). Confirms the
+  // bpScope scoping is per-tenant, not Landsec-special.
+  await step(page, p, 'rival-brand-profile-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/brand/77777777-7777-7777-7777-777777777777/profile', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const d = await res.json().catch(() => null);
+      const props = [...(d?.pitchedTo || []), ...(d?.leaseEvents || [])].map((x) => String(x.property_name || ''));
+      const landsecLeak = props.some((n) => /bluewater|o2 centre/i.test(n));
+      const ownVisible = props.some((n) => /brent cross/i.test(n));
+      return { ok: true, landsecLeak, ownVisible };
+    });
+    if (!r.ok) throw new Error(`rival client brand profile unhealthy (${r.status})`);
+    if (r.landsecLeak) throw new Error("a Landsec scheme leaked onto the rival client's brand profile (cross-tenant leak)");
+    if (!r.ownVisible) throw new Error("rival client can't see their own scheme's brand activity (over-scoped)");
+  });
+
   // Cross-tenant team isolation: a rival client (Sam/Hammerson) may read
   // THEIR OWN account team but must be refused the Landsec team board —
   // otherwise one landlord sees another's BGP staff assignments, names,
