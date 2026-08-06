@@ -683,6 +683,12 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     );
 
     // Lease-expiry radar — leasing schedule units occupied by this brand with events in next 18 months.
+    // A client sees this brand's upcoming lease events only in THEIR OWN
+    // schemes — the brand's expiries/breaks in rival landlords' centres are
+    // poaching intel, not the client's to see. Staff see all.
+    const leaseEventsScope = bpScope
+      ? ` AND (p.landlord_id = $2 OR p.id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $2))`
+      : "";
     const leaseEventsQ = pool.query(
       `SELECT u.id, u.unit_name, u.tenant_name, u.lease_expiry, u.lease_break, u.rent_review,
               p.id AS property_id, p.name AS property_name
@@ -693,10 +699,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
           AND (
             (u.lease_expiry IS NOT NULL AND u.lease_expiry BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '18 months')
             OR (u.lease_break IS NOT NULL AND u.lease_break BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '18 months')
-          )
+          )${leaseEventsScope}
         ORDER BY LEAST(COALESCE(u.lease_expiry, '9999-01-01'::date), COALESCE(u.lease_break, '9999-01-01'::date)) ASC
         LIMIT 10`,
-      [companyId]
+      bpScope ? [companyId, bpScope] : [companyId]
     );
 
     // Competitor cluster — other tracked brands in same use class (derived from rent comps)
@@ -772,8 +778,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // user can promote them with one click. Excludes BGP's own staff
     // (anything @brucegillinghampollard.com).
     const companyDomain = (c.domain || c.domain_url || "").toString().replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "").toLowerCase();
+    // Derived from BGP's correspondence log (crm_interactions) — staff-only,
+    // like /api/interactions and the interactions field. Clients get none.
     let pendingContactSuggestions: Array<{ email: string; touches: number; last_touch: string | null }> = [];
-    if (companyDomain) {
+    if (companyDomain && !bpScope) {
       try {
         const ps = await pool.query(
           `SELECT p AS email,
