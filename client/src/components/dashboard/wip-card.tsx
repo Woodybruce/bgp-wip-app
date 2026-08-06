@@ -307,6 +307,14 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
           onClearAll={() => setSelectedClients(new Set())}
           values={filterFees.client}
         />
+        <FilterDropdown
+          title="Property"
+          items={allProjects}
+          selected={selectedProjects}
+          onToggle={(p) => toggleFilter(selectedProjects, setSelectedProjects, p)}
+          onClearAll={() => setSelectedProjects(new Set())}
+          values={filterFees.project}
+        />
         {isAllTeams && (
           <FilterDropdown
             title="Team"
@@ -324,14 +332,6 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
           onToggle={(a) => toggleFilter(selectedAgents, setSelectedAgents, a)}
           onClearAll={() => setSelectedAgents(new Set())}
           values={filterFees.agent}
-        />
-        <FilterDropdown
-          title="Property"
-          items={allProjects}
-          selected={selectedProjects}
-          onToggle={(p) => toggleFilter(selectedProjects, setSelectedProjects, p)}
-          onClearAll={() => setSelectedProjects(new Set())}
-          values={filterFees.project}
         />
         <FilterDropdown
           title="Deal Status"

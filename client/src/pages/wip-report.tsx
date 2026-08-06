@@ -1207,6 +1207,14 @@ export default function WipReport() {
               values={filterFees.client}
             />
             <FilterDropdown
+              title="Property"
+              items={allProjects}
+              selected={selectedProjects}
+              onToggle={(p) => toggleFilter(selectedProjects, setSelectedProjects, p)}
+              onClearAll={() => setSelectedProjects(new Set())}
+              values={filterFees.project}
+            />
+            <FilterDropdown
               title="Team"
               items={allTeams}
               selected={selectedTeams}
@@ -1221,14 +1229,6 @@ export default function WipReport() {
               onToggle={(a) => toggleFilter(selectedAgents, setSelectedAgents, a)}
               onClearAll={() => setSelectedAgents(new Set())}
               values={filterFees.agent}
-            />
-            <FilterDropdown
-              title="Property"
-              items={allProjects}
-              selected={selectedProjects}
-              onToggle={(p) => toggleFilter(selectedProjects, setSelectedProjects, p)}
-              onClearAll={() => setSelectedProjects(new Set())}
-              values={filterFees.project}
             />
             <FilterDropdown
               title="Deal Status"
