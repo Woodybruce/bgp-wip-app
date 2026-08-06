@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -2580,6 +2580,25 @@ async function markRound(page, cross) {
     if (r.ownStatus !== 200 || !r.ownIsArray) throw new Error(`client own property tenant list unhealthy (status ${r.ownStatus}, array ${r.ownIsArray})`);
     if (r.foreign !== 403) throw new Error(`client read a foreign property's rent roll (expected 403, got ${r.foreign})`);
     if (r.del !== 403) throw new Error(`client removed a tenant from a property (expected 403, got ${r.del})`);
+  });
+
+  // The available-units LIST is client-scoped, so the single-unit read must be
+  // too: a client can open their OWN unit by id (200) but a rival landlord's
+  // unit — its rent/size/marketing status — must be refused. (Regression
+  // guard: /api/available-units/:id had no scope check while its /viewings and
+  // /offers siblings did, so a client could read any unit by id.)
+  await step(page, p, 'client-available-unit-read-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json().catch(() => []);
+      const own = (Array.isArray(units) ? units[0] : null)?.id;
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      const ownStatus = own ? await g(`/api/available-units/${own}`) : 0;
+      const rival = await g('/api/available-units/99999999-3333-3333-3333-333333333333');
+      return { own: own ? ownStatus : null, rival };
+    });
+    if (r.own !== null && r.own !== 200) throw new Error(`client can't read their own available unit by id (expected 200, got ${r.own})`);
+    if (r.rival !== 403) throw new Error(`client read a rival landlord's available unit by id (expected 403, got ${r.rival})`);
   });
 
   // The property contacts map (Linked Contacts v2): a client reads the linked
