@@ -3,9 +3,10 @@ import { useRef, useEffect, type ReactNode } from "react";
 interface ScrollableTableProps {
   children: ReactNode;
   minWidth: number;
+  fillHeight?: boolean;
 }
 
-export function ScrollableTable({ children, minWidth }: ScrollableTableProps) {
+export function ScrollableTable({ children, minWidth, fillHeight = false }: ScrollableTableProps) {
   const bottomScrollRef = useRef<HTMLDivElement>(null);
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const syncingRef = useRef<"bottom" | "table" | null>(null);
@@ -38,8 +39,12 @@ export function ScrollableTable({ children, minWidth }: ScrollableTableProps) {
   }, []);
 
   return (
-    <div className="flex flex-col">
-      <div ref={tableScrollRef} className="table-scroll-container">
+    <div className={`flex flex-col ${fillHeight ? "flex-1 min-h-0" : ""}`}>
+      <div
+        ref={tableScrollRef}
+        className={`table-scroll-container ${fillHeight ? "flex-1 min-h-0" : ""}`}
+        style={fillHeight ? { maxHeight: "none" } : undefined}
+      >
         <div style={{ minWidth }}>
           {children}
         </div>
