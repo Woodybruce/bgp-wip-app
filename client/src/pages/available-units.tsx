@@ -20,7 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2 } from "lucide-react";
+  ChevronDown, ChevronRight, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, Layers } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -34,6 +34,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { UnifiedAddUnitDialog, UNIFIED_ADD_UNIT_ENABLED } from "@/components/unified-add-unit-dialog";
+import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
@@ -308,6 +309,11 @@ export default function AvailableUnitsPage() {
   // were silently ignored before).
   const urlParam = (k: string) => { try { return new URLSearchParams(window.location.search).get(k) || "all"; } catch { return "all"; } };
   const [statusFilter, setStatusFilter] = useState(() => urlParam("status"));
+  // "All statuses" view — every deal-status group laid out down the page
+  // (SOL+ included) with the tenancy schedules underneath, instead of
+  // clicking each status card in turn (Woody, 2026-08-06).
+  const [viewAll, setViewAll] = useState(() => urlParam("view") === "all");
+  const [scheduleOpen, setScheduleOpen] = useState<Record<string, boolean>>({});
   // Header sort — Property/Unit and Client columns, A→Z / Z→A toggle.
   const [sortBy, setSortBy] = useState<"none" | "property" | "client">("none");
   const [sortDir, setSortDir] = useState<1 | -1>(1);
@@ -1062,7 +1068,9 @@ export default function AvailableUnitsPage() {
     // the default view here so the tracker stays focused. Users can still
     // click an SOL/EXC/COM lozenge to drill back in.
     const PRE_SOL_CODES = new Set(["OPP", "REP", "SPEC", "LIVE", "AVA", "NEG"]);
-    let result = statusFilter !== "all"
+    let result = viewAll
+      ? [...toolbarFiltered]
+      : statusFilter !== "all"
       ? toolbarFiltered.filter(u => legacyToCode(u.marketingStatus) === statusFilter)
       : toolbarFiltered.filter(u => {
           const code = legacyToCode(u.marketingStatus) || "AVA";
@@ -1081,8 +1089,17 @@ export default function AvailableUnitsPage() {
         : clientNameFor(u);
       result = [...result].sort((a, b) => sortDir * keyFor(a).localeCompare(keyFor(b), "en-GB", { sensitivity: "base" }));
     }
+    if (viewAll) {
+      // Status is the primary grouping key; the stable sort keeps any
+      // property/client ordering from above within each group.
+      const orderOf = (u: AvailableUnit) => {
+        const i = MARKETING_STATUSES.indexOf(legacyToCode(u.marketingStatus) || "AVA");
+        return i === -1 ? MARKETING_STATUSES.length : i;
+      };
+      result = [...result].sort((a, b) => orderOf(a) - orderOf(b));
+    }
     return result;
-  }, [toolbarFiltered, statusFilter, sortBy, sortDir, propertyMap, dealMap, crmCompanies]);
+  }, [toolbarFiltered, statusFilter, viewAll, sortBy, sortDir, propertyMap, dealMap, crmCompanies]);
 
   const stats = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -1362,12 +1379,21 @@ export default function AvailableUnitsPage() {
       {/* KPI stat cards — matching Investment Tracker style */}
       {isMobile ? (
         <div className="flex flex-wrap gap-1.5">
+          <button
+            onClick={() => { setViewAll(!viewAll); setStatusFilter("all"); }}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${viewAll ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
+            data-testid="stat-chip-all"
+          >
+            <Layers className="w-3 h-3" />
+            All statuses
+            <span className="font-bold tabular-nums">{toolbarFiltered.length}</span>
+          </button>
           {MARKETING_STATUSES.map(s => {
             const count = toolbarFiltered.filter(u => legacyToCode(u.marketingStatus) === s).length;
             return (
               <button
                 key={s}
-                onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
+                onClick={() => { setViewAll(false); setStatusFilter(statusFilter === s ? "all" : s); }}
                 className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${statusFilter === s ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
                 data-testid={`stat-chip-${s.toLowerCase()}`}
               >
@@ -1381,13 +1407,28 @@ export default function AvailableUnitsPage() {
       ) : (
       <ScrollArea className="w-full">
         <div className="flex items-center gap-3 pb-1">
+          <Card
+            className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${viewAll ? "border-primary" : ""}`}
+            onClick={() => { setViewAll(!viewAll); setStatusFilter("all"); }}
+            data-testid="stat-card-all"
+          >
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <Layers className="w-3.5 h-3.5 text-muted-foreground" />
+                <div>
+                  <p className="text-lg font-bold">{toolbarFiltered.length}</p>
+                  <p className="text-xs text-muted-foreground">All statuses</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
           {MARKETING_STATUSES.map(s => {
             const count = toolbarFiltered.filter(u => legacyToCode(u.marketingStatus) === s).length;
             return (
               <Card
                 key={s}
                 className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${statusFilter === s ? "border-primary" : ""}`}
-                onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
+                onClick={() => { setViewAll(false); setStatusFilter(statusFilter === s ? "all" : s); }}
                 data-testid={`stat-card-${s.toLowerCase()}`}
               >
                 <CardContent className="p-3">
@@ -1451,10 +1492,11 @@ export default function AvailableUnitsPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 pb-2">
-            {filtered.map(u => {
+            {filtered.map((u, idx) => {
               const prop = propertyMap[u.propertyId];
               const deal = u.dealId ? dealMap[u.dealId] : null;
               const code = legacyToCode(u.marketingStatus) || "AVA";
+              const prevCode = idx > 0 ? (legacyToCode(filtered[idx - 1].marketingStatus) || "AVA") : null;
               const tenant = deal?.tenantId ? companyMap[deal.tenantId] : null;
               const rent = deal?.rentPa ?? (u as any).askingRent;
               const size = deal?.totalAreaSqft ?? u.sqft;
@@ -1466,7 +1508,17 @@ export default function AvailableUnitsPage() {
                 { label: "Rent p.a.", value: rent ? `£${Number(rent).toLocaleString()}` : null },
               ].filter(r => r.value);
               return (
-                <div key={u.id} className="rounded-xl border bg-card p-4 space-y-3 shadow-sm" data-testid={`mobile-unit-${u.id}`}>
+                <Fragment key={u.id}>
+                {viewAll && code !== prevCode && (
+                  <div className="flex items-center gap-2 pt-2 text-xs font-semibold uppercase tracking-wide" data-testid={`mobile-status-group-${code.toLowerCase()}`}>
+                    <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[code] || "bg-gray-400"}`} />
+                    {DEAL_STATUS_LABELS[code]}
+                    <span className="text-muted-foreground font-normal normal-case tracking-normal tabular-nums">
+                      {filtered.filter(x => (legacyToCode(x.marketingStatus) || "AVA") === code).length}
+                    </span>
+                  </div>
+                )}
+                <div className="rounded-xl border bg-card p-4 space-y-3 shadow-sm" data-testid={`mobile-unit-${u.id}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
                       <span className="text-sm font-semibold leading-tight block truncate">{prop?.name || u.unitName || "Unit"}</span>
@@ -1506,6 +1558,7 @@ export default function AvailableUnitsPage() {
                     </Button>
                   </div>
                 </div>
+                </Fragment>
               );
             })}
           </div>
@@ -1564,9 +1617,11 @@ export default function AvailableUnitsPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                filtered.map(u => {
+                filtered.map((u, idx) => {
                   const prop = propertyMap[u.propertyId];
                   const deal = u.dealId ? dealMap[u.dealId] : null;
+                  const rowCode = legacyToCode(u.marketingStatus) || "AVA";
+                  const prevRowCode = idx > 0 ? (legacyToCode(filtered[idx - 1].marketingStatus) || "AVA") : null;
                   const unitTargets: any[] = briefByUnit[u.id]?.targets || [];
                   // Unit-level cells span every target row, so targets read
                   // as first-class columns. Adding after the first target
@@ -1576,6 +1631,19 @@ export default function AvailableUnitsPage() {
                   const unitClientCompanyId = briefByUnit[u.id]?.clientCompanyId || (prop as any)?.landlordId || null;
                   return (
                     <Fragment key={u.id}>
+                    {viewAll && rowCode !== prevRowCode && (
+                      <TableRow className="bg-muted/60 hover:bg-muted/60" data-testid={`status-group-${rowCode.toLowerCase()}`}>
+                        <TableCell colSpan={hideClientCol ? 18 : 19} className="py-1.5">
+                          <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
+                            <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[rowCode] || "bg-gray-400"}`} />
+                            {DEAL_STATUS_LABELS[rowCode]}
+                            <span className="text-muted-foreground font-normal normal-case tracking-normal tabular-nums">
+                              {filtered.filter(x => (legacyToCode(x.marketingStatus) || "AVA") === rowCode).length}
+                            </span>
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    )}
                     <TableRow className={selectedIds.has(u.id) ? "bg-primary/5" : ""} data-testid={`row-unit-${u.id}`}>
                       <TableCell rowSpan={unitRowSpan} className="px-2">
                         <Checkbox
@@ -2009,6 +2077,47 @@ export default function AvailableUnitsPage() {
         </ScrollableTable>
       </Card>
       )}
+
+      {/* All-statuses view rounds off with the general tenancy schedule so
+          the whole picture — every deal stage plus the rent roll — reads
+          top to bottom without clicking through categories. One collapsible
+          per property; schedules mount lazily on expand. */}
+      {viewAll && (() => {
+        const schedulePropIds = Array.from(new Set(filtered.map(u => u.propertyId).filter(Boolean)));
+        if (schedulePropIds.length === 0) return null;
+        return (
+          <div className="space-y-3 pt-2">
+            <div className="flex items-center gap-2">
+              <Building2 className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold">General Tenancy Schedule</h2>
+            </div>
+            {schedulePropIds.map(pid => {
+              const expanded = scheduleOpen[pid] ?? schedulePropIds.length === 1;
+              return (
+                <Card key={pid}>
+                  <button
+                    type="button"
+                    className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium"
+                    onClick={() => setScheduleOpen(prev => ({ ...prev, [pid]: !expanded }))}
+                    data-testid={`tenancy-schedule-toggle-${pid}`}
+                  >
+                    <span className="flex items-center gap-2 min-w-0">
+                      <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <span className="truncate">{propertyMap[pid]?.name || "Property"}</span>
+                    </span>
+                    {expanded ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+                  </button>
+                  {expanded && (
+                    <CardContent className="pt-0">
+                      <PropertyUnifiedSchedule propertyId={pid} />
+                    </CardContent>
+                  )}
+                </Card>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       {/* Stage 3b — unified Add-Unit dialog (behind VITE_UNIFIED_ADD_UNIT). */}
       <UnifiedAddUnitDialog
