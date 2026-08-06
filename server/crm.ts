@@ -1728,13 +1728,18 @@ export function setupCrmRoutes(app: Express) {
             [req.params.id]
           )).rows.length > 0;
         if (!isAllowedBrand && !isTenantRepAgent) return res.status(403).json({ error: "Access denied" });
-        // Strip BGP-internal + KYC/AML/PEP fields for client viewers.
+        // Strip BGP-internal + KYC/AML/PEP fields for client viewers. NB the
+        // company row is camelCase (Drizzle-mapped) — the hunter/distress keys
+        // were previously listed in snake_case and so never actually stripped,
+        // leaking BGP's private prospecting notes to clients.
         const {
           kycStatus, kycCheckedAt, kycApprovedBy, kycExpiresAt,
           amlChecklist, amlRiskLevel, amlPepStatus, amlSourceOfWealth,
           amlSourceOfWealthNotes, amlEddRequired, amlEddReason, amlNotes,
           companiesHouseOfficers, companiesHouseData, hunterFlag, trackingReason,
-          letting_hunter_flag, letting_hunter_notes, distress_flag, distress_notes,
+          lettingHunterFlag, lettingHunterNotes, investmentHunterFlag, investmentHunterNotes,
+          distressFlag, distressNotes, acquiringNow, acquiringNowNotes,
+          disposingNow, disposingNowNotes, lendingAppetiteNotes, lastInteraction,
           bgpContactCrm, bgpContactUserIds, aiGeneratedFields, brandAnalysis,
           ...safe
         } = company;

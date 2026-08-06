@@ -1973,6 +1973,26 @@ async function markRound(page, cross) {
     if (r.pending !== 0) throw new Error(`correspondence-derived contact suggestions leaked to the client (${r.pending} rows)`);
   });
 
+  // The raw company row (/api/crm/companies/:id) must strip BGP-internal BD
+  // prospecting fields for client viewers — hunter flags/notes, distress
+  // notes, acquiring/disposing notes, lending appetite, and last-interaction.
+  // (Regression guard: these were listed in the strip in snake_case while the
+  // row is camelCase, so they leaked. Honi carries seeded QA notes staff-side.)
+  await step(page, p, 'client-company-detail-bd-stripped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/crm/companies/77777777-7777-7777-7777-777777777777', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const d = await res.json().catch(() => null);
+      const internal = ['lettingHunterFlag', 'lettingHunterNotes', 'investmentHunterFlag', 'investmentHunterNotes',
+        'distressFlag', 'distressNotes', 'acquiringNowNotes', 'disposingNowNotes', 'lendingAppetiteNotes', 'lastInteraction'];
+      const leaked = internal.filter((k) => d && d[k] != null && d[k] !== false && d[k] !== '');
+      return { ok: true, leaked };
+    });
+    if (!r.ok) throw new Error(`client company-detail unhealthy (${r.status})`);
+    if (r.leaked.length) throw new Error(`BGP-internal BD fields leaked to the client on the company row: ${r.leaked.join(', ')}`);
+  });
+
   // Suggested-pitches is the brand-profile "which of my vacant units could
   // this operator take" engine (live requirement + AI-ranked available units
   // in the viewer's scope). A client sees it for a brand in their hospitality
