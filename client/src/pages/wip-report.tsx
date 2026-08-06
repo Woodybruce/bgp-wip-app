@@ -710,6 +710,12 @@ export default function WipReport() {
   });
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const showCol = (k: string) => !hiddenWipCols.has(k);
+  // When the Deal Status filter is narrowed to Invoiced only, every row is a
+  // done deal — the Target Month column is meaningless, so drop it entirely.
+  const invoicedOnly =
+    selectedStatuses.size > 0 &&
+    [...selectedStatuses].every((s) => legacyToCode(s) === "INV");
+  const colVisible = (k: string) => (k === "dealDate" && invoicedOnly ? false : showCol(k));
   const toggleWipCol = (k: string) => setHiddenWipCols((prev) => {
     const n = new Set(prev);
     if (n.has(k)) n.delete(k); else n.add(k);
@@ -1323,7 +1329,7 @@ export default function WipReport() {
                         data-testid="checkbox-select-all"
                       />
                     </th>
-                    {WIP_DETAIL_COLS.filter((col) => showCol(col.key)).map((col) => (
+                    {WIP_DETAIL_COLS.filter((col) => colVisible(col.key)).map((col) => (
                       <th
                         key={col.key}
                         className={`px-2 py-2 text-left font-medium text-gray-600 cursor-pointer hover:text-gray-900 ${col.width}`}
@@ -1351,12 +1357,12 @@ export default function WipReport() {
                           />
                         )}
                       </td>
-                      {showCol("dealRef") && (
+                      {colVisible("dealRef") && (
                       <td className="px-2 py-1.5 text-xs font-mono text-gray-400 whitespace-nowrap">
                         {e.dealRef ? `#${e.dealRef}` : "—"}
                       </td>
                       )}
-                      {showCol("ref") && (
+                      {colVisible("ref") && (
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[180px]">
                         {e.dealId ? (
                           <Link href={`/deals/${e.dealId}`}>
@@ -1365,28 +1371,29 @@ export default function WipReport() {
                         ) : (e.ref || "—")}
                       </td>
                       )}
-                      {showCol("client") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">{e.client || "—"}</td>}
-                      {showCol("tenant") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.tenant || "—"}</td>}
-                      {showCol("project") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.project || "—"}</td>}
-                      {showCol("billingEntity") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.billingEntity || "—"}</td>}
-                      {showCol("team") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.team || "—"}</td>}
-                      {showCol("amtWip") && (
+                      {colVisible("client") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">{e.client || "—"}</td>}
+                      {colVisible("tenant") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.tenant || "—"}</td>}
+                      {colVisible("project") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.project || "—"}</td>}
+                      {colVisible("billingEntity") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.billingEntity || "—"}</td>}
+                      {colVisible("team") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.team || "—"}</td>}
+                      {colVisible("amtWip") && (
                       <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
                         {e.amtWip ? formatFullCurrency(e.amtWip) : "—"}
                       </td>
                       )}
-                      {showCol("amtInvoice") && (
+                      {colVisible("amtInvoice") && (
                       <td className="px-2 py-1.5 text-green-700 font-mono text-right">
                         {e.amtInvoice ? formatFullCurrency(e.amtInvoice) : "—"}
                       </td>
                       )}
-                      {showCol("dealDate") && (
+                      {colVisible("dealDate") && (
                       <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">
                         {(() => {
-                          const isActual = !!(e.exchangedAt || e.completedAt || e.invoicedAt);
-                          const pick = e.invoicedAt
-                            ? { label: "Invoiced", iso: e.invoicedAt, cls: "bg-green-100 text-green-800" }
-                            : e.completedAt
+                          // Invoiced deals are done — a target month is meaningless,
+                          // so the cell stays blank.
+                          if (e.stage === "invoiced" || e.invoicedAt) return <span>—</span>;
+                          const isActual = !!(e.exchangedAt || e.completedAt);
+                          const pick = e.completedAt
                             ? { label: "Completed", iso: e.completedAt, cls: "bg-blue-100 text-blue-800" }
                             : e.exchangedAt
                             ? { label: "Exchanged", iso: e.exchangedAt, cls: "bg-amber-100 text-amber-800" }
@@ -1438,16 +1445,16 @@ export default function WipReport() {
                         })()}
                       </td>
                       )}
-                      {showCol("dealType") && (
+                      {colVisible("dealType") && (
                       <td className="px-2 py-1.5">
                         {e.dealType ? (
                           <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${DEAL_TYPE_BADGE_COLORS[e.dealType] || "bg-gray-100 text-gray-700"}`}>{e.dealType}</span>
                         ) : <span className="text-gray-400">—</span>}
                       </td>
                       )}
-                      {showCol("agent") && <td className="px-2 py-1.5 text-gray-700">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>}
-                      {showCol("dealStatus") && <td className="px-2 py-1.5 text-gray-600 truncate max-w-[100px]">{e.dealStatus || "—"}</td>}
-                      {showCol("stage") && (
+                      {colVisible("agent") && <td className="px-2 py-1.5 text-gray-700">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>}
+                      {colVisible("dealStatus") && <td className="px-2 py-1.5 text-gray-600 truncate max-w-[100px]">{e.dealStatus || "—"}</td>}
+                      {colVisible("stage") && (
                       <td className="px-2 py-1.5 text-xs truncate max-w-[100px]">
                         {e.stage === "pipeline" ? (
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">Pipeline</span>
@@ -1465,19 +1472,19 @@ export default function WipReport() {
                 </tbody>
                 <tfoot className="bg-gray-100 border-t font-semibold">
                   <tr>
-                    <td colSpan={1 + WIP_LEAD_KEYS.filter(showCol).length} className="px-2 py-1.5 text-gray-800">Total</td>
-                    {showCol("amtWip") && (
+                    <td colSpan={1 + WIP_LEAD_KEYS.filter(colVisible).length} className="px-2 py-1.5 text-gray-800">Total</td>
+                    {colVisible("amtWip") && (
                       <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
                         {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
                       </td>
                     )}
-                    {showCol("amtInvoice") && (
+                    {colVisible("amtInvoice") && (
                       <td className="px-2 py-1.5 text-green-700 font-mono text-right">
                         {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0))}
                       </td>
                     )}
-                    {WIP_TRAIL_KEYS.filter(showCol).length > 0 && (
-                      <td colSpan={WIP_TRAIL_KEYS.filter(showCol).length} className="px-2 py-1.5" />
+                    {WIP_TRAIL_KEYS.filter(colVisible).length > 0 && (
+                      <td colSpan={WIP_TRAIL_KEYS.filter(colVisible).length} className="px-2 py-1.5" />
                     )}
                   </tr>
                 </tfoot>
