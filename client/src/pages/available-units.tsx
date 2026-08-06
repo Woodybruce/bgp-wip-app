@@ -1346,10 +1346,10 @@ export default function AvailableUnitsPage() {
         </Select>
         <Select value={targetStatusFilter} onValueChange={setTargetStatusFilter}>
           <SelectTrigger className="w-[170px]" data-testid="select-target-status-filter">
-            <SelectValue placeholder="Target status" />
+            <SelectValue placeholder="Deal status" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Target Statuses</SelectItem>
+            <SelectItem value="all">All Deal Statuses</SelectItem>
             {BRIEF_TARGET_STATUSES.map(s => (
               <SelectItem key={s} value={s}>{s}</SelectItem>
             ))}
@@ -1586,7 +1586,7 @@ export default function AvailableUnitsPage() {
                 <TableHead className="w-[200px] min-w-[180px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("property")} data-testid="sort-property">
                   Property / Unit{sortBy === "property" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                 </TableHead>
-                <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>
+                <TableHead className="w-[130px] min-w-[130px]">Unit Status</TableHead>
                 {!hideClientCol && (
                   <TableHead className="w-[150px] min-w-[150px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
                     Client{sortBy === "client" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
@@ -1595,7 +1595,7 @@ export default function AvailableUnitsPage() {
                 <TableHead className="w-[170px] min-w-[170px]">Target Tenant</TableHead>
                 <TableHead className="w-[150px] min-w-[150px]">Category</TableHead>
                 <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>
-                <TableHead className="w-[130px] min-w-[130px]">Status</TableHead>
+                <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>
                 <TableHead className="w-[140px] min-w-[140px]">Agent</TableHead>
                 <TableHead className="w-[140px] min-w-[140px]">Client Contact</TableHead>
                 <TableHead className="min-w-[200px]">Comments</TableHead>
