@@ -995,8 +995,35 @@ export default function WipReport() {
     return { client, team, agent, project, status, month };
   }, [entries]);
 
+  // The server emits one entry per agent fee-split (so agent filtering and
+  // per-agent fees work), but Deal Detail should read one row per deal —
+  // a split deal was showing twice. Collapse splits by dealId: sum the fee
+  // shares, combine the agents. Merging AFTER filtering means an agent
+  // filter still shows only that agent's share of a split deal.
+  const mergedDetailEntries = useMemo(() => {
+    const byDeal = new Map<string, WipDealEntry>();
+    for (const e of filteredEntries) {
+      const key = e.dealId || e.id;
+      const existing = byDeal.get(key);
+      if (!existing) {
+        byDeal.set(key, { ...e, id: key });
+      } else {
+        existing.amtWip = (existing.amtWip || 0) + (e.amtWip || 0);
+        existing.amtInvoice = (existing.amtInvoice || 0) + (e.amtInvoice || 0);
+        if (e.agent) {
+          const agents = new Set(
+            (existing.agent || "").split(",").map(a => a.trim()).filter(Boolean),
+          );
+          (e.agent as string).split(",").map(a => a.trim()).filter(Boolean).forEach(a => agents.add(a));
+          existing.agent = [...agents].join(", ");
+        }
+      }
+    }
+    return [...byDeal.values()];
+  }, [filteredEntries]);
+
   const sortedDetailEntries = useMemo(() => {
-    const sorted = [...filteredEntries];
+    const sorted = [...mergedDetailEntries];
     sorted.sort((a, b) => {
       let aVal: any, bVal: any;
       switch (detailSort.column) {
@@ -1028,7 +1055,7 @@ export default function WipReport() {
       return detailSort.direction === "asc" ? aVal - bVal : bVal - aVal;
     });
     return sorted;
-  }, [filteredEntries, detailSort]);
+  }, [mergedDetailEntries, detailSort]);
 
   const toggleSort = (column: string) => {
     setDetailSort((prev) =>
