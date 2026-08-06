@@ -3925,6 +3925,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         LIMIT 1
       `, [req.params.id]);
       if (result.rows.length === 0) return res.status(404).json({ message: "Unit not found" });
+      // Scope the single-unit read like its /viewings and /offers siblings —
+      // the available-units LIST is client-scoped, so a client must not be able
+      // to read another landlord's unit (rent/size/marketing status) by id.
+      if (await assertUnitInClientScope(req, result.rows[0].propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
       res.json(result.rows[0]);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch unit" });

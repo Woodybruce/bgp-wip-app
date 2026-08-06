@@ -51,7 +51,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -523,7 +523,7 @@ async function victoriaRound(page, cross) {
 
   // 4h. Staff ChatBGP panel suggestion chips load into the composer.
   await step(page, p, 'staff-chat-suggestions', async () => {
-    await page.goto(`${BASE}/`);
+    await page.goto(`${BASE}/`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(3000);
     const chips = page.locator('[data-testid^="button-panel-suggestion-"]');
@@ -1797,7 +1797,7 @@ async function markRound(page, cross) {
     });
     if (!r.ok) throw new Error(`client activity-summary unhealthy (${r.status})`);
     if (r.rival) throw new Error("rival landlord content leaked into the client's activity summary");
-    await page.goto(`${BASE}/`);
+    await page.goto(`${BASE}/`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(3000);
     if (!(await page.locator('[data-testid="activity-summary"]').count())) throw new Error('activity-summary board missing from the client dashboard');
@@ -2214,7 +2214,7 @@ async function markRound(page, cross) {
   // pages) and the BGP Relationship card, and the portfolio payload supplies
   // coordinates for the pins.
   await step(page, p, 'client-dashboard-map-and-relationship', async () => {
-    await page.goto(`${BASE}/`);
+    await page.goto(`${BASE}/`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
     await page.waitForLoadState('networkidle').catch(() => {});
     await page.waitForTimeout(3000);
     if (!(await page.getByText('BGP Relationship', { exact: false }).count()))
@@ -2582,6 +2582,44 @@ async function markRound(page, cross) {
     if (r.del !== 403) throw new Error(`client removed a tenant from a property (expected 403, got ${r.del})`);
   });
 
+  // The available-units LIST is client-scoped, so the single-unit read must be
+  // too: a client can open their OWN unit by id (200) but a rival landlord's
+  // unit — its rent/size/marketing status — must be refused. (Regression
+  // guard: /api/available-units/:id had no scope check while its /viewings and
+  // /offers siblings did, so a client could read any unit by id.)
+  await step(page, p, 'client-available-unit-read-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json().catch(() => []);
+      const own = (Array.isArray(units) ? units[0] : null)?.id;
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      const ownStatus = own ? await g(`/api/available-units/${own}`) : 0;
+      const rival = await g('/api/available-units/99999999-3333-3333-3333-333333333333');
+      return { own: own ? ownStatus : null, rival };
+    });
+    if (r.own !== null && r.own !== 200) throw new Error(`client can't read their own available unit by id (expected 200, got ${r.own})`);
+    if (r.rival !== 403) throw new Error(`client read a rival landlord's available unit by id (expected 403, got ${r.rival})`);
+  });
+
+  // Detail-by-id siblings of the available-unit read must be scoped the same
+  // way (list scoped ⇒ single-fetch scoped): a client opens their OWN property
+  // by id but a rival landlord's property, and a rival landlord's contact, are
+  // refused — guarding the whole "read any row by guessing its id" class.
+  await step(page, p, 'client-detail-by-id-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      return {
+        ownProp: await g('/api/crm/properties/22222222-2222-2222-2222-222222222222'),
+        rivalProp: await g('/api/crm/properties/99999999-2222-2222-2222-222222222222'),
+        rivalContact: await g('/api/crm/contacts/99999999-6666-6666-6666-666666666666'),
+      };
+    });
+    if (r.ownProp !== 200) throw new Error(`client can't read their own property by id (expected 200, got ${r.ownProp})`);
+    if (r.rivalProp !== 403) throw new Error(`client read a rival landlord's property by id (expected 403, got ${r.rivalProp})`);
+    if (r.rivalContact !== 403) throw new Error(`client read a rival landlord's contact by id (expected 403, got ${r.rivalContact})`);
+  });
+
   // The property contacts map (Linked Contacts v2): a client reads the linked
   // contacts for their OWN scheme and may pin/hide a contact on it (a
   // per-property override, not a CRM edit), but the same actions on another
@@ -2657,7 +2695,7 @@ async function markRound(page, cross) {
   // ChatBGP panel: the suggestion chips must render for the client and clicking
   // one must load it into the composer (the panel is their main entry point).
   await step(page, p, 'client-chat-suggestions', async () => {
-    await page.goto(`${BASE}/`);
+    await page.goto(`${BASE}/`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(3000);
     const chips = page.locator('[data-testid^="button-panel-suggestion-"]');
@@ -3239,7 +3277,7 @@ async function markRound(page, cross) {
   // silently bounced to the dashboard on the live site (2026-08-02). Also
   // proves a staff-only route still bounces.
   await step(page, p, 'client-nav-guard-consistency', async () => {
-    await page.goto(`${BASE}/`);
+    await page.goto(`${BASE}/`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2000);
     const hrefs = await page.evaluate(() => {
@@ -3405,8 +3443,10 @@ async function samRound(page, cross) {
   const p = 'sam';
   // Rival client sanity: their own scoped app works…
   await step(page, p, 'rival-client-dashboard', async () => {
-    await page.goto(`${BASE}/`);
-    await page.waitForLoadState('domcontentloaded');
+    // The dashboard client-side-redirects on mount, which can abort the goto —
+    // tolerate ERR_ABORTED like visit() does, then read the settled page.
+    await page.goto(`${BASE}/`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('domcontentloaded').catch(() => {});
     await page.waitForTimeout(3500);
     const body = (await page.locator('main, [role="main"], body').first().innerText().catch(() => '')).trim();
     if (body.length < 40) throw new Error('rival client dashboard rendered blank');
