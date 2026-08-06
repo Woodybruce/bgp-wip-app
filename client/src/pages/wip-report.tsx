@@ -3,16 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import { toDateInputValue } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import {
   Printer,
-  Search,
   ArrowUpDown,
-  ChevronDown,
   X,
   Upload,
   Loader2,
@@ -20,7 +17,7 @@ import {
   Plus,
   Download,
 } from "lucide-react";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { FilterDropdown } from "@/components/wip-filter-dropdown";
 import { ScrollableTable } from "@/components/scrollable-table";
 import bgpLogo from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTeam } from "@/lib/team-context";
@@ -153,116 +150,6 @@ function getMonthSortKey(m: string): number {
   return parsed.calendarYear * 12 + fyMonth;
 }
 
-function FilterDropdown({
-  title,
-  items,
-  selected,
-  onToggle,
-  onSelectAll,
-  onClearAll,
-  values,
-  getLabel,
-}: {
-  title: string;
-  items: string[];
-  selected: Set<string>;
-  onToggle: (item: string) => void;
-  onSelectAll?: () => void;
-  onClearAll?: () => void;
-  values?: Record<string, number>;
-  getLabel?: (item: string) => string;
-}) {
-  const [searchTerm, setSearchTerm] = useState("");
-  const label = (item: string) => (getLabel ? getLabel(item) : item);
-  const filtered = searchTerm
-    ? items.filter((i) => {
-        const q = searchTerm.toLowerCase();
-        return i.toLowerCase().includes(q) || label(i).toLowerCase().includes(q);
-      })
-    : items;
-  // Empty selection = no filter (everything shows). Any tick narrows.
-  const isFiltered = selected.size > 0;
-  const slug = title.toLowerCase().replace(/\s/g, "-");
-
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className={`h-8 gap-1.5 ${isFiltered ? "border-green-600 bg-green-50 text-green-800 hover:bg-green-100" : ""}`}
-          data-testid={`wip-filter-${slug}`}
-        >
-          {title}
-          {isFiltered && (
-            <Badge variant="secondary" className="text-[10px] h-4 px-1 bg-green-600 text-white hover:bg-green-600">
-              {selected.size}
-            </Badge>
-          )}
-          <ChevronDown className="h-3.5 w-3.5 opacity-60" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-72 p-0">
-        <div className="bg-gray-50 border-b px-3 py-2 flex items-center justify-between rounded-t-md">
-          <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">{title}</span>
-          {(onSelectAll || onClearAll) && (
-            <div className="flex gap-2">
-              {onSelectAll && (
-                <button onClick={onSelectAll} className="text-[10px] text-blue-600 hover:underline" data-testid={`wip-filter-selectall-${slug}`}>
-                  Select all
-                </button>
-              )}
-              {onClearAll && (
-                <button onClick={onClearAll} className="text-[10px] text-blue-600 hover:underline" data-testid={`wip-filter-clearall-${slug}`}>
-                  Clear
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-        {items.length > 6 && (
-          <div className="px-2 pt-2">
-            <div className="relative">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-gray-400" />
-              <Input
-                placeholder="Search..."
-                className="h-7 text-xs pl-6"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                data-testid={`wip-filter-search-${slug}`}
-              />
-            </div>
-          </div>
-        )}
-        <div className="max-h-72 overflow-y-auto px-2 py-1.5">
-          {filtered.length === 0 ? (
-            <div className="px-1 py-2 text-xs text-gray-400">No matches</div>
-          ) : (
-            filtered.map((item) => (
-              <label
-                key={item}
-                className="flex items-center gap-2 py-1 px-1 text-xs text-gray-700 cursor-pointer rounded hover:bg-gray-50"
-              >
-                <Checkbox
-                  checked={selected.has(item)}
-                  onCheckedChange={() => onToggle(item)}
-                  className="h-3.5 w-3.5"
-                  data-testid={`wip-filter-checkbox-${slug}-${item}`}
-                />
-                <span className="truncate flex-1">{label(item)}</span>
-                {values && (
-                  <span className="font-mono text-gray-500 whitespace-nowrap">
-                    {formatFullCurrency(values[item] || 0)}
-                  </span>
-                )}
-              </label>
-            ))
-          )}
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
 
 interface AgentSummaryRow {
   agent: string;
