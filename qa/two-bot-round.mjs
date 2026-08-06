@@ -1993,6 +1993,31 @@ async function markRound(page, cross) {
     if (r.leaked.length) throw new Error(`BGP-internal BD fields leaked to the client on the company row: ${r.leaked.join(', ')}`);
   });
 
+  // /api/crm/companies/:id/deals only serves a client their OWN company's
+  // deals (fees stripped) — asking for a brand's deals returns []. Honi carries
+  // the QA-LEAK-DEAL fixture (with a rival landlord); the client must get an
+  // empty list there, and any deal on their own company row must be fee-free.
+  await step(page, p, 'client-company-deals-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json().catch(() => ({}));
+      const mine = me?.companyScopeId || me?.companyId || null;
+      const brandRes = await fetch('/api/crm/companies/77777777-7777-7777-7777-777777777777/deals', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const brand = brandRes.ok ? await brandRes.json().catch(() => null) : null;
+      const brandRows = Array.isArray(brand) ? brand : (brand?.deals || []);
+      let ownFeeLeak = false;
+      if (mine) {
+        const own = await (await fetch(`/api/crm/companies/${mine}/deals`, { headers: auth })).json().catch(() => []);
+        const rows = Array.isArray(own) ? own : (own?.deals || []);
+        ownFeeLeak = rows.some((d) => (d.fee != null && d.fee !== 0) || (d.feeNotes != null && d.feeNotes !== ''));
+      }
+      return { brandStatus: brandRes.status, brandCount: brandRows.length, ownFeeLeak };
+    });
+    if (r.brandStatus !== 200) throw new Error(`client company-deals endpoint unhealthy (${r.brandStatus})`);
+    if (r.brandCount !== 0) throw new Error(`client listed a brand's deals via /companies/:id/deals (${r.brandCount} rows — QA-LEAK-DEAL leak)`);
+    if (r.ownFeeLeak) throw new Error('BGP fee leaked on the client own-company deals list');
+  });
+
   // Suggested-pitches is the brand-profile "which of my vacant units could
   // this operator take" engine (live requirement + AI-ranked available units
   // in the viewer's scope). A client sees it for a brand in their hospitality
