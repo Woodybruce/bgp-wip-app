@@ -1926,7 +1926,7 @@ export const insertUnitBriefSchema = createInsertSchema(unitBriefs).omit({ id: t
 export type InsertUnitBrief = z.infer<typeof insertUnitBriefSchema>;
 export type UnitBrief = typeof unitBriefs.$inferSelect;
 
-export const BRIEF_TARGET_STATUSES = ["Identified", "Approached", "Meeting Held", "Inspection Done", "Offer", "Heads of Terms", "Let", "Passed"] as const;
+export const BRIEF_TARGET_STATUSES = ["Identified", "Approached", "Meeting Held", "Inspection Done", "Offer", "Negotiating", "Heads of Terms", "In Sols", "Let", "Passed"] as const;
 
 export const unitTargetOperators = pgTable("unit_target_operators", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

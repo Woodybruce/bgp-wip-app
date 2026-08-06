@@ -20,8 +20,8 @@ import type { AvailableUnit, UnitBrief, UnitTargetOperator } from "@shared/schem
 
 type BriefWithTargets = UnitBrief & { targets: UnitTargetOperator[] };
 
-const MET_STATUSES = new Set(["Meeting Held", "Inspection Done", "Offer", "Heads of Terms", "Let"]);
-const INSPECTED_STATUSES = new Set(["Inspection Done", "Offer", "Heads of Terms", "Let"]);
+const MET_STATUSES = new Set(["Meeting Held", "Inspection Done", "Offer", "Negotiating", "Heads of Terms", "In Sols", "Let"]);
+const INSPECTED_STATUSES = new Set(["Inspection Done", "Offer", "Negotiating", "Heads of Terms", "In Sols", "Let"]);
 
 function daysUntil(dateStr: string | null | undefined): number | null {
   if (!dateStr) return null;
