@@ -1377,12 +1377,12 @@ export default function WipReport() {
                       {colVisible("billingEntity") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.billingEntity || "—"}</td>}
                       {colVisible("team") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.team || "—"}</td>}
                       {colVisible("amtWip") && (
-                      <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
+                      <td className="px-2 py-1.5 text-gray-900 font-mono">
                         {e.amtWip ? formatFullCurrency(e.amtWip) : "—"}
                       </td>
                       )}
                       {colVisible("amtInvoice") && (
-                      <td className="px-2 py-1.5 text-green-700 font-mono text-right">
+                      <td className="px-2 py-1.5 text-green-700 font-mono">
                         {e.amtInvoice ? formatFullCurrency(e.amtInvoice) : "—"}
                       </td>
                       )}
@@ -1474,12 +1474,12 @@ export default function WipReport() {
                   <tr>
                     <td colSpan={1 + WIP_LEAD_KEYS.filter(colVisible).length} className="px-2 py-1.5 text-gray-800">Total</td>
                     {colVisible("amtWip") && (
-                      <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
+                      <td className="px-2 py-1.5 text-gray-900 font-mono">
                         {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
                       </td>
                     )}
                     {colVisible("amtInvoice") && (
-                      <td className="px-2 py-1.5 text-green-700 font-mono text-right">
+                      <td className="px-2 py-1.5 text-green-700 font-mono">
                         {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0))}
                       </td>
                     )}

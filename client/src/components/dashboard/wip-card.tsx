@@ -415,8 +415,8 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
                     <td className="px-2 py-1 text-gray-700 truncate max-w-[130px]">{e.project || "—"}</td>
                     <td className="px-2 py-1 text-gray-700 truncate max-w-[160px]">{e.team || "—"}</td>
                     <td className="px-2 py-1 text-gray-700">{e.agent ? (e.agent as string).split(",").map((a: string) => a.trim()).map((a: string) => a.includes(" ") ? a.split(" ").map((p: string) => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>
-                    <td className="px-2 py-1 text-gray-900 font-mono text-right">{e.amtWip ? formatCurrencyFull(e.amtWip) : "—"}</td>
-                    <td className="px-2 py-1 text-green-700 font-mono text-right">{e.amtInvoice ? formatCurrencyFull(e.amtInvoice) : "—"}</td>
+                    <td className="px-2 py-1 text-gray-900 font-mono">{e.amtWip ? formatCurrencyFull(e.amtWip) : "—"}</td>
+                    <td className="px-2 py-1 text-green-700 font-mono">{e.amtInvoice ? formatCurrencyFull(e.amtInvoice) : "—"}</td>
                     <td className="px-2 py-1 text-gray-600">{e.month || "—"}</td>
                     <td className="px-2 py-1 text-gray-600 truncate max-w-[100px]">{e.dealStatus || "—"}</td>
                   </tr>
@@ -425,8 +425,8 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
               <tfoot className="bg-gray-100 border-t font-semibold">
                 <tr>
                   <td colSpan={6} className="px-2 py-1 text-gray-800 text-xs">Total</td>
-                  <td className="px-2 py-1 text-gray-900 font-mono text-right text-xs">{formatCurrencyFull(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}</td>
-                  <td className="px-2 py-1 text-green-700 font-mono text-right text-xs">{formatCurrencyFull(sortedDetailEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0))}</td>
+                  <td className="px-2 py-1 text-gray-900 font-mono text-xs">{formatCurrencyFull(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}</td>
+                  <td className="px-2 py-1 text-green-700 font-mono text-xs">{formatCurrencyFull(sortedDetailEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0))}</td>
                   <td colSpan={2} />
                 </tr>
               </tfoot>
