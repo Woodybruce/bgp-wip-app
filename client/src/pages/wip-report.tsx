@@ -90,7 +90,9 @@ const DEAL_TYPE_BADGE_COLORS: Record<string, string> = {
   "Assignment": "bg-slate-100 text-slate-800",
 };
 
-const WIP_FILTERS_STORAGE_KEY = "bgp-wip-report-filters";
+// v2: filters are opt-in — empty selection means "show everything". The key
+// bump discards v1 snapshots, which stored every option ticked by default.
+const WIP_FILTERS_STORAGE_KEY = "bgp-wip-report-filters-v2";
 
 interface SavedWipFilters {
   activeTab: "report" | "agent-summary" | "fee-check";
@@ -144,13 +146,6 @@ function getFiscalYear(m: string | null | undefined): number | null {
   return parsed.monthNum >= 4 ? parsed.calendarYear + 1 : parsed.calendarYear;
 }
 
-function getCurrentFiscalYear(): number {
-  const now = new Date();
-  const month = now.getMonth() + 1;
-  const year = now.getFullYear();
-  return month >= 4 ? year + 1 : year;
-}
-
 function getMonthSortKey(m: string): number {
   const parsed = parseMonth(m);
   if (!parsed) return 99;
@@ -185,7 +180,8 @@ function FilterDropdown({
         return i.toLowerCase().includes(q) || label(i).toLowerCase().includes(q);
       })
     : items;
-  const isFiltered = selected.size > 0 && selected.size < items.length;
+  // Empty selection = no filter (everything shows). Any tick narrows.
+  const isFiltered = selected.size > 0;
   const slug = title.toLowerCase().replace(/\s/g, "-");
 
   return (
@@ -900,25 +896,9 @@ export default function WipReport() {
     return sorted;
   }, [entries]);
 
-  const filtersInitialized = useRef(!!savedFilters);
+  // No default selections — the page opens showing every deal, and each
+  // dropdown starts unticked. Ticking options narrows the report.
   useEffect(() => {
-    if (!filtersInitialized.current && entries.length > 0 && user) {
-      filtersInitialized.current = true;
-      setSelectedClients(new Set(allClients));
-      setSelectedTeams(new Set(allTeams));
-      setSelectedMonths(new Set(allMonths));
-      setSelectedAgents(new Set(allAgents));
-      setSelectedProjects(new Set(allProjects));
-      setSelectedStatuses(new Set(allStatuses));
-      if (allFiscalYears.length > 0) {
-        const currentFY = getCurrentFiscalYear();
-        setSelectedFiscalYears(new Set([allFiscalYears.includes(currentFY) ? currentFY : allFiscalYears[0]]));
-      }
-    }
-  }, [entries, user, allClients, allTeams, allMonths, allAgents, allProjects, allStatuses, allFiscalYears]);
-
-  useEffect(() => {
-    if (!filtersInitialized.current) return;
     try {
       const snapshot: SavedWipFilters = {
         activeTab,
@@ -937,17 +917,18 @@ export default function WipReport() {
     }
   }, [activeTab, selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses, selectedFiscalYears, detailSort]);
 
+  // A dropdown with nothing ticked applies no filter; any tick narrows.
   const filteredEntries = useMemo(() => {
     return entries.filter((e) => {
-      if (selectedClients.size > 0 && selectedClients.size < allClients.length) {
+      if (selectedClients.size > 0) {
         if (!e.client || !selectedClients.has(e.client)) return false;
       }
-      if (selectedTeams.size > 0 && selectedTeams.size < allTeams.length) {
+      if (selectedTeams.size > 0) {
         if (!e.team) return false;
         const entryTeams = (e.team as string).split(",").map(t => t.trim()).filter(Boolean);
         if (!entryTeams.some(t => selectedTeams.has(t))) return false;
       }
-      if (selectedFiscalYears.size > 0 && selectedFiscalYears.size < allFiscalYears.length) {
+      if (selectedFiscalYears.size > 0) {
         const rawFy = e.fiscalYear && e.fiscalYear >= 2000 && e.fiscalYear <= 2100 ? e.fiscalYear : null;
         const fy = rawFy || (e.month ? getFiscalYear(e.month) : null);
         if (fy) {
@@ -956,23 +937,23 @@ export default function WipReport() {
           if (!selectedFiscalYears.has(0)) return false;
         }
       }
-      if (selectedMonths.size > 0 && selectedMonths.size < allMonths.length) {
+      if (selectedMonths.size > 0) {
         if (e.month && !selectedMonths.has(e.month)) return false;
       }
-      if (selectedAgents.size > 0 && selectedAgents.size < allAgents.length) {
+      if (selectedAgents.size > 0) {
         if (!e.agent) return false;
         const agentParts = (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean);
         if (!agentParts.some(a => selectedAgents.has(a))) return false;
       }
-      if (selectedProjects.size > 0 && selectedProjects.size < allProjects.length) {
+      if (selectedProjects.size > 0) {
         if (!e.project || !selectedProjects.has(e.project)) return false;
       }
-      if (selectedStatuses.size > 0 && selectedStatuses.size < allStatuses.length) {
+      if (selectedStatuses.size > 0) {
         if (!e.dealStatus || !selectedStatuses.has(e.dealStatus)) return false;
       }
       return true;
     });
-  }, [entries, selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses, selectedFiscalYears, allClients.length, allTeams.length, allMonths.length, allAgents.length, allProjects.length, allStatuses.length, allFiscalYears.length]);
+  }, [entries, selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses, selectedFiscalYears]);
 
   const totalWip = useMemo(
     () => filteredEntries.reduce((s, e) => s + (e.amtWip || 0), 0),
@@ -1109,20 +1090,22 @@ export default function WipReport() {
   };
 
   const activeFilterCount =
-    (selectedClients.size > 0 && selectedClients.size < allClients.length ? 1 : 0) +
-    (selectedTeams.size > 0 && selectedTeams.size < allTeams.length ? 1 : 0) +
-    (selectedMonths.size > 0 && selectedMonths.size < allMonths.length ? 1 : 0) +
-    (selectedAgents.size > 0 && selectedAgents.size < allAgents.length ? 1 : 0) +
-    (selectedProjects.size > 0 && selectedProjects.size < allProjects.length ? 1 : 0) +
-    (selectedStatuses.size > 0 && selectedStatuses.size < allStatuses.length ? 1 : 0);
+    (selectedFiscalYears.size > 0 ? 1 : 0) +
+    (selectedClients.size > 0 ? 1 : 0) +
+    (selectedTeams.size > 0 ? 1 : 0) +
+    (selectedMonths.size > 0 ? 1 : 0) +
+    (selectedAgents.size > 0 ? 1 : 0) +
+    (selectedProjects.size > 0 ? 1 : 0) +
+    (selectedStatuses.size > 0 ? 1 : 0);
 
   const resetAllFilters = () => {
-    setSelectedClients(new Set(allClients));
-    setSelectedTeams(new Set(allTeams));
-    setSelectedMonths(new Set(allMonths));
-    setSelectedAgents(new Set(allAgents));
-    setSelectedProjects(new Set(allProjects));
-    setSelectedStatuses(new Set(allStatuses));
+    setSelectedFiscalYears(new Set());
+    setSelectedClients(new Set());
+    setSelectedTeams(new Set());
+    setSelectedMonths(new Set());
+    setSelectedAgents(new Set());
+    setSelectedProjects(new Set());
+    setSelectedStatuses(new Set());
   };
 
   if (isLoading) {
@@ -1294,15 +1277,11 @@ export default function WipReport() {
                   const yr = item === "TBC" ? 0 : parseInt(item);
                   setSelectedFiscalYears(prev => {
                     const next = new Set(prev);
-                    if (next.has(yr)) {
-                      next.delete(yr);
-                      if (next.size === 0) next.add(yr);
-                    } else {
-                      next.add(yr);
-                    }
+                    if (next.has(yr)) next.delete(yr); else next.add(yr);
                     return next;
                   });
                 }}
+                onClearAll={() => setSelectedFiscalYears(new Set())}
               />
             )}
             <FilterDropdown
@@ -1310,7 +1289,6 @@ export default function WipReport() {
               items={allClients}
               selected={selectedClients}
               onToggle={(c) => toggleFilter(selectedClients, setSelectedClients, c)}
-              onSelectAll={() => setSelectedClients(new Set(allClients))}
               onClearAll={() => setSelectedClients(new Set())}
               values={filterFees.client}
             />
@@ -1319,7 +1297,6 @@ export default function WipReport() {
               items={allTeams}
               selected={selectedTeams}
               onToggle={(t) => toggleFilter(selectedTeams, setSelectedTeams, t)}
-              onSelectAll={() => setSelectedTeams(new Set(allTeams))}
               onClearAll={() => setSelectedTeams(new Set())}
               values={filterFees.team}
             />
@@ -1328,7 +1305,6 @@ export default function WipReport() {
               items={allAgents}
               selected={selectedAgents}
               onToggle={(a) => toggleFilter(selectedAgents, setSelectedAgents, a)}
-              onSelectAll={() => setSelectedAgents(new Set(allAgents))}
               onClearAll={() => setSelectedAgents(new Set())}
               values={filterFees.agent}
             />
@@ -1337,7 +1313,6 @@ export default function WipReport() {
               items={allProjects}
               selected={selectedProjects}
               onToggle={(p) => toggleFilter(selectedProjects, setSelectedProjects, p)}
-              onSelectAll={() => setSelectedProjects(new Set(allProjects))}
               onClearAll={() => setSelectedProjects(new Set())}
               values={filterFees.project}
             />
@@ -1346,7 +1321,6 @@ export default function WipReport() {
               items={allStatuses}
               selected={selectedStatuses}
               onToggle={(s) => toggleFilter(selectedStatuses, setSelectedStatuses, s)}
-              onSelectAll={() => setSelectedStatuses(new Set(allStatuses))}
               onClearAll={() => setSelectedStatuses(new Set())}
               values={filterFees.status}
               getLabel={(s) => {
@@ -1359,7 +1333,6 @@ export default function WipReport() {
               items={allMonths}
               selected={selectedMonths}
               onToggle={(m) => toggleFilter(selectedMonths, setSelectedMonths, m)}
-              onSelectAll={() => setSelectedMonths(new Set(allMonths))}
               onClearAll={() => setSelectedMonths(new Set())}
               values={filterFees.month}
             />
