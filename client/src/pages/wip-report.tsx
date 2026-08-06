@@ -1439,7 +1439,9 @@ export default function WipReport() {
                               ) : (
                                 <span>—</span>
                               )}
-                              {pick && <span className={`inline-flex items-center px-1 py-0 rounded text-[9px] font-medium w-fit ${pick.cls}`}>{pick.label}</span>}
+                              {/* No badge for targets — the column header already says Target Month.
+                                  Completed/Exchanged keep theirs since those are actuals, not targets. */}
+                              {pick && pick.label !== "Target" && <span className={`inline-flex items-center px-1 py-0 rounded text-[9px] font-medium w-fit ${pick.cls}`}>{pick.label}</span>}
                             </div>
                           );
                         })()}
