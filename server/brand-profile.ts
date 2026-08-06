@@ -1439,9 +1439,24 @@ export async function researchBrandStores(
   // the place name must contain the brand's first significant word, and
   // none of the noise compound-words (pizza/tyres/cleaning/etc) for
   // single-word brands.
-  const brandToken = company.name.toLowerCase().replace(/[^a-z0-9& ]+/g, "").trim();
-  const brandFirstWord = brandToken.split(" ")[0] || brandToken;
-  const brandWords = brandToken.split(" ").filter((w: string) => w.length > 1);
+  // Fold diacritics (Caffè → caffe) and & → "and" (Burger & Lobster ↔
+  // Burger and Lobster) before comparing — Google names and CRM names
+  // disagree on both, and the old strip-non-ascii regex deleted accented
+  // letters outright, so "Caffè Nero" never matched "Caffe Nero".
+  const fold = (s: string) => s
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const STOPWORDS = new Set(["and", "the", "of", "at"]);
+  const brandToken = fold(company.name);
+  const allBrandWords = brandToken.split(" ").filter((w: string) => w.length > 1);
+  const significantWords = allBrandWords.filter((w: string) => !STOPWORDS.has(w));
+  const brandWords = significantWords.length > 0 ? significantWords : allBrandWords;
+  const brandFirstWord = brandWords[0] || brandToken;
   const NOISE = new Set([
     "pizza","tyres","tyre","cars","car","hire","cleaning","plumbing",
     "gym","fitness","kebab","chicken","fried","fish","chips","pharmacy",
@@ -1455,7 +1470,7 @@ export async function researchBrandStores(
     "supermarket","off-licence","newsagent","convenience","dry","wash",
   ]);
   const isBrandMatch = (placeName: string): boolean => {
-    const n = placeName.toLowerCase().replace(/[^a-z0-9& ]+/g, "").trim();
+    const n = fold(placeName);
     if (!n) return false;
     // Exact match or starts-with: always accept (cheap, high precision)
     if (n === brandToken || n.startsWith(brandToken + " ")) return true;
