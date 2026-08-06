@@ -28,7 +28,7 @@ import { useBrand } from "@/lib/brand-context";
 import { Link } from "wouter";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
-import { legacyToCode, WIP_STATUSES } from "@shared/deal-status";
+import { legacyToCode, WIP_STATUSES, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { useTableSort } from "@/hooks/use-table-sort";
@@ -166,6 +166,7 @@ function FilterDropdown({
   onSelectAll,
   onClearAll,
   values,
+  getLabel,
 }: {
   title: string;
   items: string[];
@@ -174,10 +175,15 @@ function FilterDropdown({
   onSelectAll?: () => void;
   onClearAll?: () => void;
   values?: Record<string, number>;
+  getLabel?: (item: string) => string;
 }) {
   const [searchTerm, setSearchTerm] = useState("");
+  const label = (item: string) => (getLabel ? getLabel(item) : item);
   const filtered = searchTerm
-    ? items.filter((i) => i.toLowerCase().includes(searchTerm.toLowerCase()))
+    ? items.filter((i) => {
+        const q = searchTerm.toLowerCase();
+        return i.toLowerCase().includes(q) || label(i).toLowerCase().includes(q);
+      })
     : items;
   const isFiltered = selected.size > 0 && selected.size < items.length;
   const slug = title.toLowerCase().replace(/\s/g, "-");
@@ -247,7 +253,7 @@ function FilterDropdown({
                   className="h-3.5 w-3.5"
                   data-testid={`wip-filter-checkbox-${slug}-${item}`}
                 />
-                <span className="truncate flex-1">{item}</span>
+                <span className="truncate flex-1">{label(item)}</span>
                 {values && (
                   <span className="font-mono text-gray-500 whitespace-nowrap">
                     {formatFullCurrency(values[item] || 0)}
@@ -808,7 +814,7 @@ export default function WipReport() {
     { key: "team", label: "Team", width: "w-24" },
     { key: "amtWip", label: "Fee", width: "w-20" },
     { key: "amtInvoice", label: "Fee Split", width: "w-20" },
-    { key: "dealDate", label: "Target Date", width: "w-24" },
+    { key: "dealDate", label: "Target Month", width: "w-24" },
     { key: "dealType", label: "Deal Type", width: "w-20" },
     { key: "agent", label: "BGP Contact", width: "w-20" },
     { key: "dealStatus", label: "Deal Status", width: "w-20" },
@@ -1343,6 +1349,10 @@ export default function WipReport() {
               onSelectAll={() => setSelectedStatuses(new Set(allStatuses))}
               onClearAll={() => setSelectedStatuses(new Set())}
               values={filterFees.status}
+              getLabel={(s) => {
+                const code = legacyToCode(s);
+                return code ? DEAL_STATUS_LABELS[code] : s;
+              }}
             />
             <FilterDropdown
               title="Net Fees by Month"
@@ -1496,12 +1506,12 @@ export default function WipReport() {
                             : e.targetDate
                             ? { label: "Target", iso: e.targetDate, cls: "bg-gray-100 text-gray-700" }
                             : null;
-                          const dateStr = pick ? (() => { const d = new Date(pick.iso); return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" }); })() : null;
+                          const dateStr = pick ? (() => { const d = new Date(pick.iso); return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" }); })() : null;
                           return (
                             <div className="flex flex-col gap-0.5">
                               {!isActual && e.dealId ? (
                                 <input
-                                  type="date"
+                                  type="month"
                                   // The target date belongs to the DEAL, so this saves to the deal —
                                   // every split row for that deal (e.g. AT / CR / LK) shares it, and
                                   // keying on targetDate remounts the other agents' inputs after the
@@ -1511,20 +1521,22 @@ export default function WipReport() {
                                   // doesn't blur the field, so the old onBlur save silently never fired
                                   // (this was the "I keep changing it and it won't save" bug).
                                   key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`}
-                                  defaultValue={toDateInputValue(e.targetDate)}
+                                  defaultValue={toDateInputValue(e.targetDate).slice(0, 7)}
                                   className="text-xs border border-gray-200 rounded px-1 py-0.5 w-[110px] focus:outline-none focus:border-blue-400"
                                   onChange={async (ev) => {
                                     const val = ev.target.value;
                                     if (!val) return;
                                     // PUT /api/crm/deals/:id — the endpoint the Deals page uses. (The
                                     // old PATCH /api/deals/:id route never existed, so nothing saved.)
+                                    // Month picker gives yyyy-MM; the deal stores a full date, so pin
+                                    // the target to the 1st of the chosen month.
                                     try {
-                                      await apiRequest("PUT", `/api/crm/deals/${e.dealId}`, { targetDate: val });
-                                      toast({ title: "Target date updated", description: "Applied to everyone on this deal." });
+                                      await apiRequest("PUT", `/api/crm/deals/${e.dealId}`, { targetDate: `${val}-01` });
+                                      toast({ title: "Target month updated", description: "Applied to everyone on this deal." });
                                       // Refetch so every split row on this deal re-syncs to the new date.
                                       invalidateDealCaches();
                                     } catch (err: any) {
-                                      toast({ title: "Couldn't save target date", description: err?.message || "Please try again.", variant: "destructive" });
+                                      toast({ title: "Couldn't save target month", description: err?.message || "Please try again.", variant: "destructive" });
                                     }
                                   }}
                                 />
