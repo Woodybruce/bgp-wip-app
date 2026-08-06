@@ -28,6 +28,7 @@ export const TARGET_STATUS_COLORS: Record<string, string> = {
   "Meeting Held": "bg-blue-600",
   "Inspection Done": "bg-violet-500",
   "Offer": "bg-amber-500",
+  "Heads of Terms": "bg-orange-600",
   "Let": "bg-green-600",
   "Passed": "bg-zinc-400",
 };
