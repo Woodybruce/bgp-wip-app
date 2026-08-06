@@ -1412,16 +1412,24 @@ export async function researchBrandStores(
     "Sydney", "Melbourne", "Toronto", "Vancouver",
     "Dubai", "Abu Dhabi", "Doha", "Riyadh",
   ];
+  // Query with the cleaned trading name — deal-tranche tags ("Bancone T1")
+  // and parenthetical asides ("Body Fit Training (BFT)") drag Google
+  // textsearch relevance down and never appear on the shopfront.
+  const queryName = company.name
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\bT\d\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim() || company.name;
   const queries = scope === "global"
     ? [
-        company.name,
-        `${company.name} flagship store`,
-        ...globalCities.map((c) => `${company.name} ${c}`),
+        queryName,
+        `${queryName} flagship store`,
+        ...globalCities.map((c) => `${queryName} ${c}`),
       ]
     : [
-        company.name,
-        `${company.name} UK`,
-        ...ukCities.map((c) => `${company.name} ${c}`),
+        queryName,
+        `${queryName} UK`,
+        ...ukCities.map((c) => `${queryName} ${c}`),
       ];
   const allResults: any[] = [];
   const seenPlaceIds = new Set<string>();
@@ -1451,8 +1459,13 @@ export async function researchBrandStores(
     .replace(/[^a-z0-9 ]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  const STOPWORDS = new Set(["and", "the", "of", "at"]);
-  const brandToken = fold(company.name);
+  const STOPWORDS = new Set([
+    "and", "the", "of", "at",
+    // Corporate suffixes Google never puts on the shopfront — "Prezzo Plc"
+    // and "Play Padel UK" must still match "Prezzo" / "Play Padel".
+    "ltd", "limited", "plc", "llp", "holdings", "holding", "group", "uk", "company", "retail",
+  ]);
+  const brandToken = fold(queryName);
   const allBrandWords = brandToken.split(" ").filter((w: string) => w.length > 1);
   const significantWords = allBrandWords.filter((w: string) => !STOPWORDS.has(w));
   const brandWords = significantWords.length > 0 ? significantWords : allBrandWords;
