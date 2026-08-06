@@ -853,12 +853,24 @@ async function victoriaRound(page, cross) {
       await page.getByText('Deals', { exact: true }).first().click();
     });
     await page.waitForTimeout(1200);
-    // Then flip to Board view (ViewToggle button by accessible name).
-    const boardBtn = page.getByRole('button', { name: /board/i }).first();
-    if (await boardBtn.count()) { await boardBtn.click().catch(() => {}); await page.waitForTimeout(1200); }
-    const cols = await Promise.all(['Negotiating', 'Solicitors', 'Exchanged', 'Completed', 'Invoiced']
-      .map(c => page.getByText(c, { exact: false }).count()));
-    const shown = cols.filter(n => n > 0).length;
+    // Then flip to Board view (ViewToggle button by accessible name). The
+    // /deals hub is heavy (WIP tab + funnel + board all mount lazily), so the
+    // tab/toggle clicks + column render can lag behind the fixed waits — poll
+    // for the pipeline columns and retry the Board toggle before failing, so a
+    // slow render isn't logged as a broken board.
+    const countCols = async () => {
+      const cols = await Promise.all(['Negotiating', 'Solicitors', 'Exchanged', 'Completed', 'Invoiced']
+        .map(c => page.getByText(c, { exact: false }).count()));
+      return cols.filter(n => n > 0).length;
+    };
+    let shown = 0;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const boardBtn = page.getByRole('button', { name: /board/i }).first();
+      if (await boardBtn.count()) await boardBtn.click().catch(() => {});
+      await page.waitForTimeout(1500);
+      shown = await countCols();
+      if (shown >= 3) break;
+    }
     if (shown < 3) throw new Error(`deal board shows only ${shown}/5 pipeline columns`);
   });
 }
@@ -1947,14 +1959,18 @@ async function markRound(page, cross) {
       const d = await res.json().catch(() => null);
       const deals = Array.isArray(d?.deals) ? d.deals : [];
       const bgpDeals = Array.isArray(d?.bgpDeals) ? d.bgpDeals : [];
+      const leaseEvents = Array.isArray(d?.leaseEvents) ? d.leaseEvents : [];
       const names = [...deals, ...bgpDeals].map((x) => String(x.name || ''));
       const feeLeak = bgpDeals.some((x) => 'fee' in x || 'internal_agent' in x || 'team' in x);
-      return { ok: true, rivalLeak: names.includes('QA-LEAK-DEAL'), feeLeak, interactions: (d?.interactions || []).length };
+      const leaseLeak = leaseEvents.map((x) => String(x.unit_name || '')).includes('QA-LEAK-UNIT');
+      return { ok: true, rivalLeak: names.includes('QA-LEAK-DEAL'), feeLeak, leaseLeak, interactions: (d?.interactions || []).length, pending: (d?.pendingContactSuggestions || []).length };
     });
     if (!r.ok) throw new Error(`client brand profile unhealthy (${r.status})`);
     if (r.rivalLeak) throw new Error("a rival-landlord deal (QA-LEAK-DEAL) leaked onto the client's brand profile");
     if (r.feeLeak) throw new Error('BGP fee/internal-agent columns leaked on the client bgpDeals panel');
+    if (r.leaseLeak) throw new Error("a rival-scheme lease event (QA-LEAK-UNIT @ Brent Cross) leaked onto the client's brand profile");
     if (r.interactions !== 0) throw new Error(`raw interaction log leaked to the client brand profile (${r.interactions} rows)`);
+    if (r.pending !== 0) throw new Error(`correspondence-derived contact suggestions leaked to the client (${r.pending} rows)`);
   });
 
   // Suggested-pitches is the brand-profile "which of my vacant units could
