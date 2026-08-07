@@ -8,7 +8,6 @@ import {
   Receipt, Image as ImageIcon, Building2, Store, ClipboardList, Newspaper,
 } from "lucide-react";
 import { legacyToCode } from "@shared/deal-status";
-import { useTeam } from "@/lib/team-context";
 
 type BriefingData = { briefing: string; generatedAt: string };
 
@@ -151,10 +150,12 @@ export default function MobileHome() {
   // Client logins (e.g. Landsec): no Expenses tile, and skip the BGP
   // commission/WIP queries entirely — they're staff-only and would 403.
   const isClientHome = user?.role === "Client" || !!(user as any)?.companyScopeId;
-  // Staff previewing the client experience via the team switcher see the
-  // same portfolio section (mirrors the desktop Landsec dashboard).
-  const { activeTeam } = useTeam();
-  const showPortfolioHome = isClientHome || activeTeam === "Landsec";
+  // Only real client logins get the portfolio home. Staff keep the full
+  // staff home (Expenses, billing, boards) even with the Landsec team
+  // selected — the team switcher scopes data, not the phone shell
+  // (Woody, 2026-08-07: BGP users on the Landsec account were losing
+  // Expenses/billing; reverted the staff-preview behaviour).
+  const showPortfolioHome = isClientHome;
   const { data: alerts = [] } = useQuery<Alert[]>({ queryKey: ["/api/daily-digest"] });
   const { data: tasks = [] } = useQuery<Task[]>({ queryKey: ["/api/tasks"] });
   const { data: commission } = useQuery<Commission>({
