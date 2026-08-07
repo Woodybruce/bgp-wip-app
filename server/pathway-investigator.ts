@@ -35,6 +35,46 @@ const INVESTIGATOR_TOOLS: any[] = [
       required: ["query"],
     },
   },
+  // The three email tools were implemented in the executor (and demanded by
+  // the prompt) from day one but never declared here — so Claude could not
+  // call them and every email fallback path downstream was dead code.
+  {
+    name: "search_emails",
+    description: "Search ALL BGP mailboxes (every active user + the shared inbox) for emails mentioning a term. Use the property address, street name, postcode, owner or tenant name. Returns subject, sender, date, preview, and mailbox — pass msgId + mailboxEmail to read_email for the full body.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search term, e.g. 'Haymarket', 'SW1Y 4DG', 'Dover Street Market'" },
+        top: { type: "number", description: "Max results per mailbox (default 15, max 25)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "read_email",
+    description: "Read the full body of an email found via search_emails, including a list of its attachments.",
+    input_schema: {
+      type: "object",
+      properties: {
+        mailboxEmail: { type: "string", description: "The mailbox the email lives in (from search_emails results)" },
+        msgId: { type: "string", description: "The message id (from search_emails results)" },
+      },
+      required: ["mailboxEmail", "msgId"],
+    },
+  },
+  {
+    name: "extract_attachment",
+    description: "Extract the text of an email attachment (PDF, Word, Excel) found via read_email. Use for brochures, heads of terms, leases, sales particulars.",
+    input_schema: {
+      type: "object",
+      properties: {
+        mailboxEmail: { type: "string", description: "The mailbox the email lives in" },
+        msgId: { type: "string", description: "The message id" },
+        attachmentId: { type: "string", description: "The attachment id (from read_email)" },
+      },
+      required: ["mailboxEmail", "msgId", "attachmentId"],
+    },
+  },
   {
     name: "knowledge_base_search",
     description: "Search the BGP knowledge base (archivist-indexed SharePoint docs, Dropbox files, past email content). Returns document excerpts with source path.",
@@ -754,13 +794,15 @@ ${hasCrm ? "✓ CRM already searched above" : "→ Call crm_lookup"}
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     let response: any;
     try {
+      // Per-call timeout — a hung connection here used to hang Stage 1 (and
+      // therefore the whole auto-chain) forever.
       response = await anthropic.messages.create({
         model: MODEL_PRIMARY,
         max_tokens: 16000,
         system: systemPrompt,
         tools: INVESTIGATOR_TOOLS,
         messages,
-      });
+      }, { signal: AbortSignal.timeout(180_000) });
     } catch (err: any) {
       console.warn(`[investigator] ${MODEL_PRIMARY} iter ${i} failed: ${err?.message} — falling back to ${MODEL_FALLBACK}`);
       response = await anthropic.messages.create({
@@ -769,7 +811,7 @@ ${hasCrm ? "✓ CRM already searched above" : "→ Call crm_lookup"}
         system: systemPrompt,
         tools: INVESTIGATOR_TOOLS,
         messages,
-      });
+      }, { signal: AbortSignal.timeout(120_000) });
     }
 
     const toolUses = (response.content || []).filter((b: any) => b.type === "tool_use");

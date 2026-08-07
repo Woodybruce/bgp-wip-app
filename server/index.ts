@@ -3999,6 +3999,16 @@ app.use("/api/branding/assets", express.static(
           console.error("[scheduled-jobs] Failed to start:", e?.message);
         }
       }, 15000);
+      // Resume pathway runs whose auto-chain was killed by the last
+      // redeploy — they used to stay "running" forever.
+      setTimeout(async () => {
+        try {
+          const { resumeInterruptedPathwayRuns } = await import("./property-pathway");
+          await resumeInterruptedPathwayRuns();
+        } catch (e: any) {
+          console.error("[pathway resume] Failed:", e?.message);
+        }
+      }, 20000);
       // Background crawls only run in production — too slow/fragile over local internet
       const isProduction = process.env.NODE_ENV === "production";
       if (isProduction) {

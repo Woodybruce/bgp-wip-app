@@ -65,6 +65,9 @@ export async function askPerplexity(
 
   const res = await fetch(`${PERPLEXITY_BASE}/chat/completions`, {
     method: "POST",
+    // Perplexity had no timeout — a hang here stalled every Promise.allSettled
+    // that awaited it (Stage 1 market intel, the investigator's web_search).
+    signal: AbortSignal.timeout(45_000),
     headers: {
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",

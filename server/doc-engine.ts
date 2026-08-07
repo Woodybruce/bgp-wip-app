@@ -19,7 +19,9 @@
 // renderHtmlWithClaude(). Doc-type structure lives in the registry/briefs.
 
 // The model used for all HTML design. One constant so a bump is one line.
-export const DESIGN_MODEL = "claude-sonnet-4-6";
+// Fable 5 — the most design-sensitive output in the product (Why Buy decks,
+// document briefs, designed PDFs) gets the strongest model.
+export const DESIGN_MODEL = "claude-fable-5";
 
 // House brand cues, injected into every design prompt. Single source of
 // truth — was previously duplicated verbatim in three files.
@@ -74,11 +76,27 @@ export async function renderHtmlWithClaude(prompt: string, opts: RenderHtmlOptio
     ? process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
     : undefined;
   const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
-  const msg = await client.messages.create({
-    model: opts.model || DESIGN_MODEL,
+  const model = opts.model || DESIGN_MODEL;
+  const params: any = {
+    model,
     max_tokens: opts.maxTokens ?? 16000,
     messages: [{ role: "user", content: prompt }],
-  });
-  const raw = msg.content?.[0]?.type === "text" ? (msg.content[0] as any).text : "";
+  };
+  // Fable's safety classifiers can decline — the server-side fallback
+  // re-serves a false positive on Opus 4.8 within the same call.
+  const isFable = model.startsWith("claude-fable");
+  if (isFable) {
+    params.betas = ["server-side-fallback-2026-06-01"];
+    params.fallbacks = [{ model: "claude-opus-4-8" }];
+  }
+  const msg: any = isFable
+    ? await (client as any).beta.messages.create(params)
+    : await client.messages.create(params);
+  if (msg?.stop_reason === "refusal") {
+    throw new Error("Design model declined the request (safety refusal) — adjust the brief and retry");
+  }
+  const textBlock = (msg?.content || []).find((b: any) => b.type === "text");
+  const raw = textBlock?.text || "";
+  if (!raw.trim()) throw new Error("Design model returned no content");
   return safeHtml(stripCodeFences(raw));
 }
