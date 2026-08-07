@@ -490,6 +490,30 @@ async function ensureCrmPropertyLink(
     return first;
   }
   const name = (run.address.split(",")[0] || run.address).trim();
+  // Before creating a stub, look for an existing CRM property on the same
+  // postcode whose name matches the street/building — the ilike-on-name
+  // lookup alone missed these and every run created a duplicate.
+  if (run.postcode) {
+    try {
+      const namePattern = `%${name.replace(/^[\d\-–\s]+/, "").replace(/[%_\\]/g, "").trim()}%`;
+      const { rows: samePostcode } = await pool.query(
+        `SELECT * FROM crm_properties
+          WHERE postcode IS NOT NULL
+            AND UPPER(REPLACE(postcode, ' ', '')) = UPPER(REPLACE($1, ' ', ''))
+            AND (LOWER(name) = LOWER($2) OR name ILIKE $3)
+          ORDER BY updated_at DESC NULLS LAST
+          LIMIT 1`,
+        [run.postcode, name, namePattern],
+      );
+      if (samePostcode[0]) {
+        console.log(`[pathway stage1] Linked run ${run.id} → existing CRM property ${samePostcode[0].id} (postcode+name match)`);
+        await updateRun(run.id, { propertyId: samePostcode[0].id }).catch(() => {});
+        return samePostcode[0];
+      }
+    } catch (err: any) {
+      console.warn("[pathway stage1] postcode match lookup failed:", err?.message);
+    }
+  }
   try {
     const [created] = await db
       .insert(crmProperties)
@@ -518,15 +542,157 @@ async function ensureCrmPropertyLink(
 }
 
 async function setStageStatus(runId: string, stage: keyof StageStatusMap, status: StageStatus, resultsPatch?: Partial<StageResults>): Promise<PropertyPathwayRun> {
+  const stageNumber = parseInt(stage.replace("stage", ""), 10);
+  // Atomic jsonb merge at the SQL level. The previous read-modify-write of
+  // the whole blob lost updates: a fire-and-forget writer (informed email
+  // sweep, deck seed) that read the run minutes earlier would write the
+  // entire stale blob back, erasing stages that completed in between.
+  // A skipped stage shouldn't block later stages — advance past it like a
+  // completed stage.
+  const advance = status === "completed" || status === "skipped";
+  const result = await pool.query(
+    `UPDATE property_pathway_runs
+        SET stage_status = COALESCE(stage_status, '{}'::jsonb) || $2::jsonb,
+            stage_results = COALESCE(stage_results, '{}'::jsonb) || $3::jsonb,
+            current_stage = CASE WHEN $4::boolean AND $5::int >= current_stage
+                                 THEN LEAST(9, $5::int + 1)
+                                 ELSE current_stage END,
+            updated_at = now()
+      WHERE id = $1`,
+    [runId, JSON.stringify({ [stage]: status }), JSON.stringify(resultsPatch || {}), advance, stageNumber],
+  );
+  if (result.rowCount === 0) throw new Error(`Pathway run ${runId} not found`);
   const run = await getRun(runId);
   if (!run) throw new Error(`Pathway run ${runId} not found`);
-  const stageStatus = { ...(run.stageStatus as StageStatusMap), [stage]: status };
-  const stageResults = { ...(run.stageResults as StageResults), ...(resultsPatch || {}) };
-  const stageNumber = parseInt(stage.replace("stage", ""), 10);
-  // A skipped stage shouldn't block later stages — advance past it like a completed stage.
-  const shouldAdvance = (status === "completed" || status === "skipped") && stageNumber >= run.currentStage;
-  const newCurrentStage = shouldAdvance ? Math.min(9, stageNumber + 1) : run.currentStage;
-  return updateRun(runId, { stageStatus, stageResults, currentStage: newCurrentStage });
+  return run;
+}
+
+// ============================================================================
+// BACKGROUND CHAIN RUNNER — one shared entry point for every detached stage
+// chain (/start auto-pilot, async /advance, boot resume).
+//
+// Fixes two long-standing problems:
+//   1. Durability — the chain used to be an anonymous detached promise, so a
+//      Railway redeploy mid-run left the run "running" forever. The chain now
+//      records its intent on the run row (stageResults._autoChain, advanced
+//      after each stage) and resumeInterruptedPathwayRuns() restarts it on
+//      boot from where it stopped.
+//   2. Portfolio pile-ups — starting several sites at once saturated
+//      Companies House / Graph rate limits and produced flaky runs. Chains
+//      now queue through a global concurrency gate (default 2 at a time,
+//      PATHWAY_MAX_CONCURRENT_RUNS to change).
+// ============================================================================
+
+const MAX_CONCURRENT_RUNS = Math.max(1, parseInt(process.env.PATHWAY_MAX_CONCURRENT_RUNS || "2", 10));
+let activeChains = 0;
+const chainWaiters: Array<() => void> = [];
+
+async function acquireChainSlot(): Promise<void> {
+  if (activeChains < MAX_CONCURRENT_RUNS) { activeChains++; return; }
+  await new Promise<void>((resolve) => chainWaiters.push(resolve));
+  activeChains++;
+}
+
+function releaseChainSlot(): void {
+  activeChains = Math.max(0, activeChains - 1);
+  const next = chainWaiters.shift();
+  if (next) next();
+}
+
+async function patchAutoChain(runId: string, marker: Record<string, unknown> | null): Promise<void> {
+  if (marker === null) {
+    await pool.query(
+      `UPDATE property_pathway_runs SET stage_results = COALESCE(stage_results, '{}'::jsonb) - '_autoChain', updated_at = now() WHERE id = $1`,
+      [runId],
+    );
+  } else {
+    await pool.query(
+      `UPDATE property_pathway_runs SET stage_results = COALESCE(stage_results, '{}'::jsonb) || $2::jsonb, updated_at = now() WHERE id = $1`,
+      [runId, JSON.stringify({ _autoChain: marker })],
+    );
+  }
+}
+
+export async function runStageChain(runId: string, fromStage: number, toStageExclusive: number, req: Request, label: string, resumeAttempts = 0): Promise<void> {
+  await patchAutoChain(runId, { from: fromStage, to: toStageExclusive, resumeAttempts, startedAt: new Date().toISOString() }).catch(() => {});
+  await acquireChainSlot();
+  try {
+    // We deliberately DON'T halt on a failed stage: downstream stages have
+    // fallbacks (e.g. Stage 7 uses the AI draft plan) and the user wants a
+    // complete first draft to work with.
+    for (let cur = fromStage; cur < toStageExclusive; cur++) {
+      console.log(`[pathway ${label}] running stage ${cur} for ${runId}`);
+      try {
+        await runStage(runId, cur, req);
+      } catch (err: any) {
+        console.error(`[pathway ${label}] stage ${cur} threw (continuing):`, err?.message);
+        // Surface the failure on the board instead of leaving the stage "running".
+        await setStageStatus(runId, `stage${cur}` as keyof StageStatusMap, "failed").catch(() => {});
+      }
+      const updatedRun = await getRun(runId).catch(() => null);
+      const status = (updatedRun?.stageStatus as any)?.[`stage${cur}`];
+      if (status !== "completed" && status !== "skipped") {
+        console.warn(`[pathway ${label}] stage ${cur} status=${status} — continuing to next stage anyway`);
+      }
+      // Advance the resume pointer so a redeploy restarts from the next
+      // stage, not the beginning.
+      await patchAutoChain(runId, { from: cur + 1, to: toStageExclusive, resumeAttempts, startedAt: new Date().toISOString() }).catch(() => {});
+    }
+    console.log(`[pathway ${label}] ${runId} chain finished (<${toStageExclusive})`);
+  } finally {
+    releaseChainSlot();
+    await patchAutoChain(runId, null).catch(() => {});
+  }
+}
+
+// On boot, any stage still marked "running" is dead — the chain was an
+// in-process promise. Restart interrupted chains from their resume pointer.
+export async function resumeInterruptedPathwayRuns(): Promise<void> {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, stage_status, stage_results->'_autoChain' AS chain
+         FROM property_pathway_runs
+        WHERE stage_results ? '_autoChain'
+        ORDER BY updated_at DESC
+        LIMIT 20`,
+    );
+    if (!rows.length) return;
+    console.log(`[pathway resume] found ${rows.length} interrupted run(s)`);
+    for (const row of rows) {
+      const chain = row.chain || {};
+      const from = Number(chain.from);
+      const to = Number(chain.to);
+      const attempts = Number(chain.resumeAttempts || 0);
+      if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) {
+        await patchAutoChain(row.id, null).catch(() => {});
+        continue;
+      }
+      // Reset any stage the dead chain left mid-flight so the board doesn't
+      // show a phantom "running" alongside the resumed one.
+      const stuck = Object.entries(row.stage_status || {})
+        .filter(([, v]) => v === "running")
+        .map(([k]) => k);
+      for (const stage of stuck) {
+        await pool.query(
+          `UPDATE property_pathway_runs SET stage_status = stage_status || $2::jsonb WHERE id = $1`,
+          [row.id, JSON.stringify({ [stage]: "pending" })],
+        ).catch(() => {});
+      }
+      if (attempts >= 2) {
+        console.warn(`[pathway resume] ${row.id} exceeded resume attempts — abandoning chain at stage ${from}`);
+        await setStageStatus(row.id, `stage${from}` as keyof StageStatusMap, "failed").catch(() => {});
+        await patchAutoChain(row.id, null).catch(() => {});
+        continue;
+      }
+      console.log(`[pathway resume] resuming ${row.id} from stage ${from} (attempt ${attempts + 1})`);
+      const stubReq = { session: {}, headers: {} } as unknown as Request;
+      runStageChain(row.id, from, to, stubReq, "resume", attempts + 1).catch((err: any) => {
+        console.error(`[pathway resume] ${row.id} chain error:`, err?.message);
+      });
+    }
+  } catch (err: any) {
+    console.error("[pathway resume] sweep failed:", err?.message);
+  }
 }
 
 // ============================================================================
@@ -3351,13 +3517,15 @@ End with a line: RECOMMEND: PROCEED or RECOMMEND: PAUSE (with brief reason if pa
     recommendProceed = !summary.includes("RECOMMEND: PAUSE");
   } catch (err: any) {
     console.error("[pathway stage3] Claude summary failed:", err?.message);
-    // Fallback to simple text
+    // Fallback to simple text. An AI failure must NOT read as approval —
+    // flag for manual review instead of silently green-lighting the gate.
     const lines = [`**Initial Findings for ${run.address}**`];
     if (s1.initialOwnership) lines.push(`- Owner: ${s1.initialOwnership.proprietorName || "unknown"}`);
     if (s1.tenant) lines.push(`- Tenant: ${s1.tenant.name}`);
     if (s1.rates) lines.push(`- Total rateable value: £${(s1.rates.totalRateableValue || 0).toLocaleString()}`);
-    lines.push("", "Ready to run full Property Intelligence?");
+    lines.push("", "⚠ AI review unavailable for this run — check the findings above manually before proceeding.");
     summary = lines.join("\n");
+    recommendProceed = false;
   }
 
   await setStageStatus(runId, "stage3", "completed", {
@@ -4195,18 +4363,24 @@ async function runInformedEmailSearchPostStage4(runId: string, req: Request): Pr
     return;
   }
 
-  // Merge into stage1.emailHits and persist. Re-read the run so we don't
-  // clobber a concurrent update.
+  // Merge into stage1.emailHits and persist. Re-read for the merge, but
+  // write ONLY the two keys this sweep owns via jsonb_set — writing the
+  // whole blob back used to erase stages that completed while the sweep
+  // (minutes of Graph searches) was still running.
   const fresh = await getRun(runId);
-  const freshResults = (fresh?.stageResults as any) || {};
-  const freshS1 = freshResults.stage1 || {};
+  const freshS1 = ((fresh?.stageResults as any) || {}).stage1 || {};
   const merged = [...(freshS1.emailHits || []), ...added]
     .sort((a: any, b: any) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
     .slice(0, 200);
-  freshS1.emailHits = merged;
-  freshS1.informedEmailCount = added.length;
-  freshResults.stage1 = freshS1;
-  await updateRun(runId, { stageResults: freshResults });
+  await pool.query(
+    `UPDATE property_pathway_runs
+        SET stage_results = jsonb_set(
+              jsonb_set(COALESCE(stage_results, '{}'::jsonb), '{stage1,emailHits}', $2::jsonb, true),
+              '{stage1,informedEmailCount}', $3::jsonb, true),
+            updated_at = now()
+      WHERE id = $1 AND stage_results ? 'stage1'`,
+    [runId, JSON.stringify(merged), JSON.stringify(added.length)],
+  );
   console.log(`[pathway informed-email] runId=${runId} +${added.length} emails (${existing.length} → ${merged.length}) across ${mailboxes.length} mailboxes × ${terms.size} terms`);
 }
 
@@ -4333,7 +4507,9 @@ async function draftBusinessPlan(run: PropertyPathwayRun): Promise<{ plan: Busin
   };
 
   const resp = await callClaude({
-    model: "claude-opus-4-6",
+    // The highest-judgement call in the pathway — Fable 5 (refusal fallback
+    // to Opus 4.8 is applied inside callClaude for claude-fable models).
+    model: "claude-fable-5",
     messages: [{
       role: "user",
       content: `You are a senior director at BGP (Bruce Gillingham Pollard) sitting down with Woody to agree a business plan for a live investment opportunity. You have done a final sweep of everything the pathway has gathered. Propose a concrete, opinionated plan — don't hedge, don't list options. Pick a strategy.
@@ -4364,11 +4540,11 @@ Use only numbers you can ground in the context. Where you have to estimate (e.g.
 Context:
 ${JSON.stringify(context, null, 2).slice(0, 18000)}`,
     }],
-    max_completion_tokens: 3000,
+    max_completion_tokens: 8000,
     temperature: 0.2,
   });
 
-  const raw = resp.choices[0]?.message?.content || "{}";
+  const raw = resp.choices[0]?.message?.content || "";
   const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
@@ -4379,8 +4555,14 @@ ${JSON.stringify(context, null, 2).slice(0, 18000)}`,
     console.warn("[stage6] plan JSON parse failed:", e?.message);
   }
 
+  // An unparseable or empty plan must fail the stage loudly — the old
+  // behaviour returned {} which Stage 7 then accepted as a valid draft.
+  if (!parsed.plan || typeof parsed.plan !== "object" || Object.keys(parsed.plan).length === 0) {
+    throw new Error(`Business plan generation returned ${raw.trim() ? "unparseable" : "no"} output — retry Stage 6`);
+  }
+
   return {
-    plan: (parsed.plan || {}) as BusinessPlan,
+    plan: parsed.plan as BusinessPlan,
     summary: typeof parsed.summary === "string" ? parsed.summary : "",
   };
 }
@@ -5247,28 +5429,9 @@ export function registerPropertyPathwayRoutes(app: Express) {
       // {autoRun: false}.
       const autoRun = (req.body as any)?.autoRun !== false;
       if (autoRun) {
-        const newRunId = run.id;
-        (async () => {
-          const chainCap = 10;
-          // Run the whole pathway end-to-end. We deliberately DON'T halt on a
-          // failed stage: downstream stages have fallbacks (e.g. Stage 7 uses
-          // the AI draft plan) and the user wants a complete first draft to work
-          // with — the stop/start of a chain that bails mid-way is the pain.
-          for (let cur = 1; cur < chainCap; cur++) {
-            console.log(`[pathway start auto-chain] running stage ${cur} for ${newRunId}`);
-            try {
-              await runStage(newRunId, cur, req);
-            } catch (err: any) {
-              console.error(`[pathway start auto-chain] stage ${cur} threw (continuing):`, err?.message);
-            }
-            const updatedRun = await getRun(newRunId).catch(() => null);
-            const status = (updatedRun?.stageStatus as any)?.[`stage${cur}`];
-            if (status !== "completed" && status !== "skipped") {
-              console.warn(`[pathway start auto-chain] stage ${cur} status=${status} — continuing to next stage anyway`);
-            }
-          }
-          console.log(`[pathway start auto-chain] ${newRunId} finished full run`);
-        })().catch((err: any) => {
+        // Durable, concurrency-gated chain — see runStageChain. Queues behind
+        // other in-flight runs so a multi-site portfolio starts cleanly.
+        runStageChain(run.id, 1, 10, req, "start auto-chain").catch((err: any) => {
           console.error(`[pathway start auto-chain] outer error:`, err?.message);
         });
       }
@@ -5448,23 +5611,8 @@ export function registerPropertyPathwayRoutes(app: Express) {
       // wants the whole pathway to produce a full draft to work with, and
       // downstream stages fall back gracefully (e.g. Stage 7 uses the AI draft).
       if (asyncMode || targetStage === 1 || autoChainTo) {
-        (async () => {
-          const chainCap = typeof autoChainTo === "number" ? autoChainTo : (targetStage + 1);
-          for (let cur = targetStage; cur < chainCap; cur++) {
-            console.log(`[pathway advance auto-chain] running stage ${cur} (chain to <${chainCap})`);
-            try {
-              await runStage(runId, cur, req);
-            } catch (err: any) {
-              console.error(`[pathway advance auto-chain] stage ${cur} threw (continuing):`, err?.message);
-            }
-            const updatedRun = await getRun(runId).catch(() => null);
-            const status = (updatedRun?.stageStatus as any)?.[`stage${cur}`];
-            if (status !== "completed" && status !== "skipped") {
-              console.warn(`[pathway advance auto-chain] stage ${cur} status=${status} — continuing to next stage anyway`);
-            }
-          }
-          console.log(`[pathway advance auto-chain] chain finished (<${chainCap})`);
-        })().catch((err: any) => {
+        const chainCap = typeof autoChainTo === "number" ? autoChainTo : (targetStage + 1);
+        runStageChain(runId, targetStage, chainCap, req, "advance auto-chain").catch((err: any) => {
           console.error(`[pathway advance auto-chain] outer error:`, err?.message);
         });
         return res.status(202).json({ success: true, async: true, runId, targetStage, autoChainTo: typeof autoChainTo === "number" ? autoChainTo : null });
@@ -5593,10 +5741,28 @@ export function registerPropertyPathwayRoutes(app: Express) {
         const rows = await findNearbyComps(postcode, limit);
         return res.json(rows);
       }
+      // Pathway-extracted comps live in crm_comps (the canonical table the
+      // comps page reads) — these endpoints previously targeted the orphaned
+      // retail_leasing_comps table, so the list was stale and Delete was a
+      // no-op. Rows are mapped to the legacy field shape the panel renders.
       const { rows } = await pool.query(
-        `SELECT * FROM retail_leasing_comps
-           ORDER BY COALESCE(lease_date, source_date) DESC NULLS LAST, created_at DESC
-           LIMIT $1`,
+        `SELECT id,
+                COALESCE(address->>'formatted', address->>'line1', name) AS address,
+                postcode, tenant, landlord, use_class,
+                comp_type AS sector,
+                headline_rent AS rent_pa,
+                rent_psf_overall AS rent_psf,
+                area_sqft, rent_free_months,
+                completion_date AS lease_date,
+                term AS term_years,
+                source_title AS source_ref,
+                'email' AS source_type,
+                comments AS notes,
+                created_at
+           FROM crm_comps
+          WHERE source_evidence = 'Pathway'
+          ORDER BY COALESCE(completion_date, created_at::text) DESC NULLS LAST, created_at DESC
+          LIMIT $1`,
         [limit],
       );
       res.json(rows);
@@ -5605,10 +5771,19 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
-  // Delete a curated retail comp (reviewer thinks it's bogus).
+  // Delete a curated retail comp (reviewer thinks it's bogus). Scoped to
+  // Pathway-extracted rows so this button can never remove a manually
+  // entered comp.
   app.delete("/api/retail-comps/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      await pool.query(`DELETE FROM retail_leasing_comps WHERE id = $1`, [req.params.id]);
+      const result = await pool.query(
+        `DELETE FROM crm_comps WHERE id = $1 AND source_evidence = 'Pathway'`,
+        [req.params.id],
+      );
+      if (result.rowCount === 0) {
+        // Legacy rows that predate the crm_comps migration.
+        await pool.query(`DELETE FROM retail_leasing_comps WHERE id = $1`, [req.params.id]);
+      }
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err?.message });

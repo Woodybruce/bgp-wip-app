@@ -3,16 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import { toDateInputValue } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import {
   Printer,
-  Search,
   ArrowUpDown,
-  Filter,
   X,
   Upload,
   Loader2,
@@ -20,6 +17,7 @@ import {
   Plus,
   Download,
 } from "lucide-react";
+import { FilterDropdown } from "@/components/wip-filter-dropdown";
 import { ScrollableTable } from "@/components/scrollable-table";
 import bgpLogo from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTeam } from "@/lib/team-context";
@@ -27,7 +25,7 @@ import { useBrand } from "@/lib/brand-context";
 import { Link } from "wouter";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
-import { legacyToCode, WIP_STATUSES } from "@shared/deal-status";
+import { legacyToCode, WIP_STATUSES, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { useTableSort } from "@/hooks/use-table-sort";
@@ -89,21 +87,19 @@ const DEAL_TYPE_BADGE_COLORS: Record<string, string> = {
   "Assignment": "bg-slate-100 text-slate-800",
 };
 
-type ClickFilter = {
-  field: "client" | "groupName" | "team" | "agent" | "project" | "dealStatus" | "month";
-  value: string;
-} | null;
-
-const WIP_FILTERS_STORAGE_KEY = "bgp-wip-report-filters";
+// v2: filters are opt-in — empty selection means "show everything". The key
+// bump discards v1 snapshots, which stored every option ticked by default.
+const WIP_FILTERS_STORAGE_KEY = "bgp-wip-report-filters-v2";
 
 interface SavedWipFilters {
   activeTab: "report" | "agent-summary" | "fee-check";
+  clients?: string[];
   teams: string[];
   months: string[];
   agents: string[];
+  projects?: string[];
   statuses: string[];
   fiscalYears: number[];
-  clickFilter: ClickFilter;
   detailSort: { column: string; direction: SortDirection };
 }
 
@@ -147,13 +143,6 @@ function getFiscalYear(m: string | null | undefined): number | null {
   return parsed.monthNum >= 4 ? parsed.calendarYear + 1 : parsed.calendarYear;
 }
 
-function getCurrentFiscalYear(): number {
-  const now = new Date();
-  const month = now.getMonth() + 1;
-  const year = now.getFullYear();
-  return month >= 4 ? year + 1 : year;
-}
-
 function getMonthSortKey(m: string): number {
   const parsed = parseMonth(m);
   if (!parsed) return 99;
@@ -161,177 +150,6 @@ function getMonthSortKey(m: string): number {
   return parsed.calendarYear * 12 + fyMonth;
 }
 
-function ClickableSummaryTable({
-  title,
-  data,
-  valueLabel,
-  activeValue,
-  onRowClick,
-  field,
-  overrideTotal,
-}: {
-  title: string;
-  data: Array<{ label: string; value: number; clickValue?: string }>;
-  valueLabel: string;
-  activeValue: string | null;
-  onRowClick: (field: string, value: string) => void;
-  field: string;
-  overrideTotal?: number;
-}) {
-  const total = overrideTotal ?? data.reduce((s, d) => s + d.value, 0);
-
-  return (
-    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid={`wip-summary-${title.toLowerCase().replace(/\s/g, "-")}`}>
-      <div className="bg-gray-50 border-b px-3 py-2 flex items-center justify-between">
-        <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">{title}</span>
-        <span className="text-xs font-semibold text-gray-500">{valueLabel}</span>
-      </div>
-      <div className="max-h-[400px] overflow-y-auto">
-        <div className="divide-y divide-gray-100">
-          {data.map((row) => {
-            const cv = row.clickValue ?? row.label;
-            return (
-              <div
-                key={cv}
-                className={`flex items-center justify-between px-3 py-1.5 text-sm cursor-pointer transition-colors ${
-                  activeValue === cv
-                    ? "bg-primary/8 border-l-2 border-primary"
-                    : "hover:bg-muted/50"
-                }`}
-                onClick={() => onRowClick(field, cv)}
-                data-testid={`wip-click-${field}-${cv}`}
-              >
-                <span className={`truncate flex-1 mr-1 ${activeValue === cv ? "text-foreground font-semibold" : "text-gray-800"}`}>
-                  {row.label}
-                </span>
-                <span className={`font-mono font-medium text-right whitespace-nowrap ${activeValue === cv ? "text-foreground" : "text-gray-900"}`}>
-                  {formatFullCurrency(row.value)}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      <div className="bg-gray-100 border-t px-3 py-1.5 flex items-center justify-between font-semibold text-sm">
-        <span className="text-gray-800">Total</span>
-        <span className="font-mono text-gray-900">{formatFullCurrency(total)}</span>
-      </div>
-    </div>
-  );
-}
-
-function HorizontalBarChart({
-  data,
-  maxValue,
-  activeValue,
-  onBarClick,
-}: {
-  data: Array<{ label: string; value: number; color: string }>;
-  maxValue: number;
-  activeValue: string | null;
-  onBarClick: (field: string, value: string) => void;
-}) {
-  return (
-    <div className="space-y-1.5">
-      {data.map((d) => (
-        <div
-          key={d.label}
-          className={`flex items-center gap-2 cursor-pointer rounded px-1 transition-colors ${
-            activeValue === d.label ? "bg-green-50" : "hover:bg-gray-50"
-          }`}
-          onClick={() => onBarClick("month", d.label)}
-          data-testid={`wip-click-month-${d.label}`}
-        >
-          <span className="text-xs text-gray-600 w-14 text-right flex-shrink-0">{d.label}</span>
-          <div className="flex-1 h-5 bg-gray-100 rounded overflow-hidden relative">
-            <div
-              className="h-full rounded transition-all duration-500"
-              style={{
-                width: `${Math.max(1, (d.value / maxValue) * 100)}%`,
-                backgroundColor: activeValue === d.label ? "#16a34a" : d.color,
-              }}
-            />
-          </div>
-          <span className="text-xs font-mono text-gray-700 w-14 text-right flex-shrink-0">
-            {formatCurrency(d.value)}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function FilterSection({
-  title,
-  items,
-  selected,
-  onToggle,
-  onSelectAll,
-  onClearAll,
-}: {
-  title: string;
-  items: string[];
-  selected: Set<string>;
-  onToggle: (item: string) => void;
-  onSelectAll: () => void;
-  onClearAll: () => void;
-}) {
-  const [searchTerm, setSearchTerm] = useState("");
-  const filtered = searchTerm
-    ? items.filter((i) => i.toLowerCase().includes(searchTerm.toLowerCase()))
-    : items;
-
-  return (
-    <div className="border border-gray-200 rounded-lg overflow-hidden" data-testid={`wip-filter-${title.toLowerCase().replace(/\s/g, "-")}`}>
-      <div className="bg-gray-50 border-b px-3 py-2 flex items-center justify-between">
-        <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">{title}</span>
-        {selected.size < items.length && (
-          <Badge variant="secondary" className="text-[10px] h-4 px-1">
-            {selected.size}/{items.length}
-          </Badge>
-        )}
-      </div>
-      {items.length > 6 && (
-        <div className="px-2 pt-2">
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-gray-400" />
-            <Input
-              placeholder="Search..."
-              className="h-6 text-xs pl-6"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              data-testid={`wip-filter-search-${title.toLowerCase().replace(/\s/g, "-")}`}
-            />
-          </div>
-        </div>
-      )}
-      <div className="px-2 pt-1 flex gap-2">
-        <button onClick={onSelectAll} className="text-[10px] text-blue-600 hover:underline" data-testid={`wip-filter-selectall-${title.toLowerCase()}`}>
-          Select all
-        </button>
-        <button onClick={onClearAll} className="text-[10px] text-blue-600 hover:underline" data-testid={`wip-filter-clearall-${title.toLowerCase()}`}>
-          Clear
-        </button>
-      </div>
-      <div className="max-h-[220px] overflow-y-auto px-2 py-1">
-        {filtered.map((item) => (
-          <label
-            key={item}
-            className="flex items-center gap-2 py-0.5 text-xs text-gray-700 cursor-pointer hover:text-gray-900"
-          >
-            <Checkbox
-              checked={selected.has(item)}
-              onCheckedChange={() => onToggle(item)}
-              className="h-3 w-3"
-              data-testid={`wip-filter-checkbox-${title.toLowerCase()}-${item}`}
-            />
-            <span className="truncate">{item}</span>
-          </label>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 interface AgentSummaryRow {
   agent: string;
@@ -834,12 +652,13 @@ export default function WipReport() {
   }, [rawEntries, isLandsecView, activeTeam, isWipAdmin, canSeeAll]);
 
   const INVOICED_STATUSES = useMemo(() => ["Invoiced", "Billed"], []);
+  const [selectedClients, setSelectedClients] = useState<Set<string>>(() => new Set(savedFilters?.clients || []));
   const [selectedTeams, setSelectedTeams] = useState<Set<string>>(() => new Set(savedFilters?.teams || []));
   const [selectedMonths, setSelectedMonths] = useState<Set<string>>(() => new Set(savedFilters?.months || []));
   const [selectedAgents, setSelectedAgents] = useState<Set<string>>(() => new Set(savedFilters?.agents || []));
+  const [selectedProjects, setSelectedProjects] = useState<Set<string>>(() => new Set(savedFilters?.projects || []));
   const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(() => new Set(savedFilters?.statuses || []));
   const [selectedFiscalYears, setSelectedFiscalYears] = useState<Set<number>>(() => new Set(savedFilters?.fiscalYears || []));
-  const [clickFilter, setClickFilter] = useState<ClickFilter>(savedFilters?.clickFilter ?? null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [syncingXero, setSyncingXero] = useState(false);
 
@@ -878,7 +697,7 @@ export default function WipReport() {
     { key: "team", label: "Team", width: "w-24" },
     { key: "amtWip", label: "Fee", width: "w-20" },
     { key: "amtInvoice", label: "Fee Split", width: "w-20" },
-    { key: "dealDate", label: "Target Date", width: "w-24" },
+    { key: "dealDate", label: "Target Month", width: "w-24" },
     { key: "dealType", label: "Deal Type", width: "w-20" },
     { key: "agent", label: "BGP Contact", width: "w-20" },
     { key: "dealStatus", label: "Deal Status", width: "w-20" },
@@ -891,6 +710,12 @@ export default function WipReport() {
   });
   const [colMenuOpen, setColMenuOpen] = useState(false);
   const showCol = (k: string) => !hiddenWipCols.has(k);
+  // When the Deal Status filter is narrowed to Invoiced only, every row is a
+  // done deal — the Target Month column is meaningless, so drop it entirely.
+  const invoicedOnly =
+    selectedStatuses.size > 0 &&
+    [...selectedStatuses].every((s) => legacyToCode(s) === "INV");
+  const colVisible = (k: string) => (k === "dealDate" && invoicedOnly ? false : showCol(k));
   const toggleWipCol = (k: string) => setHiddenWipCols((prev) => {
     const n = new Set(prev);
     if (n.has(k)) n.delete(k); else n.add(k);
@@ -898,14 +723,15 @@ export default function WipReport() {
     return n;
   });
 
-  const handleClickFilter = useCallback((field: string, value: string) => {
-    setClickFilter((prev) => {
-      if (prev && prev.field === field && prev.value === value) return null;
-      return { field: field as ClickFilter extends null ? never : NonNullable<ClickFilter>["field"], value };
-    });
-  }, []);
+  const allClients = useMemo(() => {
+    const set = new Set(entries.map((e) => e.client).filter(Boolean) as string[]);
+    return [...set].sort();
+  }, [entries]);
 
-  const clearClickFilter = useCallback(() => setClickFilter(null), []);
+  const allProjects = useMemo(() => {
+    const set = new Set(entries.map((e) => e.project).filter(Boolean) as string[]);
+    return [...set].sort();
+  }, [entries]);
 
   const allTeams = useMemo(() => {
     const set = new Set<string>();
@@ -963,48 +789,39 @@ export default function WipReport() {
     return sorted;
   }, [entries]);
 
-  const filtersInitialized = useRef(!!savedFilters);
+  // No default selections — the page opens showing every deal, and each
+  // dropdown starts unticked. Ticking options narrows the report.
   useEffect(() => {
-    if (!filtersInitialized.current && entries.length > 0 && user) {
-      filtersInitialized.current = true;
-      setSelectedTeams(new Set(allTeams));
-      setSelectedMonths(new Set(allMonths));
-      setSelectedAgents(new Set(allAgents));
-      setSelectedStatuses(new Set(allStatuses));
-      if (allFiscalYears.length > 0) {
-        const currentFY = getCurrentFiscalYear();
-        setSelectedFiscalYears(new Set([allFiscalYears.includes(currentFY) ? currentFY : allFiscalYears[0]]));
-      }
-    }
-  }, [entries, user, allTeams, allMonths, allAgents, allStatuses, allFiscalYears]);
-
-  useEffect(() => {
-    if (!filtersInitialized.current) return;
     try {
       const snapshot: SavedWipFilters = {
         activeTab,
+        clients: [...selectedClients],
         teams: [...selectedTeams],
         months: [...selectedMonths],
         agents: [...selectedAgents],
+        projects: [...selectedProjects],
         statuses: [...selectedStatuses],
         fiscalYears: [...selectedFiscalYears],
-        clickFilter,
         detailSort,
       };
       sessionStorage.setItem(WIP_FILTERS_STORAGE_KEY, JSON.stringify(snapshot));
     } catch {
       // storage unavailable — filters just won't survive navigation
     }
-  }, [activeTab, selectedTeams, selectedMonths, selectedAgents, selectedStatuses, selectedFiscalYears, clickFilter, detailSort]);
+  }, [activeTab, selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses, selectedFiscalYears, detailSort]);
 
-  const sidebarFilteredEntries = useMemo(() => {
+  // A dropdown with nothing ticked applies no filter; any tick narrows.
+  const filteredEntries = useMemo(() => {
     return entries.filter((e) => {
-      if (selectedTeams.size > 0 && selectedTeams.size < allTeams.length) {
+      if (selectedClients.size > 0) {
+        if (!e.client || !selectedClients.has(e.client)) return false;
+      }
+      if (selectedTeams.size > 0) {
         if (!e.team) return false;
         const entryTeams = (e.team as string).split(",").map(t => t.trim()).filter(Boolean);
         if (!entryTeams.some(t => selectedTeams.has(t))) return false;
       }
-      if (selectedFiscalYears.size > 0 && selectedFiscalYears.size < allFiscalYears.length) {
+      if (selectedFiscalYears.size > 0) {
         const rawFy = e.fiscalYear && e.fiscalYear >= 2000 && e.fiscalYear <= 2100 ? e.fiscalYear : null;
         const fy = rawFy || (e.month ? getFiscalYear(e.month) : null);
         if (fy) {
@@ -1013,48 +830,23 @@ export default function WipReport() {
           if (!selectedFiscalYears.has(0)) return false;
         }
       }
-      if (selectedMonths.size > 0 && selectedMonths.size < allMonths.length) {
+      if (selectedMonths.size > 0) {
         if (e.month && !selectedMonths.has(e.month)) return false;
       }
-      if (selectedAgents.size > 0 && selectedAgents.size < allAgents.length) {
+      if (selectedAgents.size > 0) {
         if (!e.agent) return false;
         const agentParts = (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean);
         if (!agentParts.some(a => selectedAgents.has(a))) return false;
       }
-      if (selectedStatuses.size > 0 && selectedStatuses.size < allStatuses.length) {
+      if (selectedProjects.size > 0) {
+        if (!e.project || !selectedProjects.has(e.project)) return false;
+      }
+      if (selectedStatuses.size > 0) {
         if (!e.dealStatus || !selectedStatuses.has(e.dealStatus)) return false;
       }
       return true;
     });
-  }, [entries, selectedTeams, selectedMonths, selectedAgents, selectedStatuses, selectedFiscalYears, allTeams.length, allMonths.length, allAgents.length, allStatuses.length, allFiscalYears.length]);
-
-  const filteredEntries = useMemo(() => {
-    if (!clickFilter) return sidebarFilteredEntries;
-    // "Unknown" is the bucket label used by every summary card when the
-    // underlying field is null/empty. Clicking that bucket has to filter
-    // to entries where the field is missing — not literally match the
-    // string "Unknown", which never appears in the data.
-    const isUnknownTarget = clickFilter.value === "Unknown";
-    return sidebarFilteredEntries.filter((e) => {
-      if (clickFilter.field === "agent") {
-        const agentField = (e.agent || "").trim();
-        const agents = agentField.split(",").map(a => a.trim()).filter(Boolean);
-        if (isUnknownTarget) return agents.length === 0;
-        const target = clickFilter.value.toLowerCase();
-        return agents.some(a => a.toLowerCase() === target);
-      }
-      if (clickFilter.field === "team") {
-        const entryTeams = e.team
-          ? (e.team as string).split(",").map(t => t.trim()).filter(Boolean)
-          : [];
-        if (isUnknownTarget) return entryTeams.length === 0;
-        return entryTeams.some(t => t === clickFilter.value);
-      }
-      const val = e[clickFilter.field];
-      if (isUnknownTarget) return !val;
-      return val === clickFilter.value;
-    });
-  }, [sidebarFilteredEntries, clickFilter]);
+  }, [entries, selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses, selectedFiscalYears]);
 
   const totalWip = useMemo(
     () => filteredEntries.reduce((s, e) => s + (e.amtWip || 0), 0),
@@ -1066,116 +858,65 @@ export default function WipReport() {
   );
   const totalNetFees = totalWip + totalInvoiced;
 
-  const groupData = useMemo(() => {
-    const map: Record<string, number> = {};
-    filteredEntries.forEach((e) => {
-      // "Client" card now groups by the resolved counterparty name
-      // (landlord / vendor / purchaser) so clicking Canary Wharf
-      // actually surfaces every deal where Canary Wharf is the client.
-      // Old behaviour grouped by the stage-bucket `groupName` and never
-      // matched a real client.
-      const g = e.client || "Unknown";
-      map[g] = (map[g] || 0) + (e.amtWip || 0) + (e.amtInvoice || 0);
-    });
-    return Object.entries(map)
-      .map(([label, value]) => ({ label, value }))
-      .sort((a, b) => b.value - a.value);
-  }, [filteredEntries]);
-
-  const teamData = useMemo(() => {
-    const map: Record<string, number> = {};
-    // Count each deal's fee against every team it belongs to (no split).
-    // This matches click-filter behaviour: clicking a team shows all deals
-    // that include it, at full fee.
-    const counted = new Set<string>();
-    filteredEntries.forEach((e) => {
+  // Net fees per filter option, shown alongside each entry in the dropdown
+  // lists (replaces the old summary boards). Computed from the full entry set
+  // so option values stay stable while filtering. Team gets the full fee per
+  // team (matching the old Team card); agents split the fee evenly.
+  const filterFees = useMemo(() => {
+    const client: Record<string, number> = {};
+    const team: Record<string, number> = {};
+    const agent: Record<string, number> = {};
+    const project: Record<string, number> = {};
+    const status: Record<string, number> = {};
+    const month: Record<string, number> = {};
+    entries.forEach((e) => {
       const fee = (e.amtWip || 0) + (e.amtInvoice || 0);
-      const teams = e.team
-        ? (e.team as string).split(",").map(t => t.trim()).filter(Boolean)
-        : ["Unknown"];
-      teams.forEach(t => {
-        // Deduplicate per (entry, team) so a deal split across agents
-        // doesn't multiply the team total.
-        const key = `${e.id}::${t}`;
-        if (!counted.has(key)) {
-          counted.add(key);
-          map[t] = (map[t] || 0) + fee;
-        }
-      });
-    });
-    return Object.entries(map)
-      .map(([label, value]) => ({ label, value }))
-      .sort((a, b) => b.value - a.value);
-  }, [filteredEntries]);
-
-  const agentData = useMemo(() => {
-    const map: Record<string, number> = {};
-    filteredEntries.forEach((e) => {
-      const agentField = e.agent || "Unknown";
-      const agents = agentField.split(",").map(a => normalizeAgent(a.trim())).filter(Boolean);
-      const fee = (e.amtWip || 0) + (e.amtInvoice || 0);
-      const perAgent = agents.length > 0 ? fee / agents.length : fee;
-      if (agents.length === 0) {
-        map["Unknown"] = (map["Unknown"] || 0) + fee;
-      } else {
-        agents.forEach(a => {
-          const key = a.trim().toUpperCase();
-          map[key] = (map[key] || 0) + perAgent;
-        });
+      if (e.client) client[e.client] = (client[e.client] || 0) + fee;
+      if (e.project) project[e.project] = (project[e.project] || 0) + fee;
+      if (e.dealStatus) status[e.dealStatus] = (status[e.dealStatus] || 0) + fee;
+      if (e.month) month[e.month] = (month[e.month] || 0) + fee;
+      if (e.team) {
+        const teams = new Set((e.team as string).split(",").map(t => t.trim()).filter(Boolean));
+        teams.forEach(t => { team[t] = (team[t] || 0) + fee; });
+      }
+      if (e.agent) {
+        const parts = (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean);
+        const perAgent = parts.length > 0 ? fee / parts.length : fee;
+        parts.forEach(a => { agent[a] = (agent[a] || 0) + perAgent; });
       }
     });
-    return Object.entries(map)
-      .map(([key, value]) => {
-        const display = key.includes(" ")
-          ? key.split(" ").map(p => p[0].toUpperCase()).join("")
-          : key.toUpperCase();
-        return { label: display, value, fullName: key };
-      })
-      .sort((a, b) => b.value - a.value);
-  }, [filteredEntries]);
+    return { client, team, agent, project, status, month };
+  }, [entries]);
 
-  const projectData = useMemo(() => {
-    const map: Record<string, { value: number; txns: number }> = {};
-    filteredEntries.forEach((e) => {
-      const p = e.project || "Unknown";
-      if (!map[p]) map[p] = { value: 0, txns: 0 };
-      map[p].value += (e.amtWip || 0) + (e.amtInvoice || 0);
-      map[p].txns += 1;
-    });
-    return Object.entries(map)
-      .map(([label, { value, txns }]) => ({ label, value, txns }))
-      .sort((a, b) => b.value - a.value);
-  }, [filteredEntries]);
-
-  const statusData = useMemo(() => {
-    const map: Record<string, number> = {};
-    filteredEntries.forEach((e) => {
-      const s = e.dealStatus || "Unknown";
-      map[s] = (map[s] || 0) + (e.amtWip || 0) + (e.amtInvoice || 0);
-    });
-    return Object.entries(map)
-      .map(([label, value]) => ({ label, value }))
-      .sort((a, b) => b.value - a.value);
-  }, [filteredEntries]);
-
-  const monthChartData = useMemo(() => {
-    const map: Record<string, number> = {};
-    filteredEntries.forEach((e) => {
-      const m = e.month || "No date";
-      map[m] = (map[m] || 0) + (e.amtWip || 0) + (e.amtInvoice || 0);
-    });
-    const colors = [
-      "#4a7c59", "#5a8f6a", "#6ba27b", "#7cb58c", "#8dc89d",
-      "#9edcae", "#73946d", "#5e7d58", "#4f6b49", "#8aad82",
-      "#a3c49b", "#bcdbb4",
-    ];
-    return Object.entries(map)
-      .map(([label, value], i) => ({ label, value, color: colors[i % colors.length] }))
-      .sort((a, b) => getMonthSortKey(b.label) - getMonthSortKey(a.label));
+  // The server emits one entry per agent fee-split (so agent filtering and
+  // per-agent fees work), but Deal Detail should read one row per deal —
+  // a split deal was showing twice. Collapse splits by dealId: sum the fee
+  // shares, combine the agents. Merging AFTER filtering means an agent
+  // filter still shows only that agent's share of a split deal.
+  const mergedDetailEntries = useMemo(() => {
+    const byDeal = new Map<string, WipDealEntry>();
+    for (const e of filteredEntries) {
+      const key = e.dealId || e.id;
+      const existing = byDeal.get(key);
+      if (!existing) {
+        byDeal.set(key, { ...e, id: key });
+      } else {
+        existing.amtWip = (existing.amtWip || 0) + (e.amtWip || 0);
+        existing.amtInvoice = (existing.amtInvoice || 0) + (e.amtInvoice || 0);
+        if (e.agent) {
+          const agents = new Set(
+            (existing.agent || "").split(",").map(a => a.trim()).filter(Boolean),
+          );
+          (e.agent as string).split(",").map(a => a.trim()).filter(Boolean).forEach(a => agents.add(a));
+          existing.agent = [...agents].join(", ");
+        }
+      }
+    }
+    return [...byDeal.values()];
   }, [filteredEntries]);
 
   const sortedDetailEntries = useMemo(() => {
-    const sorted = [...filteredEntries];
+    const sorted = [...mergedDetailEntries];
     sorted.sort((a, b) => {
       let aVal: any, bVal: any;
       switch (detailSort.column) {
@@ -1207,7 +948,7 @@ export default function WipReport() {
       return detailSort.direction === "asc" ? aVal - bVal : bVal - aVal;
     });
     return sorted;
-  }, [filteredEntries, detailSort]);
+  }, [mergedDetailEntries, detailSort]);
 
   const toggleSort = (column: string) => {
     setDetailSort((prev) =>
@@ -1269,10 +1010,23 @@ export default function WipReport() {
   };
 
   const activeFilterCount =
-    (selectedTeams.size < allTeams.length ? 1 : 0) +
-    (selectedMonths.size < allMonths.length ? 1 : 0) +
-    (selectedAgents.size < allAgents.length ? 1 : 0) +
-    (selectedStatuses.size < allStatuses.length ? 1 : 0);
+    (selectedFiscalYears.size > 0 ? 1 : 0) +
+    (selectedClients.size > 0 ? 1 : 0) +
+    (selectedTeams.size > 0 ? 1 : 0) +
+    (selectedMonths.size > 0 ? 1 : 0) +
+    (selectedAgents.size > 0 ? 1 : 0) +
+    (selectedProjects.size > 0 ? 1 : 0) +
+    (selectedStatuses.size > 0 ? 1 : 0);
+
+  const resetAllFilters = () => {
+    setSelectedFiscalYears(new Set());
+    setSelectedClients(new Set());
+    setSelectedTeams(new Set());
+    setSelectedMonths(new Set());
+    setSelectedAgents(new Set());
+    setSelectedProjects(new Set());
+    setSelectedStatuses(new Set());
+  };
 
   if (isLoading) {
     return (
@@ -1283,10 +1037,6 @@ export default function WipReport() {
       </div>
     );
   }
-
-  const maxMonthValue = Math.max(...monthChartData.map((d) => d.value), 1);
-  const clickFilterActiveField = clickFilter?.field || null;
-  const clickFilterActiveValue = clickFilter?.value || null;
 
   return (
     <div className="min-h-[calc(100vh-64px)] md:h-[calc(100vh-64px)] flex flex-col md:overflow-hidden p-4 sm:p-6 print:p-2 print:h-auto print:overflow-visible" data-testid="wip-report-page">
@@ -1340,12 +1090,6 @@ export default function WipReport() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 no-print">
-          {clickFilter && (
-            <Button variant="outline" size="sm" onClick={clearClickFilter} data-testid="wip-clear-click-filter">
-              <X className="h-4 w-4 mr-1" />
-              Clear: {clickFilter.value}
-            </Button>
-          )}
           <Button
             variant="outline"
             size="sm"
@@ -1413,8 +1157,7 @@ export default function WipReport() {
       ) : activeTab === "fee-check" ? (
         <FeeCheckTab />
       ) : (
-      <div className="flex flex-col md:flex-row gap-4 flex-1 min-h-0">
-        <div className="flex-1 md:overflow-y-auto space-y-4 min-h-0">
+      <div className="flex flex-col gap-4 flex-1 min-h-0">
           {/* KPI stat cards — matching Investment Tracker style */}
           <ScrollArea className="w-full shrink-0">
             <div className="flex items-center gap-3 pb-1">
@@ -1443,68 +1186,89 @@ export default function WipReport() {
             <ScrollBar orientation="horizontal" />
           </ScrollArea>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <ClickableSummaryTable
-              title="Client"
-              data={groupData}
-              valueLabel="Net fees"
-              activeValue={clickFilterActiveField === "client" ? clickFilterActiveValue : null}
-              onRowClick={handleClickFilter}
-              field="client"
-            />
-            <ClickableSummaryTable
-              title="Team"
-              data={teamData}
-              valueLabel="Net fees"
-              activeValue={clickFilterActiveField === "team" ? clickFilterActiveValue : null}
-              onRowClick={handleClickFilter}
-              field="team"
-              overrideTotal={totalNetFees}
-            />
-            <ClickableSummaryTable
-              title="BGP Contact"
-              data={agentData.map(a => ({ label: a.label, value: a.value, clickValue: a.fullName }))}
-              valueLabel="Net fees"
-              activeValue={clickFilterActiveField === "agent" ? clickFilterActiveValue : null}
-              onRowClick={handleClickFilter}
-              field="agent"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <ClickableSummaryTable
-              title="Property"
-              data={projectData}
-              valueLabel="Net fees"
-              activeValue={clickFilterActiveField === "project" ? clickFilterActiveValue : null}
-              onRowClick={handleClickFilter}
-              field="project"
-            />
-            <ClickableSummaryTable
-              title="Deal Status"
-              data={statusData}
-              valueLabel="Net fees"
-              activeValue={clickFilterActiveField === "dealStatus" ? clickFilterActiveValue : null}
-              onRowClick={handleClickFilter}
-              field="dealStatus"
-            />
-            <div className="bg-white border border-gray-200 rounded-lg p-3">
-              <div className="bg-gray-50 border-b -mx-3 -mt-3 px-3 py-2 mb-3 rounded-t-lg">
-                <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
-                  Net fees by Month
-                </span>
-              </div>
-              <HorizontalBarChart
-                data={monthChartData}
-                maxValue={maxMonthValue}
-                activeValue={clickFilterActiveField === "month" ? clickFilterActiveValue : null}
-                onBarClick={handleClickFilter}
+          {/* Filter dropdowns — one per former summary board */}
+          <div className="flex flex-wrap items-center gap-2 flex-shrink-0 no-print" data-testid="wip-filters-bar">
+            {allFiscalYears.length > 0 && (
+              <FilterDropdown
+                title="Fiscal Year"
+                items={allFiscalYears.map((yr) => (yr === 0 ? "TBC" : String(yr)))}
+                selected={new Set([...selectedFiscalYears].map((yr) => (yr === 0 ? "TBC" : String(yr))))}
+                onToggle={(item) => {
+                  const yr = item === "TBC" ? 0 : parseInt(item);
+                  setSelectedFiscalYears(prev => {
+                    const next = new Set(prev);
+                    if (next.has(yr)) next.delete(yr); else next.add(yr);
+                    return next;
+                  });
+                }}
+                onClearAll={() => setSelectedFiscalYears(new Set())}
               />
-            </div>
+            )}
+            <FilterDropdown
+              title="Client"
+              items={allClients}
+              selected={selectedClients}
+              onToggle={(c) => toggleFilter(selectedClients, setSelectedClients, c)}
+              onClearAll={() => setSelectedClients(new Set())}
+              values={filterFees.client}
+            />
+            <FilterDropdown
+              title="Property"
+              items={allProjects}
+              selected={selectedProjects}
+              onToggle={(p) => toggleFilter(selectedProjects, setSelectedProjects, p)}
+              onClearAll={() => setSelectedProjects(new Set())}
+              values={filterFees.project}
+            />
+            <FilterDropdown
+              title="Team"
+              items={allTeams}
+              selected={selectedTeams}
+              onToggle={(t) => toggleFilter(selectedTeams, setSelectedTeams, t)}
+              onClearAll={() => setSelectedTeams(new Set())}
+              values={filterFees.team}
+            />
+            <FilterDropdown
+              title="BGP Contact"
+              items={allAgents}
+              selected={selectedAgents}
+              onToggle={(a) => toggleFilter(selectedAgents, setSelectedAgents, a)}
+              onClearAll={() => setSelectedAgents(new Set())}
+              values={filterFees.agent}
+            />
+            <FilterDropdown
+              title="Deal Status"
+              items={allStatuses}
+              selected={selectedStatuses}
+              onToggle={(s) => toggleFilter(selectedStatuses, setSelectedStatuses, s)}
+              onClearAll={() => setSelectedStatuses(new Set())}
+              values={filterFees.status}
+              getLabel={(s) => {
+                const code = legacyToCode(s);
+                return code ? DEAL_STATUS_LABELS[code] : s;
+              }}
+            />
+            <FilterDropdown
+              title="Net Fees by Month"
+              items={allMonths}
+              selected={selectedMonths}
+              onToggle={(m) => toggleFilter(selectedMonths, setSelectedMonths, m)}
+              onClearAll={() => setSelectedMonths(new Set())}
+              values={filterFees.month}
+            />
+            {activeFilterCount > 0 && (
+              <button
+                onClick={resetAllFilters}
+                className="text-xs text-blue-600 hover:underline flex items-center gap-0.5 ml-1"
+                data-testid="wip-clear-all-filters"
+              >
+                <X className="h-3 w-3" /> Reset filters
+              </button>
+            )}
           </div>
 
-          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden print-break" data-testid="wip-detail-table">
-            <div className="bg-gray-50 border-b px-3 py-2 flex items-center justify-between">
+          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden print-break flex-1 min-h-0 flex flex-col" data-testid="wip-detail-table">
+            <div className="bg-gray-50 border-b px-3 py-2 flex items-center justify-between flex-shrink-0">
               <div>
                 <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
                   Deal Detail
@@ -1512,9 +1276,9 @@ export default function WipReport() {
                 <span className="text-xs text-gray-500 ml-2">({sortedDetailEntries.length} rows)</span>
               </div>
               <div className="flex items-center gap-2">
-                {clickFilter && (
+                {activeFilterCount > 0 && (
                   <Badge variant="secondary" className="text-[10px]">
-                    Filtered by {clickFilter.field === "client" || clickFilter.field === "groupName" ? "Client" : clickFilter.field === "project" ? "Property" : clickFilter.field === "dealStatus" ? "Status" : clickFilter.field}: {clickFilter.value}
+                    {activeFilterCount} filter{activeFilterCount !== 1 ? "s" : ""} active
                   </Badge>
                 )}
                 <div className="relative no-print">
@@ -1543,7 +1307,7 @@ export default function WipReport() {
               </div>
             </div>
             {selectedIds.size > 0 && (
-              <div className="flex items-center gap-3 px-4 py-2 bg-primary/5 border-b">
+              <div className="flex items-center gap-3 px-4 py-2 bg-primary/5 border-b flex-shrink-0">
                 <span className="text-xs font-medium">{selectedIds.size} selected</span>
                 <span className="text-xs text-muted-foreground">
                   {formatFullCurrency(sortedDetailEntries.filter(e => e.id && selectedIds.has(e.id)).reduce((s, e) => s + (e.amtWip || 0) + (e.amtInvoice || 0), 0))} total
@@ -1565,7 +1329,7 @@ export default function WipReport() {
                         data-testid="checkbox-select-all"
                       />
                     </th>
-                    {WIP_DETAIL_COLS.filter((col) => showCol(col.key)).map((col) => (
+                    {WIP_DETAIL_COLS.filter((col) => colVisible(col.key)).map((col) => (
                       <th
                         key={col.key}
                         className={`px-2 py-2 text-left font-medium text-gray-600 cursor-pointer hover:text-gray-900 ${col.width}`}
@@ -1593,12 +1357,12 @@ export default function WipReport() {
                           />
                         )}
                       </td>
-                      {showCol("dealRef") && (
+                      {colVisible("dealRef") && (
                       <td className="px-2 py-1.5 text-xs font-mono text-gray-400 whitespace-nowrap">
                         {e.dealRef ? `#${e.dealRef}` : "—"}
                       </td>
                       )}
-                      {showCol("ref") && (
+                      {colVisible("ref") && (
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[180px]">
                         {e.dealId ? (
                           <Link href={`/deals/${e.dealId}`}>
@@ -1607,40 +1371,41 @@ export default function WipReport() {
                         ) : (e.ref || "—")}
                       </td>
                       )}
-                      {showCol("client") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">{e.client || "—"}</td>}
-                      {showCol("tenant") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.tenant || "—"}</td>}
-                      {showCol("project") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.project || "—"}</td>}
-                      {showCol("billingEntity") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.billingEntity || "—"}</td>}
-                      {showCol("team") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.team || "—"}</td>}
-                      {showCol("amtWip") && (
-                      <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
+                      {colVisible("client") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">{e.client || "—"}</td>}
+                      {colVisible("tenant") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.tenant || "—"}</td>}
+                      {colVisible("project") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.project || "—"}</td>}
+                      {colVisible("billingEntity") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.billingEntity || "—"}</td>}
+                      {colVisible("team") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.team || "—"}</td>}
+                      {colVisible("amtWip") && (
+                      <td className="px-2 py-1.5 text-gray-900 font-mono">
                         {e.amtWip ? formatFullCurrency(e.amtWip) : "—"}
                       </td>
                       )}
-                      {showCol("amtInvoice") && (
-                      <td className="px-2 py-1.5 text-green-700 font-mono text-right">
+                      {colVisible("amtInvoice") && (
+                      <td className="px-2 py-1.5 text-green-700 font-mono">
                         {e.amtInvoice ? formatFullCurrency(e.amtInvoice) : "—"}
                       </td>
                       )}
-                      {showCol("dealDate") && (
+                      {colVisible("dealDate") && (
                       <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">
                         {(() => {
-                          const isActual = !!(e.exchangedAt || e.completedAt || e.invoicedAt);
-                          const pick = e.invoicedAt
-                            ? { label: "Invoiced", iso: e.invoicedAt, cls: "bg-green-100 text-green-800" }
-                            : e.completedAt
+                          // Invoiced deals are done — a target month is meaningless,
+                          // so the cell stays blank.
+                          if (e.stage === "invoiced" || e.invoicedAt) return <span>—</span>;
+                          const isActual = !!(e.exchangedAt || e.completedAt);
+                          const pick = e.completedAt
                             ? { label: "Completed", iso: e.completedAt, cls: "bg-blue-100 text-blue-800" }
                             : e.exchangedAt
                             ? { label: "Exchanged", iso: e.exchangedAt, cls: "bg-amber-100 text-amber-800" }
                             : e.targetDate
                             ? { label: "Target", iso: e.targetDate, cls: "bg-gray-100 text-gray-700" }
                             : null;
-                          const dateStr = pick ? (() => { const d = new Date(pick.iso); return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" }); })() : null;
+                          const dateStr = pick ? (() => { const d = new Date(pick.iso); return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" }); })() : null;
                           return (
                             <div className="flex flex-col gap-0.5">
                               {!isActual && e.dealId ? (
                                 <input
-                                  type="date"
+                                  type="month"
                                   // The target date belongs to the DEAL, so this saves to the deal —
                                   // every split row for that deal (e.g. AT / CR / LK) shares it, and
                                   // keying on targetDate remounts the other agents' inputs after the
@@ -1650,20 +1415,22 @@ export default function WipReport() {
                                   // doesn't blur the field, so the old onBlur save silently never fired
                                   // (this was the "I keep changing it and it won't save" bug).
                                   key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`}
-                                  defaultValue={toDateInputValue(e.targetDate)}
-                                  className="text-xs border border-gray-200 rounded px-1 py-0.5 w-[110px] focus:outline-none focus:border-blue-400"
+                                  defaultValue={toDateInputValue(e.targetDate).slice(0, 7)}
+                                  className="text-xs border border-gray-200 rounded px-1 py-0.5 w-[150px] focus:outline-none focus:border-blue-400"
                                   onChange={async (ev) => {
                                     const val = ev.target.value;
                                     if (!val) return;
                                     // PUT /api/crm/deals/:id — the endpoint the Deals page uses. (The
                                     // old PATCH /api/deals/:id route never existed, so nothing saved.)
+                                    // Month picker gives yyyy-MM; the deal stores a full date, so pin
+                                    // the target to the 1st of the chosen month.
                                     try {
-                                      await apiRequest("PUT", `/api/crm/deals/${e.dealId}`, { targetDate: val });
-                                      toast({ title: "Target date updated", description: "Applied to everyone on this deal." });
+                                      await apiRequest("PUT", `/api/crm/deals/${e.dealId}`, { targetDate: `${val}-01` });
+                                      toast({ title: "Target month updated", description: "Applied to everyone on this deal." });
                                       // Refetch so every split row on this deal re-syncs to the new date.
                                       invalidateDealCaches();
                                     } catch (err: any) {
-                                      toast({ title: "Couldn't save target date", description: err?.message || "Please try again.", variant: "destructive" });
+                                      toast({ title: "Couldn't save target month", description: err?.message || "Please try again.", variant: "destructive" });
                                     }
                                   }}
                                 />
@@ -1672,22 +1439,24 @@ export default function WipReport() {
                               ) : (
                                 <span>—</span>
                               )}
-                              {pick && <span className={`inline-flex items-center px-1 py-0 rounded text-[9px] font-medium w-fit ${pick.cls}`}>{pick.label}</span>}
+                              {/* No badge for targets — the column header already says Target Month.
+                                  Completed/Exchanged keep theirs since those are actuals, not targets. */}
+                              {pick && pick.label !== "Target" && <span className={`inline-flex items-center px-1 py-0 rounded text-[9px] font-medium w-fit ${pick.cls}`}>{pick.label}</span>}
                             </div>
                           );
                         })()}
                       </td>
                       )}
-                      {showCol("dealType") && (
+                      {colVisible("dealType") && (
                       <td className="px-2 py-1.5">
                         {e.dealType ? (
                           <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${DEAL_TYPE_BADGE_COLORS[e.dealType] || "bg-gray-100 text-gray-700"}`}>{e.dealType}</span>
                         ) : <span className="text-gray-400">—</span>}
                       </td>
                       )}
-                      {showCol("agent") && <td className="px-2 py-1.5 text-gray-700">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>}
-                      {showCol("dealStatus") && <td className="px-2 py-1.5 text-gray-600 truncate max-w-[100px]">{e.dealStatus || "—"}</td>}
-                      {showCol("stage") && (
+                      {colVisible("agent") && <td className="px-2 py-1.5 text-gray-700">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>}
+                      {colVisible("dealStatus") && <td className="px-2 py-1.5 text-gray-600 truncate max-w-[100px]">{e.dealStatus || "—"}</td>}
+                      {colVisible("stage") && (
                       <td className="px-2 py-1.5 text-xs truncate max-w-[100px]">
                         {e.stage === "pipeline" ? (
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800">Pipeline</span>
@@ -1705,111 +1474,25 @@ export default function WipReport() {
                 </tbody>
                 <tfoot className="bg-gray-100 border-t font-semibold">
                   <tr>
-                    <td colSpan={1 + WIP_LEAD_KEYS.filter(showCol).length} className="px-2 py-1.5 text-gray-800">Total</td>
-                    {showCol("amtWip") && (
-                      <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
+                    <td colSpan={1 + WIP_LEAD_KEYS.filter(colVisible).length} className="px-2 py-1.5 text-gray-800">Total</td>
+                    {colVisible("amtWip") && (
+                      <td className="px-2 py-1.5 text-gray-900 font-mono">
                         {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
                       </td>
                     )}
-                    {showCol("amtInvoice") && (
-                      <td className="px-2 py-1.5 text-green-700 font-mono text-right">
+                    {colVisible("amtInvoice") && (
+                      <td className="px-2 py-1.5 text-green-700 font-mono">
                         {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0))}
                       </td>
                     )}
-                    {WIP_TRAIL_KEYS.filter(showCol).length > 0 && (
-                      <td colSpan={WIP_TRAIL_KEYS.filter(showCol).length} className="px-2 py-1.5" />
+                    {WIP_TRAIL_KEYS.filter(colVisible).length > 0 && (
+                      <td colSpan={WIP_TRAIL_KEYS.filter(colVisible).length} className="px-2 py-1.5" />
                     )}
                   </tr>
                 </tfoot>
               </table>
             </ScrollableTable>
           </div>
-        </div>
-
-        <div className="w-full md:w-52 md:flex-shrink-0 no-print md:overflow-y-auto space-y-3 min-h-0 md:max-h-full" data-testid="wip-filters-panel">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide flex items-center gap-1">
-              <Filter className="h-3 w-3" /> Filters
-            </span>
-            {activeFilterCount > 0 && (
-              <button
-                onClick={() => {
-                  setSelectedTeams(new Set(allTeams));
-                  setSelectedMonths(new Set(allMonths));
-                  setSelectedAgents(new Set(allAgents));
-                  setSelectedStatuses(new Set(allStatuses));
-                }}
-                className="text-[10px] text-blue-600 hover:underline flex items-center gap-0.5"
-                data-testid="wip-clear-all-filters"
-              >
-                <X className="h-3 w-3" /> Reset
-              </button>
-            )}
-          </div>
-
-          {allFiscalYears.length > 0 && (
-            <div className="border border-gray-200 rounded-lg overflow-hidden" data-testid="wip-filter-fiscal-year">
-              <div className="bg-gray-50 border-b px-3 py-2">
-                <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Fiscal Year</span>
-              </div>
-              <div className="px-2 py-1">
-                {allFiscalYears.map((yr) => (
-                  <label key={yr} className="flex items-center gap-2 py-0.5 text-xs text-gray-700 cursor-pointer">
-                    <Checkbox
-                      checked={selectedFiscalYears.has(yr)}
-                      onCheckedChange={(checked) => {
-                        setSelectedFiscalYears(prev => {
-                          const next = new Set(prev);
-                          if (checked) {
-                            next.add(yr);
-                          } else {
-                            next.delete(yr);
-                            if (next.size === 0) next.add(yr);
-                          }
-                          return next;
-                        });
-                      }}
-                      className="h-3 w-3"
-                      data-testid={`wip-filter-fy-${yr}`}
-                    />
-                    <span>{yr === 0 ? "TBC" : yr}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <FilterSection
-            title="Month"
-            items={allMonths}
-            selected={selectedMonths}
-            onToggle={(m) => toggleFilter(selectedMonths, setSelectedMonths, m)}
-            onSelectAll={() => setSelectedMonths(new Set(allMonths))}
-            onClearAll={() => setSelectedMonths(new Set())}
-          />
-
-          <FilterSection
-            title="BGP Contact"
-            items={allAgents}
-            selected={selectedAgents}
-            onToggle={(a) => toggleFilter(selectedAgents, setSelectedAgents, a)}
-            onSelectAll={() => setSelectedAgents(new Set(allAgents))}
-            onClearAll={() => setSelectedAgents(new Set())}
-          />
-
-          <FilterSection
-            title="Deal Status"
-            items={allStatuses}
-            selected={selectedStatuses}
-            onToggle={(s) => toggleFilter(selectedStatuses, setSelectedStatuses, s)}
-            onSelectAll={() => setSelectedStatuses(new Set(allStatuses))}
-            onClearAll={() => setSelectedStatuses(new Set())}
-          />
-
-          <div className="text-[10px] text-gray-400 text-center pt-2">
-            Live data from CRM deals
-          </div>
-        </div>
       </div>
       )}
     </div>

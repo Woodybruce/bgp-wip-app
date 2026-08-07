@@ -30,6 +30,7 @@
 const SCRAPERAPI_ENDPOINT = "https://api.scraperapi.com/";
 
 import { webshareF, isProxyConfigured, isConnectionError } from "./proxy-fetch";
+import { scraperApiExhausted, noteScraperApiResponse } from "./utils/scraperapi";
 
 const BROWSER_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -298,12 +299,13 @@ async function fetchDocsHtml(docsUrl: string): Promise<string | null> {
     }
   }
 
-  // Tier 3: ScraperAPI (if key configured)
+  // Tier 3: ScraperAPI (if key configured and not credit-exhausted)
   const apiKey = process.env.SCRAPERAPI_KEY;
-  if (!apiKey) return null;
+  if (!apiKey || scraperApiExhausted()) return null;
   try {
     const proxied = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(docsUrl)}&country_code=uk&render=false`;
     const res = await fetch(proxied, { signal: AbortSignal.timeout(45000) });
+    noteScraperApiResponse(res.status);
     if (res.ok) {
       console.log(`[planning-docs] via ScraperAPI: ${docsUrl.replace(/^https?:\/\//, "").split("?")[0]}`);
       return await res.text();
@@ -453,13 +455,14 @@ export async function downloadPlanningPdf(url: string, refererUrl?: string): Pro
   // Strategy 0b: ScraperAPI sticky-session two-step.
   // Uses session_number to pin both requests to the same egress IP, avoiding
   // the rotating-proxy problem that breaks Webshare for Idox JSESSIONID flows.
-  if (apiKey && refererUrl) {
+  if (apiKey && refererUrl && !scraperApiExhausted()) {
     try {
       const sessionNum = Math.floor(Math.random() * 999999);
       const step1 = await fetch(
         `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(refererUrl)}&session_number=${sessionNum}&country_code=uk&render=false`,
         { signal: AbortSignal.timeout(20000), redirect: "follow" },
       );
+      noteScraperApiResponse(step1.status);
       const h1 = (step1 as any).headers;
       let cookies = "";
       if (typeof h1?.getSetCookie === "function") {
@@ -500,8 +503,13 @@ export async function downloadPlanningPdf(url: string, refererUrl?: string): Pro
   }
 
   const tryFetch = async (label: string, scraperUrl: string, timeoutMs: number): Promise<Buffer | null> => {
+    if (scraperApiExhausted()) {
+      lastDownloadError = "ScraperAPI paused — account out of credits (circuit breaker)";
+      return null;
+    }
     try {
       const res = await fetch(scraperUrl, { signal: AbortSignal.timeout(timeoutMs), redirect: "follow" });
+      noteScraperApiResponse(res.status);
       if (!res.ok) {
         lastDownloadError = `${label} returned HTTP ${res.status}`;
         console.warn(`[planning-docs] ${label} ${res.status} for ${url}`);

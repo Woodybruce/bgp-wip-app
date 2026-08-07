@@ -1718,6 +1718,41 @@ function SimplifiedCreateBody({
         </Select>
       </div>
 
+      {/* Team on the main form (not just "Show all fields") — the deal-type
+          auto-assignment above is visible and correctable right away. */}
+      <div>
+        <Label>Team</Label>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="w-full justify-start font-normal" data-testid="select-deal-team-simplified">
+              {form.team.length === 0 ? (
+                <span className="text-muted-foreground">Select teams</span>
+              ) : (
+                <div className="flex gap-1 flex-wrap">
+                  {form.team.map((t: string) => (
+                    <Badge key={t} className={`text-[10px] px-1.5 py-0 text-white ${DEAL_TEAM_COLORS[t] || "bg-zinc-500"}`}>{teamLabel(t)}</Badge>
+                  ))}
+                </div>
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            {CRM_OPTIONS.dealTeam.map((t) => (
+              <DropdownMenuItem key={t} onClick={() => {
+                const next = form.team.includes(t) ? form.team.filter((v: string) => v !== t) : [...form.team, t];
+                set("team", next as any);
+              }}>
+                <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${form.team.includes(t) ? "bg-primary border-primary" : "border-muted-foreground/30"}`}>
+                  {form.team.includes(t) && <span className="text-primary-foreground text-[8px]">✓</span>}
+                </div>
+                <div className={`w-2 h-2 rounded-full ${DEAL_TEAM_COLORS[t] || "bg-zinc-500"} mr-1`} />
+                {teamLabel(t)}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
       {/* Unit picker — only shown for unit-level deal types. Searches
           the tenancy schedule first (god of truth) and lets the user
           inline-create a tenancy row when the unit doesn't exist yet.

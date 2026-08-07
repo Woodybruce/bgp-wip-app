@@ -104,6 +104,15 @@ export function convertMessagesForClaude(messages: any[]): { system: string; mes
 }
 
 function parseClaudeResponse(response: any) {
+  // Fable 5's safety classifiers can decline outright — HTTP 200 with
+  // stop_reason "refusal" and no content. Surface that as an error so
+  // callers' failure paths run instead of silently parsing "".
+  if (response?.stop_reason === "refusal") {
+    throw new Error("Claude declined the request (safety refusal)");
+  }
+  if (!Array.isArray(response?.content) || response.content.length === 0) {
+    throw new Error("Claude returned no content");
+  }
   let textContent = "";
   const toolCalls: any[] = [];
 
@@ -146,13 +155,25 @@ export async function callClaude(opts: any) {
   if (system) params.system = system;
   if (tools && tools.length > 0) params.tools = tools;
 
+  // Fable models reject a temperature param, and their safety classifiers
+  // can refuse — opt into the server-side fallback so a false positive is
+  // transparently re-served by Opus 4.8 inside the same call.
+  const isFable = String(params.model).startsWith("claude-fable");
+  if (isFable) {
+    delete params.temperature;
+    params.betas = ["server-side-fallback-2026-06-01"];
+    params.fallbacks = [{ model: "claude-opus-4-8" }];
+  }
+  const createMessage = (client: any) =>
+    isFable ? client.beta.messages.create(params) : client.messages.create(params);
+
   const hasDirect = !!process.env.ANTHROPIC_API_KEY;
   const hasIntegration = !!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
 
   if (hasDirect) {
     try {
       const client = getAnthropicClient(true);
-      const response = await client.messages.create(params);
+      const response = await createMessage(client);
       return parseClaudeResponse(response);
     } catch (err: any) {
       const isCreditsOrAuth = err?.status === 400 || err?.status === 401 || err?.status === 403;
@@ -166,7 +187,7 @@ export async function callClaude(opts: any) {
   }
 
   const client = getAnthropicClient(false);
-  const response = await client.messages.create(params);
+  const response = await createMessage(client);
   return parseClaudeResponse(response);
 }
 

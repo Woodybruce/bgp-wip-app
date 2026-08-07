@@ -18,6 +18,15 @@ let _built = false;
 function getAgent(): ProxyAgent | null {
   if (_built) return _agent;
   _built = true;
+  // Vendor-agnostic form takes precedence: UK_PROXY_URL is a standard
+  // http://user:pass@host:port proxy string (Webshare, DataImpulse,
+  // IPRoyal etc all expose this). The WEBSHARE_* triple remains as the
+  // legacy fallback so existing deployments keep working.
+  const generic = process.env.UK_PROXY_URL;
+  if (generic) {
+    _agent = new ProxyAgent(generic);
+    return _agent;
+  }
   const user = process.env.WEBSHARE_PROXY_USERNAME;
   const pass = process.env.WEBSHARE_PROXY_PASSWORD;
   const endpoint = process.env.WEBSHARE_PROXY_ENDPOINT || "p.webshare.io:80";
@@ -29,7 +38,10 @@ function getAgent(): ProxyAgent | null {
 }
 
 export function isProxyConfigured(): boolean {
-  return !!(process.env.WEBSHARE_PROXY_USERNAME && process.env.WEBSHARE_PROXY_PASSWORD);
+  return !!(
+    process.env.UK_PROXY_URL ||
+    (process.env.WEBSHARE_PROXY_USERNAME && process.env.WEBSHARE_PROXY_PASSWORD)
+  );
 }
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
