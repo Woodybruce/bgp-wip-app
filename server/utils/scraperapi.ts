@@ -30,6 +30,28 @@
 
 const SCRAPERAPI_ENDPOINT = "https://api.scraperapi.com/";
 
+// ── Credit-exhaustion circuit breaker ────────────────────────────────────
+// ScraperAPI signals an exhausted or unauthorised account with 401/403 from
+// api.scraperapi.com itself. Without a breaker, the planning-PDF strategy
+// ladder alone fires ~75 doomed requests per pathway run while the account
+// is out of credits. Any caller seeing 401/403 should report it here; all
+// callers should skip ScraperAPI entirely while the breaker is tripped.
+let scraperBreakerUntil = 0;
+const SCRAPER_BREAKER_MS = 10 * 60 * 1000;
+
+export function scraperApiExhausted(): boolean {
+  return Date.now() < scraperBreakerUntil;
+}
+
+export function noteScraperApiResponse(status: number): void {
+  if (status === 401 || status === 403) {
+    if (Date.now() >= scraperBreakerUntil) {
+      console.warn(`[scraperapi] HTTP ${status} from ScraperAPI — account out of credits or unauthorised; pausing all ScraperAPI calls for 10 minutes`);
+    }
+    scraperBreakerUntil = Date.now() + SCRAPER_BREAKER_MS;
+  }
+}
+
 export interface ScraperOptions {
   /** Use ScraperAPI's premium residential pool. Defaults true on Business plan. */
   premium?: boolean;
@@ -78,12 +100,17 @@ export async function scraperFetch(
   init: RequestInit & ScraperOptions = {},
 ): Promise<Response> {
   const { premium, render, uk, keepHeaders, sessionNumber, timeoutMs, ...fetchInit } = init;
+  if (scraperApiExhausted()) {
+    throw new Error("ScraperAPI paused — account out of credits (circuit breaker)");
+  }
   const proxiedUrl = buildScraperUrl(targetUrl, { premium, render, uk, keepHeaders, sessionNumber });
   const defaultTimeout = render ? 60000 : 30000;
-  return fetch(proxiedUrl, {
+  const res = await fetch(proxiedUrl, {
     ...fetchInit,
     signal: fetchInit.signal ?? AbortSignal.timeout(timeoutMs ?? defaultTimeout),
   });
+  noteScraperApiResponse(res.status);
+  return res;
 }
 
 /**
