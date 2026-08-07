@@ -40,6 +40,7 @@ import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view
 import { PropertyUnifiedSchedule } from "@/components/PropertyUnifiedSchedule";
 import { PropertyPlansPanel } from "@/components/property-plans-panel";
 import { BrandGapPanel } from "@/components/brand-gap-panel";
+import { NotesPanel } from "@/components/notes-panel";
 import { TrackerSummary } from "@/components/tracker-summary";
 import { ActivitySummary } from "@/components/activity-summary";
 import { BrandComplianceCard } from "@/components/brand-profile-panel";
@@ -781,6 +782,11 @@ export function PropertyDetail({ id }: { id: string }) {
                 start"). Renders for clients too — the server slices the
                 analysis to their brand categories + self-adds, so Landsec
                 sees the hospitality/leisure view. */}
+            {!isClientViewer && (
+              <ErrorBoundary compact name="Notes">
+                <NotesPanel propertyId={property.id} />
+              </ErrorBoundary>
+            )}
             <ErrorBoundary compact name="Brand gap">
               <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
                 <BrandGapPanel propertyId={property.id} />
