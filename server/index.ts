@@ -3730,6 +3730,8 @@ app.use("/api/branding/assets", express.static(
   setupNewsFeedRoutes(app);
   import("./contact-verify").then(m => { m.setupContactVerifyRoutes(app); m.startContactVerifySweep(); }).catch(e => console.warn("[contact-verify] setup failed:", e?.message));
   import("./insights-feed").then(m => { m.setupInsightsRoutes(app); m.startInsightsLoop(); }).catch(e => console.warn("[insights] setup failed:", e?.message));
+  import("./notes").then(m => m.setupNotesRoutes(app)).catch(e => console.warn("[notes] setup failed:", e?.message));
+  import("./teams-notes").then(m => { m.setupTeamsNotesRoutes(app); m.startTeamsNotesLoop(); }).catch(e => console.warn("[teams-notes] setup failed:", e?.message));
   setupModelsRoutes(app);
   setupDocumentTemplateRoutes(app);
   setupCanvaRoutes(app);
