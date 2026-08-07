@@ -490,6 +490,30 @@ async function ensureCrmPropertyLink(
     return first;
   }
   const name = (run.address.split(",")[0] || run.address).trim();
+  // Before creating a stub, look for an existing CRM property on the same
+  // postcode whose name matches the street/building — the ilike-on-name
+  // lookup alone missed these and every run created a duplicate.
+  if (run.postcode) {
+    try {
+      const namePattern = `%${name.replace(/^[\d\-–\s]+/, "").replace(/[%_\\]/g, "").trim()}%`;
+      const { rows: samePostcode } = await pool.query(
+        `SELECT * FROM crm_properties
+          WHERE postcode IS NOT NULL
+            AND UPPER(REPLACE(postcode, ' ', '')) = UPPER(REPLACE($1, ' ', ''))
+            AND (LOWER(name) = LOWER($2) OR name ILIKE $3)
+          ORDER BY updated_at DESC NULLS LAST
+          LIMIT 1`,
+        [run.postcode, name, namePattern],
+      );
+      if (samePostcode[0]) {
+        console.log(`[pathway stage1] Linked run ${run.id} → existing CRM property ${samePostcode[0].id} (postcode+name match)`);
+        await updateRun(run.id, { propertyId: samePostcode[0].id }).catch(() => {});
+        return samePostcode[0];
+      }
+    } catch (err: any) {
+      console.warn("[pathway stage1] postcode match lookup failed:", err?.message);
+    }
+  }
   try {
     const [created] = await db
       .insert(crmProperties)
@@ -5717,10 +5741,28 @@ export function registerPropertyPathwayRoutes(app: Express) {
         const rows = await findNearbyComps(postcode, limit);
         return res.json(rows);
       }
+      // Pathway-extracted comps live in crm_comps (the canonical table the
+      // comps page reads) — these endpoints previously targeted the orphaned
+      // retail_leasing_comps table, so the list was stale and Delete was a
+      // no-op. Rows are mapped to the legacy field shape the panel renders.
       const { rows } = await pool.query(
-        `SELECT * FROM retail_leasing_comps
-           ORDER BY COALESCE(lease_date, source_date) DESC NULLS LAST, created_at DESC
-           LIMIT $1`,
+        `SELECT id,
+                COALESCE(address->>'formatted', address->>'line1', name) AS address,
+                postcode, tenant, landlord, use_class,
+                comp_type AS sector,
+                headline_rent AS rent_pa,
+                rent_psf_overall AS rent_psf,
+                area_sqft, rent_free_months,
+                completion_date AS lease_date,
+                term AS term_years,
+                source_title AS source_ref,
+                'email' AS source_type,
+                comments AS notes,
+                created_at
+           FROM crm_comps
+          WHERE source_evidence = 'Pathway'
+          ORDER BY COALESCE(completion_date, created_at::text) DESC NULLS LAST, created_at DESC
+          LIMIT $1`,
         [limit],
       );
       res.json(rows);
@@ -5729,10 +5771,19 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
-  // Delete a curated retail comp (reviewer thinks it's bogus).
+  // Delete a curated retail comp (reviewer thinks it's bogus). Scoped to
+  // Pathway-extracted rows so this button can never remove a manually
+  // entered comp.
   app.delete("/api/retail-comps/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      await pool.query(`DELETE FROM retail_leasing_comps WHERE id = $1`, [req.params.id]);
+      const result = await pool.query(
+        `DELETE FROM crm_comps WHERE id = $1 AND source_evidence = 'Pathway'`,
+        [req.params.id],
+      );
+      if (result.rowCount === 0) {
+        // Legacy rows that predate the crm_comps migration.
+        await pool.query(`DELETE FROM retail_leasing_comps WHERE id = $1`, [req.params.id]);
+      }
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err?.message });

@@ -1031,6 +1031,45 @@ async function nearbyPlaces(lat: number, lng: number, apiKey: string, radius = 8
   }
 }
 
+// ── Vision quality gate for the Stage 8 sweep ────────────────────────────
+// Google Places photos are user-uploaded and mostly rubbish for a deck —
+// food close-ups, interiors of the wrong venue, selfies. Score each
+// candidate with Haiku vision before storing; fail OPEN on any error so a
+// vision outage never blanks the collections. PATHWAY_IMAGE_VISION_GATE=0
+// disables the gate entirely.
+async function visionApproveImage(buf: Buffer, purpose: "building" | "tenant" | "area", subject: string): Promise<boolean> {
+  if (process.env.PATHWAY_IMAGE_VISION_GATE === "0") return true;
+  try {
+    const small = await sharp(buf).rotate()
+      .resize({ width: 768, height: 768, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 80 }).toBuffer();
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const anthropic = new Anthropic();
+    const criteria = purpose === "building"
+      ? "a clear EXTERIOR photograph of the commercial building or its facade"
+      : purpose === "tenant"
+        ? "a clear shot of the brand's storefront, signage or shopfront (a well-shot branded interior is acceptable)"
+        : "an attractive street scene or exterior that sells the surrounding area";
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 30,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: small.toString("base64") } },
+          { type: "text", text: `Context: ${subject}. Would this image look professional in a property investment deck as ${criteria}? REJECT food/drink close-ups, blurry or dark shots, photos dominated by people, screenshots, menus, and anything clearly unrelated. Reply with exactly KEEP or REJECT.` },
+        ],
+      }],
+    }, { signal: AbortSignal.timeout(20_000) });
+    logAiUsage({ provider: "anthropic", model: "claude-haiku-4-5-20251001", feature: "pathway-image-gate", usage: (response as any)?.usage });
+    const text = response.content?.[0]?.type === "text" ? (response.content[0] as any).text : "";
+    return !/REJECT/i.test(text);
+  } catch (err: any) {
+    console.warn(`[pathway sweep] vision gate error (keeping image): ${err?.message}`);
+    return true;
+  }
+}
+
 export async function sweepStage8ImagesForRun(args: {
   runId: string;
   address: string;
@@ -1070,6 +1109,49 @@ export async function sweepStage8ImagesForRun(args: {
 
   const geo = await geocodeAddress(args.address, apiKey);
 
+  // ─── Building: Street View exteriors first ─────────────────────────────
+  // The one reliably-exterior shot of the building. Check the metadata
+  // endpoint for pano availability so we never store the grey "no imagery"
+  // tile, then capture a wide and a tight framing.
+  try {
+    const svLocation = [args.address, args.postcode].filter(Boolean).join(", ");
+    const metaRes = await fetch(
+      `https://maps.googleapis.com/maps/api/streetview/metadata?location=${encodeURIComponent(svLocation)}&key=${apiKey}`,
+      { signal: AbortSignal.timeout(10_000) },
+    );
+    const meta = metaRes.ok ? await metaRes.json() : null;
+    if (meta?.status === "OK") {
+      let svIdx = 0;
+      for (const fov of ["80", "55"]) {
+        const svRes = await fetch(
+          `https://maps.googleapis.com/maps/api/streetview?location=${encodeURIComponent(svLocation)}&size=1200x800&pitch=5&fov=${fov}&key=${apiKey}`,
+          { signal: AbortSignal.timeout(15_000) },
+        );
+        if (!svRes.ok) continue;
+        const svBuf = Buffer.from(await svRes.arrayBuffer());
+        if (svBuf.length < 12_000) continue;
+        svIdx++;
+        try {
+          const stored = await storeImageFromBuffer({
+            buffer: svBuf,
+            fileName: `Street View ${svIdx === 1 ? "wide" : "tight"} — ${args.address}`,
+            category: "Street Views",
+            tags: ["Street View", "Building", "Exterior", "pathway"],
+            description: `Street View exterior of ${args.address} (auto — pathway Stage 8).`,
+            source: "streetview",
+            propertyId: args.propertyId,
+            address: args.address,
+            filenameHint: `${args.address}-streetview-${svIdx}`,
+          });
+          // Lead the Building collection with exteriors, ahead of Places shots.
+          brochureBuildingImages.push(stored.id);
+        } catch {}
+      }
+    }
+  } catch (err: any) {
+    console.warn("[pathway sweep] Street View failed:", err?.message);
+  }
+
   // ─── Building: Places photos of the building ────────────────────────────
   if (geo?.placeId) {
     const refs = await placeDetailsPhotos(geo.placeId, apiKey, 15);
@@ -1078,6 +1160,7 @@ export async function sweepStage8ImagesForRun(args: {
       idx++;
       const buf = await placePhotoBuffer(ref, apiKey);
       if (!buf) continue;
+      if (!(await visionApproveImage(buf, "building", args.address))) continue;
       try {
         const stored = await storeImageFromBuffer({
           buffer: buf,
@@ -1100,6 +1183,16 @@ export async function sweepStage8ImagesForRun(args: {
   // ─── Tenants: Places photos of flagship stores ──────────────────────────
   const uniqueTenants = Array.from(new Set((args.tenantNames || []).map(t => t.trim()).filter(t => t && t.length > 1)));
   for (const tenant of uniqueTenants.slice(0, 6)) {
+    // Curated brand imagery already in the library (brand enrichment,
+    // uploads) beats anything Google Places returns — reuse it first.
+    try {
+      const existing = await db.select({ id: imageStudioImages.id })
+        .from(imageStudioImages)
+        .where(ilike(imageStudioImages.brandName, tenant))
+        .orderBy(desc(imageStudioImages.createdAt))
+        .limit(2);
+      for (const row of existing) tenantImages.push(row.id);
+    } catch {}
     // Places findplace → photos. Bias the search to the subject building so
     // we resolve the correct branch (e.g. the Haymarket Pret, not a Pret 5
     // miles away).
@@ -1116,6 +1209,7 @@ export async function sweepStage8ImagesForRun(args: {
           idx++;
           const buf = await placePhotoBuffer(ref, apiKey);
           if (!buf) continue;
+          if (!(await visionApproveImage(buf, "tenant", `${tenant} store near ${args.address}`))) continue;
           const stored = await storeImageFromBuffer({
             buffer: buf,
             fileName: `${tenant} — Store photo ${idx}`,
@@ -1145,6 +1239,7 @@ export async function sweepStage8ImagesForRun(args: {
       for (const ref of refs) {
         const buf = await placePhotoBuffer(ref, apiKey);
         if (!buf) continue;
+        if (!(await visionApproveImage(buf, "area", `${p.name}, near ${args.address}`))) continue;
         try {
           const stored = await storeImageFromBuffer({
             buffer: buf,
