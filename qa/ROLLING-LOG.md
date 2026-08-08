@@ -137,6 +137,13 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   Suggestions added: none.
 - Next journey: rotation #3 client mobile 390px (r208 was LIGHT → r209 FULL).
 
+### r209 · 2026-08-08 ~20:25 UTC · ROUND IN PROGRESS (provisional)
+- FULL round planned: rotation #3 client mobile 390px + new viewing/offer
+  PATCH harness scenarios (per UX-batch note).
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + fresh
+  build on b4d4af7). Triage: nothing to triage — zero failures.
+- Journey + harness work in progress; final entry replaces this one.
+
 ### r206 · 2026-08-08 · LIGHT (r205 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN twice (41 checks, 0 failures;
   second run verified the new chromium fallback with no SMOKE_CHROMIUM set).
