@@ -1534,25 +1534,26 @@ async function markRound(page, cross) {
   // hospitality/leisure/fitness client slice. Guards the unscoped superBrands
   // SQL (and any future tile that forgets the slice filter).
   await step(page, p, 'client-brand-hub-hunter-scoped', async () => {
-    const OUT_OF_SLICE = ['tenant - luxury', 'tenant - luxury accessories', 'tenant - luxury beauty', 'tenant - flagship fashion', 'tenant - fashion'];
+    // The canonical client gate is slice + own company + self-added extras
+    // (CLAUDE.md 2026-08-01), and /api/crm/companies applies exactly that —
+    // so every brand the hub/hunter serves a client must be in that set. A
+    // self-added Fashion brand showing up is intended; a brand OUTSIDE the
+    // client's directory is the leak.
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const j = async (url) => { const res = await fetch(url, { headers: auth }); return { ok: res.ok, status: res.status, body: res.ok ? await res.json().catch(() => null) : null }; };
       const hub = await j('/api/brands/hub');
       const hunter = await j('/api/brands/hunter');
-      if (!hub.ok || !hunter.ok) return { ok: false, why: `hub ${hub.status} / hunter ${hunter.status}` };
-      const types = (rows) => (Array.isArray(rows) ? rows : []).map((x) => String(x.company_type || x.companyType || '').toLowerCase());
-      return {
-        ok: true,
-        superLen: (hub.body?.superBrands || []).length,
-        hubTypes: [...types(hub.body?.hotBrands), ...types(hub.body?.topTurnover)],
-        hunterTypes: types(hunter.body),
-      };
+      const dir = await j('/api/crm/companies');
+      if (!hub.ok || !hunter.ok || !dir.ok) return { ok: false, why: `hub ${hub.status} / hunter ${hunter.status} / directory ${dir.status}` };
+      const visible = new Set((Array.isArray(dir.body) ? dir.body : []).map((c) => c.id));
+      const rows = (x) => (Array.isArray(x) ? x : []).map((b) => ({ id: b.id, name: b.name, type: String(b.company_type || b.companyType || '') }));
+      const served = [...rows(hub.body?.superBrands), ...rows(hub.body?.hotBrands), ...rows(hub.body?.topTurnover), ...rows(hunter.body)];
+      const leaks = served.filter((b) => b.id && !visible.has(b.id));
+      return { ok: true, leaks: leaks.slice(0, 3) };
     });
     if (!r.ok) throw new Error(`client brand hub/hunter unhealthy (${r.why})`);
-    if (r.superLen !== 0) throw new Error(`superBrands (luxury showcase) leaked to the client hub — ${r.superLen} rows`);
-    const leak = [...r.hubTypes, ...r.hunterTypes].find((t) => OUT_OF_SLICE.includes(t));
-    if (leak) throw new Error(`out-of-slice brand type leaked into the client hub/hunter: ${leak}`);
+    if (r.leaks.length) throw new Error(`brand outside the client's directory leaked into hub/hunter: ${r.leaks.map((b) => `${b.name} (${b.type})`).join(', ')}`);
   });
 
   // Firm-wide reporting (the board report + reporting summary — whole-book
