@@ -137,6 +137,11 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   Suggestions added: none.
 - Next journey: rotation #3 client mobile 390px (r208 was LIGHT → r209 FULL).
 
+### r211 · 2026-08-08 ~22:15 UTC · ROUND IN PROGRESS (provisional)
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + fresh
+  build). Triage: nothing to triage — clean run.
+- Plan: FULL round, rotation #4 staff mobile 390px (iPhone UA), then two-bot.
+
 ### r210 · 2026-08-08 · LIGHT (r209 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
   fresh DB + fresh build). Two-bot round 210 (dev server + smoke fixture):
