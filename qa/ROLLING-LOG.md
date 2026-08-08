@@ -85,3 +85,12 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
 - Suggestions added: UX-NOTES #1 (viewings/offers not editable), #2 (viewing
   date should default to today).
 - Next journey: rotation #2 client desktop (then #3 client mobile 390px).
+
+### r206 · 2026-08-08 · round in progress (LIGHT — r205 had the journey)
+- Fresh container. Regression: run-smoke.sh GREEN (41 checks, 0 failures,
+  fresh build + fresh fixture DB).
+- Setup note: playwright's node_modules install expects headless_shell-1234
+  which isn't in /opt/pw-browsers — run smoke with
+  SMOKE_CHROMIUM=/opt/pw-browsers/chromium (symlink to chromium-1194).
+- Triage list: nothing from smoke. Next: two-bot-round.mjs sweep, triaging
+  only non-hardcoded-ID failures per r205 note.
