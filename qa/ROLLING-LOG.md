@@ -137,6 +137,12 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   Suggestions added: none.
 - Next journey: rotation #3 client mobile 390px (r208 was LIGHT → r209 FULL).
 
+### r210 · 2026-08-08 · LIGHT — IN PROGRESS (heartbeat)
+- Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
+  fresh DB + fresh build). No deferred bugs from r209.
+- Plan: LIGHT round (r209 had the journey) — two-bot sweep incl. the new
+  viewing/offer PATCH scenarios, triage, fix up to 2 bugs.
+
 ### r209 · 2026-08-08 · FULL (rotation #3 client mobile 390px)
 - Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks; before fixes
   and again on the rebuilt bundle after them). Two-bot round 209: all
