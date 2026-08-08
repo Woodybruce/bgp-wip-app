@@ -141,3 +141,21 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   ~40 fixture-mismatch scenarios regain signal in fresh containers.
 - Suggestions added: UX-NOTES #3 (irreversible stage drag on AML-gated deals).
 - Next journey: rotation #2 client desktop (then #3 client mobile 390px).
+
+## 2026-08-08 ~20:00 UTC — UX batch (parent session, Woody-confirmed)
+- Woody confirmed all 5 open UX-NOTES suggestions ("Do all 5"); built in the
+  Land sec Chat parent session, not a QA round.
+- Changes: viewing/offer row edit (new PATCH /api/available-units/viewings/:id
+  and offers/:id + pencil edit mode in tracker dialogs); Add Viewing date
+  defaults to today; AML gate now allows reverting the deal's most recent
+  stage move back into a gated stage (24h window, audit-logged revert: true,
+  non-reverts still 409); client dashboard rent KPI shows "—" when no rent
+  data; occupancy basis labelled on dashboard ("full rent roll") and leasing
+  schedule ("Units on this board" / "board units only").
+- Verified: tsc clean, build clean, 41/41 smoke green pre-batch, Playwright
+  UI pass on tracker dialog (add default + edit + toast), client KPI text,
+  leasing labels; UX3 probed via API (out 200 / non-revert 409 AML_GATE_FAILED
+  / revert 200 + audit payload).
+- Note for rounds: viewing/offer edit pencils are new — worth 1-2 harness
+  scenarios in two-bot-round.mjs (edit persists, client scope 403 on foreign
+  unit's viewing PATCH).

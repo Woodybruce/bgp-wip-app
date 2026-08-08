@@ -6495,6 +6495,24 @@ These terms are indicative only and do not constitute a binding agreement.`;
     }
   });
 
+  app.patch("/api/available-units/viewings/:viewingId", requireAuth, async (req, res) => {
+    try {
+      const { unitViewings, insertUnitViewingSchema } = await import("@shared/schema");
+      const [viewing] = await db.select().from(unitViewings).where(eq(unitViewings.id, req.params.viewingId as string));
+      if (!viewing) return res.status(404).json({ message: "Viewing not found" });
+      const vUnit = await storage.getAvailableUnit(viewing.unitId);
+      if (await assertUnitInClientScope(req, vUnit?.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      const parsed = insertUnitViewingSchema.partial().omit({ unitId: true }).safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
+      const [row] = await db.update(unitViewings).set(parsed.data).where(eq(unitViewings.id, req.params.viewingId as string)).returning();
+      res.json(row);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to update viewing" });
+    }
+  });
+
   app.delete("/api/available-units/viewings/:viewingId", requireAuth, async (req, res) => {
     try {
       const { unitViewings } = await import("@shared/schema");
@@ -6540,6 +6558,24 @@ These terms are indicative only and do not constitute a binding agreement.`;
       res.json(row);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to add offer" });
+    }
+  });
+
+  app.patch("/api/available-units/offers/:offerId", requireAuth, async (req, res) => {
+    try {
+      const { unitOffers, insertUnitOfferSchema } = await import("@shared/schema");
+      const [offer] = await db.select().from(unitOffers).where(eq(unitOffers.id, req.params.offerId as string));
+      if (!offer) return res.status(404).json({ message: "Offer not found" });
+      const oUnit = await storage.getAvailableUnit(offer.unitId);
+      if (await assertUnitInClientScope(req, oUnit?.propertyId)) {
+        return res.status(403).json({ message: "Unit is outside your portfolio" });
+      }
+      const parsed = insertUnitOfferSchema.partial().omit({ unitId: true }).safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: fromError(parsed.error).toString() });
+      const [row] = await db.update(unitOffers).set(parsed.data).where(eq(unitOffers.id, req.params.offerId as string)).returning();
+      res.json(row);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to update offer" });
     }
   });
 
