@@ -111,6 +111,11 @@ function fmtCurrency(n: number | null | undefined) {
   return `£${n.toLocaleString("en-GB")}`;
 }
 
+// Company/contact picker for the viewings & offers dialogs. Renders the
+// inline EntityCombobox rather than a Popover: these pickers only appear
+// inside a Radix Dialog, where a portal'd Popover never receives pointer
+// events — clicking a company did nothing and every viewing saved with an
+// "Unknown" company.
 function CrmPicker({ items, value, valueName, onSelect, placeholder, testId }: {
   items: { id: string; name: string }[];
   value: string;
@@ -119,42 +124,15 @@ function CrmPicker({ items, value, valueName, onSelect, placeholder, testId }: {
   placeholder: string;
   testId: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const filtered = useMemo(() => {
-    if (!search) return items.slice(0, 50);
-    const q = search.toLowerCase();
-    return items.filter(i => i.name.toLowerCase().includes(q)).slice(0, 50);
-  }, [items, search]);
-
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="w-full justify-start font-normal h-9 text-sm truncate" data-testid={testId}>
-          {valueName || <span className="text-muted-foreground">{placeholder}</span>}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="p-0 w-[280px]" align="start">
-        <Command shouldFilter={false}>
-          <CommandInput placeholder={`Search ${placeholder.toLowerCase()}...`} value={search} onValueChange={setSearch} />
-          <CommandList>
-            <CommandEmpty>No results</CommandEmpty>
-            <CommandGroup>
-              {value && (
-                <CommandItem onSelect={() => { onSelect("", ""); setOpen(false); setSearch(""); }} className="text-muted-foreground text-xs">
-                  Clear selection
-                </CommandItem>
-              )}
-              {filtered.map(i => (
-                <CommandItem key={i.id} onSelect={() => { onSelect(i.id, i.name); setOpen(false); setSearch(""); }}>
-                  {i.name}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+    <EntityCombobox
+      items={items.map(i => ({ id: i.id, label: i.name }))}
+      value={value}
+      onChange={(id) => onSelect(id, id ? (items.find(i => i.id === id)?.name ?? "") : "")}
+      placeholder={placeholder}
+      searchPlaceholder={`Search ${placeholder.toLowerCase()}...`}
+      testId={testId}
+    />
   );
 }
 

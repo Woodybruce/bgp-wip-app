@@ -12,6 +12,14 @@ Format per entry: date · persona/surface · what the user was trying to do ·
 what happened · concrete suggested improvement.
 
 ## Open suggestions
-(none yet — first v2 round pending)
+1. 2026-08-08 · staff desktop (Victoria) · Letting Tracker → unit Viewings/Offers
+   dialogs · Logged a viewing with the wrong company and wanted to correct it —
+   the row only offers delete, so fixing one field means delete + re-type the
+   whole entry (offers are the same: create/delete only, no edit route).
+   Suggest: an edit (pencil) on viewing/offer rows, or inline-editable fields.
+2. 2026-08-08 · staff desktop (Victoria) · Add Viewing dialog · The Date field
+   starts empty even though most viewings are logged the day they happen, so
+   every entry needs a manual date pick before Save. Suggest: default the date
+   to today (keep it editable).
 
 ## Confirmed / done

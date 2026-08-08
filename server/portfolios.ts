@@ -23,6 +23,13 @@ import { eq, and, desc, inArray } from "drizzle-orm";
 import { requireAuth } from "./auth";
 
 let _ensured = false;
+// Exported for property-pathway.ts: the pathway board and the boot-time
+// resume sweep read property_pathway_runs directly, so on a database that
+// never ran the drizzle migrations they 500'd until something hit
+// /api/portfolios and triggered this bootstrap.
+export async function ensurePathwayTables(): Promise<void> {
+  return ensureTables();
+}
 async function ensureTables(): Promise<void> {
   if (_ensured) return;
   await pool.query(`

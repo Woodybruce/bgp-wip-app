@@ -109,6 +109,23 @@ export async function getClientVisibleUserIds(scopeCompanyId: string | null | un
          UNION
          SELECT property_id FROM crm_company_properties WHERE company_id = $1)
        UNION
+       -- BGP agents working the client's tracker: assigned on the client's
+       -- units, or on target operators under those units' briefs. Without
+       -- these the client's Agent column renders the assignee as a raw
+       -- user id — "who do I chase?" is the whole point of that column.
+       SELECT unnest(agent_user_ids) FROM available_units
+        WHERE agent_user_ids IS NOT NULL AND property_id IN (
+         SELECT id FROM crm_properties WHERE landlord_id = $1
+         UNION
+         SELECT property_id FROM crm_company_properties WHERE company_id = $1)
+       UNION
+       SELECT unnest(t.agent_user_ids) FROM unit_target_operators t
+         JOIN unit_briefs b ON b.id = t.brief_id
+        WHERE t.agent_user_ids IS NOT NULL AND (b.client_company_id = $1 OR b.property_id IN (
+         SELECT id FROM crm_properties WHERE landlord_id = $1
+         UNION
+         SELECT property_id FROM crm_company_properties WHERE company_id = $1))
+       UNION
        SELECT u.id FROM users u
          JOIN crm_companies c ON c.id = $1
         WHERE LOWER(u.team) = LOWER(c.name)

@@ -2921,9 +2921,32 @@ async function markRound(page, cross) {
     const r = await page.evaluate(async (marker) => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const v = await (await fetch('/api/available-units/all-viewings', { headers: auth })).json();
-      return { seen: JSON.stringify(v).includes(marker) };
+      const row = (Array.isArray(v) ? v : []).find((x) => JSON.stringify(x).includes(marker));
+      // The client-scoped branch is a raw SQL read — it must come back in the
+      // drizzle camelCase shape or the tracker's FY strip counts 0 (r205).
+      return { seen: !!row, camel: !!row && 'viewingDate' in row };
     }, cross.viewingStamp);
     if (!r.seen) throw new Error("agent-logged viewing not visible on the client's letting activity");
+    if (!r.camel) throw new Error('client all-viewings rows are snake_case — FY strip counts them as 0');
+  });
+
+  // Agent names on the client tracker: every BGP agent assigned on the
+  // client's units/targets must resolve through the client's /api/users —
+  // otherwise the Agent column renders raw user ids (r205).
+  await step(page, p, 'client-tracker-agent-names', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json().catch(() => []);
+      const ids = new Set();
+      for (const u of (Array.isArray(units) ? units : [])) for (const id of (u.agentUserIds || [])) ids.add(String(id));
+      if (!ids.size) return { skip: true };
+      const users = await (await fetch('/api/users', { headers: auth })).json().catch(() => []);
+      const known = new Set((Array.isArray(users) ? users : []).map((u) => String(u.id)));
+      const missing = [...ids].filter((id) => !known.has(id));
+      return { missing };
+    });
+    if (r.skip) return;
+    if (r.missing.length) throw new Error(`client cannot resolve tracker agent name(s): ${r.missing.join(', ').slice(0, 120)}`);
   });
 
   // Parity for contacts: a contact the agent added on the Landsec company

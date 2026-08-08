@@ -1618,7 +1618,13 @@ export function setupHrRoutes(app: Express) {
           item_id TEXT NOT NULL,
           file_name TEXT,
           mime_type TEXT,
-          updated_at TIMESTAMP DEFAULT now()
+          updated_at TIMESTAMP DEFAULT now(),
+          -- rendered_html/rendered_at are also ALTERed in at boot, but when
+          -- this lazy CREATE runs first (fresh DB) the boot ALTERs have
+          -- already been skipped — without them here the policy detail
+          -- route 500s until the next restart.
+          rendered_html TEXT,
+          rendered_at TIMESTAMP
         )
       `);
 

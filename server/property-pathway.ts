@@ -649,6 +649,11 @@ export async function runStageChain(runId: string, fromStage: number, toStageExc
 // in-process promise. Restart interrupted chains from their resume pointer.
 export async function resumeInterruptedPathwayRuns(): Promise<void> {
   try {
+    // The sweep can run before (or instead of) route registration's async
+    // bootstrap — ensure the table exists so a fresh database doesn't log
+    // 'relation "property_pathway_runs" does not exist' on every boot.
+    const { ensurePathwayTables } = await import("./portfolios");
+    await ensurePathwayTables();
     const { rows } = await pool.query(
       `SELECT id, stage_status, stage_results->'_autoChain' AS chain
          FROM property_pathway_runs
@@ -5075,6 +5080,19 @@ export function registerPropertyPathwayRoutes(app: Express) {
       await ensureRetailLeasingCompsTable();
     } catch (err: any) {
       console.warn("[pathway] retail_leasing_comps bootstrap failed:", err?.message);
+    }
+  })();
+
+  // Bootstrap property_pathway_runs (+ portfolios) — the board and every
+  // route below read it directly, and on a database that never ran the
+  // drizzle migrations (fresh deploy, local fixture) they all 500'd until
+  // /api/portfolios happened to be opened first.
+  (async () => {
+    try {
+      const { ensurePathwayTables } = await import("./portfolios");
+      await ensurePathwayTables();
+    } catch (err: any) {
+      console.warn("[pathway] property_pathway_runs bootstrap failed:", err?.message);
     }
   })();
 

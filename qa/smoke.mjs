@@ -172,6 +172,13 @@ console.log('── staff (Victoria) ──');
     await page.goto(`${BASE}/tasks`, { waitUntil: 'networkidle' }).catch(() => {});
     await settle(page);
     await noCrash(page, 'staff tasks');
+
+    // Pathway board — its table is bootstrapped at runtime, so a fresh DB
+    // used to 500 here until /api/portfolios had been opened once (r205).
+    const pathway = await apiGet(ctx, token, `/api/property-pathway`);
+    check('staff: property-pathway board API', pathway === 200, `HTTP ${pathway}`);
+    const portfolios = await apiGet(ctx, token, `/api/portfolios`);
+    check('staff: portfolios API', portfolios === 200, `HTTP ${portfolios}`);
   }
   await ctx.close();
 }
@@ -205,6 +212,15 @@ console.log('── client (Mark, Landsec) ──');
     check('client property: jailed files panel (no staff panel)', await page.locator('[data-testid="client-property-folders-panel"]').count() > 0);
     check('client property: no team-name folder tabs', await page.locator('[data-testid^="folder-team-tab-"]').count() === 0);
     await page.screenshot({ path: `${SHOTS}/client-property.png` }).catch(() => {});
+
+    // Client letting activity: the scoped all-viewings branch used to return
+    // snake_case rows, so the tracker's FY Viewings strip counted 0 for every
+    // client (r205). Fixture ships one Gail's Bakery viewing on Bluewater.
+    const vRes = await ctx.request.get(`${BASE}/api/available-units/all-viewings`, { headers: { Authorization: `Bearer ${token}` } });
+    const vRows = vRes.ok() ? await vRes.json() : null;
+    check('client: letting viewings feed camelCase',
+      Array.isArray(vRows) && vRows.length > 0 && !!vRows[0].viewingDate,
+      `rows=${Array.isArray(vRows) ? vRows.length : 'ERR'} firstKeys=${vRows?.[0] ? Object.keys(vRows[0]).slice(0, 4).join(',') : '-'}`);
 
     // ── Scoping guards — the checks that MUST fail closed ──
     check('scope: own portfolio property-summary allowed',

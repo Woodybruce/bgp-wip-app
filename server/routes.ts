@@ -3853,6 +3853,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Raw db.execute returns snake_case columns, but callers consume the
+  // drizzle camelCase shape (viewingDate, unitId, …) — the client-scoped
+  // branch used to return snake_case rows, so the tracker's Viewings/Offers
+  // FY strip silently counted 0 for every client.
+  const camelRow = (row: Record<string, any>) => {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(row)) out[k.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = v;
+    return out;
+  };
+
   app.get("/api/available-units/all-viewings", requireAuth, async (req, res) => {
     try {
       const scope = await clientUnitScopeSql(req);
@@ -3863,7 +3873,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
              LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
             WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
             ORDER BY v.viewing_date`);
-        return res.json(rows.rows);
+        return res.json(rows.rows.map(camelRow));
       }
       const { unitViewings } = await import("@shared/schema");
       const rows = await db.select().from(unitViewings).orderBy(unitViewings.viewingDate);
@@ -3883,7 +3893,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
              LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
             WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
             ORDER BY o.offer_date`);
-        return res.json(rows.rows);
+        return res.json(rows.rows.map(camelRow));
       }
       const { unitOffers } = await import("@shared/schema");
       const rows = await db.select().from(unitOffers).orderBy(unitOffers.offerDate);
