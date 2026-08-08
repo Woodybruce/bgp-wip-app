@@ -330,8 +330,14 @@ export default function AvailableUnitsPage() {
   const [offersUnit, setOffersUnit] = useState<AvailableUnit | null>(null);
   const [addViewingOpen, setAddViewingOpen] = useState(false);
   const [addOfferOpen, setAddOfferOpen] = useState(false);
-  const [viewingForm, setViewingForm] = useState({ companyName: "", companyId: "", contactName: "", contactId: "", viewingDate: "", viewingTime: "", attendees: "", notes: "", outcome: "" });
-  const [offerForm, setOfferForm] = useState({ companyName: "", companyId: "", contactName: "", contactId: "", offerDate: "", rentPa: "", rentFreeMonths: "", termYears: "", breakOption: "", incentives: "", premium: "", fittingOutContribution: "", comments: "" });
+  // Most viewings are logged the day they happen, so the date defaults to
+  // today (still editable). Editing ids switch the add forms into edit mode.
+  const emptyViewingForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", viewingDate: new Date().toISOString().slice(0, 10), viewingTime: "", attendees: "", notes: "", outcome: "" });
+  const emptyOfferForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", offerDate: "", rentPa: "", rentFreeMonths: "", termYears: "", breakOption: "", incentives: "", premium: "", fittingOutContribution: "", comments: "" });
+  const [viewingForm, setViewingForm] = useState(emptyViewingForm);
+  const [offerForm, setOfferForm] = useState(emptyOfferForm);
+  const [editingViewingId, setEditingViewingId] = useState<string | null>(null);
+  const [editingOfferId, setEditingOfferId] = useState<string | null>(null);
   const [companySearchOpen, setCompanySearchOpen] = useState<"viewing" | "offer" | null>(null);
   const [contactSearchOpen, setContactSearchOpen] = useState<"viewing" | "offer" | null>(null);
   const [wipUnit, setWipUnit] = useState<AvailableUnit | null>(null);
@@ -463,8 +469,21 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-viewings-counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-viewings"] });
       setAddViewingOpen(false);
-      setViewingForm({ companyName: "", companyId: "", contactName: "", contactId: "", viewingDate: "", viewingTime: "", attendees: "", notes: "", outcome: "" });
+      setViewingForm(emptyViewingForm());
       toast({ title: "Viewing added" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const updateViewingMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: any }) => apiRequest("PATCH", `/api/available-units/viewings/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units", viewingsUnit?.id, "viewings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-viewings"] });
+      setAddViewingOpen(false);
+      setEditingViewingId(null);
+      setViewingForm(emptyViewingForm());
+      toast({ title: "Viewing updated" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -487,8 +506,21 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers-counts"] });
       queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers"] });
       setAddOfferOpen(false);
-      setOfferForm({ companyName: "", companyId: "", contactName: "", contactId: "", offerDate: "", rentPa: "", rentFreeMonths: "", termYears: "", breakOption: "", incentives: "", premium: "", fittingOutContribution: "", comments: "" });
+      setOfferForm(emptyOfferForm());
       toast({ title: "Offer added" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const updateOfferMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: any }) => apiRequest("PATCH", `/api/available-units/offers/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units", offersUnit?.id, "offers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-offers"] });
+      setAddOfferOpen(false);
+      setEditingOfferId(null);
+      setOfferForm(emptyOfferForm());
+      toast({ title: "Offer updated" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -2581,7 +2613,7 @@ export default function AvailableUnitsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!viewingsUnit} onOpenChange={v => { if (!v) { setViewingsUnit(null); setAddViewingOpen(false); } }}>
+      <Dialog open={!!viewingsUnit} onOpenChange={v => { if (!v) { setViewingsUnit(null); setAddViewingOpen(false); setEditingViewingId(null); setViewingForm(emptyViewingForm()); } }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -2610,6 +2642,13 @@ export default function AvailableUnitsPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">{v.viewingDate}{v.viewingTime ? ` at ${v.viewingTime}` : ""}</span>
+                      <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground" onClick={() => {
+                        setViewingForm({ companyName: v.companyName || "", companyId: v.companyId || "", contactName: v.contactName || "", contactId: v.contactId || "", viewingDate: v.viewingDate || "", viewingTime: v.viewingTime || "", attendees: v.attendees || "", notes: v.notes || "", outcome: v.outcome || "" });
+                        setEditingViewingId(v.id);
+                        setAddViewingOpen(true);
+                      }} data-testid={`viewing-edit-${v.id}`}>
+                        <Pencil className="h-3 w-3" />
+                      </Button>
                       <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive" onClick={() => deleteViewingMutation.mutate(v.id)}>
                         <Trash2 className="h-3 w-3" />
                       </Button>
@@ -2626,7 +2665,7 @@ export default function AvailableUnitsPage() {
 
           {addViewingOpen ? (
             <div className="border rounded-lg p-3 space-y-3">
-              <div className="text-sm font-medium">Add Viewing</div>
+              <div className="text-sm font-medium">{editingViewingId ? "Edit Viewing" : "Add Viewing"}</div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Company</Label>
@@ -2681,21 +2720,21 @@ export default function AvailableUnitsPage() {
                 </div>
               </div>
               <div className="flex gap-2 justify-end">
-                <Button variant="outline" size="sm" onClick={() => setAddViewingOpen(false)}>Cancel</Button>
-                <Button size="sm" disabled={!viewingForm.viewingDate || addViewingMutation.isPending} onClick={() => addViewingMutation.mutate(viewingForm)} data-testid="viewing-save">
-                  {addViewingMutation.isPending ? "Saving..." : "Save Viewing"}
+                <Button variant="outline" size="sm" onClick={() => { setAddViewingOpen(false); setEditingViewingId(null); setViewingForm(emptyViewingForm()); }}>Cancel</Button>
+                <Button size="sm" disabled={!viewingForm.viewingDate || addViewingMutation.isPending || updateViewingMutation.isPending} onClick={() => editingViewingId ? updateViewingMutation.mutate({ id: editingViewingId, data: viewingForm }) : addViewingMutation.mutate(viewingForm)} data-testid="viewing-save">
+                  {(addViewingMutation.isPending || updateViewingMutation.isPending) ? "Saving..." : editingViewingId ? "Save Changes" : "Save Viewing"}
                 </Button>
               </div>
             </div>
           ) : (
-            <Button variant="outline" size="sm" className="w-full" onClick={() => setAddViewingOpen(true)} data-testid="viewing-add">
+            <Button variant="outline" size="sm" className="w-full" onClick={() => { setEditingViewingId(null); setViewingForm(emptyViewingForm()); setAddViewingOpen(true); }} data-testid="viewing-add">
               <Plus className="h-3.5 w-3.5 mr-1" /> Add Viewing
             </Button>
           )}
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!offersUnit} onOpenChange={v => { if (!v) { setOffersUnit(null); setAddOfferOpen(false); } }}>
+      <Dialog open={!!offersUnit} onOpenChange={v => { if (!v) { setOffersUnit(null); setAddOfferOpen(false); setEditingOfferId(null); setOfferForm(emptyOfferForm()); } }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -2726,6 +2765,13 @@ export default function AvailableUnitsPage() {
                       )}
                       <Badge variant="outline" className={o.status === "Accepted" ? "bg-emerald-100 text-emerald-800" : o.status === "Rejected" ? "bg-red-100 text-red-800" : ""}>{o.status || "Pending"}</Badge>
                       <span className="text-xs text-muted-foreground">{o.offerDate}</span>
+                      <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground" onClick={() => {
+                        setOfferForm({ companyName: o.companyName || "", companyId: o.companyId || "", contactName: o.contactName || "", contactId: o.contactId || "", offerDate: o.offerDate || "", rentPa: o.rentPa != null ? String(o.rentPa) : "", rentFreeMonths: o.rentFreeMonths != null ? String(o.rentFreeMonths) : "", termYears: o.termYears != null ? String(o.termYears) : "", breakOption: o.breakOption || "", incentives: o.incentives || "", premium: o.premium != null ? String(o.premium) : "", fittingOutContribution: o.fittingOutContribution != null ? String(o.fittingOutContribution) : "", comments: o.comments || "" });
+                        setEditingOfferId(o.id);
+                        setAddOfferOpen(true);
+                      }} data-testid={`offer-edit-${o.id}`}>
+                        <Pencil className="h-3 w-3" />
+                      </Button>
                       <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive" onClick={() => deleteOfferMutation.mutate(o.id)}>
                         <Trash2 className="h-3 w-3" />
                       </Button>
@@ -2748,7 +2794,7 @@ export default function AvailableUnitsPage() {
 
           {addOfferOpen ? (
             <div className="border rounded-lg p-3 space-y-3">
-              <div className="text-sm font-medium">Add Offer</div>
+              <div className="text-sm font-medium">{editingOfferId ? "Edit Offer" : "Add Offer"}</div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label className="text-xs">Company</Label>
@@ -2816,27 +2862,24 @@ export default function AvailableUnitsPage() {
                 <Textarea value={offerForm.comments} onChange={e => setOfferForm(f => ({ ...f, comments: e.target.value }))} rows={2} data-testid="offer-comments" />
               </div>
               <div className="flex gap-2 justify-end">
-                <Button variant="outline" size="sm" onClick={() => setAddOfferOpen(false)}>Cancel</Button>
-                <Button size="sm" disabled={!offerForm.offerDate || addOfferMutation.isPending} onClick={() => {
+                <Button variant="outline" size="sm" onClick={() => { setAddOfferOpen(false); setEditingOfferId(null); setOfferForm(emptyOfferForm()); }}>Cancel</Button>
+                <Button size="sm" disabled={!offerForm.offerDate || addOfferMutation.isPending || updateOfferMutation.isPending} onClick={() => {
                   const payload: any = { ...offerForm };
-                  if (payload.rentPa) payload.rentPa = parseFloat(payload.rentPa);
-                  else delete payload.rentPa;
-                  if (payload.rentFreeMonths) payload.rentFreeMonths = parseFloat(payload.rentFreeMonths);
-                  else delete payload.rentFreeMonths;
-                  if (payload.termYears) payload.termYears = parseFloat(payload.termYears);
-                  else delete payload.termYears;
-                  if (payload.premium) payload.premium = parseFloat(payload.premium);
-                  else delete payload.premium;
-                  if (payload.fittingOutContribution) payload.fittingOutContribution = parseFloat(payload.fittingOutContribution);
-                  else delete payload.fittingOutContribution;
-                  addOfferMutation.mutate(payload);
+                  // On add, empty numeric fields are omitted; on edit they clear the stored value.
+                  for (const k of ["rentPa", "rentFreeMonths", "termYears", "premium", "fittingOutContribution"] as const) {
+                    if (payload[k]) payload[k] = parseFloat(payload[k]);
+                    else if (editingOfferId) payload[k] = null;
+                    else delete payload[k];
+                  }
+                  if (editingOfferId) updateOfferMutation.mutate({ id: editingOfferId, data: payload });
+                  else addOfferMutation.mutate(payload);
                 }} data-testid="offer-save">
-                  {addOfferMutation.isPending ? "Saving..." : "Save Offer"}
+                  {(addOfferMutation.isPending || updateOfferMutation.isPending) ? "Saving..." : editingOfferId ? "Save Changes" : "Save Offer"}
                 </Button>
               </div>
             </div>
           ) : (
-            <Button variant="outline" size="sm" className="w-full" onClick={() => setAddOfferOpen(true)} data-testid="offer-add">
+            <Button variant="outline" size="sm" className="w-full" onClick={() => { setEditingOfferId(null); setOfferForm(emptyOfferForm()); setAddOfferOpen(true); }} data-testid="offer-add">
               <Plus className="h-3.5 w-3.5 mr-1" /> Add Offer
             </Button>
           )}

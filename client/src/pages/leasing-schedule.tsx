@@ -3553,7 +3553,7 @@ export default function LeasingSchedulePage() {
                 <div className="w-2.5 h-2.5 rounded-full bg-slate-500" />
                 <div>
                   <p className="text-lg font-bold">{stats.totalUnits}</p>
-                  <p className="text-xs text-muted-foreground">Total Units</p>
+                  <p className="text-xs text-muted-foreground">Units on this board</p>
                 </div>
               </div>
             </CardContent>
@@ -3597,7 +3597,7 @@ export default function LeasingSchedulePage() {
                 <div className="w-2.5 h-2.5 rounded-full bg-purple-500" />
                 <div>
                   <p className="text-lg font-bold">{stats.occupancy}%</p>
-                  <p className="text-xs text-muted-foreground">Occupancy</p>
+                  <p className="text-xs text-muted-foreground">Occupancy · board units only</p>
                 </div>
               </div>
             </CardContent>

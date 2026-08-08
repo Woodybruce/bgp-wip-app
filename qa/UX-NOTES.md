@@ -12,36 +12,17 @@ Format per entry: date · persona/surface · what the user was trying to do ·
 what happened · concrete suggested improvement.
 
 ## Open suggestions
-1. 2026-08-08 · staff desktop (Victoria) · Letting Tracker → unit Viewings/Offers
-   dialogs · Logged a viewing with the wrong company and wanted to correct it —
-   the row only offers delete, so fixing one field means delete + re-type the
-   whole entry (offers are the same: create/delete only, no edit route).
-   Suggest: an edit (pencil) on viewing/offer rows, or inline-editable fields.
-2. 2026-08-08 · staff desktop (Victoria) · Add Viewing dialog · The Date field
-   starts empty even though most viewings are logged the day they happen, so
-   every entry needs a manual date pick before Save. Suggest: default the date
-   to today (keep it editable).
-3. 2026-08-08 · staff · Deals board stage moves · A deal already sitting in
-   SOL/EXC/COM/INV whose counterparties aren't KYC-approved (e.g. legacy deals
-   with no counterparty linked) can be dragged OUT of that stage freely, but
-   the AML gate then blocks dragging it back — an accidental drag is
-   irreversible without the MLRO override, even though the deal held that
-   stage seconds earlier. Suggest: allow reverting to the stage the deal held
-   immediately before the current session's move (or warn before letting a
-   gated-stage deal leave the stage it can't re-enter).
-
-4. 2026-08-08 · client desktop (Mark) · Landsec Portfolio Dashboard · Checking
-   how his portfolio is doing — the KPI strip shows "PASSING RENT £0.0m ·
-   £0/unit avg" because the fixture (and any scheme without rent data) has no
-   passing rent captured. A landlord reading £0.0m assumes the dashboard is
-   broken. Suggest: when no rent data exists, show "—" or hide the tile
-   rather than a zero.
-5. 2026-08-08 · client desktop (Mark) · Dashboard vs Leasing Schedule ·
-   Comparing portfolio health — the dashboard says 2 properties · 201 units ·
-   61.7% occupancy, while the (archived) Leasing Schedule board says the same
-   2 properties · 322 units · 52% occupancy. Two different unit counts and
-   occupancy figures for what reads as the same portfolio, with no hint of
-   which basis each uses. Suggest: label the basis on each surface (e.g.
-   "tracked units" vs "all tenancy-schedule units") or reconcile the counts.
 
 ## Confirmed / done
+Confirmed by Woody 2026-08-08 ("Do all 5"); built + visually verified same day:
+1. 2026-08-08 · Letting Tracker viewing/offer rows now have an edit pencil —
+   PATCH routes added for unit viewings + offers, form switches to edit mode.
+2. 2026-08-08 · Add Viewing date defaults to today (still editable).
+3. 2026-08-08 · Deals board: re-entering a gated stage (SOL/EXC/COM/INV) is
+   allowed when it reverts the deal's most recent move (24h window) — the AML
+   gate still blocks all other entries; reverts are audit-logged with
+   revert: true in deal_events.
+4. 2026-08-08 · Client dashboard passing-rent KPI shows "—" + "no passing
+   rent recorded yet" instead of £0.0m when no rent data exists.
+5. 2026-08-08 · Occupancy bases labelled: dashboard tiles say "full rent
+   roll", leasing schedule says "Units on this board" / "board units only".

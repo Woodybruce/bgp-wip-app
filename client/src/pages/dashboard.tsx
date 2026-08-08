@@ -1639,20 +1639,23 @@ export default function Dashboard() {
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800" data-testid="kpi-units">
                       <p className="text-[10px] text-blue-600 dark:text-blue-400 font-medium uppercase tracking-wider">Total Units</p>
                       <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">{Number(stats.totalUnits || 0).toLocaleString("en-GB")}</p>
-                      <p className="text-[10px] text-muted-foreground">{occupiedCount.toLocaleString("en-GB")} occupied · {Number(stats.vacantUnits || 0).toLocaleString("en-GB")} vacant</p>
+                      <p className="text-[10px] text-muted-foreground">{occupiedCount.toLocaleString("en-GB")} occupied · {Number(stats.vacantUnits || 0).toLocaleString("en-GB")} vacant · full rent roll</p>
                     </div>
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800" data-testid="kpi-occupancy">
                       <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium uppercase tracking-wider">Occupancy</p>
                       <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300">{occupancyRate}%</p>
-                      <p className="text-[10px] text-muted-foreground">{stats.vacancyRate}% vacancy</p>
+                      <p className="text-[10px] text-muted-foreground">{stats.vacancyRate}% vacancy · of full rent roll</p>
                     </div>
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800" data-testid="kpi-rent">
                       <p className="text-[10px] text-purple-600 dark:text-purple-400 font-medium uppercase tracking-wider">Passing Rent</p>
-                      <p className="text-xl font-bold text-purple-700 dark:text-purple-300">£{(stats.totalPassingRent / 1000000).toFixed(1)}m</p>
+                      {/* No rent data reads as a broken dashboard if we print £0.0m — show a dash instead. */}
+                      <p className="text-xl font-bold text-purple-700 dark:text-purple-300">{stats.totalPassingRent > 0 ? `£${(stats.totalPassingRent / 1000000).toFixed(1)}m` : "—"}</p>
                       <p className="text-[10px] text-muted-foreground">
-                        {rentUnits > 0 && rentCoveragePct < 95
-                          ? `across ${rentUnits.toLocaleString()} units with rent recorded (${rentCoveragePct}% of occupied)`
-                          : `£${avgRentPerUnit.toLocaleString("en-GB", { maximumFractionDigits: 0 })}/unit avg`}
+                        {stats.totalPassingRent > 0
+                          ? (rentUnits > 0 && rentCoveragePct < 95
+                              ? `across ${rentUnits.toLocaleString()} units with rent recorded (${rentCoveragePct}% of occupied)`
+                              : `£${avgRentPerUnit.toLocaleString("en-GB", { maximumFractionDigits: 0 })}/unit avg`)
+                          : "no passing rent recorded yet"}
                       </p>
                     </div>
                     <div className="flex flex-col justify-center p-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800" data-testid="kpi-deals">

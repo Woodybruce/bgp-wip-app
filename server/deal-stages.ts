@@ -135,22 +135,39 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     // and not expired. MLRO override: deals with aml_check_completed = 'YES'
     // bypass the gate (manual sign-off on the deal record).
     const GATED_STAGES = new Set(["sols", "agreed", "completed", "invoiced"]);
+    let isRevert = false;
     if (GATED_STAGES.has(toStage) && c.aml_check_completed !== "YES") {
-      const { checkCounterpartyAml, formatAmlWarning } = await import("./deal-gates");
-      const amlResult = await checkCounterpartyAml({
-        landlordId:  c.landlord_id,
-        tenantId:    c.tenant_id,
-        vendorId:    c.vendor_id,
-        purchaserId: c.purchaser_id,
-      });
-      const warning = formatAmlWarning(amlResult);
-      if (warning) {
-        return res.status(409).json({
-          error: warning,
-          code: "AML_GATE_FAILED",
-          notReady: amlResult.notReady,
-          hint: "MLRO override: set aml_check_completed = 'YES' on the deal to bypass.",
+      // Revert allowance: an accidental drag OUT of a gated stage must not be
+      // irreversible. If the deal's most recent stage move was out of the very
+      // stage being re-entered (within 24h), let it back in — it held that
+      // stage moments ago under the same compliance state. The move is still
+      // audit-logged below with revert: true.
+      const lastMove = await pool.query(
+        `SELECT from_stage, to_stage, occurred_at FROM deal_events
+          WHERE deal_id = $1 AND event_type = 'stage_change'
+          ORDER BY occurred_at DESC LIMIT 1`,
+        [dealId]
+      );
+      const lm = lastMove.rows[0];
+      isRevert = !!lm && lm.from_stage === toStage && lm.to_stage === fromStage
+        && Date.now() - new Date(lm.occurred_at).getTime() < 24 * 60 * 60 * 1000;
+      if (!isRevert) {
+        const { checkCounterpartyAml, formatAmlWarning } = await import("./deal-gates");
+        const amlResult = await checkCounterpartyAml({
+          landlordId:  c.landlord_id,
+          tenantId:    c.tenant_id,
+          vendorId:    c.vendor_id,
+          purchaserId: c.purchaser_id,
         });
+        const warning = formatAmlWarning(amlResult);
+        if (warning) {
+          return res.status(409).json({
+            error: warning,
+            code: "AML_GATE_FAILED",
+            notReady: amlResult.notReady,
+            hint: "MLRO override: set aml_check_completed = 'YES' on the deal to bypass.",
+          });
+        }
       }
     }
 
@@ -186,7 +203,7 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     await pool.query(
       `INSERT INTO deal_events (deal_id, event_type, from_stage, to_stage, payload, actor_id, actor_name)
        VALUES ($1, 'stage_change', $2, $3, $4, $5, $6)`,
-      [dealId, fromStage, toStage, JSON.stringify({ reason, learning }), req.user?.id || null, req.user?.name || null]
+      [dealId, fromStage, toStage, JSON.stringify({ reason, learning, ...(isRevert ? { revert: true } : {}) }), req.user?.id || null, req.user?.name || null]
     );
 
     // Knowledge capture — on completion with a broker learning, persist as
