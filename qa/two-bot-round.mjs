@@ -6,8 +6,11 @@
 // dead-end and broken flow to qa/logs/ as JSONL + screenshots.
 //
 // Usage:  node qa/two-bot-round.mjs [roundNumber]
-// Server: expects the dev server on http://localhost:5000 with the local
-//         fixture DB (Landsec = 11111111-1111-1111-1111-111111111111).
+// Server: expects the dev server on http://localhost:5000 with a fixture DB.
+//         Entity IDs (Landsec, Bluewater, the in-slice brand) are resolved by
+//         NAME at startup — see resolveFixture — so the harness works against
+//         both the old dev fixture and qa/smoke-fixture.sql.gz. Unresolved
+//         names fall back to the legacy dev-fixture IDs.
 
 import { chromium } from '../node_modules/playwright/index.mjs';
 import { mkdirSync, appendFileSync, existsSync } from 'fs';
@@ -17,7 +20,18 @@ const ROUND = parseInt(process.argv[2] || '1', 10);
 const LOGDIR = new URL('./logs/', import.meta.url).pathname;
 mkdirSync(LOGDIR, { recursive: true });
 
-const LANDSEC = '11111111-1111-1111-1111-111111111111';
+// Legacy dev-fixture IDs — the last-resort fallback when name resolution
+// finds nothing (keeps the harness working on the old local fixture).
+const LEGACY = {
+  landsec: '11111111-1111-1111-1111-111111111111',
+  bluewater: '22222222-2222-2222-2222-222222222222',
+  brand: '77777777-7777-7777-7777-777777777777',
+};
+// Reassigned from resolveFixture at startup; page.evaluate bodies read the
+// same values via window.QA_FIX (injected into every browser context).
+let LANDSEC = LEGACY.landsec;
+let BLUEWATER = LEGACY.bluewater;
+let BRAND = LEGACY.brand;
 const PASSWORD = 'B@nd0077!';
 const AGENT_USER = 'victoria@brucegillinghampollard.com';
 const CLIENT_USER = 'mark.warne@landsec.com';
@@ -87,7 +101,41 @@ async function login(context, username) {
     localStorage.setItem('authToken', tok);
     localStorage.setItem('user', JSON.stringify(u));
   }, [user.token, user]);
+  page.qaToken = user.token; // node-side API access for the same session
   return page;
+}
+
+// The committed smoke fixture and the old dev fixture use different IDs for
+// the same entities. Resolve them by name through the staff API so every
+// scenario targets the right rows whichever DB is loaded. Runs in NODE with
+// the login token — a page.evaluate here races the app's auth-hydration
+// navigation, which aborts the fetches and silently falls back to legacy.
+async function resolveFixture(token) {
+  const auth = { Authorization: 'Bearer ' + token };
+  const list = async (url) => {
+    try {
+      const r = await fetch(`${BASE}${url}`, { headers: auth });
+      if (!r.ok) return [];
+      const b = await r.json();
+      return Array.isArray(b) ? b : (b?.data || []);
+    } catch { return []; }
+  };
+  const companies = await list('/api/crm/companies');
+  const landsec = companies.find((c) => /^landsec$/i.test(c.name || ''))
+    || companies.find((c) => /landsec/i.test(c.name || '') && /landlord/i.test(c.companyType || ''));
+  // Any in-slice (hospitality) brand works for the slice/profile scenarios;
+  // prefer the old fixture's Honi Poke when it exists (seed-personas creates
+  // it where absent).
+  const brand = companies.find((c) => /^honi poke$/i.test(c.name || ''))
+    || companies.find((c) => /restaurant|casual dining|fine dining|caf/i.test(c.companyType || '') && !/^testco/i.test(c.name || ''));
+  const properties = await list('/api/crm/properties');
+  const bluewater = properties.find((p) => /bluewater/i.test(p.name || '') && (!landsec || p.landlordId === landsec.id))
+    || properties.find((p) => /bluewater/i.test(p.name || ''));
+  return {
+    landsec: landsec?.id || LEGACY.landsec,
+    bluewater: bluewater?.id || LEGACY.bluewater,
+    brand: brand?.id || LEGACY.brand,
+  };
 }
 
 async function visit(page, persona, path, label) {
@@ -492,7 +540,7 @@ async function victoriaRound(page, cross) {
       const [needle, role] = args;
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
       const create = await fetch('/api/crm/contacts', { method: 'POST', credentials: 'include', headers: auth,
-        body: JSON.stringify({ name: needle, role: 'Landsec-side probe', companyId: '11111111-1111-1111-1111-111111111111' }) });
+        body: JSON.stringify({ name: needle, role: 'Landsec-side probe', companyId: window.QA_FIX.landsec }) });
       if (!create.ok) return { ok: false, why: `create ${create.status}` };
       const made = await create.json();
       // Edit the role too, so the client-side parity check covers agent edits.
@@ -513,7 +561,7 @@ async function victoriaRound(page, cross) {
     const title = `QA Brief AgentParity R${ROUND}`;
     const r = await page.evaluate(async (needle) => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const bluewater = '22222222-2222-2222-2222-222222222222';
+      const bluewater = window.QA_FIX.bluewater;
       const units = await (await fetch('/api/available-units', { headers: auth })).json();
       const unit = (Array.isArray(units) ? units : []).find((u) => String(u.propertyId) === bluewater);
       if (!unit) return { ok: false, why: 'no Landsec unit found' };
@@ -572,7 +620,7 @@ async function victoriaRound(page, cross) {
   // 4j. Staff brand profile renders its main sections without any error
   // boundary tripping (Honi Poke fixture).
   await step(page, p, 'staff-brand-profile-sections', async () => {
-    await page.goto(`${BASE}/companies/77777777-7777-7777-7777-777777777777`);
+    await page.goto(`${BASE}/companies/${BRAND}`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(3500);
     if (await page.getByText('Page not found').count()) throw new Error('brand profile is a dead route for staff');
@@ -683,7 +731,7 @@ async function victoriaRound(page, cross) {
     const r = await page.evaluate(async (marker) => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const units = await (await fetch('/api/available-units', { headers: auth })).json();
-      const unit = (Array.isArray(units) ? units : []).find((u) => u.propertyId === '22222222-2222-2222-2222-222222222222') || (Array.isArray(units) ? units[0] : null);
+      const unit = (Array.isArray(units) ? units : []).find((u) => u.propertyId === window.QA_FIX.bluewater) || (Array.isArray(units) ? units[0] : null);
       if (!unit) return { skip: true };
       const post = await fetch(`/api/available-units/${unit.id}/viewings`, { method: 'POST', credentials: 'include', headers: auth,
         body: JSON.stringify({ viewingDate: new Date().toISOString().slice(0, 10), attendees: marker }) });
@@ -705,7 +753,7 @@ async function victoriaRound(page, cross) {
     const r = await page.evaluate(async (marker) => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const units = await (await fetch('/api/available-units', { headers: auth })).json();
-      const unit = (Array.isArray(units) ? units : []).find((u) => u.propertyId === '22222222-2222-2222-2222-222222222222') || (Array.isArray(units) ? units[0] : null);
+      const unit = (Array.isArray(units) ? units : []).find((u) => u.propertyId === window.QA_FIX.bluewater) || (Array.isArray(units) ? units[0] : null);
       if (!unit) return { skip: true };
       const post = await fetch(`/api/available-units/${unit.id}/offers`, { method: 'POST', credentials: 'include', headers: auth,
         body: JSON.stringify({ companyName: marker, offerDate: new Date().toISOString().slice(0, 10) }) });
@@ -745,13 +793,14 @@ async function victoriaRound(page, cross) {
     const r = await page.evaluate(async (dealName) => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const create = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth,
-        body: JSON.stringify({ name: dealName, landlordId: '11111111-1111-1111-1111-111111111111', fee: 456789, feePercentage: 12, commission: 456789 }) });
+        body: JSON.stringify({ name: dealName, landlordId: window.QA_FIX.landsec, fee: 456789, feePercentage: 12, commission: 456789 }) });
       if (!create.ok) return { ok: false, why: `create ${create.status}` };
       const made = await create.json().catch(() => ({}));
       return { ok: true, id: made?.id };
     }, name);
     if (!r.ok) throw new Error(`agent could not create a fee-bearing Landsec deal (${r.why})`);
     cross.feeDealName = name;
+    cross.feeDealId = r.id || null;
   });
 
   // Offer deletion parity: offers have no edit route (create/delete only),
@@ -762,7 +811,7 @@ async function victoriaRound(page, cross) {
     const r = await page.evaluate(async (marker) => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const units = await (await fetch('/api/available-units', { headers: auth })).json();
-      const unit = (Array.isArray(units) ? units : []).find((u) => u.propertyId === '22222222-2222-2222-2222-222222222222');
+      const unit = (Array.isArray(units) ? units : []).find((u) => u.propertyId === window.QA_FIX.bluewater);
       if (!unit) return { skip: true };
       const post = await fetch(`/api/available-units/${unit.id}/offers`, { method: 'POST', credentials: 'include', headers: auth,
         body: JSON.stringify({ companyName: marker, offerDate: new Date().toISOString().slice(0, 10) }) });
@@ -1078,7 +1127,7 @@ async function markRound(page, cross) {
   // Client property-detail page renders (tabs, no blank/crash). Cross-check
   // that staff-only surfaces (fee/WIP) never leak onto it.
   await step(page, p, 'client-property-detail', async () => {
-    await page.goto(`${BASE}/properties/22222222-2222-2222-2222-222222222222`);
+    await page.goto(`${BASE}/properties/${BLUEWATER}`);
     // The property news panel polls, so networkidle can never settle here —
     // tolerate the timeout and assert on rendered content instead.
     await page.waitForLoadState('networkidle').catch(() => {});
@@ -1336,7 +1385,7 @@ async function markRound(page, cross) {
     const r = await page.evaluate(async () => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const foreignLandlordContact = '99999999-6666-6666-6666-666666666666'; // Hammerson (landlord — never touchable)
-      const inSliceBrand = '77777777-7777-7777-7777-777777777777';           // Honi Poke (Tenant - Restaurant, in slice)
+      const inSliceBrand = window.QA_FIX.brand;           // Honi Poke (Tenant - Restaurant, in slice)
       const outOfSliceBrand = '88888888-1111-1111-1111-111111111111';        // QA Retail Brand (out of slice, not self-added)
       const editForeign = (await fetch(`/api/crm/contacts/${foreignLandlordContact}`, { method: 'PUT', credentials: 'include', headers: auth,
         body: JSON.stringify({ name: 'QA-CONTACT-HIJACK' }) }).catch(() => ({ status: 0 }))).status;
@@ -1364,7 +1413,7 @@ async function markRound(page, cross) {
       const post = async (pid) => (await fetch(`/api/properties/${pid}/bgp-commentary/regenerate`, {
         method: 'POST', credentials: 'include', headers: auth, body: '{}' }).catch(() => ({ status: 0 }))).status;
       return {
-        own: await post('22222222-2222-2222-2222-222222222222'),
+        own: await post(window.QA_FIX.bluewater),
         foreign: await post('99999999-2222-2222-2222-222222222222'),
       };
     });
@@ -1380,7 +1429,7 @@ async function markRound(page, cross) {
   await step(page, p, 'client-plans-board-scoped', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const own = await fetch('/api/properties/22222222-2222-2222-2222-222222222222/plans', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const own = await fetch(`/api/properties/${window.QA_FIX.bluewater}/plans`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       const ownBody = own.ok ? await own.json().catch(() => null) : null;
       const foreign = (await fetch('/api/properties/99999999-2222-2222-2222-222222222222/plans', { headers: auth }).catch(() => ({ status: 0 }))).status;
       return { ownOk: own.ok, ownArray: Array.isArray(ownBody?.plans), foreign };
@@ -1399,7 +1448,7 @@ async function markRound(page, cross) {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
-      const own = 'property/22222222-2222-2222-2222-222222222222';
+      const own = `property/${window.QA_FIX.bluewater}`;
       const foreign = 'property/99999999-2222-2222-2222-222222222222';
       return {
         own: await g(`/api/${own}/brand-gaps`),
@@ -1637,7 +1686,7 @@ async function markRound(page, cross) {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
       return {
-        own: await g('/api/interactions/company/11111111-1111-1111-1111-111111111111'),
+        own: await g(`/api/interactions/company/${window.QA_FIX.landsec}`),
         rival: await g('/api/interactions/company/99999999-1111-1111-1111-111111111111'),
         summary: await g('/api/interactions/summary'),
         leaderboard: await g('/api/interactions/leaderboard'),
@@ -1729,7 +1778,7 @@ async function markRound(page, cross) {
     const r = await page.evaluate(async () => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const list = (await fetch('/api/document-briefs', { headers: auth }).catch(() => ({ status: 0 }))).status;
-      const run = (await fetch('/api/document-briefs/kyc/run', { method: 'POST', headers: auth, body: JSON.stringify({ propertyId: '22222222-2222-2222-2222-222222222222' }) }).catch(() => ({ status: 0 }))).status;
+      const run = (await fetch('/api/document-briefs/kyc/run', { method: 'POST', headers: auth, body: JSON.stringify({ propertyId: window.QA_FIX.bluewater }) }).catch(() => ({ status: 0 }))).status;
       return { list, run };
     });
     if (r.list !== 403) throw new Error(`client listed the document-briefs catalog (expected 403, got ${r.list})`);
@@ -1904,7 +1953,7 @@ async function markRound(page, cross) {
     const name = `QA Contact EditNotDel R${ROUND}`;
     const r = await page.evaluate(async (needle) => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const ownCompany = '11111111-1111-1111-1111-111111111111'; // Landsec (client's own)
+      const ownCompany = window.QA_FIX.landsec; // Landsec (client's own)
       const create = await fetch('/api/crm/contacts', { method: 'POST', credentials: 'include', headers: auth,
         body: JSON.stringify({ name: needle, companyId: ownCompany }) }).catch(() => ({ ok: false, status: 0 }));
       if (!create.ok) return { createStatus: create.status };
@@ -1924,7 +1973,7 @@ async function markRound(page, cross) {
   // Client opens a hospitality brand profile (in their visible slice) — the
   // page must render (tabs/content), no dead route / blank / staff leak.
   await step(page, p, 'client-brand-profile', async () => {
-    await page.goto(`${BASE}/companies/77777777-7777-7777-7777-777777777777`); // Honi Poke
+    await page.goto(`${BASE}/companies/${BRAND}`); // Honi Poke
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
     if (await page.getByText('Page not found').count()) throw new Error('brand profile is a dead route for client');
@@ -1943,7 +1992,7 @@ async function markRound(page, cross) {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const props = await (await fetch('/api/crm/properties', { headers: auth }).catch(() => null))?.json().catch(() => null);
       const mine = new Set((Array.isArray(props) ? props : (props?.properties || props?.rows || [])).map((p) => String(p.id)));
-      const res = await fetch('/api/brand/77777777-7777-7777-7777-777777777777/profile', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const res = await fetch(`/api/brand/${window.QA_FIX.brand}/profile`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       if (!res.ok) return { ok: false, status: res.status };
       const body = await res.json().catch(() => null);
       const pitched = (body && Array.isArray(body.pitchedTo)) ? body.pitchedTo : [];
@@ -1964,7 +2013,7 @@ async function markRound(page, cross) {
   await step(page, p, 'client-brand-deals-scoped', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const res = await fetch('/api/brand/77777777-7777-7777-7777-777777777777/profile', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const res = await fetch(`/api/brand/${window.QA_FIX.brand}/profile`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       if (!res.ok) return { ok: false, status: res.status };
       const d = await res.json().catch(() => null);
       const deals = Array.isArray(d?.deals) ? d.deals : [];
@@ -1991,7 +2040,7 @@ async function markRound(page, cross) {
   await step(page, p, 'client-company-detail-bd-stripped', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const res = await fetch('/api/crm/companies/77777777-7777-7777-7777-777777777777', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const res = await fetch(`/api/crm/companies/${window.QA_FIX.brand}`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       if (!res.ok) return { ok: false, status: res.status };
       const d = await res.json().catch(() => null);
       const internal = ['lettingHunterFlag', 'lettingHunterNotes', 'investmentHunterFlag', 'investmentHunterNotes',
@@ -2012,7 +2061,7 @@ async function markRound(page, cross) {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const me = await (await fetch('/api/auth/me', { headers: auth })).json().catch(() => ({}));
       const mine = me?.companyScopeId || me?.companyId || null;
-      const brandRes = await fetch('/api/crm/companies/77777777-7777-7777-7777-777777777777/deals', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const brandRes = await fetch(`/api/crm/companies/${window.QA_FIX.brand}/deals`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       const brand = brandRes.ok ? await brandRes.json().catch(() => null) : null;
       const brandRows = Array.isArray(brand) ? brand : (brand?.deals || []);
       let ownFeeLeak = false;
@@ -2036,7 +2085,7 @@ async function markRound(page, cross) {
   await step(page, p, 'client-brand-suggested-pitches-scoped', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const inSlice = await fetch('/api/brands/77777777-7777-7777-7777-777777777777/suggested-pitches', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const inSlice = await fetch(`/api/brands/${window.QA_FIX.brand}/suggested-pitches`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       const body = inSlice.ok ? await inSlice.json().catch(() => null) : null;
       const shapeOk = !!body && typeof body.brandName === 'string' && Array.isArray(body.suggestions);
       const foreign = (await fetch('/api/brands/88888888-1111-1111-1111-111111111111/suggested-pitches', { headers: auth }).catch(() => ({ status: 0 }))).status;
@@ -2056,7 +2105,7 @@ async function markRound(page, cross) {
   await step(page, p, 'client-brand-kyc-visible-actions-blocked', async () => {
     const r = await page.evaluate(async () => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const honi = '77777777-7777-7777-7777-777777777777';      // in the hospitality slice
+      const honi = window.QA_FIX.brand;      // in the hospitality slice
       const outOfSlice = '88888888-1111-1111-1111-111111111111'; // QA Retail Brand
       const prof = await fetch(`/api/brand/${honi}/profile`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       const kycVisible = prof.ok ? ((await prof.json().catch(() => ({}))).kyc !== undefined) : false;
@@ -2104,7 +2153,7 @@ async function markRound(page, cross) {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
       return {
-        byCrmSlice: await g('/api/covenant/by-crm/77777777-7777-7777-7777-777777777777'),
+        byCrmSlice: await g(`/api/covenant/by-crm/${window.QA_FIX.brand}`),
         byCrmRival: await g('/api/covenant/by-crm/99999999-1111-1111-1111-111111111111'),
         watchlist: await g('/api/covenant/watchlist'),
         alerts: await g('/api/covenant/alerts'),
@@ -2146,7 +2195,7 @@ async function markRound(page, cross) {
   await step(page, p, 'client-apollo-enrichment-scope', async () => {
     const r = await page.evaluate(async () => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const slice = '77777777-7777-7777-7777-777777777777';
+      const slice = window.QA_FIX.brand;
       const rival = '99999999-1111-1111-1111-111111111111';
       const g = async (url, opts) => (await fetch(url, opts || { headers: auth }).catch(() => ({ status: 0 }))).status;
       return {
@@ -2562,7 +2611,7 @@ async function markRound(page, cross) {
   await step(page, p, 'client-tenancy-links', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const res = await fetch('/api/tenancy-schedule/property/22222222-2222-2222-2222-222222222222/links', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const res = await fetch(`/api/tenancy-schedule/property/${window.QA_FIX.bluewater}/links`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       if (!res.ok) return { ok: false, status: res.status };
       const d = await res.json().catch(() => null);
       return { ok: true, shape: !!d && Array.isArray(d.deals) && Array.isArray(d.lettingUnits) };
@@ -2579,12 +2628,12 @@ async function markRound(page, cross) {
   await step(page, p, 'client-property-tenants-scoped', async () => {
     const r = await page.evaluate(async () => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const own = '22222222-2222-2222-2222-222222222222';
+      const own = window.QA_FIX.bluewater;
       const foreign = '44444444-4444-4444-4444-444444444444';
       const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
       const ownRes = await fetch(`/api/crm/properties/${own}/tenants`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       const ownBody = ownRes.ok ? await ownRes.json().catch(() => null) : null;
-      const del = (await fetch(`/api/crm/properties/${own}/tenants/77777777-7777-7777-7777-777777777777`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => ({ status: 0 }))).status;
+      const del = (await fetch(`/api/crm/properties/${own}/tenants/${window.QA_FIX.brand}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => ({ status: 0 }))).status;
       return { ownStatus: ownRes.status, ownIsArray: Array.isArray(ownBody), foreign: await g(`/api/crm/properties/${foreign}/tenants`), del };
     });
     if (r.ownStatus !== 200 || !r.ownIsArray) throw new Error(`client own property tenant list unhealthy (status ${r.ownStatus}, array ${r.ownIsArray})`);
@@ -2620,7 +2669,7 @@ async function markRound(page, cross) {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
       return {
-        ownProp: await g('/api/crm/properties/22222222-2222-2222-2222-222222222222'),
+        ownProp: await g(`/api/crm/properties/${window.QA_FIX.bluewater}`),
         rivalProp: await g('/api/crm/properties/99999999-2222-2222-2222-222222222222'),
         rivalContact: await g('/api/crm/contacts/99999999-6666-6666-6666-666666666666'),
       };
@@ -2638,7 +2687,7 @@ async function markRound(page, cross) {
   await step(page, p, 'client-contact-override-scoped', async () => {
     const r = await page.evaluate(async () => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const own = '22222222-2222-2222-2222-222222222222';
+      const own = window.QA_FIX.bluewater;
       const foreign = '44444444-4444-4444-4444-444444444444';
       const cid = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
       const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
@@ -2665,7 +2714,7 @@ async function markRound(page, cross) {
   await step(page, p, 'client-tenancy-export-scoped', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const own = '22222222-2222-2222-2222-222222222222';
+      const own = window.QA_FIX.bluewater;
       const foreign = '44444444-4444-4444-4444-444444444444';
       const ownRes = await fetch(`/api/tenancy-schedule/property/${own}/export-excel`, { headers: auth }).catch(() => ({ ok: false, status: 0, headers: { get: () => '' } }));
       const ct = ownRes.headers && ownRes.headers.get ? (ownRes.headers.get('content-type') || '') : '';
@@ -2735,7 +2784,7 @@ async function markRound(page, cross) {
       const contactId = Array.isArray(contacts) && contacts[0] ? contacts[0].id : '00000000-0000-0000-0000-000000000000';
       const probes = [
         ['DELETE', `/api/crm/deals/${dealId}`],
-        ['DELETE', `/api/crm/companies/11111111-1111-1111-1111-111111111111`],
+        ['DELETE', `/api/crm/companies/${window.QA_FIX.landsec}`],
         ['POST',   '/api/crm/deals/bulk-rent-analysis'],
         ['POST',   '/api/crm/wipe-deals'],
         ['POST',   '/api/image-studio/bulk-assign-property'],
@@ -3035,22 +3084,23 @@ async function markRound(page, cross) {
   });
 
   // Fee-strip must hold on the SINGLE-deal detail fetch too, not just the list
-  // — and cover the fee-agreement document link. Deal 6666… carries a real
-  // fee (£45k) staff-side; the client's GET /api/crm/deals/:id must come back
-  // with every fee field (incl. feeAgreement / feeAgreementUrl / feeNotes)
-  // blanked. A route that strips the list but not the detail would leak the
-  // fee on the deal page.
+  // — and cover the fee-agreement document link. Victoria's round created a
+  // Landsec deal carrying a real fee (cross.feeDealId); the client's
+  // GET /api/crm/deals/:id must come back with every fee field (incl.
+  // feeAgreement / feeAgreementUrl / feeNotes) blanked. A route that strips
+  // the list but not the detail would leak the fee on the deal page.
   await step(page, p, 'client-deal-detail-fee-stripped', async () => {
-    const r = await page.evaluate(async () => {
+    const dealId = cross.feeDealId || '66666666-6666-6666-6666-666666666666';
+    const r = await page.evaluate(async (dealId) => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const res = await fetch('/api/crm/deals/66666666-6666-6666-6666-666666666666', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const res = await fetch(`/api/crm/deals/${dealId}`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       if (!res.ok) return { ok: false, status: res.status };
       const d = await res.json().catch(() => null);
       if (!d || typeof d !== 'object') return { ok: false, status: -1 };
       const fields = ['fee', 'feePercentage', 'feeNotes', 'commission', 'feeAgreement', 'feeAgreementUrl'];
       const leaked = fields.filter((k) => { const v = d[k]; return v !== null && v !== undefined && v !== 0 && v !== ''; });
       return { ok: true, leaked };
-    });
+    }, dealId);
     if (!r.ok) throw new Error(`client own deal detail fetch unhealthy (${r.status})`);
     if (r.leaked.length) throw new Error(`BGP fee data leaked on the client deal-detail fetch: ${r.leaked.join(', ')}`);
   });
@@ -3369,7 +3419,7 @@ async function markRound(page, cross) {
       if (scrollW > clientW + 4) throw new Error(`client dashboard overflows on mobile: scrollWidth ${scrollW} > viewport ${clientW}`);
       // The property page got a unified any-width layout (terminal,
       // 2026-08-03) — hold it to the same no-overflow bar on a phone.
-      await mob.goto(`${BASE}/properties/22222222-2222-2222-2222-222222222222`, nav);
+      await mob.goto(`${BASE}/properties/${BLUEWATER}`, nav);
       await mob.waitForLoadState('networkidle').catch(() => {});
       await mob.waitForTimeout(3000);
       const prop = await mob.evaluate(() => ({
@@ -3537,18 +3587,12 @@ async function samRound(page, cross) {
   });
 
   await step(page, p, 'rival-client-write-guards', async () => {
-    const landsecUnit = await page.evaluate(async () => {
-      // Resolve a Landsec unit id via fixture convention (Bluewater unit is
-      // seeded as 66666666-… in the fixture deal; fall back to a probe list).
-      return null;
-    });
-    const probes = await page.evaluate(async () => {
+    const probes = await page.evaluate(async (crossUnitId) => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      // Any unit belonging to Landsec — fixture Bluewater tracker unit ids are
-      // unknown here, so probe through the STAFF-visible id conventions used
-      // by the fixture instead: ask our own list first and take a foreign id
-      // from the cross-tenant seeded constant.
-      const foreign = '85b15bb7-58be-429a-b034-7df637aeb7cd'; // Landsec Bluewater unit (fixture)
+      // A real Landsec unit id: Victoria's round discovered one on the live
+      // fixture (cross.briefUnitId); the legacy dev-fixture id is the
+      // fallback so the probes hit an existing row, not a 404.
+      const foreign = crossUnitId || '85b15bb7-58be-429a-b034-7df637aeb7cd';
       const out = [];
       const tryReq = async (label, method, url, body) => {
         const r = await fetch(url, { method, credentials: 'include', headers: auth, body: body ? JSON.stringify(body) : undefined }).catch(() => ({ status: 0, ok: false }));
@@ -3562,13 +3606,13 @@ async function samRound(page, cross) {
       // Cross-tenant client-team board writes: the /api/client-teams/ prefix
       // is client-writable, but the handlers must reject a board that isn't
       // the caller's own. Sam (Hammerson) aims every write at the LANDSEC id.
-      const LANDSEC = '11111111-1111-1111-1111-111111111111';
+      const LANDSEC = window.QA_FIX.landsec;
       await tryReq('team-member-add', 'POST', `/api/client-teams/${LANDSEC}/member`, { user_id: '99999999-4444-4444-4444-444444444444', team_group: 'QA-RIVAL' });
       await tryReq('team-column-add', 'POST', `/api/client-teams/${LANDSEC}/columns`, { name: 'QA-RIVAL-COL' });
       await tryReq('team-column-del', 'DELETE', `/api/client-teams/${LANDSEC}/columns/Investment`, null);
       await tryReq('team-reorder', 'POST', `/api/client-teams/${LANDSEC}/reorder`, { items: [{ id: 'x', sort_order: 0 }] });
       return out;
-    });
+    }, cross.briefUnitId || null);
     const allowed = probes.filter((x) => x.ok);
     if (allowed.length) throw new Error(`rival client wrote to a Landsec resource: ${allowed.map((x) => x.label).join(', ')}`);
   });
@@ -3592,7 +3636,7 @@ async function samRound(page, cross) {
   await step(page, p, 'rival-brand-profile-scoped', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const res = await fetch('/api/brand/77777777-7777-7777-7777-777777777777/profile', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      const res = await fetch(`/api/brand/${window.QA_FIX.brand}/profile`, { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       if (!res.ok) return { ok: false, status: res.status };
       const d = await res.json().catch(() => null);
       const props = [...(d?.pitchedTo || []), ...(d?.leaseEvents || [])].map((x) => String(x.property_name || ''));
@@ -3614,7 +3658,7 @@ async function samRound(page, cross) {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const own = await fetch('/api/client-teams/99999999-1111-1111-1111-111111111111', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
       const ownArray = own.ok ? Array.isArray(await own.json().catch(() => null)) : false;
-      const foreign = (await fetch('/api/client-teams/11111111-1111-1111-1111-111111111111', { headers: auth }).catch(() => ({ status: 0 }))).status;
+      const foreign = (await fetch(`/api/client-teams/${window.QA_FIX.landsec}`, { headers: auth }).catch(() => ({ status: 0 }))).status;
       return { ownOk: own.ok, ownArray, foreign };
     });
     if (!r.ownOk || !r.ownArray) throw new Error("rival client can't read their own team board");
@@ -3634,6 +3678,13 @@ const clientCtx = await browser.newContext({ viewport: { width: 1500, height: 95
 
 console.log(`── Round ${ROUND} — Victoria (agent) × Mark (Landsec client) ──`);
 const vPage = await login(agentCtx, AGENT_USER);
+const FIX = await resolveFixture(vPage.qaToken);
+LANDSEC = FIX.landsec; BLUEWATER = FIX.bluewater; BRAND = FIX.brand;
+console.log(`  [fixture] landsec=${LANDSEC} bluewater=${BLUEWATER} brand=${BRAND}`);
+// Every page in every context reads the resolved IDs as window.QA_FIX
+// (init script re-runs on each navigation — every scenario starts with one;
+// a direct evaluate here would race the app's auth-hydration navigation).
+for (const ctx of [agentCtx, clientCtx]) await ctx.addInitScript((f) => { window.QA_FIX = f; }, FIX);
 const mPage = await login(clientCtx, CLIENT_USER);
 attachCollectors(vPage, 'victoria');
 attachCollectors(mPage, 'mark');
@@ -3651,6 +3702,7 @@ for (const [name, user, fn] of [
   currentScenario[name] = 'startup';
   try {
     const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
+    await ctx.addInitScript((f) => { window.QA_FIX = f; }, FIX);
     const pg = await login(ctx, user);
     attachCollectors(pg, name);
     await fn(pg, cross).catch((e) => logIssue(name, 'round', 'harness-crash', e.message));
