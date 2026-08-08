@@ -10,7 +10,7 @@
 //         fixture DB (Landsec = 11111111-1111-1111-1111-111111111111).
 
 import { chromium } from '../node_modules/playwright/index.mjs';
-import { mkdirSync, appendFileSync } from 'fs';
+import { mkdirSync, appendFileSync, existsSync } from 'fs';
 
 const BASE = 'http://localhost:5000';
 const ROUND = parseInt(process.argv[2] || '1', 10);
@@ -421,8 +421,18 @@ async function victoriaRound(page, cross) {
       if (!move.ok) return { ok: false, why: `stage PUT ${move.status}` };
       const after = await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json();
       const moved = after?.status === 'UO';
+      // Restoring INTO SOL/EXC/COM/INV re-fires the AML counterparty gate
+      // (409 when the fixture deal has no KYC-approved counterparties), so
+      // restore with the documented MLRO override, then put the override
+      // flag back so the fixture is untouched.
+      const gated = ['SOL', 'EXC', 'COM', 'INV'].includes(original);
+      const restoreBody = gated ? { status: original, amlCheckCompleted: 'YES' } : { status: original };
       await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
-        body: JSON.stringify({ status: original }) }).catch(() => {});
+        body: JSON.stringify(restoreBody) }).catch(() => {});
+      if (gated && deal.amlCheckCompleted !== 'YES') {
+        await fetch(`/api/crm/deals/${deal.id}`, { method: 'PUT', credentials: 'include', headers: auth,
+          body: JSON.stringify({ amlCheckCompleted: deal.amlCheckCompleted ?? null }) }).catch(() => {});
+      }
       const restored = await (await fetch(`/api/crm/deals/${deal.id}`, { headers: auth })).json();
       return { ok: true, moved, restoredStatus: restored?.status, original };
     });
@@ -3601,7 +3611,11 @@ async function samRound(page, cross) {
 
 // ─── Run ──────────────────────────────────────────────────────────────────
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+// Prefer the container's preinstalled chromium (version-stable symlink);
+// fall back to playwright's own browser where /opt/pw-browsers is absent.
+const QA_CHROMIUM = process.env.QA_CHROMIUM
+  || (existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : null);
+const browser = await chromium.launch(QA_CHROMIUM ? { executablePath: QA_CHROMIUM } : {});
 const agentCtx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
 const clientCtx = await browser.newContext({ viewport: { width: 1500, height: 950 } });
 

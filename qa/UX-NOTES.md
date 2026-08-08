@@ -21,5 +21,13 @@ what happened · concrete suggested improvement.
    starts empty even though most viewings are logged the day they happen, so
    every entry needs a manual date pick before Save. Suggest: default the date
    to today (keep it editable).
+3. 2026-08-08 · staff · Deals board stage moves · A deal already sitting in
+   SOL/EXC/COM/INV whose counterparties aren't KYC-approved (e.g. legacy deals
+   with no counterparty linked) can be dragged OUT of that stage freely, but
+   the AML gate then blocks dragging it back — an accidental drag is
+   irreversible without the MLRO override, even though the deal held that
+   stage seconds earlier. Suggest: allow reverting to the stage the deal held
+   immediately before the current session's move (or warn before letting a
+   gated-stage deal leave the stage it can't re-enter).
 
 ## Confirmed / done

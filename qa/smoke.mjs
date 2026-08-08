@@ -14,7 +14,7 @@
 //          and their API errors are on the ignore list.
 
 import { chromium } from '../node_modules/playwright/index.mjs';
-import { mkdirSync } from 'fs';
+import { mkdirSync, existsSync } from 'fs';
 import { spawnSync } from 'child_process';
 
 const BASE = process.env.SMOKE_BASE || 'http://localhost:5000';
@@ -106,9 +106,21 @@ async function noCrash(page, label) {
   check(`${label}: no error boundary`, boundary === 0);
 }
 
-const browser = await chromium.launch(
-  process.env.SMOKE_CHROMIUM ? { executablePath: process.env.SMOKE_CHROMIUM } : {}
-);
+// Fresh containers ship chromium at /opt/pw-browsers/chromium but not the
+// headless-shell build playwright's npm install expects — fall back to the
+// preinstalled binary when the default launch can't find its browser.
+let browser;
+try {
+  browser = await chromium.launch(
+    process.env.SMOKE_CHROMIUM ? { executablePath: process.env.SMOKE_CHROMIUM } : {}
+  );
+} catch (err) {
+  if (!process.env.SMOKE_CHROMIUM && existsSync('/opt/pw-browsers/chromium')) {
+    browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+  } else {
+    throw err;
+  }
+}
 
 // ─── Staff — Victoria ─────────────────────────────────────────────────────
 console.log('── staff (Victoria) ──');

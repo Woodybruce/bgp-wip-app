@@ -86,11 +86,30 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   date should default to today).
 - Next journey: rotation #2 client desktop (then #3 client mobile 390px).
 
-### r206 · 2026-08-08 · round in progress (LIGHT — r205 had the journey)
-- Fresh container. Regression: run-smoke.sh GREEN (41 checks, 0 failures,
-  fresh build + fresh fixture DB).
-- Setup note: playwright's node_modules install expects headless_shell-1234
-  which isn't in /opt/pw-browsers — run smoke with
-  SMOKE_CHROMIUM=/opt/pw-browsers/chromium (symlink to chromium-1194).
-- Triage list: nothing from smoke. Next: two-bot-round.mjs sweep, triaging
-  only non-hardcoded-ID failures per r205 note.
+### r206 · 2026-08-08 · LIGHT (r205 had the journey)
+- Fresh container. Regression: run-smoke.sh GREEN twice (41 checks, 0 failures;
+  second run verified the new chromium fallback with no SMOKE_CHROMIUM set).
+- Two-bot sweep (round 206, dev server + smoke fixture): 42 issues, all but
+  one the known hardcoded-ID fixture mismatch (11111111/22222222/77777777/
+  66666666 scenarios fail by construction) or listed env noise. ~60 scenarios
+  still pass, incl. all rival-isolation and destructive guards.
+- Harness bugs fixed (2):
+  1. staff-deal-stage-move corrupted the fixture: it flips the Bluewater deal
+     (SOL) to UO, and the intended AML counterparty gate 409s the restore
+     (no KYC-approved counterparties on the fixture deal) — deal stayed stuck
+     in UO for the rest of the round. Restore now uses the documented MLRO
+     override for gated codes and puts amlCheckCompleted back afterwards
+     (qa/two-bot-round.mjs). Verified: move+restore both 200, flag reset.
+  2. Fresh containers can't launch playwright's own browser (node_modules
+     expects headless_shell-1234; /opt only has chromium-1194) — smoke.mjs now
+     falls back to /opt/pw-browsers/chromium when the default launch fails,
+     and two-bot uses the version-stable /opt/pw-browsers/chromium symlink
+     (env QA_CHROMIUM overrides) instead of a hardcoded chromium-1194 path.
+- App bugs: none found (AML-gate 409 judged intended behaviour — compliance
+  gate with MLRO override; logged the drag-out-can't-drag-back trap as
+  UX-NOTES #3 instead).
+- Deferred (harness): port two-bot-round.mjs off the old-fixture hardcoded IDs
+  (resolve Landsec/property/brand/deal IDs from the DB at startup) so the
+  ~40 fixture-mismatch scenarios regain signal in fresh containers.
+- Suggestions added: UX-NOTES #3 (irreversible stage drag on AML-gated deals).
+- Next journey: rotation #2 client desktop (then #3 client mobile 390px).
