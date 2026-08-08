@@ -114,6 +114,13 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
 - Next journey: rotation #3 client mobile 390px (r207 had the journey → r208
   may be LIGHT; then #3).
 
+### r208 · 2026-08-08 · IN PROGRESS (light round — r207 had the journey)
+- Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
+  fresh DB + fresh build). No new issues to triage from smoke.
+- Plan: deferred harness work — port two-bot-round.mjs off old-fixture
+  hardcoded IDs (resolve Landsec/property/brand IDs from DB at startup),
+  then re-run two-bot to regain signal on the ~40 fixture-mismatch scenarios.
+
 ### r206 · 2026-08-08 · LIGHT (r205 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN twice (41 checks, 0 failures;
   second run verified the new chromium fallback with no SMOKE_CHROMIUM set).
