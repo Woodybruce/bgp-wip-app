@@ -137,12 +137,43 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   Suggestions added: none.
 - Next journey: rotation #3 client mobile 390px (r208 was LIGHT → r209 FULL).
 
-### r209 · 2026-08-08 ~20:25 UTC · ROUND IN PROGRESS (provisional)
-- FULL round planned: rotation #3 client mobile 390px + new viewing/offer
-  PATCH harness scenarios (per UX-batch note).
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + fresh
-  build on b4d4af7). Triage: nothing to triage — zero failures.
-- Journey + harness work in progress; final entry replaces this one.
+### r209 · 2026-08-08 · FULL (rotation #3 client mobile 390px)
+- Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks; before fixes
+  and again on the rebuilt bundle after them). Two-bot round 209: all
+  scenarios ok, 3 logged issues triaged (rocketreach 400 = listed noise; the
+  fee-injection 403 was a real bug, fixed below).
+- Journey: Mark Warne @ 390px iPhone UA — login → mobile shell (Messages/
+  Portfolio/Deals/Tasks/News tabs) → Deals tab → Letting Tracker sub-tab →
+  Portfolio/Tasks/News. Mobile shell renders cleanly; tracker chips, unit
+  cards and search all fine at 390px. NOTE for future mobile rounds: the
+  mobile shell only triggers on a MOBILE USER AGENT (useIsMobile requires
+  isTouchDevice + narrow); Playwright viewport+hasTouch alone gets the
+  desktop layout with a squeezed sidebar — set an iPhone/Android UA.
+- Bugs fixed (2):
+  1. Client deal scoping missed tracker-created deals (no landlord_id on the
+     deal row) — Mark's Deals board showed "0 deals" while the dashboard KPI
+     counted 4, deal detail 403'd, and the client deal-edit PUT 403'd (the
+     fee-injection scenario had been silently skipping). Fixed in all three
+     spots by the property-landlord rule the dashboard KPI already used:
+     /api/crm/deals list filter (server/crm.ts), isDealInScope
+     (server/company-scope.ts), and the PUT gate now calls isDealInScope
+     instead of its own inline copy. Verified: list 4 deals + fees stripped,
+     own tracker-deal detail 200, PUT 200 with fee injection ignored,
+     rival deal read/write still 403.
+  2. Client mobile home fired staff-only GET /api/expenses/pending-approval
+     → 403 console noise every 60s (mobile-home.tsx approvals badge now
+     gated !isClientHome, matching the commission/WIP queries beside it).
+- Harness growth: two-bot +3 — agent-edit-viewing-offer (new PATCH pencils:
+  edit persists, EDITED stamps flow to the client cross-checks),
+  rival-viewing-offer-patch-guard (Sam PATCH/DELETE on a Landsec viewing/
+  offer → 403), client-deals-property-scope (tracker deals present, rival
+  absent, no fee leak). All three passed in round 209.
+- NOT bugs: Deals sub-tab shows 2 while KPI says 4 — tracker-linked deals
+  deliberately live on the Letting Tracker sub-tab (logged as UX-NOTES #7).
+- Deferred: none. Suggestions added: UX-NOTES #6 (client mobile lands on
+  empty Messages tab), #7 (Deals-vs-KPI count mismatch needs a hint).
+- Next journey: rotation #4 staff mobile 390px (r209 had the journey → r210
+  may be LIGHT; then #4).
 
 ### r206 · 2026-08-08 · LIGHT (r205 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN twice (41 checks, 0 failures;

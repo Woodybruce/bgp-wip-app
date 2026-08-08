@@ -201,6 +201,7 @@ export default function MobileHome() {
   const { data: pendingApprovals } = useQuery<any[]>({
     queryKey: ["/api/expenses/pending-approval"],
     refetchInterval: 60_000,
+    enabled: !!user && !isClientHome,
   });
   const approvalCount = Array.isArray(pendingApprovals) ? pendingApprovals.length : 0;
   const hour = new Date().getHours();

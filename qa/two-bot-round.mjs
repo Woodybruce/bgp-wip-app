@@ -65,7 +65,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -743,6 +743,7 @@ async function victoriaRound(page, cross) {
     if (!r.ok) throw new Error(`agent could not log a viewing (${r.why})`);
     cross.viewingStamp = stamp;
     cross.viewingId = r.viewingId;
+    cross.viewingUnitId = r.unitId;
   });
 
   // Agent logs an OFFER on a Landsec unit — the client must then see it on
@@ -765,6 +766,32 @@ async function victoriaRound(page, cross) {
     if (!r.ok) throw new Error(`agent could not log an offer (${r.why})`);
     cross.offerStamp = stamp;
     cross.offerId = r.offerId;
+  });
+
+  // The tracker dialogs' edit pencils (2026-08-08 UX batch): PATCH
+  // /api/available-units/viewings/:id and offers/:id. Edit the rows just
+  // logged, confirm the edit persists on re-read, and hand the EDITED
+  // stamps to Mark's round so the client-visibility checks also prove
+  // edits flow through to the client.
+  await step(page, p, 'agent-edit-viewing-offer', async () => {
+    if (!cross.viewingId || !cross.offerId || !cross.viewingUnitId) return;
+    const r = await page.evaluate(async (args) => {
+      const [viewingId, offerId, vStamp, oStamp, unitId] = args;
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const pv = await fetch(`/api/available-units/viewings/${viewingId}`, { method: 'PATCH', credentials: 'include', headers: auth,
+        body: JSON.stringify({ attendees: vStamp }) });
+      if (!pv.ok) return { ok: false, why: `viewing PATCH ${pv.status}` };
+      const po = await fetch(`/api/available-units/offers/${offerId}`, { method: 'PATCH', credentials: 'include', headers: auth,
+        body: JSON.stringify({ companyName: oStamp }) });
+      if (!po.ok) return { ok: false, why: `offer PATCH ${po.status}` };
+      const viewings = await (await fetch(`/api/available-units/${unitId}/viewings`, { headers: auth })).json();
+      const vRow = (Array.isArray(viewings) ? viewings : []).find((x) => x.id === viewingId);
+      return { ok: true, persisted: vRow?.attendees === vStamp };
+    }, [cross.viewingId, cross.offerId, `${cross.viewingStamp}-EDITED`, `${cross.offerStamp}-EDITED`, cross.viewingUnitId]);
+    if (!r.ok) throw new Error(`tracker row edit failed (${r.why})`);
+    if (!r.persisted) throw new Error('viewing PATCH returned OK but the edit did not persist');
+    cross.viewingStamp = `${cross.viewingStamp}-EDITED`;
+    cross.offerStamp = `${cross.offerStamp}-EDITED`;
   });
 
   // Comps parity: a comp Victoria logs against the client's scheme must show
@@ -3123,6 +3150,25 @@ async function markRound(page, cross) {
     if (!r.deletedGone) throw new Error("agent-DELETED offer still visible on the client's letting activity");
   });
 
+  // Tracker-created deals carry no landlord_id on the deal row — the client
+  // Deals list must still include them via the property's landlord (r209:
+  // Mark's board showed "0 deals" while the dashboard KPI counted 4), with
+  // fees stripped, and a rival landlord's deal must stay invisible.
+  await step(page, p, 'client-deals-property-scope', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = await (await fetch('/api/crm/deals', { headers: auth })).json().catch(() => []);
+      const rows = Array.isArray(list) ? list : (list?.data || []);
+      const tracker = rows.filter((d) => d.propertyId === window.QA_FIX.bluewater);
+      const rival = rows.find((d) => /broadgate secret/i.test(d.name || ''));
+      const feeLeak = rows.find((d) => d.fee || d.feePercentage || d.commission);
+      return { total: rows.length, tracker: tracker.length, rival: !!rival, feeLeak: !!feeLeak };
+    });
+    if (!r.tracker) throw new Error(`client deals list is missing property-scoped tracker deals (${r.total} rows, 0 on Bluewater)`);
+    if (r.rival) throw new Error("a rival landlord's deal (Broadgate Secret Deal) leaked into the client deals list");
+    if (r.feeLeak) throw new Error('BGP fee fields leaked on the client deals list');
+  });
+
   // Locks in the terminal-side audit fix: a client reading ANOTHER
   // landlord's unit files/viewings/offers BY ID must be refused (was a
   // confirmed live cross-tenant leak). Uses the seeded Hammerson unit.
@@ -3666,6 +3712,28 @@ async function samRound(page, cross) {
     });
     if (!r.ownOk || !r.ownArray) throw new Error("rival client can't read their own team board");
     if (r.foreign !== 403) throw new Error(`rival client read the Landsec team board (expected 403, got ${r.foreign})`);
+  });
+
+  // The tracker-row edit endpoints (viewing/offer PATCH + DELETE) must hold
+  // the tenant boundary: Sam editing or deleting the viewing/offer Victoria
+  // logged on a Landsec unit must be refused. Complements
+  // rival-client-write-guards, which only probes the POST side.
+  await step(page, p, 'rival-viewing-offer-patch-guard', async () => {
+    if (!cross.viewingId || !cross.offerId) return;
+    const r = await page.evaluate(async (args) => {
+      const [viewingId, offerId] = args;
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const s = async (url, method, body) =>
+        (await fetch(url, { method, credentials: 'include', headers: auth, body: body ? JSON.stringify(body) : undefined }).catch(() => ({ status: 0 }))).status;
+      return {
+        vPatch: await s(`/api/available-units/viewings/${viewingId}`, 'PATCH', { attendees: 'QA-RIVAL-EDIT' }),
+        oPatch: await s(`/api/available-units/offers/${offerId}`, 'PATCH', { companyName: 'QA-RIVAL-EDIT' }),
+        vDel: await s(`/api/available-units/viewings/${viewingId}`, 'DELETE'),
+      };
+    }, [cross.viewingId, cross.offerId]);
+    if (r.vPatch !== 403) throw new Error(`rival client edited a Landsec viewing (expected 403, got ${r.vPatch})`);
+    if (r.oPatch !== 403) throw new Error(`rival client edited a Landsec offer (expected 403, got ${r.oPatch})`);
+    if (r.vDel !== 403) throw new Error(`rival client deleted a Landsec viewing (expected 403, got ${r.vDel})`);
   });
 }
 

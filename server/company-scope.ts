@@ -269,7 +269,19 @@ export async function isDealInScope(scopeCompanyId: string, dealId: string): Pro
     `SELECT 1 FROM crm_company_deals WHERE company_id = $1 AND deal_id = $2 LIMIT 1`,
     [scopeCompanyId, dealId]
   );
-  return linkResult.rows.length > 0;
+  if (linkResult.rows.length > 0) return true;
+  // Tracker-created deals carry no company fields — they're the client's
+  // when they sit on one of the client's properties (same rule as the
+  // dashboard KPI, letting tracker and activity feed).
+  const propResult = await pool.query(
+    `SELECT 1 FROM crm_deals d
+     WHERE d.id = $1 AND d.property_id IS NOT NULL AND (
+       EXISTS (SELECT 1 FROM crm_properties p WHERE p.id = d.property_id AND p.landlord_id = $2)
+       OR EXISTS (SELECT 1 FROM crm_company_properties cp WHERE cp.property_id = d.property_id AND cp.company_id = $2)
+     ) LIMIT 1`,
+    [dealId, scopeCompanyId]
+  );
+  return propResult.rows.length > 0;
 }
 
 export async function isContactInScope(scopeCompanyId: string, contactId: string): Promise<boolean> {

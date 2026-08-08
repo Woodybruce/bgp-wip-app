@@ -3005,12 +3005,22 @@ Only return the JSON object. If uncertain, return {"role": null}.`
           [scopeCompanyId]
         );
         const linkedDealIds = new Set(linkedResult.rows.map((r: any) => r.deal_id));
+        // Tracker-created deals carry no company fields — they belong to the
+        // client through the property's landlord, same rule as the dashboard
+        // KPI and the letting tracker (which already show them).
+        const scopedPropsResult = await pool.query(
+          `SELECT id FROM crm_properties WHERE landlord_id = $1
+           UNION SELECT property_id FROM crm_company_properties WHERE company_id = $1`,
+          [scopeCompanyId]
+        );
+        const scopedPropertyIds = new Set(scopedPropsResult.rows.map((r: any) => r.id));
         const scopeFilter = (d: any) =>
           d.landlordId === scopeCompanyId ||
           d.tenantId === scopeCompanyId ||
           d.vendorId === scopeCompanyId ||
           d.purchaserId === scopeCompanyId ||
-          linkedDealIds.has(d.id);
+          linkedDealIds.has(d.id) ||
+          (d.propertyId && scopedPropertyIds.has(d.propertyId));
         const arr = Array.isArray(result) ? result : result.data;
         // BGP's fee/commission is internal — strip every fee field before
         // sending a deal to a client login (fee, %, notes, agreement doc).
@@ -3251,12 +3261,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       // never touch any fee field. Scope check mirrors the deals-list filter.
       const editScope = await resolveCompanyScope(req);
       if (editScope) {
-        const inScope = oldDeal && (
-          (oldDeal as any).landlordId === editScope ||
-          (oldDeal as any).tenantId === editScope ||
-          (oldDeal as any).vendorId === editScope ||
-          (oldDeal as any).purchaserId === editScope
-        );
+        const inScope = !!oldDeal && (await isDealInScope(editScope, req.params.id));
         if (!inScope) return res.status(403).json({ error: "Not available for client accounts" });
         for (const f of ["fee", "feePercentage", "feeNotes", "feeAgreement", "feeAgreementUrl", "commission"]) {
           delete (req.body as any)[f];
