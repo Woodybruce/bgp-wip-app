@@ -86,6 +86,12 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   date should default to today).
 - Next journey: rotation #2 client desktop (then #3 client mobile 390px).
 
+### r207 · 2026-08-08 · ROUND IN PROGRESS
+- Fresh container. Regression: run-smoke.sh GREEN (41 checks, 0 failures).
+- Triage: nothing beyond known env noise so far. FULL round — journey next:
+  rotation #2 client desktop (Mark Warne), "see how my lettings are
+  progressing and find who to chase".
+
 ### r206 · 2026-08-08 · LIGHT (r205 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN twice (41 checks, 0 failures;
   second run verified the new chromium fallback with no SMOKE_CHROMIUM set).
