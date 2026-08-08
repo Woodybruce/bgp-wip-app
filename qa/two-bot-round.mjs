@@ -2845,6 +2845,19 @@ async function markRound(page, cross) {
     if (!r.delOk) throw new Error(`client could not delete their own unit (${r.delStatus})`);
   });
 
+  // Summarise scope mirrors feed visibility (r207): the deal-linked Gail's
+  // meeting (contact without a company) is on the client's own feed, so
+  // summarising it must not 403 (short preview → skipped:true, no AI call).
+  await step(page, p, 'client-summarise-feed-scope', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/interactions/22220000-0000-0000-0000-000000000002/summarise', { method: 'POST', headers: auth });
+      return { status: res.status };
+    });
+    if (r.status === 404) return; // old fixture without the seeded interaction
+    if (r.status !== 200) throw new Error(`client summarise of own-feed interaction returned ${r.status}`);
+  });
+
   // The reworked target-operator columns must render on the client tracker —
   // either existing target rows or the add affordance, without a crash.
   await step(page, p, 'client-target-columns', async () => {

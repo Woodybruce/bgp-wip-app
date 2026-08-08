@@ -30,4 +30,18 @@ what happened · concrete suggested improvement.
    immediately before the current session's move (or warn before letting a
    gated-stage deal leave the stage it can't re-enter).
 
+4. 2026-08-08 · client desktop (Mark) · Landsec Portfolio Dashboard · Checking
+   how his portfolio is doing — the KPI strip shows "PASSING RENT £0.0m ·
+   £0/unit avg" because the fixture (and any scheme without rent data) has no
+   passing rent captured. A landlord reading £0.0m assumes the dashboard is
+   broken. Suggest: when no rent data exists, show "—" or hide the tile
+   rather than a zero.
+5. 2026-08-08 · client desktop (Mark) · Dashboard vs Leasing Schedule ·
+   Comparing portfolio health — the dashboard says 2 properties · 201 units ·
+   61.7% occupancy, while the (archived) Leasing Schedule board says the same
+   2 properties · 322 units · 52% occupancy. Two different unit counts and
+   occupancy figures for what reads as the same portfolio, with no hint of
+   which basis each uses. Suggest: label the basis on each surface (e.g.
+   "tracked units" vs "all tenancy-schedule units") or reconcile the counts.
+
 ## Confirmed / done

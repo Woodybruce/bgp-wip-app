@@ -278,7 +278,36 @@ router.post("/api/interactions/:id/summarise", requireAuth, async (req: Request,
     const { resolveCompanyScope: resolveScope, isClientRequestUser, isClientVisibleBrand } = await import("./company-scope");
     if (await isClientRequestUser(req)) {
       const scope = await resolveScope(req);
-      const ok = !!scope && (it.contact_company_id === scope || (await isClientVisibleBrand(it.contact_company_id, scope)));
+      // Mirror the feed's visibility rule: an interaction the client's own
+      // activity feed serves (contact in scope/brand slice, or tied to their
+      // portfolio via the interaction's company or its deal) must also be
+      // summarisable — otherwise auto-summarise 403s on rows the client sees.
+      let ok = !!scope && (it.contact_company_id === scope || (await isClientVisibleBrand(it.contact_company_id, scope)));
+      if (!ok && scope) {
+        const { rows: linkRows } = await pool.query(
+          `SELECT 1
+             FROM crm_interactions i
+             LEFT JOIN crm_contacts c ON c.id = i.contact_id
+             LEFT JOIN crm_deals d ON d.id = i.deal_id
+             LEFT JOIN property_units pu ON pu.id = d.unit_id
+             LEFT JOIN tenancy_schedule_units ts ON ts.id = d.tenancy_unit_id
+            WHERE i.id = $1 AND (
+              i.company_id = $2 OR d.landlord_id = $2 OR d.tenant_id = $2
+              OR d.property_id IN (
+                SELECT id FROM crm_properties WHERE landlord_id = $2
+                UNION SELECT property_id FROM crm_company_properties WHERE company_id = $2)
+              OR pu.property_id IN (
+                SELECT id FROM crm_properties WHERE landlord_id = $2
+                UNION SELECT property_id FROM crm_company_properties WHERE company_id = $2)
+              OR ts.property_id IN (
+                SELECT id FROM crm_properties WHERE landlord_id = $2
+                UNION SELECT property_id FROM crm_company_properties WHERE company_id = $2)
+            )
+            LIMIT 1`,
+          [id, scope]
+        );
+        ok = linkRows.length > 0;
+      }
       if (!ok) return res.status(403).json({ error: "Not available for client accounts" });
     }
 

@@ -86,11 +86,33 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   date should default to today).
 - Next journey: rotation #2 client desktop (then #3 client mobile 390px).
 
-### r207 · 2026-08-08 · ROUND IN PROGRESS
-- Fresh container. Regression: run-smoke.sh GREEN (41 checks, 0 failures).
-- Triage: nothing beyond known env noise so far. FULL round — journey next:
-  rotation #2 client desktop (Mark Warne), "see how my lettings are
-  progressing and find who to chase".
+### r207 · 2026-08-08 · FULL (rotation #2 client desktop)
+- Fresh container. Regression: run-smoke.sh GREEN twice (41 checks before the
+  fix, 42 after — new summarise-scope check).
+- Journey: Mark Warne desktop — dashboard → letting-tracker card click →
+  /deals/letting?propertyId=… → filters/chips/FY strip → U124 search.
+  Navigation + scoping all worked; FY Viewings strip shows 1 (r205 fix holds).
+- Bug fixed (1): client auto-summarise 403 — /api/activity-summary serves
+  clients deal/property-linked interactions (e.g. Gail's — U124 meeting whose
+  contact has no company), but POST /api/interactions/:id/summarise only
+  accepted contact-company ∈ scope → console 403 storm on every scoped feed
+  + "Couldn't summarise" toast on manual click. Gate now mirrors the feed's
+  portfolio rule (server/activity-summary.ts). Verified: deal-linked → 200,
+  Hammerson-contact probe → still 403.
+- Harness growth: smoke.mjs +1 (client summarise portfolio-linked allowed);
+  two-bot +1 client-summarise-feed-scope (404-tolerant for old fixture).
+- NOT bugs: client tracker Add Unit/delete icons are intended (clients may
+  manage units on their own property — two-bot asserts it); U124 rows show no
+  deal because the fixture's Gail's deal has unit_id NULL (fixture shape).
+- New env noise: 404 GET /api/client/sharepoint/root — fixture has no linked
+  folder ("ask your BGP team" path); ignore. Also /deals/letting takes ~8s to
+  first paint under the DEV server (lazy chunk transform) — don't screenshot
+  early and call it blank; prod build is fine.
+- Deferred (harness, from r206): port two-bot off old-fixture hardcoded IDs.
+- Suggestions added: UX-NOTES #4 (£0.0m passing rent tile), #5 (dashboard vs
+  leasing-schedule unit/occupancy figures disagree).
+- Next journey: rotation #3 client mobile 390px (r207 had the journey → r208
+  may be LIGHT; then #3).
 
 ### r206 · 2026-08-08 · LIGHT (r205 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN twice (41 checks, 0 failures;

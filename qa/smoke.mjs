@@ -234,6 +234,16 @@ console.log('── client (Mark, Landsec) ──');
       Array.isArray(vRows) && vRows.length > 0 && !!vRows[0].viewingDate,
       `rows=${Array.isArray(vRows) ? vRows.length : 'ERR'} firstKeys=${vRows?.[0] ? Object.keys(vRows[0]).slice(0, 4).join(',') : '-'}`);
 
+    // Summarise scope must mirror feed visibility (r207): the Gail's — U124
+    // meeting is deal-linked to the client's Bluewater portfolio (contact has
+    // no company), so the client's auto-summarise used to 403 on a row their
+    // own feed served. Short preview → deterministic skipped:true, no AI call.
+    const sumRes = await ctx.request.post(
+      `${BASE}/api/interactions/22220000-0000-0000-0000-000000000002/summarise`,
+      { headers: { Authorization: `Bearer ${token}` } });
+    check('client: summarise portfolio-linked interaction allowed', sumRes.status() === 200,
+      `HTTP ${sumRes.status()}`);
+
     // ── Scoping guards — the checks that MUST fail closed ──
     check('scope: own portfolio property-summary allowed',
       await apiGet(ctx, token, `/api/crm/companies/${LANDSEC_CO}/property-summary?role=landlord`) === 200);
