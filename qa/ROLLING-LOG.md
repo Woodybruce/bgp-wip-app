@@ -137,10 +137,27 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   Suggestions added: none.
 - Next journey: rotation #3 client mobile 390px (r208 was LIGHT → r209 FULL).
 
-### r211 · 2026-08-08 ~22:15 UTC · ROUND IN PROGRESS (provisional)
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + fresh
-  build). Triage: nothing to triage — clean run.
-- Plan: FULL round, rotation #4 staff mobile 390px (iPhone UA), then two-bot.
+### r211 · 2026-08-08 · FULL (rotation #4 staff mobile 390px)
+- Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
+  fresh DB + fresh build). Two-bot round 211: ALL scenarios ok, 1 logged
+  issue = the listed rocketreach 400 noise. 0 app bugs.
+- Journey: Victoria @ 390px iPhone UA — UI login (Client/guest link) →
+  mobile shell (Messages | Dashboard | Mail | Deals | News) → Dashboard
+  (billing KPIs, quick links, boards, AI briefing, My Tasks at bottom) →
+  Deals → Letting Tracker (search U124) → Viewing dialog: ADD (date
+  defaults to today — UX2 holds on mobile) → row lists with pencil/trash →
+  pencil EDIT persists + EDITED stamp shows. Mail tab = Connect M365
+  (expected, no keys), News renders. All clean; no 4xx/5xx beyond noise.
+- Harness note: mobile-shell scrolling is an inner `overflow-y-auto` div —
+  mouse.wheel at (0,0) doesn't move it; scroll via evaluate on the
+  container. Tracker first paint on the dev server is slow (known) — wait
+  for the search input, not a fixed pause.
+- Bugs fixed: 0. Deferred: none. Suggestions added: UX-NOTES #8 (staff
+  mobile also lands on empty Messages tab — extend #6), #9 (viewing row
+  edit/delete icons unlabelled + tiny at 390px; company-less viewing shows
+  "Unknown"). New flakes: none.
+- Next journey: rotation #1 staff desktop (r211 had the journey → r212 may
+  be LIGHT; then #1).
 
 ### r210 · 2026-08-08 · LIGHT (r209 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,

@@ -28,6 +28,19 @@ what happened · concrete suggested improvement.
    deals are excluded (e.g. "+2 letting deals on the Tracker tab"), or include
    a linked chip.
 
+8. 2026-08-08 · BGP staff · mobile (iPhone shell) · Victoria logs in on her
+   phone to check her day — same as #6, the app lands on the empty Messages
+   tab ("No conversations yet"); her dashboard (billing, boards, My Tasks) is
+   one tap away. If #6 is built, apply the same landing logic to staff
+   (Dashboard tab feels like the natural staff home).
+
+9. 2026-08-08 · BGP staff · mobile Letting Tracker viewing dialog · Victoria
+   edits a viewing row — the new edit/delete controls are bare pencil/trash
+   icons with no aria-label or tooltip, small tap targets at 390px, and a
+   viewing saved without picking a company lists as "Unknown". Works fine,
+   but suggest: aria-labels + slightly larger touch targets on the row icons,
+   and "No company" (or prompt to pick one) instead of "Unknown".
+
 ## Confirmed / done
 Confirmed by Woody 2026-08-08 ("Do all 5"); built + visually verified same day:
 1. 2026-08-08 · Letting Tracker viewing/offer rows now have an edit pencil —
