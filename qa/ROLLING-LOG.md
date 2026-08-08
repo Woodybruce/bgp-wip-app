@@ -48,13 +48,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 - Do NOT run the prod build over plain http for browser tests: session cookie
   is secure-only in production, so cookie-auth UI flows all 401
   (/api/client/brand-theme storms, empty client nav). smoke.mjs is fine (Bearer).
-- IMPORTANT: qa/two-bot-round.mjs + run-round.sh were written for the OLD dev
-  fixture (Landsec = 11111111-…, property 22222222 = Landsec's, brand 77777777)
-  which is NOT in the repo. Against qa/smoke-fixture.sql.gz (Landsec = d25ec158…,
-  11111111 = "British Land Rival") every ID-hardcoded scenario fails by
-  construction — those are fixture mismatches, not app bugs. In a fresh
-  container treat `bash qa/run-smoke.sh` as the authoritative regression, and
-  triage only two-bot failures that don't involve the hardcoded IDs.
+- (RESOLVED r208) two-bot used to hardcode old-dev-fixture IDs; it now
+  resolves Landsec/Bluewater/brand by name at startup and works against
+  qa/smoke-fixture.sql.gz. run-round.sh + seed-personas.sql then two-bot is
+  the full sweep; run-smoke.sh stays the quick authoritative regression.
 
 ## Rounds
 (carried over: the previous rolling session completed ~204 scripted rounds
@@ -114,12 +111,31 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
 - Next journey: rotation #3 client mobile 390px (r207 had the journey → r208
   may be LIGHT; then #3).
 
-### r208 · 2026-08-08 · IN PROGRESS (light round — r207 had the journey)
+### r208 · 2026-08-08 · LIGHT (r207 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
-  fresh DB + fresh build). No new issues to triage from smoke.
-- Plan: deferred harness work — port two-bot-round.mjs off old-fixture
-  hardcoded IDs (resolve Landsec/property/brand IDs from DB at startup),
-  then re-run two-bot to regain signal on the ~40 fixture-mismatch scenarios.
+  fresh DB + fresh build).
+- Deferred harness port DONE: two-bot resolves Landsec/Bluewater/brand by
+  NAME at startup and injects them as window.QA_FIX into every browser
+  context. Resolution must run NODE-side (a page.evaluate right after login
+  races the app's auth-hydration navigation and silently falls back to the
+  legacy IDs — cost one full false-signal run). seed-personas.sql grows:
+  Honi Poke + pitch rows on both estates, Landsec team members (also added
+  to bgp_contact_user_ids so the orphan sweep keeps them); fee-strip detail
+  and rival-unit probes now use IDs discovered during the round.
+- Two-bot round 208 (dev server + smoke fixture): 151 scenarios ok, 4 issues,
+  all triaged, 0 app bugs: rocketreach 400 (listed noise); hub/hunter
+  "fashion leak" was Landsec's fixture-shipped self-added extra (Testco
+  Fashion in crm_extra_brand_ids) — scenario now asserts hub/hunter ⊆ the
+  client's /api/crm/companies directory (the canonical slice+extras gate);
+  team board empty = fixture shipped no members (now seeded); tenancy-write
+  guard got 404 not 403 because the probe id never existed — now targets the
+  seeded rival row (403 re-verified via API, as were the other two fixes).
+- Mid-round merge: parent session pushed the Woody-confirmed UX batch; the
+  round ran pre-merge server + post-merge client — no scenario touches the
+  new viewing/offer PATCH routes, so results stand. Next round exercises them.
+- Bugs fixed: 0 (nothing broken in the app this round). Deferred: none.
+  Suggestions added: none.
+- Next journey: rotation #3 client mobile 390px (r208 was LIGHT → r209 FULL).
 
 ### r206 · 2026-08-08 · LIGHT (r205 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN twice (41 checks, 0 failures;

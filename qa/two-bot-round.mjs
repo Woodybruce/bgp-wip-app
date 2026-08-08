@@ -2598,7 +2598,9 @@ async function markRound(page, cross) {
   await step(page, p, 'client-tenancy-write-scoped', async () => {
     const r = await page.evaluate(async () => {
       const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
-      const put = (await fetch('/api/leasing-schedule/unit/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify({ updates: 'QA-INTRUSION client edit on rival scheme' }) }).catch(() => ({ status: 0 }))).status;
+      // The seeded rival tenancy row (Brent Cross BX10) — it must EXIST so
+      // the probe reaches the scope gate; a made-up id 404s before authz.
+      const put = (await fetch('/api/leasing-schedule/unit/99999999-4444-4444-4444-444444444444', { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify({ updates: 'QA-INTRUSION client edit on rival scheme' }) }).catch(() => ({ status: 0 }))).status;
       const read = (await fetch('/api/leasing-schedule/property/99999999-2222-2222-2222-222222222222', { headers: auth }).catch(() => ({ status: 0 }))).status;
       return { put, read };
     });

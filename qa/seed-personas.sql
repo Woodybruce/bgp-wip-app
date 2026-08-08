@@ -38,6 +38,28 @@ SELECT 'aaaaaaaa-5555-5555-5555-555555555555', 'qa.resettable@bgp.test', u.passw
 FROM users u WHERE u.email = 'mark.warne@landsec.com'
 ON CONFLICT (id) DO NOTHING;
 
+-- Landsec account team: the client team board needs members to assert
+-- rendering integrity (the smoke fixture ships none). They must also be
+-- account contacts, or run-round's orphan sweep purges them each round.
+UPDATE crm_companies c
+   SET bgp_contact_user_ids = (
+     SELECT array_agg(DISTINCT x) FROM unnest(
+       COALESCE(c.bgp_contact_user_ids, '{}'::text[]) ||
+       ARRAY(SELECT id::text FROM users WHERE email IN
+         ('victoria@brucegillinghampollard.com', 'woody@brucegillinghampollard.com'))
+     ) AS x)
+ WHERE c.name = 'Landsec';
+INSERT INTO crm_client_team_members (id, client_company_id, user_id, team_group, sort_order, is_lead)
+SELECT 'aaaaaaaa-8888-8888-8888-888888888801', c.id, u.id, 'Leasing', 0, true
+  FROM crm_companies c, users u
+ WHERE c.name = 'Landsec' AND u.email = 'victoria@brucegillinghampollard.com'
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO crm_client_team_members (id, client_company_id, user_id, team_group, sort_order, is_lead)
+SELECT 'aaaaaaaa-8888-8888-8888-888888888802', c.id, u.id, 'Leasing', 1, false
+  FROM crm_companies c, users u
+ WHERE c.name = 'Landsec' AND u.email = 'woody@brucegillinghampollard.com'
+ON CONFLICT (id) DO NOTHING;
+
 -- The in-slice hospitality brand the brand-profile scenarios pivot on. The
 -- old dev fixture shipped it; the smoke fixture doesn't — create it where
 -- absent so the harness's name resolution finds it in either DB.
