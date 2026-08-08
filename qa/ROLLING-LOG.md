@@ -137,11 +137,21 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   Suggestions added: none.
 - Next journey: rotation #3 client mobile 390px (r208 was LIGHT → r209 FULL).
 
-### r210 · 2026-08-08 · LIGHT — IN PROGRESS (heartbeat)
+### r210 · 2026-08-08 · LIGHT (r209 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
-  fresh DB + fresh build). No deferred bugs from r209.
-- Plan: LIGHT round (r209 had the journey) — two-bot sweep incl. the new
-  viewing/offer PATCH scenarios, triage, fix up to 2 bugs.
+  fresh DB + fresh build). Two-bot round 210 (dev server + smoke fixture):
+  all scenarios ok, 1 logged issue = the listed rocketreach 400 noise.
+  0 app bugs. The r209 viewing/offer PATCH scenarios (agent-edit-viewing-
+  offer, rival-viewing-offer-patch-guard, client-deals-property-scope) and
+  the post-UX-batch server (AML revert window, tracker edit routes) all hold.
+- Bugs fixed: 0. Deferred: none. Suggestions added: none. New flakes: none.
+- Setup note: bgp role may get created WITHOUT superuser (CREATE DATABASE
+  ... OWNER bgp can fail with "must be able to SET ROLE"); restore then spews
+  ~222 "must be able to SET ROLE postgres" OWNER-TO errors — harmless, data
+  restores fine and tables stay owned by bgp.
+- Next journey: rotation #4 staff mobile 390px (r210 was LIGHT → r211 FULL;
+  remember: mobile shell needs an iPhone/Android USER AGENT, not just
+  viewport+hasTouch).
 
 ### r209 · 2026-08-08 · FULL (rotation #3 client mobile 390px)
 - Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks; before fixes
