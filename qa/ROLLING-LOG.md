@@ -55,6 +55,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r217 · 2026-08-09 · ROUND IN PROGRESS (provisional heartbeat)
+- Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
+  fresh DB + fresh build). Two-bot round 217: ALL scenarios ok, 1 logged
+  issue = the listed rocketreach-400 noise. 0 app bugs from the sweep.
+- Triage: nothing to triage beyond listed noise. Journey next: rotation #3
+  client mobile 390px (r216 was LIGHT → r217 FULL).
+
 ### r216 · 2026-08-09 · LIGHT (r215 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
   fresh DB + fresh build). Two-bot round 216: ALL scenarios ok, 1 logged
