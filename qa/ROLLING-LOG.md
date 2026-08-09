@@ -55,6 +55,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r235 · 2026-08-09 · ROUND IN PROGRESS (FULL — rotation #4 staff mobile 390px)
+- Provisional heartbeat. Regression: run-smoke.sh GREEN (42 checks,
+  0 failures, fresh DB + FRESH_BUILD=1). Two-bot round 235 in progress —
+  2 logged issues so far, both listed noise (rocketreach-400;
+  commentary-regen 503 = intended no-key degradation).
+- Journey planned: Victoria @ 390px iPhone UA — log an offer on a Bluewater
+  unit from the tracker, then news. Final entry replaces this one.
+
 ### r234 · 2026-08-09 · LIGHT (r233 had the journey)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:
   run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
