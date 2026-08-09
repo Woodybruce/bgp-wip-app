@@ -55,6 +55,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r221 · 2026-08-09 · ROUND IN PROGRESS (FULL — rotation #1 staff desktop)
+- Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
+  fresh DB + fresh build). Two-bot round 221: 162 scenarios ok, 2 logged
+  issues both listed noise (rocketreach-400; commentary-regen 503 = intended
+  no-key degradation). 0 app bugs from the sweep. Journey (Victoria desktop,
+  Image Studio + brand profile) in progress.
+
 ### r220 · 2026-08-09 · LIGHT (r219 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
   fresh build before the fix and rebuilt bundle after). Two-bot round 220:
