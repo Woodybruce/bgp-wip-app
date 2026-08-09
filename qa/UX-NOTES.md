@@ -13,6 +13,25 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+14. 2026-08-09 · BGP staff (non-admin) / desktop 1440px · wanted to prep
+    marketing imagery for a Bluewater pitch · sidebar "Image Studio" lands
+    (by design — 2026-08-04 gate: full studio is admins + clients only) on
+    the lightweight /m/images page, which at 1440px is headed "Images" with
+    phone copy ("No photos uploaded from your phone yet — Tap Add photos")
+    and shows none of the org's existing studio images · Suggested: desktop-
+    aware copy ("Click Add photos"), rename the sidebar entry for non-admin
+    staff (e.g. "My Photos"), or a hint line "Full Image Studio is
+    admin-only — ask an admin for property imagery".
+
+15. 2026-08-09 · BGP staff / desktop · from the Honi Poke brand profile,
+    clicked "Pitch property" (and "Add to deal") to act on the brand · both
+    are bare navigations to /available and /deals — the brand context is
+    dropped, so the user lands on the full 156-unit Letting Tracker and must
+    re-find/re-type Honi Poke in a Target Operator picker themselves ·
+    Suggested: carry the brand through (e.g. /available?pitchBrand=<id>
+    pre-filling the target-operator picker, and /deals opening the new-deal
+    dialog with the brand preselected).
+
 ## Confirmed / done
 Confirmed by Woody 2026-08-09 ("go ahead with them all"); built + visually
 verified same day (commit dbade8e0):

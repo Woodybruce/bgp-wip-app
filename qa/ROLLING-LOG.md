@@ -55,12 +55,32 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r221 · 2026-08-09 · ROUND IN PROGRESS (FULL — rotation #1 staff desktop)
+### r221 · 2026-08-09 · FULL (rotation #1 staff desktop)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
   fresh DB + fresh build). Two-bot round 221: 162 scenarios ok, 2 logged
   issues both listed noise (rocketreach-400; commentary-regen 503 = intended
-  no-key degradation). 0 app bugs from the sweep. Journey (Victoria desktop,
-  Image Studio + brand profile) in progress.
+  no-key degradation). 0 app bugs from the sweep; 0 raw 500s in the whole
+  round's server log.
+- Journey: Victoria desktop 1440px — "prep marketing material for a
+  Bluewater pitch": login → dashboard → Image Studio (first journey visit)
+  → Brand Intelligence Overview → search Honi → Honi Poke profile (all
+  section tabs, Portfolio Activity, Expansion, Key Contacts, Compliance) →
+  Pitch property → Letting Tracker. Everything renders and works; AI panels
+  degrade to the intended "AI take unavailable" copy.
+- NOT bugs: staff non-admin hitting /image-studio is bounced to /m/images
+  by design (StudioRoute gate, Woody 2026-08-04: full studio = admins +
+  clients) — desktop experience of that gate logged as UX-NOTES #14.
+  "QA Target Operator" visible on a tracker row = two-bot parity residue,
+  swept at next round start by run-round.sh.
+- Bugs fixed: 0 (nothing broken found). Deferred: none.
+- Suggestions added: UX-NOTES #14 (Image Studio for non-admin staff on
+  desktop = phone-copy /m/images page), #15 (brand profile "Pitch property"/
+  "Add to deal" drop the brand context — bare navigations).
+- New env noise: 401 GET /api/microsoft/calendar + /api/microsoft/files
+  console echoes when M365 isn't connected — UI shows the Connect prompt;
+  ignore alongside the listed M365 503s.
+- Next journey: rotation #2 client desktop (r221 had the journey → r222 may
+  be LIGHT; then #2).
 
 ### r220 · 2026-08-09 · LIGHT (r219 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
