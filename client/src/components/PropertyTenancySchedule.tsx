@@ -546,6 +546,12 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   const [importing, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Import and Re-sync (all) are staff-only server-side (the client gateway
+  // only opens /unit row edits) — hide them from client viewers so the
+  // buttons don't 403.
+  const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = !currentUser || currentUser.role === "Client" || !!currentUser.companyScopeId;
+
   // When already on the dedicated full-board route the "Full Board" link is
   // redundant — hide it. The route is /tenancy-schedule/:propertyId.
   const onFullBoard = location === `/tenancy-schedule/${propertyId}`;
@@ -856,9 +862,11 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
         <div className="flex items-center justify-end">
           <div className="flex gap-2">
             <input type="file" ref={fileInputRef} accept=".xlsx,.xls" onChange={handleImport} className="hidden" />
+            {!isClientViewer && (
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fileInputRef.current?.click()} disabled={importing} data-testid="btn-import-tenancy">
               {importing ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Upload className="w-3 h-3 mr-1" />}Import Excel
             </Button>
+            )}
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => UNIFIED_ADD_UNIT_ENABLED ? setUnifiedAddOpen(true) : setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
               <Plus className="w-3 h-3 mr-1" />Add Unit
             </Button>
@@ -909,7 +917,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." className="h-7 text-xs pl-7 w-40" data-testid="tenancy-search" />
           </div>
           <input type="file" ref={fileInputRef} accept=".xlsx,.xls" onChange={handleImport} className="hidden" />
-          {!readOnly && (
+          {!readOnly && !isClientViewer && (
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fileInputRef.current?.click()} disabled={importing} data-testid="btn-import-tenancy">
             {importing ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Upload className="w-3 h-3 mr-1" />}Import
           </Button>
@@ -921,6 +929,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => UNIFIED_ADD_UNIT_ENABLED ? setUnifiedAddOpen(true) : setShowAddUnit(true)} data-testid="btn-add-tenancy-unit">
             <Plus className="w-3 h-3 mr-1" />Add
           </Button>
+          {!isClientViewer && (
           <Button
             size="sm"
             variant="outline"
@@ -932,6 +941,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           >
             {resyncMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}Re-sync (all)
           </Button>
+          )}
           </>)}
           <Popover>
             <PopoverTrigger asChild>

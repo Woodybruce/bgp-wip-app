@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+16. 2026-08-09 · Landsec client / desktop 1440px · reviewing portfolio health,
+    saw "EXPIRING (6M): 8 leases expiring soon" on the dashboard and wanted to
+    know WHICH leases · the KPI tile is not clickable (nothing happens) and no
+    client surface lists the expiring leases — the tenancy full board has no
+    expiry filter/sort preset, so the user must eyeball 200 rows of lease
+    dates · Suggested: make the tile click through to the tenancy schedule
+    pre-filtered/sorted to leases expiring within 6 months (or a small
+    "expiring soon" list popover on the tile).
+
 14. 2026-08-09 · BGP staff (non-admin) / desktop 1440px · wanted to prep
     marketing imagery for a Bluewater pitch · sidebar "Image Studio" lands
     (by design — 2026-08-04 gate: full studio is admins + clients only) on

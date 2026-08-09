@@ -55,13 +55,39 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r223 · 2026-08-09 · ROUND IN PROGRESS (FULL — rotation #2 client desktop)
-- Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
-  fresh DB + fresh build). Two-bot round 223: all scenarios ok, 2 logged
-  issues both listed noise (rocketreach-400; commentary-regen 503 =
-  intended no-key degradation). 0 raw 500s in the round's server log.
-- Journey (Mark Warne desktop 1440px, portfolio-health task) in progress —
-  final entry replaces this one.
+### r223 · 2026-08-09 · FULL (rotation #2 client desktop)
+- Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
+  fresh build before the fix and rebuilt bundle after). Two-bot round 223:
+  all scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503 = intended no-key degradation). 0 raw 500s in the
+  round's server log.
+- Journey: Mark Warne desktop 1440px — "portfolio health: which leases are
+  expiring, tenant news, my tasks, ask ChatBGP": login → dashboard (KPIs,
+  rent "—" holds) → EXPIRING tile (dead end, UX-NOTES #16) → News (For You
+  renders) → My Tasks (task list + degraded briefing fine) → ChatBGP
+  ("Not Connected" no-key copy = intended) → Letting Tracker via Bluewater
+  → Tenancy Schedule full board (r217 mobile fix N/A here; board renders,
+  201 units). Bare /tenancy-schedule 404s but is unreachable in real nav
+  (route is /tenancy-schedule/:propertyId only) — not a bug.
+- Bug fixed (1): client tenancy full board showed staff-only "Import" and
+  "Re-sync (all)" buttons — both 403 for clients at the gateway (import/
+  bulk-delete/resync are deliberately staff-only; only /unit row edits are
+  client-open). Buttons now hidden for client viewers via the house
+  isClientViewer pattern; Add/Excel-export/Columns/row edits stay (those
+  ARE client-allowed + scope-checked). r215 interactions-sync class of bug.
+  Verified via Playwright both ways: Mark sees no Import/Re-sync, Victoria
+  unchanged (client/src/components/PropertyTenancySchedule.tsx). tsc clean,
+  rebuilt, smoke re-green.
+- Harness growth: two-bot +1 client-tenancy-staff-ops-guard (bulk-delete /
+  import-excel / resync-mirror as client on OWN property must all 403 —
+  server side of the same rule; statuses pre-verified via curl as Mark).
+- Bugs deferred: none. Suggestions added: UX-NOTES #16 (EXPIRING KPI tile
+  is a dead end — no way to see which leases expire).
+- Journey note: desktop dashboard scrolls in an inner container (like the
+  mobile shell) — window.scrollTo doesn't move it; scroll the container.
+- New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r223 had the journey →
+  r224 may be LIGHT; then #3).
 
 ### r222 · 2026-08-09 · LIGHT (r221 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
