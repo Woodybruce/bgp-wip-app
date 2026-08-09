@@ -621,11 +621,20 @@ Write FOUR SHORT paragraphs separated by blank lines, each opening with a bold l
 
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const msg = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 500,
-      messages: [{ role: "user", content: prompt }],
-    });
+    let msg;
+    try {
+      msg = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 500,
+        messages: [{ role: "user", content: prompt }],
+      });
+    } catch (aiErr: any) {
+      if (row.gap_commentary) return res.json({ text: row.gap_commentary, generatedAt: row.gap_commentary_at, cached: true });
+      if (/api ?key|authentication|authToken/i.test(aiErr?.message || "")) {
+        return res.status(503).json({ error: "AI commentary unavailable — AI service is not configured" });
+      }
+      return res.status(502).json({ error: "Couldn't generate commentary" });
+    }
     const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
     if (!text) {
       if (row.gap_commentary) return res.json({ text: row.gap_commentary, generatedAt: row.gap_commentary_at, cached: true });
@@ -674,11 +683,20 @@ Reply as strict JSON array only: [{"name": "...", "sector": "...", "origin": "..
 
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-    const msg = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1400,
-      messages: [{ role: "user", content: prompt }],
-    });
+    let msg;
+    try {
+      msg = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1400,
+        messages: [{ role: "user", content: prompt }],
+      });
+    } catch (aiErr: any) {
+      if (row.gap_intl) return res.json({ items: row.gap_intl, generatedAt: row.gap_intl_at, cached: true });
+      if (/api ?key|authentication|authToken/i.test(aiErr?.message || "")) {
+        return res.status(503).json({ error: "International watchlist unavailable — AI service is not configured" });
+      }
+      return res.status(502).json({ error: "Couldn't generate watchlist" });
+    }
     const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
     let items: any[] = [];
     try { items = JSON.parse(text.replace(/^```(json)?/m, "").replace(/```$/m, "").trim()); } catch {}

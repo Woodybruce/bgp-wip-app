@@ -2937,6 +2937,20 @@ async function markRound(page, cross) {
     if (r.status !== 200) throw new Error(`client summarise of own-feed interaction returned ${r.status}`);
   });
 
+  // Brand-gaps AI reads degrade gracefully (r214): with no AI key (or an AI
+  // failure) the routes must serve the cached row or a clean 503 — never a
+  // raw 500. Client reads their own property (parity rule).
+  await step(page, p, 'client-brand-gaps-graceful', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const g = async (path) => (await fetch(`/api/property/${window.QA_FIX.bluewater}/brand-gaps/${path}`, { headers: auth })).status;
+      return { commentary: await g('commentary'), international: await g('international') };
+    });
+    for (const [k, s] of Object.entries(r)) {
+      if (s !== 200 && s !== 503) throw new Error(`brand-gaps/${k} returned ${s} (want 200 cached or 503 no-key, never 500)`);
+    }
+  });
+
   // The reworked target-operator columns must render on the client tracker —
   // either existing target rows or the add affordance, without a crash.
   await step(page, p, 'client-target-columns', async () => {

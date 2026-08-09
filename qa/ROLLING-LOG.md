@@ -137,9 +137,25 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   Suggestions added: none.
 - Next journey: rotation #3 client mobile 390px (r208 was LIGHT → r209 FULL).
 
-### r214 · 2026-08-09 ~03:35 UTC · round in progress (LIGHT — r213 had the journey)
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + build).
-- Triage: nothing to triage from smoke. Two-bot sweep next.
+### r214 · 2026-08-09 · LIGHT (r213 had the journey)
+- Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
+  fresh build before the fix and rebuilt bundle after). Two-bot round 214:
+  ALL scenarios ok, 1 logged issue = the listed rocketreach-400 noise (plus
+  the intended bulk-assign {} validation 400). 0 app bugs from the sweep.
+- Bug fixed (1): brand-gaps AI reads 500'd instead of degrading — GET
+  /api/property/:id/brand-gaps/commentary and /international called the
+  Anthropic SDK bare, so an SDK throw (no key locally; overload/auth blip in
+  prod) skipped both the cached-row fallback AND the house 503 mapping
+  (brand-ai-take pattern) and surfaced a raw 500 — even with perfectly good
+  cached commentary in the DB. Both routes now: AI failure → serve cached
+  row if present, else 503 for key/auth errors, 502 otherwise
+  (server/property-gap-analysis.ts). Verified via API: no-cache → 503 both
+  routes (was 500), stale-cache + AI failure → 200 cached=true both routes,
+  client (Mark) on Bluewater → 503 not 500. Probe writes reverted.
+- Harness growth: two-bot +1 client-brand-gaps-graceful (both routes must
+  return 200-cached or 503, never 500). Assertion verified manually as Mark.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #2 client desktop (r214 was LIGHT → r215 FULL).
 
 ### r213 · 2026-08-09 · FULL (rotation #1 staff desktop)
 - Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
