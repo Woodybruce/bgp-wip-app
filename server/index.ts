@@ -3708,14 +3708,26 @@ app.use("/api/branding/assets", express.static(
       }
       // AI activity commentary (AIActivityCard) on the client's OWN company —
       // the dashboard BGP Relationship board mirrors the internal page
-      // (Woody, 2026-07-30). Read-only: the exact landlord|brand/:id shape
+      // (Woody, 2026-07-30) — or on a brand in their visible slice: the
+      // brand profile's BGP Relationship zone is client-visible too (Woody,
+      // 2026-08-04 parity). Read-only: the exact landlord|brand/:id shape
       // only, so the raw meeting/email viewer routes and the curate POST
       // (a write) stay sealed for clients.
       const activityRead = p.match(/^\/api\/activity\/(landlord|brand)\/([^/]+)$/);
       if (activityRead) {
-        const { resolveCompanyScope } = await import("./company-scope");
+        const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
         const scope = await resolveCompanyScope(req);
-        if (scope && activityRead[2] === scope) return next();
+        if (scope && (activityRead[2] === scope || (await isClientVisibleBrand(activityRead[2], scope)))) return next();
+      }
+      // All-correspondence drawer on the brand profile — client-visible for
+      // their own company and slice brands (Woody, 2026-08-04). The handler
+      // in interactions.ts re-checks the same scope rule and 403s anything
+      // outside it, so this only lets the request reach that gate.
+      const interactionsRead = p.match(/^\/api\/interactions\/company\/([^/]+)$/);
+      if (interactionsRead) {
+        const { resolveCompanyScope, isClientVisibleBrand } = await import("./company-scope");
+        const scope = await resolveCompanyScope(req);
+        if (scope && (interactionsRead[1] === scope || (await isClientVisibleBrand(interactionsRead[1], scope)))) return next();
       }
       if (allowed) return next();
       return res.status(403).json({ error: "Not available for client accounts" });

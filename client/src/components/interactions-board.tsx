@@ -107,6 +107,10 @@ export function InteractionsBoard({ scope, contextId }: Props) {
     queryKey: ["/api/users"],
     staleTime: 10 * 60 * 1000,
   });
+  // Meeting sync is a staff-only M365 op — client viewers read the board but
+  // must not fire the sync (403 noise on every brand profile otherwise).
+  const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const isClientViewer = !currentUser || currentUser.role === "Client" || !!currentUser.companyScopeId;
   const emailToName = useMemo(() => {
     const m = new Map<string, string>();
     for (const u of allUsers || []) {
@@ -164,6 +168,7 @@ export function InteractionsBoard({ scope, contextId }: Props) {
   // One-off per scope+id per session — won't loop.
   useEffect(() => {
     if (autoSyncedRef.current) return;
+    if (isClientViewer) return;
     if (isLoading || !data) return;
     if (meetingCount === 0 && totalCount > 0) {
       autoSyncedRef.current = true;
@@ -250,13 +255,15 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                 <Loader2 className="w-3 h-3 animate-spin" /> Syncing meetings…
               </span>
             )}
-            <button
-              onClick={() => syncMutation.mutate()}
-              disabled={syncMutation.isPending}
-              className="ml-auto text-[10px] text-muted-foreground hover:text-foreground underline disabled:opacity-50"
-            >
-              Sync now
-            </button>
+            {!isClientViewer && (
+              <button
+                onClick={() => syncMutation.mutate()}
+                disabled={syncMutation.isPending}
+                className="ml-auto text-[10px] text-muted-foreground hover:text-foreground underline disabled:opacity-50"
+              >
+                Sync now
+              </button>
+            )}
           </div>
 
           {/* List — 3-line rows */}

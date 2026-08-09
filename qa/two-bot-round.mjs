@@ -47,8 +47,8 @@ const IGNORED_RESPONSES = [
   /\/api\/brand\/[^/]+\/ai-take\//,      // 503 locally (no AI key) by design
   /\/api\/brand\/[^/]+\/(competitors\/research|rocketreach-company\/refresh)/, // 503 locally, no keys
   /\/api\/property\/[^/]+\/brand-gaps\/(commentary|international)/, // Brand Gap v2 AI reads — 500 locally with no AI key (the base /brand-gaps is keyless and stays checked); works in prod. The scope gate is covered by client-brand-gaps-scoped.
-  /\/api\/activity\/(brand|landlord)\/[^/]+$/, // AI relationship activity is own-company-only for clients (deliberate gateway rule); the client brand-profile panel fires it on slice brands and gets a safe 403. Own-company returns 200; cross-tenant isolation is covered by the rival-* scenarios.
-  /\/api\/interactions\//,               // raw correspondence (meetings/emails) is staff-only for clients — the client correspondence drawer fires /api/interactions/company/:id and gets a safe 403. The client-interactions-guard scenario is the authoritative lock that this stays blocked.
+  /\/api\/activity\/(brand|landlord)\/[^/]+$/, // AI relationship activity: own company + slice brands return 200 for clients since r215 (gateway now honours the 2026-08-04 parity decision); anything else 403s. client-interactions-guard is the authoritative lock either way.
+  /\/api\/interactions\//,               // correspondence drawer: own company + slice brands are client-readable (Woody, 2026-08-04 — restored r215); rival/summary/leaderboard stay 403. The client-interactions-guard scenario is the authoritative lock.
   /\/api\/covenant\//,                    // covenant engine (credit analysis) is staff-only — the client covenant badge fires /api/covenant/by-crm/:id and gets a safe 403. client-covenant-guard is the authoritative lock.
   /fonts|\.woff|\.map$/,
 ];
@@ -1703,27 +1703,38 @@ async function markRound(page, cross) {
     if (fLen !== 0) throw new Error(`system activity log leaked to the client activity-feed (${fLen} items)`);
   });
 
-  // The interactions surface is BGP's raw correspondence store — logged
-  // meetings and synced Outlook emails, per-company and per-contact, plus the
-  // BD engagement leaderboards. It's fully staff-only for clients (even their
-  // OWN company): a Landsec login only ever sees the curated AI activity
-  // summary on their own company, never the underlying meeting/email log or
-  // another firm's. All of /api/interactions/* must refuse a client.
+  // Correspondence + AI activity on the brand profile's BGP Relationship
+  // zone (Woody, 2026-08-04 parity; gateway fixed r215): a client reads the
+  // drawer + activity card for their OWN company and slice brands. The
+  // firm-wide surfaces (summary, leaderboard) and rivals stay sealed, as do
+  // the raw meeting viewer and the curate/sync writes.
   await step(page, p, 'client-interactions-guard', async () => {
     const r = await page.evaluate(async () => {
       const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
       const g = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
       return {
         own: await g(`/api/interactions/company/${window.QA_FIX.landsec}`),
+        slice: await g(`/api/interactions/company/${window.QA_FIX.brand}`),
+        ownActivity: await g(`/api/activity/landlord/${window.QA_FIX.landsec}`),
+        sliceActivity: await g(`/api/activity/brand/${window.QA_FIX.brand}`),
         rival: await g('/api/interactions/company/99999999-1111-1111-1111-111111111111'),
+        rivalActivity: await g('/api/activity/landlord/99999999-1111-1111-1111-111111111111'),
         summary: await g('/api/interactions/summary'),
         leaderboard: await g('/api/interactions/leaderboard'),
+        meetingViewer: await g('/api/activity/meeting/probe%40bgp.com/evt-probe'),
+        sync: (await fetch('/api/interactions/sync?daysBack=1&daysForward=1', { method: 'POST', headers: auth }).catch(() => ({ status: 0 }))).status,
       };
     });
-    if (r.own !== 403) throw new Error(`client read raw correspondence for their own company (expected 403, got ${r.own})`);
+    if (r.own !== 200) throw new Error(`client blocked from their own correspondence drawer (expected 200, got ${r.own})`);
+    if (r.slice !== 200) throw new Error(`client blocked from a slice brand's correspondence drawer (expected 200, got ${r.slice})`);
+    if (r.ownActivity !== 200) throw new Error(`client blocked from own-company AI activity (expected 200, got ${r.ownActivity})`);
+    if (r.sliceActivity !== 200) throw new Error(`client blocked from slice-brand AI activity (expected 200, got ${r.sliceActivity})`);
     if (r.rival !== 403) throw new Error(`client read a rival's correspondence log (expected 403, got ${r.rival})`);
+    if (r.rivalActivity !== 403) throw new Error(`client read a rival's AI activity (expected 403, got ${r.rivalActivity})`);
     if (r.summary !== 403) throw new Error(`client reached the interactions summary (expected 403, got ${r.summary})`);
     if (r.leaderboard !== 403) throw new Error(`client reached the BD engagement leaderboard (expected 403, got ${r.leaderboard})`);
+    if (r.meetingViewer !== 403) throw new Error(`client reached the raw meeting viewer (expected 403, got ${r.meetingViewer})`);
+    if (r.sync !== 403) throw new Error(`client kicked the staff-only interactions sync (expected 403, got ${r.sync})`);
   });
 
   // The Lease Events board is BGP's lease-advisory BD pipeline (rent reviews,
