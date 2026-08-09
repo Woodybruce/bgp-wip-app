@@ -13,6 +13,13 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+18. 2026-08-09 · BGP staff / desktop 1440px · opened Calendar on a Sunday to
+    check the day's viewings · the diary defaults to Work week (Mon–Fri), so
+    on a weekend "today" isn't in the grid at all — today's events only
+    appear in the small Today's Schedule sidebar list · Suggested: when
+    today falls outside the default work-week range, open in Week (or Day)
+    view instead so the current day is always visible on landing.
+
 17. 2026-08-09 · BGP staff / mobile 390px · opened the Bluewater tenancy
     schedule on a phone to glance at the board · the header controls stack
     vertically at 390px (Letting Tracker link, units count, Search, Import,

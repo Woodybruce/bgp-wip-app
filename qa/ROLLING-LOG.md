@@ -611,14 +611,37 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   the chat list at "/". Smoke tick skipped one 30-min slot (~11:00 UTC)
   while this batch built; suite was green immediately before and after.
 
-### r229 · 2026-08-09 · FULL — IN PROGRESS (rotation #1 staff desktop)
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + fresh
-  build). Two-bot round 229 in progress against dev server.
-- Setup lesson re-learned: first two-bot attempt ran against the PROD build
-  on :5000 → 97× brand-theme 401 storm + 18 flow-failures, all the
-  documented secure-cookie artefact (setup section warning holds; not app
-  bugs). Re-ran per the documented dev-server setup.
-- Journey + triage to follow.
+### r229 · 2026-08-09 · FULL (rotation #1 staff desktop)
+- Fresh container (pg_hba trust fix needed). Regression: run-smoke.sh GREEN
+  ×2 (42 checks, 0 failures; fresh build before fixes and FRESH_BUILD=1
+  after). Two-bot round 229: all scenarios ok, 2 logged issues both listed
+  noise (rocketreach-400; commentary-regen 503). 0 raw 500/502/504 in the
+  round's server log. NOTE: a first two-bot attempt against the PROD build
+  on :5000 reproduced the documented secure-cookie artefact exactly (97×
+  brand-theme 401 + 18 flow-failures) — setup-section warning holds, re-ran
+  on the dev server per the docs; not app bugs.
+- Journey: Victoria desktop 1440px — "Monday-morning desk session: dashboard,
+  calendar, add a task, requirements, comps, global-search to Bluewater,
+  tenancy tab": login form (Client/guest reveal) → dashboard → /calendar →
+  /tasks (quick-add works) → /requirements → /comps (strip + AI-leads line
+  hold) → Ctrl+K search → Bluewater property → tenancy tab. All render; only
+  noise-list 4xx/5xx.
+- Bug fixed 1: global search labelled every deal at a matched property with
+  the PROPERTY name (crmSearchAll `propertyName || d.name`) — WIP group
+  showed three identical "Bluewater Shopping Centre" rows. Now deal name +
+  property as subtitle. Verified API + visually; harness grew
+  staff-search-deal-names.
+- Bug fixed 2: calendar Event Types legend split one type into look-alike
+  rows when stored event_type case/plurality differed ("Meetings" vs
+  "meeting" — seeded QA events surfaced it). teamEventType now normalises to
+  canonical lowercase singular (alias map). Verified visually: single
+  "Meetings 3" row.
+- Bugs deferred: none. Suggestions added: UX-NOTES #18 (calendar defaults to
+  Work week on weekends, so "today" isn't in the grid on Sat/Sun).
+- New flakes: none. Setup notes: pkill pattern "tsx server" does NOT match
+  the dev process (`tsx --env-file=.env server/index.ts`) — kill the PIDs.
+- Next journey: rotation #2 client desktop (r229 had the journey → r230 may
+  be LIGHT; then #2).
 
 ### r228 · 2026-08-09 · LIGHT (r227 had the journey)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:

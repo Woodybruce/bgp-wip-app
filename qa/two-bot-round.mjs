@@ -617,6 +617,24 @@ async function victoriaRound(page, cross) {
     if (!r.delOk) throw new Error('requirement cleanup delete failed');
   });
 
+  // Global search labels deal hits with the DEAL's own name (r229: the
+  // property-name join used to overwrite it, so every deal at a matched
+  // property rendered as the property name — three identical "Bluewater
+  // Shopping Centre" rows in the WIP group).
+  await step(page, p, 'staff-search-deal-names', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/search?q=Bluewater', { credentials: 'include', headers: auth });
+      if (!res.ok) return { ok: false, why: `search ${res.status}` };
+      const body = await res.json();
+      const deals = (body.results || []).filter((x) => x.type === 'deal');
+      return { ok: true, total: deals.length, ownName: deals.filter((x) => !/^Bluewater Shopping Centre$/i.test(x.name)).length };
+    });
+    if (!r.ok) throw new Error(`global search failed (${r.why})`);
+    if (r.total === 0) throw new Error('property-name search returned no deals — join coverage regressed');
+    if (r.ownName === 0) throw new Error('deal search hits all carry the property name, not the deal name (r229 regression)');
+  });
+
   // 4j. Staff brand profile renders its main sections without any error
   // boundary tripping (Honi Poke fixture).
   await step(page, p, 'staff-brand-profile-sections', async () => {

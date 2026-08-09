@@ -136,9 +136,16 @@ interface CrmLinks {
 // types"). Generic types get the same title classification Outlook events
 // already use; explicit types (viewing, call…) are kept as stored.
 const GENERIC_TEAM_TYPES = new Set(["client-sync", "other", "event", ""]);
+// Stored types arrive in whatever case/plurality the writer used ("Meetings",
+// "meeting", "Viewing"…) — normalise to the canonical singular lowercase keys
+// or the Event Types legend splits one type into look-alike rows.
+const TEAM_TYPE_ALIASES: Record<string, string> = {
+  meetings: "meeting", viewings: "viewing", calls: "call", deadlines: "deadline",
+  inspections: "inspection", "personal / leave": "personal", leave: "personal",
+};
 function teamEventType(te: TeamEvent): string {
   const stored = (te.event_type || "").toLowerCase();
-  return GENERIC_TEAM_TYPES.has(stored) ? classifyOutlookEvent(te.title) : te.event_type;
+  return GENERIC_TEAM_TYPES.has(stored) ? classifyOutlookEvent(te.title) : (TEAM_TYPE_ALIASES[stored] || stored);
 }
 
 function teamEventToCalendarEvent(te: TeamEvent): CalendarEvent {

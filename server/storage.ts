@@ -1278,7 +1278,7 @@ export class DatabaseStorage implements IStorage {
       db.select().from(crmComps).where(ilike(crmComps.name, q)).limit(10),
     ]);
     props.forEach(p => results.push({ type: "property", id: p.id, name: p.name, detail: p.status || undefined }));
-    deals.forEach(({ deal: d, propertyName }) => results.push({ type: "deal", id: d.id, name: propertyName || d.name, detail: d.groupName || undefined }));
+    deals.forEach(({ deal: d, propertyName }) => results.push({ type: "deal", id: d.id, name: d.name, detail: propertyName || d.groupName || undefined }));
     companies.forEach(c => results.push({ type: "company", id: c.id, name: c.name, detail: c.companyType || undefined }));
     contactsR.forEach(c => results.push({ type: "contact", id: c.id, name: c.name, detail: c.email || undefined }));
     leads.forEach(l => results.push({ type: "lead", id: l.id, name: l.name, detail: l.status || undefined }));
