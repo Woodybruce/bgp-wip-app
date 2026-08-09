@@ -611,11 +611,17 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   the chat list at "/". Smoke tick skipped one 30-min slot (~11:00 UTC)
   while this batch built; suite was green immediately before and after.
 
-### r226 · 2026-08-09 · ROUND IN PROGRESS (LIGHT — r225 had the journey)
-- Fresh container. run-smoke.sh GREEN (42 checks, 0 failures, fresh DB +
-  fresh build). Two-bot round 226 running; triage to follow.
+### r226 · 2026-08-09 · LIGHT (r225 had the journey)
+- Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
+  fresh DB + fresh build). Two-bot round 226: all scenarios ok, 2 logged
+  issues both listed noise (rocketreach-400; commentary-regen 503 = intended
+  no-key degradation). 0 raw 500/502s in the whole round's server log
+  (status tally: only 2xx/3xx/expected 400/401/403/404/503). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
 - Setup note: fresh container needed the pg_hba trust fix (r205 note) —
   smoke's postgres restore fails on password auth otherwise.
+- Next journey: rotation #4 staff mobile 390px (r226 was LIGHT → r227 FULL).
 
 ### r225 · 2026-08-09 · FULL (rotation #3 client mobile 390px)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
