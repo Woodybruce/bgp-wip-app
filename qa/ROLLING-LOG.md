@@ -55,6 +55,11 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r224 · 2026-08-09 · ROUND IN PROGRESS (provisional)
+- Fresh container. LIGHT round (r223 had the journey). run-smoke.sh GREEN
+  (42 checks, 0 failures, fresh DB + fresh build). Two-bot round 224 running;
+  triage to follow.
+
 ### r223 · 2026-08-09 · FULL (rotation #2 client desktop)
 - Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
   fresh build before the fix and rebuilt bundle after). Two-bot round 223:
