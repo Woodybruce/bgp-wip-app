@@ -611,6 +611,15 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   the chat list at "/". Smoke tick skipped one 30-min slot (~11:00 UTC)
   while this batch built; suite was green immediately before and after.
 
+### r229 · 2026-08-09 · FULL — IN PROGRESS (rotation #1 staff desktop)
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + fresh
+  build). Two-bot round 229 in progress against dev server.
+- Setup lesson re-learned: first two-bot attempt ran against the PROD build
+  on :5000 → 97× brand-theme 401 storm + 18 flow-failures, all the
+  documented secure-cookie artefact (setup section warning holds; not app
+  bugs). Re-ran per the documented dev-server setup.
+- Journey + triage to follow.
+
 ### r228 · 2026-08-09 · LIGHT (r227 had the journey)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:
   run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + fresh build).
