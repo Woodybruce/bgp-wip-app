@@ -610,3 +610,8 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   "/" and Messages at /messages — update any harness scenario that assumed
   the chat list at "/". Smoke tick skipped one 30-min slot (~11:00 UTC)
   while this batch built; suite was green immediately before and after.
+
+### r225 · 2026-08-09 · ROUND IN PROGRESS (provisional)
+- Fresh container. run-smoke.sh GREEN (42 checks, 0 failures, fresh DB +
+  fresh build). Two-bot + FULL journey (rotation #3 client mobile 390px)
+  in progress. Triage so far: nothing beyond listed noise.
