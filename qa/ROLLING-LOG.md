@@ -55,6 +55,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r223 · 2026-08-09 · ROUND IN PROGRESS (FULL — rotation #2 client desktop)
+- Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
+  fresh DB + fresh build). Two-bot round 223: all scenarios ok, 2 logged
+  issues both listed noise (rocketreach-400; commentary-regen 503 =
+  intended no-key degradation). 0 raw 500s in the round's server log.
+- Journey (Mark Warne desktop 1440px, portfolio-health task) in progress —
+  final entry replaces this one.
+
 ### r222 · 2026-08-09 · LIGHT (r221 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
   fresh DB + fresh build). Two-bot round 222: 53 scenarios ok, 2 logged
