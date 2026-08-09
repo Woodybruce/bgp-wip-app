@@ -94,7 +94,8 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   them; regenerating the fixture left for a dedicated decision).
 - Harness growth: two-bot +1 agent-reimport-no-dup (throwaway QA property:
   tenancy create → bulk-delete → recreate = exactly 1 tracker row);
-  run-round.sh purge sweeps QA-REIMP leftovers.
+  run-round.sh purge sweeps QA-REIMP leftovers. Passed in the post-fix
+  revalidation sweep (160 ok, only rocketreach-400 noise; no residue).
 - Suggestions added: UX-NOTES #11 (pitch reason is hover-only — invisible
   on touch), #12 (signals card shows near-duplicate headlines).
 - Bugs deferred: none. New flakes: none.
