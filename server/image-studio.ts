@@ -3353,17 +3353,26 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
       if (!Array.isArray(ids) || !ids.length || !propertyId) {
         return res.status(400).json({ error: "ids (array) and propertyId required" });
       }
+      const bapScope = await requestScope(req);
+      if (bapScope) {
+        const { isPropertyInScope } = await import("./company-scope");
+        if (!(await isPropertyInScope(bapScope, propertyId))) {
+          return res.status(403).json({ error: "You can only file photos against your own buildings." });
+        }
+      }
+      const allowedIds = bapScope ? [...(await imageIdsInScope(bapScope, ids))] : ids;
+      if (!allowedIds.length) return res.status(403).json({ error: "None of these images are in your portfolio" });
       const updates: Record<string, any> = { propertyId };
       if (address) updates.address = address;
       await db.update(imageStudioImages)
         .set(updates)
-        .where(inArray(imageStudioImages.id, ids));
+        .where(inArray(imageStudioImages.id, allowedIds));
 
       // Sync to property_imagery_assets + entity_images so the property
       // sidebar Images panel + Pathway imagery picker pick the images up
       // automatically. Idempotent per (image_studio_id, property_id).
       const userId = req.session?.userId || (req as any).tokenUserId;
-      for (const imgId of ids) {
+      for (const imgId of allowedIds) {
         try {
           const [img] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, imgId));
           if (!img) continue;
@@ -3421,14 +3430,14 @@ Only include images you've actually confirmed exist on those pages. Skip stock l
           await pool.query(
             `INSERT INTO image_studio_collection_images (collection_id, image_id)
              SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING`,
-            [collectionId, ids],
+            [collectionId, allowedIds],
           );
         }
       } catch (colErr: any) {
         console.warn("[bulk-assign-property] property-collection link failed:", colErr?.message);
       }
 
-      res.json({ success: true, updated: ids.length });
+      res.json({ success: true, updated: allowedIds.length });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

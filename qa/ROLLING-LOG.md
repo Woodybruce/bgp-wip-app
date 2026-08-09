@@ -137,10 +137,30 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   Suggestions added: none.
 - Next journey: rotation #3 client mobile 390px (r208 was LIGHT → r209 FULL).
 
-### r212 · 2026-08-08 · LIGHT — ROUND IN PROGRESS (provisional)
-- Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
-  fresh DB + fresh build). Triage: nothing to triage from smoke. Two-bot
-  sweep running next; entry will be replaced with the final one.
+### r212 · 2026-08-08 · LIGHT (r211 had the journey)
+- Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
+  before the fix and again on the rebuilt bundle). Two-bot round 212: ALL
+  scenarios ok, 1 logged issue = http-400 (the listed rocketreach noise plus
+  a bulk-assign 400 from the {}-body destructive probe — which exposed the
+  real bug below).
+- Bug fixed (1): POST /api/image-studio/bulk-assign-property had NO scope
+  check despite the client-parity allowance in index.ts claiming every
+  image-studio handler scope-jails — a client with a VALID payload could
+  reassign ANY image (rival/staff) to ANY property, including a rival's,
+  and the sync loop then wrote property_imagery_assets/entity_images rows
+  onto the foreign property. Handler now jails ids via imageIdsInScope and
+  gates propertyId via isPropertyInScope (mirrors bulk-tag/upload patterns,
+  server/image-studio.ts). Verified via API as Mark: own img → rival prop
+  403, foreign img → own prop 403, own img → own prop 200; Victoria
+  (unscoped staff) unchanged 200. Probe writes reverted in dev DB.
+- Harness growth: two-bot +1 client-image-assign-scope-guard (valid-payload
+  probes: rival property refused, out-of-scope image id refused) — the
+  destructive-guards probe only sends {} and stops at validation, which is
+  why this never fired before.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Setup note: killing the dev server needs the tsx PID (kill on "npm run
+  dev" leaves tsx holding :5000 → EADDRINUSE on restart); lsof -ti:5000.
+- Next journey: rotation #1 staff desktop (r212 was LIGHT → r213 FULL).
 
 ### r211 · 2026-08-08 · FULL (rotation #4 staff mobile 390px)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
