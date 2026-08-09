@@ -55,10 +55,47 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r215 · 2026-08-09 · IN PROGRESS (FULL, rotation #2 client desktop)
-- Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
-  fresh DB + fresh build). Triage: nothing to triage — no failures beyond
-  listed env noise. Journey + two-bot to follow.
+### r215 · 2026-08-09 · FULL (rotation #2 client desktop)
+- Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
+  fresh build before the fixes and rebuilt bundle after). Two-bot round 215:
+  ALL scenarios ok, 1 logged issue = listed rocketreach-400 noise.
+- Journey: Mark Warne desktop 1440px — "scope an operator for Bluewater":
+  login → dashboard (rent "—" + occupancy label fixes hold) → Brand
+  Intelligence Overview → Brand Explorer (8-brand slice + Testco Fashion
+  extra correct) → Starbucks profile (Compliance & KYC panel visible per
+  decision; covenant/news/contacts clean) → Add brand dialog (search
+  renders). All navigation clean.
+- Bugs fixed (2):
+  1. Client 403s on the brand profile's BGP Relationship zone — the
+     default-deny gateway only allowed /api/activity/(landlord|brand)/:id
+     for the client's OWN company and had no allowance at all for
+     /api/interactions/company/:id, even though both handlers + the UI
+     implement Woody's 2026-08-04 parity decision (correspondence drawer +
+     activity card client-visible for own company AND slice brands — the
+     handler comment quotes it). Gateway now allows both shapes for
+     scope-or-slice ids (server/index.ts); the interactions handler re-checks
+     the same rule. Verified as Mark: Starbucks/Honi/extra 200, own company
+     200, rival landlord 403, meeting viewer 403, curate POST 403; Victoria
+     unchanged. NOTE: two-bot's client-interactions-guard previously
+     asserted the OPPOSITE ("all /api/interactions/* refuse a client") and
+     the noise list called the 403 "deliberate" — both encoded the
+     pre-2026-08-04 rule and had locked the broken state in; rewritten to
+     assert the decided behaviour (own+slice 200, rival/summary/leaderboard/
+     meeting-viewer/sync 403). If staff-only was actually intended, revert
+     4083df3.
+  2. InteractionsBoard auto-fired staff-only POST /api/interactions/sync as
+     a client (403 noise on every profile once the drawer became reachable)
+     — auto-sync and the "Sync now" button now gated !isClientViewer,
+     matching the brand-profile-panel pattern
+     (client/src/components/interactions-board.tsx).
+- Harness growth: client-interactions-guard extended to 10 assertions
+  (own/slice interactions + activity 200; rival ×2, summary, leaderboard,
+  meeting viewer, sync POST all 403). Passed in round 215.
+- NOT a bug: dashboard AI Briefing "Preparing your briefing…" during 503 is
+  just the loading state — it settles into a static task digest + retry.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r215 had the journey → r216
+  may be LIGHT; then #3).
 (carried over: the previous rolling session completed ~204 scripted rounds
 green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
 
