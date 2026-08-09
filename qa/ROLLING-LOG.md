@@ -611,7 +611,27 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   the chat list at "/". Smoke tick skipped one 30-min slot (~11:00 UTC)
   while this batch built; suite was green immediately before and after.
 
-### r225 · 2026-08-09 · ROUND IN PROGRESS (provisional)
-- Fresh container. run-smoke.sh GREEN (42 checks, 0 failures, fresh DB +
-  fresh build). Two-bot + FULL journey (rotation #3 client mobile 390px)
-  in progress. Triage so far: nothing beyond listed noise.
+### r225 · 2026-08-09 · FULL (rotation #3 client mobile 390px)
+- Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
+  fresh DB + fresh build). Two-bot round 225: all scenarios ok, 2 logged
+  issues both listed noise (rocketreach-400; commentary-regen 503 = intended
+  no-key degradation). 0 raw 500/502s in the whole round's server log.
+- Journey: Mark Warne @ 390px iPhone UA — "on my phone: how's my portfolio,
+  dig into lettings, message BGP, check tasks": login → "/" lands on
+  Portfolio dashboard (LAYOUT SWAP VERIFIED client-side: bottom nav
+  Portfolio|Messages|Deals|Tasks|News, Portfolio active at "/") → /messages
+  (ChatBGP pinned + New Chat, renders clean) → Tasks (list + degraded
+  briefing fine) → Tracker tile → /available (search U124 filters, status
+  chips, unit card actions) → Viewing dialog at 390px (renders, date
+  defaults today — UX2 holds for client mobile) → Deals tab (2 deals,
+  "+2 letting deals" subtitle = r209 UX7 holds) → News. No h-overflow on
+  any surface; no 4xx/5xx beyond noise; task achievable in ≤3 taps each.
+- NOT a bug: client dashboard tracker KPI "0 Under offer/0 Let" while deals
+  sit at SOL/EXC — fixture's Gail's deal has unit_id NULL (r207 note) so the
+  deal→unit marketing_status mirror (crm.ts ~3655) has nothing to sync;
+  KPI correctly reflects unit statuses (all 151 Bluewater rows AVA).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none. Harness growth: none needed (mobile-no-overflow
+  already landing-agnostic per r222).
+- Next journey: rotation #4 staff mobile 390px (r225 had the journey →
+  r226 may be LIGHT; then #4).
