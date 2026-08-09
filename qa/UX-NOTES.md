@@ -56,6 +56,14 @@ what happened · concrete suggested improvement.
    exists as a hover title attribute, which doesn't exist on touch. Suggest:
    show the reason as a sub-line on the row (or reveal on tap) on phones.
 
+13. 2026-08-09 · BGP staff · mobile CRM (390px) · Victoria taps the CRM tile
+   to find who to contact at a brand — the Contacts page only covers
+   landlords/agents/lenders, so searching "star" (Starbucks) returns
+   "0 results" with no pointer that brands live in Brand Intelligence.
+   Works as designed, but a dead end on a phone. Suggest: when a Contacts
+   search has 0 hits but matches brand names, show a "Looking for a brand?
+   Search Brand Intelligence →" hint line.
+
 12. 2026-08-09 · Landsec client · mobile brand profile Signals card · The
    news list shows near-duplicate headlines (the "Musician sues Starbucks
    for £2m" story appears twice from two sources within the visible six).

@@ -996,10 +996,6 @@ const ALL_TABS: { key: PeopleTab; label: string; icon: any }[] = [
   { key: "lenders", label: "Lenders", icon: Landmark },
 ];
 
-const SCOPED_TABS: { key: PeopleTab; label: string; icon: any }[] = [
-  { key: "agents", label: "Agents", icon: Briefcase },
-];
-
 const LANDSEC_TABS: { key: PeopleTab; label: string; icon: any }[] = [
   { key: "agents", label: "Agents", icon: Briefcase },
 ];
@@ -1554,6 +1550,7 @@ function DataHealthQueue() {
 
 function PeopleHub() {
   const { activeTeam } = useTeam();
+  const [, navigate] = useLocation();
   const { toast } = useToast();
   const { data: user } = useQuery<User>({ queryKey: ["/api/auth/me"] });
   const effectiveTeam = activeTeam && activeTeam !== "all" ? activeTeam : user?.team;
@@ -1561,7 +1558,6 @@ function PeopleHub() {
 
   const [tab, setTab] = useState<PeopleTab>(isLandsec ? "agents" : "landlords");
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">("card");
-  const [scopedLandlord, setScopedLandlord] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ type: "company" | "contact"; id: string; name: string } | null>(null);
 
   const deleteMutation = useMutation({
@@ -1631,17 +1627,13 @@ function PeopleHub() {
     return contacts.filter((c) => c.companyId && hubCompanyIds.has(c.companyId)).length;
   }, [contacts, companies, landlordCompanies]);
 
-  const scopedLandlordCompany = scopedLandlord ? companies.find(c => c.id === scopedLandlord) : null;
-  const tabs = scopedLandlord ? SCOPED_TABS : isLandsec ? LANDSEC_TABS : ALL_TABS;
+  const tabs = isLandsec ? LANDSEC_TABS : ALL_TABS;
 
+  // "View People" on a landlord card goes to the company profile, where its
+  // contacts actually live. (It used to flip to a "scoped" agents tab that
+  // was never filtered by the landlord and never showed its contacts.)
   const handleScopeLandlord = (id: string) => {
-    setScopedLandlord(id);
-    setTab("agents");
-  };
-
-  const handleClearScope = () => {
-    setScopedLandlord(null);
-    setTab(isLandsec ? "agents" : "landlords");
+    navigate(`/companies/${id}`);
   };
 
   return (
@@ -1650,26 +1642,14 @@ function PeopleHub() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
-            {scopedLandlordCompany ? `${scopedLandlordCompany.name} — CRM` : "CRM"}
+            CRM
           </h1>
           <p className="text-sm text-muted-foreground">
-            {scopedLandlordCompany
-              ? "Agents & tenants relevant to this landlord"
-              : `${landlordCompanies.length.toLocaleString()} landlords · ${agentCompaniesCount.toLocaleString()} agents · ${hubContactCount.toLocaleString()} contacts`}
+            {`${landlordCompanies.length.toLocaleString()} landlords · ${agentCompaniesCount.toLocaleString()} agents · ${hubContactCount.toLocaleString()} contacts`}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <ViewToggle view={viewMode} onToggle={setViewMode} />
-          {scopedLandlord && (
-          <button
-            onClick={handleClearScope}
-            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground border rounded-md px-3 py-1.5 hover:bg-muted transition-colors"
-            data-testid="button-clear-scope"
-          >
-            <X className="w-3.5 h-3.5" />
-            Show all
-          </button>
-        )}
         </div>
       </div>
 
@@ -1695,7 +1675,7 @@ function PeopleHub() {
         <PageLoader />
       ) : (
         <>
-          {tab === "landlords" && !scopedLandlord && (
+          {tab === "landlords" && (
             <LandlordsTab
               companies={companies}
               contacts={contacts}

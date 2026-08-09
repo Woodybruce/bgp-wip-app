@@ -55,14 +55,37 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r219 · 2026-08-09 · ROUND IN PROGRESS (FULL, rotation #4 staff mobile)
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + fresh
-  build). Two-bot round 219: 55 scenarios ok, 2 logged issues both triaged
-  as listed noise (rocketreach-400; commentary-regen 503 = the intended
-  no-key degradation the r218 scenario asserts). 0 app bugs from the sweep;
-  no raw 5xx in the server log.
-- Journey next: Victoria @ 390px iPhone UA — expenses + CRM contact + tasks
-  (surfaces no round has touched on mobile).
+### r219 · 2026-08-09 · FULL (rotation #4 staff mobile 390px)
+- Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
+  fresh build before the fix and rebuilt bundle after). Two-bot round 219:
+  55 scenarios ok, 2 logged issues both triaged as listed noise
+  (rocketreach-400; commentary-regen 503 = the intended no-key degradation
+  the r218 scenario asserts). 0 app bugs from the sweep; no raw 5xx.
+- Journey: Victoria @ 390px iPhone UA — "back from a viewing: log an
+  expense, find a landlord contact, check my tasks": login → Dashboard
+  (billing KPIs, quick links, boards) → Expenses tile (/m/expenses renders,
+  Add-a-receipt CTA, empty state fine) → CRM tile (/contacts: cards,
+  stats, search fine at 390px) → Hammerson → Tasks page via My Tasks
+  "View all" (renders, 0 open, New Task present). No h-overflow anywhere;
+  only noise-list 503s. Surfaces /m/expenses, mobile CRM and mobile Tasks
+  had never been journey-tested.
+- Bug fixed (1): CRM "View People" on a landlord card was a dead end — it
+  flipped to a pseudo-scoped view headed "<Landlord> — CRM · Agents &
+  tenants relevant to this landlord" that actually rendered the GLOBAL
+  agents list (AgentsTab never received the landlord) and never showed the
+  landlord's own contacts, despite the card advertising "1 contact ·
+  View People". Button now navigates to the company profile
+  (/companies/:id) where KEY CONTACTS lives; removed the unreachable
+  scoped-tabs state machinery (client/src/pages/people.tsx). Verified at
+  390px: Hammerson → View People → profile with "Show all 1 contacts".
+  tsc clean, rebuilt, smoke re-green.
+- Harness growth: none (client-side navigation fix, no cheap API probe —
+  same call as r213's nested-anchor).
+- Suggestions added: UX-NOTES #13 (mobile CRM search is a dead end for
+  brand names — no pointer to Brand Intelligence).
+- Bugs deferred: none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r219 had the journey → r220 may
+  be LIGHT; then #1).
 
 ### r218 · 2026-08-09 · LIGHT (r217 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
