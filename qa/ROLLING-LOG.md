@@ -55,9 +55,25 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r218 · 2026-08-09 · LIGHT (r217 had the journey) — IN PROGRESS
-- Fresh container. run-smoke.sh GREEN (42 checks, 0 failures, fresh DB +
-  fresh build). Two-bot round 218 running; triage to follow.
+### r218 · 2026-08-09 · LIGHT (r217 had the journey)
+- Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
+  fresh build before the fix and rebuilt bundle after). Two-bot round 218:
+  55 scenarios ALL ok, 1 logged issue = listed rocketreach-400 noise (plus
+  the intended bulk-assign {} validation 400 in the server log). The r217
+  reimport-no-dup + mobile fixes hold.
+- Bug fixed (1): POST /api/properties/:id/bgp-commentary/regenerate 500'd
+  on AI failure — bare Anthropic SDK call, so no-key locally (or an auth/
+  overload blip in prod) surfaced a raw 500 instead of the house mapping.
+  Found via the server-log 500 sweep during triage (one 500 mid-round).
+  Now maps key/auth errors → 503, other AI failures → 502 (r214
+  brand-gaps pattern; no cache fallback — regenerate is an explicit action
+  and the panel keeps the old prose; server/property-asset-brief.ts).
+  Verified via API: Mark on own property 503 (was 500), Victoria 503.
+  tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 client-commentary-regen-graceful (route must
+  return 200/503/502, never 500). Assertion verified manually as Mark.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r218 was LIGHT → r219 FULL).
 
 ### r217 · 2026-08-09 · FULL (rotation #3 client mobile 390px)
 - Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;

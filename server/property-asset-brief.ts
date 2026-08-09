@@ -603,11 +603,19 @@ Write the operational commentary for the asset owner reading this, as FOUR SHORT
 
 Rules: British English, partner-tone, no hype, no "I'm pleased to". Keep each paragraph to 1-3 sentences. Bold the key tenant and unit names with **double asterisks**. Reference the actual tenants / units / figures above — don't generalise. Never state BGP fees or commissions. No headings beyond the bold lead-ins, no lists. No preamble or "here is".`;
 
-    const msg = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 600,
-      messages: [{ role: "user", content: prompt }],
-    });
+    let msg: any;
+    try {
+      msg = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 600,
+        messages: [{ role: "user", content: prompt }],
+      });
+    } catch (aiErr: any) {
+      if (/api ?key|authentication|authToken/i.test(aiErr?.message || "")) {
+        return res.status(503).json({ error: "Commentary unavailable — AI service is not configured" });
+      }
+      return res.status(502).json({ error: "Couldn't regenerate commentary" });
+    }
     const text = msg.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
     if (!text) return res.status(502).json({ error: "Claude returned empty commentary" });
 

@@ -3002,6 +3002,20 @@ async function markRound(page, cross) {
     }
   });
 
+  // BGP Commentary regenerate degrades gracefully (r218): the explicit
+  // regenerate action calls the AI directly — an AI failure must map to
+  // 503 (no key/auth) or 502, never a raw 500. Client on own property.
+  await step(page, p, 'client-commentary-regen-graceful', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch(`/api/properties/${window.QA_FIX.bluewater}/bgp-commentary/regenerate`, { method: 'POST', headers: auth });
+      return { status: res.status };
+    });
+    if (r.status !== 200 && r.status !== 503 && r.status !== 502) {
+      throw new Error(`bgp-commentary/regenerate returned ${r.status} (want 200, 503 no-key or 502, never 500)`);
+    }
+  });
+
   // The reworked target-operator columns must render on the client tracker —
   // either existing target rows or the add affordance, without a crash.
   await step(page, p, 'client-target-columns', async () => {
