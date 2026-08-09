@@ -287,10 +287,10 @@ export function setupHrRoutes(app: Express) {
           -- / remaining without double-subtracting.
           (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
            WHERE user_id = u.id AND status = 'approved'
-             AND EXTRACT(YEAR FROM start_date) = EXTRACT(YEAR FROM now())) AS holiday_used,
+             AND EXTRACT(YEAR FROM start_date::date) = EXTRACT(YEAR FROM now())) AS holiday_used,
           (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
            WHERE user_id = u.id AND status = 'pending'
-             AND EXTRACT(YEAR FROM start_date) = EXTRACT(YEAR FROM now())) AS holiday_pending
+             AND EXTRACT(YEAR FROM start_date::date) = EXTRACT(YEAR FROM now())) AS holiday_pending
         FROM users u
         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
         LEFT JOIN users m ON m.id = sp.manager_id
@@ -368,12 +368,12 @@ export function setupHrRoutes(app: Express) {
           CASE WHEN $2::boolean THEN
             (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
               WHERE user_id = u.id AND status = 'approved'
-                AND EXTRACT(YEAR FROM start_date) = EXTRACT(YEAR FROM now()))
+                AND EXTRACT(YEAR FROM start_date::date) = EXTRACT(YEAR FROM now()))
           ELSE NULL END AS holiday_used,
           CASE WHEN $2::boolean THEN
             (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
               WHERE user_id = u.id AND status = 'pending'
-                AND EXTRACT(YEAR FROM start_date) = EXTRACT(YEAR FROM now()))
+                AND EXTRACT(YEAR FROM start_date::date) = EXTRACT(YEAR FROM now()))
           ELSE NULL END AS holiday_pending
         FROM users u
         LEFT JOIN staff_profiles sp ON sp.user_id = u.id

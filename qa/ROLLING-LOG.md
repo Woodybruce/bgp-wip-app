@@ -55,10 +55,30 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r220 · 2026-08-09 · ROUND IN PROGRESS (provisional)
-- LIGHT round (r219 had the journey). Regression: run-smoke.sh GREEN
-  (42 checks, 0 failures, fresh DB + fresh build). Two-bot round 220
-  running; triage to follow.
+### r220 · 2026-08-09 · LIGHT (r219 had the journey)
+- Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
+  fresh build before the fix and rebuilt bundle after). Two-bot round 220:
+  161 scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503 = the intended no-key degradation). 0 app bugs from
+  the sweep itself.
+- Bug fixed (1): GET /api/hr/staff and /api/hr/staff/:userId silently
+  degraded to their minimal-SELECT fallback — the holiday_used/holiday_pending
+  subqueries did EXTRACT(YEAR FROM start_date) but holiday_requests.start_date
+  is TEXT ("function pg_catalog.extract(unknown, text) does not exist",
+  4 hits in the round's server log; introduced with the year-filter in
+  3b10bc2). Every profile-tier field (title/salary/APC/holiday/emergency)
+  vanished from the directory + drill-in while the route still 200'd.
+  Fixed with the house ::date cast (server/hr-routes.ts ×4 sites, same
+  pattern as the anniversary sweep). Verified via API as Victoria: bulk
+  route returns full shape + holiday_used sums a seeded probe request
+  (probe reverted), drill-in same; /hr page visually green at 1440px.
+  tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 staff-hr-directory-full-shape (route must
+  return the full-query shape — fallback rows lack the holiday_used key,
+  so the silent-fallback failure mode now fires an issue). Assertion
+  verified manually via the same fetch.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r220 was LIGHT → r221 FULL).
 
 ### r219 · 2026-08-09 · FULL (rotation #4 staff mobile 390px)
 - Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;

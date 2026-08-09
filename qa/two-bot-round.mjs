@@ -646,6 +646,23 @@ async function victoriaRound(page, cross) {
     if (!r.count) throw new Error('staff document-briefs catalog is empty (feature dead?)');
   });
 
+  // The HR staff directory has a silent minimal-SELECT fallback: if the full
+  // query throws (r220: EXTRACT on the text start_date column), the route
+  // still 200s but every profile-tier field vanishes. Assert the full shape —
+  // fallback rows carry no holiday_used key at all.
+  await step(page, p, 'staff-hr-directory-full-shape', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/hr/staff', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const rows = await res.json().catch(() => null);
+      if (!Array.isArray(rows) || !rows.length) return { ok: false, status: 'empty' };
+      return { ok: true, fullShape: 'holiday_used' in rows[0] };
+    });
+    if (!r.ok) throw new Error(`staff HR directory unhealthy (${r.status})`);
+    if (!r.fullShape) throw new Error('HR directory served the minimal fallback shape (full query is throwing — check [hr] GET /staff error in the server log)');
+  });
+
   // WIP Report is BGP's internal work-in-progress fee pipeline (every deal's
   // fee, agent split, completion value across the whole firm). It must be a
   // live staff surface — a 200 with an entries array — so the client guard
