@@ -55,6 +55,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r219 · 2026-08-09 · ROUND IN PROGRESS (FULL, rotation #4 staff mobile)
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + fresh
+  build). Two-bot round 219: 55 scenarios ok, 2 logged issues both triaged
+  as listed noise (rocketreach-400; commentary-regen 503 = the intended
+  no-key degradation the r218 scenario asserts). 0 app bugs from the sweep;
+  no raw 5xx in the server log.
+- Journey next: Victoria @ 390px iPhone UA — expenses + CRM contact + tasks
+  (surfaces no round has touched on mobile).
+
 ### r218 · 2026-08-09 · LIGHT (r217 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
   fresh build before the fix and rebuilt bundle after). Two-bot round 218:
