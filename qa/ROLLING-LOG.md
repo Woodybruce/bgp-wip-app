@@ -54,6 +54,11 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   the full sweep; run-smoke.sh stays the quick authoritative regression.
 
 ## Rounds
+
+### r215 · 2026-08-09 · IN PROGRESS (FULL, rotation #2 client desktop)
+- Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
+  fresh DB + fresh build). Triage: nothing to triage — no failures beyond
+  listed env noise. Journey + two-bot to follow.
 (carried over: the previous rolling session completed ~204 scripted rounds
 green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
 
