@@ -860,19 +860,15 @@ export default function TenantRep() {
               <div className="flex items-center gap-3 pt-1 border-t">
                 <span className="text-xs text-muted-foreground">Quick links:</span>
                 {editTarget.company_id && (
-                  <Link href={`/companies/${editTarget.company_id}`}>
-                    <a className="text-xs text-primary flex items-center gap-1 hover:underline" target="_blank">
-                      <Building2 className="w-3 h-3" />
-                      {editTarget.company_name ?? "Brand"}
-                      <ExternalLink className="w-2.5 h-2.5" />
-                    </a>
+                  <Link href={`/companies/${editTarget.company_id}`} className="text-xs text-primary flex items-center gap-1 hover:underline" target="_blank">
+                    <Building2 className="w-3 h-3" />
+                    {editTarget.company_name ?? "Brand"}
+                    <ExternalLink className="w-2.5 h-2.5" />
                   </Link>
                 )}
                 {editTarget.deal_id && (
-                  <Link href={`/deals/${editTarget.deal_id}`}>
-                    <a className="text-xs text-primary flex items-center gap-1 hover:underline" target="_blank">
-                      Deal <ExternalLink className="w-2.5 h-2.5" />
-                    </a>
+                  <Link href={`/deals/${editTarget.deal_id}`} className="text-xs text-primary flex items-center gap-1 hover:underline" target="_blank">
+                    Deal <ExternalLink className="w-2.5 h-2.5" />
                   </Link>
                 )}
               </div>

@@ -27,8 +27,8 @@ export default function TenancyScheduleFull() {
         <FileSpreadsheet className="w-5 h-5 text-muted-foreground" />
         <h1 className="text-xl font-semibold">Tenancy Schedule</h1>
         {property && (
-          <Link href={`/properties/${property.id}`}>
-            <a className="text-sm text-muted-foreground hover:underline">· {property.name}</a>
+          <Link href={`/properties/${property.id}`} className="text-sm text-muted-foreground hover:underline">
+            · {property.name}
           </Link>
         )}
       </div>

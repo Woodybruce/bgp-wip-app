@@ -550,17 +550,13 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 </div>
                 <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap" data-testid="deal-breadcrumb">
                   {headingIsUnit && linkedProperty && (
-                    <Link href={`/properties/${linkedProperty.id}`}>
-                      <a className="inline-flex items-center gap-1 hover:underline hover:text-foreground" title="Open property">
-                        <Building2 className="w-3.5 h-3.5" /> {linkedProperty.name}
-                      </a>
+                    <Link href={`/properties/${linkedProperty.id}`} className="inline-flex items-center gap-1 hover:underline hover:text-foreground" title="Open property">
+                      <Building2 className="w-3.5 h-3.5" /> {linkedProperty.name}
                     </Link>
                   )}
                   {counterparty && (
-                    <Link href={`/companies/${counterparty.id}`}>
-                      <a className="inline-flex items-center gap-1 hover:underline hover:text-foreground" title={`Open ${counterpartyLabel.toLowerCase()}`}>
-                        <Users className="w-3.5 h-3.5" /> {counterpartyLabel}: {counterparty.name}
-                      </a>
+                    <Link href={`/companies/${counterparty.id}`} className="inline-flex items-center gap-1 hover:underline hover:text-foreground" title={`Open ${counterpartyLabel.toLowerCase()}`}>
+                      <Users className="w-3.5 h-3.5" /> {counterpartyLabel}: {counterparty.name}
                     </Link>
                   )}
                   {!counterparty && (
@@ -572,8 +568,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                     </span>
                   )}
                   {headingIsUnit && (
-                    <Link href={`/deals/letting${linkedProperty ? `?propertyId=${linkedProperty.id}` : ""}`}>
-                      <a className="text-xs hover:underline hover:text-foreground" data-testid="link-back-to-tracker">← Back to Letting Tracker</a>
+                    <Link href={`/deals/letting${linkedProperty ? `?propertyId=${linkedProperty.id}` : ""}`} className="text-xs hover:underline hover:text-foreground" data-testid="link-back-to-tracker">
+                      ← Back to Letting Tracker
                     </Link>
                   )}
                   {/* Spine state — green chip when the deal is linked

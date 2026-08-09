@@ -137,10 +137,32 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   Suggestions added: none.
 - Next journey: rotation #3 client mobile 390px (r208 was LIGHT → r209 FULL).
 
-### r213 · 2026-08-09 · IN PROGRESS (FULL — rotation #1 staff desktop)
-- Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
-  fresh DB + fresh build). Nothing to triage. Two-bot + staff desktop
-  journey to follow.
+### r213 · 2026-08-09 · FULL (rotation #1 staff desktop)
+- Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
+  fresh build before the fix and rebuilt bundle after). Two-bot round 213:
+  55 scenarios ok, 1 logged issue = listed rocketreach-400 noise (plus the
+  intended bulk-assign {} validation 400). 0 app bugs from the sweep.
+- Journey: Victoria desktop 1440px — "prep the Landsec catch-up": login →
+  dashboard → Requirements → Comps → Leasing Schedule board → Bluewater
+  board → Tenancy Schedule → Tasks (create chase task — created, listed,
+  toast) → News. All surfaces render + work; task CRUD clean.
+- Bug fixed (1): nested-<a> DOM nesting violations — wouter v3 Link already
+  renders an anchor, but 6 sites still wrapped a child <a> inside it
+  (tenancy-schedule-full breadcrumb, deal-detail breadcrumb ×3, tenant-rep
+  quick links ×2 — invalid HTML, React validateDOMNesting warning, flaky
+  click/navigation semantics). Moved className/target onto Link, dropped the
+  inner <a>. Verified: warning gone, `a a` selector count 0 on tenancy
+  schedule + deal detail, breadcrumb still navigates to the property page.
+  tsc clean, rebuilt, smoke re-green.
+- NOT a bug: Comps table shows 1 row while stats strip says 12 — the 11 AI
+  news-extracted comps are unverified "leads" on the parked admin-only Leads
+  tab (isLead filter). Logged as UX-NOTES #10 instead.
+- Harness growth: none (nested-anchor fix has no cheap API probe; viewing/
+  offer PATCH scenarios already landed r209/r212).
+- Bugs deferred: none. New flakes: none. Setup note: for API probes,
+  POST /api/auth/login takes {username, password} (email works as username).
+- Next journey: rotation #2 client desktop (r213 had the journey → r214 may
+  be LIGHT; then #2).
 
 ### r212 · 2026-08-08 · LIGHT (r211 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;

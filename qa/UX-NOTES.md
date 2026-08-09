@@ -41,6 +41,15 @@ what happened · concrete suggested improvement.
    but suggest: aria-labels + slightly larger touch targets on the row icons,
    and "No company" (or prompt to pick one) instead of "Unknown".
 
+10. 2026-08-09 · BGP staff · desktop Comps page · Victoria opens Comps to pull
+   rent evidence — the stats strip says "12 comps · 0 verified · 11 AI ·
+   5 areas" but the table below shows only 1 row with all filters at
+   defaults. The other 11 are unverified AI-extracted leads that live on the
+   parked, admin-only Leads tab, so a non-admin sees a count they can never
+   reach. Works as designed, but suggest: either count only table-visible
+   comps in the strip, or make the "11 AI" stat a link/hint ("11 leads
+   awaiting review — ask an admin").
+
 ## Confirmed / done
 Confirmed by Woody 2026-08-08 ("Do all 5"); built + visually verified same day:
 1. 2026-08-08 · Letting Tracker viewing/offer rows now have an edit pencil —
