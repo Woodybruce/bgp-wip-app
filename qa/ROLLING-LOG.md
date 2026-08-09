@@ -55,16 +55,47 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r231 · 2026-08-09 · ROUND IN PROGRESS (FULL, rotation #2 client desktop)
+### r231 · 2026-08-09 · FULL (rotation #2 client desktop)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:
-  run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
-  Two-bot round 231: 164 scenarios ok, 2 logged issues both listed noise
-  (rocketreach-400; commentary-regen 503 = intended no-key degradation).
-  0 raw 500/502/504 in the whole round's server log. Triage: 0 app bugs
-  from the sweep.
-- Journey (in progress): Mark Warne desktop 1440px — "prepare a board
-  pack": Image Studio as client (never journey-tested), deal detail
-  drill-in, documents.
+  run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1 before the
+  fixes and rebuilt bundle after). Two-bot round 231: 164 scenarios ok,
+  2 logged issues both listed noise (rocketreach-400; commentary-regen 503
+  = intended no-key degradation). 0 raw 500/502/504 in the whole round's
+  server log. 0 app bugs from the sweep.
+- Journey: Mark Warne desktop 1440px — "prepare a board pack": login →
+  dashboard → Image Studio as client (FIRST journey visit client-side:
+  Library/Brand Library/Collections tabs all render, Landsec brand folder,
+  upload/AI-generate entry points present) → Deals board (2 deals +
+  tracker subtitle) → deal detail #1003 drill-in (Parties, Files
+  "managed by BGP team" copy, comments, timeline/audit) → Create-document
+  probe. All clean beyond noise + the 2 bugs below.
+- Bugs fixed (2):
+  1. Client saw the staff-only "Create document" button on deal detail —
+     clicking navigated to /document-briefs, whose API 403s clients (the
+     two-bot client-document-briefs-guard asserts exactly that) and the
+     route guard bounced them home: a silent dead-end + 403 noise. Button
+     now hidden via the existing isClientDeal gate
+     (client/src/components/deal-detail.tsx; r223 interactions-sync class).
+  2. Unit-less LEASING deal detail was headed by the PROPERTY name —
+     heading, breadcrumb and sidebar all used linkedProperty?.name ||
+     deal.name, so "U124 Bluewater — Gail's letting" rendered as
+     "Bluewater Shopping Centre" and the two fixture Bluewater deals were
+     indistinguishable everywhere (deal name appeared nowhere on the page).
+     Investment deals keep property-name headings (that's their design);
+     leasing deals now fall back to deal.name first, with the property as
+     the existing sub-line link. Verified visually as Mark AND Victoria:
+     h1/sidebar = deal name, property sub-line present, Create document
+     hidden for Mark / present for Victoria. tsc clean, rebuilt, smoke
+     re-green.
+- Harness growth: two-bot +1 client-deal-detail-name-and-doc-gate
+  (unit-less leasing deal must be headed by deal.name; client must not see
+  button-deal-create-document). Assertions verified manually via the same
+  locators both ways.
+- Bugs deferred: none. Suggestions added: UX-NOTES #19 (Parties card shows
+  Vendor/Purchaser slots on leasing deals — investment-only parties).
+- New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r231 had the journey →
+  r232 may be LIGHT; then #3).
 
 ### r224 · 2026-08-09 · LIGHT (r223 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,

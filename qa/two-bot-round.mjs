@@ -3602,6 +3602,27 @@ async function markRound(page, cross) {
     if (new URL(page.url()).pathname === '/hr') throw new Error('client can open the staff-only /hr route (guard hole)');
   });
 
+  await step(page, p, 'client-deal-detail-name-and-doc-gate', async () => {
+    // r231: unit-less leasing deals must be headed by the DEAL name (not the
+    // property name, which made same-property deals indistinguishable), and
+    // the staff-only "Create document" entry point must be hidden for clients
+    // (the document-briefs API 403s them and the route guard bounces home).
+    const deal = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      return (Array.isArray(deals) ? deals : []).find((d) =>
+        !d.unitId && d.dealType !== 'Sale' && d.dealType !== 'Purchase' && d.name) || null;
+    });
+    if (!deal) return; // fixture has no unit-less leasing deal — nothing to assert
+    await page.goto(`${BASE}/deals/${deal.id}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2500);
+    const h1 = (await page.locator('[data-testid="text-deal-name"]').first().textContent().catch(() => '')) || '';
+    if (h1.trim() !== deal.name.trim()) throw new Error(`deal detail headed "${h1.trim()}" — expected deal name "${deal.name}"`);
+    if (await page.locator('[data-testid="button-deal-create-document"]').count()) {
+      throw new Error('client sees the staff-only "Create document" button on deal detail');
+    }
+  });
+
   await step(page, p, 'client-mobile-no-overflow', async () => {
     const mob = await page.context().newPage();
     try {

@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+19. 2026-08-09 · Landsec client / desktop 1440px · opened a New Letting deal's
+    detail page to see who the parties are · the Parties card shows all four
+    slots — Landlord, Tenant, Vendor, Purchaser — with "+ Link vendor" /
+    "+ Link purchaser" affordances even though vendor/purchaser only apply to
+    investment (Sale/Purchase) deals; on a letting deal they're clutter and
+    invite mis-linking · Suggested: show Landlord + Tenant on leasing deals
+    and Vendor + Purchaser on investment deals (mirroring the counterparty
+    logic the page header already uses).
+
 18. 2026-08-09 · BGP staff / desktop 1440px · opened Calendar on a Sunday to
     check the day's viewings · the diary defaults to Work week (Mon–Fri), so
     on a weekend "today" isn't in the grid at all — today's events only

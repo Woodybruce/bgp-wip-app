@@ -258,6 +258,15 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 
   const linkedProperty = deal?.propertyId ? properties.find((p) => p.id === deal.propertyId) : null;
 
+  // Investment deals are about the whole property, so the property name can
+  // stand in for a missing deal name. A leasing deal with no linked unit must
+  // keep its own name — two unit-less deals at the same property would
+  // otherwise be indistinguishable everywhere the title shows.
+  const isInvestmentDeal = deal?.dealType === "Sale" || deal?.dealType === "Purchase";
+  const dealDisplayName = (isInvestmentDeal
+    ? (linkedProperty?.name || deal?.name)
+    : (deal?.name || linkedProperty?.name)) || "Untitled Deal";
+
   const linkedLandlord = deal?.landlordId ? companies.find((c) => c.id === deal.landlordId) : null;
   const linkedTenant = deal?.tenantId ? companies.find((c) => c.id === deal.tenantId) : null;
 
@@ -481,7 +490,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         <Breadcrumbs
           items={[
             { label: isComps ? "Comps" : "Deals", href: isComps ? "/comps" : "/deals" },
-            { label: linkedProperty?.name || deal.name },
+            { label: dealDisplayName },
           ]}
         />
       </div>
@@ -514,7 +523,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             const headingIsUnit = !isInvestment && !!linkedUnit;
             const headingText = headingIsUnit
               ? linkedUnit!.unitName
-              : (linkedProperty?.name || deal.name);
+              : dealDisplayName;
             // Counterparty: Purchaser/Vendor for investment, Tenant for leasing.
             let counterpartyId: string | null = null;
             let counterpartyLabel = "";
@@ -549,7 +558,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                   )}
                 </div>
                 <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap" data-testid="deal-breadcrumb">
-                  {headingIsUnit && linkedProperty && (
+                  {linkedProperty && headingText !== linkedProperty.name && (
                     <Link href={`/properties/${linkedProperty.id}`} className="inline-flex items-center gap-1 hover:underline hover:text-foreground" title="Open property">
                       <Building2 className="w-3.5 h-3.5" /> {linkedProperty.name}
                     </Link>
@@ -613,12 +622,16 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               Image Studio
             </Button>
           </Link>
-          <Link href={`/document-briefs?propertyId=${encodeURIComponent(deal.propertyId || "")}&propertyName=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&postcode=${encodeURIComponent((linkedProperty as any)?.postcode || "")}`}>
-            <Button variant="outline" size="sm" data-testid="button-deal-create-document">
-              <FileText className="w-4 h-4 mr-2" />
-              Create document
-            </Button>
-          </Link>
+          {/* Document briefs are staff-only (the API 403s clients and the
+              route guard bounces them home) — hide the entry point. */}
+          {!isClientDeal && (
+            <Link href={`/document-briefs?propertyId=${encodeURIComponent(deal.propertyId || "")}&propertyName=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&postcode=${encodeURIComponent((linkedProperty as any)?.postcode || "")}`}>
+              <Button variant="outline" size="sm" data-testid="button-deal-create-document">
+                <FileText className="w-4 h-4 mr-2" />
+                Create document
+              </Button>
+            </Link>
+          )}
           <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} data-testid="button-edit-deal">
             <Pencil className="w-4 h-4 mr-2" />
             Edit
@@ -1031,7 +1044,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         <div className="w-[340px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
           <ScrollArea className="flex-1">
             <div className="px-4 pt-4 pb-3 border-b">
-              <h3 className="text-sm font-bold leading-tight truncate" data-testid="sidebar-deal-name">{linkedProperty?.name || deal.name}</h3>
+              <h3 className="text-sm font-bold leading-tight truncate" data-testid="sidebar-deal-name">{dealDisplayName}</h3>
             </div>
 
             <SidebarSection open={sidebarSections.files} onToggle={() => toggleSidebar("files")} icon={FileText} title="Files" testId="toggle-sidebar-files">
