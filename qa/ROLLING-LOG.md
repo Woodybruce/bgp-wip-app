@@ -55,10 +55,47 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r233 · 2026-08-09 · ROUND IN PROGRESS (FULL — rotation #3 client mobile 390px)
+### r233 · 2026-08-09 · FULL (rotation #3 client mobile 390px)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:
-  run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
-  Two-bot round 233 running; journey next. Triage so far: none pending.
+  run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1 before the
+  fixes and rebuilt bundle after). Two-bot round 233: all scenarios ok,
+  2 logged issues both listed noise (rocketreach-400; commentary-regen 503).
+  0 raw 500/502/504 across the round.
+- Journey: Mark Warne @ 390px iPhone UA — "before a call with BGP: how is
+  Bluewater doing — property drill-in, tenancy, news, documents": login →
+  "/" Portfolio home (layout swap holds) → tracker card → /available
+  (Letting Tracker clean) → News list (article cards fine; blank thumbnails
+  = no external network, noise) → SharePoint tile → Calendar → Comps →
+  Property Intelligence tile → MAP: blank + 403 storm (the round's bugs) →
+  /messages (ChatBGP pinned). No h-overflow anywhere.
+- Bugs fixed (2, both on the client Property Intelligence map — the sidebar
+  decision makes PI client-visible, but its Map tab was dead for clients):
+  1. Gateway allowlist carried the dead prefix "/api/os-data" — the FILE is
+     os-data.ts but the routes are /api/os/* — so every OS layer (sites,
+     buildings, uprns, places) 403'd for clients despite the app-sidebar
+     comment claiming OS data is client-allowed. Entry now "/api/os/"
+     (external Ordnance Survey proxies only, no BGP internals;
+     server/index.ts). Verified as Mark: os/sites 503 no-key = same as
+     staff (was 403), ngd-status 200.
+  2. The map auto-fired 7 BGP-internal staff-only endpoints as a client —
+     map/pins (whole property book, unscoped — must stay staff-only),
+     occupier-plan, retail-units, labels, map-annotations,
+     external-properties, property-plans/in-viewport — a guaranteed 403
+     storm on every client visit. All 7 now skipped for client viewers via
+     a mapIsClientRef read at fetch time (edozo-map.tsx; r215/r223
+     interactions-sync class). Verified visually both ways: Mark 390px map
+     = 0×403 (only intended os/sites 503 no-key); Victoria desktop Map tab
+     unchanged (all layers 200). tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 client-map-layer-scope (OS proxies must not
+  gateway-403 for a client; pins/annotations/external-properties/plans
+  must stay 403). Statuses pre-verified via curl as Mark; negative-probe
+  listed.
+- Bugs deferred: none. Suggestions added: UX-NOTES #20 (390px map toolbar
+  overlaps the search field), #21 (client map shows no pins at all — even
+  own estates; needs a scoped-pins decision).
+- New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r233 had the journey →
+  r234 may be LIGHT; then #4).
 
 ### r232 · 2026-08-09 · LIGHT (r231 had the journey)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:

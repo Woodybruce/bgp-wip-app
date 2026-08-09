@@ -3451,6 +3451,12 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   // Comps and Pathway runs are BGP's own pipeline/comparables. (Landsec audit.)
   const { data: mapViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const mapIsClient = !!mapViewer && (mapViewer.role === "Client" || !!mapViewer.companyScopeId);
+  // Read at fetch time from map handlers/effects (their closures outlive the
+  // auth query resolving). The BGP-internal layer endpoints (/api/map/*,
+  // map-annotations, external-properties, property-plans) are staff-only at
+  // the gateway — skip them for clients instead of firing guaranteed 403s.
+  const mapIsClientRef = useRef(false);
+  mapIsClientRef.current = mapIsClient;
   const CLIENT_HIDDEN_LAYERS = new Set(["icomps", "pathway"]);
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -3767,7 +3773,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       // Prefer the occupier plan (Goad/Edozo) — names live on the polygons, so
       // no OSM/NGD label-guessing is needed where we have coverage. Only at
       // street zoom, matching the label-render gate.
-      if (map.getZoom() >= 17) {
+      if (map.getZoom() >= 17 && !mapIsClientRef.current) {
         try {
           const opResp = await fetch(`/api/map/occupier-plan?bbox=${bboxParam}`, {
             credentials: "include",
@@ -3812,7 +3818,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       }
 
       // Fetch buildings (OSM) and label overrides (CRM > Comps > Google) in parallel
-      const labelsPromise = fetch(`/api/map/labels?bbox=${bboxParam}`, {
+      const labelsPromise = mapIsClientRef.current ? Promise.resolve(null) : fetch(`/api/map/labels?bbox=${bboxParam}`, {
         credentials: "include",
         headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
       })
@@ -4096,7 +4102,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     // Available Properties layer data — external (scraped/emailed/WhatsApp)
     // listings + BGP's own available units, normalised to {kind,lat,lng,...}.
     Promise.all([
-      fetch("/api/external-properties", { credentials: "include", headers }).then(r => r.ok ? r.json() : []).catch(() => []),
+      mapIsClientRef.current ? Promise.resolve([]) : fetch("/api/external-properties", { credentials: "include", headers }).then(r => r.ok ? r.json() : []).catch(() => []),
       fetch("/api/available-units", { credentials: "include", headers }).then(r => r.ok ? r.json() : []).catch(() => []),
     ]).then(([ext, units]) => {
       const out: any[] = [];
@@ -4116,6 +4122,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
 
   // Fetch CRM map pins (Deals, Comps, Lease Events) on mount
   useEffect(() => {
+    if (mapIsClientRef.current) return;
     const headers = { ...getAuthHeaders(), Authorization: `Bearer ${localStorage.getItem("bgp_token")}` };
     fetch("/api/map/pins", { credentials: "include", headers })
       .then(r => r.ok ? r.json() : null)
@@ -4526,6 +4533,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     let lastKey = "";
 
     const fetchUnits = async () => {
+      if (mapIsClientRef.current) return; // staff-only layer at the gateway
       if (map.getZoom() < 16) return; // too far out — units unreadable
       const b = map.getBounds();
       const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
@@ -4634,6 +4642,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   // Fetch + render pins / labels stored in map_annotations. Click handler
   // is bound when annotateMode is set; click drops a new pin or label.
   const loadAnnotations = useCallback(async () => {
+    if (mapIsClientRef.current) return; // staff-only at the gateway
     try {
       const r = await fetch("/api/map-annotations", { credentials: "include" });
       if (!r.ok) return;
@@ -5546,6 +5555,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     }
     let cancelled = false;
     const refresh = async () => {
+      if (mapIsClientRef.current) return; // staff-only at the gateway
       const bounds = map.getBounds();
       const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
       try {

@@ -3419,7 +3419,11 @@ app.use("/api/branding/assets", express.static(
     // parity for clients (Woody, 2026-08-03). Plan ids are UUIDs; writes
     // (upload, polygon editing, auto-detect) stay staff-only.
     "/api/plans/",
-    "/api/voa", "/api/map-layers", "/api/os-data", "/api/edozo",
+    // "/api/os/" = the OS NGD/Places proxies in os-data.ts (sites, buildings,
+    // uprns, places) — external Ordnance Survey data, no BGP internals. The
+    // entry used to read "/api/os-data" (the FILE name), which matched no
+    // route, so the client Property Intelligence map's OS layers all 403'd.
+    "/api/voa", "/api/map-layers", "/api/os/", "/api/edozo",
     "/api/image-studio", "/api/ai-briefing",
     "/api/notifications", "/api/daily-digest", "/api/activity-feed",
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",

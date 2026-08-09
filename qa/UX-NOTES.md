@@ -13,6 +13,21 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+21. 2026-08-09 · Landsec client / mobile 390px · opened Property Intelligence
+    → Map to look at their own estate · after the r233 fix the map loads
+    without errors, but a client sees NO property pins at all — not even
+    their own estates — because /api/map/pins is (rightly) staff-only: it
+    returns the whole BGP property book unscoped · Suggested: a client-scoped
+    pins read (own portfolio only) so the client map shows their estates;
+    needs a scoping decision on the pins payload first.
+
+20. 2026-08-09 · Landsec client / mobile 390px · tried to search an address
+    on the Property Intelligence map · at 390px the floating "Download Plan"
+    pill and Map/Satellite toggle sit ON TOP of the search field — only
+    "Search a…" is visible and the tap target is half-covered · Suggested:
+    stack the map toolbar controls below the search bar (or collapse them
+    behind a ⋯ menu) at narrow widths.
+
 19. 2026-08-09 · Landsec client / desktop 1440px · opened a New Letting deal's
     detail page to see who the parties are · the Parties card shows all four
     slots — Landlord, Tenant, Vendor, Purchaser — with "+ Link vendor" /
