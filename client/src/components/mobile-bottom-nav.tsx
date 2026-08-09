@@ -2,19 +2,20 @@ import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { LayoutDashboard, MessageCircle, Mail, BarChart3, Newspaper, CheckSquare } from "lucide-react";
 
-// Messages is the home tab (Woody, 2026-08-05) — the unified chat list
-// lives at "/", the tile dashboard at /home.
+// Dashboard/Portfolio is the home tab (Woody, 2026-08-09, UX-NOTES #6+#8 —
+// supersedes the 2026-08-05 Messages-home): the tile dashboard lives at "/",
+// the unified chat list at /messages.
 const NAV_ITEMS = [
-  { label: "Messages", icon: MessageCircle, path: "/" },
-  { label: "Dashboard", icon: LayoutDashboard, path: "/home" },
+  { label: "Dashboard", icon: LayoutDashboard, path: "/" },
+  { label: "Messages", icon: MessageCircle, path: "/messages" },
   { label: "Mail", icon: Mail, path: "/mail" },
   { label: "Deals", icon: BarChart3, path: "/deals" },
   { label: "News", icon: Newspaper, path: "/news" },
 ] as const;
 
 const CLIENT_NAV_ITEMS = [
-  { label: "Messages", icon: MessageCircle, path: "/" },
-  { label: "Portfolio", icon: LayoutDashboard, path: "/home" },
+  { label: "Portfolio", icon: LayoutDashboard, path: "/" },
+  { label: "Messages", icon: MessageCircle, path: "/messages" },
   { label: "Deals", icon: BarChart3, path: "/deals" },
   { label: "Tasks", icon: CheckSquare, path: "/tasks" },
   { label: "News", icon: Newspaper, path: "/news" },
@@ -82,4 +83,4 @@ export function MobileBottomNav() {
  * These should not show the standard mobile header back button behavior
  * and instead just display in the content area above the bottom nav.
  */
-export const BOTTOM_NAV_PATHS = ["/", "/home", "/chatbgp", "/mail", "/deals", "/news", "/tasks"];
+export const BOTTOM_NAV_PATHS = ["/", "/home", "/messages", "/chatbgp", "/mail", "/deals", "/news", "/tasks"];

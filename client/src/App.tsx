@@ -459,15 +459,17 @@ function AuthenticatedApp() {
     return <MobileApp initialTab="ai" />;
   }
 
-  // Mobile home = Messages (Woody, 2026-08-05: WhatsApp-style unified chat
-  // as the landing screen for everyone — "half the company work for
-  // Landsec"). The tile dashboard moved one tab over, to /home.
-  if ((isMobile || nativeMobile) && location === "/") {
+  // Mobile home = Dashboard/Portfolio (Woody, 2026-08-09, UX-NOTES #6+#8:
+  // landing on an empty Messages list read as a blank page — clients land on
+  // Portfolio, staff on Dashboard). Supersedes the 2026-08-05 Messages-home
+  // decision; the unified chat list moved one tab over, to /messages.
+  if ((isMobile || nativeMobile) && location === "/messages") {
     return <MobileApp initialTab="chats" />;
   }
 
-  // The old mobile dashboard — alerts, tasks, quick links, portfolio tiles.
-  if ((isMobile || nativeMobile) && location === "/home") {
+  // The tile dashboard — alerts, tasks, quick links, portfolio tiles.
+  // "/home" stays as an alias so old links keep working.
+  if ((isMobile || nativeMobile) && (location === "/" || location === "/home")) {
     return (
       <div className="flex flex-col" style={{ height: "100dvh" }}>
         <div

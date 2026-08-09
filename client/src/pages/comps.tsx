@@ -2517,10 +2517,13 @@ export default function Comps() {
         <>
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-4 text-xs">
-            <span className="flex items-center gap-1.5"><Scale className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{stats.total}</span> comps</span>
+            {/* Counts reflect the table below, not rows parked on the
+                admin-only Leads tab — "12 comps" over a 1-row table read
+                as data loss (UX-NOTES #10). */}
+            <span className="flex items-center gap-1.5"><Scale className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{confirmedComps.length}</span> comps</span>
             <span className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-green-600" /> <span className="font-semibold">{stats.verified}</span> verified</span>
-            {stats.aiExtracted > 0 && <span className="flex items-center gap-1.5"><Sparkles className="w-3.5 h-3.5 text-amber-500" /> <span className="font-semibold">{stats.aiExtracted}</span> AI</span>}
-            <span className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{stats.areas}</span> areas</span>
+            {leadComps.length > 0 && <span className="flex items-center gap-1.5 text-muted-foreground"><Sparkles className="w-3.5 h-3.5 text-amber-500" /> <span className="font-semibold">{leadComps.length}</span> AI lead{leadComps.length !== 1 ? "s" : ""} awaiting review</span>}
+            <span className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{new Set(confirmedComps.map(c => c.areaLocation).filter(Boolean)).size}</span> areas</span>
           </div>
           <div className="flex-1" />
           <div className="relative">

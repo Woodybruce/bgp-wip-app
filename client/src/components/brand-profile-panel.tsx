@@ -448,6 +448,22 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     },
   });
 
+  // The same story often arrives from two sources with near-identical
+  // headlines — dedupe by normalised headline (first occurrence wins; the
+  // feed is newest-first) so the visible six aren't half duplicates.
+  const dedupedSignals = useMemo(() => {
+    const rows: any[] = data?.signals || [];
+    const seen: string[] = [];
+    const norm = (h: string) => (h || "").toLowerCase().replace(/[^a-z0-9£$ ]+/g, " ").replace(/\s+/g, " ").trim();
+    return rows.filter((s: any) => {
+      const n = norm(s.headline);
+      if (!n) return true;
+      const dup = seen.some(p => p === n || (n.length >= 30 && p.startsWith(n)) || (p.length >= 30 && n.startsWith(p)));
+      if (!dup) seen.push(n);
+      return !dup;
+    });
+  }, [data?.signals]);
+
   useEffect(() => {
     if (!data || isClientViewer || autoContactsRan.current) return;
     autoContactsRan.current = true;
@@ -2526,7 +2542,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               )}
               {data.signals.length > 0 && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1">
-                  {(signalsShowAll ? data.signals : data.signals.slice(0, 6)).map((s: any) => {
+                  {(signalsShowAll ? dedupedSignals : dedupedSignals.slice(0, 6)).map((s: any) => {
                     const typeCls: Record<string, string> = {
                       opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
                       closure:     "bg-red-50 text-red-700 border-red-200",
@@ -2572,12 +2588,12 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   })}
                 </div>
               )}
-              {data.signals.length > 6 && (
+              {dedupedSignals.length > 6 && (
                 <button
                   onClick={() => setSignalsShowAll(v => !v)}
                   className="mt-1.5 text-[10px] text-primary hover:underline"
                 >
-                  {signalsShowAll ? "Show less" : `Show ${data.signals.length - 6} more signal${data.signals.length - 6 === 1 ? "" : "s"}`}
+                  {signalsShowAll ? "Show less" : `Show ${dedupedSignals.length - 6} more signal${dedupedSignals.length - 6 === 1 ? "" : "s"}`}
                 </button>
               )}
             </div>
@@ -4216,14 +4232,18 @@ export function PortfolioActivityBlock({ companyId }: { companyId: string }) {
   const suggestions: any[] = sugg?.suggestions || [];
   if (!tenantAt.length && !targeted.length && !pitched.length && !suggestions.length) return null;
 
-  const Row = ({ propertyId, propertyName, unitName, right, title }: any) => (
-    <div className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card min-w-0" title={title || ""}>
-      <Link href={`/properties/${propertyId}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
-        <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-        <span className="text-xs font-medium truncate">{propertyName}</span>
-        {unitName && <span className="text-[10px] text-muted-foreground truncate">{unitName}</span>}
-      </Link>
-      <span className="flex items-center gap-1 shrink-0 max-w-[55%] justify-end">{right}</span>
+  const Row = ({ propertyId, propertyName, unitName, right, title, subline }: any) => (
+    <div className="p-1.5 rounded border bg-card min-w-0" title={title || ""}>
+      <div className="flex items-center justify-between gap-2 min-w-0">
+        <Link href={`/properties/${propertyId}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
+          <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span className="text-xs font-medium truncate">{propertyName}</span>
+          {unitName && <span className="text-[10px] text-muted-foreground truncate">{unitName}</span>}
+        </Link>
+        <span className="flex items-center gap-1 shrink-0 max-w-[55%] justify-end">{right}</span>
+      </div>
+      {/* Hover titles don't exist on touch — the reason gets its own line. */}
+      {subline && <div className="text-[10px] text-muted-foreground mt-0.5 pl-5 line-clamp-2">{subline}</div>}
     </div>
   );
 
@@ -4274,7 +4294,7 @@ export function PortfolioActivityBlock({ companyId }: { companyId: string }) {
           <Tier label="Suggested pitches" count={suggestions.length} tone="text-emerald-700/80">
             {suggestions.slice(0, 6).map((u: any) => (
               <Row key={`s-${u.id}`} propertyId={u.property_id} propertyName={u.property_name} unitName={u.unit_name}
-                title={u.reason}
+                title={u.reason} subline={u.reason}
                 right={u.sqft ? <span className="text-[10px] text-muted-foreground tabular-nums">{Number(u.sqft).toLocaleString()} sq ft</span> : null} />
             ))}
           </Tier>

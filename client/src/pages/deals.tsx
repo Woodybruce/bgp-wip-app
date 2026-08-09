@@ -5380,12 +5380,21 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   const { data: availableUnitsData = [] } = useQuery<AvailableUnit[]>({
     queryKey: ["/api/available-units"],
-    enabled: isNegotiationsMode,
+    // Clients also need this to count their tracker-only deals — the board
+    // header otherwise reads as data loss next to the dashboard's Active
+    // Deals KPI (UX-NOTES #7).
+    enabled: isNegotiationsMode || isClientDeals,
   });
 
   const migratedDealIds = useMemo(() => {
     return new Set(availableUnitsData.filter(u => u.dealId).map(u => u.dealId));
   }, [availableUnitsData]);
+
+  const trackerOnlyDealCount = useMemo(() => {
+    if (!isClientDeals) return 0;
+    const crmIds = new Set(deals.map(d => d.id));
+    return new Set(availableUnitsData.filter(u => u.dealId && !crmIds.has(u.dealId)).map(u => u.dealId)).size;
+  }, [isClientDeals, availableUnitsData, deals]);
 
   const { data: properties = [] } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties", { excludeComps: true }],
@@ -5966,8 +5975,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         : urlTeamParam
           ? `${filteredDeals.length} deal${filteredDeals.length !== 1 ? "s" : ""} · Filtered by ${urlTeamParam} team`
           : activeTeam && activeTeam !== "all"
-            ? `${filteredDeals.length} deal${filteredDeals.length !== 1 ? "s" : ""} — ${activeTeam}`
-            : `${deals.length} deal${deals.length !== 1 ? "s" : ""} in the CRM`}
+            ? `${filteredDeals.length} deal${filteredDeals.length !== 1 ? "s" : ""} — ${activeTeam}${trackerOnlyDealCount > 0 ? ` · +${trackerOnlyDealCount} letting deal${trackerOnlyDealCount !== 1 ? "s" : ""} on the Letting Tracker` : ""}`
+            : `${deals.length} deal${deals.length !== 1 ? "s" : ""} in the CRM${trackerOnlyDealCount > 0 ? ` · +${trackerOnlyDealCount} letting deal${trackerOnlyDealCount !== 1 ? "s" : ""} on the Letting Tracker` : ""}`}
       actions={!isCompsMode ? (
         <>
           {!isMobile && !isClientDeals && (<>

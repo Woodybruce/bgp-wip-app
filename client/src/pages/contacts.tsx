@@ -1834,6 +1834,15 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
                 <p className="text-sm text-muted-foreground">
                   {hasActiveFilters ? "Try adjusting your search or filters" : "Add your first contact to get started"}
                 </p>
+                {/* Brands don't live here — a zero-hit search that matches a
+                    company name is usually someone hunting a brand (UX-NOTES #13). */}
+                {search.trim().length > 1 && companies.some(c => c.name?.toLowerCase().includes(search.trim().toLowerCase())) && (
+                  <p className="text-sm mt-2">
+                    <Link href="/brands" className="text-primary hover:underline">
+                      Looking for a brand? Search Brand Intelligence →
+                    </Link>
+                  </p>
+                )}
               </CardContent>
             </Card>
           ) : isMobile ? (
