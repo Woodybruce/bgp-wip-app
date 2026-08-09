@@ -31,6 +31,12 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM team_events WHERE title LIKE 'QA-VIS %' OR title LIKE 'QA-CAL-%' OR title LIKE 'QA Landsec brainstorm' OR title LIKE 'QA Other Client review';
   DELETE FROM unit_viewings WHERE attendees LIKE 'QA-VIEWING-%' OR attendees LIKE 'QA-VDEL-%';
   DELETE FROM crm_comps    WHERE name LIKE 'QA-COMP%';
+  -- reimport-no-dup scenario cleans up after itself; sweep survivors of a
+  -- mid-scenario death (tenancy + tracker rows, then the QA property).
+  DELETE FROM tenancy_schedule_units WHERE unit_number = 'QA-REIMP-UNIT';
+  DELETE FROM available_units WHERE unit_name = 'QA-REIMP-UNIT';
+  DELETE FROM leasing_schedule_units WHERE unit_name = 'QA-REIMP-UNIT';
+  DELETE FROM crm_properties WHERE name LIKE 'QA-REIMP Prop%';
   DELETE FROM chat_messages WHERE thread_id IN (SELECT id FROM chat_threads WHERE title LIKE 'QA-CHATDEL%' OR title LIKE 'QA Thread%');
   DELETE FROM chat_threads WHERE title LIKE 'QA-CHATDEL%' OR title LIKE 'QA Thread%';
   DELETE FROM unit_offers WHERE company_name LIKE 'QA-AOFFER-%' OR company_name LIKE 'QA-ODEL-%' OR company_name LIKE 'QA-OFFER-%' OR company_name LIKE 'QA-RIVAL-%';

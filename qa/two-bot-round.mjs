@@ -794,6 +794,46 @@ async function victoriaRound(page, cross) {
     cross.offerStamp = `${cross.offerStamp}-EDITED`;
   });
 
+  // Tenancy re-import must not duplicate the tracker (r217): the schedule
+  // import's clearExisting and bulk-delete unlink the mirror rows first, so
+  // the fan-out re-adopts them by name instead of spawning a second listing
+  // per unit. Simulated on a throwaway QA property; everything cleaned up.
+  await step(page, p, 'agent-reimport-no-dup', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const mk = await fetch('/api/crm/properties', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA-REIMP Prop R${round}` }) });
+      if (!mk.ok) return { ok: false, why: `property POST ${mk.status}` };
+      const prop = await mk.json();
+      const out = { ok: true, propId: prop.id, trackerRows: -1 };
+      const cleanup = async () => {
+        const units = await (await fetch(`/api/available-units?propertyId=${prop.id}`, { headers: auth })).json().catch(() => []);
+        for (const u of (Array.isArray(units) ? units : [])) {
+          await fetch(`/api/available-units/${u.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+        }
+        await fetch('/api/tenancy-schedule/bulk-delete', { method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ propertyId: prop.id }) }).catch(() => {});
+        await fetch(`/api/crm/properties/${prop.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => {});
+      };
+      try {
+        const mkRow = () => fetch('/api/tenancy-schedule/unit', { method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ property_id: prop.id, unit_number: 'QA-REIMP-UNIT', status: 'Vacant' }) });
+        const first = await mkRow();
+        if (!first.ok) return { ...out, ok: false, why: `tenancy POST ${first.status}` };
+        const bd = await fetch('/api/tenancy-schedule/bulk-delete', { method: 'POST', credentials: 'include', headers: auth,
+          body: JSON.stringify({ propertyId: prop.id }) });
+        if (!bd.ok) return { ...out, ok: false, why: `bulk-delete ${bd.status}` };
+        const second = await mkRow();
+        if (!second.ok) return { ...out, ok: false, why: `tenancy re-POST ${second.status}` };
+        const units = await (await fetch(`/api/available-units?propertyId=${prop.id}`, { headers: auth })).json();
+        out.trackerRows = (Array.isArray(units) ? units : []).filter((u) => u.unitName === 'QA-REIMP-UNIT').length;
+        return out;
+      } finally { await cleanup(); }
+    }, ROUND);
+    if (!r.ok) throw new Error(`re-import simulation failed (${r.why})`);
+    if (r.trackerRows !== 1) throw new Error(`delete + re-import left ${r.trackerRows} tracker rows for one unit (want 1 — duplication regression)`);
+  });
+
   // Comps parity: a comp Victoria logs against the client's scheme must show
   // in the client's scheme-scoped comps table. Kept alive for mark's round;
   // swept by the QA-COMP purge.

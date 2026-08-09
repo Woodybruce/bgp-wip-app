@@ -4221,7 +4221,7 @@ export function PortfolioActivityBlock({ companyId }: { companyId: string }) {
       <Link href={`/properties/${propertyId}`} className="flex items-center gap-1.5 min-w-0 flex-1 hover:underline">
         <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
         <span className="text-xs font-medium truncate">{propertyName}</span>
-        {unitName && <span className="text-[10px] text-muted-foreground truncate hidden sm:inline">{unitName}</span>}
+        {unitName && <span className="text-[10px] text-muted-foreground truncate">{unitName}</span>}
       </Link>
       <span className="flex items-center gap-1 shrink-0 max-w-[55%] justify-end">{right}</span>
     </div>

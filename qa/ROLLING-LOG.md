@@ -55,12 +55,51 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r217 · 2026-08-09 · ROUND IN PROGRESS (provisional heartbeat)
-- Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
-  fresh DB + fresh build). Two-bot round 217: ALL scenarios ok, 1 logged
-  issue = the listed rocketreach-400 noise. 0 app bugs from the sweep.
-- Triage: nothing to triage beyond listed noise. Journey next: rotation #3
-  client mobile 390px (r216 was LIGHT → r217 FULL).
+### r217 · 2026-08-09 · FULL (rotation #3 client mobile 390px)
+- Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
+  fresh build before the fixes and rebuilt bundle after). Two-bot round 217:
+  ALL scenarios ok, 1 logged issue = listed rocketreach-400 noise.
+- Journey: Mark Warne @ 390px iPhone UA — "find who to contact at a brand
+  about my Bluewater lettings": UI login (Client/guest link; NOTE the generic
+  button:has-text("Sign in") locator hits "Sign in with Microsoft" first —
+  use role+exact name) → Portfolio tab → Brands tile → Brand Intelligence
+  (slice categories + search fine at 390px) → Starbucks profile
+  (MobileBrandView: contact name+role visible, covenant/compliance/signals
+  clean, r215 interactions parity holds on mobile — no 403s) → Deals tab.
+  Task achievable in 4 taps; all clean beyond noise.
+- Bugs fixed (2):
+  1. Tenancy schedule re-import DUPLICATED the Letting Tracker + leasing
+     boards — import-excel with clearExisting (tenancy-schedule.ts:780) and
+     bulk-delete (:1237) deleted tenancy_schedule_units wholesale but left
+     mirror rows' tenancy_unit_id dangling; unit-mirror's name-link adoption
+     only matches tenancy_unit_id IS NULL, so the fan-out inserted a second
+     listing per unit on every re-import. (This is exactly how the fixture
+     got its 75 orphaned/duplicate Bluewater tracker rows, created 2min
+     apart on 2026-08-03 — the mop-up tool /api/admin/dedupe-tracker existed
+     but the leak was never plugged.) Both sites now run the same unlink
+     cascade the single-row DELETE route already had (null mirror +
+     crm_deals tenancy_unit_id refs first). Verified via API probe: create
+     tenancy row → bulk-delete → recreate same name = 1 tracker row,
+     relinked, 0 dangling (was 2 rows pre-fix); probe property restored.
+  2. Mobile brand profile: PortfolioActivityBlock rows hid the unit name
+     below 640px (`hidden sm:inline` — desktop panel never renders that
+     narrow, so it ONLY fired on phones, where MobileBrandView reuses the
+     block) → two same-property suggested pitches rendered as identical
+     duplicate-looking rows. Unit name now always shown (truncates).
+     Verified at 390px: rows show "BWREST Portakabin Bluewater" labels.
+- FLAG for Woody: if prod Bluewater's tracker shows duplicate units (the
+  fixture was cut from a DB bearing this damage), staff POST
+  /api/admin/dedupe-tracker?apply=1 is the existing cleanup; the leak
+  itself is now plugged. Fixture keeps its 75 orphans (smoke green against
+  them; regenerating the fixture left for a dedicated decision).
+- Harness growth: two-bot +1 agent-reimport-no-dup (throwaway QA property:
+  tenancy create → bulk-delete → recreate = exactly 1 tracker row);
+  run-round.sh purge sweeps QA-REIMP leftovers.
+- Suggestions added: UX-NOTES #11 (pitch reason is hover-only — invisible
+  on touch), #12 (signals card shows near-duplicate headlines).
+- Bugs deferred: none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r217 had the journey → r218
+  may be LIGHT; then #4).
 
 ### r216 · 2026-08-09 · LIGHT (r215 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,

@@ -50,6 +50,18 @@ what happened · concrete suggested improvement.
    comps in the strip, or make the "11 AI" stat a link/hint ("11 leads
    awaiting review — ask an admin").
 
+11. 2026-08-09 · Landsec client · mobile brand profile (390px) · Mark checks
+   why BGP suggests pitching Starbucks at Bluewater — each Suggested Pitches
+   row carries a "reason" ("Unit suits their Restaurant format") but it only
+   exists as a hover title attribute, which doesn't exist on touch. Suggest:
+   show the reason as a sub-line on the row (or reveal on tap) on phones.
+
+12. 2026-08-09 · Landsec client · mobile brand profile Signals card · The
+   news list shows near-duplicate headlines (the "Musician sues Starbucks
+   for £2m" story appears twice from two sources within the visible six).
+   Works, but wastes half the card on a phone. Suggest: dedupe signals by
+   normalised headline similarity before display, keep the newest source.
+
 ## Confirmed / done
 Confirmed by Woody 2026-08-08 ("Do all 5"); built + visually verified same day:
 1. 2026-08-08 · Letting Tracker viewing/offer rows now have an edit pencil —

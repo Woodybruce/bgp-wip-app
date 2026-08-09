@@ -777,6 +777,13 @@ router.post("/api/tenancy-schedule/import-excel", requireAuth, upload.single("fi
 
     const clearExisting = req.body.clearExisting === "true";
     if (clearExisting) {
+      // Unlink projections first (same cascade as the single-row delete
+      // below) — otherwise the mirror rows keep a dangling tenancy_unit_id,
+      // the fan-out's name-link can't adopt them, and every re-import
+      // duplicates the Letting Tracker / leasing boards.
+      await pool.query(`UPDATE leasing_schedule_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
+      await pool.query(`UPDATE available_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
+      await pool.query(`UPDATE crm_deals SET tenancy_unit_id = NULL WHERE tenancy_unit_id IN (SELECT id FROM tenancy_schedule_units WHERE property_id = $1)`, [propertyId]);
       await pool.query("DELETE FROM tenancy_schedule_units WHERE property_id = $1", [propertyId]);
     }
 
@@ -1234,6 +1241,11 @@ router.post("/api/tenancy-schedule/bulk-delete", requireAuth, async (req, res) =
     const pool = await getPool();
     const { propertyId } = req.body;
     if (!propertyId) return res.status(400).json({ error: "propertyId required" });
+    // Same unlink cascade as the single-row delete — leaving dangling
+    // tenancy_unit_ids makes the next import duplicate the boards.
+    await pool.query(`UPDATE leasing_schedule_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
+    await pool.query(`UPDATE available_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
+    await pool.query(`UPDATE crm_deals SET tenancy_unit_id = NULL WHERE tenancy_unit_id IN (SELECT id FROM tenancy_schedule_units WHERE property_id = $1)`, [propertyId]);
     await pool.query("DELETE FROM tenancy_schedule_units WHERE property_id = $1", [propertyId]);
     res.json({ ok: true });
   } catch (e: any) {
