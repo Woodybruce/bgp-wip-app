@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+17. 2026-08-09 · BGP staff / mobile 390px · opened the Bluewater tenancy
+    schedule on a phone to glance at the board · the header controls stack
+    vertically at 390px (Letting Tracker link, units count, Search, Import,
+    Excel, Add, Re-sync (all), Columns — 8 controls) and together with the
+    KPI tiles push the first unit row ~2 screens down; Import/Re-sync are
+    rarely phone tasks · Suggested: collapse the rarer actions (Import,
+    Re-sync, Columns, Excel) into a "⋯ More" menu below `sm:`, keeping
+    Search + Add inline, so rows appear on the first screen.
+
 16. 2026-08-09 · Landsec client / desktop 1440px · reviewing portfolio health,
     saw "EXPIRING (6M): 8 leases expiring soon" on the dashboard and wanted to
     know WHICH leases · the KPI tile is not clickable (nothing happens) and no

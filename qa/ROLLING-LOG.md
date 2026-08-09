@@ -611,14 +611,38 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   the chat list at "/". Smoke tick skipped one 30-min slot (~11:00 UTC)
   while this batch built; suite was green immediately before and after.
 
-### r227 · 2026-08-09 · IN PROGRESS (FULL, rotation #4 staff mobile 390px)
-- Heartbeat. Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB
-  + fresh build). Two-bot round 227 running. Journey done: Victoria @ 390px
-  iPhone UA — landing swap verified staff-side ("/" = Dashboard, bottom nav
-  Dashboard|Messages|Mail|Deals|News), /messages + ChatBGP thread, Brand
-  Intelligence search → Starbucks profile (contacts/covenant/activity/signals
-  clean), Bluewater tenancy schedule (202 rows, no overflow). Only noise-list
-  issues so far (ai-briefing 503, favicon reset). Triage of two-bot pending.
+### r227 · 2026-08-09 · FULL (rotation #4 staff mobile 390px)
+- Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
+  fresh build before the fix and rebuilt bundle after). Two-bot round 227:
+  163 scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503 = intended no-key degradation). 0 raw 500/502s in the
+  whole round's server log.
+- Journey: Victoria @ 390px iPhone UA — "between viewings: check the new home
+  screen, Messages/ChatBGP, look up a brand for a pitch, glance at the
+  Bluewater tenancy board": login → "/" lands on Dashboard (LAYOUT SWAP
+  VERIFIED staff-side: bottom nav Dashboard|Messages|Mail|Deals|News,
+  Dashboard active at "/") → /messages (ChatBGP pinned + New Chat, clean) →
+  ChatBGP thread (suggestion chips, composer render) → Brand Intelligence
+  (category tiles + search at 390px) → Starbucks profile via search (Key
+  Contacts name+role, covenant checks, Portfolio Activity unit names = r217
+  fix holds, pitch reasons as sub-lines + deduped signals = UX batch 2 holds)
+  → Bluewater tenancy schedule (202 rows, KPI tiles, no h-overflow). No
+  h-overflow anywhere; only noise-list issues (ai-briefing 503, favicon
+  reset). Journey used API-token login (harness pattern) — login form itself
+  covered by smoke.
+- Bug fixed (1, micro): mobile dashboard greeting said "Good afternoon"
+  while ChatBGP said "Good evening" between 17:00-18:00 — mobile-home.tsx
+  used hour<18 for afternoon, mobile-app.tsx + today.tsx use hour<17.
+  Aligned to <17. Verified visually at 17:50: both now "Good evening".
+  tsc clean, rebuilt, smoke re-green.
+- Harness growth: none (client-side one-liner, no cheap API probe).
+- Bugs deferred: none. Suggestions added: UX-NOTES #17 (staff mobile tenancy
+  header = 8 stacked controls pushing rows ~2 screens down at 390px).
+- New flakes: none. Setup notes: fresh container needed the pg_hba trust fix
+  (r205); scratchpad scripts must import playwright via the repo's absolute
+  node_modules path (ESM resolves from the file's location, not cwd).
+- Next journey: rotation #1 staff desktop (r227 had the journey → r228 may
+  be LIGHT; then #1).
 
 ### r226 · 2026-08-09 · LIGHT (r225 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,

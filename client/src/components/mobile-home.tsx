@@ -205,7 +205,7 @@ export default function MobileHome() {
   });
   const approvalCount = Array.isArray(pendingApprovals) ? pendingApprovals.length : 0;
   const hour = new Date().getHours();
-  const greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const firstName = (user?.name || "").split(" ")[0] || "there";
   const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
 
