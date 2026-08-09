@@ -481,3 +481,20 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
 - Note for rounds: viewing/offer edit pencils are new — worth 1-2 harness
   scenarios in two-bot-round.mjs (edit persists, client scope 403 on foreign
   unit's viewing PATCH).
+
+## 2026-08-09 ~11:30 UTC — UX batch 2 (parent session, Woody-confirmed all 8)
+- Woody confirmed UX-NOTES #6-13 ("go ahead with them all"); built in the
+  parent session (commit dbade8e0), not a QA round.
+- Changes: mobile landing swapped — Dashboard/Portfolio now at "/", Messages
+  at /messages (bottom nav + BOTTOM_NAV_PATHS updated; supersedes 2026-08-05
+  Messages-home decision); client Deals subtitle notes +N tracker-only letting
+  deals; viewing/offer row controls got aria-labels/bigger targets/"No
+  company"; comps strip counts visible comps + "N AI leads awaiting review";
+  Suggested Pitches reasons render as sub-lines; brand Signals deduped by
+  normalised headline; Contacts zero-hit search hints at Brand Intelligence.
+- Verified: tsc + build clean, 12/12 Playwright checks (mobile 390px client +
+  staff landings, /messages nav, aria-labels, comps strip, signal dedupe).
+- Note for rounds: mobile journeys should now expect Dashboard/Portfolio at
+  "/" and Messages at /messages — update any harness scenario that assumed
+  the chat list at "/". Smoke tick skipped one 30-min slot (~11:00 UTC)
+  while this batch built; suite was green immediately before and after.

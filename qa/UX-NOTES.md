@@ -13,64 +13,23 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
-6. 2026-08-08 · Landsec client · mobile (iPhone shell) · Mark logs in to check
-   his lettings — the app lands on the **Messages** tab, which for him is an
-   empty "No conversations yet" screen. His portfolio is one tap away, but the
-   first impression is a blank page. Suggest: client logins land on the
-   Portfolio tab (or remember the last-used tab); Messages stays the default
-   for staff if that's where their day starts.
-
-7. 2026-08-08 · Landsec client · mobile Deals tab · Dashboard KPI says
-   "Active Deals 4", but the Deals board shows "2 deals — Landsec" (the other
-   two are tracker-linked deals, deliberately shown on the Letting Tracker
-   sub-tab instead). Both numbers are right, but the mismatch reads as data
-   loss on a phone. Suggest: a one-line hint on the Deals board when tracker
-   deals are excluded (e.g. "+2 letting deals on the Tracker tab"), or include
-   a linked chip.
-
-8. 2026-08-08 · BGP staff · mobile (iPhone shell) · Victoria logs in on her
-   phone to check her day — same as #6, the app lands on the empty Messages
-   tab ("No conversations yet"); her dashboard (billing, boards, My Tasks) is
-   one tap away. If #6 is built, apply the same landing logic to staff
-   (Dashboard tab feels like the natural staff home).
-
-9. 2026-08-08 · BGP staff · mobile Letting Tracker viewing dialog · Victoria
-   edits a viewing row — the new edit/delete controls are bare pencil/trash
-   icons with no aria-label or tooltip, small tap targets at 390px, and a
-   viewing saved without picking a company lists as "Unknown". Works fine,
-   but suggest: aria-labels + slightly larger touch targets on the row icons,
-   and "No company" (or prompt to pick one) instead of "Unknown".
-
-10. 2026-08-09 · BGP staff · desktop Comps page · Victoria opens Comps to pull
-   rent evidence — the stats strip says "12 comps · 0 verified · 11 AI ·
-   5 areas" but the table below shows only 1 row with all filters at
-   defaults. The other 11 are unverified AI-extracted leads that live on the
-   parked, admin-only Leads tab, so a non-admin sees a count they can never
-   reach. Works as designed, but suggest: either count only table-visible
-   comps in the strip, or make the "11 AI" stat a link/hint ("11 leads
-   awaiting review — ask an admin").
-
-11. 2026-08-09 · Landsec client · mobile brand profile (390px) · Mark checks
-   why BGP suggests pitching Starbucks at Bluewater — each Suggested Pitches
-   row carries a "reason" ("Unit suits their Restaurant format") but it only
-   exists as a hover title attribute, which doesn't exist on touch. Suggest:
-   show the reason as a sub-line on the row (or reveal on tap) on phones.
-
-13. 2026-08-09 · BGP staff · mobile CRM (390px) · Victoria taps the CRM tile
-   to find who to contact at a brand — the Contacts page only covers
-   landlords/agents/lenders, so searching "star" (Starbucks) returns
-   "0 results" with no pointer that brands live in Brand Intelligence.
-   Works as designed, but a dead end on a phone. Suggest: when a Contacts
-   search has 0 hits but matches brand names, show a "Looking for a brand?
-   Search Brand Intelligence →" hint line.
-
-12. 2026-08-09 · Landsec client · mobile brand profile Signals card · The
-   news list shows near-duplicate headlines (the "Musician sues Starbucks
-   for £2m" story appears twice from two sources within the visible six).
-   Works, but wastes half the card on a phone. Suggest: dedupe signals by
-   normalised headline similarity before display, keep the newest source.
-
 ## Confirmed / done
+Confirmed by Woody 2026-08-09 ("go ahead with them all"); built + visually
+verified same day (commit dbade8e0):
+6.+8. Mobile landing is now the Dashboard (staff) / Portfolio (client) at "/";
+   the unified Messages list moved to /messages (supersedes the 2026-08-05
+   Messages-home decision — landing on an empty chat list read as a blank app).
+7. Client Deals board subtitle now notes "+N letting deals on the Letting
+   Tracker" when tracker-linked deals are excluded from the CRM list.
+9. Viewing/offer row edit/delete controls: aria-labels + titles, larger tap
+   targets, and "No company" instead of "Unknown".
+10. Comps stats strip counts only table-visible comps; the AI stat now reads
+   "N AI leads awaiting review".
+11. Suggested Pitches rows show the reason as a sub-line (hover title kept).
+12. Brand Signals dedupe near-identical headlines (first/newest wins).
+13. Contacts zero-hit searches that match a company name show "Looking for a
+   brand? Search Brand Intelligence →".
+
 Confirmed by Woody 2026-08-08 ("Do all 5"); built + visually verified same day:
 1. 2026-08-08 · Letting Tracker viewing/offer rows now have an edit pencil —
    PATCH routes added for unit viewings + offers, form switches to edit mode.
