@@ -55,13 +55,36 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r235 · 2026-08-09 · ROUND IN PROGRESS (FULL — rotation #4 staff mobile 390px)
-- Provisional heartbeat. Regression: run-smoke.sh GREEN (42 checks,
-  0 failures, fresh DB + FRESH_BUILD=1). Two-bot round 235 in progress —
-  2 logged issues so far, both listed noise (rocketreach-400;
-  commentary-regen 503 = intended no-key degradation).
-- Journey planned: Victoria @ 390px iPhone UA — log an offer on a Bluewater
-  unit from the tracker, then news. Final entry replaces this one.
+### r235 · 2026-08-09 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (pg_hba trust fix needed, r205 note). Regression:
+  run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
+  Two-bot round 235: all scenarios ok, 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503 = intended no-key degradation).
+  0 raw 500/502/504 in the whole round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404/503).
+- Journey: Victoria @ 390px iPhone UA — "back from a viewing: a tenant made
+  a verbal offer on U124 Bluewater — log it, then scan news": login → "/"
+  Dashboard (layout swap holds staff-side) → Deals tab → Letting Tracker →
+  search U124 → Interest button → Offers dialog (renders clean at 390px) →
+  company picker popover-in-dialog works (r205 fix holds on mobile) → save →
+  toast + row lists (Starbucks/Pending/date/rent) → Interest (1) count
+  updates → reopen → Edit offer/Delete offer aria-labels present (UX batch 2
+  holds), edit prefills date+rent → News list (cards render; blank
+  thumbnails + external-link taps = no-network noise). No h-overflow on any
+  surface; 0 console errors; 0 net issues beyond noise. Probe offer deleted
+  from dev DB after verification. First journey coverage of the OFFER flow
+  on staff mobile.
+- NOT a bug: U124 search shows duplicate unit cards — the fixture's known
+  75 orphaned/duplicate Bluewater tracker rows (r217; leak plugged, fixture
+  regeneration deliberately deferred).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Harness growth:
+  none needed (offer add/edit already covered API-side by
+  agent-edit-viewing-offer, r209).
+- Suggestions added: UX-NOTES #22 (Add Offer date should default to today
+  like Add Viewing — fiddly native date picker on phones).
+- New flakes: none.
+- Next journey: rotation #1 staff desktop (r235 had the journey → r236 may
+  be LIGHT; then #1).
 
 ### r234 · 2026-08-09 · LIGHT (r233 had the journey)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:

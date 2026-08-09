@@ -13,6 +13,14 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+22. 2026-08-09 · BGP staff / mobile 390px · logged a verbal offer on a
+    Bluewater unit from the Letting Tracker's Interest button · the Add Offer
+    form's Date field starts empty (mm/dd/yyyy placeholder) while the Add
+    Viewing dialog right next to it defaults to today (confirmed UX #2) — on
+    a phone, picking today's date in the native picker is the fiddliest part
+    of an otherwise 30-second flow · Suggested: default the offer Date to
+    today (still editable), matching the viewing dialog.
+
 21. 2026-08-09 · Landsec client / mobile 390px · opened Property Intelligence
     → Map to look at their own estate · after the r233 fix the map loads
     without errors, but a client sees NO property pins at all — not even
