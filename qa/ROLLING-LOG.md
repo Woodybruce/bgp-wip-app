@@ -611,6 +611,12 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   the chat list at "/". Smoke tick skipped one 30-min slot (~11:00 UTC)
   while this batch built; suite was green immediately before and after.
 
+### r230 · 2026-08-09 · ROUND IN PROGRESS (heartbeat)
+- LIGHT round (r229 had the journey). Fresh container (pg_hba trust fix
+  needed, r205 note). Regression: run-smoke.sh GREEN (42 checks, 0 failures,
+  fresh DB + FRESH_BUILD=1). Two-bot round 230 in progress on the dev
+  server; triage to follow.
+
 ### r229 · 2026-08-09 · FULL (rotation #1 staff desktop)
 - Fresh container (pg_hba trust fix needed). Regression: run-smoke.sh GREEN
   ×2 (42 checks, 0 failures; fresh build before fixes and FRESH_BUILD=1
