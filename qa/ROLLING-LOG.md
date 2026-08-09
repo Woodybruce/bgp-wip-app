@@ -55,10 +55,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r222 · 2026-08-09 · ROUND IN PROGRESS (LIGHT — r221 had the journey)
+### r222 · 2026-08-09 · LIGHT (r221 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
-  fresh DB + fresh build). Two-bot round 222 in progress; triage to follow.
-- Provisional heartbeat entry — replaced by the final one at round end.
+  fresh DB + fresh build). Two-bot round 222: 53 scenarios ok, 2 logged
+  issues both listed noise (rocketreach-400 + intended bulk-assign {}
+  validation 400; commentary-regen 503 = intended no-key degradation).
+  0 raw 500s in the whole round's server log. 0 app bugs.
+- Layout-change check (Woody 2026-08-09 mobile landing swap): no harness
+  scenario assumed the chat list at "/" — the mobile-no-overflow steps
+  visit "/" and only assert overflow, landing-agnostic. Nothing to update.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #2 client desktop (r222 was LIGHT → r223 FULL).
 
 ### r221 · 2026-08-09 · FULL (rotation #1 staff desktop)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
