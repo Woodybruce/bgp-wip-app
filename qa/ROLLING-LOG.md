@@ -55,6 +55,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r231 · 2026-08-09 · ROUND IN PROGRESS (FULL, rotation #2 client desktop)
+- Fresh container (pg_hba trust fix needed, r205 note). Regression:
+  run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
+  Two-bot round 231: 164 scenarios ok, 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503 = intended no-key degradation).
+  0 raw 500/502/504 in the whole round's server log. Triage: 0 app bugs
+  from the sweep.
+- Journey (in progress): Mark Warne desktop 1440px — "prepare a board
+  pack": Image Studio as client (never journey-tested), deal detail
+  drill-in, documents.
+
 ### r224 · 2026-08-09 · LIGHT (r223 had the journey)
 - Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
   fresh DB + fresh build). Two-bot round 224: all scenarios ok (incl. the
