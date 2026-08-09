@@ -55,6 +55,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r232 · 2026-08-09 · LIGHT (r231 had the journey)
+- Fresh container (pg_hba trust fix needed, r205 note). Regression:
+  run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
+  Two-bot round 232: all scenarios ok (incl. the new r231
+  client-deal-detail-name-and-doc-gate), 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503 = intended no-key degradation).
+  0 raw 500/502/504 in the whole round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404/503). 0 app bugs. The r231 fixes hold.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r232 was LIGHT → r233 FULL).
+
 ### r231 · 2026-08-09 · FULL (rotation #2 client desktop)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:
   run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1 before the
