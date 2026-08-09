@@ -55,10 +55,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r224 · 2026-08-09 · ROUND IN PROGRESS (provisional)
-- Fresh container. LIGHT round (r223 had the journey). run-smoke.sh GREEN
-  (42 checks, 0 failures, fresh DB + fresh build). Two-bot round 224 running;
-  triage to follow.
+### r224 · 2026-08-09 · LIGHT (r223 had the journey)
+- Fresh container. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
+  fresh DB + fresh build). Two-bot round 224: all scenarios ok (incl. the
+  new r223 client-tenancy-staff-ops-guard), 2 logged issues both listed
+  noise (rocketreach-400; commentary-regen 503 = intended no-key
+  degradation). 0 raw 500/502s in the whole round's server log. 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Setup note: two-bot stdout buffers when piped — early [ok] lines can be
+  lost if the run is backgrounded; qa/logs/round-N.jsonl is the
+  authoritative issue record either way.
+- Next journey: rotation #3 client mobile 390px (r224 was LIGHT → r225 FULL).
 
 ### r223 · 2026-08-09 · FULL (rotation #2 client desktop)
 - Fresh container. Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
