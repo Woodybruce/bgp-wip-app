@@ -55,12 +55,22 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r242 · 2026-08-10 · LIGHT — ROUND IN PROGRESS (heartbeat)
-- Fresh container (pg_hba trust fix needed, r205 note; fixture restored as
-  postgres then table ownership ALTERed to bgp — restore-as-bgp now fails on
-  "must be able to SET ROLE postgres").
+### r242 · 2026-08-10 · LIGHT (r241 had the journey)
+- Fresh container (pg_hba trust fix needed, r205 note). Setup note: restoring
+  the fixture AS bgp now fails ("must be able to SET ROLE postgres" on an
+  ALTER ... OWNER) — restore as postgres into db bgp, then ALTER all
+  public tables+sequences owner to bgp (else auto-migrate index creation is
+  skipped as non-owner).
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB +
-  FRESH_BUILD=1). Two-bot round 242 running; triage to follow.
+  FRESH_BUILD=1). Two-bot round 242: exit 0, all scenarios ok (incl. the new
+  r241 client-deal-mobile-sidebar — first live run, green), 2 logged issues
+  both listed noise (rocketreach-400; commentary-regen 503 = intended no-key
+  degradation). 0 raw 500/502/504 in the whole round's server log (status
+  tally: only 2xx/3xx/expected 400/401/403/404/503; every 503 endpoint is a
+  listed AI/no-key route). The r241 deal-sidebar-mobile fix holds. 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r242 was LIGHT → r243 FULL).
 
 ### r241 · 2026-08-10 · FULL (rotation #3 client mobile 390px)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:
