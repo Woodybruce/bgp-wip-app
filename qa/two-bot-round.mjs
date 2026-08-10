@@ -3667,6 +3667,37 @@ async function markRound(page, cross) {
     }
   });
 
+  await step(page, p, 'client-deal-mobile-sidebar', async () => {
+    // r241: below md the deal-detail right sidebar is display:none — the
+    // Files/Linked Property/Comments/History sections must be re-rendered
+    // stacked in the main column, or phones lose them entirely.
+    const deal = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      return (Array.isArray(deals) ? deals : []).find((d) => d.name) || null;
+    });
+    if (!deal) return; // no visible deals — nothing to assert
+    const mob = await page.context().newPage();
+    try {
+      await mob.setViewportSize({ width: 390, height: 780 });
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mob.goto(`${BASE}/deals/${deal.id}`, nav);
+      await mob.waitForTimeout(3000);
+      if (!(await mob.locator('[data-testid="deal-sidebar-mobile"]').isVisible().catch(() => false))) {
+        throw new Error('mobile deal detail lost the sidebar sections (deal-sidebar-mobile not visible at 390px)');
+      }
+      if (!(await mob.locator('[data-testid="deal-sidebar-mobile"] [data-testid="toggle-sidebar-comments"]').count())) {
+        throw new Error('mobile deal sidebar block is missing the Comments section');
+      }
+    } finally {
+      await mob.close();
+    }
+  });
+
   await step(page, p, 'client-mobile-no-overflow', async () => {
     const mob = await page.context().newPage();
     try {

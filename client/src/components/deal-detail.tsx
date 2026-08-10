@@ -484,6 +484,94 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     { label: "Last Interaction", value: deal.lastInteraction },
   ];
 
+  // Files / linked records / comments / history. Rendered in the right
+  // sidebar on ≥md screens and stacked under the main column on mobile —
+  // the sidebar is display:none below md, which used to make these
+  // sections unreachable on phones.
+  const sidebarPanels = (
+    <>
+      <SidebarSection open={sidebarSections.files} onToggle={() => toggleSidebar("files")} icon={FileText} title="Files" testId="toggle-sidebar-files">
+        <div className="space-y-2" data-testid="deal-files-section">
+          {/* The deal's files live in its property's folder — render the
+              same unified Files panel (browse / upload / new folder /
+              rename / delete / share) instead of just a link. */}
+          {linkedProperty && !isClientDeal && (
+            <PropertyFoldersPanel
+              propertyName={linkedProperty.name}
+              folderTeams={(linkedProperty as any).folderTeams}
+              sharepointFolderUrl={(linkedProperty as any).sharepointFolderUrl}
+            />
+          )}
+          {isClientDeal && (
+            <p className="text-xs text-muted-foreground italic">Documents are managed by the BGP team.</p>
+          )}
+          {!linkedProperty && !isClientDeal && (
+            <p className="text-xs text-muted-foreground italic">Link this deal to a property to see its folders.</p>
+          )}
+        </div>
+      </SidebarSection>
+
+      {linkedProperty && (
+        <SidebarSection open={sidebarSections.property} onToggle={() => toggleSidebar("property")} icon={Building2} title="Linked Property" testId="toggle-sidebar-property">
+          <Link href={`/properties/${linkedProperty.id}`}>
+            <div className="p-2 rounded-md border hover-elevate cursor-pointer" data-testid="linked-property-panel">
+              <p className="text-xs font-medium">{linkedProperty.name}</p>
+              {linkedProperty.status && (
+                <Badge variant="outline" className="mt-1 text-[9px]">{linkedProperty.status}</Badge>
+              )}
+            </div>
+          </Link>
+        </SidebarSection>
+      )}
+
+      {linkedContacts.length > 0 && (
+        <SidebarSection open={sidebarSections.contacts} onToggle={() => toggleSidebar("contacts")} icon={Users} title={`Linked Contacts (${linkedContacts.length})`} testId="toggle-sidebar-contacts">
+          <div className="space-y-1.5" data-testid="linked-contacts-panel">
+            {linkedContacts.map((contact) => (
+              <Link key={contact.id} href={`/contacts/${contact.id}`}>
+                <div className="p-2 rounded-md border hover-elevate cursor-pointer">
+                  <p className="text-xs font-medium">{contact.name}</p>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {contact.role && (
+                      <span className="text-[9px] text-muted-foreground">{contact.role}</span>
+                    )}
+                    {contact.companyName && (
+                      <Badge variant="outline" className="text-[9px]">{contact.companyName}</Badge>
+                    )}
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </SidebarSection>
+      )}
+
+      <SidebarSection open={sidebarSections.comments} onToggle={() => toggleSidebar("comments")} icon={MessageSquare} title="Comments" testId="toggle-sidebar-comments">
+        <InlineText
+          value={deal.comments}
+          multiline
+          placeholder="Click to add a comment…"
+          className="text-xs whitespace-pre-wrap text-muted-foreground w-full"
+          onSave={async (val) => {
+            await apiRequest("PUT", `/api/crm/deals/${id}`, { comments: val || null });
+            invalidateDealCaches(id);
+          }}
+        />
+      </SidebarSection>
+
+      <SidebarSection open={sidebarSections.history ?? true} onToggle={() => toggleSidebar("history")} icon={History} title="History & activity" testId="toggle-sidebar-history">
+        <div className="space-y-2">
+          <CollapsibleCard open={mainSections.timeline} onToggle={() => toggleMain("timeline")} icon={CalendarIcon} title="Timeline" testId="toggle-deal-timeline">
+            <DealTimeline dealId={id} />
+          </CollapsibleCard>
+          <CollapsibleCard open={mainSections.audit} onToggle={() => toggleMain("audit")} icon={History} title="Audit log" testId="toggle-deal-audit">
+            <DealAuditLog dealId={id} />
+          </CollapsibleCard>
+        </div>
+      </SidebarSection>
+    </>
+  );
+
   return (
     <div className="h-[calc(100vh-48px)] flex flex-col" data-testid={`deal-detail-${id}`}>
       <div className="px-4 sm:px-6 pt-4 sm:pt-5">
@@ -1008,6 +1096,13 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </DialogContent>
       </Dialog>
 
+      {/* Below md the right sidebar is hidden — surface the same sections
+          stacked here so files/contacts/comments/history stay reachable
+          on phones. */}
+      <div className="md:hidden border rounded-md mt-4" data-testid="deal-sidebar-mobile">
+        {sidebarPanels}
+      </div>
+
       {!isClientDeal && (
       <div className="flex justify-start mt-6 pt-3 border-t">
         <Button variant="outline" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteOpen(true)} data-testid="button-delete-deal">
@@ -1046,86 +1141,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             <div className="px-4 pt-4 pb-3 border-b">
               <h3 className="text-sm font-bold leading-tight truncate" data-testid="sidebar-deal-name">{dealDisplayName}</h3>
             </div>
-
-            <SidebarSection open={sidebarSections.files} onToggle={() => toggleSidebar("files")} icon={FileText} title="Files" testId="toggle-sidebar-files">
-              <div className="space-y-2" data-testid="deal-files-section">
-                {/* The deal's files live in its property's folder — render the
-                    same unified Files panel (browse / upload / new folder /
-                    rename / delete / share) instead of just a link. */}
-                {linkedProperty && !isClientDeal && (
-                  <PropertyFoldersPanel
-                    propertyName={linkedProperty.name}
-                    folderTeams={(linkedProperty as any).folderTeams}
-                    sharepointFolderUrl={(linkedProperty as any).sharepointFolderUrl}
-                  />
-                )}
-                {isClientDeal && (
-                  <p className="text-xs text-muted-foreground italic">Documents are managed by the BGP team.</p>
-                )}
-                {!linkedProperty && !isClientDeal && (
-                  <p className="text-xs text-muted-foreground italic">Link this deal to a property to see its folders.</p>
-                )}
-              </div>
-            </SidebarSection>
-
-            {linkedProperty && (
-              <SidebarSection open={sidebarSections.property} onToggle={() => toggleSidebar("property")} icon={Building2} title="Linked Property" testId="toggle-sidebar-property">
-                <Link href={`/properties/${linkedProperty.id}`}>
-                  <div className="p-2 rounded-md border hover-elevate cursor-pointer" data-testid="linked-property-panel">
-                    <p className="text-xs font-medium">{linkedProperty.name}</p>
-                    {linkedProperty.status && (
-                      <Badge variant="outline" className="mt-1 text-[9px]">{linkedProperty.status}</Badge>
-                    )}
-                  </div>
-                </Link>
-              </SidebarSection>
-            )}
-
-            {linkedContacts.length > 0 && (
-              <SidebarSection open={sidebarSections.contacts} onToggle={() => toggleSidebar("contacts")} icon={Users} title={`Linked Contacts (${linkedContacts.length})`} testId="toggle-sidebar-contacts">
-                <div className="space-y-1.5" data-testid="linked-contacts-panel">
-                  {linkedContacts.map((contact) => (
-                    <Link key={contact.id} href={`/contacts/${contact.id}`}>
-                      <div className="p-2 rounded-md border hover-elevate cursor-pointer">
-                        <p className="text-xs font-medium">{contact.name}</p>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {contact.role && (
-                            <span className="text-[9px] text-muted-foreground">{contact.role}</span>
-                          )}
-                          {contact.companyName && (
-                            <Badge variant="outline" className="text-[9px]">{contact.companyName}</Badge>
-                          )}
-                        </div>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              </SidebarSection>
-            )}
-
-            <SidebarSection open={sidebarSections.comments} onToggle={() => toggleSidebar("comments")} icon={MessageSquare} title="Comments" testId="toggle-sidebar-comments">
-              <InlineText
-                value={deal.comments}
-                multiline
-                placeholder="Click to add a comment…"
-                className="text-xs whitespace-pre-wrap text-muted-foreground w-full"
-                onSave={async (val) => {
-                  await apiRequest("PUT", `/api/crm/deals/${id}`, { comments: val || null });
-                  invalidateDealCaches(id);
-                }}
-              />
-            </SidebarSection>
-
-            <SidebarSection open={sidebarSections.history ?? true} onToggle={() => toggleSidebar("history")} icon={History} title="History & activity" testId="toggle-sidebar-history">
-              <div className="space-y-2">
-                <CollapsibleCard open={mainSections.timeline} onToggle={() => toggleMain("timeline")} icon={CalendarIcon} title="Timeline" testId="toggle-deal-timeline">
-                  <DealTimeline dealId={id} />
-                </CollapsibleCard>
-                <CollapsibleCard open={mainSections.audit} onToggle={() => toggleMain("audit")} icon={History} title="Audit log" testId="toggle-deal-audit">
-                  <DealAuditLog dealId={id} />
-                </CollapsibleCard>
-              </div>
-            </SidebarSection>
+            {sidebarPanels}
           </ScrollArea>
         </div>
       </div>

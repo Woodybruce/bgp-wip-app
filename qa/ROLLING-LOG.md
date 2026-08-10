@@ -55,11 +55,42 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r241 · 2026-08-10 · ROUND IN PROGRESS (FULL — rotation #3 client mobile 390px)
+### r241 · 2026-08-10 · FULL (rotation #3 client mobile 390px)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:
-  run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
-  Two-bot round 241 running; journey (Mark Warne mobile 390px) next.
-  Triage list so far: none — smoke fully green.
+  run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1 before the
+  fix and rebuilt bundle after). Two-bot round 241: all scenarios ok,
+  2 logged issues both listed noise (rocketreach-400; commentary-regen 503
+  = intended no-key degradation). 0 raw 500/502/504 in the whole round's
+  server log (status tally: only 2xx/3xx/expected 400/401/403/404/503).
+- Journey: Mark Warne @ 390px iPhone UA — "how are my Bluewater lettings
+  progressing, and who do I chase?": login → "/" Portfolio home (layout
+  swap holds) → Deals tab (2 deals + tracker subtitle) → Gail's deal
+  drill-in (h1 = deal name, r231 fix holds on MOBILE — first coverage) →
+  tracker → Interest opens the Offers dialog clean at 390px → /messages
+  (ChatBGP pinned). 0 console errors, 0 net issues beyond noise,
+  no h-overflow anywhere.
+- Bug fixed (1): deal detail below md LOST the entire right sidebar —
+  Files, Linked Property, Linked Contacts, Comments, Timeline/Audit are
+  all inside a `hidden md:flex` panel with no mobile fallback, so phones
+  (client AND staff) couldn't read or add deal comments, see linked
+  contacts, or open history at all (r217 hidden-on-mobile class; also the
+  journey's "who to chase" dead-ended). Sections extracted to a shared
+  sidebarPanels fragment, desktop sidebar unchanged, new md:hidden stacked
+  block (testid deal-sidebar-mobile) at the bottom of the main column
+  (client/src/components/deal-detail.tsx). Verified visually both ways:
+  Mark 390px shows Files/Linked Property/Comments/History stacked,
+  0 h-overflow; Victoria 1440px sidebar unchanged, mobile block hidden.
+  tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 client-deal-mobile-sidebar (390px deal detail
+  must show deal-sidebar-mobile with the Comments section). Locators
+  verified manually at both widths; runs from round 242 (the 241 process
+  loaded the pre-edit file).
+- Bugs deferred: none. Suggestions added: UX-NOTES #25 (client deal
+  detail names no BGP person to chase — agent/fee card is rightly
+  staff-only, so a stalled deal has no human next step).
+- New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r241 had the journey →
+  r242 may be LIGHT; then #4).
 
 ### r240 · 2026-08-10 · LIGHT (r239 had the journey)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:

@@ -13,6 +13,16 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+25. 2026-08-10 · Landsec client / mobile 390px · opened a Bluewater letting
+    deal to find WHO at BGP to chase about progress · the deal page names no
+    BGP person anywhere for a client — the agent/fee-allocation card is
+    staff-only (rightly), Parties only holds landlord/tenant slots, and the
+    fixture deal had no linked contacts — so "who do I chase?" ends in the
+    generic Messages tab · Suggested: a small client-visible "Your BGP
+    contact" line on deal detail (name + role from the deal's internal
+    agent or the company's bgp_contact_user_ids, no fees), so the natural
+    next step from a stalled deal is a person, not a blank.
+
 24. 2026-08-10 · Landsec client / desktop 1440px · clicked a unit's name on
     the Letting Tracker board expecting to open/expand the unit · the name
     turned into an inline rename input right away (clients can edit units on
