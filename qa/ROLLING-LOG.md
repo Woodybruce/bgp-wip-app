@@ -59,6 +59,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r252 · 2026-08-10 · LIGHT — ROUND IN PROGRESS (r251 had the journey)
+- Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +
+  ALTER owners + schema grant per r249 note). Regression: run-smoke.sh
+  GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1). Two-bot round
+  252: exit 0, all scenarios ok, 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503 = intended no-key degradation).
+  0 raw 500/502/504 in the round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404/503; every 503 endpoint is a listed
+  AI/no-key route + os/sites noise). Triage: nothing to triage beyond
+  the two noise entries. Final entry to follow.
+
 ### r251 · 2026-08-10 · FULL (rotation #4 staff mobile 390px)
 - Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +
   ALTER owners + schema grant per r249 note). Regression: run-smoke.sh
