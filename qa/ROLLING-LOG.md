@@ -55,6 +55,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r237 · 2026-08-10 · FULL round in progress (rotation #1 staff desktop)
+- PROVISIONAL heartbeat entry. Fresh container (pg_hba trust fix needed,
+  r205 note). Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1). Two-bot round 237 in progress (first attempt timed
+  out on the initial page.goto — dev server cold + 13s-slow DB health check
+  at boot; warmed the module graph and re-ran). Journey next: Victoria
+  desktop — Pathway board + deal drill-in + company contacts.
+
 ### r236 · 2026-08-09 · LIGHT (r235 had the journey)
 - Fresh container (pg_hba trust fix needed, r205 note; mid-round worker
   restart — postgres needed a second `service postgresql start`, no other
