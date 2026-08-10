@@ -55,19 +55,42 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r245 · 2026-08-10 · ROUND IN PROGRESS (FULL, rotation #1 staff desktop)
-- Provisional heartbeat. Regression: run-smoke.sh GREEN (42 checks, 0
-  failures, fresh DB + FRESH_BUILD=1). Two-bot round 245 still running
-  (all [ok] so far). Journey underway: Victoria desktop 1440px —
-  "new operator requirement: log it, scan deals board, check Bluewater
-  tenancy for a fit, sanity-check comps". So far: requirements page +
-  Create Leasing Requirement dialog work end-to-end (new-company path,
-  row appears, toast); client cross-check clean (Mark does NOT see the
-  staff requirement); deals WIP report, tenancy full board (200 units),
-  comps all render; 0 non-noise console/net errors.
-- Triage so far: comps "11 AI leads awaiting review" stat is a dead-end
-  for non-admin staff (Leads tab deliberately parked admin-only) — UX
-  note, not a bug.
+### r245 · 2026-08-10 · FULL (rotation #1 staff desktop)
+- Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +
+  ALTER owners per r242 note). Regression: run-smoke.sh GREEN (42 checks,
+  0 failures, fresh DB + FRESH_BUILD=1). Two-bot round 245: exit 0, all
+  scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503 = intended no-key degradation). 0 raw 500/502/504
+  in the whole round's server log (only Error lines = ai-briefing no-key
+  SDK + Azure-creds noise).
+- Journey: Victoria desktop 1440px — "a new operator requirement came in:
+  log it, scan the deals board, check Bluewater tenancy for a fit,
+  sanity-check comps" (first journey coverage of the staff REQUIREMENTS
+  add flow and staff Comps): login → /requirements (renders, staff sync
+  toolbar present) → Create Leasing Requirement dialog end-to-end via the
+  "+ Add as a new company" path ("Requirement created" toast, row lists,
+  KPI increments) → row drill-in lands on the auto-created company brand
+  profile (r237 enrich-toast fix holds: house "AI service is not
+  configured" copy, not the raw SDK error) → /deals WIP report (5 rows,
+  KPIs, filters) → /tenancy-schedule/Bluewater (200 units, Import/Add/
+  Excel/Columns present for staff) → /comps (renders; empty fixture state).
+  Cross-check: Mark (client desktop) sees 0 requirements — the staff
+  requirement is correctly invisible (clients get PIPnet + own-company
+  only) and staff-only sync buttons hidden. 0 non-noise console/net
+  errors, 0 page errors, 0 h-overflow. Probe requirement + company
+  deleted post-journey.
+- NOT bugs (triaged): comps "11 AI leads awaiting review" stat with no
+  path to review = deliberate parking (Leads tab is admin-only via
+  /admin/comps-leads → /comps?tab=leads; comment at comps.tsx:1894) —
+  logged as UX #26 instead. QA-REQ-R245 / QA-COMP R245 rows appearing
+  mid-journey = the concurrent two-bot's own probes (purged by
+  run-round.sh next round).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: UX-NOTES #26 (comps AI-leads stat is a dead-end for non-admin
+  staff). New flakes: none. Harness growth: none needed (requirement
+  create/scope already covered API-side).
+- Next journey: rotation #2 client desktop (r245 had the journey → r246
+  may be LIGHT; then #2).
 
 ### r244 · 2026-08-10 · LIGHT (r243 had the journey)
 - Fresh container (pg_hba trust fix needed, r205 note; restore-as-postgres +
