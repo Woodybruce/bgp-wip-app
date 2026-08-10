@@ -55,6 +55,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r249 · 2026-08-10 · ROUND IN PROGRESS (provisional)
+- FULL round planned (r248 was LIGHT): rotation #3 client mobile 390px.
+- Setup: fresh container; pg_hba trust fix; restore-as-postgres + ALTER
+  owners; ALSO needed `grant all on schema public to bgp` + alter schema
+  owner (bgp role couldn't CREATE — auto-migrate skipped kyc/deal-audit
+  tables until granted).
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB +
+  FRESH_BUILD=1). Two-bot round 249 in progress. Journey next: Mark @
+  390px — Bluewater tenancy vacancies + asking rents, quick-add task.
+
 ### r248 · 2026-08-10 · LIGHT (r247 had the journey)
 - Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +
   ALTER owners per r242 note). Regression: run-smoke.sh GREEN (42 checks,
