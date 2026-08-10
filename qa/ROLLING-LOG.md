@@ -55,6 +55,12 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r241 · 2026-08-10 · ROUND IN PROGRESS (FULL — rotation #3 client mobile 390px)
+- Fresh container (pg_hba trust fix needed, r205 note). Regression:
+  run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
+  Two-bot round 241 running; journey (Mark Warne mobile 390px) next.
+  Triage list so far: none — smoke fully green.
+
 ### r240 · 2026-08-10 · LIGHT (r239 had the journey)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:
   run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
