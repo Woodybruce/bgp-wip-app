@@ -59,16 +59,41 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r251 · 2026-08-10 · FULL round IN PROGRESS (rotation #4 staff mobile 390px)
-- Provisional heartbeat 22:48 UTC. Fresh container (pg_hba trust fix; restore-
-  as-postgres + ALTER owners + schema grant per r249 note). Regression:
-  run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
-  Journey underway: Victoria @ 390px — requirement create via dialog (clean:
-  toast, KPI chips, row card) + staff tenancy full board (200 units, staff
-  Import/Add/Excel/Columns/Re-sync all present, search works, table scrolls
-  in own container, 0 h-overflow, 0 non-noise errors). Two-bot pending.
-- Triage so far: only listed noise (no-key 503s). One 404 self-inflicted
-  (/tenancy-schedule/Bluewater — route needs the property ID, tester error).
+### r251 · 2026-08-10 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +
+  ALTER owners + schema grant per r249 note). Regression: run-smoke.sh
+  GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1). Two-bot round
+  251: exit 0, all scenarios ok, 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503 = intended no-key degradation).
+  0 raw 500/502/504 in the whole round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404/503; every 503 endpoint is a listed
+  AI/no-key route + os/sites noise).
+- Journey: Victoria @ 390px iPhone UA — "a new operator requirement came
+  in by phone: log it, then check the Bluewater tenancy board for a fit"
+  (FIRST journey coverage of the REQUIREMENTS create flow AND the staff
+  tenancy full board at 390px): login → /requirements (renders, Leasing/
+  Investment tabs, KPI chips) → Create Leasing Requirement dialog
+  end-to-end via manual-name path ("Requirement created" toast, row card
+  lists, group + All chips increment, persisted across reload) →
+  /tenancy-schedule/:bluewaterId staff board (200 units, staff Import/
+  Add/Excel/Re-sync/Columns all present at 390px, KPI tiles, MSU3 search
+  filters to 2 rows, wide table scrolls in its own container — 0 page
+  h-overflow). 0 non-noise console/net errors, 0 page errors. Probe
+  requirement deleted post-journey.
+- NOT bugs (triaged): GET /api/crm/properties/Bluewater 404 mid-journey =
+  tester error (route wants the property ID, not the name); repeating
+  /api/client/sharepoint/root 404s = concurrent two-bot polling, listed
+  noise (IGNORED_RESPONSES); tenancy "151 Available" vs "VACANT 76" =
+  known fixture orphans (r217/r249).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: UX-NOTES #29 (mobile requirement cards drop the desktop Match/
+  fits/Discuss actions — phone user sees "0/1 fit your available units"
+  with no way to open the matches). New flakes: none. Harness growth:
+  none needed (requirement create/scope covered API-side by
+  agent-create-requirement/agent-edit-requirement; mobile-no-overflow
+  covers the shell).
+- Next journey: rotation #1 staff desktop (r251 had the journey → r252
+  may be LIGHT; then #1).
 
 ### r250 · 2026-08-10 · LIGHT (r249 had the journey)
 - Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +
