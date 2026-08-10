@@ -13,6 +13,14 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+23. 2026-08-10 · BGP staff / desktop 1440px · opened the Property Pathway
+    board to prep a Bluewater pitch · the board can only START a run via
+    ChatBGP ("ask it to start a pathway for 12 Haymarket") — an empty board
+    offers no direct "New investigation" button, so the natural next step
+    is a context switch to a chat window and a typed sentence · Suggested:
+    a "Start investigation" button on the Pathway board itself (address
+    picker → kicks the same run ChatBGP would).
+
 22. 2026-08-09 · BGP staff / mobile 390px · logged a verbal offer on a
     Bluewater unit from the Letting Tracker's Interest button · the Add Offer
     form's Date field starts empty (mm/dd/yyyy placeholder) while the Add

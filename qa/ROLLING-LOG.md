@@ -55,13 +55,53 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r237 · 2026-08-10 · FULL round in progress (rotation #1 staff desktop)
-- PROVISIONAL heartbeat entry. Fresh container (pg_hba trust fix needed,
-  r205 note). Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1). Two-bot round 237 in progress (first attempt timed
-  out on the initial page.goto — dev server cold + 13s-slow DB health check
-  at boot; warmed the module graph and re-ran). Journey next: Victoria
-  desktop — Pathway board + deal drill-in + company contacts.
+### r237 · 2026-08-10 · FULL (rotation #1 staff desktop)
+- Fresh container (pg_hba trust fix needed, r205 note). Regression:
+  run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1 before the
+  fixes and rebuilt bundle after). Two-bot round 237: 164 scenarios ok,
+  4 logged issues — 2 listed noise (rocketreach-400; commentary-regen 503),
+  2 flow-failures (client-add-contact networkidle timeout;
+  client-activity-summary board "missing") that fired while the journey +
+  tsc ran concurrently on the same box — BOTH re-verified standalone
+  after the round: add-contact OK, activity-summary testid PRESENT. Load
+  flakes, not app bugs. 1 raw 500 in the whole round's server log = bug 1
+  below (fixed).
+- Journey: Victoria desktop 1440px — "prep the Landsec quarterly: Pathway
+  board for Bluewater, drill into the Gail's letting deal, leave a note,
+  find Landsec's key contact, glance at Covenant Watch": login → dashboard
+  → /property-pathway (FIRST journey visit: empty-state renders with
+  ChatBGP guidance copy — runs only start via ChatBGP, fixture has none;
+  dead-end logged as UX #23) → deal detail (staff h1 = deal name, r231 fix
+  holds staff-side; comments live click-to-reveal in the sidebar) →
+  Landsec company profile (Key Contacts present, Chat/Enrich/AI-take
+  render) → Covenant Watch (renders; screenshot caught "Viewing as
+  Landsec" mid-round = the concurrent two-bot team-board scenario POSTing
+  active-team on the shared Victoria user, not a bug).
+- Bugs fixed (2):
+  1. GET /api/aml/deal/:id/mlr-scope 500'd on EVERY staff deal-detail open —
+     the "core columns" SELECT read monthly_rent/annual_rent, which don't
+     exist in crm_deals (real column: rent_pa). MLR 2017 SCOPE panel showed
+     no suggestion + a raw 500 each visit. Now SELECTs rent_pa and feeds it
+     to assessMlrScope as annualRent (server/aml-compliance.ts). Verified
+     API (200 + in_scope suggestion, was 500) and visually (panel shows
+     "Suggested: in scope — Standard CDD…"; 0 5xx on page load).
+  2. Brand auto-enrich surfaced the raw Anthropic SDK error to users — the
+     red "AI enrichment skipped" toast printed "Could not resolve
+     authentication method. Expected either apiKey or authToken…" on every
+     staff brand-profile open with blank AI fields (auto-enrich fires on
+     open). Reason now maps key/auth errors to the house "AI service is
+     not configured" copy, other failures to "try again shortly"
+     (server/brand-enrichment.ts, r214/r218 class). Verified via API.
+- Harness growth: two-bot +1 staff-deal-mlr-scope (route must 200 with a
+  suggestion payload, never 500 — guards the schema-drift class).
+- Bugs deferred: none. Suggestions added: UX-NOTES #23 (Pathway board has
+  no "start investigation" entry point of its own — ChatBGP-only).
+- New flakes: a freshly (re)started dev server's FIRST browser page load
+  can exceed playwright's 30s goto timeout (cold Vite transform + slow
+  first DB pool checkout — killed one two-bot launch and one probe script).
+  Warm it with a single browser goto before starting a harness run.
+- Next journey: rotation #2 client desktop (r237 had the journey → r238
+  may be LIGHT; then #2).
 
 ### r236 · 2026-08-09 · LIGHT (r235 had the journey)
 - Fresh container (pg_hba trust fix needed, r205 note; mid-round worker

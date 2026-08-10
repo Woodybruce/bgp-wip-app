@@ -137,7 +137,10 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
     }
   }
   if (!aiOut && lastErr) {
-    return { updated: [], skipped: [], reason: `AI call failed: ${lastErr?.message || lastErr}` };
+    const reason = /api ?key|authentication|authToken/i.test(lastErr?.message || "")
+      ? "AI enrichment unavailable — AI service is not configured"
+      : "AI enrichment failed — try again shortly";
+    return { updated: [], skipped: [], reason };
   }
 
   if (!aiOut || typeof aiOut !== "object") {

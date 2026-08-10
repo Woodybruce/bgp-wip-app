@@ -1317,7 +1317,7 @@ router.get("/api/aml/deal/:id/mlr-scope", requireAuth, async (req: Request, res:
     // may be missing on some DBs, so read them separately and degrade
     // gracefully rather than 500-ing the whole endpoint.
     const r = await pool.query(
-      `SELECT id, name, deal_type, fee, monthly_rent, annual_rent FROM crm_deals WHERE id = $1`,
+      `SELECT id, name, deal_type, fee, rent_pa FROM crm_deals WHERE id = $1`,
       [req.params.id],
     );
     const d = r.rows[0];
@@ -1341,8 +1341,7 @@ router.get("/api/aml/deal/:id/mlr-scope", requireAuth, async (req: Request, res:
     const suggestion = assessMlrScope({
       dealType: d.deal_type,
       fee: d.fee,
-      monthlyRent: d.monthly_rent,
-      annualRent: d.annual_rent,
+      annualRent: d.rent_pa,
     });
     res.json({ current, suggestion });
   } catch (err: any) {

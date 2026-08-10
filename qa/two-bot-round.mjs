@@ -490,6 +490,24 @@ async function victoriaRound(page, cross) {
     if (r.restoredStatus !== r.original) throw new Error(`fixture deal stuck in UO (restore failed: ${r.restoredStatus})`);
   });
 
+  // MLR scope suggestion on deal detail: must 200 with a suggestion, never
+  // 500 (r237: the route SELECTed non-existent monthly_rent/annual_rent
+  // columns, so every staff deal-detail open fired a raw 500).
+  await step(page, p, 'staff-deal-mlr-scope', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      const deal = (Array.isArray(deals) ? deals : []).find((d) => /bluewater/i.test(d.name || ''));
+      if (!deal) return { skip: true };
+      const res = await fetch(`/api/aml/deal/${deal.id}/mlr-scope`, { headers: auth });
+      const body = res.ok ? await res.json().catch(() => null) : null;
+      return { skip: false, status: res.status, hasSuggestion: !!body?.suggestion?.suggestedScope };
+    });
+    if (r.skip) return;
+    if (r.status !== 200) throw new Error(`mlr-scope GET ${r.status} (must be 200, never 500)`);
+    if (!r.hasSuggestion) throw new Error('mlr-scope 200 but no suggestion payload');
+  });
+
   // Task assignment (terminal, 2026-08-03): a task assigned to another staff
   // member lands on the ASSIGNEE's list. Victoria assigns to Woody; the
   // woody round verifies receipt. Swept by the QA-PROBE task purge.
