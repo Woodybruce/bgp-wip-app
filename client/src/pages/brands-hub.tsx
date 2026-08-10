@@ -1407,6 +1407,19 @@ function ClientAddBrandButton() {
     } finally { setAddingId(null); }
   };
 
+  const remove = async (id: string) => {
+    setAddingId(id);
+    try {
+      await apiRequest("DELETE", `/api/client/crm/add-brand/${id}`);
+      setResults(prev => prev.map(b => b.id === id ? { ...b, added: false } : b));
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/brands/hub"] });
+      toast({ title: "Brand removed from your CRM" });
+    } catch (e: any) {
+      toast({ title: "Couldn't remove brand", description: e.message, variant: "destructive" });
+    } finally { setAddingId(null); }
+  };
+
   return (
     <>
       <Button size="sm" variant="outline" onClick={() => setOpen(true)} data-testid="client-add-brand">
@@ -1432,8 +1445,15 @@ function ClientAddBrandButton() {
                     <div className="text-sm font-medium truncate">{b.name}</div>
                     <div className="text-[10px] text-muted-foreground">{(b.companyType || "").replace(/^Tenant - /, "")}{b.inSlice ? " · already in your CRM" : ""}</div>
                   </div>
-                  {b.added || b.inSlice ? (
-                    <Badge variant="outline" className="text-[10px] gap-1 shrink-0"><Check className="w-3 h-3" /> {b.inSlice ? "In CRM" : "Added"}</Badge>
+                  {b.inSlice ? (
+                    <Badge variant="outline" className="text-[10px] gap-1 shrink-0"><Check className="w-3 h-3" /> In CRM</Badge>
+                  ) : b.added ? (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Badge variant="outline" className="text-[10px] gap-1"><Check className="w-3 h-3" /> Added</Badge>
+                      <Button size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground" disabled={addingId === b.id} onClick={() => remove(b.id)} data-testid={`client-remove-brand-${b.id}`}>
+                        {addingId === b.id ? <Loader2 className="w-3 h-3 animate-spin" /> : "Remove"}
+                      </Button>
+                    </div>
                   ) : (
                     <Button size="sm" variant="secondary" className="h-7 text-xs shrink-0" disabled={addingId === b.id} onClick={() => add(b.id)}>
                       {addingId === b.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Plus className="w-3 h-3 mr-1" /> Add</>}

@@ -13,6 +13,27 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+28. 2026-08-10 · Landsec client / mobile 390px · opened the Bluewater
+    tenancy schedule on a phone to find the asking (quoting) rent for a
+    vacant unit · the board renders all ~50 columns in a 6,700px-wide
+    table, so Quoting Rent sits ~3,400px of horizontal swiping to the
+    right (sticky Unit column helps, but every rent lookup repeats the
+    swipe); the Columns dialog works but means hand-unticking dozens of
+    boxes on a phone · Suggested: a compact mobile preset (e.g. Unit /
+    Status / Tenant / Quoting Rent / Expiry) applied by default below
+    `sm:`, or a one-tap "Key columns" toggle next to Columns.
+    (Companion to #17, which covers the stacked header controls.)
+
+27. 2026-08-10 · Landsec client / desktop 1440px · added a brand from the
+    global directory ("Add brand" → search → Add) to start tracking it ·
+    the "Brand added to your CRM" toast has no link, the dialog rows aren't
+    clickable, and the hub stays on the Overview tab (which never lists
+    individual brands) — so the user must close the dialog, click the Brand
+    Explorer tab and re-find the brand to actually look at it · Suggested:
+    make the toast (or the row's "Added" badge) link straight to the brand
+    profile, or switch the hub to Brand Explorer filtered to the new brand
+    after an add.
+
 26. 2026-08-10 · BGP staff / desktop 1440px · saw "11 AI leads awaiting
     review" in the Comps header and tried to review them · the stat is plain
     text — clicking does nothing, the All Comps filter only offers

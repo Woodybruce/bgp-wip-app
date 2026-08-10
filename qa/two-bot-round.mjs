@@ -2427,6 +2427,47 @@ async function markRound(page, cross) {
     if (!r.delOk) throw new Error('client remove-brand failed');
   });
 
+  // The add-brand dialog is also where a client REMOVES a self-added brand
+  // (r247): an "Added" extra row must carry the Remove button, clicking it
+  // flips the row back to Add, and slice rows never show Remove.
+  await step(page, p, 'client-add-brand-remove-ui', async () => {
+    const retail = '88888888-1111-1111-1111-111111111111';
+    await page.evaluate(async (id) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      await fetch('/api/client/crm/add-brand', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ brandId: id }) });
+    }, retail);
+    await page.goto(`${BASE}/brands`).catch((e) => { if (!/ERR_ABORTED/.test(String(e))) throw e; });
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(1500);
+    await page.getByTestId('client-add-brand').click();
+    await page.getByTestId('client-add-brand-search').fill('QA Retail');
+    await page.waitForTimeout(1500);
+    const removeBtn = page.getByTestId(`client-remove-brand-${retail}`);
+    if (!(await removeBtn.count())) throw new Error('self-added brand row has no Remove button in the add-brand dialog');
+    await removeBtn.click();
+    await page.waitForTimeout(1500);
+    if (await removeBtn.count()) throw new Error('Remove click did not flip the row back to Add');
+    await page.getByTestId('client-add-brand-search').fill('Starbucks');
+    await page.waitForTimeout(1500);
+    const dlg = await page.locator('[role="dialog"]').innerText();
+    if (/Remove/.test(dlg)) throw new Error('slice brand row shows a Remove button (must be In CRM badge only)');
+    await page.keyboard.press('Escape');
+    const left = await page.evaluate(async (id) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const me = await (await fetch('/api/auth/me', { headers: auth })).json();
+      return me?.companyScopeId || null;
+    }, retail);
+    if (left) {
+      const extras = await page.evaluate(async () => {
+        const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+        const r = await fetch('/api/client/crm/global-brands?search=qa retail', { headers: auth });
+        const arr = await r.json().catch(() => []);
+        return Array.isArray(arr) ? arr.filter((b) => b.added).length : -1;
+      });
+      if (extras !== 0) throw new Error(`QA Retail still marked added after UI remove (${extras})`);
+    }
+  });
+
   // Client dashboard carries the Portfolio Map (same map as the landlord
   // pages) and the BGP Relationship card, and the portfolio payload supplies
   // coordinates for the pins.
