@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+24. 2026-08-10 · Landsec client / desktop 1440px · clicked a unit's name on
+    the Letting Tracker board expecting to open/expand the unit · the name
+    turned into an inline rename input right away (clients can edit units on
+    their own property, so this fires for them too) — a click on a row title
+    is the universal "open" gesture, and here it invites accidental renames
+    with no drill-in anywhere on the row · Suggested: reserve inline rename
+    for the pencil icon (which already exists next to the property name) and
+    make the name click expand the row / open unit details.
+
 23. 2026-08-10 · BGP staff / desktop 1440px · opened the Property Pathway
     board to prep a Bluewater pitch · the board can only START a run via
     ChatBGP ("ask it to start a pathway for 12 Haymarket") — an empty board
