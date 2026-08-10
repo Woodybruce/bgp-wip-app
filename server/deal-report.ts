@@ -441,6 +441,8 @@ async function renderDealReportPdf(
       if (deal.landlord_name) parties.push(`Landlord: ${pdfSafe(deal.landlord_name)}`);
       if (deal.vendor_name) parties.push(`Vendor: ${pdfSafe(deal.vendor_name)}`);
       if (deal.purchaser_name) parties.push(`Purchaser: ${pdfSafe(deal.purchaser_name)}`);
+      const agents = (Array.isArray(deal.internal_agent) ? deal.internal_agent : []).filter(Boolean);
+      if (agents.length) parties.push(`Agent${agents.length > 1 ? "s" : ""}: ${agents.map((a: string) => pdfSafe(a)).join(", ")}`);
       if (parties.length) {
         doc.font("Helvetica").fontSize(9).fillColor("#555").text(parties.join("  ·  "), tx, ty, { width: tw });
         ty = doc.y + 2;
