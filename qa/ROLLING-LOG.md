@@ -55,10 +55,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r238 · 2026-08-10 · ROUND IN PROGRESS (provisional heartbeat)
-- LIGHT round (r237 had the journey). Fresh container (pg_hba trust fix
-  needed, r205 note). run-smoke.sh GREEN (42 checks, 0 failures, fresh DB +
-  FRESH_BUILD=1). Two-bot round 238 in progress; triage to follow.
+### r238 · 2026-08-10 · LIGHT (r237 had the journey)
+- Fresh container (pg_hba trust fix needed, r205 note). Regression:
+  run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
+  Two-bot round 238: 167 scenarios ok, 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503 = intended no-key degradation).
+  0 raw 500/502/504 in the whole round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404/503). The r237 fixes hold
+  (staff-deal-mlr-scope green; enrich-toast class not re-triggered).
+  0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #2 client desktop (r238 was LIGHT → r239 FULL).
 
 ### r237 · 2026-08-10 · FULL (rotation #1 staff desktop)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:
