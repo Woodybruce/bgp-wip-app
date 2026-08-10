@@ -59,6 +59,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r251 · 2026-08-10 · FULL round IN PROGRESS (rotation #4 staff mobile 390px)
+- Provisional heartbeat 22:48 UTC. Fresh container (pg_hba trust fix; restore-
+  as-postgres + ALTER owners + schema grant per r249 note). Regression:
+  run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
+  Journey underway: Victoria @ 390px — requirement create via dialog (clean:
+  toast, KPI chips, row card) + staff tenancy full board (200 units, staff
+  Import/Add/Excel/Columns/Re-sync all present, search works, table scrolls
+  in own container, 0 h-overflow, 0 non-noise errors). Two-bot pending.
+- Triage so far: only listed noise (no-key 503s). One 404 self-inflicted
+  (/tenancy-schedule/Bluewater — route needs the property ID, tester error).
+
 ### r250 · 2026-08-10 · LIGHT (r249 had the journey)
 - Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +
   ALTER owners + schema grant per r249 note). Regression: run-smoke.sh
