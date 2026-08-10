@@ -2583,6 +2583,38 @@ Deferred for v2: Excel model live-link (cells editable through the board), revie
     console.warn("[one-off departures] failed:", e?.message);
   }
 
+  // ── One-off (per Woody, 2026-08): Alex Todd was promoted. His HR staff
+  // profile still says Graduate Surveyor and reports to Victoria; it should
+  // say Senior Surveyor and report to Tracey Pollard. Both updates are
+  // guarded on the stale value, so they apply exactly once and never fight
+  // later edits made in the HR page.
+  try {
+    const { rows: alexRows } = await pool.query(
+      `SELECT id FROM users WHERE lower(email) = 'alext@brucegillinghampollard.com' LIMIT 1`,
+    );
+    const alexId = alexRows[0]?.id;
+    if (alexId) {
+      const t = await pool.query(
+        `UPDATE staff_profiles SET title = 'Senior Surveyor'
+          WHERE user_id = $1 AND title = 'Graduate Surveyor'`,
+        [alexId],
+      );
+      if ((t.rowCount ?? 0) > 0) console.log("[one-off alex-todd] HR title → Senior Surveyor");
+      const m = await pool.query(
+        `UPDATE staff_profiles SET manager_id = (
+            SELECT id FROM users WHERE lower(email) = 'tracey@brucegillinghampollard.com' LIMIT 1)
+          WHERE user_id = $1
+            AND manager_id = (SELECT id FROM users WHERE lower(email) = 'victoria@brucegillinghampollard.com' LIMIT 1)`,
+        [alexId],
+      );
+      if ((m.rowCount ?? 0) > 0) console.log("[one-off alex-todd] Reports to → Tracey Pollard");
+    } else {
+      console.warn("[one-off alex-todd] user not found — nothing changed");
+    }
+  } catch (e: any) {
+    console.warn("[one-off alex-todd] failed:", e?.message);
+  }
+
   // ── One-off (per Woody): deals 3437, 3490 & 3226 (Harry) are exempt from
   // the 15% BGP House cut — the whole fee goes to the agent, not 85%. The fee
   // editor hard-locks the house slice on every deal, so this can't be done in
