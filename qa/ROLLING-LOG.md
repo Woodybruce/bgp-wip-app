@@ -55,6 +55,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r243 · 2026-08-10 · ROUND IN PROGRESS (provisional)
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB +
+  FRESH_BUILD=1). Two-bot round 243 running; only logged issue so far is
+  noise (rocketreach-400).
+- Journey (rotation #4 staff mobile 390px) underway: home → tracker →
+  log viewing (works, toast) → interest dialog → tasks quick-add (works) →
+  contacts search; client cross-check sees the staff-logged viewing.
+  0 app issues so far. Final entry to follow.
+
 ### r242 · 2026-08-10 · LIGHT (r241 had the journey)
 - Fresh container (pg_hba trust fix needed, r205 note). Setup note: restoring
   the fixture AS bgp now fails ("must be able to SET ROLE postgres" on an
