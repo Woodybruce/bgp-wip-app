@@ -55,12 +55,35 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r239 · 2026-08-10 · FULL (rotation #2 client desktop) — IN PROGRESS
+### r239 · 2026-08-10 · FULL (rotation #2 client desktop)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:
   run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
-  Two-bot + journey (Mark desktop 1440px: comps / tenancy schedule edit /
-  tasks) underway. Journey net/console so far: only listed noise
-  (ai-briefing 503, sharepoint-root 404, ai-take 503, hr-photo 404).
+  Two-bot round 239: exit 0, 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503 = intended no-key degradation).
+  0 raw 500/502/504 in the whole round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404/503).
+- Journey: Mark Warne desktop 1440px — "prep the quarterly review: check
+  area comps, review the Bluewater tenancy schedule + edit a unit record,
+  log a follow-up task": login → dashboard (KPIs, rent "—" holds) → Comps
+  (FIRST client-desktop journey visit: renders with the client-facing
+  empty state "Your BGP team adds comps as deals complete" — intended
+  scoping, fixture comps aren't Landsec-linked) → dashboard "Letting
+  Tracker >" link → /deals/letting (navigates fine) → /tenancy-schedule/
+  Bluewater full board (200 units; staff Import/Re-sync hidden, r223 fix
+  holds; Add/Excel/Columns present) → click-to-edit a cell: edit
+  PERSISTED across reload, revert clean — first journey coverage of the
+  client row-edit path → dashboard Quick-add task → shows on dashboard +
+  /tasks (probe task deleted after) → Requirements as client (0 rows =
+  correct scoping: clients see PIPnet imports + own-company only, none
+  locally; "New Brand" button is deliberately client-allowed per the
+  gateway comment). All net/console = listed noise only.
+- Bugs fixed: 0 (nothing broken found — round green).
+- Bugs deferred: none. Suggestions added: UX-NOTES #24 (tracker unit-name
+  click starts an inline rename — accidental-edit trap, no drill-in).
+- New flakes: none. Note: two-bot [ok] stdout buffering when piped loses
+  early lines (known r224) — round-239.jsonl is authoritative.
+- Next journey: rotation #3 client mobile 390px (r239 had the journey →
+  r240 may be LIGHT; then #3).
 
 ### r238 · 2026-08-10 · LIGHT (r237 had the journey)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:
