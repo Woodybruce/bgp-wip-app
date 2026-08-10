@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+29. 2026-08-10 · BGP staff / mobile 390px · logged a new operator
+    requirement from a phone, then wanted to see which available units fit
+    it · the requirements KPI tile advertises "0 / 1 fit your available
+    units", but the mobile card view only offers Edit / Delete — the
+    desktop rows' Match action (RequirementMatchesDialog), fit chips,
+    Discuss and Send-to-brief are all desktop-only, so a phone user can
+    see that fits exist but has no way to open them · Suggested: add a
+    "Matches" action to the mobile requirement card (opens the existing
+    RequirementMatchesDialog, which is a plain Dialog and should render
+    fine at 390px), and make the fits KPI tile tappable to the same end.
+
 28. 2026-08-10 · Landsec client / mobile 390px · opened the Bluewater
     tenancy schedule on a phone to find the asking (quoting) rent for a
     vacant unit · the board renders all ~50 columns in a 6,700px-wide
