@@ -55,11 +55,44 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r247 · 2026-08-10 · FULL (rotation #2 client desktop) — IN PROGRESS
+### r247 · 2026-08-10 · FULL (rotation #2 client desktop)
 - Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +
-  ALTER owners per r242 note). Regression: run-smoke.sh GREEN (42 checks,
-  0 failures, fresh DB + FRESH_BUILD=1). Two-bot round 247 in progress.
-- Journey planned: rotation #2 Mark Warne client desktop.
+  ALTER owners per r242 note). Regression: run-smoke.sh GREEN ×2 (42 checks,
+  0 failures; FRESH_BUILD=1 before the fix and rebuilt bundle after).
+  Two-bot round 247: exit 0, 168 scenarios ok, 2 logged issues both listed
+  noise (rocketreach-400; commentary-regen 503 = intended no-key
+  degradation). 0 raw 500/502/504 in the whole round's server log.
+- Journey: Mark Warne desktop 1440px — "weighing a jewellery operator
+  outside our hospitality slice: add the brand to my CRM, review its
+  profile and contacts, then take it back out" (FIRST end-to-end UI
+  coverage of the client self-add brand flow): UI login (guest-login form
+  testids) → dashboard → /brands hub → Add brand dialog (search shows
+  slice rows as "In CRM", global rows with Add) → add Testco Jewellers
+  (toast, hub Total Brands 9→10, Brand Explorer lists it + category chip)
+  → its profile renders for the client (contacts + Compliance panel per
+  decision, no 403s) → removal. NOTE: hub lands on Overview tab which
+  never lists individual brands — my first "added brand not visible"
+  triage was a false positive (it's on the Brand Explorer tab); logged
+  the discoverability gap as UX #27 instead.
+- Bug fixed (1): client could ADD a brand but never REMOVE one — the
+  decided model (CLAUDE.md: "add/remove via /api/client/crm/add-brand")
+  has a DELETE route that no UI called, so a misclicked Add (no confirm
+  step) was permanent from the user's side. Add-brand dialog rows that
+  are self-added extras now show Added + a Remove button (slice rows keep
+  the plain In CRM badge); remove flips the row back to Add and
+  invalidates the hub/companies queries (client/src/pages/brands-hub.tsx,
+  ClientAddBrandButton). Verified visually as Mark: Remove on
+  Fashion/Jewellers extras only, removal toast, Explorer drops the brand,
+  DB extras restored to fixture state. tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 client-add-brand-remove-ui (extra row must
+  carry Remove, click flips to Add, slice rows never show Remove, API
+  confirms cleared). Steps verified standalone against the dev server;
+  runs from round 248.
+- Bugs deferred: none. Suggestions added: UX-NOTES #27 (post-add
+  dead-end — toast/dialog give no path to the added brand; Overview tab
+  never lists brands). New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r247 had the journey →
+  r248 may be LIGHT; then #3).
 
 ### r246 · 2026-08-10 · LIGHT (r245 had the journey)
 - Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +
