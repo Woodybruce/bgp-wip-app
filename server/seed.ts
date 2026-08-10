@@ -82,10 +82,9 @@ export async function seedDatabase() {
 
   const existingProjects = await db.select().from(projects);
   if (existingProjects.length > 0) {
-    const existingUsers = await db.select().from(users);
-    if (existingUsers.length === 0) {
-      await seedUsers();
-    }
+    // Always run — idempotent: inserts seed-listed users that are missing and
+    // heals drifted titles/phones/departments on the ones that exist.
+    await seedUsers();
     await seedFromFile();
     await seedInvestmentTracker();
     await seedLettingTracker();
@@ -204,6 +203,21 @@ async function seedUsers() {
         department: member.department,
         team: (member as any).team || null,
       });
+    } else {
+      // Heal drifted profile fields for seed-listed users. Titles and phones
+      // only ever change in this file (there's no in-app editor for them), so
+      // the seed is authoritative — without this, editing a title here never
+      // reaches a database that already has the user (e.g. Alex Todd's
+      // Surveyor → Senior Surveyor promotion). Team is deliberately NOT
+      // healed: it IS editable in-app and must not be overwritten on boot.
+      const u: any = existing[0];
+      const newRole = member.role || null;
+      const newPhone = member.phone || null;
+      if ((u.role ?? null) !== newRole || (u.phone ?? null) !== newPhone || (u.department ?? null) !== member.department) {
+        await db.update(users)
+          .set({ role: newRole, phone: newPhone, department: member.department })
+          .where(sql`${users.id} = ${u.id}`);
+      }
     }
   }
 
