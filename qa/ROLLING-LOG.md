@@ -55,6 +55,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r245 · 2026-08-10 · ROUND IN PROGRESS (FULL, rotation #1 staff desktop)
+- Provisional heartbeat. Regression: run-smoke.sh GREEN (42 checks, 0
+  failures, fresh DB + FRESH_BUILD=1). Two-bot round 245 still running
+  (all [ok] so far). Journey underway: Victoria desktop 1440px —
+  "new operator requirement: log it, scan deals board, check Bluewater
+  tenancy for a fit, sanity-check comps". So far: requirements page +
+  Create Leasing Requirement dialog work end-to-end (new-company path,
+  row appears, toast); client cross-check clean (Mark does NOT see the
+  staff requirement); deals WIP report, tenancy full board (200 units),
+  comps all render; 0 non-noise console/net errors.
+- Triage so far: comps "11 AI leads awaiting review" stat is a dead-end
+  for non-admin staff (Leads tab deliberately parked admin-only) — UX
+  note, not a bug.
+
 ### r244 · 2026-08-10 · LIGHT (r243 had the journey)
 - Fresh container (pg_hba trust fix needed, r205 note; restore-as-postgres +
   ALTER owners per r242 note). Regression: run-smoke.sh GREEN (42 checks,
