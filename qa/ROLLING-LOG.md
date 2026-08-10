@@ -45,6 +45,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 - Dev server needs a .env (DATABASE_URL=postgresql://bgp:bgp@127.0.0.1:5432/bgp,
   PORT=5000, SESSION_SECRET, HOST=0.0.0.0); create role bgp + db bgp and restore
   qa/smoke-fixture.sql.gz into it for browser journeys.
+- (r249) After restore-as-postgres + ALTER owners, ALSO run
+  `grant all on schema public to bgp; alter schema public owner to bgp;`
+  — else the bgp role can't CREATE and auto-migrate silently skips new
+  tables/indexes (kyc_audit_log, deal_audit_log, …).
 - Do NOT run the prod build over plain http for browser tests: session cookie
   is secure-only in production, so cookie-auth UI flows all 401
   (/api/client/brand-theme storms, empty client nav). smoke.mjs is fine (Bearer).
@@ -55,15 +59,43 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r249 · 2026-08-10 · ROUND IN PROGRESS (provisional)
-- FULL round planned (r248 was LIGHT): rotation #3 client mobile 390px.
-- Setup: fresh container; pg_hba trust fix; restore-as-postgres + ALTER
-  owners; ALSO needed `grant all on schema public to bgp` + alter schema
-  owner (bgp role couldn't CREATE — auto-migrate skipped kyc/deal-audit
-  tables until granted).
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB +
-  FRESH_BUILD=1). Two-bot round 249 in progress. Journey next: Mark @
-  390px — Bluewater tenancy vacancies + asking rents, quick-add task.
+### r249 · 2026-08-10 · FULL (rotation #3 client mobile 390px)
+- Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +
+  ALTER owners per r242 note; ALSO needed `grant all on schema public to
+  bgp` + alter schema owner — bgp role couldn't CREATE, auto-migrate
+  skipped kyc/deal-audit tables until granted; new setup line below).
+  Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB +
+  FRESH_BUILD=1). Two-bot round 249: exit 0, 169 scenarios ok, 2 logged
+  issues both listed noise (rocketreach-400; commentary-regen 503 =
+  intended no-key degradation). 0 raw 500/502/504 in the whole round's
+  server log (every 503 endpoint is a listed AI/no-key route + os/sites
+  noise).
+- Journey: Mark Warne @ 390px iPhone UA — "on my phone before a call with
+  BGP: which Bluewater units are vacant, what rents are we asking, then
+  log a follow-up task" (FIRST journey coverage of the tenancy full board
+  at client-mobile 390px): login → "/" Portfolio home → Tracker tile →
+  /available (153 units, status chips, unit cards clean) →
+  /tenancy-schedule/Bluewater (board renders, KPI tiles, search filters
+  MSU3/MSU4, wide table scrolls in its own overflow-x-auto container —
+  0 page h-overflow; sticky Unit column holds while reaching the Quoting
+  Rent column; Columns popover renders + grouped checkboxes work at
+  390px) → bottom-nav Tasks → quick-add input ("Task created" toast, row
+  lists) → task shows on dashboard MY TASKS widget. 0 non-noise
+  console/net errors, 0 page errors. Probe task deleted post-journey.
+- NOT bugs (triaged): per-row trash icon on the client tenancy board =
+  deliberate (single-row delete is client-allowed on own properties,
+  "Landsec audit" comment at tenancy-schedule.ts:464; only bulk ops are
+  staff-only per r223). "151 Available" chip vs "VACANT 76" on the same
+  board = the fixture's known 75 orphaned/duplicate Bluewater tracker
+  rows (r217; mirror-status chips count tracker rows, VACANT counts
+  tenancy rows).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: UX-NOTES #28 (mobile tenancy board needs a compact column
+  preset — rent lookup = ~3,400px of swiping; companion to #17). New
+  flakes: none. Harness growth: none needed (client tenancy read/write
+  scoping already covered API-side; mobile-no-overflow covers "/").
+- Next journey: rotation #4 staff mobile 390px (r249 had the journey →
+  r250 may be LIGHT; then #4).
 
 ### r248 · 2026-08-10 · LIGHT (r247 had the journey)
 - Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +
