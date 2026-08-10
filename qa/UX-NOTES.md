@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+26. 2026-08-10 · BGP staff / desktop 1440px · saw "11 AI leads awaiting
+    review" in the Comps header and tried to review them · the stat is plain
+    text — clicking does nothing, the All Comps filter only offers
+    Verified/Unverified, and the Leads tab is deliberately parked admin-only
+    (reachable via /admin/comps-leads → /comps?tab=leads), so non-admin
+    staff see a count they can never act on · Suggested: either hide the
+    stat for non-admins, or make it a link (admins → the Leads tab,
+    non-admins → a tooltip saying an admin reviews these).
+
 25. 2026-08-10 · Landsec client / mobile 390px · opened a Bluewater letting
     deal to find WHO at BGP to chase about progress · the deal page names no
     BGP person anywhere for a client — the agent/fee-allocation card is
