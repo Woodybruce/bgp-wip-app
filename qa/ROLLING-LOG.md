@@ -55,6 +55,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r239 · 2026-08-10 · FULL (rotation #2 client desktop) — IN PROGRESS
+- Fresh container (pg_hba trust fix needed, r205 note). Regression:
+  run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
+  Two-bot + journey (Mark desktop 1440px: comps / tenancy schedule edit /
+  tasks) underway. Journey net/console so far: only listed noise
+  (ai-briefing 503, sharepoint-root 404, ai-take 503, hr-photo 404).
+
 ### r238 · 2026-08-10 · LIGHT (r237 had the journey)
 - Fresh container (pg_hba trust fix needed, r205 note). Regression:
   run-smoke.sh GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
