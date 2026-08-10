@@ -55,14 +55,38 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r243 · 2026-08-10 · ROUND IN PROGRESS (provisional)
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB +
-  FRESH_BUILD=1). Two-bot round 243 running; only logged issue so far is
-  noise (rocketreach-400).
-- Journey (rotation #4 staff mobile 390px) underway: home → tracker →
-  log viewing (works, toast) → interest dialog → tasks quick-add (works) →
-  contacts search; client cross-check sees the staff-logged viewing.
-  0 app issues so far. Final entry to follow.
+### r243 · 2026-08-10 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (pg_hba trust fix needed, r205 note; restore-as-postgres +
+  ALTER owners per r242 note). Regression: run-smoke.sh GREEN (42 checks,
+  0 failures, fresh DB + FRESH_BUILD=1). Two-bot round 243: exit 0, all
+  scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server log
+  (status tally: only 2xx/3xx/expected 400/401/403/404/503; every 503 is a
+  listed AI/no-key route + os/sites map noise).
+- Journey: Victoria @ 390px iPhone UA — "back from a Bluewater viewing:
+  log it, check offers, add a follow-up task, find who to chase": login →
+  "/" Dashboard (billing KPIs, boards, bottom nav) → /available Letting
+  Tracker (156 units, search MSU9) → log viewing via Viewing dialog
+  ("Viewing added" toast, row appears, date defaults today) → Interest
+  dialog (offer list + full Add Offer form clean at 390px) → /tasks
+  quick-add ("Task created", row appears) → /contacts search. Cross-check:
+  Mark (client, 390px) sees the staff-logged viewing on the same unit's
+  dialog; client /available correctly scoped (153 units, all Landsec
+  properties server-side). Staff mobile deal detail: r241
+  deal-sidebar-mobile fix holds for STAFF too (Comments/Files/History
+  present, 0 h-overflow). 0 console/page errors, 0 h-overflow anywhere.
+- NOT bugs (triaged): client tracker header "N units" vs smaller chip
+  counts = header shows teamUnits pre-toolbar-filter by design (KPI
+  comment in available-units.tsx ~1038); contacts "Warne" 0 results +
+  "0 BGP Clients" KPI = fixture data (no crm_contacts row for Mark,
+  bgp_client=false everywhere); /deals at 390px needs ~5s for the lazy
+  DealsHub chunk before judging content (timing artifact, not a blank).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none (offer-date default already noted as UX #22). New flakes: none.
+- Journey QA rows (viewings 'QA-R243 Journey Viewing%', task
+  'QA-PROBE task r243%') deleted post-journey.
+- Next journey: rotation #1 staff desktop (r243 had the journey → r244 may
+  be LIGHT; then #1).
 
 ### r242 · 2026-08-10 · LIGHT (r241 had the journey)
 - Fresh container (pg_hba trust fix needed, r205 note). Setup note: restoring
