@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+28. 2026-08-10 · Landsec client / mobile 390px · opened the Bluewater
+    tenancy schedule on a phone to find the asking (quoting) rent for a
+    vacant unit · the board renders all ~50 columns in a 6,700px-wide
+    table, so Quoting Rent sits ~3,400px of horizontal swiping to the
+    right (sticky Unit column helps, but every rent lookup repeats the
+    swipe); the Columns dialog works but means hand-unticking dozens of
+    boxes on a phone · Suggested: a compact mobile preset (e.g. Unit /
+    Status / Tenant / Quoting Rent / Expiry) applied by default below
+    `sm:`, or a one-tap "Key columns" toggle next to Columns.
+    (Companion to #17, which covers the stacked header controls.)
+
 27. 2026-08-10 · Landsec client / desktop 1440px · added a brand from the
     global directory ("Add brand" → search → Add) to start tracking it ·
     the "Brand added to your CRM" toast has no link, the dialog rows aren't
