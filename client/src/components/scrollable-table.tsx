@@ -3,9 +3,13 @@ import { useRef, useEffect, useState, type ReactNode } from "react";
 interface ScrollableTableProps {
   children: ReactNode;
   minWidth: number;
+  // Scroll with the page instead of inside a fixed-height box: no internal
+  // vertical scrollbar, the table takes its natural height. Horizontal
+  // scrolling and the sticky bottom scrollbar are kept.
+  pageScroll?: boolean;
 }
 
-export function ScrollableTable({ children, minWidth }: ScrollableTableProps) {
+export function ScrollableTable({ children, minWidth, pageScroll = false }: ScrollableTableProps) {
   const bottomScrollRef = useRef<HTMLDivElement>(null);
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
@@ -63,6 +67,7 @@ export function ScrollableTable({ children, minWidth }: ScrollableTableProps) {
   // the box overshot the viewport and its last rows (and the synced bottom
   // scrollbar) sat below the fold, unreachable. Measure instead of guess.
   useEffect(() => {
+    if (pageScroll) return;
     const el = tableScrollRef.current;
     if (!el) return;
     const update = () => {
@@ -82,14 +87,14 @@ export function ScrollableTable({ children, minWidth }: ScrollableTableProps) {
       window.removeEventListener("resize", update);
       ro.disconnect();
     };
-  }, []);
+  }, [pageScroll]);
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div className={pageScroll ? "flex flex-col" : "flex flex-col flex-1 min-h-0"}>
       <div
         ref={tableScrollRef}
-        className="table-scroll-container flex-1 min-h-0"
-        style={maxHeight ? { maxHeight } : undefined}
+        className={pageScroll ? "table-scroll-container" : "table-scroll-container flex-1 min-h-0"}
+        style={pageScroll ? { maxHeight: "none", overflowY: "visible" } : maxHeight ? { maxHeight } : undefined}
       >
         <div ref={innerRef} style={{ minWidth }}>
           {children}

@@ -1039,7 +1039,7 @@ export default function WipReport() {
   }
 
   return (
-    <div className="min-h-[calc(100vh-64px)] md:h-[calc(100vh-64px)] flex flex-col md:overflow-hidden p-4 sm:p-6 print:p-2 print:h-auto print:overflow-visible" data-testid="wip-report-page">
+    <div className="min-h-[calc(100vh-64px)] flex flex-col p-4 sm:p-6 print:p-2" data-testid="wip-report-page">
       <style>{`
         @media print {
           .no-print { display: none !important; }
@@ -1157,7 +1157,7 @@ export default function WipReport() {
       ) : activeTab === "fee-check" ? (
         <FeeCheckTab />
       ) : (
-      <div className="flex flex-col gap-4 flex-1 min-h-0">
+      <div className="flex flex-col gap-4">
           {/* KPI stat cards — matching Investment Tracker style */}
           <ScrollArea className="w-full shrink-0">
             <div className="flex items-center gap-3 pb-1">
@@ -1267,8 +1267,8 @@ export default function WipReport() {
             )}
           </div>
 
-          <div className="bg-white border border-gray-200 rounded-lg overflow-hidden print-break flex-1 min-h-0 flex flex-col" data-testid="wip-detail-table">
-            <div className="bg-gray-50 border-b px-3 py-2 flex items-center justify-between flex-shrink-0">
+          <div className="print-break" data-testid="wip-detail-table">
+            <div className="border-b border-gray-200 pb-2 flex items-center justify-between">
               <div>
                 <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
                   Deal Detail
@@ -1307,7 +1307,7 @@ export default function WipReport() {
               </div>
             </div>
             {selectedIds.size > 0 && (
-              <div className="flex items-center gap-3 px-4 py-2 bg-primary/5 border-b flex-shrink-0">
+              <div className="flex items-center gap-3 px-2 py-2 bg-primary/5 border-b">
                 <span className="text-xs font-medium">{selectedIds.size} selected</span>
                 <span className="text-xs text-muted-foreground">
                   {formatFullCurrency(sortedDetailEntries.filter(e => e.id && selectedIds.has(e.id)).reduce((s, e) => s + (e.amtWip || 0) + (e.amtInvoice || 0), 0))} total
@@ -1317,7 +1317,7 @@ export default function WipReport() {
                 </Button>
               </div>
             )}
-            <ScrollableTable minWidth={1400}>
+            <ScrollableTable minWidth={1400} pageScroll>
               <table className="w-full">
                 <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
                   <tr>
