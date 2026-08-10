@@ -320,7 +320,10 @@ function findCrmLinks(
   const externalEmails = attendeeEmails.filter(e => !e.includes("brucegillinghampollard"));
   for (const p of properties) {
     const pName = (p.name || "").toLowerCase();
-    const pAddr = (p.address || "").toLowerCase();
+    // address is a jsonb column — it can be a structured object rather than a
+    // string, which made `.toLowerCase` crash the whole calendar page.
+    const rawAddr: any = p.address;
+    const pAddr = (typeof rawAddr === "string" ? rawAddr : rawAddr?.formatted || "").toLowerCase();
     if (pName.length > 3 && subject.includes(pName)) {
       links.properties.push({ id: p.id, name: p.name });
     } else if (pAddr.length > 5) {
