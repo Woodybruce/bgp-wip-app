@@ -142,6 +142,16 @@ function DiaryRedirect() {
   return null;
 }
 
+// A signed-in user sitting at the literal /login URL (guest-form sign-in
+// happens in place, without a navigation) has no /login route in the
+// authenticated app — staff used to land on "Page not found" right after
+// a successful sign-in. Send them home instead.
+function LoginRedirect() {
+  const [, setLocation] = useLocation();
+  useEffect(() => { setLocation("/", { replace: true }); }, [setLocation]);
+  return null;
+}
+
 // Document Studio is now one cockpit with tabs. The old standalone
 // /templates and /decks pages fold in as tabs, so their URLs redirect into
 // the Studio with the right tab pre-selected (the deck editor /decks/:id
@@ -241,6 +251,7 @@ function Router() {
       <Route path="/" component={Dashboard} />
       {/* /home is the mobile dashboard tab; on desktop it's just the dashboard. */}
       <Route path="/home" component={Dashboard} />
+      <Route path="/login" component={LoginRedirect} />
       <Route path="/instructions" component={Instructions} />
       {/* Properties list now lives as a tab inside Deals Hub. /properties
           keeps working but mounts DealsHub so the user sees the unified

@@ -814,6 +814,7 @@ function ContactDetail({ id }: { id: string }) {
             <Pencil className="w-4 h-4 mr-1" />
             Edit
           </Button>
+          {!cdIsClient && (
           <Button
             variant="outline"
             size="sm"
@@ -825,6 +826,7 @@ function ContactDetail({ id }: { id: string }) {
             <Trash2 className="w-4 h-4 mr-1" />
             Delete
           </Button>
+          )}
         </div>
       </div>
 
@@ -1090,9 +1092,13 @@ function ContactDetail({ id }: { id: string }) {
           {/* AI-curated activity — emails + calendar invites involving this
               contact, filtered by ChatBGP across all 31 mailboxes. Same
               engine as the deal page, brand profile, and hunter rows. */}
-          <AIActivityCard subjectType="contact" subjectId={id} title="Contact Activity (AI curated)" />
+          {/* Both boards read staff-only M365-derived endpoints
+              (/api/activity/contact, /api/interactions/contact) — the gateway
+              403s them for clients, so don't fire them (and don't render a
+              false "no interactions" empty state) for client viewers. */}
+          {!cdIsClient && <AIActivityCard subjectType="contact" subjectId={id} title="Contact Activity (AI curated)" />}
 
-          <InteractionsBoard scope="contact" contextId={id} />
+          {!cdIsClient && <InteractionsBoard scope="contact" contextId={id} />}
         </div>
 
         <div className="space-y-6">

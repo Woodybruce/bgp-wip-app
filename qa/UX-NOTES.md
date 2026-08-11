@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+32. 2026-08-11 · Landsec client / mobile 390px · "a colleague asked who our
+    contact at Starbucks is — find them on my phone" · the brand profile at
+    390px leads with the full-height Chat panel, so the KEY CONTACTS card
+    (and everything else) starts more than one screen down; the contact
+    lookup meant scrolling past a mostly-empty chat box every visit ·
+    Suggested: on mobile, collapse the brand-profile chat to a compact
+    "Ask about this brand" bar (expanding on tap) so contacts/covenant/
+    signals are visible on the first screen.
+
 31. 2026-08-11 · Landsec client / desktop 1440px · asked "which of my
     vacant units have live interest?" on the Letting Tracker · the
     Activity column (viewing/offer counts + dialog buttons) sits ~15

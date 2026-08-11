@@ -59,12 +59,60 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r257 · 2026-08-11 · IN PROGRESS (FULL — rotation #3 client mobile 390px)
-- Round in progress. Fresh container (pg_hba trust fix per r205; restore-as-
-  postgres + ALTER owners + schema grant per r249). Regression: run-smoke.sh
-  GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1) — nothing to
-  triage beyond listed noise. Two-bot round 257 + client-mobile journey to
-  follow.
+### r257 · 2026-08-11 · FULL (rotation #3 client mobile 390px)
+- Fresh container (pg_hba trust fix per r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN ×2
+  (42 checks, 0 failures; FRESH_BUILD=1 before the fixes and rebuilt bundle
+  after). Two-bot round 257: exit 0, 170 scenarios ok, 3 logged issues —
+  2 listed noise (rocketreach-400; commentary-regen 503), 1 flow-failure
+  (client-property-detail "Files board missing") that is the r256 TIMING
+  FLAKE class: screenshot shows the page still on skeletons (journey + tsc
+  ran concurrently); standalone re-run renders the panel with the graceful
+  no-folder fallback. Hardened the scenario to waitFor the panel (15s)
+  before asserting. 0 raw 500/502/504 in the whole round's server log
+  (503s all listed AI/no-key routes; 403s are two-bot's negative probes).
+- Journey: Mark Warne @ 390px iPhone UA — "a colleague asked who our
+  contact at Starbucks is: find the brand on my phone, get their details,
+  check what's happening with them" (FIRST journey coverage of the client
+  CONTACT DETAIL page, and of the brands hub → profile → contact drill
+  path at client mobile): login → "/" Portfolio home → Brands tile →
+  Brand Intelligence hub (category tiles, search "Starbucks" → 1 result) →
+  brand profile (contacts, covenant, compliance-per-decision, signals all
+  render, 0 h-overflow) → tap Tom Barista → /contacts/:id detail (email
+  mailto present — task done). 0 page errors; 0 non-noise console/net
+  errors after fixes.
+- Bugs fixed (2):
+  1. Client contact detail (r223 interactions-sync class): the page showed
+     the staff-only Delete button (DELETE always 403s for clients —
+     "managed by your BGP team") and auto-fired the two staff-only boards —
+     /api/interactions/contact + /api/activity/contact both gateway-403 —
+     with the InteractionsBoard then rendering a FALSE "No interactions in
+     the last 2 years" over real staff data. Delete, AIActivityCard and
+     InteractionsBoard now gated behind !cdIsClient (same pattern as the
+     already-gated Enrich/SourcePanel; client/src/pages/contacts.tsx).
+     Edit stays — PUT is scope-checked client parity. Verified visually
+     both ways: Mark 390px (Edit only, no boards, 0×403), Victoria 1440px
+     unchanged (Enrich/Edit/Delete + both boards with data).
+  2. Signed-in user at the literal /login URL landed on "Page not found" —
+     guest-form sign-in happens in place (no navigation), and the
+     authenticated Router had no /login route; staff logging in via the
+     guest form hit a 404 straight after signing in (clients were saved
+     only by the ClientRouteGuard bounce). Added a /login → "/" redirect
+     route (LoginRedirect, client/src/App.tsx). Verified: Victoria's UI
+     login now lands on the dashboard. Both fixes: tsc clean, rebuilt,
+     smoke re-green.
+- Harness growth: two-bot +2 — client-contact-detail-gates (no
+  Delete/Enrich/boards for client, no 403 fetches, Edit present; server
+  probe: client contact DELETE on a QA-created row must 403) and
+  staff-login-route-redirect (authenticated /login must land home, never
+  "Page not found"). Assertions verified standalone (curl probes + UI both
+  personas); run from round 258.
+- Bugs deferred: none. Suggestions added: UX-NOTES #32 (mobile brand
+  profile leads with a full-screen chat panel — contacts a screen+ down).
+  New flakes: none new (client-property-detail joined the known fixed-wait
+  class and is now hardened).
+- Next journey: rotation #4 staff mobile 390px (r257 had the journey →
+  r258 may be LIGHT; then #4).
 
 ### r256 · 2026-08-11 · LIGHT (r255 had the journey)
 - Fresh container (pg_hba trust fix, r205; restore-as-postgres + ALTER

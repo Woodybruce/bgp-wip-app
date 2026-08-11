@@ -973,6 +973,17 @@ async function victoriaRound(page, cross) {
     if (!r.persisted) throw new Error('tracker inline PATCH did not persist the detail field');
   });
 
+  // r257: a signed-in user parked at the literal /login URL used to hit
+  // "Page not found" (guest-form sign-in happens in place, and the
+  // authenticated router had no /login route). Must now land on the dashboard.
+  await step(page, p, 'staff-login-route-redirect', async () => {
+    await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2500);
+    const path = new URL(page.url()).pathname;
+    if (path === '/login') throw new Error('authenticated /login did not redirect home');
+    if (await page.getByText('Page not found').count()) throw new Error('authenticated /login landed on Page not found');
+  });
+
   // 4m. Deal comments round-trip: Victoria writes a comment on the Bluewater
   // deal and reads it back (the sidebar Comments widget rides this field).
   await step(page, p, 'staff-deal-comment', async () => {
@@ -1285,7 +1296,10 @@ async function markRound(page, cross) {
     // Client Files board (2026-08-03: "put back the files board but remove
     // the team name"): panel must render — folder content or the graceful
     // no-folder fallback — and never leak an internal team name.
+    // Poll rather than trusting the fixed wait above — under round load the
+    // page can still be on skeletons at this point (r256/r257 flake class).
     const panel = page.locator('[data-testid="client-property-folders-panel"]');
+    await panel.waitFor({ state: 'attached', timeout: 15000 }).catch(() => {});
     if (!(await panel.count())) throw new Error('client Files board missing from the property page');
     const panelText = (await panel.innerText().catch(() => '')).trim();
     if (panelText.length < 10) throw new Error('client Files board rendered blank');
@@ -3735,6 +3749,49 @@ async function markRound(page, cross) {
     if (await page.locator('[data-testid="button-deal-create-document"]').count()) {
       throw new Error('client sees the staff-only "Create document" button on deal detail');
     }
+  });
+
+  // r257: contact detail as a client — Edit stays (PUT is scope-checked,
+  // client-instruction parity), but Delete/Enrich are staff-only (the DELETE
+  // 403s: "Deleting contacts is managed by your BGP team"), and the two
+  // staff-only boards (interactions + AI activity) must not fire their
+  // gateway-403'd fetches or render a false "No interactions" empty state.
+  await step(page, p, 'client-contact-detail-gates', async () => {
+    const contact = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const rows = await (await fetch('/api/crm/contacts', { headers: auth })).json();
+      return (Array.isArray(rows) ? rows : []).find((c) => c.name) || null;
+    });
+    if (!contact) return; // no client-visible contacts in fixture — nothing to assert
+    const blocked = [];
+    const onResp = (r) => {
+      if (r.status() === 403 && /\/api\/(interactions|activity)\/contact\//.test(r.url())) blocked.push(r.url());
+    };
+    page.on('response', onResp);
+    try {
+      await page.goto(`${BASE}/contacts/${contact.id}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.locator('[data-testid="contact-detail"]').waitFor({ state: 'attached', timeout: 15000 });
+      await page.waitForTimeout(2500);
+    } finally { page.off('response', onResp); }
+    if (blocked.length) throw new Error(`client contact page fired staff-only endpoints: ${blocked.join(', ')}`);
+    if (!(await page.locator('[data-testid="button-edit-contact"]').count())) throw new Error('client lost the (allowed) contact Edit button');
+    if (await page.locator('[data-testid="button-delete-contact"]').count()) throw new Error('client sees the staff-only contact Delete button');
+    if (await page.locator('[data-testid="button-enrich-contact"]').count()) throw new Error('client sees the staff-only contact Enrich button');
+    if (await page.getByText('No interactions in the last 2 years').count()) throw new Error('client sees the interactions board (false empty state over a 403)');
+    // Server side of the same rule: contact DELETE must 403 for a client,
+    // probed against a QA-created row (never fixture data — a regression
+    // here would delete it). run-round.sh purges 'QA Contact%' anyway.
+    const probe = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const post = await fetch('/api/crm/contacts', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA Contact DelProbe R${round}` }) });
+      if (!post.ok) return { ok: false, why: `probe POST ${post.status}` };
+      const row = await post.json();
+      const del = await fetch(`/api/crm/contacts/${row.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      return { ok: true, delStatus: del.status };
+    }, ROUND);
+    if (!probe.ok) throw new Error(`contact delete probe setup failed (${probe.why})`);
+    if (probe.delStatus !== 403) throw new Error(`client contact DELETE returned ${probe.delStatus} — expected 403`);
   });
 
   await step(page, p, 'client-deal-mobile-sidebar', async () => {
