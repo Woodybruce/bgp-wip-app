@@ -2472,8 +2472,10 @@ async function markRound(page, cross) {
     const removeBtn = page.getByTestId(`client-remove-brand-${retail}`);
     if (!(await removeBtn.count())) throw new Error('self-added brand row has no Remove button in the add-brand dialog');
     await removeBtn.click();
-    await page.waitForTimeout(1500);
-    if (await removeBtn.count()) throw new Error('Remove click did not flip the row back to Add');
+    // The flip is a query invalidation + refetch — fast alone (~150ms) but can
+    // exceed a fixed wait under round load (r256 flake), so poll up to 10s.
+    await removeBtn.waitFor({ state: 'detached', timeout: 10000 })
+      .catch(() => { throw new Error('Remove click did not flip the row back to Add (10s)'); });
     await page.getByTestId('client-add-brand-search').fill('Starbucks');
     await page.waitForTimeout(1500);
     const dlg = await page.locator('[role="dialog"]').innerText();

@@ -59,11 +59,27 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r256 · 2026-08-11 · ROUND IN PROGRESS (LIGHT — r255 had the journey)
+### r256 · 2026-08-11 · LIGHT (r255 had the journey)
 - Fresh container (pg_hba trust fix, r205; restore-as-postgres + ALTER
   owners + schema grant per r249). Regression: run-smoke.sh GREEN
-  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1). Two-bot round 256
-  underway; triage to follow.
+  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1). Two-bot round 256:
+  exit 0, 3 logged issues — 2 listed noise (rocketreach-400;
+  commentary-regen 503 = intended no-key degradation), 1 flow-failure
+  (client-add-brand-remove-ui "Remove did not flip to Add") that is a
+  TIMING FLAKE, not an app bug: the failure screenshot shows the row
+  already flipped + the removal toast, and a standalone re-run flipped in
+  151ms with the DB extra cleared — the scenario's fixed 1500ms
+  post-click wait just lost the race under round load. Hardened the
+  scenario to poll via waitFor detached (10s) instead of the fixed wait
+  (qa/two-bot-round.mjs; node --check clean). 0 raw 500/502/504 in the
+  whole round's server log (status tally: only 2xx/3xx/expected
+  400/401/403/404/503; every 503 endpoint is a listed AI/no-key route +
+  os/sites noise). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: fixed-wait UI assertions can lose the
+  invalidation-refetch race under round load (this class now polls).
+- Next journey: rotation #3 client mobile 390px (r256 was LIGHT → r257
+  FULL).
 
 ### r255 · 2026-08-11 · FULL (rotation #2 client desktop)
 - Fresh container (pg_hba trust fix, r205; restore-as-postgres + ALTER
