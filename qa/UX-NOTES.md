@@ -13,6 +13,21 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+36. 2026-08-11 · Landsec client / desktop · reviewed the deal Audit log
+    after amending the tenant on his own deal · the Change Log renders raw
+    values — "changed tenant from 11110000-0000-0000-0000-000000000201 to
+    empty" — company-id fields show naked UUIDs a user can't read (staff
+    see the same on their audit views) · Suggested: resolve
+    tenant/landlord/vendor/purchaser id values to company names in the
+    audit renderer (keep the id in a title/tooltip).
+
+35. 2026-08-11 · Landsec client / desktop · "scan what's happening with my
+    tenants" — staff have a News page (feed, source chips, Landsec sort)
+    but the client nav has no news surface at all; the only route to
+    headlines is opening each brand profile one at a time for its Signals
+    card · Suggested: a client-facing news/signals feed scoped to the
+    client's brand slice + self-added brands (read-only version of /news).
+
 34. 2026-08-11 · BGP staff / desktop 1440px · back at her desk after a phone
     call with a brand contact, Victoria wanted to note the call on the
     contact's record · the contact page's activity board is inbox/calendar-

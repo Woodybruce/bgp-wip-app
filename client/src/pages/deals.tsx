@@ -5574,8 +5574,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     }
     inlineUpdateMutation.mutate({ id: dealId, field, value });
 
-    // Counterparty/client party change → fire full AML sweep on both sides of the deal.
-    if ((field === "tenantId" || field === "landlordId" || field === "vendorId" || field === "purchaserId") && value) {
+    // Counterparty/client party change → fire full AML sweep on both sides of
+    // the deal. Staff only — the endpoint 403s for clients, who must not see
+    // a "Running AML checks" toast for a run that never happens.
+    if ((field === "tenantId" || field === "landlordId" || field === "vendorId" || field === "purchaserId") && value && !isClientDeals) {
       const entity = companies.find((c: any) => c.id === String(value));
       toast({ title: "Running AML checks", description: `Screening ${entity?.name || "party"}...` });
       fetch(`/api/kyc/run-all-checks`, {
@@ -5587,7 +5589,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
       }).catch(() => {});
     }
-  }, [deals, companies, toast]);
+  }, [deals, companies, toast, isClientDeals]);
 
   // Inline "search and set up" for party cells — when the typed name matches
   // no existing CRM record, create it (with the right company type) and link

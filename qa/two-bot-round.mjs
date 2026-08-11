@@ -3783,6 +3783,51 @@ async function markRound(page, cross) {
     }
   });
 
+  await step(page, p, 'client-deal-party-link-gates', async () => {
+    // r263: linking a party on an own-portfolio deal is client-allowed (PUT
+    // parity), but the staff-only AML auto-kick must NOT fire for clients
+    // (it 403s and the "Running AML checks" toast lies), and the Timeline
+    // card must be hidden (its /api/deals/:id/timeline read is gateway-403;
+    // clients keep the Audit log).
+    const deal = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      return (Array.isArray(deals) ? deals : []).find((d) => d.name && !d.tenantId) || null;
+    });
+    if (!deal) return; // no tenant-less client-visible deal — nothing to assert
+    const kycHits = [];
+    const onReq = (r) => { if (r.url().includes('/api/kyc/run-all-checks')) kycHits.push(r.method()); };
+    page.on('request', onReq);
+    try {
+      await page.goto(`${BASE}/deals/${deal.id}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForTimeout(2500);
+      if (await page.locator('[data-testid="toggle-deal-timeline"]').count()) {
+        throw new Error('client sees the Timeline card (its timeline read is gateway-403)');
+      }
+      if (!(await page.locator('[data-testid="toggle-deal-audit"]').count())) {
+        throw new Error('client lost the (allowed) deal Audit log card');
+      }
+      // Link a tenant through the inline picker, then undo. The AML kick is
+      // client-side logic, so this must go through the real UI.
+      await page.locator('button:has-text("Link tenant")').locator('visible=true').first().click();
+      await page.waitForTimeout(600);
+      await page.fill('[data-testid="inline-link-search"]', 'Starbucks');
+      await page.waitForTimeout(600);
+      const opt = page.locator('button[data-testid^="inline-link-option-"]').first();
+      if (!(await opt.count())) throw new Error('tenant picker listed no options for "Starbucks"');
+      await opt.click();
+      await page.waitForTimeout(2000);
+      if (kycHits.length) throw new Error(`client party-link fired the staff-only AML kick (${kycHits.length}× /api/kyc/run-all-checks)`);
+    } finally {
+      page.off('request', onReq);
+      // restore the fixture deal whether or not the assertions passed
+      await page.evaluate(async (id) => {
+        const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+        await fetch(`/api/crm/deals/${id}`, { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify({ tenantId: null }) });
+      }, deal.id);
+    }
+  });
+
   // r257: contact detail as a client — Edit stays (PUT is scope-checked,
   // client-instruction parity), but Delete/Enrich are staff-only (the DELETE
   // 403s: "Deleting contacts is managed by your BGP team"), and the two

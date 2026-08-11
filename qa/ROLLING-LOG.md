@@ -61,10 +61,54 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r263 · 2026-08-11 · FULL (rotation #2 client desktop) — IN PROGRESS
-- Heartbeat: smoke GREEN first pass (42 checks, 0 failures, fresh DB +
-  FRESH_BUILD=1; no cold-build login flake this time). Two-bot round 263
-  underway; client-desktop journey to follow. Final entry replaces this one.
+### r263 · 2026-08-11 · FULL (rotation #2 client desktop)
+- Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
+  + schema grant per r249). Regression: run-smoke.sh GREEN ×2 (42 checks,
+  0 failures; FRESH_BUILD=1 before the fixes, rebuilt bundle after — no
+  cold-build login flake this time). Two-bot round 263: exit 0, all
+  scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). Repo hygiene: the r261 entry in THIS FILE contained
+  a literal NUL byte (in the sentence about NUL bytes…) making the log
+  binary to git diff/grep — escaped it, log is a text file again.
+- Journey: Mark Warne desktop 1440px — "the Gail's letting is at Solicitors:
+  read the deal, ask BGP a question via deal comment, check history"
+  (FIRST client-desktop journey coverage of deal-detail writes: comments,
+  party linking, Timeline/Audit): login → dashboard → /deals table (2 CRM
+  deals + tracker subtitle) → U124 Gail's deal → comment via the inline
+  editor (saves on blur, PUT 200, persists across reload) → "+ Link tenant"
+  picker (works client-side, PUT 200 = decided client-parity write) →
+  Timeline + Audit log cards. Probe comment/link cleared after (verified
+  via the deal's own Audit log). NOT bugs: comment save-on-blur with no
+  Save button felt riskier than it is (blur saves; Esc cancels) — my first
+  "lost comment" triage was a tester error (reloaded while the textarea
+  still had focus, so blur-save never fired).
+- Bugs fixed (2):
+  1. Client party-link fired the staff-only AML sweep: handlePartySave
+     (deal-detail.tsx) + handleInlineSave (deals.tsx) always toasted
+     "Running AML checks — Screening <company>…" then POSTed
+     /api/kyc/run-all-checks, which gateway-403s for clients and fetch
+     swallows — the client was TOLD screening ran when nothing did (worse
+     than noise: a compliance claim). Both homes now skip toast+kick when
+     the viewer is a client (isClientDeal / isClientDeals). Verified: link
+     as Mark → 0 kyc calls, 0 toast, 0 403; staff path untouched.
+  2. Deal-detail Timeline card for clients opened an EMPTY panel — its
+     GET /api/deals/:id/timeline is gateway-403 (only /api/crm/ is
+     client-allowed, and the route has no per-deal scope check so opening
+     the prefix would be wrong); r257 gate pattern applied: Timeline card
+     hidden for clients (both sidebar homes via the shared fragment),
+     Audit log stays (works, and records client edits). Verified both
+     personas: Mark no Timeline + Audit renders; Victoria Timeline renders
+     entries. tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 client-deal-party-link-gates (no Timeline
+  card / Audit stays / UI tenant-link fires zero run-all-checks; restores
+  tenantId=null in finally). Assertions verified standalone via the
+  journey probes; runs from r264.
+- Bugs deferred: none. Suggestions added: UX #35 (clients have no news
+  surface — staff /news has no client equivalent), UX #36 (audit log
+  Change Log prints raw company UUIDs, e.g. "changed tenant from
+  11110000-… to empty"). New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r263 had the journey →
+  r264 may be LIGHT; then #3).
 
 ### r262 · 2026-08-11 · LIGHT (r261 had the journey)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER
