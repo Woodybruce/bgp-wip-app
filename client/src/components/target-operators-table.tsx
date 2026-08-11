@@ -214,7 +214,6 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
           href={t.clientContactId ? `/contacts/${t.clientContactId}` : undefined}
           onSave={v => patchTarget({ clientContactId: v })}
           placeholder={clientCompanyId ? "Link client contact" : "No client company"}
-          compact
         />
       </TableCell>
       <TableCell className="text-xs max-w-[220px]">
