@@ -61,13 +61,25 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r264 · 2026-08-11 · ROUND IN PROGRESS (provisional)
-- LIGHT round (r263 had the journey). Fresh container (pg_hba trust per
-  r205; restore-as-postgres + ALTER owners + schema grant per r249).
-- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures,
-  fresh DB + FRESH_BUILD=1; no cold-build login flake this time).
-- Two-bot round 264 underway — first live run of r263's
-  client-deal-party-link-gates. Triage to follow.
+### r264 · 2026-08-11 · LIGHT (r263 had the journey)
+- Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN first
+  pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build
+  login flake this time). Two-bot round 264: exit 0, 175 scenarios ok —
+  incl. the FIRST live run of r263's client-deal-party-link-gates
+  (green; the r263 AML-gate + Timeline-card fixes hold). 2 logged
+  issues both listed noise (rocketreach-400; commentary-regen 503).
+  0 raw 500/502/504 in the whole round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404; every 503 endpoint is a listed
+  AI/no-key route + os/sites noise; contact verify now 503s per the
+  r261 fix). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: two-bot's FIRST run right after dev-server
+  start can die at login with ECONNRESET (Vite still cold-transforming
+  the first page load; sibling of the r262 cold-build smoke flake) —
+  warm "/" once / re-run before triaging as real.
+- Next journey: rotation #3 client mobile 390px (r264 was LIGHT → r265
+  FULL).
 
 ### r263 · 2026-08-11 · FULL (rotation #2 client desktop)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
