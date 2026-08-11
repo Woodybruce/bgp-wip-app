@@ -61,6 +61,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r266 · 2026-08-11 · IN PROGRESS (light round — r265 had the journey)
+- Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
+  + schema grant per r249). Regression: run-smoke.sh GREEN first pass
+  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake).
+- Triage: r265's deferred calendar-footer clip REPRODUCED at 390px (insight
+  strip left 56px visible by the Intelligence label + date stamp; first card
+  391px nowrap → unreadable clip). Fix in progress in
+  client/src/components/intelligence-footer.tsx. Two-bot round to follow.
+
 ### r265 · 2026-08-11 · FULL (rotation #3 client mobile 390px)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
   + schema grant per r249). Regression: run-smoke.sh GREEN ×2 (42 checks,
