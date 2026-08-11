@@ -59,12 +59,40 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r255 · 2026-08-11 · ROUND IN PROGRESS
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB +
-  FRESH_BUILD=1). Two-bot round 255 underway. Journey underway:
-  rotation #2 client desktop (Mark, 1440px) — tracker interest/viewings,
-  brand contact, calendar. Triage pending. This entry is the heartbeat;
-  final entry replaces it.
+### r255 · 2026-08-11 · FULL (rotation #2 client desktop)
+- Fresh container (pg_hba trust fix, r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN
+  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1). Two-bot round 255:
+  exit 0, 171 scenarios ok, 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503 = intended no-key degradation).
+  0 raw 500/502/504 in the whole round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404/503; every 503 endpoint is a listed
+  AI/no-key route).
+- Journey: Mark Warne desktop 1440px — "before the quarterly call: which
+  vacant Bluewater units have live interest, who do I chase at the brand,
+  and when is the review meeting?" (FIRST client-desktop journey coverage
+  of the tracker Viewings/Offers dialogs, the CRM Contacts page, and the
+  Calendar): login → /available (153 units, table + status chips) →
+  Viewings dialog (clean empty state, Add Viewing) → Offers dialog →
+  Add Viewing form: company combobox popover-in-dialog WORKS client-side
+  (r205 fix holds; Starbucks pick fills form, date defaults today; not
+  saved) → /calendar (week grid + month mini-cal render, two-bot's
+  QA-CAL-MINE event correctly Landsec-scoped, intelligence footer) →
+  /contacts CRM (Brand Directory slice = 9 brands, Starbucks card shows
+  Tom Barista + email; Landsec Contacts tab lists the client's people).
+  0 non-noise console/net errors, 0 page errors. No data mutated.
+- NOT bugs (triaged): "No company / QA-VIEWING-R255-EDITED" viewing row
+  mid-journey = concurrent two-bot probe (swept next round); tracker
+  first paint can take ~8s cold (r237 warm-up flake class — use longer
+  waits, not a bug).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: UX-NOTES #31 (client tracker: Activity/viewings/offers column
+  is off-screen at 1440px and the FY Viewings/Offers chips don't filter —
+  "which units have interest" is scroll-and-scan). New flakes: none.
+  Harness growth: none needed (viewing/offer add+edit covered API-side;
+  calendar scoping covered by client-calendar-sees-own-events).
+- Next journey: rotation #3 client mobile 390px (r255 had the journey →
+  r256 may be LIGHT; then #3).
 
 ### r254 · 2026-08-11 · LIGHT (r253 had the journey)
 - Fresh container (pg_hba trust fix, r205; restore-as-postgres + ALTER

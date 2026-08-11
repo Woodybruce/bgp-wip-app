@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+31. 2026-08-11 · Landsec client / desktop 1440px · asked "which of my
+    vacant units have live interest?" on the Letting Tracker · the
+    Activity column (viewing/offer counts + dialog buttons) sits ~15
+    columns right, off-screen at 1440px, so every unit means a long
+    horizontal scroll; the FY "Viewings / Offers" chips at the top show
+    portfolio totals but aren't clickable and there's no "has activity"
+    filter, so the only route is scroll-and-scan per row · Suggested:
+    make the FY Viewings/Offers chips filter the table to units with
+    activity (like the status chips below them do), and/or surface small
+    viewing/offer count badges in the always-visible Property/Unit cell.
+
 30. 2026-08-11 · BGP staff / desktop 1440px · opened a vacant unit's
     Targeting Brief to add a target operator · the dialog opens as a blank
     instruction form with no Target operators section at all — the targets
