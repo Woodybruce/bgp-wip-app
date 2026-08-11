@@ -65,7 +65,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-map-layer-scope']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-map-layer-scope', 'client-brief-target-scope']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1051,6 +1051,33 @@ async function victoriaRound(page, cross) {
       if (shown >= 3) break;
     }
     if (shown < 3) throw new Error(`deal board shows only ${shown}/5 pipeline columns`);
+  });
+
+  // Targeting Brief + target operator via the API the Brief dialog uses
+  // (r253: the dialog's popover picker was dead inside the Radix Dialog —
+  // the API pair is the cheap guard that briefs/targets keep round-tripping).
+  // The brief is left for markRound's client-brief-target-scope cross-check;
+  // run-round.sh purges 'QA Brief%' briefs + their targets at round start.
+  await step(page, p, 'staff-brief-target-create', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json().catch(() => []);
+      const unit = (Array.isArray(units) ? units : []).find(u => u.propertyId === window.QA_FIX.bluewater);
+      if (!unit) return { fail: 'no Bluewater unit found' };
+      const bRes = await fetch('/api/unit-briefs', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ unitId: unit.id, title: `QA Brief R${round} target-scope` }) });
+      const brief = bRes.ok ? await bRes.json() : null;
+      if (!brief?.id) return { fail: `brief create ${bRes.status}` };
+      const tRes = await fetch(`/api/unit-briefs/${brief.id}/targets`, { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ operatorName: `QA-TGT-R${round}`, priority: 'A' }) });
+      // No GET-by-id route exists — the list endpoint is what the tracker and
+      // Brief dialog read, and it rides the targets along.
+      const list = await (await fetch('/api/unit-briefs', { headers: auth })).json().catch(() => []);
+      const mine = (Array.isArray(list) ? list : []).find(b => b.id === brief.id);
+      return { briefId: brief.id, targetStatus: tRes.status, targets: (mine?.targets || []).map(t => t.operatorName) };
+    }, ROUND);
+    if (r.fail) throw new Error(r.fail);
+    if (r.targetStatus !== 200) throw new Error(`target add failed (${r.targetStatus})`);
+    if (!r.targets.includes(`QA-TGT-R${ROUND}`)) throw new Error('added target missing from brief read-back');
+    cross.briefId = r.briefId;
   });
 }
 
@@ -3773,6 +3800,31 @@ async function markRound(page, cross) {
     } finally {
       await mob.close();
     }
+  });
+
+  // Targeting Brief scope (r253): the staff-created brief on the client's own
+  // property is client-readable WITH its targets, the client may add a target
+  // there (client-instruction parity — same decision family as tenancy row
+  // edits), but target writes against a brief outside their portfolio are
+  // refused. run-round.sh purges the QA Brief + targets next round.
+  await step(page, p, 'client-brief-target-scope', async () => {
+    if (!cross.briefId) throw new Error('no briefId from staff-brief-target-create');
+    const r = await page.evaluate(async ([briefId, round]) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      // The list endpoint is the only brief read path (no GET-by-id route);
+      // it is client-scoped and rides targets along.
+      const listRes = await fetch('/api/unit-briefs', { headers: auth });
+      const list = listRes.ok ? await listRes.json() : [];
+      const mine = (Array.isArray(list) ? list : []).find(b => b.id === briefId);
+      const ownAdd = (await fetch(`/api/unit-briefs/${briefId}/targets`, { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ operatorName: `QA-TGT-CLIENT-R${round}`, priority: 'B' }) })).status;
+      const foreignAdd = (await fetch('/api/unit-briefs/00000000-dead-beef-0000-000000000000/targets', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ operatorName: 'QA-TGT-FOREIGN', priority: 'B' }) })).status;
+      return { readStatus: listRes.status, found: !!mine, targets: (mine?.targets || []).map(t => t.operatorName), ownAdd, foreignAdd };
+    }, [cross.briefId, ROUND]);
+    if (r.readStatus !== 200) throw new Error(`client brief list unhealthy (${r.readStatus})`);
+    if (!r.found) throw new Error('own-property brief missing from client brief list');
+    if (!r.targets.includes(`QA-TGT-R${ROUND}`)) throw new Error('staff-added target not visible to client');
+    if (r.ownAdd !== 200) throw new Error(`client target add on own brief refused (${r.ownAdd})`);
+    if (![403, 404].includes(r.foreignAdd)) throw new Error(`foreign brief target write not refused (${r.foreignAdd})`);
   });
 }
 

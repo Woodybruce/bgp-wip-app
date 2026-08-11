@@ -59,13 +59,55 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r253 · 2026-08-11 · IN PROGRESS (FULL — rotation #1 staff desktop)
+### r253 · 2026-08-11 · FULL (rotation #1 staff desktop)
 - Fresh container (pg_hba trust fix, r205; restore-as-postgres + ALTER
-  owners + schema grant per r249). Regression: run-smoke.sh GREEN
-  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1). Two-bot round 253
-  running; journey next: Victoria desktop — unit brief / target operator
-  flow on the Bluewater tracker + client cross-check (first journey
-  coverage of the Brief dialog).
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN ×2
+  (42 checks, 0 failures; FRESH_BUILD=1 before the fixes and rebuilt
+  bundle after). Two-bot round 253: exit 0, all scenarios ok, 2 logged
+  issues both listed noise (rocketreach-400; commentary-regen 503 =
+  intended no-key degradation).
+- Journey: Victoria desktop 1440px — "MSU3 Bluewater is vacant: brief the
+  unit, set a target operator, log this morning's viewing, then check
+  what the client sees" (FIRST journey coverage of the Targeting Brief
+  dialog): login → /available → search MSU3 → Brief dialog → create brief
+  → add target operator + comment → log viewing via Viewings dialog →
+  cross-check as Mark: staff viewing visible on the unit, Brief dialog
+  opens with the target row (client-instruction parity), rival-brief
+  writes 403 / reads 404 (probed via API). Post-fix run: 0 non-noise
+  console/net errors. All probe rows deleted after.
+- Bugs fixed (2, both in the Targeting Brief dialog):
+  1. The "add target operator" picker was DEAD in its only home — the
+     brand dropdown is a portal'd Popover inside a Radix Dialog (the
+     documented r205 dead-picker class): the list rendered but the
+     dialog's focus trap + pointer-events guard swallowed every click and
+     keystroke, so staff could not add a target operator from the Brief
+     dialog at all. BrandSearchInput gained an `inline` mode (dialog-safe
+     EntityCombobox shape, dropdown in the trigger's own subtree);
+     TargetOperatorsTable passes it. Popover mode untouched — tracker /
+     leasing-schedule inline pickers re-verified working via Playwright.
+  2. Picking a brand never autofilled Category — the pick handler compared
+     companyType ("Tenant - Restaurant") against LETTING_CATEGORIES bare
+     labels ("Restaurant"), so the advertised autofill never fired; now
+     strips the "Tenant - " prefix (Starbucks pick → Category Restaurant,
+     verified visually). Both fixes: tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +2 — staff-brief-target-create (brief + target
+  round-trip via the list route, which is the only brief read path) and
+  client-brief-target-scope (own-property brief + staff target visible to
+  client, client target-add on own brief 200, foreign-brief write
+  403/404; negative-probe listed). Assertions verified standalone via
+  curl both personas; run from round 254 — briefs titled 'QA Brief%' are
+  purged by run-round.sh at round start.
+- Bugs deferred: none. Suggestions added: UX-NOTES #30 (Brief dialog
+  hides the Target operators section until the brief is saved, and
+  "Create brief" only appears once a field is dirty — invisible two-step
+  gate). New flakes: none.
+- NOT bugs (triaged): client CAN add targets to a brief on their own
+  property (200) — client-instruction parity, same decision family as
+  tenancy row edits; rival scoping holds (403/404). GET
+  /api/unit-briefs/:id 404s for everyone — the route doesn't exist, the
+  list endpoint is the read path (dialog + tracker use it).
+- Next journey: rotation #2 client desktop (r253 had the journey → r254
+  may be LIGHT; then #2).
 
 ### r252 · 2026-08-10 · LIGHT (r251 had the journey)
 - Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +

@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+30. 2026-08-11 · BGP staff / desktop 1440px · opened a vacant unit's
+    Targeting Brief to add a target operator · the dialog opens as a blank
+    instruction form with no Target operators section at all — the targets
+    table (and its add row) only mounts after the brief row is saved, and
+    the "Create brief" button itself only appears once a field is edited,
+    so "just add a target" means discovering an invisible two-step gate ·
+    Suggested: always render the Target operators section, with a one-line
+    empty state ("Save the brief to start adding targets" — or better,
+    auto-create the brief on first target add, like the tracker's inline
+    add already does via ensureBriefFor).
+
 29. 2026-08-10 · BGP staff / mobile 390px · logged a new operator
     requirement from a phone, then wanted to see which available units fit
     it · the requirements KPI tile advertises "0 / 1 fit your available

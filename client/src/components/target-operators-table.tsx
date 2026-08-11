@@ -301,7 +301,13 @@ export function TargetOperatorsTable({ targets, clientCompanyId, ensureBriefId, 
           value={newTarget.operatorName}
           companyId={newTarget.companyId}
           allowCreate
-          onPick={p => setNewTarget(prev => ({ ...prev, operatorName: p.name, companyId: p.companyId, category: p.companyType && LETTING_CATEGORIES.includes(p.companyType) ? p.companyType : prev.category }))}
+          inline
+          onPick={p => setNewTarget(prev => {
+            // Brand companyTypes carry a "Tenant - " prefix ("Tenant - Restaurant"),
+            // so compare against the bare category label or the autofill never fires.
+            const ct = (p.companyType || "").replace(/^Tenant - /i, "");
+            return { ...prev, operatorName: p.name, companyId: p.companyId, category: LETTING_CATEGORIES.includes(ct) ? ct : prev.category };
+          })}
           testId="input-new-target-name"
         />
         <Select value={newTarget.category} onValueChange={v => setNewTarget(p => ({ ...p, category: v }))}>

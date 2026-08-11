@@ -6,7 +6,7 @@
 // brand list" for names we don't have (staff only — the companies POST is
 // staff-gated); "use as typed" falls back to an unlinked name (the server
 // still auto-links an exact name match at insert time).
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronsUpDown, Link2Off, Plus } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -20,7 +20,7 @@ export interface BrandPick {
   companyType?: string | null;
 }
 
-export function BrandSearchInput({ value, companyId, onPick, placeholder = "Search brands…", className = "", testId, allowCreate = false, iconOnly = false }: {
+export function BrandSearchInput({ value, companyId, onPick, placeholder = "Search brands…", className = "", testId, allowCreate = false, iconOnly = false, inline = false }: {
   value: string;
   companyId?: string | null;
   onPick: (pick: BrandPick) => void;
@@ -30,11 +30,32 @@ export function BrandSearchInput({ value, companyId, onPick, placeholder = "Sear
   allowCreate?: boolean;
   /** Render just a small + button as the trigger — for tight table cells. */
   iconOnly?: boolean;
+  /** Render the dropdown inline (no Popover portal) — required inside Radix Dialogs. */
+  inline?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+
+  // Inline mode manages its own dismissal (no Popover doing it for us).
+  useEffect(() => {
+    if (!inline || !open) return;
+    const onDocPointerDown = (e: PointerEvent) => {
+      const el = containerRef.current;
+      if (el && !el.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDocPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [inline, open]);
 
   // Same key + shape as the leasing-schedule page's basic company cache,
   // so the two share one fetch.
@@ -83,39 +104,35 @@ export function BrandSearchInput({ value, companyId, onPick, placeholder = "Sear
     }
   };
 
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        {iconOnly ? (
-          <button
-            type="button"
-            className={`inline-flex items-center justify-center h-5 w-5 rounded border border-dashed border-muted-foreground/40 text-muted-foreground hover:text-foreground hover:border-foreground/60 shrink-0 ${className}`}
-            title={placeholder}
-            data-testid={testId || "brand-search-input"}
-          >
-            <Plus className="h-3 w-3" />
-          </button>
-        ) : (
-          <button
-            type="button"
-            className={`flex h-8 items-center justify-between gap-1 rounded-md border border-input bg-background px-2 text-xs ring-offset-background hover:bg-muted/40 ${className}`}
-            data-testid={testId || "brand-search-input"}
-          >
-            <span className={`truncate ${value ? "" : "text-muted-foreground"}`}>
-              {value || placeholder}
-            </span>
-            <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-50" />
-          </button>
-        )}
-      </PopoverTrigger>
-      {/* Kept short (list capped at 240px) so the panel fits below the
-          trigger on laptop heights — a taller list made Radix flip it above
-          the row, where it sprawled over the toolbar and read as a broken
-          "bleed" (Woody, 2026-07-31). */}
-      <PopoverContent className="p-0 w-[320px]" align="start" side="bottom" collisionPadding={8}>
-        <Command shouldFilter={false}>
+  const trigger = iconOnly ? (
+    <button
+      type="button"
+      className={`inline-flex items-center justify-center h-5 w-5 rounded border border-dashed border-muted-foreground/40 text-muted-foreground hover:text-foreground hover:border-foreground/60 shrink-0 ${className}`}
+      title={placeholder}
+      data-testid={testId || "brand-search-input"}
+      {...(inline ? { onClick: () => setOpen(o => !o) } : {})}
+    >
+      <Plus className="h-3 w-3" />
+    </button>
+  ) : (
+    <button
+      type="button"
+      className={`flex h-8 items-center justify-between gap-1 rounded-md border border-input bg-background px-2 text-xs ring-offset-background hover:bg-muted/40 ${className}`}
+      data-testid={testId || "brand-search-input"}
+      {...(inline ? { onClick: () => setOpen(o => !o) } : {})}
+    >
+      <span className={`truncate ${value ? "" : "text-muted-foreground"}`}>
+        {value || placeholder}
+      </span>
+      <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-50" />
+    </button>
+  );
+
+  const commandPanel = (
+    <Command shouldFilter={false}>
           <CommandInput
             placeholder={placeholder}
+            autoFocus
             value={query}
             onValueChange={setQuery}
           />
@@ -152,7 +169,38 @@ export function BrandSearchInput({ value, companyId, onPick, placeholder = "Sear
               </CommandGroup>
             )}
           </CommandList>
-        </Command>
+    </Command>
+  );
+
+  // Inside a Radix Dialog the portal'd Popover never receives pointer events
+  // or focus (the dialog's focus trap + pointer-events guard swallow them),
+  // so `inline` renders the same panel in the trigger's own DOM subtree —
+  // the documented dialog-safe shape (see entity-combobox.tsx / QA r205).
+  if (inline) {
+    return (
+      <div ref={containerRef} className={`relative ${className}`}>
+        {trigger}
+        {open && (
+          <div
+            className="absolute left-0 bottom-full z-50 mb-1 w-[320px] rounded-md border bg-popover text-popover-foreground shadow-md overflow-hidden"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            {commandPanel}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+      {/* Kept short (list capped at 240px) so the panel fits below the
+          trigger on laptop heights — a taller list made Radix flip it above
+          the row, where it sprawled over the toolbar and read as a broken
+          "bleed" (Woody, 2026-07-31). */}
+      <PopoverContent className="p-0 w-[320px]" align="start" side="bottom" collisionPadding={8}>
+        {commandPanel}
       </PopoverContent>
     </Popover>
   );
