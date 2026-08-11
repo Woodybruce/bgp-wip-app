@@ -1818,7 +1818,11 @@ export function setupStripeIssuingRoutes(app: Express) {
       const totalMonthCount = monthExp.length;
       const pendingReceipts = allExp.filter(e => e.status === "pending_receipt").length;
       const pendingApproval = allExp.filter(e => e.status === "pending_approval").length;
-      const postedToXero = rangeExp.filter(e => e.status === "posted_to_xero").length;
+      // All-time, matching the Pending tiles — date-range filtering made the
+      // 19 June-dated postings "vanish" when the range rolled into July and
+      // Wendy reasonably concluded they'd been lost. (Mirrors ChatBGP's
+      // server-side fix so it exists in the repo, not just the live checkout.)
+      const postedToXero = allExp.filter(e => e.status === "posted_to_xero").length;
       const personalFlagged = rangeExp.filter(e => e.isPersonal).length;
 
       // Spend by cardholder over the selected range.
