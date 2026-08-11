@@ -61,6 +61,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r265 · 2026-08-11 · ROUND IN PROGRESS (FULL, rotation #3 client mobile 390px)
+- Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
+  + schema grant per r249). Regression: run-smoke.sh GREEN first pass
+  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake).
+- Journey pass 1 (Mark @ 390px iPhone UA — "before a call with BGP: when's
+  our next meeting, what requirements are live, message BGP"; FIRST
+  client-mobile coverage of /calendar, /requirements, /messages): all four
+  pages render, 0 console/page errors, 0 h-overflow, 0 non-noise http
+  errors. Triage in progress: client Requirements shows a "New Brand"
+  button (checking for staff-action leak); calendar view-toggle row cut
+  off at right edge + intelligence footer clipped at 390px. Two-bot round
+  pending.
+
 ### r264 · 2026-08-11 · LIGHT (r263 had the journey)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER
   owners + schema grant per r249). Regression: run-smoke.sh GREEN first
