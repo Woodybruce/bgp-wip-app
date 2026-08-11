@@ -59,6 +59,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r259 · 2026-08-11 · ROUND IN PROGRESS (FULL — rotation #4 staff mobile 390px)
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB +
+  FRESH_BUILD). Two-bot round 259: exit 0, 3 logged issues — 2 listed noise
+  (rocketreach-400; commentary-regen 503), 1 is the harness's OWN
+  client-contact-detail-gates DELETE-must-403 probe (scenario [ok]; the
+  scenario isn't in NEGATIVE_PROBE_SCENARIOS so the global listener logs its
+  pass condition — harness noise, fix planned this round). 0 raw 5xx in the
+  server log. Journey (staff mobile calendar → brands hub → brand profile →
+  contact detail) underway.
+
 ### r258 · 2026-08-11 · LIGHT (r257 had the journey)
 - Fresh container (pg_hba trust fix per r205; restore-as-postgres + ALTER
   owners + schema grant per r249). Regression: run-smoke.sh GREEN ×2
