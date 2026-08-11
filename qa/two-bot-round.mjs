@@ -540,6 +540,46 @@ async function victoriaRound(page, cross) {
     if (!r.terminal) throw new Error('activity curate never reached a terminal state (inFlight stuck true ≥30s — Analysing… spinner would spin forever)');
   });
 
+  // r267: the staff deal-detail action row (Image Studio / Create document /
+  // Edit) must wrap at 390px — without flex-wrap, Edit sat past the viewport
+  // with no scroll path (same class as the r265 calendar toolbar). Real phone
+  // emulation per r266: touch + mobile UA, session cookie copied over.
+  await step(page, p, 'staff-deal-mobile-action-row', async () => {
+    const deals = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      return Array.isArray(list) ? list : (list?.data || []);
+    });
+    const deal = deals.find((d) => /gail/i.test(d.name || '')) || deals[0];
+    if (!deal) return; // fixture without deals
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mob.goto(`${BASE}/deals/${deal.id}`, nav);
+      await mob.locator('[data-testid="button-edit-deal"]').waitFor({ timeout: 20000 });
+      for (const id of ['button-deal-image-studio', 'button-deal-create-document', 'button-edit-deal']) {
+        const box = await mob.locator(`[data-testid="${id}"]`).first().boundingBox();
+        if (!box) throw new Error(`deal action ${id} missing at 390px`);
+        if (box.x < 0 || box.x + box.width > 390 + 2) {
+          throw new Error(`deal action ${id} clipped at 390px (x ${Math.round(box.x)}, right ${Math.round(box.x + box.width)})`);
+        }
+      }
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // Task assignment (terminal, 2026-08-03): a task assigned to another staff
   // member lands on the ASSIGNEE's list. Victoria assigns to Woody; the
   // woody round verifies receipt. Swept by the QA-PROBE task purge.

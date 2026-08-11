@@ -61,19 +61,49 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r267 · 2026-08-11 · ROUND IN PROGRESS (provisional)
-- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 267: exit 0,
-  176 scenarios ok, 2 logged issues both listed noise (rocketreach-400;
-  commentary-regen 503).
-- FULL round underway (rotation #4 staff mobile 390px): journey = Victoria
-  on phone, deals board -> Gail's deal detail -> comment. Bug found + fix
-  in progress: deal-detail action row (Image Studio / Create document /
-  Edit) nowrap at 390px, Edit past the viewport, row not scrollable —
-  flex-wrap applied, verification pending.
-- Triage note: mid-journey "client shell as Victoria" sighting = the
-  concurrent two-bot staff-switch-to-client-view scenario flipping her
-  server-persisted active_team mid-run, not an app bug.
+### r267 · 2026-08-11 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
+  + schema grant per r249). Regression: run-smoke.sh GREEN ×2 (42 checks,
+  0 failures; FRESH_BUILD=1 before the fix, rebuilt bundle after; no
+  cold-build flake either pass). Two-bot round 267: exit 0, 176 scenarios
+  ok — incl. the FIRST live runs of r266's rebuilt
+  client-mobile-controls-reachable (green in its iPhone context) — 2 logged
+  issues both listed noise (rocketreach-400; commentary-regen 503).
+- Journey: Victoria @ 390px iPhone UA — "on the train: how is the Gail's
+  deal at Solicitors going — open it, read the latest, log a comment"
+  (FIRST journey coverage of the staff deals board + deal DETAIL at staff
+  mobile): login → "/" dashboard → bottom-nav Deals (mobile lands on the
+  Deals list — 2 cards, status chips, search) → U124 Gail's deal detail
+  (header chips, Parties, Fee Allocation, Files/Linked Property/Comments/
+  History accordions all render, 0 page h-overflow) → comment via the
+  Comments InlineText (tap placeholder → textarea, blur-saves PUT 200,
+  persists across reload). Probe comment cleared after via API. 0 page
+  errors, 0 non-noise console/net errors.
+- Bug fixed (1): staff deal-detail action row (Image Studio / Create
+  document / Edit) is a nowrap flex row — 412px wide at a 390px phone, so
+  EDIT sat past the viewport with no scroll path (row overflow visible,
+  scrollLeft stuck 0; r265 calendar-toolbar class). Added flex-wrap
+  gap-y-1.5 (client/src/components/deal-detail.tsx); Edit now wraps to a
+  second row, all three actions inside the viewport (verified 390px
+  iPhone UA). Desktop 1440px re-verified: row still a single line (equal
+  y for all three). tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 staff-deal-mobile-action-row (Gail's deal at
+  390px iPhone context per r266 pattern — all three action buttons must
+  sit inside the viewport). Assertions verified standalone via the journey
+  probes (geometry green post-fix); node --check clean; runs from r268.
+- NOT bugs (triaged): mid-journey "client shell as Victoria" (Portfolio
+  nav, client Files copy, no Fee Allocation) = the CONCURRENT two-bot
+  staff-switch-to-client-view scenario flipping her server-persisted
+  active_team mid-run — self-inflicted window, cleared when the scenario
+  exits; journey re-run post-window showed the staff shell. Deal Comments
+  panel: header tap TOGGLES it closed (it defaults open) and the editor is
+  a click-to-edit InlineText — first "no textarea" triage was a tester
+  error. deal-detail treats an unresolved viewer as client (!ddUser at
+  deal-detail.tsx:208) — deliberate fail-closed default, renders staff
+  extras once /me lands.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r267 had the journey → r268 may
+  be LIGHT; then #1).
 
 ### r266 · 2026-08-11 · LIGHT (r265 had the journey)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
