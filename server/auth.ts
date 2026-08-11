@@ -368,6 +368,23 @@ export function setupAuth(app: Express) {
     });
   });
 
+  // Mint a fresh bearer token off a still-valid session. Auth tokens expire
+  // after 8h while the session cookie lives much longer, so the token in
+  // localStorage routinely goes stale — the WebSocket then loops "Invalid
+  // token" and token-authed links (mobile downloads) 401. The client calls
+  // this to self-heal instead of requiring a fresh sign-in.
+  app.post("/api/auth/refresh-token", async (req: Request, res: Response) => {
+    const userId = req.session.userId;
+    if (!userId) return res.status(401).json({ message: "No active session" });
+    try {
+      const token = await createAuthToken(userId);
+      res.json({ token });
+    } catch (err: any) {
+      console.error("[auth] refresh-token error:", err?.message);
+      res.status(500).json({ message: "Could not refresh token" });
+    }
+  });
+
   app.get("/api/auth/me", async (req: Request, res: Response) => {
     const userId = req.session.userId || req.tokenUserId;
     if (!userId) {
