@@ -303,7 +303,7 @@ async function fetchDocsHtml(docsUrl: string): Promise<string | null> {
   const apiKey = process.env.SCRAPERAPI_KEY;
   if (!apiKey || scraperApiExhausted()) return null;
   try {
-    const proxied = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(docsUrl)}&country_code=uk&render=false`;
+    const proxied = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(docsUrl)}&render=false`;
     const res = await fetch(proxied, { signal: AbortSignal.timeout(45000) });
     noteScraperApiResponse(res.status);
     if (res.ok) {
@@ -459,7 +459,7 @@ export async function downloadPlanningPdf(url: string, refererUrl?: string): Pro
     try {
       const sessionNum = Math.floor(Math.random() * 999999);
       const step1 = await fetch(
-        `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(refererUrl)}&session_number=${sessionNum}&country_code=uk&render=false`,
+        `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(refererUrl)}&session_number=${sessionNum}&render=false`,
         { signal: AbortSignal.timeout(20000), redirect: "follow" },
       );
       noteScraperApiResponse(step1.status);
@@ -474,7 +474,7 @@ export async function downloadPlanningPdf(url: string, refererUrl?: string): Pro
       console.log(`[planning-docs] ScraperAPI session ${sessionNum}: referer cookies="${cookies}"`);
       if (cookies) {
         const step2 = await fetch(
-          `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&session_number=${sessionNum}&keep_headers=true&country_code=uk&render=false`,
+          `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&session_number=${sessionNum}&keep_headers=true&render=false`,
           {
             headers: { Cookie: cookies, Referer: refererUrl, "User-Agent": BROWSER_UA },
             signal: AbortSignal.timeout(30000),
@@ -523,7 +523,7 @@ export async function downloadPlanningPdf(url: string, refererUrl?: string): Pro
       const embedded = extractEmbeddedPdfUrl(head, url);
       if (embedded && embedded !== url) {
         console.log(`[planning-docs] ${label} returned HTML — retrying embedded URL ${embedded}`);
-        const retryUrl = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(embedded)}&country_code=uk&render=false`;
+        const retryUrl = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(embedded)}&render=false`;
         const retryRes = await fetch(retryUrl, { signal: AbortSignal.timeout(25000), redirect: "follow" });
         if (retryRes.ok) {
           const retryBuf = Buffer.from(await retryRes.arrayBuffer());
@@ -541,19 +541,19 @@ export async function downloadPlanningPdf(url: string, refererUrl?: string): Pro
   };
 
   // Strategy 1: cheapest — no JS rendering. Works for direct .pdf URLs.
-  const s1 = await tryFetch("no-render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=false`, 25000);
+  const s1 = await tryFetch("no-render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&render=false`, 25000);
   if (s1) return s1;
 
   // Strategy 2: premium proxy (residential IPs).
-  const s2 = await tryFetch("premium", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&premium=true&country_code=uk&render=false`, 30000);
+  const s2 = await tryFetch("premium", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&premium=true&render=false`, 30000);
   if (s2) return s2;
 
   // Strategy 3: JS rendering for viewer-page redirects.
-  const s3 = await tryFetch("render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=true`, 45000);
+  const s3 = await tryFetch("render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&render=true`, 45000);
   if (s3) return s3;
 
   // Strategy 4: premium + render. Slow but handles JS-gated + IP-gated Idox.
-  const s4 = await tryFetch("premium+render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&premium=true&country_code=uk&render=true`, 60000);
+  const s4 = await tryFetch("premium+render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&premium=true&render=true`, 60000);
   if (s4) return s4;
 
   return null;

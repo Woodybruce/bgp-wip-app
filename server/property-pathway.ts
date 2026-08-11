@@ -3409,6 +3409,21 @@ async function runStage2(runId: string, _req: Request): Promise<void> {
     return;
   }
 
+  // Stage 1 sometimes "identifies" a description rather than a brand —
+  // "Multiple occupiers across mixed-use building", "Various tenants",
+  // "Vacant unit". Creating a CRM company from that litters the brand book
+  // with phantom records that then get enriched, KYC'd and rendered as full
+  // brand profiles. Treat them exactly like the no-tenant case.
+  // (Worded so real operators like "Various Eateries" still pass: it takes
+  // a placeholder word PLUS a generic noun, or a leading vacancy term.)
+  const PLACEHOLDER_TENANT_RE = /\b(multiple|various|numerous|unknown|unidentified)\b.*\b(occupiers?|tenants?|operators?|brands?|uses?)\b|\bmixed[- ]use\b|^(vacant|unknown|unidentified|tbc|n\/a|none|no tenant|not identified)\b|\bplaceholder\b/i;
+  if (PLACEHOLDER_TENANT_RE.test(tenantName)) {
+    await setStageStatus(runId, "stage2", "skipped", {
+      stage2: { skipped: true, reason: `Stage 1 tenant "${tenantName}" is a descriptive placeholder, not a brand — no CRM company created`, buildingContacts },
+    });
+    return;
+  }
+
   try {
     // Find or create company
     let [company] = await db.select().from(crmCompanies).where(ilike(crmCompanies.name, tenantName)).limit(1);
