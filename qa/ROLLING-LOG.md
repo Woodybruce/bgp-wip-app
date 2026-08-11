@@ -59,6 +59,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r253 · 2026-08-11 · IN PROGRESS (FULL — rotation #1 staff desktop)
+- Fresh container (pg_hba trust fix, r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN
+  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1). Two-bot round 253
+  running; journey next: Victoria desktop — unit brief / target operator
+  flow on the Bluewater tracker + client cross-check (first journey
+  coverage of the Brief dialog).
+
 ### r252 · 2026-08-10 · LIGHT (r251 had the journey)
 - Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +
   ALTER owners + schema grant per r249 note). Regression: run-smoke.sh
