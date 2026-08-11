@@ -65,7 +65,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-map-layer-scope', 'client-brief-target-scope', 'client-contact-detail-gates']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-map-layer-scope', 'client-brief-target-scope', 'client-contact-detail-gates', 'staff-ai-failure-terminal']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -506,6 +506,38 @@ async function victoriaRound(page, cross) {
     if (r.skip) return;
     if (r.status !== 200) throw new Error(`mlr-scope GET ${r.status} (must be 200, never 500)`);
     if (!r.hasSuggestion) throw new Error('mlr-scope 200 but no suggestion payload');
+  });
+
+  // AI failures must reach a terminal state the user can see (r261):
+  // 1. Contact "Verify with AI" must never surface a raw 500/SDK error —
+  //    no-key environments get a 503 with the house "not configured" copy.
+  // 2. An activity curate job that dies (no AI key) must stop reporting
+  //    inFlight so the "Analysing…" spinner resolves — the GET auto-kick
+  //    honours the failure cooldown instead of relaunching a doomed job
+  //    on every poll.
+  await step(page, p, 'staff-ai-failure-terminal', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const contacts = await (await fetch('/api/crm/contacts', { headers: auth })).json();
+      const tom = (Array.isArray(contacts) ? contacts : []).find((c) => /barista/i.test(c.name || ''));
+      if (!tom) return { skip: true };
+      const v = await fetch(`/api/crm/contacts/${tom.id}/verify`, { method: 'POST', credentials: 'include', headers: auth });
+      const vBody = await v.json().catch(() => ({}));
+      const kick = await fetch(`/api/activity/contact/${tom.id}/curate`, { method: 'POST', credentials: 'include', headers: auth });
+      let terminal = false;
+      for (let i = 0; i < 15; i++) {
+        await new Promise((res2) => setTimeout(res2, 2000));
+        const g = await (await fetch(`/api/activity/contact/${tom.id}`, { headers: auth })).json().catch(() => null);
+        if (g && !g.inFlight) { terminal = true; break; }
+      }
+      return { skip: false, verifyStatus: v.status, verifyError: String(vBody?.error || ''), kickStatus: kick.status, terminal };
+    });
+    if (r.skip) return;
+    if (r.verifyStatus === 500) throw new Error(`verify-contact returned raw 500 (${r.verifyError.slice(0, 80)})`);
+    if (r.verifyStatus === 503 && !/not configured/i.test(r.verifyError)) throw new Error(`verify-contact 503 without house copy: ${r.verifyError.slice(0, 80)}`);
+    if (![200, 503].includes(r.verifyStatus)) throw new Error(`verify-contact unexpected ${r.verifyStatus}`);
+    if (r.kickStatus !== 202) throw new Error(`curate kick ${r.kickStatus} (expected 202)`);
+    if (!r.terminal) throw new Error('activity curate never reached a terminal state (inFlight stuck true ≥30s — Analysing… spinner would spin forever)');
   });
 
   // Task assignment (terminal, 2026-08-03): a task assigned to another staff

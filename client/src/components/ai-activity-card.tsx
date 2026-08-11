@@ -157,9 +157,11 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
             toast({ title: "Activity refreshed", description: `${d.emailHits?.length || 0} emails, ${d.meetingHits?.length || 0} meetings cited.` });
             return;
           }
-          if (!stillCooking && d.generatedAt && d.generatedAt !== before) {
-            setData(d);
+          if (!stillCooking) {
+            // Job ended without a fresh read — it failed server-side
+            // (no AI key, mailbox error, …). Stop spinning and say so.
             setCurating(false);
+            setError("Analysis didn't complete — the AI service may be unavailable. Try again shortly.");
             return;
           }
         }

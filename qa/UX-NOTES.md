@@ -13,6 +13,16 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+34. 2026-08-11 · BGP staff / desktop 1440px · back at her desk after a phone
+    call with a brand contact, Victoria wanted to note the call on the
+    contact's record · the contact page's activity board is inbox/calendar-
+    synced only — there is no "log a call/note" action anywhere on the page;
+    the only free-text home is the Notes field buried inside the Edit
+    Contact dialog (unstructured, no timestamp, invisible on the activity
+    timeline) · Suggested: a lightweight "Log activity" button on the
+    contact detail page (call/meeting/note + date + one-line summary) that
+    renders in the same activity feed alongside synced emails/meetings.
+
 33. 2026-08-11 · Landsec client / desktop · opened an agent's contact page
     from the CRM list (agent contacts are deliberately client-readable —
     they're named on the tracker/requirements boards) · the page shows the
