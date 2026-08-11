@@ -3911,9 +3911,20 @@ async function markRound(page, cross) {
     // flow that always fails; (b) the calendar toolbar must wrap at 390px —
     // without flex-wrap the Week/CRM controls sat past the viewport with no
     // scroll path to them.
-    const mob = await page.context().newPage();
+    // r266: this needs REAL phone emulation (touch + mobile UA), not just a
+    // narrow viewport — useIsMobile deliberately keeps the desktop layout for
+    // non-touch windows, so a bare 390px page renders the squeezed desktop
+    // shell and the toolbar assertions fail against the wrong layout.
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    // the session cookie (set by login()'s context.request.post) is the auth
+    // carrier — localStorage alone does not authenticate a fresh context
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
     try {
-      await mob.setViewportSize({ width: 390, height: 780 });
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
       await mob.evaluate(([tok, u]) => {
@@ -3946,6 +3957,7 @@ async function markRound(page, cross) {
       }
     } finally {
       await mob.close();
+      await mobCtx.close();
     }
   });
 

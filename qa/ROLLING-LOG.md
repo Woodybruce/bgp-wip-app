@@ -61,14 +61,48 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r266 · 2026-08-11 · IN PROGRESS (light round — r265 had the journey)
+### r266 · 2026-08-11 · LIGHT (r265 had the journey)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
-  + schema grant per r249). Regression: run-smoke.sh GREEN first pass
-  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake).
-- Triage: r265's deferred calendar-footer clip REPRODUCED at 390px (insight
-  strip left 56px visible by the Intelligence label + date stamp; first card
-  391px nowrap → unreadable clip). Fix in progress in
-  client/src/components/intelligence-footer.tsx. Two-bot round to follow.
+  + schema grant per r249). Regression: run-smoke.sh GREEN ×2 (42 checks,
+  0 failures; FRESH_BUILD=1 before the fix, rebuilt bundle after; no
+  cold-build flake either pass). Two-bot round 266: exit 0, 175 scenarios
+  ok, 3 logged issues — 2 listed noise (rocketreach-400; commentary-regen
+  503), 1 was the FIRST live run of r265's client-mobile-controls-reachable
+  failing on ITS OWN environment, not the app (below).
+- Bug fixed (1, r265's deferred item): calendar Intelligence footer clipped
+  its insight text mid-word at 390px — the Intelligence label (178px) +
+  date stamp (84px) chrome left the strip 56px of visible width, and the
+  first nowrap card is 391px wide, so phones saw "🔥 I…" and nothing else.
+  Footer now hides the label text + date group below sm and caps the
+  insight detail at max-w-[58vw] with truncate (ellipsis) on mobile
+  (client/src/components/intelligence-footer.tsx). Verified 390px iPhone
+  UA: first card fully inside the viewport with clean ellipsis, strip
+  285px + swipeable; staff desktop /calendar byte-identical layout (label,
+  date, full-width cards). tsc clean, rebuilt, smoke re-green.
+- Harness fixes (2, both in client-mobile-controls-reachable —
+  qa/two-bot-round.mjs): (a) its first live run failed "toggle-crm-events
+  clipped (x 391)" — a TEST bug: it used a bare 390px page in the desktop
+  context, and useIsMobile deliberately keeps the DESKTOP layout for
+  non-touch/desktop-UA windows (force-desktop support), so it asserted
+  phone-layout geometry against the intentionally-squeezed desktop shell.
+  Scenario now runs in a dedicated iPhone-emulating context (mobile UA +
+  isMobile + hasTouch). (b) that fresh context needs the session COOKIE
+  copied over (addCookies) — localStorage authToken/user alone does not
+  authenticate, pages silently land on the sign-in screen and count()==0
+  assertions false-pass. Also grew the scenario: footer first-insight card
+  must sit inside the 390px viewport (guards this round's fix). All
+  assertions verified standalone green (view-week 183, toggle-crm 256,
+  insight 257 — all < 390); runs from r267. node --check clean.
+- NOT bugs (triaged): desktop layout at a 390px-wide desktop-UA window
+  (or force-desktop on a phone) genuinely overflows the calendar toolbar —
+  intended desktop shell at an extreme width, not a phone surface, left
+  alone. Client mobile dashboard has NO IntelligenceFooter (the 134px-wide
+  footer-in-card sighting was the same desktop-UA artifact). Repeated
+  script logins tripping the 429 limiter mid-triage — listed noise,
+  cleared by dev-server restart.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r266 was LIGHT → r267
+  FULL).
 
 ### r265 · 2026-08-11 · FULL (rotation #3 client mobile 390px)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
