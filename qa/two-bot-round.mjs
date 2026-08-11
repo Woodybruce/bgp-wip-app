@@ -3905,6 +3905,39 @@ async function markRound(page, cross) {
     }
   });
 
+  await step(page, p, 'client-mobile-controls-reachable', async () => {
+    // r265: (a) the requirements "New Brand" button is staff-only — its POST
+    // /api/crm/companies is read-only for clients, so showing it advertises a
+    // flow that always fails; (b) the calendar toolbar must wrap at 390px —
+    // without flex-wrap the Week/CRM controls sat past the viewport with no
+    // scroll path to them.
+    const mob = await page.context().newPage();
+    try {
+      await mob.setViewportSize({ width: 390, height: 780 });
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mob.goto(`${BASE}/requirements`, nav);
+      await mob.waitForTimeout(3000);
+      if (await mob.locator('[data-testid="button-new-brand"]').count()) {
+        throw new Error('client requirements shows the staff-only New Brand button (its save 403s for clients)');
+      }
+      await mob.goto(`${BASE}/calendar`, nav);
+      await mob.waitForTimeout(3000);
+      for (const id of ['view-week', 'toggle-crm-events']) {
+        const box = await mob.locator(`[data-testid="${id}"]`).boundingBox();
+        if (!box) throw new Error(`calendar control ${id} missing at 390px`);
+        if (box.x < 0 || box.x + box.width > 390 + 2) {
+          throw new Error(`calendar control ${id} clipped at 390px (x ${Math.round(box.x)}, right ${Math.round(box.x + box.width)})`);
+        }
+      }
+    } finally {
+      await mob.close();
+    }
+  });
+
   await step(page, p, 'client-mobile-no-overflow', async () => {
     const mob = await page.context().newPage();
     try {

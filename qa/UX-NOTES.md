@@ -13,6 +13,23 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+37. 2026-08-11 · Landsec client / mobile 390px · "when's our next meeting
+    with BGP?" — the calendar opens on Day view of today; with no meeting
+    today the grid is just empty, and finding the next one means paging
+    forward day by day (Week view helps only within the current week; the
+    Month/mini-cal sidebar is desktop-only, hidden lg:block) · Suggested:
+    a compact "Upcoming" agenda list (next 5 events) at the top of the
+    mobile calendar, or defaulting mobile to a week/agenda view — "next
+    meeting" is the phone calendar's number-one question.
+
+38. 2026-08-11 · Landsec client / mobile 390px · empty Requirements board ·
+    the empty state says "No requirements — Try adjusting your filters"
+    even when no search/filter is active, which sends the user hunting for
+    filters that aren't set; for a client it also gives no hint that BGP
+    logs requirements on their behalf · Suggested: filter-aware empty copy
+    ("No live requirements for your portfolio yet" when unfiltered; keep
+    the filter hint only when a filter/search is active).
+
 36. 2026-08-11 · Landsec client / desktop · reviewed the deal Audit log
     after amending the tenant on his own deal · the Change Log renders raw
     values — "changed tenant from 11110000-0000-0000-0000-000000000201 to
