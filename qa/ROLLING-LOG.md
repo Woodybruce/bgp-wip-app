@@ -59,11 +59,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r254 · 2026-08-11 · LIGHT — ROUND IN PROGRESS (provisional)
-- Round in progress. Regression: run-smoke.sh GREEN (42 checks, 0 failures,
-  fresh DB + FRESH_BUILD=1). Two-bot round 254 running (first live run of
-  r253's staff-brief-target-create + client-brief-target-scope); triage to
-  follow. r253 had the journey → this round is LIGHT (no journey).
+### r254 · 2026-08-11 · LIGHT (r253 had the journey)
+- Fresh container (pg_hba trust fix, r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN
+  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1). Two-bot round 254:
+  exit 0, all scenarios ok — incl. the FIRST live run of r253's
+  staff-brief-target-create + client-brief-target-scope (both green; the
+  r253 Brief-dialog fixes hold). 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503 = intended no-key degradation).
+  0 raw 500/502/504 in the whole round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404/503; every 503 endpoint is a listed
+  AI/no-key route + os/sites noise). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #2 client desktop (r254 was LIGHT → r255 FULL).
 
 ### r253 · 2026-08-11 · FULL (rotation #1 staff desktop)
 - Fresh container (pg_hba trust fix, r205; restore-as-postgres + ALTER
