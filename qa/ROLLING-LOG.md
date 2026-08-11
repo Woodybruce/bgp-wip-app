@@ -59,6 +59,12 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r261 · 2026-08-11 · FULL (rotation #1 staff desktop) — IN PROGRESS
+- Fresh container (pg_hba trust fix per r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN (42 checks,
+  0 failures, fresh DB + FRESH_BUILD=1). Triage: journey first pass logged
+  only /api/microsoft/* 401s (listed noise). Two-bot + journey underway.
+
 ### r260 · 2026-08-11 · LIGHT (r259 had the journey)
 - Fresh container (pg_hba trust fix per r205; restore-as-postgres + ALTER
   owners + schema grant per r249). Regression: run-smoke.sh GREEN (42 checks,
