@@ -61,6 +61,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r267 · 2026-08-11 · ROUND IN PROGRESS (provisional)
+- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 267: exit 0,
+  176 scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503).
+- FULL round underway (rotation #4 staff mobile 390px): journey = Victoria
+  on phone, deals board -> Gail's deal detail -> comment. Bug found + fix
+  in progress: deal-detail action row (Image Studio / Create document /
+  Edit) nowrap at 390px, Edit past the viewport, row not scrollable —
+  flex-wrap applied, verification pending.
+- Triage note: mid-journey "client shell as Victoria" sighting = the
+  concurrent two-bot staff-switch-to-client-view scenario flipping her
+  server-persisted active_team mid-run, not an app bug.
+
 ### r266 · 2026-08-11 · LIGHT (r265 had the journey)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
   + schema grant per r249). Regression: run-smoke.sh GREEN ×2 (42 checks,
