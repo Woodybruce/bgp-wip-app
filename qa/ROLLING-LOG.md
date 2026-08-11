@@ -61,18 +61,57 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r265 · 2026-08-11 · ROUND IN PROGRESS (FULL, rotation #3 client mobile 390px)
+### r265 · 2026-08-11 · FULL (rotation #3 client mobile 390px)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
-  + schema grant per r249). Regression: run-smoke.sh GREEN first pass
-  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake).
-- Journey pass 1 (Mark @ 390px iPhone UA — "before a call with BGP: when's
-  our next meeting, what requirements are live, message BGP"; FIRST
-  client-mobile coverage of /calendar, /requirements, /messages): all four
-  pages render, 0 console/page errors, 0 h-overflow, 0 non-noise http
-  errors. Triage in progress: client Requirements shows a "New Brand"
-  button (checking for staff-action leak); calendar view-toggle row cut
-  off at right edge + intelligence footer clipped at 390px. Two-bot round
-  pending.
+  + schema grant per r249). Regression: run-smoke.sh GREEN ×2 (42 checks,
+  0 failures; FRESH_BUILD=1 before the fixes, rebuilt bundle after; no
+  cold-build login flake either pass). Two-bot round 265: exit 0,
+  175 scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's dev-server
+  log (status tally: only 2xx/3xx/expected 400/401/403/404 + no-key 503s;
+  403s are the harness's negative probes).
+- Journey: Mark Warne @ 390px iPhone UA — "before a call with BGP: when's
+  our next meeting, what requirements are live for us, message BGP" (FIRST
+  client-mobile coverage of /calendar, /requirements, /messages): login →
+  "/" Portfolio home → /calendar (day grid + red now-line render, client
+  Add event present) → /requirements (renders, client slice = 0 rows,
+  clean empty state) → /messages (ChatBGP pinned, New Chat). All four
+  pages: 0 console/page errors, 0 page h-overflow, 0 non-noise http
+  errors.
+- Bugs fixed (2, both found by judging the journey pages as the user):
+  1. Client Requirements showed the staff-only "New Brand" button (r223
+     staff-leak class): its save POSTs /api/crm/companies which is
+     read-only for client accounts — 403 "Read-only access" — so the
+     dialog advertised a flow that could never save (the dialog even has a
+     client category slice, but the write gate is the decided model:
+     clients add existing brands via brands-hub add-brand). Button now
+     gated behind !isClientView, same as the sync toolbar one line below
+     (client/src/pages/requirements.tsx). Verified: Mark 0 buttons,
+     Victoria still has it.
+  2. Calendar toolbar unusable at 390px: the header row (nav/Today/Add
+     event + view toggle + CRM chip) is a non-wrapping flex row — "Week"
+     sat clipped at x=410 and the CRM toggle fully past the viewport with
+     NO scrollable ancestor (page body doesn't h-scroll), so phone users
+     could not switch views or toggle CRM events at all. Added
+     flex-wrap gap-y-1.5 to the toolbar (client/src/pages/calendar.tsx);
+     controls now wrap to a second row. Verified 390px: all six controls
+     inside the viewport, CRM toggle clickable, 0 h-overflow; staff
+     desktop toolbar still a single 49px row. Both: tsc clean, rebuilt,
+     smoke re-green.
+- Harness growth: two-bot +1 client-mobile-controls-reachable (client
+  /requirements must have no button-new-brand; calendar view-week +
+  toggle-crm-events must sit inside a 390px viewport). node --check
+  clean; runs from r266.
+- Bugs deferred (1): calendar INTELLIGENCE footer at 390px clips its
+  rotating stat text mid-word (screenshot shows "🔥 F…" truncated) —
+  cosmetic, triage next round whether it should wrap/shorten.
+- Suggestions added: UX #37 (mobile calendar has no "next meeting"
+  answer — Day view of today + desktop-only mini-cal; wants an Upcoming
+  agenda list), UX #38 (requirements empty state says "Try adjusting
+  your filters" when no filters are active; also no hint BGP logs
+  requirements for clients). New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r265 had the journey →
+  r266 may be LIGHT; then #4).
 
 ### r264 · 2026-08-11 · LIGHT (r263 had the journey)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER
