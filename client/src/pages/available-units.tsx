@@ -42,7 +42,7 @@ import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitM
 import { BRIEF_TARGET_STATUSES } from "@shared/schema";
 import { BrandSearchInput, type BrandPick } from "@/components/brand-search-input";
 import { SuggestTargetsDialog } from "@/components/suggest-targets-dialog";
-import { TargetRowCells, LETTING_CATEGORIES } from "@/components/target-operators-table";
+import { TargetRowCells, LETTING_CATEGORIES, targetStatusLabel } from "@/components/target-operators-table";
 import { useTeam } from "@/lib/team-context";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { DEAL_TYPE_COLORS, DEAL_TEAM_COLORS } from "@/pages/deals";
@@ -302,6 +302,36 @@ export default function AvailableUnitsPage() {
     } else { setSortBy(key); setSortDir(1); }
   };
   const [targetStatusFilter, setTargetStatusFilter] = useState("all");
+  // Column show/hide, mirroring the WIP report's Deal Detail Columns menu.
+  // Checkbox + Property/Unit + Target Tenant + Actions always stay.
+  const LETTING_COLS: { key: string; label: string }[] = [
+    { key: "ref", label: "Ref" },
+    { key: "unitStatus", label: "Unit Status" },
+    { key: "client", label: "Client" },
+    { key: "dealStatus", label: "Deal Status" },
+    { key: "category", label: "Category" },
+    { key: "priority", label: "Priority" },
+    { key: "agent", label: "Agent" },
+    { key: "clientContact", label: "Client Contact" },
+    { key: "comments", label: "Comments" },
+    { key: "floorAreas", label: "Floor Areas" },
+    { key: "costs", label: "Costs" },
+    { key: "dealType", label: "Deal Type" },
+    { key: "activity", label: "Activity" },
+    { key: "files", label: "Files" },
+    { key: "brief", label: "Brief" },
+  ];
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(localStorage.getItem("bgp_letting_hidden_cols") || "[]")); } catch { return new Set(); }
+  });
+  const [colMenuOpen, setColMenuOpen] = useState(false);
+  const showCol = (k: string) => !hiddenCols.has(k);
+  const toggleColVis = (k: string) => setHiddenCols((prev) => {
+    const n = new Set(prev);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    try { localStorage.setItem("bgp_letting_hidden_cols", JSON.stringify([...n])); } catch {}
+    return n;
+  });
   const [propertyFilter, setPropertyFilter] = useState(() => urlParam("propertyId"));
   const [assetClassFilter, setAssetClassFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
@@ -575,6 +605,7 @@ export default function AvailableUnitsPage() {
   // client logins, staff viewing-as-client, the sidebar team switched to a
   // client team (Landsec), or the toolbar team filter set to one: every
   // row is that client, so the column says nothing.
+  const targetBlockSpan = 1 + ["dealStatus", "category", "priority", "agent", "clientContact", "comments"].filter((k) => showCol(k)).length;
   const hideClientCol = isClientTracker
     || !!(auUser as any)?.companyScopeId
     || !!teamFilteredPropertyIds
@@ -1361,7 +1392,7 @@ export default function AvailableUnitsPage() {
           <SelectContent>
             <SelectItem value="all">All Deal Statuses</SelectItem>
             {BRIEF_TARGET_STATUSES.map(s => (
-              <SelectItem key={s} value={s}>{s}</SelectItem>
+              <SelectItem key={s} value={s}>{targetStatusLabel(s)}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -1383,6 +1414,29 @@ export default function AvailableUnitsPage() {
             ))}
           </div>
         )}
+        <div className="relative ml-auto">
+          <button
+            onClick={() => setColMenuOpen((o) => !o)}
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-600 hover:text-gray-900 border border-gray-200 rounded px-2 py-1 bg-white whitespace-nowrap"
+            data-testid="letting-columns-button"
+          >
+            Columns{hiddenCols.size > 0 ? ` (${LETTING_COLS.length - hiddenCols.size}/${LETTING_COLS.length})` : ""}
+          </button>
+          {colMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setColMenuOpen(false)} />
+              <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-lg shadow-xl p-2 w-48 max-h-[320px] overflow-y-auto">
+                <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide px-1 pb-1">Show columns</p>
+                {LETTING_COLS.map((c) => (
+                  <label key={c.key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-gray-50 cursor-pointer text-xs text-gray-700">
+                    <Checkbox checked={showCol(c.key)} onCheckedChange={() => toggleColVis(c.key)} className="h-3.5 w-3.5" />
+                    <span>{c.label}</span>
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         </>)}
       </div>
 
@@ -1592,36 +1646,36 @@ export default function AvailableUnitsPage() {
                     data-testid="checkbox-select-all-units"
                   />
                 </TableHead>
-                <TableHead className="w-[56px]">Ref</TableHead>
+                {showCol("ref") && <TableHead className="w-[56px]">Ref</TableHead>}
                 <TableHead className="w-[200px] min-w-[180px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("property")} data-testid="sort-property">
                   Property / Unit{sortBy === "property" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                 </TableHead>
-                <TableHead className="w-[130px] min-w-[130px]">Unit Status</TableHead>
-                {!hideClientCol && (
+                {showCol("unitStatus") && <TableHead className="w-[130px] min-w-[130px]">Unit Status</TableHead>}
+                {!hideClientCol && showCol("client") && (
                   <TableHead className="w-[150px] min-w-[150px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
                     Client{sortBy === "client" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                   </TableHead>
                 )}
                 <TableHead className="w-[170px] min-w-[170px]">Target Tenant</TableHead>
-                <TableHead className="w-[150px] min-w-[150px]">Category</TableHead>
-                <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>
-                <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>
-                <TableHead className="w-[140px] min-w-[140px]">Agent</TableHead>
-                <TableHead className="w-[140px] min-w-[140px]">Client Contact</TableHead>
-                <TableHead className="min-w-[200px]">Comments</TableHead>
-                <TableHead className="w-[130px] min-w-[130px]">Floor Areas</TableHead>
-                <TableHead className="w-[130px] min-w-[130px] text-right">Costs</TableHead>
-                <TableHead className="w-[130px] min-w-[130px]">Deal Type</TableHead>
-                <TableHead className="w-[100px] min-w-[100px] text-center">Activity</TableHead>
-                <TableHead className="w-[90px] min-w-[90px]">Files</TableHead>
-                <TableHead className="w-[90px] min-w-[90px]">Brief</TableHead>
+                {showCol("dealStatus") && <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>}
+                {showCol("category") && <TableHead className="w-[150px] min-w-[150px]">Category</TableHead>}
+                {showCol("priority") && <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>}
+                {showCol("agent") && <TableHead className="w-[140px] min-w-[140px]">Agent</TableHead>}
+                {showCol("clientContact") && <TableHead className="w-[140px] min-w-[140px]">Client Contact</TableHead>}
+                {showCol("comments") && <TableHead className="min-w-[200px]">Comments</TableHead>}
+                {showCol("floorAreas") && <TableHead className="w-[130px] min-w-[130px]">Floor Areas</TableHead>}
+                {showCol("costs") && <TableHead className="w-[130px] min-w-[130px] text-right">Costs</TableHead>}
+                {showCol("dealType") && <TableHead className="w-[130px] min-w-[130px]">Deal Type</TableHead>}
+                {showCol("activity") && <TableHead className="w-[100px] min-w-[100px] text-center">Activity</TableHead>}
+                {showCol("files") && <TableHead className="w-[90px] min-w-[90px]">Files</TableHead>}
+                {showCol("brief") && <TableHead className="w-[90px] min-w-[90px]">Brief</TableHead>}
                 <TableHead className="w-[100px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={hideClientCol ? 18 : 19} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={3 + targetBlockSpan + ["ref", "unitStatus", "floorAreas", "costs", "dealType", "activity", "files", "brief"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1643,7 +1697,7 @@ export default function AvailableUnitsPage() {
                     <Fragment key={u.id}>
                     {viewAll && rowCode !== prevRowCode && (
                       <TableRow className="bg-muted/60 hover:bg-muted/60" data-testid={`status-group-${rowCode.toLowerCase()}`}>
-                        <TableCell colSpan={hideClientCol ? 18 : 19} className="py-1.5">
+                        <TableCell colSpan={3 + targetBlockSpan + ["ref", "unitStatus", "floorAreas", "costs", "dealType", "activity", "files", "brief"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
                           <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
                             <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[rowCode] || "bg-gray-400"}`} />
                             {DEAL_STATUS_LABELS[rowCode]}
@@ -1669,6 +1723,7 @@ export default function AvailableUnitsPage() {
                           data-testid={`checkbox-unit-${u.id}`}
                         />
                       </TableCell>
+                      {showCol("ref") && (
                       <TableCell rowSpan={unitRowSpan} className="text-xs font-mono text-muted-foreground">
                         {deal?.dealRef ? (
                           <div className="flex items-center gap-1.5">
@@ -1699,6 +1754,7 @@ export default function AvailableUnitsPage() {
                           </div>
                         ) : "—"}
                       </TableCell>
+                      )}
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 max-w-[220px]">
                         <div className="flex flex-col gap-0.5">
                           <div className="text-sm font-medium truncate">
@@ -1721,6 +1777,7 @@ export default function AvailableUnitsPage() {
                           </div>
                         </div>
                       </TableCell>
+                      {showCol("unitStatus") && (
                       <TableCell rowSpan={unitRowSpan} className="px-1.5">
                         <InlineLabelSelect
                           value={legacyToCode(u.marketingStatus) || "AVA"}
@@ -1731,7 +1788,8 @@ export default function AvailableUnitsPage() {
                           allowClear={false}
                         />
                       </TableCell>
-                      {!hideClientCol && (
+                      )}
+                      {!hideClientCol && showCol("client") && (
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[140px]">
                         {deal ? (() => {
                           const isTenantRep = (deal.dealType || "").toLowerCase().includes("tenant rep");
@@ -1763,7 +1821,7 @@ export default function AvailableUnitsPage() {
                       </TableCell>
                       )}
                       {unitTargets.length === 0 ? (
-                        <TableCell colSpan={7}>
+                        <TableCell colSpan={targetBlockSpan}>
                           <div className="flex items-center gap-1.5">
                             <BrandSearchInput
                               className="h-7 w-[220px] border-dashed text-[11px]"
@@ -1790,6 +1848,7 @@ export default function AvailableUnitsPage() {
                           target={unitTargets[0]}
                           clientCompanyId={unitClientCompanyId}
                           onChanged={() => invalidateBriefs(u.id)}
+                          visibleCols={{ status: showCol("dealStatus"), category: showCol("category"), priority: showCol("priority"), agent: showCol("agent"), client: showCol("clientContact"), comments: showCol("comments") }}
                           operatorExtra={
                             <BrandSearchInput
                               iconOnly
@@ -1802,6 +1861,7 @@ export default function AvailableUnitsPage() {
                           }
                         />
                       )}
+                      {showCol("floorAreas") && (
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1">
                         <div className="space-y-0.5">
                           {deal ? (
@@ -1847,6 +1907,8 @@ export default function AvailableUnitsPage() {
                           )}
                         </div>
                       </TableCell>
+                      )}
+                      {showCol("costs") && (
                       <TableCell rowSpan={unitRowSpan} className="px-1.5 py-1 text-right">
                         <Popover>
                           <PopoverTrigger asChild>
@@ -1944,6 +2006,8 @@ export default function AvailableUnitsPage() {
                           </PopoverContent>
                         </Popover>
                       </TableCell>
+                      )}
+                      {showCol("dealType") && (
                       <TableCell rowSpan={unitRowSpan}>
                         {/* No backing deal yet → still editable: the unit
                             PATCH auto-creates the deal when a type is set,
@@ -1958,6 +2022,8 @@ export default function AvailableUnitsPage() {
                           }}
                         />
                       </TableCell>
+                      )}
+                      {showCol("activity") && (
                       <TableCell rowSpan={unitRowSpan} className="text-center">
                         <div className="flex items-center justify-center gap-1">
                           <Button
@@ -1985,6 +2051,8 @@ export default function AvailableUnitsPage() {
                           </Button>
                         </div>
                       </TableCell>
+                      )}
+                      {showCol("files") && (
                       <TableCell rowSpan={unitRowSpan}>
                         <div className="flex flex-col items-start">
                         <Button
@@ -2010,6 +2078,8 @@ export default function AvailableUnitsPage() {
                         </Button>
                         </div>
                       </TableCell>
+                      )}
+                      {showCol("brief") && (
                       <TableCell rowSpan={unitRowSpan}>
                         <Button
                           variant="ghost"
@@ -2022,6 +2092,7 @@ export default function AvailableUnitsPage() {
                           Brief
                         </Button>
                       </TableCell>
+                      )}
                       <TableCell rowSpan={unitRowSpan} className={`sticky right-0 z-10 border-l ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
                         <div className="flex gap-1">
                           <Button
@@ -2075,6 +2146,7 @@ export default function AvailableUnitsPage() {
                           target={t}
                           clientCompanyId={unitClientCompanyId}
                           onChanged={() => invalidateBriefs(u.id)}
+                          visibleCols={{ status: showCol("dealStatus"), category: showCol("category"), priority: showCol("priority"), agent: showCol("agent"), client: showCol("clientContact"), comments: showCol("comments") }}
                         />
                       </TableRow>
                     ))}

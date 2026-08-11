@@ -22,6 +22,11 @@ import { BrandSearchInput } from "@/components/brand-search-input";
 import { InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
 import { BRIEF_TARGET_STATUSES } from "@shared/schema";
 
+// Display rename (Woody's team, 2026-08): "Passed" reads as "Rejected" in the
+// UI. The stored value and API keep "Passed" so existing rows don't need a
+// migration.
+export const targetStatusLabel = (s: string) => (s === "Passed" ? "Rejected" : s);
+
 export const TARGET_STATUS_COLORS: Record<string, string> = {
   "Identified": "bg-gray-500",
   "Approached": "bg-sky-500",
@@ -55,9 +60,9 @@ function CategoryItems({ current }: { current: string }) {
 
 // The seven target columns, in canonical order. Surfaces render these
 // headers themselves so widths can differ, but the order is fixed here.
-export const TARGET_COLUMNS = ["Operator", "Category", "Priority", "Status", "Agent", "Client", "Comments"] as const;
+export const TARGET_COLUMNS = ["Operator", "Status", "Category", "Priority", "Agent", "Client", "Comments"] as const;
 
-export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDelete = true, operatorExtra }: {
+export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDelete = true, operatorExtra, visibleCols }: {
   target: any;
   clientCompanyId?: string | null;
   onChanged: () => void;
@@ -65,7 +70,11 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
   /** Rendered after the delete button in the Operator cell — e.g. the
       tracker's small + add-target trigger on the first row of a unit. */
   operatorExtra?: React.ReactNode;
+  /** Per-column visibility (Letting Tracker's Columns menu). Omitted = all shown.
+      The Operator cell is always rendered. */
+  visibleCols?: { status?: boolean; category?: boolean; priority?: boolean; agent?: boolean; client?: boolean; comments?: boolean };
 }) {
+  const vis = { status: true, category: true, priority: true, agent: true, client: true, comments: true, ...(visibleCols || {}) };
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -172,12 +181,29 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
           {operatorExtra}
         </div>
       </TableCell>
+      {vis.status && (
+      <TableCell>
+        <Select value={t.status || "Identified"} onValueChange={v => patchTarget({ status: v })}>
+          <SelectTrigger className="h-7 text-xs w-[124px]">
+            <SelectValue>
+              <Badge className={`text-[10px] text-white ${TARGET_STATUS_COLORS[t.status || "Identified"]}`}>{targetStatusLabel(t.status || "Identified")}</Badge>
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {BRIEF_TARGET_STATUSES.map(s => <SelectItem key={s} value={s}>{targetStatusLabel(s)}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </TableCell>
+      )}
+      {vis.category && (
       <TableCell>
         <Select value={t.category || ""} onValueChange={v => patchTarget({ category: v })}>
           <SelectTrigger className="h-7 text-xs w-[140px]"><SelectValue placeholder="—" /></SelectTrigger>
           <CategoryItems current={t.category || ""} />
         </Select>
       </TableCell>
+      )}
+      {vis.priority && (
       <TableCell>
         <Select value={t.priority || "B"} onValueChange={v => patchTarget({ priority: v })}>
           <SelectTrigger className="h-7 text-xs w-[54px]"><SelectValue /></SelectTrigger>
@@ -187,18 +213,8 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
           </SelectContent>
         </Select>
       </TableCell>
-      <TableCell>
-        <Select value={t.status || "Identified"} onValueChange={v => patchTarget({ status: v })}>
-          <SelectTrigger className="h-7 text-xs w-[124px]">
-            <SelectValue>
-              <Badge className={`text-[10px] text-white ${TARGET_STATUS_COLORS[t.status || "Identified"]}`}>{t.status || "Identified"}</Badge>
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {BRIEF_TARGET_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-          </SelectContent>
-        </Select>
-      </TableCell>
+      )}
+      {vis.agent && (
       <TableCell className="max-w-[140px]">
         <InlineMultiSelect
           value={t.agentUserIds || []}
@@ -208,6 +224,8 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
           testId={`target-agent-${t.id}`}
         />
       </TableCell>
+      )}
+      {vis.client && (
       <TableCell className="max-w-[150px]">
         <InlineLinkSelect
           value={t.clientContactId}
@@ -227,6 +245,8 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
           placeholder={clientCompanyId ? "Link client contact" : "No client company"}
         />
       </TableCell>
+      )}
+      {vis.comments && (
       <TableCell className="text-xs max-w-[220px]">
         <TargetComments
           comments={t.comments}
@@ -236,6 +256,7 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
           }}
         />
       </TableCell>
+      )}
     </>
   );
 }
@@ -280,9 +301,9 @@ export function TargetOperatorsTable({ targets, clientCompanyId, ensureBriefId, 
           <TableHeader>
             <TableRow>
               <TableHead className="w-[160px]">Operator</TableHead>
+              <TableHead className="w-[140px]">Status</TableHead>
               <TableHead>Category</TableHead>
               <TableHead className="w-[70px]">Priority</TableHead>
-              <TableHead className="w-[140px]">Status</TableHead>
               <TableHead className="w-[130px]">Agent</TableHead>
               <TableHead className="w-[140px]">Client</TableHead>
               <TableHead>Comments</TableHead>
