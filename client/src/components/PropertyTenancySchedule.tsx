@@ -813,7 +813,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   // Occupied + Trading both count as "in possession" for the headline
   // KPI. Vacant + In Negotiation + Under Offer + Lease Event all count
   // as "actionable" — surfaced as their own buckets below if non-zero.
-  const occupied = units.filter(u => u.status === "Occupied" || u.status === "Trading" || u.status === "Let").length;
+  const occupied = units.filter(u => u.status === "Occupied" || u.status === "Trading" || u.status === "Let" || u.status === "Not Vacant").length;
   // Void/Available/AVA are vacancy statuses too (dashboard counts them as
   // vacant; synthetic tracker rows arrive as their marketing status).
   const vacant = units.filter(u => ["Vacant", "Void", "Available", "AVA"].includes(u.status || "")).length;
@@ -1334,17 +1334,20 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
           // Leasing lens both reflect the change on next refresh. Rendered
           // inline (not as a trailing column) so it sits in its natural
           // Unit Details position AND keeps the colour tint + header filter.
+          // "Not Vacant" (Landsec feed value) displays as Occupied rather
+          // than surfacing as its own option (Victoria, 2026-08-11).
+          const statusValue = unit.status === "Not Vacant" ? "Occupied" : unit.status;
           return (
             <td key={c.field} className={`p-1 text-${c.align || "left"} whitespace-nowrap`}>
               <select
-                value={unit.status || ""}
+                value={statusValue || ""}
                 onChange={(e) => onUpdate(unit.id, "status", e.target.value)}
-                className={`text-[10px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none ${SCHEDULE_STATUS_COLOURS[unit.status || ""] || "bg-gray-100 text-gray-700"}`}
+                className={`text-[10px] font-semibold rounded px-1.5 py-0.5 border-0 cursor-pointer outline-none ${SCHEDULE_STATUS_COLOURS[statusValue || ""] || "bg-gray-100 text-gray-700"}`}
                 data-testid={`tenancy-status-${unit.id}`}
                 aria-label="Status"
               >
-                {!SCHEDULE_STATUSES.includes(unit.status as any) && unit.status && (
-                  <option value={unit.status}>{unit.status}</option>
+                {!SCHEDULE_STATUSES.includes(statusValue as any) && statusValue && (
+                  <option value={statusValue}>{statusValue}</option>
                 )}
                 {SCHEDULE_STATUSES.map((s) => (
                   <option key={s} value={s}>{s}</option>

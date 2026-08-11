@@ -6,7 +6,7 @@
 // any surface can drop it into a TableRow. TargetOperatorsTable wraps it
 // in a standalone table for the brief dialog.
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -67,6 +67,7 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
   operatorExtra?: React.ReactNode;
 }) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const { data: users = [] } = useQuery<{ id: string; name: string }[]>({
     queryKey: ["/api/users"],
@@ -213,6 +214,16 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
           options={clientContactOptions}
           href={t.clientContactId ? `/contacts/${t.clientContactId}` : undefined}
           onSave={v => patchTarget({ clientContactId: v })}
+          onCreate={clientCompanyId ? async (name) => {
+            try {
+              const r = await apiRequest("POST", "/api/crm/contacts", { name, companyId: clientCompanyId });
+              const c = await r.json();
+              queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts", "by-company", clientCompanyId] });
+              await patchTarget({ clientContactId: String(c.id) });
+            } catch (e: any) {
+              toast({ title: "Couldn't add contact", description: e?.message, variant: "destructive" });
+            }
+          } : undefined}
           placeholder={clientCompanyId ? "Link client contact" : "No client company"}
         />
       </TableCell>
