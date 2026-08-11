@@ -31,6 +31,9 @@ what happened · concrete suggested improvement.
     Suggested: on mobile, collapse the brand-profile chat to a compact
     "Ask about this brand" bar (expanding on tap) so contacts/covenant/
     signals are visible on the first screen.
+    (r259 addendum: same layout confirmed on STAFF mobile 390px — Victoria's
+    pre-meeting brand review also starts a full screen below the chat panel,
+    so the fix should cover /companies/:id for both personas.)
 
 31. 2026-08-11 · Landsec client / desktop 1440px · asked "which of my
     vacant units have live interest?" on the Letting Tracker · the

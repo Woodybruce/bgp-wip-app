@@ -59,15 +59,42 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r259 · 2026-08-11 · ROUND IN PROGRESS (FULL — rotation #4 staff mobile 390px)
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB +
-  FRESH_BUILD). Two-bot round 259: exit 0, 3 logged issues — 2 listed noise
-  (rocketreach-400; commentary-regen 503), 1 is the harness's OWN
-  client-contact-detail-gates DELETE-must-403 probe (scenario [ok]; the
-  scenario isn't in NEGATIVE_PROBE_SCENARIOS so the global listener logs its
-  pass condition — harness noise, fix planned this round). 0 raw 5xx in the
-  server log. Journey (staff mobile calendar → brands hub → brand profile →
-  contact detail) underway.
+### r259 · 2026-08-11 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (pg_hba trust fix per r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN (42 checks,
+  0 failures, fresh DB + fresh build). Two-bot round 259: exit 0, 3 logged
+  issues — 2 listed noise (rocketreach-400; commentary-regen 503), 1 was the
+  harness's OWN client-contact-detail-gates DELETE-must-403 probe echoing
+  through the global response listener (scenario [ok] — r258's fixes hold;
+  first live run of the widened blocked-regex green). 0 raw 5xx in the whole
+  round's server log.
+- Journey: Victoria @ 390px iPhone UA — "on the train to a Starbucks
+  meeting: when is it, review the brand, find the contact" (FIRST journey
+  coverage of staff CALENDAR + brands hub → brand profile → contact
+  drill-in at staff mobile): login → "/" Dashboard → /calendar (day view
+  renders, team filter chips, today's events visible incl. correctly
+  staff-visible other-client rows) → /brands hub → search "Starbucks" →
+  card tap → /companies/:id profile (chips, Chat, Key Contacts with Tom
+  Barista, Covenant; 0 h-overflow) → tap contact → /contacts/:id detail
+  (Enrich/Edit/Delete, email + mailto, activity board — task done). GREEN:
+  0 page errors, 0 non-noise console/net errors, 0 h-overflow anywhere.
+  NOT bugs (tester errors, for future rounds): brand profile route is
+  /companies/:id (NOT /brand/:id — that's a dead URL and my first pass
+  triaged phantom failures off it); hub cards are covered by an
+  a[aria-label=<name>] overlay anchor — click THAT, not the name text
+  (text-node clicks get intercepted and time out; a real tap works).
+- Bugs fixed: 0 app bugs (nothing broken found). Harness fix (1):
+  client-contact-detail-gates added to NEGATIVE_PROBE_SCENARIOS so its
+  intentional DELETE-403 probe stops logging as an issue every round — its
+  read-path 403 assertions live in the scenario's own listener and still
+  throw crisply (node --check clean; effective from r260, expect the
+  http-403 echo gone).
+- Bugs deferred: none. Suggestions added: none new — UX #32 extended with
+  an r259 addendum (chat-first brand profile layout equally buries Key
+  Contacts for STAFF mobile; fix should cover both personas). New flakes:
+  none.
+- Next journey: rotation #1 staff desktop (r259 had the journey → r260 may
+  be LIGHT; then #1).
 
 ### r258 · 2026-08-11 · LIGHT (r257 had the journey)
 - Fresh container (pg_hba trust fix per r205; restore-as-postgres + ALTER
