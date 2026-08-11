@@ -59,12 +59,45 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r258 · 2026-08-11 · ROUND IN PROGRESS (provisional)
-- LIGHT round (r257 had the journey). Fresh container (pg_hba trust fix per
-  r205; restore-as-postgres + ALTER owners + schema grant per r249).
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh DB +
-  FRESH_BUILD=1). Two-bot round 258 underway — first live run of r257's
-  client-contact-detail-gates + staff-login-route-redirect. Triage to follow.
+### r258 · 2026-08-11 · LIGHT (r257 had the journey)
+- Fresh container (pg_hba trust fix per r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN ×2
+  (42 checks, 0 failures; FRESH_BUILD=1 before the fixes and rebuilt bundle
+  after). Two-bot round 258: exit 0, 18 logged issues — 2 listed noise
+  (rocketreach-400; commentary-regen 503), 16 all ONE real bug caught by the
+  FIRST live run of r257's client-contact-detail-gates (staff-login-route-
+  redirect green): 15× http-403 on GET /api/crm/contacts/…0002 + its
+  requirements/deals/properties/investment-tracker subroutes as Mark, plus
+  the flow-failure (contact-detail testid never attached — page errored on
+  the base 403). The 403s attributed to client-mobile-no-overflow were the
+  same page (listener attribution). 0 raw 5xx in the round's issue log.
+- Bug fixed (1, client agent-contact read path, server/crm.ts): the contacts
+  LIST deliberately serves agent-company contacts to clients ("market-facing
+  — the requirements board names the acquiring agent", and its comment even
+  claims detail-GET parity) but the detail GET and forbidsContactRead used
+  clientCanTouchCompany (own company + brand slice only) — so EVERY agent
+  contact a client could see in the list 403'd when opened (error page, not
+  detail). New clientCanReadContactCompany (touch ∪ company_type ILIKE
+  'Agent%') now gates the detail GET + all four sub-resource reads; writes
+  (PUT/DELETE/POST) stay on clientCanTouchCompany. Same asymmetry one level
+  up: the contact page's Company card fires GET /api/crm/companies/:id,
+  which only allowed slice/extras/tenant-rep agents — general Agent rows now
+  client-readable with the SAME stripped-fields path as brands. Verified:
+  Mark reads Alex Agentson detail + subroutes 200, company card 200
+  (stripped, no kyc/aml/hunter keys), PUT/DELETE still 403, slice contact
+  still 200; Victoria unchanged (200s); rival Sam still 403 on Landsec row,
+  200 on agent row (market-facing for all clients, matches list rule).
+  Browser re-run of the scenario's assertions: page renders, Edit only, no
+  Delete/Enrich, no false interactions empty-state, 0×403/5xx. tsc clean,
+  rebuilt, smoke re-green.
+- Harness growth: client-contact-detail-gates blocked-regex widened to also
+  catch crm/contacts + crm/companies 403s (the read path itself), so this
+  class fails crisply instead of via flow-timeout (qa/two-bot-round.mjs;
+  node --check clean). Runs from round 259.
+- Bugs deferred: none. Suggestions added: UX-NOTES #33 (client sees Edit on
+  agent contacts but the PUT write gate 403s the save — hide/disable Edit
+  outside the writable set). New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r258 was LIGHT → r259 FULL).
 
 ### r257 · 2026-08-11 · FULL (rotation #3 client mobile 390px)
 - Fresh container (pg_hba trust fix per r205; restore-as-postgres + ALTER

@@ -13,6 +13,16 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+33. 2026-08-11 · Landsec client / desktop · opened an agent's contact page
+    from the CRM list (agent contacts are deliberately client-readable —
+    they're named on the tracker/requirements boards) · the page shows the
+    same Edit button as on own-company/brand contacts, but saving an edit
+    to an AGENT contact 403s ("Access denied") — the write gate is
+    own-company + brand-slice only, so the affordance is misleading ·
+    Suggested: hide (or disable with a "managed by BGP" tooltip) the Edit
+    button when the contact's company is outside the client's writable
+    set, mirroring how Delete is already hidden.
+
 32. 2026-08-11 · Landsec client / mobile 390px · "a colleague asked who our
     contact at Starbucks is — find them on my phone" · the brand profile at
     390px leads with the full-height Chat panel, so the KEY CONTACTS card

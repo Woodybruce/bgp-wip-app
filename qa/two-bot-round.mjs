@@ -3765,7 +3765,10 @@ async function markRound(page, cross) {
     if (!contact) return; // no client-visible contacts in fixture — nothing to assert
     const blocked = [];
     const onResp = (r) => {
-      if (r.status() === 403 && /\/api\/(interactions|activity)\/contact\//.test(r.url())) blocked.push(r.url());
+      // r258: also catch the read path itself — the contacts LIST serves
+      // agent-company contacts to clients, so the detail GET + company card
+      // must never 403 for a row the list handed out.
+      if (r.status() === 403 && /\/api\/(interactions\/contact\/|activity\/contact\/|crm\/contacts\/|crm\/companies\/)/.test(r.url())) blocked.push(r.url());
     };
     page.on('response', onResp);
     try {
