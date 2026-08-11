@@ -37,7 +37,15 @@ interface PlanitRecord {
 
 function normalise(r: PlanitRecord): IdoxPlanningApp {
   const reference = r.uid || r.reference || r.name || r.altid || "";
-  const docs = r.other_fields?.docs_url || r.url || r.link || "";
+  // Link priority: the LPA's own document page, then any PlanIt-provided
+  // source link, then PlanIt's own per-application permalink (always exists
+  // when the record has a `name` like "Richmond/16/4191/FUL"). Guarantees
+  // every application in the panel has somewhere to click through to.
+  const docs = r.other_fields?.docs_url
+    || r.other_fields?.source_url
+    || r.url
+    || r.link
+    || (r.name ? `https://www.planit.org.uk/planapplic/${encodeURI(r.name)}` : "");
   return {
     reference,
     address: r.address || "",

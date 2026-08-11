@@ -7089,17 +7089,33 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                                   dec.includes("refused") || dec.includes("dismissed") ? "#ef4444" :
                                   dec.includes("withdrawn") ? "#9ca3af" : "#f59e0b";
                       const dateStr = a.decided_date || a.received_date || a.date;
-                      return (
-                        <div key={`pa-${i}`} className="text-[11px] py-1 border-b last:border-b-0">
-                          <div className="flex items-start gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full shrink-0 mt-1" style={{ background: dot }} />
-                            <div className="min-w-0 flex-1">
-                              <div className="text-gray-900 line-clamp-2 leading-tight">{a.description || a.proposal || "(no description)"}</div>
-                              <div className="text-[10px] text-gray-500 mt-0.5">
-                                {[a.decision || a.status, dateStr ? new Date(dateStr).toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : null, a.reference || a.ref].filter(Boolean).join(" · ")}
-                              </div>
-                            </div>
+                      const url = a.documentUrl || a.url || null;
+                      const meta = [a.decision || a.status, dateStr ? new Date(dateStr).toLocaleDateString("en-GB", { month: "short", year: "numeric" }) : null, a.reference || a.ref].filter(Boolean).join(" · ");
+                      const inner = (
+                        <div className="flex items-start gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full shrink-0 mt-1" style={{ background: dot }} />
+                          <div className="min-w-0 flex-1">
+                            <div className={`line-clamp-2 leading-tight ${url ? "text-blue-700 group-hover:underline" : "text-gray-900"}`}>{a.description || a.proposal || "(no description)"}</div>
+                            <div className="text-[10px] text-gray-500 mt-0.5">{meta}</div>
                           </div>
+                          {url && <ExternalLink className="w-3 h-3 text-gray-400 shrink-0 mt-0.5 group-hover:text-blue-700" />}
+                        </div>
+                      );
+                      return url ? (
+                        <a
+                          key={`pa-${i}`}
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="group block text-[11px] py-1 border-b last:border-b-0 hover:bg-gray-50 rounded px-0.5 -mx-0.5 cursor-pointer"
+                          title="Open the planning application"
+                          data-testid={`planning-app-link-${i}`}
+                        >
+                          {inner}
+                        </a>
+                      ) : (
+                        <div key={`pa-${i}`} className="text-[11px] py-1 border-b last:border-b-0">
+                          {inner}
                         </div>
                       );
                     })}
