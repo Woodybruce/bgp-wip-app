@@ -3933,6 +3933,17 @@ async function markRound(page, cross) {
           throw new Error(`calendar control ${id} clipped at 390px (x ${Math.round(box.x)}, right ${Math.round(box.x + box.width)})`);
         }
       }
+      // r266: the Intelligence footer's first insight card must sit inside the
+      // 390px viewport — the label/date chrome used to leave the strip 56px
+      // wide, so the nowrap card clipped mid-word and read as broken.
+      const firstInsight = mob.locator('[data-testid="calendar-footer"] [data-testid^="insight-"]').first();
+      await firstInsight.waitFor({ timeout: 20000 }).catch(() => {});
+      if (await firstInsight.count()) {
+        const fb = await firstInsight.boundingBox();
+        if (fb && (fb.x < 0 || fb.x + fb.width > 390 + 2)) {
+          throw new Error(`calendar footer first insight clipped at 390px (x ${Math.round(fb.x)}, right ${Math.round(fb.x + fb.width)})`);
+        }
+      }
     } finally {
       await mob.close();
     }
