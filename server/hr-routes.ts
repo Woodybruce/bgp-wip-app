@@ -5409,11 +5409,13 @@ Use the language and tone of BGP's review docs.`,
       );
       for (const t of tableEvents) {
         const k = `tabletbl:${t.id}`;
+        // pg returns timestamps as Date objects; Graph events carry string
+        // starts — normalise to ISO so the localeCompare sort below holds.
         byKey.set(k, {
           key: k,
           subject: t.title,
-          start: t.start_time,
-          end: t.end_time,
+          start: t.start_time instanceof Date ? t.start_time.toISOString() : String(t.start_time),
+          end: t.end_time instanceof Date ? t.end_time.toISOString() : (t.end_time ? String(t.end_time) : null),
           isAllDay: false,
           location: t.location || "",
           bodyPreview: t.notes || "",
