@@ -61,6 +61,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r269 · 2026-08-12 · ROUND IN PROGRESS (provisional)
+- Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
+  + schema grant per r249). Regression: run-smoke.sh GREEN first pass
+  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake).
+- Plan: FULL round (r268 was LIGHT) — rotation #1 staff desktop journey:
+  Victoria adds a new brand contact via /contacts New Contact, verifies it
+  on the brand profile, then first journey visit to ChatBGP /messages
+  (keyless degradation check). Two-bot round running next.
+
 ### r268 · 2026-08-12 · LIGHT (r267 had the journey)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
   + schema grant per r249). Regression: run-smoke.sh GREEN first pass
