@@ -1442,11 +1442,14 @@ function ConsultantCreateBody({
         <Label htmlFor="consultant-target-date">
           Timing for completion <span className="text-rose-600">*</span>
         </Label>
+        {/* Month picker, not an exact day — the WIP report only buckets by
+            month, so asking for a day was false precision. Stored as the
+            1st of the chosen month. */}
         <Input
           id="consultant-target-date"
-          type="date"
-          value={form.targetDate}
-          onChange={(e) => set("targetDate", e.target.value)}
+          type="month"
+          value={form.targetDate ? form.targetDate.slice(0, 7) : ""}
+          onChange={(e) => set("targetDate", e.target.value ? `${e.target.value}-01` : "")}
           required
           className={!form.targetDate ? "border-rose-300" : ""}
           data-testid="input-deal-target-date"
@@ -2046,11 +2049,14 @@ function SimplifiedCreateBody({
             <Label htmlFor="deal-target-date" className="text-xs">
               Timing for completion <span className="text-rose-600">*</span>
             </Label>
+            {/* Month picker, not an exact day — the WIP report only buckets
+                by month, so asking for a day was false precision. Stored as
+                the 1st of the chosen month. */}
             <Input
               id="deal-target-date"
-              type="date"
-              value={form.targetDate}
-              onChange={(e) => set("targetDate", e.target.value)}
+              type="month"
+              value={form.targetDate ? form.targetDate.slice(0, 7) : ""}
+              onChange={(e) => set("targetDate", e.target.value ? `${e.target.value}-01` : "")}
               required
               className={!form.targetDate ? "border-rose-300" : ""}
             />
