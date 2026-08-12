@@ -63,10 +63,44 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r277 · 2026-08-12 22:07 UTC · ROUND IN PROGRESS (FULL — rotation #1 staff desktop)
-- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Two-bot + journey pending.
-- Triage list: none yet.
+### r277 · 2026-08-12 · FULL (rotation #1 staff desktop)
+- Fresh container (pg_hba trust per r205 — method-column awk;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 277: exit 0,
+  all scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server
+  log (status tally: only 2xx/3xx/expected 400/401/403/404 + no-key
+  503s; 403s the harness's negative probes).
+- Journey: Victoria desktop 1440px — "a brand asked for photos of a
+  Bluewater unit: find them via Image Studio, add today's new unit
+  photo; also, does a pasted /image-studio admin link dead-end?" (FIRST
+  journey coverage of the staff image gallery /m/images anywhere):
+  login → "/" dashboard → sidebar "Image Studio" (rewritten to /m/images
+  for non-admin staff) → gallery renders, 0 h-overflow → upload leg
+  END-TO-END: Add photos file input → "Uploaded — ready to edit with AI"
+  toast, edit sheet opens (image, phone-upload tag, download/folder/
+  link/trash controls, AI prompt chips) → direct /image-studio goto
+  bounces cleanly to /m/images (StudioRoute guard, no Page-not-found).
+  Probe row deleted after. 0 page errors, 0 non-noise net errors.
+  NOT bugs (tester errors, for future rounds): staff /m/images shows
+  ONLY phone-upload-tagged photos by design ("phone-upload filter is a
+  staff convenience", mobile-images.tsx:190) — 0 tiles with a
+  brands-only fixture is intended, don't triage the empty grid; the
+  fixture qa-unit-photo.jpg row is the harness's own upload probe
+  (run-round.sh purges it at round start). Radix logs a DialogTitle
+  a11y warning from the edit sheet (dev console only, cosmetic).
+- Bugs fixed: 0 (nothing broken found — journey's only real finding is
+  a UX gap, below). Harness growth: two-bot +1 staff-image-studio-
+  redirect (non-admin /image-studio must land on /m/images with the
+  gallery shell rendered; assertions verified standalone green in the
+  browser this round; node --check clean; runs from r278).
+- Bugs deferred: none. Suggestions added: UX #43 (staff desktop "Image
+  Studio" nav lands on the phone-uploads-only gallery — non-admin staff
+  have NO route to the team image library, and the empty-state copy is
+  phone-phrased on desktop). New flakes: none.
+- Next journey: rotation #2 client desktop (r277 had the journey → r278
+  may be LIGHT; then #2).
 
 ### r276 · 2026-08-12 · LIGHT (r275 had the journey)
 - Fresh container (pg_hba trust per r205 — method-column-only sed;

@@ -1122,6 +1122,18 @@ async function victoriaRound(page, cross) {
     if (await page.getByText('Page not found').count()) throw new Error('desktop /messages landed on Page not found');
   });
 
+  // r277: the full /image-studio power page is admin-only; non-admin staff
+  // hitting it directly (pasted admin link / old bookmark) must be redirected
+  // to the /m/images gallery by StudioRoute, never dead-end.
+  await step(page, p, 'staff-image-studio-redirect', async () => {
+    await page.goto(`${BASE}/image-studio`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2500);
+    const path = new URL(page.url()).pathname;
+    if (path !== '/m/images') throw new Error(`non-admin /image-studio landed on ${path}, expected /m/images`);
+    if (await page.getByText('Page not found').count()) throw new Error('non-admin /image-studio landed on Page not found');
+    if (!(await page.locator('[data-testid="mobile-images"]').count())) throw new Error('/m/images gallery shell did not render after redirect');
+  });
+
   // 4m. Deal comments round-trip: Victoria writes a comment on the Bluewater
   // deal and reads it back (the sidebar Comments widget rides this field).
   await step(page, p, 'staff-deal-comment', async () => {

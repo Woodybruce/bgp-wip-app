@@ -13,6 +13,21 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+43. 2026-08-12 · BGP staff (non-admin) / desktop 1440px · "a brand asked for
+    photos of a Bluewater unit — find them in Image Studio" · the sidebar's
+    "Image Studio" entry sends non-admin staff to /m/images, which is
+    deliberately scoped to the user's OWN phone uploads — so Victoria lands
+    on "No photos uploaded from your phone yet · Tap Add photos to take one
+    or pick several" and has NO route to the team's central image library
+    at all (the full /image-studio power page is admin-only, and pasting
+    its URL just bounces her back). The task is impossible for non-admin
+    staff, and the phone-phrased empty state ("Tap", "camera roll") reads
+    odd on a desktop. The upload-and-AI-edit flow itself is excellent
+    (instant toast, edit sheet, prompt chips) · Suggested: give staff a
+    read path into the shared library (e.g. a "Team library" tab/toggle on
+    /m/images, or open the full studio read-only for staff), and vary the
+    empty-state copy on desktop. Needs Woody's call on scope — not built.
+
 42. 2026-08-12 · Landsec client / mobile 390px · checking a vacant unit's
     asking rent on the Letting Tracker · the mobile unit card silently
     drops its Rent p.a. / Area rows when the values are unset — the user
