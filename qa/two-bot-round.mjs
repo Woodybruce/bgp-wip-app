@@ -595,6 +595,45 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r275: the /tasks filter tab strip (Assigned by me / All / To Do /
+  // In Progress / Done) was a nowrap flex row — Done sat at x 425-494 at
+  // 390px, reachable only by panning the whole page pane sideways (r265
+  // calendar-toolbar class, fixed with flex-wrap). Every filter tab must sit
+  // inside the phone viewport, and the content pane must not h-scroll.
+  await step(page, p, 'staff-tasks-mobile-tabs', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobGoto(mob, `${BASE}/tasks`, nav);
+      await mob.locator('[data-testid="filter-done"]').waitFor({ timeout: 20000 });
+      for (const id of ['filter-assigned-by-me', 'filter-all', 'filter-todo', 'filter-in_progress', 'filter-done']) {
+        const box = await mob.locator(`[data-testid="${id}"]`).first().boundingBox();
+        if (!box) throw new Error(`tasks tab ${id} missing at 390px`);
+        if (box.x < 0 || box.x + box.width > 390 + 2) {
+          throw new Error(`tasks tab ${id} clipped at 390px (x ${Math.round(box.x)}, right ${Math.round(box.x + box.width)})`);
+        }
+      }
+      const paneOverflow = await mob.evaluate(() => {
+        const p = document.querySelector('.flex-1.overflow-y-auto');
+        return p ? p.scrollWidth - p.clientWidth : 0;
+      });
+      if (paneOverflow > 4) throw new Error(`tasks page pane h-scrolls at 390px (${paneOverflow}px overflow)`);
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // Task assignment (terminal, 2026-08-03): a task assigned to another staff
   // member lands on the ASSIGNEE's list. Victoria assigns to Woody; the
   // woody round verifies receipt. Swept by the QA-PROBE task purge.

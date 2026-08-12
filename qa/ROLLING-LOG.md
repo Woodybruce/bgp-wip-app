@@ -63,12 +63,50 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r275 · 2026-08-12 · ROUND IN PROGRESS (provisional heartbeat)
-- FULL round planned (r274 was LIGHT) — rotation #4 staff mobile 390px.
+### r275 · 2026-08-12 · FULL (rotation #4 staff mobile 390px)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + per-object
-  ALTER owners + schema grant per r249). Regression: run-smoke.sh GREEN
-  first pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no
-  cold-build flake). Two-bot round 275 running; journey pending.
+  ALTER owners + schema grant per r249). Regression: run-smoke.sh GREEN ×2
+  (42 checks, 0 failures; FRESH_BUILD=1 before the fix, rebuilt bundle
+  after; no cold-build flake either pass). Two-bot round 275: exit 0, all
+  scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server log
+  (status tally: only 2xx/3xx/expected 400/401/403/404 + no-key 503s; 403s
+  the harness's negative probes; 404s the listed sharepoint-root polling +
+  HR photos; the rocketreach + image-studio 400s the harness's own probes).
+- Journey: Victoria @ 390px iPhone UA — "between viewings, on my phone:
+  check the requirements board, log a new requirement, quick-add a
+  follow-up task, confirm it shows on my dashboard" (FIRST coverage of
+  staff-mobile /requirements, the Create Leasing Requirement dialog, and
+  /tasks quick-add at 390px): login → "/" dashboard (0 h-overflow) →
+  /requirements (renders, tabs/KPIs/Add Requirement all inside viewport) →
+  Create Requirement dialog END-TO-END: 61 visible controls all inside
+  390px, typed name → "+ Add as new company" → Save (below the fold,
+  in-dialog scroll reaches it) → row appears, probe req + auto-created
+  company deleted via API (200/200) → /tasks quick-add ("Add a task…
+  press Enter" input, row lists) → task visible on dashboard MY TASKS.
+  0 page errors; only non-listed sighting was GET /api/ai-briefing 503×6
+  (keyless noise class; card TERMINATES — flickers idle↔"Preparing…"
+  during react-query retries then settles on "Generate Briefing" — NOT
+  the r261 forever-spinner class).
+- Bug fixed (1): /tasks filter tab strip (Assigned by me/All/To Do/
+  In Progress/Done) was a nowrap flex row — Done sat at x 425-494 at
+  390px, only reachable by panning the ENTIRE page pane sideways 104px
+  (the strip itself has no scroll; r265 calendar-toolbar class). Added
+  flex-wrap to the header row + tab row (client/src/pages/tasks.tsx);
+  tabs wrap to a second row, all five inside the viewport, pane
+  h-overflow 0. Desktop 1440px re-verified: single row (equal y).
+  tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 staff-tasks-mobile-tabs (iPhone context per
+  r266 pattern — all five filter tabs inside 390px + no content-pane
+  h-scroll). Assertions verified standalone via the journey probes
+  (geometry green post-fix); node --check clean; runs from r276.
+- NOT bugs (tester errors, for future rounds): the Create Requirement
+  dialog Save needs the "+ Add … as a new company" pick first and sits
+  below the fold — a bare tap on Save without scrolling the dialog times
+  out; the flow is fine as a real user drives it.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r275 had the journey → r276
+  may be LIGHT; then #1).
 
 ### r274 · 2026-08-12 · LIGHT (r273 had the journey)
 - Fresh container (pg_hba trust per r205 — method-column-only sed;
