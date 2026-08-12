@@ -6065,6 +6065,17 @@ export function registerPropertyPathwayRoutes(app: Express) {
       const propertyIds = Array.from(new Set(runs.map(r => r.propertyId).filter((id): id is string => !!id)));
       const nameById = new Map<string, string>();
       const heroById = new Map<string, string>();
+      // Whose deal each run is — the board shows attribution and filters
+      // by owner ("mine" / per-person).
+      const starterById = new Map<string, string>();
+      const starterIds = Array.from(new Set(runs.map(r => (r as any).startedBy).filter((id): id is string => !!id)));
+      if (starterIds.length > 0) {
+        const { rows } = await pool.query<{ id: string; name: string }>(
+          `SELECT id, name FROM users WHERE id = ANY($1::varchar[])`,
+          [starterIds],
+        );
+        for (const r of rows) starterById.set(r.id, r.name);
+      }
       if (propertyIds.length > 0) {
         const { rows: nameRows } = await pool.query<{ id: string; name: string }>(
           `SELECT id, name FROM crm_properties WHERE id = ANY($1::varchar[])`,
@@ -6094,6 +6105,7 @@ export function registerPropertyPathwayRoutes(app: Express) {
         ...r,
         propertyName: r.propertyId ? (nameById.get(r.propertyId) || null) : null,
         heroImageStudioId: r.propertyId ? (heroById.get(r.propertyId) || null) : null,
+        startedByName: (r as any).startedBy ? (starterById.get((r as any).startedBy) || null) : null,
       }));
       res.json(enriched);
     } catch (err: any) {
