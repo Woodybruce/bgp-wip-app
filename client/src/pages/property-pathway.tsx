@@ -105,10 +105,18 @@ export default function PropertyPathway() {
     return Array.from(seen, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   }, [runs]);
   const visibleRuns = useMemo(() => {
-    if (ownerFilter === "mine") return runs.filter(r => r.startedBy && r.startedBy === viewer?.id);
-    if (ownerFilter === "waiting") return runs.filter(r => awaitingGateLabel(r) !== null);
-    if (ownerFilter !== "all") return runs.filter(r => r.startedBy === ownerFilter);
-    return runs;
+    // Passed/Lost runs are archived: out of every view except the explicit
+    // Archived one, so dead investigations stop accumulating on the board.
+    const archivedOf = (r: PathwayRun) => {
+      const d = (r.stageResults as any)?._disposition?.status;
+      return d === "passed" || d === "lost";
+    };
+    if (ownerFilter === "archived") return runs.filter(archivedOf);
+    const live = runs.filter(r => !archivedOf(r));
+    if (ownerFilter === "mine") return live.filter(r => r.startedBy && r.startedBy === viewer?.id);
+    if (ownerFilter === "waiting") return live.filter(r => awaitingGateLabel(r) !== null);
+    if (ownerFilter !== "all") return live.filter(r => r.startedBy === ownerFilter);
+    return live;
   }, [runs, ownerFilter, viewer?.id]);
   const ctxProperty = usePropertyContext();
   const [newAddress, setNewAddress] = useState(ctxProperty?.name || "");
@@ -543,7 +551,12 @@ export default function PropertyPathway() {
             Start an investigation below, or ask ChatBGP ("start a pathway for 12 Haymarket"). Existing runs appear here.
           </p>
         </div>
-        <ReviewQueueButton />
+        <div className="flex items-center gap-2 shrink-0">
+          <Link href="/pathway-portfolio">
+            <Button variant="outline" size="sm" data-testid="button-pathway-portfolio">Portfolio</Button>
+          </Link>
+          <ReviewQueueButton />
+        </div>
       </div>
 
       {/* Direct start — the board previously only started runs via ChatBGP,
@@ -569,9 +582,9 @@ export default function PropertyPathway() {
       <div>
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <h2 className="text-sm font-medium text-muted-foreground mr-2">Recent investigations</h2>
-          {ownerOptions.length > 1 && (
+          {runs.length > 0 && (
             <>
-              {[{ key: "all", label: "All" }, { key: "mine", label: "Mine" }, { key: "waiting", label: "Needs sign-off" }].map(f => (
+              {[{ key: "all", label: "All" }, { key: "mine", label: "Mine" }, { key: "waiting", label: "Needs sign-off" }, { key: "archived", label: "Archived" }].map(f => (
                 <button
                   key={f.key}
                   onClick={() => setOwnerFilter(ownerFilter === f.key ? "all" : f.key)}
@@ -581,15 +594,17 @@ export default function PropertyPathway() {
                   {f.label}
                 </button>
               ))}
-              <select
-                value={ownerOptions.some(o => o.id === ownerFilter) ? ownerFilter : ""}
-                onChange={(e) => setOwnerFilter(e.target.value || "all")}
-                className="px-2 py-1 rounded-full text-xs border bg-card text-muted-foreground"
-                data-testid="filter-pathway-owner"
-              >
-                <option value="">By person…</option>
-                {ownerOptions.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-              </select>
+              {ownerOptions.length > 1 && (
+                <select
+                  value={ownerOptions.some(o => o.id === ownerFilter) ? ownerFilter : ""}
+                  onChange={(e) => setOwnerFilter(e.target.value || "all")}
+                  className="px-2 py-1 rounded-full text-xs border bg-card text-muted-foreground"
+                  data-testid="filter-pathway-owner"
+                >
+                  <option value="">By person…</option>
+                  {ownerOptions.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+                </select>
+              )}
             </>
           )}
         </div>
@@ -646,6 +661,9 @@ function PathwayCard({ run, onOpen, onDelete }: { run: PathwayRun; onOpen: () =>
   const anyRunning = Object.values(run.stageStatus || {}).some(s => s === "running");
   const heroUrl = run.heroImageStudioId ? `/api/image-studio/${run.heroImageStudioId}/thumb` : null;
   const gateLabel = awaitingGateLabel(run);
+  const disposition = (run.stageResults as any)?._disposition?.status as string | undefined;
+  const dispositionLabel = disposition === "offer_made" ? "Offer made"
+    : disposition ? disposition.charAt(0).toUpperCase() + disposition.slice(1) : null;
 
   return (
     <div
@@ -685,6 +703,15 @@ function PathwayCard({ run, onOpen, onDelete }: { run: PathwayRun; onOpen: () =>
         {!anyRunning && gateLabel && (
           <span className="absolute bottom-2 left-2 px-2 py-1 rounded-md bg-amber-500/90 text-white text-[10px] font-medium">
             {gateLabel}
+          </span>
+        )}
+        {dispositionLabel && (
+          <span className={`absolute top-2 left-2 px-2 py-1 rounded-md text-white text-[10px] font-medium ${
+            disposition === "pursuing" ? "bg-emerald-600/90"
+            : disposition === "offer_made" ? "bg-blue-600/90"
+            : "bg-zinc-600/90"
+          }`}>
+            {dispositionLabel}
           </span>
         )}
       </div>
