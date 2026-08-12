@@ -793,6 +793,73 @@ export function findDuplicatePathwayRuns(
   return { exact, similar };
 }
 
+// Which human gate (if any) a run is parked at. Shared by the review queue,
+// the board badges (client mirror) and the morning digest.
+export function detectPathwayGate(run: PropertyPathwayRun): 3 | 6 | 7 | null {
+  if (run.completedAt) return null;
+  const ss = (run.stageStatus as Record<string, string>) || {};
+  if (Object.values(ss).includes("running")) return null;
+  const sr = (run.stageResults as StageResults) || {};
+  const st6 = sr.stage6 || {};
+  const st7 = sr.stage7 || {};
+  if (ss.stage7 === "completed" && (st7.modelRunId || st7.modelVersionId) && !st7.agreed) return 7;
+  if (ss.stage6 === "completed" && st6.draft && !st6.agreed) return 6;
+  if (ss.stage3 === "completed" && (!ss.stage4 || ss.stage4 === "pending")) return 3;
+  return null;
+}
+
+const GATE_LABELS: Record<number, string> = { 3: "Review & Confirm", 6: "Business Plan sign-off", 7: "Excel Model sign-off" };
+
+// Morning digest — "4 runs cleared overnight, 3 awaiting your agreement,
+// 1 failed". Returns null on a quiet day so the scheduler posts nothing.
+// Posted to chat by the `pathway_digest` scheduled-job action.
+export async function buildPathwayDigest(): Promise<string | null> {
+  const runs = await db
+    .select()
+    .from(propertyPathwayRuns)
+    .orderBy(desc(propertyPathwayRuns.updatedAt))
+    .limit(300);
+  const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  const isArchived = (r: PropertyPathwayRun) => {
+    const d = ((r.stageResults as any) || {})._disposition?.status;
+    return d === "passed" || d === "lost";
+  };
+  const live = runs.filter(r => !isArchived(r));
+
+  const completedOvernight = runs.filter(r => r.completedAt && new Date(r.completedAt as any).getTime() > dayAgo);
+  const atGates = live
+    .map(r => ({ run: r, gate: detectPathwayGate(r) }))
+    .filter((x): x is { run: PropertyPathwayRun; gate: 3 | 6 | 7 } => x.gate !== null);
+  const failedRecently = live.filter(r =>
+    !r.completedAt
+    && Object.values((r.stageStatus as Record<string, string>) || {}).includes("failed")
+    && r.updatedAt && new Date(r.updatedAt as any).getTime() > dayAgo,
+  );
+
+  if (completedOvernight.length === 0 && atGates.length === 0 && failedRecently.length === 0) return null;
+
+  const name = (r: PropertyPathwayRun) => r.address || "Untitled run";
+  const lines: string[] = ["**Pathway morning digest**", ""];
+  if (completedOvernight.length > 0) {
+    lines.push(`✅ ${completedOvernight.length} run${completedOvernight.length === 1 ? "" : "s"} completed in the last 24h: ${completedOvernight.map(name).join("; ")}`);
+  }
+  if (atGates.length > 0) {
+    lines.push(`✋ ${atGates.length} awaiting sign-off:`);
+    for (const { run, gate } of atGates.slice(0, 10)) {
+      lines.push(`• ${name(run)} — ${GATE_LABELS[gate]}`);
+    }
+    if (atGates.length > 10) lines.push(`…and ${atGates.length - 10} more.`);
+    lines.push(`Approve them all from the Review Queue: /pathway-review`);
+  }
+  if (failedRecently.length > 0) {
+    lines.push(`⚠️ ${failedRecently.length} hit a failed stage in the last 24h: ${failedRecently.map(r => {
+      const failedStages = Object.entries((r.stageStatus as Record<string, string>) || {}).filter(([, v]) => v === "failed").map(([k]) => k.replace("stage", ""));
+      return `${name(r)} (stage ${failedStages.join(", ")})`;
+    }).join("; ")}`);
+  }
+  return lines.join("\n");
+}
+
 async function autoAdvanceDisabled(runId: string): Promise<boolean> {
   try {
     const { rows } = await pool.query(
@@ -5967,22 +6034,10 @@ export function registerPropertyPathwayRoutes(app: Express) {
       const items: QueueItem[] = [];
 
       for (const r of runs) {
-        if (r.completedAt) continue;
-        const ss = (r.stageStatus as Record<string, string>) || {};
         const sr = (r.stageResults as StageResults) || {};
-        // A running stage means the machine still owns this run.
-        if (Object.values(ss).includes("running")) continue;
-
         const st6 = sr.stage6 || {};
         const st7 = sr.stage7 || {};
-        let gate: 3 | 6 | 7 | null = null;
-        if (ss.stage7 === "completed" && (st7.modelRunId || st7.modelVersionId) && !st7.agreed) {
-          gate = 7;
-        } else if (ss.stage6 === "completed" && st6.draft && !st6.agreed) {
-          gate = 6;
-        } else if (ss.stage3 === "completed" && (!ss.stage4 || ss.stage4 === "pending")) {
-          gate = 3;
-        }
+        const gate = detectPathwayGate(r);
         if (!gate) continue;
 
         const plan: BusinessPlan = st6.agreed || st6.draft || {};

@@ -176,6 +176,33 @@ async function runAction(job: JobRow): Promise<{ status: "ok" | "error"; output:
       );
       return { status: "ok", output: `posted to thread ${threadId}` };
     }
+    if (job.action_kind === "pathway_digest") {
+      // Computed at run time (counts change nightly) — that's why this
+      // isn't a static send_chat_message. payload.threadId targets a
+      // specific chat; without one, the digest lands in the job creator's
+      // most recent plain ChatBGP conversation.
+      const { buildPathwayDigest } = await import("./property-pathway");
+      const digest = await buildPathwayDigest();
+      if (!digest) return { status: "ok", output: "quiet day — nothing to report, no message posted" };
+      let threadId = String(job.action_payload?.threadId || "");
+      if (!threadId && job.created_by) {
+        const { rows } = await pool.query(
+          `SELECT id FROM chat_threads
+            WHERE is_ai_chat = TRUE AND linked_type IS NULL AND created_by = $1
+            ORDER BY updated_at DESC NULLS LAST LIMIT 1`,
+          [job.created_by],
+        );
+        threadId = rows[0]?.id || "";
+      }
+      if (!threadId) return { status: "error", output: "payload.threadId missing and no ChatBGP thread found for the job creator" };
+      await pool.query(
+        `INSERT INTO chat_messages (thread_id, role, content, user_id) VALUES ($1, 'assistant', $2, $3)`,
+        [threadId, digest.substring(0, 8000), job.created_by],
+      );
+      // Bump the thread so the digest surfaces at the top of the chat list.
+      await pool.query(`UPDATE chat_threads SET updated_at = now() WHERE id = $1`, [threadId]).catch(() => {});
+      return { status: "ok", output: `digest posted to thread ${threadId}` };
+    }
     if (job.action_kind === "send_email") {
       // Defer to the existing email send pipeline. The Microsoft token must
       // belong to a session; for scheduled jobs, fall back to a system-owned
@@ -268,11 +295,44 @@ async function tick(): Promise<void> {
   }
 }
 
+// Seed the pathway morning digest if nobody has one yet — daily 08:00 into
+// Woody's latest ChatBGP conversation (threadId resolved at run time, so it
+// follows him to whichever chat he last used). Deleting/disabling the job
+// row is the off switch; a disabled row also blocks re-seeding.
+async function ensurePathwayDigestJob(): Promise<void> {
+  try {
+    const { rows: existing } = await pool.query(
+      `SELECT 1 FROM scheduled_jobs WHERE action_kind = 'pathway_digest' LIMIT 1`,
+    );
+    if (existing[0]) return;
+    const { rows: woody } = await pool.query(
+      `SELECT id FROM users WHERE lower(email) LIKE 'woody@%' LIMIT 1`,
+    );
+    if (!woody[0]) return;
+    await pool.query(
+      `INSERT INTO scheduled_jobs (name, description, schedule_kind, schedule_value, action_kind, action_payload, enabled, created_by, next_run_at)
+       VALUES ($1, $2, 'daily', '08:00', 'pathway_digest', '{}'::jsonb, true, $3, $4)`,
+      [
+        "Pathway morning digest",
+        "Posts runs completed overnight, runs awaiting sign-off, and failed stages to Woody's ChatBGP each morning. Quiet days post nothing.",
+        woody[0].id,
+        computeNextRun("daily", "08:00"),
+      ],
+    );
+    console.log("[scheduled-jobs] seeded Pathway morning digest (daily 08:00)");
+  } catch (err: any) {
+    console.warn("[scheduled-jobs] digest seed skipped:", err?.message);
+  }
+}
+
 export function startScheduledJobs(): void {
   if (started) return;
   started = true;
   // First tick after a short delay so the rest of the boot sequence finishes.
-  setTimeout(() => { tick().catch(e => console.error("[scheduled-jobs] tick:", e?.message)); }, 30_000);
+  setTimeout(() => {
+    ensurePathwayDigestJob().catch(() => {});
+    tick().catch(e => console.error("[scheduled-jobs] tick:", e?.message));
+  }, 30_000);
   intervalHandle = setInterval(() => {
     tick().catch(e => console.error("[scheduled-jobs] tick:", e?.message));
   }, POLL_MS);
