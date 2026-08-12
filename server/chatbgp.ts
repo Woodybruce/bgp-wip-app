@@ -6873,7 +6873,10 @@ export async function executeCrmToolRaw(
   if (fnName === "run_shell_command") {
     const fail = await ensureAdmin();
     if (fail) return fail;
-    const { execSync } = await import("child_process");
+    // Async exec — execSync here froze the whole Node event loop for up to
+    // 5 minutes per command (every request, every chat, every SSE stream
+    // stalled on "Thinking..." while a build/backfill ran).
+    const { exec } = await import("child_process");
     const command = fnArgs.command as string;
     const description = fnArgs.description || "Shell command via ChatBGP";
 
@@ -6892,12 +6895,21 @@ export async function executeCrmToolRaw(
     }
 
     try {
-      const output = execSync(command, {
-        cwd: process.cwd(),
-        timeout: 300000, // 5 min — admin-gated, no point sub-second cap
-        env: { ...process.env },
-        maxBuffer: 10 * 1024 * 1024, // 10 MB — long outputs like npm install fit
-      }).toString();
+      const output = await new Promise<string>((resolve, reject) => {
+        exec(command, {
+          cwd: process.cwd(),
+          timeout: 300000, // 5 min — admin-gated, no point sub-second cap
+          env: { ...process.env },
+          maxBuffer: 10 * 1024 * 1024, // 10 MB — long outputs like npm install fit
+        }, (err, stdout, stderr) => {
+          if (err) {
+            (err as any).stderr = stderr || stdout;
+            reject(err);
+          } else {
+            resolve(stdout.toString());
+          }
+        });
+      });
 
       await pool.query(
         `INSERT INTO code_changes (tool_used, shell_command, shell_output, description, status) VALUES ($1, $2, $3, $4, 'applied')`,

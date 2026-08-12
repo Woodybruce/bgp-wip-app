@@ -490,6 +490,7 @@ export default function PropertyPathway() {
             Investigations run via ChatBGP — ask it to "start a pathway for 12 Haymarket" and it'll resolve the address and kick the run off. Existing runs appear here.
           </p>
         </div>
+        <ReviewQueueButton />
       </div>
 
       <div>
@@ -507,6 +508,26 @@ export default function PropertyPathway() {
         )}
       </div>
     </div>
+  );
+}
+
+// Header shortcut to /pathway-review with a live count of runs parked at
+// a sign-off gate. Hidden entirely when the queue is empty.
+function ReviewQueueButton() {
+  const { data } = useQuery<Array<{ runId: string }>>({
+    queryKey: ["/api/property-pathway/review-queue"],
+    refetchInterval: 60000,
+  });
+  const count = data?.length || 0;
+  if (count === 0) return null;
+  return (
+    <Link href="/pathway-review">
+      <Button variant="outline" size="sm" className="shrink-0 gap-1.5" data-testid="button-review-queue">
+        <Check className="w-4 h-4" />
+        Review queue
+        <Badge variant="secondary" className="ml-1 px-1.5">{count}</Badge>
+      </Button>
+    </Link>
   );
 }
 

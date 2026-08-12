@@ -1263,6 +1263,14 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const [searchInChat, setSearchInChat] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState("");
   const initialMsgCountRef = useRef<number | null>(null);
+  // "New chat" epoch — bumped when the user starts a fresh conversation from
+  // inside the chat view. An in-flight ChatBGP send stamped with an older
+  // epoch must not write its reply/error into the new conversation's UI
+  // (the reply still lands in the old thread server-side).
+  const [chatEpoch, setChatEpoch] = useState(0);
+  const chatEpochRef = useRef(0);
+  const inFlightEpochRef = useRef(0);
+  const sendAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (threadId) emitMarkSeen(threadId);
@@ -1328,6 +1336,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
 
   const aiSendMutation = useMutation({
     mutationFn: async ({ newMessages, files, tid }: { newMessages: LocalChatMessage[]; files: File[]; tid: string | null }) => {
+      inFlightEpochRef.current = chatEpochRef.current;
       const plainMessages = newMessages.map(m => {
         let content = m.content;
         if (m.attachments && m.attachments.length > 0) {
@@ -1413,6 +1422,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           const headers: Record<string, string> = { "Content-Type": "application/json" };
           if (token) headers["Authorization"] = `Bearer ${token}`;
           const controller = new AbortController();
+          sendAbortRef.current = controller;
           const timeoutId = setTimeout(() => controller.abort(), 600000)  // 10 min — Why Buy / Pathway turns routinely take 4-5 min so 5 min was clipping legitimate responses;
           try {
             const res = await fetch("/api/chatbgp/chat", {
@@ -1513,13 +1523,19 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       }
     },
     onSuccess: async (data: { reply: string; action?: ChatAction; threadId: string; savedToThread?: boolean }) => {
-      const msg: LocalChatMessage = { role: "assistant", content: data.reply };
-      if (data.action) msg.action = data.action;
-      setMessages(prev => [...prev, msg]);
+      // Stale send (user started a new chat while this was in flight):
+      // still persist the reply to its own thread, but keep it out of the
+      // fresh conversation's UI.
+      const stale = inFlightEpochRef.current !== chatEpochRef.current;
+      if (!stale) {
+        const msg: LocalChatMessage = { role: "assistant", content: data.reply };
+        if (data.action) msg.action = data.action;
+        setMessages(prev => [...prev, msg]);
+      }
       if (!data.savedToThread) {
         await saveMessageMutation.mutateAsync({ threadId: data.threadId, role: "assistant", content: data.reply, actionData: data.action ? JSON.stringify(data.action) : undefined });
       }
-      if (!threadIdProp && data.threadId) {
+      if (!stale && !threadIdProp && data.threadId) {
         setLocalThreadId(data.threadId);
       }
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", data.threadId] });
@@ -1530,6 +1546,9 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         .catch(() => {});
     },
     onError: async (err: any) => {
+      // Send belonged to a conversation the user has already left via
+      // "new chat" — don't recover into or apologise in the fresh one.
+      if (inFlightEpochRef.current !== chatEpochRef.current) return;
       if (threadId) {
         // Late-response recovery: ChatBGP turns that touch search +
         // KB + doc-gen routinely take 4-5 minutes. The fetch may have
@@ -1612,7 +1631,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     // Drain one queued message when the current send finishes. Array-based
     // so the user can stack multiple messages while a long ChatBGP response
     // is still streaming back. Same pattern the desktop chat-panel uses.
-    if (!aiSendMutation.isPending && queuedMessagesRef.current.length > 0 && threadId) {
+    if (!aiSendMutation.isPending && queuedMessagesRef.current.length > 0) {
       const next = queuedMessagesRef.current[0];
       setQueuedMessages(prev => prev.slice(1));
       const userMessage: LocalChatMessage = { role: "user", content: next.text || "Shared files", userName: currentUser?.name, userId: currentUser?.id };
@@ -1920,6 +1939,9 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   }, [isRecording]);
 
   const isSending = aiSendMutation.isPending || teamSendMutation.isPending || uploading;
+  // An AI send left over from a conversation the user abandoned via "new
+  // chat" — don't show its "Thinking..." indicator in the fresh one.
+  const staleAiSend = aiSendMutation.isPending && inFlightEpochRef.current !== chatEpoch;
   // Array-based queue so the user can stack multiple ChatBGP requests while
   // a long response is still streaming. Drained one-at-a-time by the effect
   // above. Mirrors the desktop chat-panel behaviour.
@@ -1985,6 +2007,25 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       }
     }
     if (textareaRef.current) textareaRef.current.style.height = "auto";
+  };
+
+  // Fresh conversation from inside the chat view. Previously the + button
+  // only nulled the parent's activeThreadId — which did nothing when the
+  // thread lived in localThreadId, and never cleared the on-screen messages.
+  const startNewChat = () => {
+    chatEpochRef.current += 1;
+    setChatEpoch(chatEpochRef.current);
+    sendAbortRef.current?.abort();
+    setMessages([]);
+    setLocalThreadId(null);
+    setInput("");
+    setAttachedFiles([]);
+    setQueuedMessages([]);
+    setStreamingProgress(null);
+    setSearchInChat(false);
+    setChatSearchQuery("");
+    initialMsgCountRef.current = null;
+    if (onNewChat) onNewChat(); else onBack();
   };
 
   const [selectedCheckboxes, setSelectedCheckboxes] = useState<string[]>([]);
@@ -2143,14 +2184,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 <Search className="w-[18px] h-[18px] text-gray-400" />
               </button>
               <button
-                onClick={() => {
-                  if (onNewChat) {
-                    onNewChat();
-                  } else {
-                    setMessages([]);
-                    onBack();
-                  }
-                }}
+                onClick={startNewChat}
                 className="w-9 h-9 rounded-full flex items-center justify-center active:bg-gray-100"
                 data-testid="button-mobile-new-chat"
               >
@@ -2304,7 +2338,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           );
         })}
 
-        {isSending && (
+        {isSending && !staleAiSend && (
           isActiveThreadAi ? (
             <div className="flex items-start gap-3">
               <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }}>

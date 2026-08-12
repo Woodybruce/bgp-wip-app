@@ -5836,6 +5836,116 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
+  // Review queue — every run parked at a human gate (3 review confirm,
+  // 6 business-plan agree, 7 model agree) with the key numbers inline so
+  // sign-offs can happen from one list without opening each run.
+  // NOTE: registered before /:runId so "review-queue" isn't eaten by it.
+  app.get("/api/property-pathway/review-queue", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const runs = await db
+        .select()
+        .from(propertyPathwayRuns)
+        .orderBy(desc(propertyPathwayRuns.updatedAt))
+        .limit(200);
+
+      type QueueItem = {
+        runId: string;
+        propertyId: string | null;
+        address: string;
+        postcode: string | null;
+        propertyName: string | null;
+        gate: 3 | 6 | 7;
+        gateLabel: string;
+        waitingSince: string | null;
+        startedBy: string | null;
+        startedByName: string | null;
+        price: number | null;
+        niy: number | null;
+        irr: number | null;
+        moic: number | null;
+        strategy: string | null;
+        holdPeriodYrs: number | null;
+        summary: string | null;
+        recommendProceed: boolean | null;
+        modelVersionLabel: string | null;
+        workbookUrl: string | null;
+      };
+      const items: QueueItem[] = [];
+
+      for (const r of runs) {
+        if (r.completedAt) continue;
+        const ss = (r.stageStatus as Record<string, string>) || {};
+        const sr = (r.stageResults as StageResults) || {};
+        // A running stage means the machine still owns this run.
+        if (Object.values(ss).includes("running")) continue;
+
+        const st6 = sr.stage6 || {};
+        const st7 = sr.stage7 || {};
+        let gate: 3 | 6 | 7 | null = null;
+        if (ss.stage7 === "completed" && (st7.modelRunId || st7.modelVersionId) && !st7.agreed) {
+          gate = 7;
+        } else if (ss.stage6 === "completed" && st6.draft && !st6.agreed) {
+          gate = 6;
+        } else if (ss.stage3 === "completed" && (!ss.stage4 || ss.stage4 === "pending")) {
+          gate = 3;
+        }
+        if (!gate) continue;
+
+        const plan: BusinessPlan = st6.agreed || st6.draft || {};
+        items.push({
+          runId: r.id,
+          propertyId: r.propertyId || null,
+          address: r.address,
+          postcode: r.postcode || null,
+          propertyName: null,
+          gate,
+          gateLabel: gate === 3 ? "Review & Confirm" : gate === 6 ? "Business Plan" : "Excel Model",
+          waitingSince: r.updatedAt ? new Date(r.updatedAt as any).toISOString() : null,
+          startedBy: (r as any).startedBy || null,
+          startedByName: null,
+          price: plan.targetPurchasePrice ?? null,
+          niy: plan.targetNIY ?? null,
+          irr: plan.targetIRR ?? null,
+          moic: plan.targetMOIC ?? null,
+          strategy: plan.strategy ?? null,
+          holdPeriodYrs: plan.holdPeriodYrs ?? null,
+          summary: gate === 3 ? (sr.stage3?.summary || null) : (st6.summary || null),
+          recommendProceed: gate === 3 ? (sr.stage3?.recommendProceed ?? null) : null,
+          modelVersionLabel: gate === 7 ? (st7.modelVersionLabel || null) : null,
+          workbookUrl: gate === 7 ? (st7.workbookUrl || null) : null,
+        });
+      }
+
+      // Canonical property names + starter names, same enrichment the board gets.
+      const propertyIds = Array.from(new Set(items.map(i => i.propertyId).filter((id): id is string => !!id)));
+      if (propertyIds.length > 0) {
+        const { rows } = await pool.query<{ id: string; name: string }>(
+          `SELECT id, name FROM crm_properties WHERE id = ANY($1::varchar[])`,
+          [propertyIds],
+        );
+        const nameById = new Map(rows.map(r => [r.id, r.name]));
+        for (const i of items) if (i.propertyId) i.propertyName = nameById.get(i.propertyId) || null;
+      }
+      const userIds = Array.from(new Set(items.map(i => i.startedBy).filter((id): id is string => !!id)));
+      if (userIds.length > 0) {
+        const { rows } = await pool.query<{ id: string; name: string }>(
+          `SELECT id, name FROM users WHERE id = ANY($1::varchar[])`,
+          [userIds],
+        );
+        const nameById = new Map(rows.map(r => [r.id, r.name]));
+        for (const i of items) if (i.startedBy) i.startedByName = nameById.get(i.startedBy) || null;
+      }
+
+      // Longest-waiting first within each gate group; later gates (closest
+      // to done) float to the top of the page.
+      items.sort((a, b) => (b.gate - a.gate) || (new Date(a.waitingSince || 0).getTime() - new Date(b.waitingSince || 0).getTime()));
+      res.json(items);
+    } catch (err: any) {
+      console.error("[pathway review-queue] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
   // Fetch current state of a run
   app.get("/api/property-pathway/:runId", requireAuth, async (req: Request, res: Response) => {
     try {
