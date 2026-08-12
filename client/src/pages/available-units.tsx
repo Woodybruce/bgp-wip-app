@@ -1566,11 +1566,14 @@ export default function AvailableUnitsPage() {
               const size = deal?.totalAreaSqft ?? u.sqft;
               const vCount = viewingsCounts[u.id] || 0;
               const oCount = offersCounts[u.id] || 0;
+              // Area/Rent stay visible with "—" when unset so "not recorded"
+              // reads as data, not a hidden field (UX #42); Tenant still
+              // drops when there's no linked deal tenant.
               const rows = [
-                { label: "Area", value: size ? `${Number(size).toLocaleString()} sq ft` : null },
-                { label: "Tenant", value: tenant },
-                { label: "Rent p.a.", value: rent ? `£${Number(rent).toLocaleString()}` : null },
-              ].filter(r => r.value);
+                { label: "Area", value: size ? `${Number(size).toLocaleString()} sq ft` : "—" },
+                ...(tenant ? [{ label: "Tenant", value: tenant }] : []),
+                { label: "Rent p.a.", value: rent ? `£${Number(rent).toLocaleString()}` : "—" },
+              ];
               return (
                 <Fragment key={u.id}>
                 {viewAll && code !== prevCode && (

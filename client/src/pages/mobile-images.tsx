@@ -587,8 +587,13 @@ export default function MobileImages() {
           {!search && !isClientViewer && (
             <p className="text-[11px] text-muted-foreground/70 mt-1">
               {folders.length > 0
-                ? "Open a folder above to see them, or tap Add photos for more."
-                : "Tap Add photos to take one or pick several — AI edits land here too."}
+                ? "Open a folder above to see them, or use Add photos for more."
+                : "Use Add photos to take one or pick several — AI edits land here too."}
+            </p>
+          )}
+          {!search && !isClientViewer && !(viewer as any)?.isAdmin && (
+            <p className="text-[11px] text-muted-foreground/70 mt-1">
+              The full Image Studio is admin-only — ask an admin for property imagery.
             </p>
           )}
         </div>

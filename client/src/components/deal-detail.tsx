@@ -772,7 +772,13 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             <Users className="w-4 h-4 text-muted-foreground" />
             <h3 className="text-sm font-semibold">Parties</h3>
           </div>
+          {/* Leasing deals show Landlord/Tenant; investment (Sale/Purchase)
+              deals show Vendor/Purchaser — the unused pair is clutter that
+              invites mis-linking (UX #19). Already-linked slots stay visible
+              either way so existing data is never hidden. */}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2">
+            {(() => { const partiesInvestment = deal.dealType === "Sale" || deal.dealType === "Purchase"; return (<>
+            {(!partiesInvestment || deal.landlordId) && (
             <div className="flex flex-col gap-1">
               <p className="text-[10px] text-muted-foreground leading-tight">Landlord</p>
               <InlineLinkSelect
@@ -784,6 +790,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 placeholder="Link landlord"
               />
             </div>
+            )}
+            {(!partiesInvestment || deal.tenantId) && (
             <div className="flex flex-col gap-1">
               <p className="text-[10px] text-muted-foreground leading-tight">Tenant</p>
               <InlineLinkSelect
@@ -795,6 +803,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 placeholder="Link tenant"
               />
             </div>
+            )}
+            {(partiesInvestment || deal.vendorId) && (
             <div className="flex flex-col gap-1">
               <p className="text-[10px] text-muted-foreground leading-tight">Vendor</p>
               <InlineLinkSelect
@@ -806,6 +816,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 placeholder="Link vendor"
               />
             </div>
+            )}
+            {(partiesInvestment || deal.purchaserId) && (
             <div className="flex flex-col gap-1">
               <p className="text-[10px] text-muted-foreground leading-tight">Purchaser</p>
               <InlineLinkSelect
@@ -817,6 +829,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 placeholder="Link purchaser"
               />
             </div>
+            )}
+            </>); })()}
             {!isClientDeal && (
             <div className="flex flex-col gap-1">
               <p className="text-[10px] text-muted-foreground leading-tight">Xero Contact</p>

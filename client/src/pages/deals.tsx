@@ -4592,6 +4592,10 @@ export function DealTimeline({ dealId }: { dealId: string }) {
 
 export function DealAuditLog({ dealId }: { dealId: string }) {
   const [expanded, setExpanded] = useState(false);
+  // Company/property id fields log raw UUIDs — resolve to names for the
+  // renderer (UX #36); the raw id stays in the hover title.
+  const { data: auditCompanies = [] } = useQuery<any[]>({ queryKey: ["/api/crm/companies"] });
+  const { data: auditProperties = [] } = useQuery<any[]>({ queryKey: ["/api/crm/properties"] });
   const { data: logs, isLoading } = useQuery<any[]>({
     queryKey: ["/api/crm/deals", dealId, "audit-log"],
     queryFn: async () => {
@@ -4645,8 +4649,14 @@ export function DealAuditLog({ dealId }: { dealId: string }) {
     return map[field] || field;
   };
 
+  const ID_FIELDS = new Set(["landlordId", "tenantId", "vendorId", "purchaserId", "propertyId"]);
   const formatValue = (field: string, val: string | null) => {
     if (val == null || val === "null") return "empty";
+    if (ID_FIELDS.has(field)) {
+      const pool = field === "propertyId" ? auditProperties : auditCompanies;
+      const hit = pool.find((x: any) => String(x.id) === String(val));
+      if (hit?.name) return hit.name;
+    }
     if (field === "fee" || field === "pricing" || field === "rentPa" || field === "capitalContribution") {
       const num = parseFloat(val);
       if (!isNaN(num)) return new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 }).format(num);
@@ -4682,10 +4692,10 @@ export function DealAuditLog({ dealId }: { dealId: string }) {
                       {" changed "}
                       <span className="font-medium">{formatFieldName(log.field)}</span>
                       {log.oldValue && log.oldValue !== "null" ? (
-                        <>{" from "}<span className="text-muted-foreground line-through">{formatValue(log.field, log.oldValue)}</span></>
+                        <>{" from "}<span className="text-muted-foreground line-through" title={log.oldValue || undefined}>{formatValue(log.field, log.oldValue)}</span></>
                       ) : null}
                       {" to "}
-                      <span className="font-semibold">{formatValue(log.field, log.newValue)}</span>
+                      <span className="font-semibold" title={log.newValue || undefined}>{formatValue(log.field, log.newValue)}</span>
                     </p>
                     {log.reason && (
                       <p className="text-[10px] text-muted-foreground mt-0.5 italic">

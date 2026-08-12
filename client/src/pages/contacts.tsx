@@ -810,10 +810,26 @@ function ContactDetail({ id }: { id: string }) {
             Enrich
           </Button>
           )}
-          <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} data-testid="button-edit-contact">
-            <Pencil className="w-4 h-4 mr-1" />
-            Edit
-          </Button>
+          {(() => {
+            // Clients can only write own-company + brand-slice contacts; agent
+            // contacts are readable but the PUT 403s, so don't offer Edit
+            // there (UX #33) — mirrors how Delete is already hidden.
+            const looksAgent = (company?.companyType || contact.contactType || "").toLowerCase().includes("agent") || (contact.groupName || "").toLowerCase() === "agents";
+            if (cdIsClient && looksAgent) {
+              return (
+                <Button variant="outline" size="sm" disabled title="Managed by BGP" data-testid="button-edit-contact">
+                  <Pencil className="w-4 h-4 mr-1" />
+                  Edit
+                </Button>
+              );
+            }
+            return (
+              <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} data-testid="button-edit-contact">
+                <Pencil className="w-4 h-4 mr-1" />
+                Edit
+              </Button>
+            );
+          })()}
           {!cdIsClient && (
           <Button
             variant="outline"

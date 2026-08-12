@@ -2416,7 +2416,14 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                         </span>
                       )}
                     </div>
-                    <p className="text-xs leading-snug text-foreground/90">{c.brand_analysis}</p>
+                    <p className="text-xs leading-snug text-foreground/90">
+                      {/* The generator ends with BGP-internal pitch guidance
+                          ("Recommendation: do not pitch until…") — strip it
+                          for client viewers (UX #40). */}
+                      {isClientViewer
+                        ? String(c.brand_analysis).split(/\*{0,2}Recommendation\b/i)[0].replace(/[\s*—:-]+$/, "")
+                        : c.brand_analysis}
+                    </p>
                   </div>
                 ) : (
                   <div className="rounded-md border border-dashed border-muted-foreground/30 p-3 text-center">

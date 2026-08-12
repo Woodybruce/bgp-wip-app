@@ -1363,7 +1363,10 @@ export default function Calendar() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   // A 5-column week grid is unreadable on a phone — mobile starts in Day view.
-  const [viewMode, setViewMode] = useState<ViewMode>(isMobile ? "day" : "workWeek");
+  // Weekends fall outside Work week's Mon–Fri grid, so landing on a Sat/Sun
+  // would hide "today" entirely — open in full Week view instead (UX #18).
+  const todayIsWeekend = [0, 6].includes(new Date().getDay());
+  const [viewMode, setViewMode] = useState<ViewMode>(isMobile ? "day" : todayIsWeekend ? "week" : "workWeek");
   const [showCrmEvents, setShowCrmEvents] = useState(true);
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [showOutlookEvents, setShowOutlookEvents] = useState(true);
