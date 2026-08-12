@@ -252,7 +252,7 @@ export default function PropertyPathway() {
     } catch {}
   }
 
-  async function startRun(addressOverride?: string, postcodeOverride?: string) {
+  async function startRun(addressOverride?: string, postcodeOverride?: string, force?: boolean) {
     const addr = (addressOverride ?? newAddress).trim();
     if (!addr) return;
     const pc = (postcodeOverride ?? newPostcode).trim();
@@ -261,8 +261,30 @@ export default function PropertyPathway() {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         credentials: "include",
-        body: JSON.stringify({ address: addr, postcode: pc || undefined }),
+        body: JSON.stringify({ address: addr, postcode: pc || undefined, force: force || undefined }),
       });
+      // Fuzzy duplicate — the server found run(s) that look like the same
+      // property under a different spelling. Hard prompt: open the existing
+      // run, or deliberately start fresh.
+      if (res.status === 409) {
+        const dup = await res.json().catch(() => null);
+        const cands: Array<{ id: string; address: string; postcode?: string | null }> = dup?.candidates || [];
+        if (cands.length > 0) {
+          const listing = cands.map(c => `• ${c.address}${c.postcode ? ` (${c.postcode})` : ""}`).join("\n");
+          const openExisting = confirm(
+            `There's already an investigation that looks like this property:\n\n${listing}\n\nOK — open the existing run\nCancel — start a genuinely new one anyway`,
+          );
+          if (openExisting) {
+            setNewAddress("");
+            setNewPostcode("");
+            await loadRuns();
+            navigate(`/property-pathway?runId=${cands[0].id}`);
+          } else {
+            await startRun(addr, pc, true);
+          }
+          return;
+        }
+      }
       if (!res.ok) throw new Error("Failed to start");
       const { run, existing } = await res.json();
       setNewAddress("");

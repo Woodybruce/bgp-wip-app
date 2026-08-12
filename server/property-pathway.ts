@@ -721,6 +721,78 @@ export function nextGateCap(fromStage: number): number {
   return 10;
 }
 
+// ============================================================================
+// DUPLICATE-RUN DETECTION — shared by POST /start and ChatBGP's
+// start_property_pathway tool so both front doors ask the same question.
+// Exact match (normalised address + postcode tie-break) short-circuits to
+// the existing run; fuzzy matches ("Vesuvius Site" vs "Vesuvius Works",
+// same street + postcode with different numbering) come back as `similar`
+// so the caller can put a hard "open it or genuinely start fresh?" prompt
+// in front of the user instead of silently minting run #12.
+// ============================================================================
+
+export function normalisePathwayAddress(s: string): string {
+  return s.trim().toLowerCase().replace(/[—–]/g, "-").replace(/\s*-\s*/g, "-").replace(/[.,]/g, "").replace(/\s+/g, " ");
+}
+
+// Generic words that don't distinguish one asset from another — "Vesuvius
+// Site" and "Vesuvius Works" must reduce to the same core token.
+const ADDR_STOP_WORDS = new Set([
+  "the", "site", "works", "building", "buildings", "house", "estate", "land",
+  "at", "former", "unit", "units", "plot", "phase", "yard", "court", "street",
+  "st", "road", "rd", "lane", "ln", "avenue", "ave", "place", "pl", "square",
+  "sq", "row", "walk", "gardens", "gate", "hill", "park", "of", "and", "&",
+]);
+
+function significantAddrTokens(s: string): Set<string> {
+  return new Set(
+    normalisePathwayAddress(s)
+      .split(/[\s-]+/)
+      .filter(t => t.length > 1 && !ADDR_STOP_WORDS.has(t) && !/^\d+[a-z]?$/.test(t)),
+  );
+}
+
+export function findDuplicatePathwayRuns(
+  address: string,
+  postcode: string | null | undefined,
+  runs: PropertyPathwayRun[],
+): { exact: PropertyPathwayRun | null; similar: PropertyPathwayRun[] } {
+  const normalisedAddr = normalisePathwayAddress(address);
+  const normPc = (postcode || "").trim().replace(/\s+/g, "").toUpperCase();
+
+  const exact = runs.find((r) => {
+    const rAddr = normalisePathwayAddress(r.address || "");
+    const rPc = (r.postcode || "").trim().replace(/\s+/g, "").toUpperCase();
+    if (rAddr !== normalisedAddr) return false;
+    if (normPc && rPc && rPc !== normPc) return false;
+    return true;
+  }) || null;
+
+  const myTokens = significantAddrTokens(address);
+  const outward = (pc: string) => pc.slice(0, -3); // UK inward is always 3 chars
+  const similar = runs.filter((r) => {
+    if (exact && r.id === exact.id) return false;
+    const rTokens = significantAddrTokens(r.address || "");
+    if (myTokens.size === 0 || rTokens.size === 0) return false;
+    let shared = 0;
+    for (const t of myTokens) if (rTokens.has(t)) shared++;
+    const jaccard = shared / (myTokens.size + rTokens.size - shared);
+    const rPc = (r.postcode || "").trim().replace(/\s+/g, "").toUpperCase();
+    if (normPc && rPc) {
+      // Same postcode + any shared core token → almost certainly the same
+      // asset spelled differently. Same district → demand near-identity.
+      // Different districts are different places, however similar the name.
+      if (normPc === rPc) return shared >= 1;
+      if (outward(normPc) === outward(rPc)) return jaccard >= 0.6;
+      return false;
+    }
+    // Postcode missing on one side — go on name similarity alone.
+    return jaccard >= 0.6;
+  }).slice(0, 5);
+
+  return { exact, similar };
+}
+
 async function autoAdvanceDisabled(runId: string): Promise<boolean> {
   try {
     const { rows } = await pool.query(
@@ -5466,44 +5538,37 @@ export function registerPropertyPathwayRoutes(app: Express) {
       if (!address || typeof address !== "string") {
         return res.status(400).json({ error: "address required" });
       }
-      // Normalise aggressively: lowercase, collapse whitespace, strip spaces
-      // around hyphens, remove punctuation — so "18-22 Haymarket",
-      // "18 - 22 Haymarket", and "18—22 haymarket." all match.
-      const normaliseAddr = (s: string) =>
-        s.trim()
-          .toLowerCase()
-          .replace(/[—–]/g, "-")
-          .replace(/\s*-\s*/g, "-")
-          .replace(/[.,]/g, "")
-          .replace(/\s+/g, " ");
-      const normalisedAddr = normaliseAddr(address);
       // Extract postcode from address if not provided separately
       const UK_POSTCODE_RE = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
       const resolvedPostcode = postcode || address.match(UK_POSTCODE_RE)?.[1] || "";
-      const normalisedPostcode = resolvedPostcode.trim().replace(/\s+/g, "").toUpperCase();
 
-      // Dedupe: only match when BOTH address and postcode line up. Postcode
-      // alone is far too loose — buildings on the same postcode (e.g. multiple
-      // properties sharing SW1Y 4DG) would otherwise share a single pathway
-      // run and CRM link, which has caused bad cross-linkage in the past
-      // (e.g. an 18-22 Haymarket run pointing at a 12-18 Moorgate CRM record
-      // because they once shared a postcode by mistake).
+      // Dedupe at the front door. An exact address match (postcode as
+      // tie-breaker only — postcode alone is far too loose) reopens the
+      // existing run. A fuzzy match ("Vesuvius Site" vs "Vesuvius Works")
+      // comes back as 409 so the client makes the user choose between
+      // opening the existing run and deliberately starting fresh.
       if (!force) {
         const existing = await db
           .select()
           .from(propertyPathwayRuns)
           .orderBy(desc(propertyPathwayRuns.updatedAt))
           .limit(200);
-        const match = existing.find((r) => {
-          const rAddr = normaliseAddr(r.address || "");
-          const rPostcode = (r.postcode || "").trim().replace(/\s+/g, "").toUpperCase();
-          // Require address match. Postcode is a tie-breaker only.
-          if (rAddr !== normalisedAddr) return false;
-          if (normalisedPostcode && rPostcode && rPostcode !== normalisedPostcode) return false;
-          return true;
-        });
-        if (match) {
-          return res.json({ success: true, run: match, existing: true });
+        const { exact, similar } = findDuplicatePathwayRuns(address, resolvedPostcode, existing);
+        if (exact) {
+          return res.json({ success: true, run: exact, existing: true });
+        }
+        if (similar.length > 0) {
+          return res.status(409).json({
+            duplicate: true,
+            message: "There's already a pathway run that looks like this property.",
+            candidates: similar.map(r => ({
+              id: r.id,
+              address: r.address,
+              postcode: r.postcode,
+              currentStage: r.currentStage,
+              updatedAt: r.updatedAt,
+            })),
+          });
         }
       }
 
