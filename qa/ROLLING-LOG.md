@@ -61,6 +61,11 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r268 · 2026-08-12 · ROUND IN PROGRESS (provisional)
+- LIGHT round (r267 had the journey). Regression: run-smoke.sh GREEN first
+  pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build
+  flake). Two-bot round 268 running — triage to follow.
+
 ### r267 · 2026-08-11 · FULL (rotation #4 staff mobile 390px)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
   + schema grant per r249). Regression: run-smoke.sh GREEN ×2 (42 checks,
