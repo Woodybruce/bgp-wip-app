@@ -5229,6 +5229,30 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     } catch (err: any) { res.status(500).json({ message: err?.message || "Failed to remove brand" }); }
   });
 
+  // Client news feed (UX #35): brand signals across the client's visible
+  // brand slice + self-added brands — the same per-brand Signals data the
+  // client already sees on each profile, aggregated into one read-only feed.
+  app.get("/api/client/news-signals", requireAuth, async (req: any, res) => {
+    try {
+      const { resolveCompanyScope, clientBrandSliceSql } = await import("./company-scope");
+      const scope = await resolveCompanyScope(req);
+      if (!scope) return res.status(403).json({ message: "Client accounts only" });
+      const sliceSql = await clientBrandSliceSql(scope, "c.id");
+      const limit = Math.min(parseInt(String(req.query.limit || "60")) || 60, 200);
+      const q = await pool.query(
+        `SELECT s.id, s.brand_company_id, s.signal_type, s.headline, s.detail, s.source,
+                s.signal_date, s.sentiment, s.confidence, s.created_at, c.name AS brand_name
+           FROM brand_signals s
+           JOIN crm_companies c ON c.id = s.brand_company_id
+          WHERE ${sliceSql}
+          ORDER BY COALESCE(s.signal_date, s.created_at) DESC NULLS LAST
+          LIMIT $1`,
+        [limit]
+      );
+      res.json(q.rows);
+    } catch (err: any) { res.status(500).json({ message: err?.message || "Failed to load news" }); }
+  });
+
   // Staff refresh of a company's brand theme from logo.dev (company page).
   app.post("/api/crm/companies/:id/fetch-brand-theme", requireAuth, async (req: any, res) => {
     try {

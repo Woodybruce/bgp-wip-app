@@ -190,6 +190,44 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
     }
   });
 
+  // Client-scoped pins (UX #21): a client map shows ONLY their own portfolio
+  // properties (landlord_id or explicit crm_company_properties link) — never
+  // the whole BGP book, which stays behind the staff-only /api/map/pins.
+  app.get("/api/client/map/pins", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { resolveCompanyScope } = await import("./company-scope");
+      const scope = await resolveCompanyScope(req);
+      if (!scope) return res.status(403).json({ message: "Client accounts only" });
+      const q = await pool.query(
+        `SELECT id, name, address, postcode, status, asset_class,
+                latitude AS lat, longitude AS lng
+           FROM crm_properties
+          WHERE (landlord_id = $1
+             OR id IN (SELECT property_id FROM crm_company_properties WHERE company_id = $1))
+            AND latitude IS NOT NULL AND longitude IS NOT NULL
+          ORDER BY name`,
+        [scope]
+      );
+      res.json({
+        deals: [],
+        comps: [],
+        properties: q.rows.map((r: any) => ({
+          id: r.id,
+          type: "property",
+          lat: parseFloat(r.lat),
+          lng: parseFloat(r.lng),
+          label: r.name,
+          status: r.status,
+          assetClass: r.asset_class,
+          addressLabel: addrFromJsonb(r.address) || r.postcode || r.name,
+          propertyId: r.id,
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Failed to load pins" });
+    }
+  });
+
   app.get("/api/map/pins", requireAuth, async (_req: Request, res: Response) => {
     try {
       // ── 1. Deals ─────────────────────────────────────────────────────────
