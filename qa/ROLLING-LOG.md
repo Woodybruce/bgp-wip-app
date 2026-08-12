@@ -63,6 +63,12 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r271 · 2026-08-12 · FULL (rotation #2 client desktop) — IN PROGRESS
+- Round in progress. Regression: run-smoke.sh GREEN first pass (42 checks,
+  0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake). Two-bot round
+  271 running; journey (Mark Warne desktop 1440px — brand compliance review
+  + self-add brand) pending.
+
 ### r270 · 2026-08-12 · LIGHT (r269 had the journey)
 - Fresh container (pg_hba trust per r205 — note: a blanket sed can mangle
   scram-sha-256 → trust-sha-256, check the file before reload;
