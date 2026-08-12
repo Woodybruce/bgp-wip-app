@@ -1531,7 +1531,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               {currentUser?.role !== "Client" && (<>
               <button
                 type="button"
-                onClick={() => navigate("/deals")}
+                onClick={() => navigate(`/deals?search=${encodeURIComponent(c.name || "")}`)}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-xs font-medium transition-colors"
                 title="Go to Deals to add this brand to a deal"
               >
@@ -1539,7 +1539,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               </button>
               <button
                 type="button"
-                onClick={() => navigate("/available")}
+                onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-medium transition-colors"
                 title="Browse available units to pitch to this brand"
               >

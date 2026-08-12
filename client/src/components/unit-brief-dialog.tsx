@@ -354,14 +354,22 @@ export function UnitBriefDialog({ unit, open, onClose }: {
               />
             )}
 
-            {brief && (
-              <TargetOperatorsTable
-                targets={targets}
-                clientCompanyId={briefClientCompanyId}
-                ensureBriefId={async () => brief.id}
-                onChanged={invalidate}
-              />
-            )}
+            {/* Always rendered — adding the first target auto-creates the
+                brief with whatever fields are filled so far, killing the
+                invisible save-the-brief-first gate (UX #30). */}
+            <TargetOperatorsTable
+              targets={targets}
+              clientCompanyId={briefClientCompanyId}
+              ensureBriefId={async () => {
+                if (brief) return brief.id;
+                const res = await apiRequest("POST", `/api/available-units/${unit?.id}/brief`, form);
+                const created = await res.json();
+                invalidate();
+                setDirty(false);
+                return created.id;
+              }}
+              onChanged={invalidate}
+            />
 
             {!brief && pendingTargets.length > 0 && (
               <div className="border rounded-lg p-3 bg-muted/30">
