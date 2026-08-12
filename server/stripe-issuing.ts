@@ -2285,36 +2285,50 @@ export function setupStripeIssuingRoutes(app: Express) {
       const { withSystemXero } = await import("./xero-system-session");
       const { postExpenseToXero } = await import("./expense-xero-poster");
 
-      const outcomes: any[] = [];
-      for (const id of ids) {
-        if (!(await canApproveExpense(userId, id))) {
-          outcomes.push({ id, ok: false, error: "not authorised" });
-          continue;
+      // Respond BEFORE doing the work. 30+ approvals each posting to Xero
+      // take minutes — the request blew past the proxy timeout (504) while
+      // the loop carried on server-side, so the toast said "failed" for
+      // work that was actually succeeding. Same respond-now / work-in-
+      // background pattern as the receipt-upload 504 fix.
+      res.json({ ok: true, started: true, queued: ids.length });
+
+      setImmediate(async () => {
+        const outcomes: any[] = [];
+        for (const id of ids) {
+          try {
+            if (!(await canApproveExpense(userId, id))) {
+              outcomes.push({ id, ok: false, error: "not authorised" });
+              continue;
+            }
+            // Stage 1 advances to a director; stage 2 finalises + posts to Xero.
+            const result = await approveExpense(userId, id, null);
+            if (result.outcome === "advanced") {
+              outcomes.push({ id, ok: true, advanced: true, stage: result.stage });
+              continue;
+            }
+            if (result.outcome === "noop") {
+              outcomes.push({ id, ok: false, error: "already actioned" });
+              continue;
+            }
+            try {
+              const xero = await withSystemXero((session) => postExpenseToXero({ session, expenseId: id }));
+              outcomes.push({ id, ok: true, approved: true, xero });
+            } catch (e: any) {
+              outcomes.push({ id, ok: true, approved: true, xero: { posted: false, error: e?.message } });
+            }
+          } catch (e: any) {
+            outcomes.push({ id, ok: false, error: e?.message });
+          }
         }
-        // Stage 1 advances to a director; stage 2 finalises + posts to Xero.
-        const result = await approveExpense(userId, id, null);
-        if (result.outcome === "advanced") {
-          outcomes.push({ id, ok: true, advanced: true, stage: result.stage });
-          continue;
-        }
-        if (result.outcome === "noop") {
-          outcomes.push({ id, ok: false, error: "already actioned" });
-          continue;
-        }
-        try {
-          const xero = await withSystemXero((session) => postExpenseToXero({ session, expenseId: id }));
-          outcomes.push({ id, ok: true, approved: true, xero });
-        } catch (e: any) {
-          outcomes.push({ id, ok: true, approved: true, xero: { posted: false, error: e?.message } });
-        }
-      }
-      const advanced = outcomes.filter(o => o.advanced).length;
-      const approved = outcomes.filter(o => o.approved).length;
-      const posted = outcomes.filter(o => o.xero?.posted).length;
-      res.json({ ok: true, advanced, approved, posted, outcomes });
+        const advanced = outcomes.filter(o => o.advanced).length;
+        const approved = outcomes.filter(o => o.approved).length;
+        const posted = outcomes.filter(o => o.xero?.posted).length;
+        const failed = outcomes.filter(o => !o.ok).length;
+        console.log(`[expenses] bulk approve finished: ${ids.length} queued → ${advanced} advanced, ${approved} approved, ${posted} posted to Xero, ${failed} skipped/failed`);
+      });
     } catch (e: any) {
       console.error("[expenses] approve-bulk error:", e?.message, e?.stack);
-      res.status(500).json({ error: e?.message });
+      if (!res.headersSent) res.status(500).json({ error: e?.message });
     }
   });
 

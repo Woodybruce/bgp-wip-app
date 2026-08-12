@@ -134,17 +134,15 @@ export default function ExpensesApprovals() {
       return r.json();
     },
     onSuccess: (json: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] });
       setSelected(new Set());
-      const approved = json.approved || 0;
-      const advanced = json.advanced || 0;
-      const posted = json.posted || 0;
-      const bits = [
-        advanced ? `${advanced} passed to directors` : null,
-        approved ? `${approved} fully approved` : null,
-        posted ? `${posted} posted to Xero` : null,
-      ].filter(Boolean).join(" · ");
-      toast({ title: "Done", description: bits || "Nothing to action" });
+      // The server now responds immediately and works through the batch in
+      // the background (each stage-2 approval posts to Xero, which takes
+      // seconds per item — a synchronous request 504'd on big batches).
+      // Refresh the list on a stagger so rows visibly clear as they process.
+      toast({ title: `Approving ${json.queued ?? "the selected"} expenses`, description: "Running in the background — the list clears as each one completes." });
+      [3000, 8000, 15000, 30000, 60000, 120000].forEach((ms) =>
+        setTimeout(() => queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] }), ms));
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] });
     },
     onError: (e: any) => toast({ title: "Bulk approve failed", description: e?.message, variant: "destructive" }),
   });

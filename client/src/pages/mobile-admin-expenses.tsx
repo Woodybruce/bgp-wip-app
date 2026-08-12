@@ -257,17 +257,15 @@ function ApprovalsTab() {
   const bulkApproveMutation = useMutation({
     mutationFn: async (ids: string[]) => (await apiRequest("POST", `/api/expenses/approve-bulk`, { ids })).json(),
     onSuccess: (json: any) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/expenses/admin/summary"] });
-      const approved = json.approved || 0;
-      const advanced = json.advanced || 0;
-      const posted = json.posted || 0;
-      const bits = [
-        advanced ? `${advanced} passed to directors` : null,
-        approved ? `${approved} fully approved` : null,
-        posted ? `${posted} posted to Xero` : null,
-      ].filter(Boolean).join(" · ");
-      toast({ title: "Done", description: bits || "Nothing to action" });
+      // Server responds immediately and processes in the background (see
+      // expenses-approvals.tsx) — stagger refreshes so rows clear as they go.
+      toast({ title: `Approving ${json.queued ?? "the selected"} expenses`, description: "Running in the background — the list clears as each one completes." });
+      const refresh = () => {
+        queryClient.invalidateQueries({ queryKey: ["/api/expenses/pending-approval"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/expenses/admin/summary"] });
+      };
+      refresh();
+      [3000, 8000, 15000, 30000, 60000, 120000].forEach((ms) => setTimeout(refresh, ms));
     },
     onError: (e: any) => toast({ title: "Bulk approve failed", description: e?.message, variant: "destructive" }),
   });
