@@ -46,12 +46,59 @@ export interface NormalisedUnit {
 }
 
 // ---------------------------------------------------------------------------
-// Reprojection: OSGB36 National Grid (EPSG:27700) → WGS84 lat/lng.
-// Airy-1830 inverse transverse Mercator, then an approximate OSGB36→WGS84
-// datum shift. Accurate to a few metres — fine for plan display. (Full OSTN15
-// accuracy would need the shift grid; not worth it for a rendered map.)
+// Reprojection: OSGB36 National Grid (EPSG:27700) ↔ WGS84 lat/lng.
+//
+// Two genuinely separate steps, and both matter:
+//   1. The transverse-Mercator projection maths (Airy 1830 ellipsoid) turns
+//      easting/northing into OSGB36 latitude/longitude.
+//   2. A Helmert 7-parameter datum shift turns OSGB36 into WGS84.
+// The original implementation did step 1 only and labelled the result WGS84 —
+// that misplaces everything in London by ~110 m (the "plan isn't in the right
+// position" bug). Helmert accuracy is ~5 m nationwide — fine for plan display;
+// full OSTN15 grid accuracy isn't worth it for a rendered map.
 // ---------------------------------------------------------------------------
-export function bngToWgs84(E: number, N: number): [number, number] {
+
+const AIRY_1830 = { a: 6377563.396, b: 6356256.909 };
+const WGS84_ELL = { a: 6378137.0, b: 6356752.3141 };
+
+// OSGB36 → WGS84 Helmert parameters (tx/ty/tz metres, rx/ry/rz arc-seconds,
+// s ppm). Reverse the signs for WGS84 → OSGB36.
+const OSGB36_TO_WGS84 = { tx: 446.448, ty: -125.157, tz: 542.06, rx: 0.1502, ry: 0.247, rz: 0.8421, s: -20.4894 };
+
+function latLngToCartesian(latDeg: number, lngDeg: number, ell: { a: number; b: number }): [number, number, number] {
+  const phi = (latDeg * Math.PI) / 180, lam = (lngDeg * Math.PI) / 180;
+  const e2 = 1 - (ell.b * ell.b) / (ell.a * ell.a);
+  const nu = ell.a / Math.sqrt(1 - e2 * Math.sin(phi) ** 2);
+  return [nu * Math.cos(phi) * Math.cos(lam), nu * Math.cos(phi) * Math.sin(lam), nu * (1 - e2) * Math.sin(phi)];
+}
+
+function cartesianToLatLng(x: number, y: number, z: number, ell: { a: number; b: number }): [number, number] {
+  const e2 = 1 - (ell.b * ell.b) / (ell.a * ell.a);
+  const p = Math.sqrt(x * x + y * y);
+  let phi = Math.atan2(z, p * (1 - e2));
+  for (let i = 0; i < 8; i++) {
+    const nu = ell.a / Math.sqrt(1 - e2 * Math.sin(phi) ** 2);
+    phi = Math.atan2(z + e2 * nu * Math.sin(phi), p);
+  }
+  return [(phi * 180) / Math.PI, (Math.atan2(y, x) * 180) / Math.PI];
+}
+
+function helmert(x: number, y: number, z: number, t: typeof OSGB36_TO_WGS84, invert = false): [number, number, number] {
+  const sign = invert ? -1 : 1;
+  const s = 1 + sign * t.s * 1e-6;
+  const asRad = (sec: number) => (sign * sec * Math.PI) / (180 * 3600);
+  const rx = asRad(t.rx), ry = asRad(t.ry), rz = asRad(t.rz);
+  return [
+    sign * t.tx + s * x - rz * y + ry * z,
+    sign * t.ty + rz * x + s * y - rx * z,
+    sign * t.tz - ry * x + rx * y + s * z,
+  ];
+}
+
+// Step 1 only: inverse transverse Mercator. Output is OSGB36 lat/lng —
+// exported for the one-off stored-data repair, which uses it to recover the
+// exact values the buggy converter wrote.
+export function bngToOsgb36LatLng(E: number, N: number): [number, number] {
   const a = 6377563.396, b = 6356256.909; // Airy 1830
   const F0 = 0.9996012717;
   const lat0 = (49 * Math.PI) / 180, lon0 = (-2 * Math.PI) / 180;
@@ -85,9 +132,17 @@ export function bngToWgs84(E: number, N: number): [number, number] {
   return [(latOut * 180) / Math.PI, (lonOut * 180) / Math.PI];
 }
 
-// WGS84 lat/lng → BNG easting/northing (forward), needed to build the WKT
-// query polygon the Edozo WFS expects.
-export function wgs84ToBng(lat: number, lng: number): [number, number] {
+// BNG easting/northing → WGS84 lat/lng: projection inverse + datum shift.
+export function bngToWgs84(E: number, N: number): [number, number] {
+  const [lat36, lng36] = bngToOsgb36LatLng(E, N);
+  const [x, y, z] = latLngToCartesian(lat36, lng36, AIRY_1830);
+  const [wx, wy, wz] = helmert(x, y, z, OSGB36_TO_WGS84);
+  return cartesianToLatLng(wx, wy, wz, WGS84_ELL);
+}
+
+// Step 1 only (forward): OSGB36 lat/lng → easting/northing. Exported for the
+// stored-data repair (see bngToOsgb36LatLng).
+export function osgb36LatLngToBng(lat: number, lng: number): [number, number] {
   const a = 6377563.396, b = 6356256.909;
   const F0 = 0.9996012717;
   const lat0 = (49 * Math.PI) / 180, lon0 = (-2 * Math.PI) / 180;
@@ -115,6 +170,96 @@ export function wgs84ToBng(lat: number, lng: number): [number, number] {
   const N = I + II * dl ** 2 + III * dl ** 4 + IIIA * dl ** 6;
   const E = E0 + IV * dl + V * dl ** 3 + VI * dl ** 5;
   return [E, N];
+}
+
+// WGS84 lat/lng → BNG easting/northing: datum shift + projection forward.
+// Used to build the WKT query polygon the Edozo WFS expects.
+export function wgs84ToBng(lat: number, lng: number): [number, number] {
+  const [x, y, z] = latLngToCartesian(lat, lng, WGS84_ELL);
+  const [ox, oy, oz] = helmert(x, y, z, OSGB36_TO_WGS84, true);
+  const [lat36, lng36] = cartesianToLatLng(ox, oy, oz, AIRY_1830);
+  return osgb36LatLngToBng(lat36, lng36);
+}
+
+// ---------------------------------------------------------------------------
+// One-off stored-data repair. Harvested goad_units rows were written with the
+// datum-shift-less converter, so every stored lat/lng (geometry, centroid,
+// bbox) is OSGB36 mislabelled as WGS84 — ~110 m off in London. The old
+// converter is exactly invertible (pure TM), so each stored value can be
+// recovered to precise easting/northing and re-projected correctly. Runs once,
+// guarded by a system_settings key; batched so boot isn't blocked.
+// ---------------------------------------------------------------------------
+export async function fixGoadUnitsDatumOnce(): Promise<void> {
+  const FLAG = "migration:goad_units_datum_v2";
+  try {
+    const { rows: flag } = await pool.query(`SELECT value FROM system_settings WHERE key = $1 LIMIT 1`, [FLAG]);
+    if (flag.length > 0) return;
+  } catch { return; } // system_settings missing — very fresh DB, nothing harvested yet
+
+  const fixPair = (lat: number, lng: number): [number, number] => {
+    const [E, N] = osgb36LatLngToBng(lat, lng); // recover exact BNG the harvest saw
+    return bngToWgs84(E, N);                    // re-project with the datum shift
+  };
+  const fixGeom = (geom: any): any => {
+    const conv = (c: any): any => {
+      if (typeof c[0] === "number") {
+        const [lat, lng] = fixPair(c[1], c[0]); // GeoJSON coords are [lng, lat]
+        return [lng, lat];
+      }
+      return c.map(conv);
+    };
+    if (!geom?.coordinates) return geom;
+    return { type: geom.type, coordinates: geom.coordinates.map(conv) };
+  };
+
+  // The repair is NOT idempotent (re-fixing a fixed row shifts it again), so
+  // it runs in a single transaction with the flag written before COMMIT:
+  // either every row is fixed exactly once, or none are and the next boot
+  // retries cleanly.
+  const client = await pool.connect();
+  let cursor = 0, fixed = 0;
+  try {
+    await client.query("BEGIN");
+    for (;;) {
+      const { rows } = await client.query(
+        `SELECT id, geometry, centroid_lat, centroid_lng, min_lat, min_lng, max_lat, max_lng
+           FROM goad_units WHERE id > $1 ORDER BY id LIMIT 500`,
+        [cursor],
+      );
+      if (rows.length === 0) break;
+      for (const r of rows) {
+        cursor = r.id;
+        const geom = typeof r.geometry === "string" ? JSON.parse(r.geometry) : r.geometry;
+        const newGeom = geom ? fixGeom(geom) : null;
+        const c = r.centroid_lat != null ? fixPair(Number(r.centroid_lat), Number(r.centroid_lng)) : null;
+        const lo = r.min_lat != null ? fixPair(Number(r.min_lat), Number(r.min_lng)) : null;
+        const hi = r.max_lat != null ? fixPair(Number(r.max_lat), Number(r.max_lng)) : null;
+        await client.query(
+          `UPDATE goad_units SET geometry = $2,
+                  centroid_lat = $3, centroid_lng = $4,
+                  min_lat = $5, min_lng = $6, max_lat = $7, max_lng = $8
+            WHERE id = $1`,
+          [r.id, newGeom ? JSON.stringify(newGeom) : r.geometry,
+           c ? c[0] : r.centroid_lat, c ? c[1] : r.centroid_lng,
+           lo ? lo[0] : r.min_lat, lo ? lo[1] : r.min_lng,
+           hi ? hi[0] : r.max_lat, hi ? hi[1] : r.max_lng],
+        );
+        fixed++;
+      }
+      if (fixed % 5000 < 500) console.log(`[goad datum fix] ${fixed} units repaired so far…`);
+    }
+    await client.query(
+      `INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2`,
+      [FLAG, JSON.stringify({ fixedAt: new Date().toISOString(), rows: fixed })],
+    );
+    await client.query("COMMIT");
+    console.log(`[goad datum fix] complete — ${fixed} units re-projected onto WGS84`);
+  } catch (e: any) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[goad datum fix] failed — rolled back, no rows changed; next boot retries:", e?.message);
+  } finally {
+    client.release();
+  }
 }
 
 export function bboxOfGeometry(geom: any): { minLat: number; minLng: number; maxLat: number; maxLng: number; centroidLat: number; centroidLng: number } | null {

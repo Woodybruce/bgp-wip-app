@@ -4059,6 +4059,18 @@ app.use("/api/branding/assets", express.static(
           console.error("[pathway resume] Failed:", e?.message);
         }
       }, 20000);
+      // One-off: re-project harvested goad_units onto true WGS84 — the
+      // original harvest missed the OSGB36→WGS84 datum shift, leaving every
+      // occupier plan ~110m out of position. Guarded + transactional; no-op
+      // after the first successful run.
+      setTimeout(async () => {
+        try {
+          const { fixGoadUnitsDatumOnce } = await import("./goad-units");
+          await fixGoadUnitsDatumOnce();
+        } catch (e: any) {
+          console.error("[goad datum fix] Failed:", e?.message);
+        }
+      }, 30000);
       // Background crawls only run in production — too slow/fragile over local internet
       const isProduction = process.env.NODE_ENV === "production";
       if (isProduction) {
