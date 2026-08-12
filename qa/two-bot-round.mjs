@@ -229,7 +229,11 @@ async function victoriaRound(page, cross) {
     // Leave the fee blank at creation — it's editable on the board later, and
     // entering it without an agent split would 400 the fee-allocations save
     // (BGP House 15% row required). A real user uses the split editor.
-    await page.locator('[data-testid="input-deal-target-date"]').fill('2026-12-31');
+    // Completion date is a month picker on JOGQK (WIP report buckets by
+    // month); older builds use a day input — fill whichever format the
+    // rendered input expects.
+    const targetDate = page.locator('[data-testid="input-deal-target-date"]');
+    await targetDate.fill((await targetDate.getAttribute('type')) === 'month' ? '2026-12' : '2026-12-31');
     await page.locator('[data-testid="button-save-deal"]').click();
     await page.waitForTimeout(1800);
     // Verify via the API, not the deals table — the table is team-filtered
