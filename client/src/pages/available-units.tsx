@@ -1108,7 +1108,7 @@ export default function AvailableUnitsPage() {
     // unit moves to Solicitors it lives on the Deals board; we hide SOL+ from
     // the default view here so the tracker stays focused. Users can still
     // click an SOL/EXC/COM lozenge to drill back in.
-    const PRE_SOL_CODES = new Set(["OPP", "REP", "SPEC", "LIVE", "AVA", "NEG"]);
+    const PRE_SOL_CODES = new Set(["OPP", "REP", "SPEC", "LIVE", "AVA", "NEG", "HOT"]);
     let result = viewAll
       ? [...toolbarFiltered]
       : statusFilter !== "all"

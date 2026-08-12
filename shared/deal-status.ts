@@ -8,6 +8,7 @@ export const DEAL_STATUS_CODES = [
   "LIVE", // Live
   "AVA",  // Available
   "NEG",  // Negotiating
+  "HOT",  // HOTs — heads of terms agreed, pre-solicitors (Alex, 2026-08-12)
   "SOL",  // Solicitors (replaces "Under Offer")
   "EXC",  // Exchanged
   "COM",  // Completed (also covers "Let" on the letting tracker)
@@ -24,6 +25,7 @@ export const DEAL_STATUS_LABELS: Record<DealStatusCode, string> = {
   LIVE: "Live",
   AVA: "Available",
   NEG: "Negotiating",
+  HOT: "HOTs",
   SOL: "Solicitors",
   EXC: "Exchanged",
   COM: "Completed",
@@ -39,6 +41,7 @@ export const DEAL_STATUS_COLORS: Record<DealStatusCode, string> = {
   LIVE: "bg-blue-100 text-blue-800",
   AVA: "bg-sky-100 text-sky-800",
   NEG: "bg-amber-100 text-amber-800",
+  HOT: "bg-rose-100 text-rose-800",
   SOL: "bg-orange-100 text-orange-800",
   EXC: "bg-violet-100 text-violet-800",
   COM: "bg-emerald-100 text-emerald-800",
@@ -47,13 +50,16 @@ export const DEAL_STATUS_COLORS: Record<DealStatusCode, string> = {
 };
 
 // Per-tracker subsets — which codes each view's dropdown should offer
-export const LETTING_STATUSES: DealStatusCode[]    = ["OPP", "REP", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"];
+// REP dropped from the letting tracker headings (Alex, 2026-08-12: "not
+// relevant") — existing REP rows still render via legacyToCode, they just
+// lose their chip. HOT sits between NEG and SOL per the same request.
+export const LETTING_STATUSES: DealStatusCode[]    = ["OPP", "AVA", "NEG", "HOT", "SOL", "EXC", "COM", "WIT", "INV"];
 export const INVESTMENT_STATUSES: DealStatusCode[] = ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"];
 // WIP report covers every fee-bearing stage including pre-deal pipeline.
 // REP + AVA + NEG live on the Letting Tracker side; SOL+ live on the
 // Deals Board. Both feed the WIP report (visual reflection of both
 // boards per the post-Sage model).
-export const WIP_STATUSES: DealStatusCode[]        = ["REP", "AVA", "NEG", "SOL", "EXC", "COM", "INV"];
+export const WIP_STATUSES: DealStatusCode[]        = ["REP", "AVA", "NEG", "HOT", "SOL", "EXC", "COM", "INV"];
 export const DEAL_PAGE_STATUSES: DealStatusCode[]  = [...DEAL_STATUS_CODES];
 
 // INV is set automatically when a Xero invoice syncs onto the deal — UI should
@@ -69,7 +75,8 @@ const LEGACY_MAP: Record<string, DealStatusCode> = {
   "in negotiation": "NEG",        // leasing-schedule unit status, leaks into deals
   "negotiation": "NEG",
   "neg": "NEG",
-  "hots": "NEG",
+  "hots": "HOT",
+  "heads of terms": "HOT",
   "under offer": "SOL",
   "sols": "SOL",
   "sol": "SOL",

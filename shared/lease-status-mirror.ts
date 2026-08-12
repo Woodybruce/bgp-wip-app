@@ -14,7 +14,7 @@
 // Mapping rationale:
 //   REP / SPEC / LIVE / AVA  →  Vacant         (on the market or pre-marketing)
 //   NEG                       →  In Negotiation
-//   SOL / EXC                 →  Under Offer    (post-Solicitors but not yet completed)
+//   HOT / SOL / EXC           →  Under Offer    (terms agreed through to exchange)
 //   COM / INV                 →  Occupied       (tenant signed/in, deal done)
 //   WIT                       →  Archived       (withdrawn / dead deal)
 //
@@ -35,6 +35,7 @@ const CODE_TO_LEASING: Record<DealStatusCode, LeasingStatus> = {
   LIVE: "Vacant",
   AVA:  "Vacant",
   NEG:  "In Negotiation",
+  HOT:  "Under Offer",
   SOL:  "Under Offer",
   EXC:  "Under Offer",
   COM:  "Occupied",
@@ -96,6 +97,7 @@ const CODE_TO_TENANCY: Record<DealStatusCode, TenancyStatus> = {
   LIVE: "Vacant",
   AVA:  "Vacant",
   NEG:  "Vacant",
+  HOT:  "Vacant",
   SOL:  "Vacant",
   EXC:  "Occupied",
   COM:  "Occupied",
