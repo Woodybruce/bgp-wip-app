@@ -63,12 +63,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r272 · 2026-08-12 · ROUND IN PROGRESS (LIGHT — r271 had the journey)
+### r272 · 2026-08-12 · LIGHT (r271 had the journey)
 - Fresh container (pg_hba trust per r205 — method-column-only sed;
   restore-as-postgres + per-object ALTER owners + schema grant per r249).
-- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 272 running —
-  160+ scenarios ok so far, triage pending. Final entry replaces this one.
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 272: exit 0,
+  179 scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server
+  log (the lone " 500 " grep hit is the "500 articles" news-feed text
+  again; status tally: only 2xx/3xx/expected 400/401/403/404 + no-key
+  503s; 403s are the harness's negative probes; 404s are the listed
+  sharepoint-root polling + missing HR photos). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r272 was LIGHT → r273
+  FULL).
 
 ### r271 · 2026-08-12 · FULL (rotation #2 client desktop)
 - Fresh container (pg_hba trust per r205 — method-column-only sed;
