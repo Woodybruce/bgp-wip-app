@@ -4059,6 +4059,21 @@ app.use("/api/branding/assets", express.static(
           console.error("[pathway resume] Failed:", e?.message);
         }
       }, 20000);
+      // Pathway stall watchdog — anything stuck "running" for >2h gets one
+      // automatic retry, then a failed flag (runs sat dead since April/June
+      // with nothing noticing). First sweep shortly after boot, then every
+      // 30 minutes.
+      setTimeout(async () => {
+        try {
+          const { sweepStalledPathwayRuns } = await import("./property-pathway");
+          await sweepStalledPathwayRuns();
+          setInterval(() => {
+            sweepStalledPathwayRuns().catch((e: any) => console.error("[pathway watchdog] tick failed:", e?.message));
+          }, 30 * 60 * 1000);
+        } catch (e: any) {
+          console.error("[pathway watchdog] Failed to start:", e?.message);
+        }
+      }, 45000);
       // One-off: re-project harvested goad_units onto true WGS84 — the
       // original harvest missed the OSGB36→WGS84 datum shift, leaving every
       // occupier plan ~110m out of position. Guarded + transactional; no-op

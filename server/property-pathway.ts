@@ -701,6 +701,101 @@ export async function resumeInterruptedPathwayRuns(): Promise<void> {
 }
 
 // ============================================================================
+// AUTO-ADVANCE GATES + STALL WATCHDOG
+//
+// Gates: stages 3 (review confirmation), 6 (business-plan agree) and 7
+// (model agree) need a human. Everything else flows: a chain started at any
+// stage runs up to — never past — the next gate boundary, and clearing a
+// gate (the agree endpoints / advancing past 3) resumes the flow to the
+// next one. Per-run opt-out via stage_results._noAutoAdvance.
+// ============================================================================
+
+const GATE_STAGES = new Set([3, 6, 7]);
+
+// First stage AFTER `fromStage`'s chain that must not run unattended.
+// e.g. from 1 → 4 (runs 1,2,3 then waits), from 4 → 7, from 7 → 8, from 8 → 10.
+export function nextGateCap(fromStage: number): number {
+  for (let s = fromStage; s <= 9; s++) {
+    if (GATE_STAGES.has(s)) return s + 1;
+  }
+  return 10;
+}
+
+async function autoAdvanceDisabled(runId: string): Promise<boolean> {
+  try {
+    const { rows } = await pool.query(
+      `SELECT (stage_results->>'_noAutoAdvance') = 'true' AS off FROM property_pathway_runs WHERE id = $1`,
+      [runId],
+    );
+    return rows[0]?.off === true;
+  } catch {
+    return false;
+  }
+}
+
+// Stage stuck "running" for longer than this is presumed dead. updated_at is
+// touched on every stage-status write, so it doubles as a heartbeat.
+const STALL_THRESHOLD_MS = 2 * 60 * 60 * 1000;
+
+// Retry a stalled stage once; a second stall marks it failed. Motivated by
+// runs that sat "running" since April/June with nothing flagging them.
+export async function sweepStalledPathwayRuns(): Promise<void> {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, stage_status, stage_results->'_stallRetries' AS retries,
+              (stage_results ? '_autoChain') AS chained
+         FROM property_pathway_runs
+        WHERE stage_status::text LIKE '%"running"%'
+          AND updated_at < now() - make_interval(secs => $1)
+        ORDER BY updated_at ASC
+        LIMIT 10`,
+      [STALL_THRESHOLD_MS / 1000],
+    );
+    if (rows.length === 0) return;
+    console.log(`[pathway watchdog] ${rows.length} run(s) with a stage stuck >2h`);
+    for (const row of rows) {
+      const retries: Record<string, number> = (row.retries as any) || {};
+      const stuckStages = Object.entries((row.stage_status as any) || {})
+        .filter(([, v]) => v === "running")
+        .map(([k]) => parseInt(String(k).replace("stage", ""), 10))
+        .filter((n) => Number.isFinite(n))
+        .sort((a, b) => a - b);
+      if (stuckStages.length === 0) continue;
+      const lowest = stuckStages[0];
+      const key = `stage${lowest}`;
+      // Phantom "running" markers above the lowest stage get reset — the
+      // retry chain re-runs them in order anyway.
+      for (const s of stuckStages.slice(1)) {
+        await pool.query(
+          `UPDATE property_pathway_runs SET stage_status = stage_status || $2::jsonb WHERE id = $1`,
+          [row.id, JSON.stringify({ [`stage${s}`]: "pending" })],
+        ).catch(() => {});
+      }
+      const attempts = Number(retries[key] || 0);
+      if (attempts >= 1) {
+        console.warn(`[pathway watchdog] ${row.id} ${key} stalled again after a retry — marking failed`);
+        await setStageStatus(row.id, key as keyof StageStatusMap, "failed").catch(() => {});
+        continue;
+      }
+      console.log(`[pathway watchdog] ${row.id} ${key} stalled — retrying once`);
+      await pool.query(
+        `UPDATE property_pathway_runs SET stage_results = COALESCE(stage_results, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+        [row.id, JSON.stringify({ _stallRetries: { ...retries, [key]: attempts + 1 } })],
+      ).catch(() => {});
+      // A dead in-process chain can't be resumed — clear its marker so boot
+      // resume doesn't double-run, then start a fresh chain to the next gate.
+      if (row.chained) await patchAutoChain(row.id, null).catch(() => {});
+      const stubReq = { session: {}, headers: {} } as unknown as Request;
+      runStageChain(row.id, lowest, nextGateCap(lowest), stubReq, "watchdog").catch((err: any) => {
+        console.error(`[pathway watchdog] ${row.id} retry chain error:`, err?.message);
+      });
+    }
+  } catch (err: any) {
+    console.error("[pathway watchdog] sweep failed:", err?.message);
+  }
+}
+
+// ============================================================================
 // MARKET INTEL CRAWL — Perplexity + Exa + Claude synthesis, shared by Stage 1
 // and the manual refresh endpoint.
 // ============================================================================
@@ -5644,14 +5739,31 @@ export function registerPropertyPathwayRoutes(app: Express) {
       // wants the whole pathway to produce a full draft to work with, and
       // downstream stages fall back gracefully (e.g. Stage 7 uses the AI draft).
       if (asyncMode || targetStage === 1 || autoChainTo) {
-        const chainCap = typeof autoChainTo === "number" ? autoChainTo : (targetStage + 1);
+        // Auto-advance: with no explicit chain target, run through to the
+        // next human gate (after stages 3, 6, 7) instead of stopping after
+        // one stage — non-gate stages need no babysitting. Per-run opt-out
+        // via _noAutoAdvance falls back to the old single-stage behaviour.
+        const chainCap = typeof autoChainTo === "number"
+          ? autoChainTo
+          : ((await autoAdvanceDisabled(runId)) ? targetStage + 1 : nextGateCap(targetStage));
         runStageChain(runId, targetStage, chainCap, req, "advance auto-chain").catch((err: any) => {
           console.error(`[pathway advance auto-chain] outer error:`, err?.message);
         });
-        return res.status(202).json({ success: true, async: true, runId, targetStage, autoChainTo: typeof autoChainTo === "number" ? autoChainTo : null });
+        return res.status(202).json({ success: true, async: true, runId, targetStage, autoChainTo: typeof autoChainTo === "number" ? autoChainTo : chainCap });
       }
 
       const updated = await runStage(runId, targetStage, req);
+      // Sync path gets the same auto-advance: if the stage landed cleanly and
+      // the next stage isn't behind a gate, continue in the background.
+      try {
+        const st = (updated.stageStatus as any)?.[`stage${targetStage}`];
+        const cap = nextGateCap(targetStage);
+        if ((st === "completed" || st === "skipped") && targetStage + 1 < cap && !(await autoAdvanceDisabled(runId))) {
+          runStageChain(runId, targetStage + 1, cap, req, "auto-advance").catch((err: any) => {
+            console.error(`[pathway auto-advance] chain error:`, err?.message);
+          });
+        }
+      } catch { /* auto-advance is best-effort — never fail the response */ }
       if (res.headersSent) return; // guard against edge-timed-out responses
       res.json({ success: true, run: updated });
     } catch (err: any) {
@@ -5662,6 +5774,29 @@ export function registerPropertyPathwayRoutes(app: Express) {
         error: err?.message || "Failed to advance pathway",
         run: currentRun,
       });
+    }
+  });
+
+  // Per-run auto-advance opt-out. body: { enabled: boolean } — enabled=false
+  // stores _noAutoAdvance so chains stop after each stage (old behaviour).
+  app.post("/api/property-pathway/:runId/auto-advance", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const runId = String(req.params.runId);
+      const enabled = req.body?.enabled !== false;
+      if (enabled) {
+        await pool.query(
+          `UPDATE property_pathway_runs SET stage_results = COALESCE(stage_results, '{}'::jsonb) - '_noAutoAdvance', updated_at = now() WHERE id = $1`,
+          [runId],
+        );
+      } else {
+        await pool.query(
+          `UPDATE property_pathway_runs SET stage_results = COALESCE(stage_results, '{}'::jsonb) || '{"_noAutoAdvance": true}'::jsonb, updated_at = now() WHERE id = $1`,
+          [runId],
+        );
+      }
+      res.json({ ok: true, autoAdvance: enabled });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
     }
   });
 
@@ -6065,7 +6200,16 @@ export function registerPropertyPathwayRoutes(app: Express) {
         stageStatus: nextStatus,
         currentStage: Math.max(run.currentStage, 7),
       });
-      res.json({ ok: true, stage6: nextStage6 });
+      // Gate cleared → resume the pipeline: build the Excel model (stage 7)
+      // in the background, stopping at the next gate (the model agreement).
+      let autoAdvancing = false;
+      if (!(await autoAdvanceDisabled(runId))) {
+        autoAdvancing = true;
+        runStageChain(runId, 7, nextGateCap(7), req, "post-agree(plan)").catch((err: any) => {
+          console.error(`[pathway post-agree] stage 7 chain error:`, err?.message);
+        });
+      }
+      res.json({ ok: true, stage6: nextStage6, autoAdvancing });
     } catch (err: any) {
       console.error("[business-plan/agree] error:", err?.message);
       res.status(500).json({ error: err?.message });
@@ -6097,7 +6241,15 @@ export function registerPropertyPathwayRoutes(app: Express) {
         stageStatus: nextStatus,
         currentStage: Math.max(run.currentStage, 8),
       });
-      res.json({ ok: true, stage7: nextStage7 });
+      // Final gate cleared → run Studios + Why Buy (stages 8-9) unattended.
+      let autoAdvancing = false;
+      if (!(await autoAdvanceDisabled(runId))) {
+        autoAdvancing = true;
+        runStageChain(runId, 8, nextGateCap(8), req, "post-agree(model)").catch((err: any) => {
+          console.error(`[pathway post-agree] stage 8-9 chain error:`, err?.message);
+        });
+      }
+      res.json({ ok: true, stage7: nextStage7, autoAdvancing });
     } catch (err: any) {
       console.error("[excel-model/agree] error:", err?.message);
       res.status(500).json({ error: err?.message });
