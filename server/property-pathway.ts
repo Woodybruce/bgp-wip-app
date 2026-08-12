@@ -6040,6 +6040,116 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
+  // Portfolio comparison — one row per run that has a business plan, with
+  // the plan/model numbers side by side so the Monday meeting is "sort by
+  // IRR, discuss the top five". Registered before /:runId (route order).
+  app.get("/api/property-pathway/portfolio", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const runs = await db
+        .select()
+        .from(propertyPathwayRuns)
+        .orderBy(desc(propertyPathwayRuns.updatedAt))
+        .limit(300);
+
+      const propertyIds = Array.from(new Set(runs.map(r => r.propertyId).filter((id): id is string => !!id)));
+      const nameById = new Map<string, string>();
+      if (propertyIds.length > 0) {
+        const { rows } = await pool.query<{ id: string; name: string }>(
+          `SELECT id, name FROM crm_properties WHERE id = ANY($1::varchar[])`,
+          [propertyIds],
+        );
+        for (const r of rows) nameById.set(r.id, r.name);
+      }
+      const starterIds = Array.from(new Set(runs.map(r => (r as any).startedBy).filter((id): id is string => !!id)));
+      const starterById = new Map<string, string>();
+      if (starterIds.length > 0) {
+        const { rows } = await pool.query<{ id: string; name: string }>(
+          `SELECT id, name FROM users WHERE id = ANY($1::varchar[])`,
+          [starterIds],
+        );
+        for (const r of rows) starterById.set(r.id, r.name);
+      }
+
+      const rows = runs.map((r) => {
+        const sr = (r.stageResults as StageResults & { _disposition?: { status?: string; reason?: string; setBy?: string; setAt?: string } }) || {};
+        const st6 = sr.stage6 || {};
+        const plan: BusinessPlan | undefined = st6.agreed || st6.draft;
+        if (!plan) return null; // nothing to compare until Stage 6 has run
+        const st7 = sr.stage7 || {};
+        return {
+          runId: r.id,
+          propertyId: r.propertyId || null,
+          address: r.address,
+          postcode: r.postcode || null,
+          propertyName: r.propertyId ? (nameById.get(r.propertyId) || null) : null,
+          startedByName: (r as any).startedBy ? (starterById.get((r as any).startedBy) || null) : null,
+          currentStage: r.currentStage,
+          completedAt: r.completedAt,
+          updatedAt: r.updatedAt,
+          price: plan.targetPurchasePrice ?? null,
+          niy: plan.targetNIY ?? null,
+          irr: plan.targetIRR ?? null,
+          moic: plan.targetMOIC ?? null,
+          strategy: plan.strategy ?? null,
+          holdPeriodYrs: plan.holdPeriodYrs ?? null,
+          exitPrice: plan.exitPrice ?? null,
+          exitYield: plan.exitYield ?? null,
+          capex: plan.capex?.amount ?? null,
+          planAgreed: !!st6.agreed,
+          modelAgreed: !!st7.agreed,
+          whyBuyUrl: r.whyBuyDocumentUrl || null,
+          disposition: sr._disposition?.status || null,
+          dispositionReason: sr._disposition?.reason || null,
+        };
+      }).filter(Boolean);
+
+      res.json(rows);
+    } catch (err: any) {
+      console.error("[pathway portfolio] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Outcome tracking — where did this investigation land? Stored as
+  // stage_results._disposition (same JSONB side-channel as _noAutoAdvance).
+  // "passed"/"lost" archive the run off the board's default view; six
+  // months from now "everything we passed on in Leeds and why" is a query.
+  app.post("/api/property-pathway/:runId/disposition", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const runId = String(req.params.runId);
+      const { status, reason } = req.body as { status?: string | null; reason?: string };
+      const allowed = ["pursuing", "offer_made", "passed", "lost"];
+      if (status != null && !allowed.includes(status)) {
+        return res.status(400).json({ error: `status must be one of ${allowed.join(", ")} or null to clear` });
+      }
+      const run = await getRun(runId);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+
+      if (status == null) {
+        await pool.query(
+          `UPDATE property_pathway_runs SET stage_results = stage_results - '_disposition', updated_at = now() WHERE id = $1`,
+          [runId],
+        );
+        return res.json({ ok: true, disposition: null });
+      }
+      const user = (req as any).user;
+      const disposition = {
+        status,
+        reason: (reason || "").trim() || undefined,
+        setBy: user?.username || user?.email || "unknown",
+        setAt: new Date().toISOString(),
+      };
+      await pool.query(
+        `UPDATE property_pathway_runs SET stage_results = COALESCE(stage_results, '{}'::jsonb) || $2::jsonb, updated_at = now() WHERE id = $1`,
+        [runId, JSON.stringify({ _disposition: disposition })],
+      );
+      res.json({ ok: true, disposition });
+    } catch (err: any) {
+      console.error("[pathway disposition] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
   // Fetch current state of a run
   app.get("/api/property-pathway/:runId", requireAuth, async (req: Request, res: Response) => {
     try {

@@ -105,6 +105,7 @@ const TodayPage = lazy(() => import("@/pages/today"));
 const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
 const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
 const PathwayReview = lazy(() => import("@/pages/pathway-review"));
+const PathwayPortfolio = lazy(() => import("@/pages/pathway-portfolio"));
 const TenantRep = lazy(() => import("@/pages/tenant-rep"));
 const PlaMatters = lazy(() => import("@/pages/pla-matters"));
 const WestminsterRestaurants = lazy(() => import("@/pages/westminster-restaurants"));
@@ -343,6 +344,7 @@ function Router() {
       <Route path="/brands" component={BrandsHub} />
       <Route path="/property-pathway" component={PropertyPathway} />
       <Route path="/pathway-review" component={PathwayReview} />
+      <Route path="/pathway-portfolio" component={PathwayPortfolio} />
       <Route path="/turnover">{() => <TurnoverBoard />}</Route>
       <Route path="/wip-report" component={DealsHub} />
       <Route path="/upload" component={UploadPage} />
