@@ -5514,6 +5514,9 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
 //   - the brand has no instagram_handle OR isn't a Business/Creator account
 function BrandInstagramCard({ companyId }: { companyId: string }) {
   const { toast } = useToast();
+  // Clients get house copy, not server-config detail (UX #41).
+  const { data: igViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const igClientViewer = !igViewer || igViewer.role === "Client" || !!igViewer.companyScopeId;
   const { data: profile, isLoading } = useQuery<any>({
     queryKey: ["/api/brand", companyId, "instagram"],
     queryFn: async () => {
@@ -5572,8 +5575,9 @@ function BrandInstagramCard({ companyId }: { companyId: string }) {
         </Card>
       );
     }
-    const message =
-      status === "not_configured" ? "Meta Graph API credentials not set on server."
+    const message = igClientViewer
+      ? "Instagram feed unavailable for this brand."
+      : status === "not_configured" ? "Meta Graph API credentials not set on server."
       : status === "no_handle" ? "No Instagram handle on this brand. Add via Edit, or run the homepage backfill."
       : "Instagram lookup failed — likely the handle is a Personal account (Business Discovery only works on Business/Creator accounts), or the access token / business account ID is wrong.";
     return (

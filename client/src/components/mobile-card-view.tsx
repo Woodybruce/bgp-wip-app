@@ -35,13 +35,13 @@ function StatusDot({ color }: { color?: string }) {
   );
 }
 
-export function MobileCardView({ items, emptyMessage, emptyIcon }: { items: MobileCardItem[]; emptyMessage?: string; emptyIcon?: LucideIcon }) {
+export function MobileCardView({ items, emptyMessage, emptyIcon, emptyDescription }: { items: MobileCardItem[]; emptyMessage?: string; emptyIcon?: LucideIcon; emptyDescription?: string }) {
   if (items.length === 0) {
     return (
       <EmptyState
         icon={emptyIcon || Inbox}
         title={emptyMessage || "No items found"}
-        description="Try adjusting your filters"
+        description={emptyDescription ?? "Try adjusting your filters"}
       />
     );
   }

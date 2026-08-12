@@ -363,7 +363,7 @@ export default function AvailableUnitsPage() {
   // Most viewings are logged the day they happen, so the date defaults to
   // today (still editable). Editing ids switch the add forms into edit mode.
   const emptyViewingForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", viewingDate: new Date().toISOString().slice(0, 10), viewingTime: "", attendees: "", notes: "", outcome: "" });
-  const emptyOfferForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", offerDate: "", rentPa: "", rentFreeMonths: "", termYears: "", breakOption: "", incentives: "", premium: "", fittingOutContribution: "", comments: "" });
+  const emptyOfferForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", offerDate: new Date().toISOString().slice(0, 10), rentPa: "", rentFreeMonths: "", termYears: "", breakOption: "", incentives: "", premium: "", fittingOutContribution: "", comments: "" });
   const [viewingForm, setViewingForm] = useState(emptyViewingForm);
   const [offerForm, setOfferForm] = useState(emptyOfferForm);
   const [editingViewingId, setEditingViewingId] = useState<string | null>(null);

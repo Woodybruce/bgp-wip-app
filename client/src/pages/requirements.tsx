@@ -1016,6 +1016,9 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
       {isMobile ? (
         <MobileCardView
           emptyMessage="No requirements"
+          emptyDescription={search || groupFilter !== "all" || Object.keys(columnFilters).length > 0
+            ? "Try adjusting your filters"
+            : isClientView ? "No live requirements for your portfolio yet — BGP logs these on your behalf" : "No live requirements yet"}
           items={[...activeItems, ...pastItems, ...archivedItems].map((item) => ({
             id: item.id,
             title: item.name,
@@ -3579,6 +3582,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
       {isMobile ? (
         <MobileCardView
           emptyMessage="No requirements"
+          emptyDescription={search ? "Try adjusting your filters" : "No live requirements yet"}
           items={filteredItems.map((item) => ({
             id: item.id,
             title: (item.companyId ? companyMap.get(item.companyId)?.name : null) || item.name,
