@@ -13,6 +13,24 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+41. 2026-08-12 · Landsec client / desktop 1440px · reviewing a tenant brand
+    profile · the Instagram card's empty state reads "Meta Graph API
+    credentials not set on server" — server-config copy shown to a client
+    (the AI panels' equivalent states use house copy like "AI take
+    unavailable — AI service is not configured") · Suggested: user-facing
+    copy, e.g. "Instagram feed unavailable", keeping the config detail to
+    server logs.
+
+40. 2026-08-12 · Landsec client / desktop 1440px · board asked about a
+    tenant brand's standing — read the Starbucks profile · the "Brand
+    expansion" AI commentary shown to the client ends with BGP-internal
+    pitch strategy: "**Recommendation: Do not pitch until BGP completes KYC
+    due diligence and obtains baseline data…**" — advice addressed to BGP,
+    not the landlord, and commercially awkward for a client to read ·
+    Suggested: either strip/skip the Recommendation section of expansion
+    commentary for client viewers, or prompt the generator to write the
+    client-visible variant without internal pitch guidance.
+
 39. 2026-08-12 · BGP staff / desktop 1440px · after an intro call, tried to
     add the new Starbucks contact to the CRM by hand · there is NO manual
     "add contact" entry point anywhere for staff: the CRM hub (Landlords/

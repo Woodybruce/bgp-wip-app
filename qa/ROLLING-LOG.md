@@ -63,11 +63,43 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r271 · 2026-08-12 · FULL (rotation #2 client desktop) — IN PROGRESS
-- Round in progress. Regression: run-smoke.sh GREEN first pass (42 checks,
-  0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake). Two-bot round
-  271 running; journey (Mark Warne desktop 1440px — brand compliance review
-  + self-add brand) pending.
+### r271 · 2026-08-12 · FULL (rotation #2 client desktop)
+- Fresh container (pg_hba trust per r205 — method-column-only sed;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 271: exit 0,
+  179 scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server log
+  (the lone " 500 " grep hit is the "500 articles" news-feed text again).
+- Journey: Mark Warne desktop 1440px — "board asked about a tenant brand's
+  financial standing: review its compliance, then add a brand we're
+  courting to our CRM and find who to chase" (FIRST client-desktop journey
+  coverage of the Brand Intelligence hub tabs, brand-profile Compliance/KYC
+  panel, and the Add-brand dialog UI): login → Portfolio home → /brands hub
+  (Overview KPIs, 9 brands) → Brand Explorer tab + search → Starbucks
+  profile (Compliance & KYC panel visible per the 2026-08-01 decision,
+  Covenant, competitor set, news; NO staff leaks — 0 Run-checks/Delete/
+  Enrich/RocketReach buttons; 0 h-overflow) → Key Contacts → Tom Barista
+  detail (Edit only, r257/r258 gates hold) → Turnover Board + Brand Hunter
+  tabs (both render client-side, no errors) → Add brand dialog END-TO-END:
+  search Testco Jewellers (out-of-slice) → Add → row flips to Remove →
+  brand appears in Brand Explorer → its profile renders with compliance
+  panel → removed via API, state restored. 0 page errors, 0 non-noise
+  console/net errors across all legs. 0 app bugs.
+- FIXTURE NOTE (future add-brand probes): the fixture ships Landsec with
+  Testco Fashion (aaaaaaaa-…-0002) ALREADY in crm_extra_brand_ids — its
+  dialog row shows Added/Remove from the start; probe with Testco
+  Jewellers (…0007) instead. (My first probe removed the fixture extra —
+  restored via SQL same round.)
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  UX #40 (client-visible Brand-expansion AI commentary ends with BGP-
+  internal "Do not pitch until KYC due diligence…" advice), UX #41
+  (Instagram card empty state prints "Meta Graph API credentials not set
+  on server" to clients — wants house copy). New flakes: none. Harness
+  growth: none needed (add-brand round-trip + remove-UI already covered;
+  this round verified the Add-side flip visually).
+- Next journey: rotation #3 client mobile 390px (r271 had the journey →
+  r272 may be LIGHT; then #3).
 
 ### r270 · 2026-08-12 · LIGHT (r269 had the journey)
 - Fresh container (pg_hba trust per r205 — note: a blanket sed can mangle
