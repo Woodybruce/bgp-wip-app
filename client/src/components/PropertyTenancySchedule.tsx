@@ -534,6 +534,17 @@ const LETTINGS_HIDDEN_FIELDS = new Set([
   "comments",                // generic free-text column
 ]);
 
+// Key-columns preset (UX #28): the handful worth reading on a phone.
+// First visit on a small screen defaults to this; one-tap from the
+// ⋯ More menu / Columns popover after that.
+const KEY_COLUMN_FIELDS = new Set([
+  "unit_number",
+  "status",
+  "tenant_name",
+  "marketing_rent_pa",
+  "lease_expiry",
+]);
+
 export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { propertyId: string; lens?: "lettings" | "tenancy"; readOnly?: boolean }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -569,6 +580,12 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     try {
       const raw = localStorage.getItem(hiddenStorageKey);
       if (raw) return new Set(JSON.parse(raw));
+      // First visit on a phone — start from the key-columns preset so the
+      // board is readable without sideways scrolling (UX #28). Any manual
+      // toggle persists per device from then on.
+      if (typeof window !== "undefined" && window.innerWidth < 640) {
+        return new Set(COLUMNS.filter(c => !KEY_COLUMN_FIELDS.has(c.field as string)).map(c => c.field as string));
+      }
       // First-time load for this property+lens — apply the lens defaults.
       if (lensKey === "lettings") {
         const def = new Set<string>(LETTINGS_HIDDEN_FIELDS);
@@ -589,6 +606,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     });
   };
   const visibleColumns = COLUMNS.filter(c => !hiddenFields.has(c.field as string));
+  const applyKeyColumns = () => {
+    setHiddenFields(new Set(COLUMNS.filter(c => !KEY_COLUMN_FIELDS.has(c.field as string)).map(c => c.field as string)));
+  };
+  const keyColumnsActive = visibleColumns.length === KEY_COLUMN_FIELDS.size && visibleColumns.every(c => KEY_COLUMN_FIELDS.has(c.field as string));
 
   // Per-column multi-select filters. Map keyed by field; value is the set of
   // accepted values. A row passes if, for every active filter, its cell
@@ -965,6 +986,15 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                   <RefreshCw className="w-3 h-3" /> Re-sync (all)
                 </button>
               )}
+              {keyColumnsActive ? (
+                <button type="button" className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-2" onClick={() => setHiddenFields(new Set())} data-testid="btn-tenancy-all-columns">
+                  <Eye className="w-3 h-3" /> All columns
+                </button>
+              ) : (
+                <button type="button" className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-2" onClick={applyKeyColumns} data-testid="btn-tenancy-key-columns">
+                  <Eye className="w-3 h-3" /> Key columns
+                </button>
+              )}
             </PopoverContent>
           </Popover>
           <Popover>
@@ -979,15 +1009,26 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
             <PopoverContent align="end" className="w-72 max-h-[60vh] overflow-y-auto p-2">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-semibold">Show / hide columns</span>
-                {hiddenFields.size > 0 && (
-                  <button
-                    className="text-[10px] text-indigo-500 hover:underline"
-                    onClick={() => setHiddenFields(new Set())}
-                    data-testid="btn-tenancy-columns-reset"
-                  >
-                    Reset
-                  </button>
-                )}
+                <span className="flex items-center gap-2">
+                  {!keyColumnsActive && (
+                    <button
+                      className="text-[10px] text-indigo-500 hover:underline"
+                      onClick={applyKeyColumns}
+                      data-testid="btn-tenancy-columns-key"
+                    >
+                      Key columns
+                    </button>
+                  )}
+                  {hiddenFields.size > 0 && (
+                    <button
+                      className="text-[10px] text-indigo-500 hover:underline"
+                      onClick={() => setHiddenFields(new Set())}
+                      data-testid="btn-tenancy-columns-reset"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </span>
               </div>
               {(() => {
                 const byBand = new Map<string, Col[]>();

@@ -1401,7 +1401,7 @@ function ClientAddBrandButton() {
       setResults(prev => prev.map(b => b.id === id ? { ...b, added: true } : b));
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
       queryClient.invalidateQueries({ queryKey: ["/api/brands/hub"] });
-      toast({ title: "Brand added to your CRM" });
+      toast({ title: "Brand added to your CRM", description: "Tap the brand name to open its profile." });
     } catch (e: any) {
       toast({ title: "Couldn't add brand", description: e.message, variant: "destructive" });
     } finally { setAddingId(null); }
@@ -1442,7 +1442,14 @@ function ClientAddBrandButton() {
               {results.map(b => (
                 <div key={b.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded border bg-card">
                   <div className="min-w-0">
-                    <div className="text-sm font-medium truncate">{b.name}</div>
+                    {/* Once a brand is visible (in-slice or just added), its
+                        name links straight to the profile — no re-finding it
+                        via Brand Explorer (UX #27). */}
+                    {(b.inSlice || b.added) ? (
+                      <a href={`/companies/${b.id}`} className="text-sm font-medium truncate block text-primary hover:underline" data-testid={`client-open-brand-${b.id}`}>{b.name}</a>
+                    ) : (
+                      <div className="text-sm font-medium truncate">{b.name}</div>
+                    )}
                     <div className="text-[10px] text-muted-foreground">{(b.companyType || "").replace(/^Tenant - /, "")}{b.inSlice ? " · already in your CRM" : ""}</div>
                   </div>
                   {b.inSlice ? (

@@ -772,6 +772,18 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             <Users className="w-4 h-4 text-muted-foreground" />
             <h3 className="text-sm font-semibold">Parties</h3>
           </div>
+          {/* Clients see WHO at BGP runs this deal (names only, no fees) —
+              "who do I chase?" previously ended in a blank (UX #25). */}
+          {isClientDeal && (() => {
+            const raw = (deal as any).internalAgent;
+            const agents = (Array.isArray(raw) ? raw : String(raw || "").split(",")).map((a: string) => String(a).trim()).filter(Boolean);
+            if (agents.length === 0) return null;
+            return (
+              <p className="text-xs text-muted-foreground" data-testid="client-bgp-contact">
+                Your BGP contact{agents.length > 1 ? "s" : ""}: <span className="font-medium text-foreground">{agents.join(", ")}</span>
+              </p>
+            );
+          })()}
           {/* Leasing deals show Landlord/Tenant; investment (Sale/Purchase)
               deals show Vendor/Purchaser — the unused pair is clutter that
               invites mis-linking (UX #19). Already-linked slots stay visible
