@@ -863,7 +863,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           <div className="flex gap-2">
             <input type="file" ref={fileInputRef} accept=".xlsx,.xls" onChange={handleImport} className="hidden" />
             {!isClientViewer && (
-            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fileInputRef.current?.click()} disabled={importing} data-testid="btn-import-tenancy">
+            <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={() => fileInputRef.current?.click()} disabled={importing} data-testid="btn-import-tenancy">
               {importing ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Upload className="w-3 h-3 mr-1" />}Import Excel
             </Button>
             )}
@@ -918,11 +918,11 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           </div>
           <input type="file" ref={fileInputRef} accept=".xlsx,.xls" onChange={handleImport} className="hidden" />
           {!readOnly && !isClientViewer && (
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fileInputRef.current?.click()} disabled={importing} data-testid="btn-import-tenancy">
+          <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={() => fileInputRef.current?.click()} disabled={importing} data-testid="btn-import-tenancy">
             {importing ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Upload className="w-3 h-3 mr-1" />}Import
           </Button>
           )}
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleExport} data-testid="btn-export-tenancy">
+          <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" onClick={handleExport} data-testid="btn-export-tenancy">
             <Download className="w-3 h-3 mr-1" />Excel
           </Button>
           {!readOnly && (<>
@@ -933,7 +933,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           <Button
             size="sm"
             variant="outline"
-            className="h-7 text-xs"
+            className="h-7 text-xs hidden sm:inline-flex"
             onClick={() => resyncMutation.mutate()}
             disabled={resyncMutation.isPending}
             title="Sweep every tenancy unit in the app: re-link Letting Tracker + leasing rows by unit name and push the current canonical status onto both. Heals any board drift across all properties, not just this one."
@@ -943,9 +943,33 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           </Button>
           )}
           </>)}
+          {/* Phones: Import / Excel / Re-sync / Columns collapse behind one
+              ⋯ menu so unit rows start on the first screen (UX #17). The
+              Columns popover stays desktop-only — column tuning is not a
+              phone task. */}
           <Popover>
             <PopoverTrigger asChild>
-              <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="btn-tenancy-columns">
+              <Button size="sm" variant="outline" className="h-7 text-xs sm:hidden" data-testid="btn-tenancy-more">⋯ More</Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-44 p-1.5 space-y-1">
+              {!readOnly && !isClientViewer && (
+                <button type="button" className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-2" onClick={() => fileInputRef.current?.click()} disabled={importing}>
+                  <Upload className="w-3 h-3" /> Import Excel
+                </button>
+              )}
+              <button type="button" className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-2" onClick={handleExport}>
+                <Download className="w-3 h-3" /> Export Excel
+              </button>
+              {!readOnly && !isClientViewer && (
+                <button type="button" className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-2" onClick={() => resyncMutation.mutate()} disabled={resyncMutation.isPending}>
+                  <RefreshCw className="w-3 h-3" /> Re-sync (all)
+                </button>
+              )}
+            </PopoverContent>
+          </Popover>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button size="sm" variant="outline" className="h-7 text-xs hidden sm:inline-flex" data-testid="btn-tenancy-columns">
                 <Eye className="w-3 h-3 mr-1" />Columns
                 {hiddenFields.size > 0 && (
                   <Badge variant="secondary" className="ml-1 h-4 px-1 text-[9px]">{hiddenFields.size} hidden</Badge>

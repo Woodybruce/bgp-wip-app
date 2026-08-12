@@ -6407,7 +6407,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
             existing pills still fit on the same row; on desktop it's a
             fixed 320px. The Leaflet flyTo + marker happen via the
             handlePlaceSelected callback wired up in a useEffect. */}
-        <div className="absolute top-3 left-3 z-[1000] w-[calc(100%-260px)] sm:w-[320px] max-w-[420px]">
+        {/* <sm the search takes the full row and the pills drop BELOW it —
+            side-by-side at 390px they overlapped the input (UX #20). */}
+        <div className="absolute top-3 left-3 z-[1000] w-[calc(100%-24px)] sm:w-[320px] max-w-[420px]">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
             <input
@@ -6439,7 +6441,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
         </div>
 
         {/* Map / Satellite base-layer pill toggle — top-right of the map */}
-        <div className="absolute top-3 right-3 z-[1000] flex items-center gap-2" data-testid="base-layer-toggle">
+        <div className="absolute top-[60px] sm:top-3 right-3 z-[1000] flex items-center gap-2" data-testid="base-layer-toggle">
           <button
             onClick={exportGoadPlanPdf}
             disabled={exportingPlan}

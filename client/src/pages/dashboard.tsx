@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "wouter";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useTeam } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
@@ -1662,11 +1663,30 @@ export default function Dashboard() {
                       <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium uppercase tracking-wider">Active Deals</p>
                       <p className="text-2xl font-bold text-amber-700 dark:text-amber-300">{stats.activeDeals}</p>
                     </div>
-                    <div className="flex flex-col justify-center p-2 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800" data-testid="kpi-expiring">
-                      <p className="text-[10px] text-rose-600 dark:text-rose-400 font-medium uppercase tracking-wider">Expiring (6m)</p>
-                      <p className="text-2xl font-bold text-rose-700 dark:text-rose-300">{expiringUnits}</p>
-                      <p className="text-[10px] text-muted-foreground">leases expiring soon</p>
-                    </div>
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button type="button" className="flex flex-col justify-center p-2 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-left hover:ring-2 hover:ring-rose-300 transition-shadow cursor-pointer" data-testid="kpi-expiring">
+                          <p className="text-[10px] text-rose-600 dark:text-rose-400 font-medium uppercase tracking-wider">Expiring (6m)</p>
+                          <p className="text-2xl font-bold text-rose-700 dark:text-rose-300">{expiringUnits}</p>
+                          <p className="text-[10px] text-muted-foreground">leases expiring soon · click to list</p>
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="w-[340px] p-2 max-h-[320px] overflow-y-auto">
+                        <p className="text-xs font-semibold px-1 pb-1.5">Leases expiring within 6 months</p>
+                        {(portfolioData.leasingUnits || [])
+                          .filter((u: any) => isExpiringSoon(u.lease_expiry))
+                          .sort((a: any, b: any) => new Date(a.lease_expiry).getTime() - new Date(b.lease_expiry).getTime())
+                          .map((u: any, i: number) => (
+                            <Link key={i} href={`/tenancy-schedule/${u.property_id}`}>
+                              <div className="flex items-center justify-between gap-2 px-1.5 py-1 rounded hover:bg-muted cursor-pointer text-xs" data-testid={`expiring-lease-${i}`}>
+                                <span className="truncate">{u.tenant_name || u.unit_number || "Unit"} <span className="text-muted-foreground">· {u.property_name}</span></span>
+                                <span className="tabular-nums text-rose-600 shrink-0">{new Date(u.lease_expiry).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" })}</span>
+                              </div>
+                            </Link>
+                          ))}
+                        {expiringUnits === 0 && <p className="text-xs text-muted-foreground px-1 py-2">Nothing expiring in the next 6 months.</p>}
+                      </PopoverContent>
+                    </Popover>
                   </div>
                 </CardContent>
               </Card>
