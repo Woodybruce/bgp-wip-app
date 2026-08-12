@@ -65,7 +65,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-map-layer-scope']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-map-layer-scope', 'client-brief-target-scope', 'client-contact-detail-gates', 'staff-ai-failure-terminal']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -161,6 +161,21 @@ async function visit(page, persona, path, label) {
   if (bodyText.length < 30) {
     await page.screenshot({ path: `${LOGDIR}/r${ROUND}-${persona}-blank-${path.replace(/\W+/g, '_')}.png` });
     logIssue(persona, `visit ${path}`, 'blank-page', `${label || path} rendered <30 chars of content`);
+  }
+}
+
+// r273: goto for the dedicated mobile contexts — right after localStorage
+// auth is planted on "/", the app's hydration can issue a redirect-on-mount
+// that aborts the NEXT navigation (the r204 class; flaked once under round
+// load as ERR_ABORTED at /requirements). Retry once so the page really lands
+// on the target instead of swallowing the abort and asserting elsewhere.
+async function mobGoto(pg, url, nav) {
+  try {
+    await pg.goto(url, nav);
+  } catch (e) {
+    if (!/ERR_ABORTED/.test(String(e))) throw e;
+    await pg.waitForTimeout(1000);
+    await pg.goto(url, nav);
   }
 }
 
@@ -506,6 +521,117 @@ async function victoriaRound(page, cross) {
     if (r.skip) return;
     if (r.status !== 200) throw new Error(`mlr-scope GET ${r.status} (must be 200, never 500)`);
     if (!r.hasSuggestion) throw new Error('mlr-scope 200 but no suggestion payload');
+  });
+
+  // AI failures must reach a terminal state the user can see (r261):
+  // 1. Contact "Verify with AI" must never surface a raw 500/SDK error —
+  //    no-key environments get a 503 with the house "not configured" copy.
+  // 2. An activity curate job that dies (no AI key) must stop reporting
+  //    inFlight so the "Analysing…" spinner resolves — the GET auto-kick
+  //    honours the failure cooldown instead of relaunching a doomed job
+  //    on every poll.
+  await step(page, p, 'staff-ai-failure-terminal', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const contacts = await (await fetch('/api/crm/contacts', { headers: auth })).json();
+      const tom = (Array.isArray(contacts) ? contacts : []).find((c) => /barista/i.test(c.name || ''));
+      if (!tom) return { skip: true };
+      const v = await fetch(`/api/crm/contacts/${tom.id}/verify`, { method: 'POST', credentials: 'include', headers: auth });
+      const vBody = await v.json().catch(() => ({}));
+      const kick = await fetch(`/api/activity/contact/${tom.id}/curate`, { method: 'POST', credentials: 'include', headers: auth });
+      let terminal = false;
+      for (let i = 0; i < 15; i++) {
+        await new Promise((res2) => setTimeout(res2, 2000));
+        const g = await (await fetch(`/api/activity/contact/${tom.id}`, { headers: auth })).json().catch(() => null);
+        if (g && !g.inFlight) { terminal = true; break; }
+      }
+      return { skip: false, verifyStatus: v.status, verifyError: String(vBody?.error || ''), kickStatus: kick.status, terminal };
+    });
+    if (r.skip) return;
+    if (r.verifyStatus === 500) throw new Error(`verify-contact returned raw 500 (${r.verifyError.slice(0, 80)})`);
+    if (r.verifyStatus === 503 && !/not configured/i.test(r.verifyError)) throw new Error(`verify-contact 503 without house copy: ${r.verifyError.slice(0, 80)}`);
+    if (![200, 503].includes(r.verifyStatus)) throw new Error(`verify-contact unexpected ${r.verifyStatus}`);
+    if (r.kickStatus !== 202) throw new Error(`curate kick ${r.kickStatus} (expected 202)`);
+    if (!r.terminal) throw new Error('activity curate never reached a terminal state (inFlight stuck true ≥30s — Analysing… spinner would spin forever)');
+  });
+
+  // r267: the staff deal-detail action row (Image Studio / Create document /
+  // Edit) must wrap at 390px — without flex-wrap, Edit sat past the viewport
+  // with no scroll path (same class as the r265 calendar toolbar). Real phone
+  // emulation per r266: touch + mobile UA, session cookie copied over.
+  await step(page, p, 'staff-deal-mobile-action-row', async () => {
+    const deals = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      return Array.isArray(list) ? list : (list?.data || []);
+    });
+    const deal = deals.find((d) => /gail/i.test(d.name || '')) || deals[0];
+    if (!deal) return; // fixture without deals
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobGoto(mob, `${BASE}/deals/${deal.id}`, nav);
+      await mob.locator('[data-testid="button-edit-deal"]').waitFor({ timeout: 20000 });
+      for (const id of ['button-deal-image-studio', 'button-deal-create-document', 'button-edit-deal']) {
+        const box = await mob.locator(`[data-testid="${id}"]`).first().boundingBox();
+        if (!box) throw new Error(`deal action ${id} missing at 390px`);
+        if (box.x < 0 || box.x + box.width > 390 + 2) {
+          throw new Error(`deal action ${id} clipped at 390px (x ${Math.round(box.x)}, right ${Math.round(box.x + box.width)})`);
+        }
+      }
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
+  // r275: the /tasks filter tab strip (Assigned by me / All / To Do /
+  // In Progress / Done) was a nowrap flex row — Done sat at x 425-494 at
+  // 390px, reachable only by panning the whole page pane sideways (r265
+  // calendar-toolbar class, fixed with flex-wrap). Every filter tab must sit
+  // inside the phone viewport, and the content pane must not h-scroll.
+  await step(page, p, 'staff-tasks-mobile-tabs', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobGoto(mob, `${BASE}/tasks`, nav);
+      await mob.locator('[data-testid="filter-done"]').waitFor({ timeout: 20000 });
+      for (const id of ['filter-assigned-by-me', 'filter-all', 'filter-todo', 'filter-in_progress', 'filter-done']) {
+        const box = await mob.locator(`[data-testid="${id}"]`).first().boundingBox();
+        if (!box) throw new Error(`tasks tab ${id} missing at 390px`);
+        if (box.x < 0 || box.x + box.width > 390 + 2) {
+          throw new Error(`tasks tab ${id} clipped at 390px (x ${Math.round(box.x)}, right ${Math.round(box.x + box.width)})`);
+        }
+      }
+      const paneOverflow = await mob.evaluate(() => {
+        const p = document.querySelector('.flex-1.overflow-y-auto');
+        return p ? p.scrollWidth - p.clientWidth : 0;
+      });
+      if (paneOverflow > 4) throw new Error(`tasks page pane h-scrolls at 390px (${paneOverflow}px overflow)`);
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
   });
 
   // Task assignment (terminal, 2026-08-03): a task assigned to another staff
@@ -973,6 +1099,29 @@ async function victoriaRound(page, cross) {
     if (!r.persisted) throw new Error('tracker inline PATCH did not persist the detail field');
   });
 
+  // r257: a signed-in user parked at the literal /login URL used to hit
+  // "Page not found" (guest-form sign-in happens in place, and the
+  // authenticated router had no /login route). Must now land on the dashboard.
+  await step(page, p, 'staff-login-route-redirect', async () => {
+    await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2500);
+    const path = new URL(page.url()).pathname;
+    if (path === '/login') throw new Error('authenticated /login did not redirect home');
+    if (await page.getByText('Page not found').count()) throw new Error('authenticated /login landed on Page not found');
+  });
+
+  // r269: /messages is the mobile chat list; a mobile bookmark opened on
+  // desktop used to land on "Page not found" (no desktop route). Must now
+  // redirect to /chatbgp.
+  await step(page, p, 'staff-messages-desktop-redirect', async () => {
+    await page.goto(`${BASE}/messages`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2500);
+    const path = new URL(page.url()).pathname;
+    if (path === '/messages') throw new Error('desktop /messages did not redirect');
+    if (path !== '/chatbgp') throw new Error(`desktop /messages landed on ${path}, expected /chatbgp`);
+    if (await page.getByText('Page not found').count()) throw new Error('desktop /messages landed on Page not found');
+  });
+
   // 4m. Deal comments round-trip: Victoria writes a comment on the Bluewater
   // deal and reads it back (the sidebar Comments widget rides this field).
   await step(page, p, 'staff-deal-comment', async () => {
@@ -1051,6 +1200,33 @@ async function victoriaRound(page, cross) {
       if (shown >= 3) break;
     }
     if (shown < 3) throw new Error(`deal board shows only ${shown}/5 pipeline columns`);
+  });
+
+  // Targeting Brief + target operator via the API the Brief dialog uses
+  // (r253: the dialog's popover picker was dead inside the Radix Dialog —
+  // the API pair is the cheap guard that briefs/targets keep round-tripping).
+  // The brief is left for markRound's client-brief-target-scope cross-check;
+  // run-round.sh purges 'QA Brief%' briefs + their targets at round start.
+  await step(page, p, 'staff-brief-target-create', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json().catch(() => []);
+      const unit = (Array.isArray(units) ? units : []).find(u => u.propertyId === window.QA_FIX.bluewater);
+      if (!unit) return { fail: 'no Bluewater unit found' };
+      const bRes = await fetch('/api/unit-briefs', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ unitId: unit.id, title: `QA Brief R${round} target-scope` }) });
+      const brief = bRes.ok ? await bRes.json() : null;
+      if (!brief?.id) return { fail: `brief create ${bRes.status}` };
+      const tRes = await fetch(`/api/unit-briefs/${brief.id}/targets`, { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ operatorName: `QA-TGT-R${round}`, priority: 'A' }) });
+      // No GET-by-id route exists — the list endpoint is what the tracker and
+      // Brief dialog read, and it rides the targets along.
+      const list = await (await fetch('/api/unit-briefs', { headers: auth })).json().catch(() => []);
+      const mine = (Array.isArray(list) ? list : []).find(b => b.id === brief.id);
+      return { briefId: brief.id, targetStatus: tRes.status, targets: (mine?.targets || []).map(t => t.operatorName) };
+    }, ROUND);
+    if (r.fail) throw new Error(r.fail);
+    if (r.targetStatus !== 200) throw new Error(`target add failed (${r.targetStatus})`);
+    if (!r.targets.includes(`QA-TGT-R${ROUND}`)) throw new Error('added target missing from brief read-back');
+    cross.briefId = r.briefId;
   });
 }
 
@@ -1258,7 +1434,10 @@ async function markRound(page, cross) {
     // Client Files board (2026-08-03: "put back the files board but remove
     // the team name"): panel must render — folder content or the graceful
     // no-folder fallback — and never leak an internal team name.
+    // Poll rather than trusting the fixed wait above — under round load the
+    // page can still be on skeletons at this point (r256/r257 flake class).
     const panel = page.locator('[data-testid="client-property-folders-panel"]');
+    await panel.waitFor({ state: 'attached', timeout: 15000 }).catch(() => {});
     if (!(await panel.count())) throw new Error('client Files board missing from the property page');
     const panelText = (await panel.innerText().catch(() => '')).trim();
     if (panelText.length < 10) throw new Error('client Files board rendered blank');
@@ -2445,8 +2624,10 @@ async function markRound(page, cross) {
     const removeBtn = page.getByTestId(`client-remove-brand-${retail}`);
     if (!(await removeBtn.count())) throw new Error('self-added brand row has no Remove button in the add-brand dialog');
     await removeBtn.click();
-    await page.waitForTimeout(1500);
-    if (await removeBtn.count()) throw new Error('Remove click did not flip the row back to Add');
+    // The flip is a query invalidation + refetch — fast alone (~150ms) but can
+    // exceed a fixed wait under round load (r256 flake), so poll up to 10s.
+    await removeBtn.waitFor({ state: 'detached', timeout: 10000 })
+      .catch(() => { throw new Error('Remove click did not flip the row back to Add (10s)'); });
     await page.getByTestId('client-add-brand-search').fill('Starbucks');
     await page.waitForTimeout(1500);
     const dlg = await page.locator('[role="dialog"]').innerText();
@@ -3687,6 +3868,16 @@ async function markRound(page, cross) {
     if (new URL(page.url()).pathname === '/hr') throw new Error('client can open the staff-only /hr route (guard hole)');
   });
 
+  // r269: a client's mobile /messages bookmark opened on desktop must land
+  // on ChatBGP, not "Page not found" or a guard-bounce home.
+  await step(page, p, 'client-messages-desktop-redirect', async () => {
+    await page.goto(`${BASE}/messages`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2500);
+    const path = new URL(page.url()).pathname;
+    if (path !== '/chatbgp') throw new Error(`client desktop /messages landed on ${path}, expected /chatbgp`);
+    if (await page.getByText('Page not found').count()) throw new Error('client desktop /messages landed on Page not found');
+  });
+
   await step(page, p, 'client-deal-detail-name-and-doc-gate', async () => {
     // r231: unit-less leasing deals must be headed by the DEAL name (not the
     // property name, which made same-property deals indistinguishable), and
@@ -3708,6 +3899,97 @@ async function markRound(page, cross) {
     }
   });
 
+  await step(page, p, 'client-deal-party-link-gates', async () => {
+    // r263: linking a party on an own-portfolio deal is client-allowed (PUT
+    // parity), but the staff-only AML auto-kick must NOT fire for clients
+    // (it 403s and the "Running AML checks" toast lies), and the Timeline
+    // card must be hidden (its /api/deals/:id/timeline read is gateway-403;
+    // clients keep the Audit log).
+    const deal = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json();
+      return (Array.isArray(deals) ? deals : []).find((d) => d.name && !d.tenantId) || null;
+    });
+    if (!deal) return; // no tenant-less client-visible deal — nothing to assert
+    const kycHits = [];
+    const onReq = (r) => { if (r.url().includes('/api/kyc/run-all-checks')) kycHits.push(r.method()); };
+    page.on('request', onReq);
+    try {
+      await page.goto(`${BASE}/deals/${deal.id}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForTimeout(2500);
+      if (await page.locator('[data-testid="toggle-deal-timeline"]').count()) {
+        throw new Error('client sees the Timeline card (its timeline read is gateway-403)');
+      }
+      if (!(await page.locator('[data-testid="toggle-deal-audit"]').count())) {
+        throw new Error('client lost the (allowed) deal Audit log card');
+      }
+      // Link a tenant through the inline picker, then undo. The AML kick is
+      // client-side logic, so this must go through the real UI.
+      await page.locator('button:has-text("Link tenant")').locator('visible=true').first().click();
+      await page.waitForTimeout(600);
+      await page.fill('[data-testid="inline-link-search"]', 'Starbucks');
+      await page.waitForTimeout(600);
+      const opt = page.locator('button[data-testid^="inline-link-option-"]').first();
+      if (!(await opt.count())) throw new Error('tenant picker listed no options for "Starbucks"');
+      await opt.click();
+      await page.waitForTimeout(2000);
+      if (kycHits.length) throw new Error(`client party-link fired the staff-only AML kick (${kycHits.length}× /api/kyc/run-all-checks)`);
+    } finally {
+      page.off('request', onReq);
+      // restore the fixture deal whether or not the assertions passed
+      await page.evaluate(async (id) => {
+        const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+        await fetch(`/api/crm/deals/${id}`, { method: 'PUT', credentials: 'include', headers: auth, body: JSON.stringify({ tenantId: null }) });
+      }, deal.id);
+    }
+  });
+
+  // r257: contact detail as a client — Edit stays (PUT is scope-checked,
+  // client-instruction parity), but Delete/Enrich are staff-only (the DELETE
+  // 403s: "Deleting contacts is managed by your BGP team"), and the two
+  // staff-only boards (interactions + AI activity) must not fire their
+  // gateway-403'd fetches or render a false "No interactions" empty state.
+  await step(page, p, 'client-contact-detail-gates', async () => {
+    const contact = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const rows = await (await fetch('/api/crm/contacts', { headers: auth })).json();
+      return (Array.isArray(rows) ? rows : []).find((c) => c.name) || null;
+    });
+    if (!contact) return; // no client-visible contacts in fixture — nothing to assert
+    const blocked = [];
+    const onResp = (r) => {
+      // r258: also catch the read path itself — the contacts LIST serves
+      // agent-company contacts to clients, so the detail GET + company card
+      // must never 403 for a row the list handed out.
+      if (r.status() === 403 && /\/api\/(interactions\/contact\/|activity\/contact\/|crm\/contacts\/|crm\/companies\/)/.test(r.url())) blocked.push(r.url());
+    };
+    page.on('response', onResp);
+    try {
+      await page.goto(`${BASE}/contacts/${contact.id}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.locator('[data-testid="contact-detail"]').waitFor({ state: 'attached', timeout: 15000 });
+      await page.waitForTimeout(2500);
+    } finally { page.off('response', onResp); }
+    if (blocked.length) throw new Error(`client contact page fired staff-only endpoints: ${blocked.join(', ')}`);
+    if (!(await page.locator('[data-testid="button-edit-contact"]').count())) throw new Error('client lost the (allowed) contact Edit button');
+    if (await page.locator('[data-testid="button-delete-contact"]').count()) throw new Error('client sees the staff-only contact Delete button');
+    if (await page.locator('[data-testid="button-enrich-contact"]').count()) throw new Error('client sees the staff-only contact Enrich button');
+    if (await page.getByText('No interactions in the last 2 years').count()) throw new Error('client sees the interactions board (false empty state over a 403)');
+    // Server side of the same rule: contact DELETE must 403 for a client,
+    // probed against a QA-created row (never fixture data — a regression
+    // here would delete it). run-round.sh purges 'QA Contact%' anyway.
+    const probe = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const post = await fetch('/api/crm/contacts', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: `QA Contact DelProbe R${round}` }) });
+      if (!post.ok) return { ok: false, why: `probe POST ${post.status}` };
+      const row = await post.json();
+      const del = await fetch(`/api/crm/contacts/${row.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      return { ok: true, delStatus: del.status };
+    }, ROUND);
+    if (!probe.ok) throw new Error(`contact delete probe setup failed (${probe.why})`);
+    if (probe.delStatus !== 403) throw new Error(`client contact DELETE returned ${probe.delStatus} — expected 403`);
+  });
+
   await step(page, p, 'client-deal-mobile-sidebar', async () => {
     // r241: below md the deal-detail right sidebar is display:none — the
     // Files/Linked Property/Comments/History sections must be re-rendered
@@ -3726,7 +4008,7 @@ async function markRound(page, cross) {
       await mob.evaluate(([tok, u]) => {
         localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
       }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
-      await mob.goto(`${BASE}/deals/${deal.id}`, nav);
+      await mobGoto(mob, `${BASE}/deals/${deal.id}`, nav);
       await mob.waitForTimeout(3000);
       if (!(await mob.locator('[data-testid="deal-sidebar-mobile"]').isVisible().catch(() => false))) {
         throw new Error('mobile deal detail lost the sidebar sections (deal-sidebar-mobile not visible at 390px)');
@@ -3736,6 +4018,62 @@ async function markRound(page, cross) {
       }
     } finally {
       await mob.close();
+    }
+  });
+
+  await step(page, p, 'client-mobile-controls-reachable', async () => {
+    // r265: (a) the requirements "New Brand" button is staff-only — its POST
+    // /api/crm/companies is read-only for clients, so showing it advertises a
+    // flow that always fails; (b) the calendar toolbar must wrap at 390px —
+    // without flex-wrap the Week/CRM controls sat past the viewport with no
+    // scroll path to them.
+    // r266: this needs REAL phone emulation (touch + mobile UA), not just a
+    // narrow viewport — useIsMobile deliberately keeps the desktop layout for
+    // non-touch windows, so a bare 390px page renders the squeezed desktop
+    // shell and the toolbar assertions fail against the wrong layout.
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    // the session cookie (set by login()'s context.request.post) is the auth
+    // carrier — localStorage alone does not authenticate a fresh context
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobGoto(mob, `${BASE}/requirements`, nav);
+      await mob.waitForTimeout(3000);
+      if (await mob.locator('[data-testid="button-new-brand"]').count()) {
+        throw new Error('client requirements shows the staff-only New Brand button (its save 403s for clients)');
+      }
+      await mobGoto(mob, `${BASE}/calendar`, nav);
+      await mob.waitForTimeout(3000);
+      for (const id of ['view-week', 'toggle-crm-events']) {
+        const box = await mob.locator(`[data-testid="${id}"]`).boundingBox();
+        if (!box) throw new Error(`calendar control ${id} missing at 390px`);
+        if (box.x < 0 || box.x + box.width > 390 + 2) {
+          throw new Error(`calendar control ${id} clipped at 390px (x ${Math.round(box.x)}, right ${Math.round(box.x + box.width)})`);
+        }
+      }
+      // r266: the Intelligence footer's first insight card must sit inside the
+      // 390px viewport — the label/date chrome used to leave the strip 56px
+      // wide, so the nowrap card clipped mid-word and read as broken.
+      const firstInsight = mob.locator('[data-testid="calendar-footer"] [data-testid^="insight-"]').first();
+      await firstInsight.waitFor({ timeout: 20000 }).catch(() => {});
+      if (await firstInsight.count()) {
+        const fb = await firstInsight.boundingBox();
+        if (fb && (fb.x < 0 || fb.x + fb.width > 390 + 2)) {
+          throw new Error(`calendar footer first insight clipped at 390px (x ${Math.round(fb.x)}, right ${Math.round(fb.x + fb.width)})`);
+        }
+      }
+    } finally {
+      await mob.close();
+      await mobCtx.close();
     }
   });
 
@@ -3750,7 +4088,7 @@ async function markRound(page, cross) {
       await mob.evaluate(([tok, u]) => {
         localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
       }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
-      await mob.goto(`${BASE}/`, nav);
+      await mobGoto(mob, `${BASE}/`, nav);
       // Dashboard widgets poll (news/map), so networkidle can't settle here.
       await mob.waitForLoadState('networkidle').catch(() => {});
       await mob.waitForTimeout(3000);
@@ -3773,6 +4111,31 @@ async function markRound(page, cross) {
     } finally {
       await mob.close();
     }
+  });
+
+  // Targeting Brief scope (r253): the staff-created brief on the client's own
+  // property is client-readable WITH its targets, the client may add a target
+  // there (client-instruction parity — same decision family as tenancy row
+  // edits), but target writes against a brief outside their portfolio are
+  // refused. run-round.sh purges the QA Brief + targets next round.
+  await step(page, p, 'client-brief-target-scope', async () => {
+    if (!cross.briefId) throw new Error('no briefId from staff-brief-target-create');
+    const r = await page.evaluate(async ([briefId, round]) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      // The list endpoint is the only brief read path (no GET-by-id route);
+      // it is client-scoped and rides targets along.
+      const listRes = await fetch('/api/unit-briefs', { headers: auth });
+      const list = listRes.ok ? await listRes.json() : [];
+      const mine = (Array.isArray(list) ? list : []).find(b => b.id === briefId);
+      const ownAdd = (await fetch(`/api/unit-briefs/${briefId}/targets`, { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ operatorName: `QA-TGT-CLIENT-R${round}`, priority: 'B' }) })).status;
+      const foreignAdd = (await fetch('/api/unit-briefs/00000000-dead-beef-0000-000000000000/targets', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ operatorName: 'QA-TGT-FOREIGN', priority: 'B' }) })).status;
+      return { readStatus: listRes.status, found: !!mine, targets: (mine?.targets || []).map(t => t.operatorName), ownAdd, foreignAdd };
+    }, [cross.briefId, ROUND]);
+    if (r.readStatus !== 200) throw new Error(`client brief list unhealthy (${r.readStatus})`);
+    if (!r.found) throw new Error('own-property brief missing from client brief list');
+    if (!r.targets.includes(`QA-TGT-R${ROUND}`)) throw new Error('staff-added target not visible to client');
+    if (r.ownAdd !== 200) throw new Error(`client target add on own brief refused (${r.ownAdd})`);
+    if (![403, 404].includes(r.foreignAdd)) throw new Error(`foreign brief target write not refused (${r.foreignAdd})`);
   });
 }
 

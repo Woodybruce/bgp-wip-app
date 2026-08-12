@@ -13,6 +13,146 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+42. 2026-08-12 · Landsec client / mobile 390px · checking a vacant unit's
+    asking rent on the Letting Tracker · the mobile unit card silently
+    drops its Rent p.a. / Area rows when the values are unset — the user
+    can't tell "no rent recorded" from "rent hidden on mobile" (desktop at
+    least shows the empty Rent column cell; MSU3 Bluewater has no asking
+    rent in the fixture and the card just shows name + status) · Suggested:
+    keep the rows with an explicit "not set" / "—" value, mirroring the
+    confirmed #4 pattern (client KPI shows "—" + "no passing rent recorded
+    yet" instead of vanishing).
+
+41. 2026-08-12 · Landsec client / desktop 1440px · reviewing a tenant brand
+    profile · the Instagram card's empty state reads "Meta Graph API
+    credentials not set on server" — server-config copy shown to a client
+    (the AI panels' equivalent states use house copy like "AI take
+    unavailable — AI service is not configured") · Suggested: user-facing
+    copy, e.g. "Instagram feed unavailable", keeping the config detail to
+    server logs.
+
+40. 2026-08-12 · Landsec client / desktop 1440px · board asked about a
+    tenant brand's standing — read the Starbucks profile · the "Brand
+    expansion" AI commentary shown to the client ends with BGP-internal
+    pitch strategy: "**Recommendation: Do not pitch until BGP completes KYC
+    due diligence and obtains baseline data…**" — advice addressed to BGP,
+    not the landlord, and commercially awkward for a client to read ·
+    Suggested: either strip/skip the Recommendation section of expansion
+    commentary for client viewers, or prompt the generator to write the
+    client-visible variant without internal pitch guidance.
+
+39. 2026-08-12 · BGP staff / desktop 1440px · after an intro call, tried to
+    add the new Starbucks contact to the CRM by hand · there is NO manual
+    "add contact" entry point anywhere for staff: the CRM hub (Landlords/
+    Agents/Lenders tabs) has none, and a brand/company profile offers only
+    inbox-scan "Add" rows (needs M365 + an email from that person) and
+    RocketReach "Refresh contacts" (needs an API key). A complete "New
+    Contact" dialog exists in pages/contacts.tsx (name/status/type/email/
+    phone/title/company + save to POST /api/crm/contacts, which staff-201s)
+    but became unreachable when /contacts was re-routed to the People hub —
+    the client Brand Directory kept its own Add contact button, staff lost
+    theirs. Someone met at a viewing or event can't be logged at all ·
+    Suggested: an "Add contact" button on the company/brand profile
+    contacts board (and/or the CRM hub header) reusing the existing orphaned
+    dialog. Needs a decision on where it should live — not built.
+
+37. 2026-08-11 · Landsec client / mobile 390px · "when's our next meeting
+    with BGP?" — the calendar opens on Day view of today; with no meeting
+    today the grid is just empty, and finding the next one means paging
+    forward day by day (Week view helps only within the current week; the
+    Month/mini-cal sidebar is desktop-only, hidden lg:block) · Suggested:
+    a compact "Upcoming" agenda list (next 5 events) at the top of the
+    mobile calendar, or defaulting mobile to a week/agenda view — "next
+    meeting" is the phone calendar's number-one question.
+
+38. 2026-08-11 · Landsec client / mobile 390px · empty Requirements board ·
+    the empty state says "No requirements — Try adjusting your filters"
+    even when no search/filter is active, which sends the user hunting for
+    filters that aren't set; for a client it also gives no hint that BGP
+    logs requirements on their behalf · Suggested: filter-aware empty copy
+    ("No live requirements for your portfolio yet" when unfiltered; keep
+    the filter hint only when a filter/search is active).
+
+36. 2026-08-11 · Landsec client / desktop · reviewed the deal Audit log
+    after amending the tenant on his own deal · the Change Log renders raw
+    values — "changed tenant from 11110000-0000-0000-0000-000000000201 to
+    empty" — company-id fields show naked UUIDs a user can't read (staff
+    see the same on their audit views) · Suggested: resolve
+    tenant/landlord/vendor/purchaser id values to company names in the
+    audit renderer (keep the id in a title/tooltip).
+
+35. 2026-08-11 · Landsec client / desktop · "scan what's happening with my
+    tenants" — staff have a News page (feed, source chips, Landsec sort)
+    but the client nav has no news surface at all; the only route to
+    headlines is opening each brand profile one at a time for its Signals
+    card · Suggested: a client-facing news/signals feed scoped to the
+    client's brand slice + self-added brands (read-only version of /news).
+
+34. 2026-08-11 · BGP staff / desktop 1440px · back at her desk after a phone
+    call with a brand contact, Victoria wanted to note the call on the
+    contact's record · the contact page's activity board is inbox/calendar-
+    synced only — there is no "log a call/note" action anywhere on the page;
+    the only free-text home is the Notes field buried inside the Edit
+    Contact dialog (unstructured, no timestamp, invisible on the activity
+    timeline) · Suggested: a lightweight "Log activity" button on the
+    contact detail page (call/meeting/note + date + one-line summary) that
+    renders in the same activity feed alongside synced emails/meetings.
+
+33. 2026-08-11 · Landsec client / desktop · opened an agent's contact page
+    from the CRM list (agent contacts are deliberately client-readable —
+    they're named on the tracker/requirements boards) · the page shows the
+    same Edit button as on own-company/brand contacts, but saving an edit
+    to an AGENT contact 403s ("Access denied") — the write gate is
+    own-company + brand-slice only, so the affordance is misleading ·
+    Suggested: hide (or disable with a "managed by BGP" tooltip) the Edit
+    button when the contact's company is outside the client's writable
+    set, mirroring how Delete is already hidden.
+
+32. 2026-08-11 · Landsec client / mobile 390px · "a colleague asked who our
+    contact at Starbucks is — find them on my phone" · the brand profile at
+    390px leads with the full-height Chat panel, so the KEY CONTACTS card
+    (and everything else) starts more than one screen down; the contact
+    lookup meant scrolling past a mostly-empty chat box every visit ·
+    Suggested: on mobile, collapse the brand-profile chat to a compact
+    "Ask about this brand" bar (expanding on tap) so contacts/covenant/
+    signals are visible on the first screen.
+    (r259 addendum: same layout confirmed on STAFF mobile 390px — Victoria's
+    pre-meeting brand review also starts a full screen below the chat panel,
+    so the fix should cover /companies/:id for both personas.)
+
+31. 2026-08-11 · Landsec client / desktop 1440px · asked "which of my
+    vacant units have live interest?" on the Letting Tracker · the
+    Activity column (viewing/offer counts + dialog buttons) sits ~15
+    columns right, off-screen at 1440px, so every unit means a long
+    horizontal scroll; the FY "Viewings / Offers" chips at the top show
+    portfolio totals but aren't clickable and there's no "has activity"
+    filter, so the only route is scroll-and-scan per row · Suggested:
+    make the FY Viewings/Offers chips filter the table to units with
+    activity (like the status chips below them do), and/or surface small
+    viewing/offer count badges in the always-visible Property/Unit cell.
+
+30. 2026-08-11 · BGP staff / desktop 1440px · opened a vacant unit's
+    Targeting Brief to add a target operator · the dialog opens as a blank
+    instruction form with no Target operators section at all — the targets
+    table (and its add row) only mounts after the brief row is saved, and
+    the "Create brief" button itself only appears once a field is edited,
+    so "just add a target" means discovering an invisible two-step gate ·
+    Suggested: always render the Target operators section, with a one-line
+    empty state ("Save the brief to start adding targets" — or better,
+    auto-create the brief on first target add, like the tracker's inline
+    add already does via ensureBriefFor).
+
+29. 2026-08-10 · BGP staff / mobile 390px · logged a new operator
+    requirement from a phone, then wanted to see which available units fit
+    it · the requirements KPI tile advertises "0 / 1 fit your available
+    units", but the mobile card view only offers Edit / Delete — the
+    desktop rows' Match action (RequirementMatchesDialog), fit chips,
+    Discuss and Send-to-brief are all desktop-only, so a phone user can
+    see that fits exist but has no way to open them · Suggested: add a
+    "Matches" action to the mobile requirement card (opens the existing
+    RequirementMatchesDialog, which is a plain Dialog and should render
+    fine at 390px), and make the fits KPI tile tappable to the same end.
+
 28. 2026-08-10 · Landsec client / mobile 390px · opened the Bluewater
     tenancy schedule on a phone to find the asking (quoting) rent for a
     vacant unit · the board renders all ~50 columns in a 6,700px-wide

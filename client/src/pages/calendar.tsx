@@ -1533,7 +1533,10 @@ export default function Calendar() {
     <div className="h-full flex flex-col" data-testid="calendar-page">
       <DaySummaryBar />
 
-      <div className="flex items-center justify-between px-3 py-2 border-b shrink-0 bg-background">
+      {/* flex-wrap: at phone widths the view toggle + CRM/Outlook/Team chips
+          drop to a second row — without it they clip past the viewport with
+          no way to scroll to them. */}
+      <div className="flex items-center justify-between flex-wrap gap-y-1.5 px-3 py-2 border-b shrink-0 bg-background">
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setSelectedDate(navigateView(selectedDate, viewMode, -1))} data-testid="button-prev-day">
             <ChevronLeft className="w-4 h-4" />

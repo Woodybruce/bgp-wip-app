@@ -30,6 +30,8 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   locally; the brand profile auto-fires it and swallows the failure
 - 401 GET /api/client/brand-theme console echo on the login screen (fires
   before auth hydrates; harmless)
+- 503 GET /api/brand/:id/ai-take/* — keyless AI-take panels on company
+  profiles fire these on load; UI shows "AI take unavailable" (r269)
 - ERR_CONNECTION_RESET on google.com/s2/favicons — no external network
 
 ## Known flakes
@@ -38,6 +40,8 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 - bare root gotos can throw ERR_ABORTED on redirect-on-mount — hardened in
   qa helpers (round 204); use the tolerant visit() pattern
 - tsx does not hot-reload server/*.ts — restart the server after server fixes
+- (r262) first smoke pass right after FRESH_BUILD can time out the client
+  UI-login check (cold first page load); re-run before triaging as real
 
 ## Fresh-container setup (learned r205)
 - Repo may not be pre-cloned; clone to /workspace/bgp-wip-app.
@@ -58,6 +62,865 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   the full sweep; run-smoke.sh stays the quick authoritative regression.
 
 ## Rounds
+
+### r276 · 2026-08-12 · LIGHT (r275 had the journey)
+- Fresh container (pg_hba trust per r205 — method-column-only sed;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 276: exit 0,
+  180 scenarios ok — incl. the FIRST live run of r275's
+  staff-tasks-mobile-tabs (green; the tasks filter-tab wrap fix holds).
+  2 logged issues both listed noise (rocketreach-400; commentary-regen
+  503). 0 raw 500/502/504 in the whole round's server log (the lone
+  " 500 " grep hit is the "500 articles" news-feed text again; status
+  tally: only 2xx/3xx/expected 400/401/403/404 + no-key 503s; 403s the
+  harness's negative probes; 404s the listed HR-photo + sharepoint-root
+  polling + the harness's own requirements-leasing probe; the 2 400s
+  are the rocketreach + image-studio harness probes). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none new — one setup note: run-round.sh's 3s
+  health check can fail while the dev server is still cold-transforming
+  "/" (warm-up curl in flight); wait for the warm-up then retry (r264
+  cold-transform class).
+- Next journey: rotation #1 staff desktop (r276 was LIGHT → r277 FULL).
+
+### r275 · 2026-08-12 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (pg_hba trust per r205; restore-as-postgres + per-object
+  ALTER owners + schema grant per r249). Regression: run-smoke.sh GREEN ×2
+  (42 checks, 0 failures; FRESH_BUILD=1 before the fix, rebuilt bundle
+  after; no cold-build flake either pass). Two-bot round 275: exit 0, all
+  scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server log
+  (status tally: only 2xx/3xx/expected 400/401/403/404 + no-key 503s; 403s
+  the harness's negative probes; 404s the listed sharepoint-root polling +
+  HR photos; the rocketreach + image-studio 400s the harness's own probes).
+- Journey: Victoria @ 390px iPhone UA — "between viewings, on my phone:
+  check the requirements board, log a new requirement, quick-add a
+  follow-up task, confirm it shows on my dashboard" (FIRST coverage of
+  staff-mobile /requirements, the Create Leasing Requirement dialog, and
+  /tasks quick-add at 390px): login → "/" dashboard (0 h-overflow) →
+  /requirements (renders, tabs/KPIs/Add Requirement all inside viewport) →
+  Create Requirement dialog END-TO-END: 61 visible controls all inside
+  390px, typed name → "+ Add as new company" → Save (below the fold,
+  in-dialog scroll reaches it) → row appears, probe req + auto-created
+  company deleted via API (200/200) → /tasks quick-add ("Add a task…
+  press Enter" input, row lists) → task visible on dashboard MY TASKS.
+  0 page errors; only non-listed sighting was GET /api/ai-briefing 503×6
+  (keyless noise class; card TERMINATES — flickers idle↔"Preparing…"
+  during react-query retries then settles on "Generate Briefing" — NOT
+  the r261 forever-spinner class).
+- Bug fixed (1): /tasks filter tab strip (Assigned by me/All/To Do/
+  In Progress/Done) was a nowrap flex row — Done sat at x 425-494 at
+  390px, only reachable by panning the ENTIRE page pane sideways 104px
+  (the strip itself has no scroll; r265 calendar-toolbar class). Added
+  flex-wrap to the header row + tab row (client/src/pages/tasks.tsx);
+  tabs wrap to a second row, all five inside the viewport, pane
+  h-overflow 0. Desktop 1440px re-verified: single row (equal y).
+  tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 staff-tasks-mobile-tabs (iPhone context per
+  r266 pattern — all five filter tabs inside 390px + no content-pane
+  h-scroll). Assertions verified standalone via the journey probes
+  (geometry green post-fix); node --check clean; runs from r276.
+- NOT bugs (tester errors, for future rounds): the Create Requirement
+  dialog Save needs the "+ Add … as a new company" pick first and sits
+  below the fold — a bare tap on Save without scrolling the dialog times
+  out; the flow is fine as a real user drives it.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r275 had the journey → r276
+  may be LIGHT; then #1).
+
+### r274 · 2026-08-12 · LIGHT (r273 had the journey)
+- Fresh container (pg_hba trust per r205 — method-column-only sed;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 274: exit 0,
+  all scenarios ok — incl. first live runs of r273's mobGoto-hardened
+  gotos (client-mobile-controls-reachable green, no ERR_ABORTED recur).
+  2 logged issues both listed noise (rocketreach-400; commentary-regen
+  503). 0 raw 500/502/504 in the whole round's server log (the lone
+  " 500 " grep hit is the "500 articles" news-feed text again; status
+  tally: only 2xx/3xx/expected 400/401/403/404 + no-key 503s; 403s are
+  the harness's negative probes; 404s the listed HR-photo + sharepoint-
+  root polling + the harness's own requirements-leasing probe; the
+  image-studio bulk-assign 400 is the harness's own probe, scenario ok).
+  0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r274 was LIGHT → r275
+  FULL).
+
+### r273 · 2026-08-12 · FULL (rotation #3 client mobile 390px)
+- Fresh container (pg_hba trust per r205 — method-column-only sed;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 273: exit 0,
+  178 scenarios ok, 3 logged issues — 2 listed noise (rocketreach-400;
+  commentary-regen 503), 1 flow-failure client-mobile-controls-reachable
+  "page.goto: net::ERR_ABORTED at /requirements" = the r204
+  redirect-on-mount goto race under round load (first flake since its
+  r266 rebuild): standalone re-run 5/5 green, new-brand count 0 every
+  pass — NOT an app bug.
+- Journey: Mark Warne @ 390px iPhone UA — "just walked a vacant Bluewater
+  unit with an agent: log the viewing on my phone, then check the unit's
+  asking rent and existing interest" (FIRST coverage of the tracker WRITE
+  path — Add Viewing dialog — at client mobile): login → "/" Portfolio
+  home → tracker link → /available (153 units, 0 h-overflow) → search
+  MSU3 (2 cards) → card "Viewing" button → dialog opens with the Add form
+  → company combobox works inline at 390px in-dialog (typed Starbucks,
+  picked; r253 EntityCombobox shape holds), date defaults today (UX #2
+  holds), Save inside the viewport → "Viewing added" toast, row lists
+  with company/date/attendees, card chip flips to "Viewing (1)" →
+  Interest button opens the Offers dialog clean (Add Offer form, all
+  fields inside 390px). Probe viewing deleted via API (200) — client
+  parity delete works. 0 page errors; only non-listed sighting was
+  3× 503 GET /api/ai-briefing on the client home = keyless-AI noise
+  class (generic "503s from AI/M365 endpoints" line covers it). 0 app
+  bugs.
+- Bugs fixed: 0 (nothing broken found). Harness fix (1): new mobGoto
+  helper retries once on ERR_ABORTED (swallow-only would false-pass
+  assertions against the wrong page) — applied to the post-localStorage
+  gotos in client-mobile-controls-reachable, staff-deal-mobile-action-row
+  and client-mobile-no-overflow (qa/two-bot-round.mjs; node --check
+  clean; live from r274).
+- Bugs deferred: none. Suggestions added: UX #42 (mobile tracker unit
+  card silently drops Rent/Area rows when unset — user can't tell
+  unrecorded from hidden; wants "—"/"not set" per confirmed #4 pattern).
+  New flakes: none new (the /requirements abort joins the documented
+  r204 class, now hardened). FIXTURE NOTE: MSU3 Bluewater exists TWICE
+  in the fixture (both AVA, same name, no rent/sqft) — dupe rows, mind
+  probes that assume one.
+- Next journey: rotation #4 staff mobile 390px (r273 had the journey →
+  r274 may be LIGHT; then #4).
+
+### r272 · 2026-08-12 · LIGHT (r271 had the journey)
+- Fresh container (pg_hba trust per r205 — method-column-only sed;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 272: exit 0,
+  179 scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server
+  log (the lone " 500 " grep hit is the "500 articles" news-feed text
+  again; status tally: only 2xx/3xx/expected 400/401/403/404 + no-key
+  503s; 403s are the harness's negative probes; 404s are the listed
+  sharepoint-root polling + missing HR photos). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r272 was LIGHT → r273
+  FULL).
+
+### r271 · 2026-08-12 · FULL (rotation #2 client desktop)
+- Fresh container (pg_hba trust per r205 — method-column-only sed;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 271: exit 0,
+  179 scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server log
+  (the lone " 500 " grep hit is the "500 articles" news-feed text again).
+- Journey: Mark Warne desktop 1440px — "board asked about a tenant brand's
+  financial standing: review its compliance, then add a brand we're
+  courting to our CRM and find who to chase" (FIRST client-desktop journey
+  coverage of the Brand Intelligence hub tabs, brand-profile Compliance/KYC
+  panel, and the Add-brand dialog UI): login → Portfolio home → /brands hub
+  (Overview KPIs, 9 brands) → Brand Explorer tab + search → Starbucks
+  profile (Compliance & KYC panel visible per the 2026-08-01 decision,
+  Covenant, competitor set, news; NO staff leaks — 0 Run-checks/Delete/
+  Enrich/RocketReach buttons; 0 h-overflow) → Key Contacts → Tom Barista
+  detail (Edit only, r257/r258 gates hold) → Turnover Board + Brand Hunter
+  tabs (both render client-side, no errors) → Add brand dialog END-TO-END:
+  search Testco Jewellers (out-of-slice) → Add → row flips to Remove →
+  brand appears in Brand Explorer → its profile renders with compliance
+  panel → removed via API, state restored. 0 page errors, 0 non-noise
+  console/net errors across all legs. 0 app bugs.
+- FIXTURE NOTE (future add-brand probes): the fixture ships Landsec with
+  Testco Fashion (aaaaaaaa-…-0002) ALREADY in crm_extra_brand_ids — its
+  dialog row shows Added/Remove from the start; probe with Testco
+  Jewellers (…0007) instead. (My first probe removed the fixture extra —
+  restored via SQL same round.)
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  UX #40 (client-visible Brand-expansion AI commentary ends with BGP-
+  internal "Do not pitch until KYC due diligence…" advice), UX #41
+  (Instagram card empty state prints "Meta Graph API credentials not set
+  on server" to clients — wants house copy). New flakes: none. Harness
+  growth: none needed (add-brand round-trip + remove-UI already covered;
+  this round verified the Add-side flip visually).
+- Next journey: rotation #3 client mobile 390px (r271 had the journey →
+  r272 may be LIGHT; then #3).
+
+### r270 · 2026-08-12 · LIGHT (r269 had the journey)
+- Fresh container (pg_hba trust per r205 — note: a blanket sed can mangle
+  scram-sha-256 → trust-sha-256, check the file before reload;
+  restore-as-postgres + per-table ALTER owners + schema grant per r249 —
+  blanket REASSIGN OWNED BY postgres is rejected by pg16, use the
+  per-object loop). Regression: run-smoke.sh GREEN first pass (42 checks,
+  0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake). Two-bot
+  round 270: exit 0, 179 scenarios ok — incl. the FIRST live runs of
+  r269's staff-messages-desktop-redirect + client-messages-desktop-
+  redirect (both green; the desktop /messages → /chatbgp fix holds).
+  2 logged issues both listed noise (rocketreach-400; commentary-regen
+  503). 0 raw 500/502/504 in the whole round's server log (status tally:
+  only 2xx/3xx/expected 400/401/403/404 + no-key 503s; 403s are the
+  harness's negative probes). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #2 client desktop (r270 was LIGHT → r271 FULL).
+
+### r269 · 2026-08-12 · FULL (rotation #1 staff desktop)
+- Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
+  + schema grant per r249). Regression: run-smoke.sh GREEN ×2 (42 checks,
+  0 failures; FRESH_BUILD=1 before the fix, rebuilt bundle after; no
+  cold-build flake either pass). Two-bot round 269: exit 0, all scenarios ok,
+  2 logged issues both listed noise (rocketreach-400; commentary-regen 503).
+  0 raw 500/502/504 in the whole round's server log (the lone " 500 " grep
+  hit is the text "500 articles" in a news-feed log line).
+- Journey: Victoria desktop 1440px — "after an intro call with a new
+  Starbucks contact: get them into the CRM, then ask ChatBGP a question"
+  (FIRST journey hunt for the staff manual add-contact path + FIRST visit
+  to staff-desktop ChatBGP): login → /contacts CRM hub (Landlords/Agents/
+  Lenders render; 0 add-contact controls on any tab) → Landsec + Starbucks
+  profiles (render clean, contacts board has only inbox-scan Add +
+  RocketReach refresh) → /chatbgp (keyless "Not Connected — AI service is
+  not configured" house state, no hang — GREEN). Core task IMPOSSIBLE as
+  the user: no manual add-contact entry point anywhere for staff (the
+  complete New Contact dialog in pages/contacts.tsx is orphaned — /contacts
+  routes to the People hub; staff POST /api/crm/contacts still 201s) —
+  logged as UX #39, not built (entry-point placement is Woody's call).
+  Ai-take 503s on profiles = no-key noise (added to noise list below).
+  NOT bugs (tester errors): /messages is mobile-only by design (bottom-nav
+  tab) — but see the fix below; first "manual-add=1" probe hit was the
+  regex matching "no NEW CONTACTs found" in the scan banner, not a control.
+- Bug fixed (1): desktop /messages showed "Page not found" (r257 /login
+  class): the mobile chat list is intercepted before the desktop Router,
+  which had no /messages route — a mobile bookmark/shared link opened on
+  desktop dead-ended (clients additionally guard-bounced home, since
+  /messages wasn't CLIENT_ALLOWED). Added MessagesRedirect → /chatbgp in
+  the authenticated Router + "/messages" to CLIENT_ALLOWED_ROUTES
+  (client/src/App.tsx). Verified in-browser both personas: staff and Mark
+  land on /chatbgp, no "Page not found". tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +2 — staff-messages-desktop-redirect and
+  client-messages-desktop-redirect (desktop /messages must land on
+  /chatbgp, never Page-not-found/guard-bounce). Assertions verified
+  standalone in-browser both personas; node --check clean; run from r270.
+- Environment noise addition: GET /api/brand/:id/ai-take/* 503s (keyless
+  AI-take panels on company profiles fire them on load; UI shows the
+  intended "AI take unavailable" copy).
+- Bugs deferred: none. Suggestions added: UX #39 (staff have no manual
+  add-contact path; orphaned New Contact dialog). New flakes: none.
+- Next journey: rotation #2 client desktop (r269 had the journey → r270
+  may be LIGHT; then #2).
+
+### r268 · 2026-08-12 · LIGHT (r267 had the journey)
+- Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
+  + schema grant per r249). Regression: run-smoke.sh GREEN first pass
+  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake).
+  Two-bot round 268: exit 0, all scenarios ok — incl. the FIRST live run of
+  r267's staff-deal-mobile-action-row (green; the deal action-row wrap fix
+  holds). 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server log
+  (status tally: only 2xx/3xx/expected 400/401/403/404 + no-key 503s; 403s
+  are the harness's negative probes; the lone requirements-leasing 404 and
+  image-studio bulk-assign 400 are the harness's own probes, scenarios ok).
+  0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r268 was LIGHT → r269 FULL).
+
+### r267 · 2026-08-11 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
+  + schema grant per r249). Regression: run-smoke.sh GREEN ×2 (42 checks,
+  0 failures; FRESH_BUILD=1 before the fix, rebuilt bundle after; no
+  cold-build flake either pass). Two-bot round 267: exit 0, 176 scenarios
+  ok — incl. the FIRST live runs of r266's rebuilt
+  client-mobile-controls-reachable (green in its iPhone context) — 2 logged
+  issues both listed noise (rocketreach-400; commentary-regen 503).
+- Journey: Victoria @ 390px iPhone UA — "on the train: how is the Gail's
+  deal at Solicitors going — open it, read the latest, log a comment"
+  (FIRST journey coverage of the staff deals board + deal DETAIL at staff
+  mobile): login → "/" dashboard → bottom-nav Deals (mobile lands on the
+  Deals list — 2 cards, status chips, search) → U124 Gail's deal detail
+  (header chips, Parties, Fee Allocation, Files/Linked Property/Comments/
+  History accordions all render, 0 page h-overflow) → comment via the
+  Comments InlineText (tap placeholder → textarea, blur-saves PUT 200,
+  persists across reload). Probe comment cleared after via API. 0 page
+  errors, 0 non-noise console/net errors.
+- Bug fixed (1): staff deal-detail action row (Image Studio / Create
+  document / Edit) is a nowrap flex row — 412px wide at a 390px phone, so
+  EDIT sat past the viewport with no scroll path (row overflow visible,
+  scrollLeft stuck 0; r265 calendar-toolbar class). Added flex-wrap
+  gap-y-1.5 (client/src/components/deal-detail.tsx); Edit now wraps to a
+  second row, all three actions inside the viewport (verified 390px
+  iPhone UA). Desktop 1440px re-verified: row still a single line (equal
+  y for all three). tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 staff-deal-mobile-action-row (Gail's deal at
+  390px iPhone context per r266 pattern — all three action buttons must
+  sit inside the viewport). Assertions verified standalone via the journey
+  probes (geometry green post-fix); node --check clean; runs from r268.
+- NOT bugs (triaged): mid-journey "client shell as Victoria" (Portfolio
+  nav, client Files copy, no Fee Allocation) = the CONCURRENT two-bot
+  staff-switch-to-client-view scenario flipping her server-persisted
+  active_team mid-run — self-inflicted window, cleared when the scenario
+  exits; journey re-run post-window showed the staff shell. Deal Comments
+  panel: header tap TOGGLES it closed (it defaults open) and the editor is
+  a click-to-edit InlineText — first "no textarea" triage was a tester
+  error. deal-detail treats an unresolved viewer as client (!ddUser at
+  deal-detail.tsx:208) — deliberate fail-closed default, renders staff
+  extras once /me lands.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r267 had the journey → r268 may
+  be LIGHT; then #1).
+
+### r266 · 2026-08-11 · LIGHT (r265 had the journey)
+- Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
+  + schema grant per r249). Regression: run-smoke.sh GREEN ×2 (42 checks,
+  0 failures; FRESH_BUILD=1 before the fix, rebuilt bundle after; no
+  cold-build flake either pass). Two-bot round 266: exit 0, 175 scenarios
+  ok, 3 logged issues — 2 listed noise (rocketreach-400; commentary-regen
+  503), 1 was the FIRST live run of r265's client-mobile-controls-reachable
+  failing on ITS OWN environment, not the app (below).
+- Bug fixed (1, r265's deferred item): calendar Intelligence footer clipped
+  its insight text mid-word at 390px — the Intelligence label (178px) +
+  date stamp (84px) chrome left the strip 56px of visible width, and the
+  first nowrap card is 391px wide, so phones saw "🔥 I…" and nothing else.
+  Footer now hides the label text + date group below sm and caps the
+  insight detail at max-w-[58vw] with truncate (ellipsis) on mobile
+  (client/src/components/intelligence-footer.tsx). Verified 390px iPhone
+  UA: first card fully inside the viewport with clean ellipsis, strip
+  285px + swipeable; staff desktop /calendar byte-identical layout (label,
+  date, full-width cards). tsc clean, rebuilt, smoke re-green.
+- Harness fixes (2, both in client-mobile-controls-reachable —
+  qa/two-bot-round.mjs): (a) its first live run failed "toggle-crm-events
+  clipped (x 391)" — a TEST bug: it used a bare 390px page in the desktop
+  context, and useIsMobile deliberately keeps the DESKTOP layout for
+  non-touch/desktop-UA windows (force-desktop support), so it asserted
+  phone-layout geometry against the intentionally-squeezed desktop shell.
+  Scenario now runs in a dedicated iPhone-emulating context (mobile UA +
+  isMobile + hasTouch). (b) that fresh context needs the session COOKIE
+  copied over (addCookies) — localStorage authToken/user alone does not
+  authenticate, pages silently land on the sign-in screen and count()==0
+  assertions false-pass. Also grew the scenario: footer first-insight card
+  must sit inside the 390px viewport (guards this round's fix). All
+  assertions verified standalone green (view-week 183, toggle-crm 256,
+  insight 257 — all < 390); runs from r267. node --check clean.
+- NOT bugs (triaged): desktop layout at a 390px-wide desktop-UA window
+  (or force-desktop on a phone) genuinely overflows the calendar toolbar —
+  intended desktop shell at an extreme width, not a phone surface, left
+  alone. Client mobile dashboard has NO IntelligenceFooter (the 134px-wide
+  footer-in-card sighting was the same desktop-UA artifact). Repeated
+  script logins tripping the 429 limiter mid-triage — listed noise,
+  cleared by dev-server restart.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r266 was LIGHT → r267
+  FULL).
+
+### r265 · 2026-08-11 · FULL (rotation #3 client mobile 390px)
+- Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
+  + schema grant per r249). Regression: run-smoke.sh GREEN ×2 (42 checks,
+  0 failures; FRESH_BUILD=1 before the fixes, rebuilt bundle after; no
+  cold-build login flake either pass). Two-bot round 265: exit 0,
+  175 scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's dev-server
+  log (status tally: only 2xx/3xx/expected 400/401/403/404 + no-key 503s;
+  403s are the harness's negative probes).
+- Journey: Mark Warne @ 390px iPhone UA — "before a call with BGP: when's
+  our next meeting, what requirements are live for us, message BGP" (FIRST
+  client-mobile coverage of /calendar, /requirements, /messages): login →
+  "/" Portfolio home → /calendar (day grid + red now-line render, client
+  Add event present) → /requirements (renders, client slice = 0 rows,
+  clean empty state) → /messages (ChatBGP pinned, New Chat). All four
+  pages: 0 console/page errors, 0 page h-overflow, 0 non-noise http
+  errors.
+- Bugs fixed (2, both found by judging the journey pages as the user):
+  1. Client Requirements showed the staff-only "New Brand" button (r223
+     staff-leak class): its save POSTs /api/crm/companies which is
+     read-only for client accounts — 403 "Read-only access" — so the
+     dialog advertised a flow that could never save (the dialog even has a
+     client category slice, but the write gate is the decided model:
+     clients add existing brands via brands-hub add-brand). Button now
+     gated behind !isClientView, same as the sync toolbar one line below
+     (client/src/pages/requirements.tsx). Verified: Mark 0 buttons,
+     Victoria still has it.
+  2. Calendar toolbar unusable at 390px: the header row (nav/Today/Add
+     event + view toggle + CRM chip) is a non-wrapping flex row — "Week"
+     sat clipped at x=410 and the CRM toggle fully past the viewport with
+     NO scrollable ancestor (page body doesn't h-scroll), so phone users
+     could not switch views or toggle CRM events at all. Added
+     flex-wrap gap-y-1.5 to the toolbar (client/src/pages/calendar.tsx);
+     controls now wrap to a second row. Verified 390px: all six controls
+     inside the viewport, CRM toggle clickable, 0 h-overflow; staff
+     desktop toolbar still a single 49px row. Both: tsc clean, rebuilt,
+     smoke re-green.
+- Harness growth: two-bot +1 client-mobile-controls-reachable (client
+  /requirements must have no button-new-brand; calendar view-week +
+  toggle-crm-events must sit inside a 390px viewport). node --check
+  clean; runs from r266.
+- Bugs deferred (1): calendar INTELLIGENCE footer at 390px clips its
+  rotating stat text mid-word (screenshot shows "🔥 F…" truncated) —
+  cosmetic, triage next round whether it should wrap/shorten.
+- Suggestions added: UX #37 (mobile calendar has no "next meeting"
+  answer — Day view of today + desktop-only mini-cal; wants an Upcoming
+  agenda list), UX #38 (requirements empty state says "Try adjusting
+  your filters" when no filters are active; also no hint BGP logs
+  requirements for clients). New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r265 had the journey →
+  r266 may be LIGHT; then #4).
+
+### r264 · 2026-08-11 · LIGHT (r263 had the journey)
+- Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN first
+  pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build
+  login flake this time). Two-bot round 264: exit 0, 175 scenarios ok —
+  incl. the FIRST live run of r263's client-deal-party-link-gates
+  (green; the r263 AML-gate + Timeline-card fixes hold). 2 logged
+  issues both listed noise (rocketreach-400; commentary-regen 503).
+  0 raw 500/502/504 in the whole round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404; every 503 endpoint is a listed
+  AI/no-key route + os/sites noise; contact verify now 503s per the
+  r261 fix). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: two-bot's FIRST run right after dev-server
+  start can die at login with ECONNRESET (Vite still cold-transforming
+  the first page load; sibling of the r262 cold-build smoke flake) —
+  warm "/" once / re-run before triaging as real.
+- Next journey: rotation #3 client mobile 390px (r264 was LIGHT → r265
+  FULL).
+
+### r263 · 2026-08-11 · FULL (rotation #2 client desktop)
+- Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
+  + schema grant per r249). Regression: run-smoke.sh GREEN ×2 (42 checks,
+  0 failures; FRESH_BUILD=1 before the fixes, rebuilt bundle after — no
+  cold-build login flake this time). Two-bot round 263: exit 0, all
+  scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). Repo hygiene: the r261 entry in THIS FILE contained
+  a literal NUL byte (in the sentence about NUL bytes…) making the log
+  binary to git diff/grep — escaped it, log is a text file again.
+- Journey: Mark Warne desktop 1440px — "the Gail's letting is at Solicitors:
+  read the deal, ask BGP a question via deal comment, check history"
+  (FIRST client-desktop journey coverage of deal-detail writes: comments,
+  party linking, Timeline/Audit): login → dashboard → /deals table (2 CRM
+  deals + tracker subtitle) → U124 Gail's deal → comment via the inline
+  editor (saves on blur, PUT 200, persists across reload) → "+ Link tenant"
+  picker (works client-side, PUT 200 = decided client-parity write) →
+  Timeline + Audit log cards. Probe comment/link cleared after (verified
+  via the deal's own Audit log). NOT bugs: comment save-on-blur with no
+  Save button felt riskier than it is (blur saves; Esc cancels) — my first
+  "lost comment" triage was a tester error (reloaded while the textarea
+  still had focus, so blur-save never fired).
+- Bugs fixed (2):
+  1. Client party-link fired the staff-only AML sweep: handlePartySave
+     (deal-detail.tsx) + handleInlineSave (deals.tsx) always toasted
+     "Running AML checks — Screening <company>…" then POSTed
+     /api/kyc/run-all-checks, which gateway-403s for clients and fetch
+     swallows — the client was TOLD screening ran when nothing did (worse
+     than noise: a compliance claim). Both homes now skip toast+kick when
+     the viewer is a client (isClientDeal / isClientDeals). Verified: link
+     as Mark → 0 kyc calls, 0 toast, 0 403; staff path untouched.
+  2. Deal-detail Timeline card for clients opened an EMPTY panel — its
+     GET /api/deals/:id/timeline is gateway-403 (only /api/crm/ is
+     client-allowed, and the route has no per-deal scope check so opening
+     the prefix would be wrong); r257 gate pattern applied: Timeline card
+     hidden for clients (both sidebar homes via the shared fragment),
+     Audit log stays (works, and records client edits). Verified both
+     personas: Mark no Timeline + Audit renders; Victoria Timeline renders
+     entries. tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 client-deal-party-link-gates (no Timeline
+  card / Audit stays / UI tenant-link fires zero run-all-checks; restores
+  tenantId=null in finally). Assertions verified standalone via the
+  journey probes; runs from r264.
+- Bugs deferred: none. Suggestions added: UX #35 (clients have no news
+  surface — staff /news has no client equivalent), UX #36 (audit log
+  Change Log prints raw company UUIDs, e.g. "changed tenant from
+  11110000-… to empty"). New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r263 had the journey →
+  r264 may be LIGHT; then #3).
+
+### r262 · 2026-08-11 · LIGHT (r261 had the journey)
+- Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh first run had
+  1 failure — client UI login input never rendered in 30s on the cold
+  FRESH_BUILD first page load (staff checks all ok; r237 warm-up flake
+  class, new flake line below); immediate re-run GREEN 42 checks,
+  0 failures. Two-bot round 262: exit 0, all scenarios ok — incl. the
+  FIRST live run of r261's staff-ai-failure-terminal (green; the r261
+  verify-500 + curate-spinner fixes hold). 2 logged issues both listed
+  noise (rocketreach-400; commentary-regen 503). 0 raw 500/502/504 in
+  the whole round's server log (status tally: only 2xx/3xx/expected
+  400/401/403/404/503; every 503 endpoint is a listed AI/no-key route +
+  os/sites noise). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: first smoke pass right after FRESH_BUILD can
+  time out the client UI-login check (cold first page load); re-run
+  before triaging it as real.
+- Next journey: rotation #2 client desktop (r262 was LIGHT → r263 FULL).
+
+### r261 · 2026-08-11 · FULL (rotation #1 staff desktop)
+- Fresh container (pg_hba trust fix per r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN ×2
+  (42 checks, 0 failures; FRESH_BUILD=1 before the fixes and rebuilt bundle
+  after). Two-bot round 261: exit 0, all scenarios ok, 2 logged issues both
+  listed noise (rocketreach-400; commentary-regen 503). The only raw 500 in
+  the whole round's server log was bug 1 below, fired by my own probe.
+- Journey: Victoria desktop 1440px — "Monday morning desk sweep: scan brand
+  news for signals, drill into a brand, find the key contact, note the
+  call, set a follow-up task" (FIRST journey coverage of staff-desktop
+  NEWS page and the My Tasks page): login → dashboard → /news (Feed renders,
+  42 sources, chips; Landsec chip re-sorts; headline click expands card to
+  Read/Save/Extract Leads) → Starbucks profile via CRM (chips, Key
+  Contacts, 0 non-noise errors) → Tom Barista contact detail (Enrich/Edit/
+  Delete, synced activity board) → Edit Contact dialog (clean, esc closes)
+  → /tasks quick-add ("Task created" toast, row lists) → task visible on
+  dashboard MY TASKS widget. Probe task deleted post-journey. GREEN apart
+  from the two bugs below (found by clicking the page's own AI buttons).
+- Bugs fixed (2, both "AI failure never reaches the user properly"):
+  1. Contact "Verify with AI" surfaced the raw Anthropic SDK error as a
+     500 toast ("Could not resolve authentication method…", r237/r257
+     class). Route catch now maps key/auth errors to 503 + house copy
+     "Contact verification unavailable — AI service is not configured"
+     (server/contact-verify.ts). Verified visually: toast shows house copy.
+     Side fix: replaced two literal NUL bytes ("\x00" sentinels) in
+     contact-verify.ts with escaped "\x00" — same runtime value, but the
+     file was binary to grep/git diff.
+  2. Contact/brand "Analyse" (activity curate) spun on "Analysing… 30-60
+     seconds" FOREVER when the background job died (no AI key): client poll
+     had an unreachable terminal branch (its condition duplicated `fresh`),
+     and the GET auto-kick relaunched a doomed job on every 4s poll so
+     inFlight never read false. Client now stops with "Analysis didn't
+     complete — the AI service may be unavailable" when the job ends
+     without a fresh read (client/src/components/ai-activity-card.tsx);
+     server tracks recentCurationFailures with a 10-min cooldown before
+     auto-re-kick, cleared by explicit POST /curate retry
+     (server/activity-routes.ts). Verified visually: panel resolves to the
+     error copy in <10s, Analyse button returns to idle. tsc clean,
+     rebuilt, smoke re-green.
+- Harness growth: two-bot +1 staff-ai-failure-terminal (verify-contact must
+  never 500 — 503 needs house copy; curate kick must reach inFlight:false
+  within 30s). Negative-probe listed; assertions verified standalone via
+  the journey probes; runs from r262.
+- Bugs deferred: none. Suggestions added: UX-NOTES #34 (no way to log a
+  call/note on a contact — activity board is inbox-synced only, Notes field
+  buried in Edit dialog). New flakes: none.
+- NOT bugs (triaged): /api/microsoft/* 401s on dashboard = listed noise
+  (no M365 creds); news "Sorted for Landsec" content looks generic = AI
+  curation is keyless locally, can't judge relevance here.
+- Next journey: rotation #2 client desktop (r261 had the journey → r262
+  may be LIGHT; then #2).
+
+### r260 · 2026-08-11 · LIGHT (r259 had the journey)
+- Fresh container (pg_hba trust fix per r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN (42 checks,
+  0 failures, fresh DB + FRESH_BUILD=1). Two-bot round 260: exit 0, all
+  scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503 = intended no-key degradation). r259's
+  negative-probe silencing holds — the client-contact-detail-gates DELETE
+  probe no longer echoes as http-403. 0 raw 500/502/504 in the whole
+  round's server log (status tally: only 2xx/3xx/expected
+  400/401/403/404/503; every 503 endpoint is a listed AI/no-key route +
+  os/sites noise). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r260 was LIGHT → r261 FULL).
+
+### r259 · 2026-08-11 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (pg_hba trust fix per r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN (42 checks,
+  0 failures, fresh DB + fresh build). Two-bot round 259: exit 0, 3 logged
+  issues — 2 listed noise (rocketreach-400; commentary-regen 503), 1 was the
+  harness's OWN client-contact-detail-gates DELETE-must-403 probe echoing
+  through the global response listener (scenario [ok] — r258's fixes hold;
+  first live run of the widened blocked-regex green). 0 raw 5xx in the whole
+  round's server log.
+- Journey: Victoria @ 390px iPhone UA — "on the train to a Starbucks
+  meeting: when is it, review the brand, find the contact" (FIRST journey
+  coverage of staff CALENDAR + brands hub → brand profile → contact
+  drill-in at staff mobile): login → "/" Dashboard → /calendar (day view
+  renders, team filter chips, today's events visible incl. correctly
+  staff-visible other-client rows) → /brands hub → search "Starbucks" →
+  card tap → /companies/:id profile (chips, Chat, Key Contacts with Tom
+  Barista, Covenant; 0 h-overflow) → tap contact → /contacts/:id detail
+  (Enrich/Edit/Delete, email + mailto, activity board — task done). GREEN:
+  0 page errors, 0 non-noise console/net errors, 0 h-overflow anywhere.
+  NOT bugs (tester errors, for future rounds): brand profile route is
+  /companies/:id (NOT /brand/:id — that's a dead URL and my first pass
+  triaged phantom failures off it); hub cards are covered by an
+  a[aria-label=<name>] overlay anchor — click THAT, not the name text
+  (text-node clicks get intercepted and time out; a real tap works).
+- Bugs fixed: 0 app bugs (nothing broken found). Harness fix (1):
+  client-contact-detail-gates added to NEGATIVE_PROBE_SCENARIOS so its
+  intentional DELETE-403 probe stops logging as an issue every round — its
+  read-path 403 assertions live in the scenario's own listener and still
+  throw crisply (node --check clean; effective from r260, expect the
+  http-403 echo gone).
+- Bugs deferred: none. Suggestions added: none new — UX #32 extended with
+  an r259 addendum (chat-first brand profile layout equally buries Key
+  Contacts for STAFF mobile; fix should cover both personas). New flakes:
+  none.
+- Next journey: rotation #1 staff desktop (r259 had the journey → r260 may
+  be LIGHT; then #1).
+
+### r258 · 2026-08-11 · LIGHT (r257 had the journey)
+- Fresh container (pg_hba trust fix per r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN ×2
+  (42 checks, 0 failures; FRESH_BUILD=1 before the fixes and rebuilt bundle
+  after). Two-bot round 258: exit 0, 18 logged issues — 2 listed noise
+  (rocketreach-400; commentary-regen 503), 16 all ONE real bug caught by the
+  FIRST live run of r257's client-contact-detail-gates (staff-login-route-
+  redirect green): 15× http-403 on GET /api/crm/contacts/…0002 + its
+  requirements/deals/properties/investment-tracker subroutes as Mark, plus
+  the flow-failure (contact-detail testid never attached — page errored on
+  the base 403). The 403s attributed to client-mobile-no-overflow were the
+  same page (listener attribution). 0 raw 5xx in the round's issue log.
+- Bug fixed (1, client agent-contact read path, server/crm.ts): the contacts
+  LIST deliberately serves agent-company contacts to clients ("market-facing
+  — the requirements board names the acquiring agent", and its comment even
+  claims detail-GET parity) but the detail GET and forbidsContactRead used
+  clientCanTouchCompany (own company + brand slice only) — so EVERY agent
+  contact a client could see in the list 403'd when opened (error page, not
+  detail). New clientCanReadContactCompany (touch ∪ company_type ILIKE
+  'Agent%') now gates the detail GET + all four sub-resource reads; writes
+  (PUT/DELETE/POST) stay on clientCanTouchCompany. Same asymmetry one level
+  up: the contact page's Company card fires GET /api/crm/companies/:id,
+  which only allowed slice/extras/tenant-rep agents — general Agent rows now
+  client-readable with the SAME stripped-fields path as brands. Verified:
+  Mark reads Alex Agentson detail + subroutes 200, company card 200
+  (stripped, no kyc/aml/hunter keys), PUT/DELETE still 403, slice contact
+  still 200; Victoria unchanged (200s); rival Sam still 403 on Landsec row,
+  200 on agent row (market-facing for all clients, matches list rule).
+  Browser re-run of the scenario's assertions: page renders, Edit only, no
+  Delete/Enrich, no false interactions empty-state, 0×403/5xx. tsc clean,
+  rebuilt, smoke re-green.
+- Harness growth: client-contact-detail-gates blocked-regex widened to also
+  catch crm/contacts + crm/companies 403s (the read path itself), so this
+  class fails crisply instead of via flow-timeout (qa/two-bot-round.mjs;
+  node --check clean). Runs from round 259.
+- Bugs deferred: none. Suggestions added: UX-NOTES #33 (client sees Edit on
+  agent contacts but the PUT write gate 403s the save — hide/disable Edit
+  outside the writable set). New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r258 was LIGHT → r259 FULL).
+
+### r257 · 2026-08-11 · FULL (rotation #3 client mobile 390px)
+- Fresh container (pg_hba trust fix per r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN ×2
+  (42 checks, 0 failures; FRESH_BUILD=1 before the fixes and rebuilt bundle
+  after). Two-bot round 257: exit 0, 170 scenarios ok, 3 logged issues —
+  2 listed noise (rocketreach-400; commentary-regen 503), 1 flow-failure
+  (client-property-detail "Files board missing") that is the r256 TIMING
+  FLAKE class: screenshot shows the page still on skeletons (journey + tsc
+  ran concurrently); standalone re-run renders the panel with the graceful
+  no-folder fallback. Hardened the scenario to waitFor the panel (15s)
+  before asserting. 0 raw 500/502/504 in the whole round's server log
+  (503s all listed AI/no-key routes; 403s are two-bot's negative probes).
+- Journey: Mark Warne @ 390px iPhone UA — "a colleague asked who our
+  contact at Starbucks is: find the brand on my phone, get their details,
+  check what's happening with them" (FIRST journey coverage of the client
+  CONTACT DETAIL page, and of the brands hub → profile → contact drill
+  path at client mobile): login → "/" Portfolio home → Brands tile →
+  Brand Intelligence hub (category tiles, search "Starbucks" → 1 result) →
+  brand profile (contacts, covenant, compliance-per-decision, signals all
+  render, 0 h-overflow) → tap Tom Barista → /contacts/:id detail (email
+  mailto present — task done). 0 page errors; 0 non-noise console/net
+  errors after fixes.
+- Bugs fixed (2):
+  1. Client contact detail (r223 interactions-sync class): the page showed
+     the staff-only Delete button (DELETE always 403s for clients —
+     "managed by your BGP team") and auto-fired the two staff-only boards —
+     /api/interactions/contact + /api/activity/contact both gateway-403 —
+     with the InteractionsBoard then rendering a FALSE "No interactions in
+     the last 2 years" over real staff data. Delete, AIActivityCard and
+     InteractionsBoard now gated behind !cdIsClient (same pattern as the
+     already-gated Enrich/SourcePanel; client/src/pages/contacts.tsx).
+     Edit stays — PUT is scope-checked client parity. Verified visually
+     both ways: Mark 390px (Edit only, no boards, 0×403), Victoria 1440px
+     unchanged (Enrich/Edit/Delete + both boards with data).
+  2. Signed-in user at the literal /login URL landed on "Page not found" —
+     guest-form sign-in happens in place (no navigation), and the
+     authenticated Router had no /login route; staff logging in via the
+     guest form hit a 404 straight after signing in (clients were saved
+     only by the ClientRouteGuard bounce). Added a /login → "/" redirect
+     route (LoginRedirect, client/src/App.tsx). Verified: Victoria's UI
+     login now lands on the dashboard. Both fixes: tsc clean, rebuilt,
+     smoke re-green.
+- Harness growth: two-bot +2 — client-contact-detail-gates (no
+  Delete/Enrich/boards for client, no 403 fetches, Edit present; server
+  probe: client contact DELETE on a QA-created row must 403) and
+  staff-login-route-redirect (authenticated /login must land home, never
+  "Page not found"). Assertions verified standalone (curl probes + UI both
+  personas); run from round 258.
+- Bugs deferred: none. Suggestions added: UX-NOTES #32 (mobile brand
+  profile leads with a full-screen chat panel — contacts a screen+ down).
+  New flakes: none new (client-property-detail joined the known fixed-wait
+  class and is now hardened).
+- Next journey: rotation #4 staff mobile 390px (r257 had the journey →
+  r258 may be LIGHT; then #4).
+
+### r256 · 2026-08-11 · LIGHT (r255 had the journey)
+- Fresh container (pg_hba trust fix, r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN
+  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1). Two-bot round 256:
+  exit 0, 3 logged issues — 2 listed noise (rocketreach-400;
+  commentary-regen 503 = intended no-key degradation), 1 flow-failure
+  (client-add-brand-remove-ui "Remove did not flip to Add") that is a
+  TIMING FLAKE, not an app bug: the failure screenshot shows the row
+  already flipped + the removal toast, and a standalone re-run flipped in
+  151ms with the DB extra cleared — the scenario's fixed 1500ms
+  post-click wait just lost the race under round load. Hardened the
+  scenario to poll via waitFor detached (10s) instead of the fixed wait
+  (qa/two-bot-round.mjs; node --check clean). 0 raw 500/502/504 in the
+  whole round's server log (status tally: only 2xx/3xx/expected
+  400/401/403/404/503; every 503 endpoint is a listed AI/no-key route +
+  os/sites noise). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: fixed-wait UI assertions can lose the
+  invalidation-refetch race under round load (this class now polls).
+- Next journey: rotation #3 client mobile 390px (r256 was LIGHT → r257
+  FULL).
+
+### r255 · 2026-08-11 · FULL (rotation #2 client desktop)
+- Fresh container (pg_hba trust fix, r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN
+  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1). Two-bot round 255:
+  exit 0, 171 scenarios ok, 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503 = intended no-key degradation).
+  0 raw 500/502/504 in the whole round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404/503; every 503 endpoint is a listed
+  AI/no-key route).
+- Journey: Mark Warne desktop 1440px — "before the quarterly call: which
+  vacant Bluewater units have live interest, who do I chase at the brand,
+  and when is the review meeting?" (FIRST client-desktop journey coverage
+  of the tracker Viewings/Offers dialogs, the CRM Contacts page, and the
+  Calendar): login → /available (153 units, table + status chips) →
+  Viewings dialog (clean empty state, Add Viewing) → Offers dialog →
+  Add Viewing form: company combobox popover-in-dialog WORKS client-side
+  (r205 fix holds; Starbucks pick fills form, date defaults today; not
+  saved) → /calendar (week grid + month mini-cal render, two-bot's
+  QA-CAL-MINE event correctly Landsec-scoped, intelligence footer) →
+  /contacts CRM (Brand Directory slice = 9 brands, Starbucks card shows
+  Tom Barista + email; Landsec Contacts tab lists the client's people).
+  0 non-noise console/net errors, 0 page errors. No data mutated.
+- NOT bugs (triaged): "No company / QA-VIEWING-R255-EDITED" viewing row
+  mid-journey = concurrent two-bot probe (swept next round); tracker
+  first paint can take ~8s cold (r237 warm-up flake class — use longer
+  waits, not a bug).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: UX-NOTES #31 (client tracker: Activity/viewings/offers column
+  is off-screen at 1440px and the FY Viewings/Offers chips don't filter —
+  "which units have interest" is scroll-and-scan). New flakes: none.
+  Harness growth: none needed (viewing/offer add+edit covered API-side;
+  calendar scoping covered by client-calendar-sees-own-events).
+- Next journey: rotation #3 client mobile 390px (r255 had the journey →
+  r256 may be LIGHT; then #3).
+
+### r254 · 2026-08-11 · LIGHT (r253 had the journey)
+- Fresh container (pg_hba trust fix, r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN
+  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1). Two-bot round 254:
+  exit 0, all scenarios ok — incl. the FIRST live run of r253's
+  staff-brief-target-create + client-brief-target-scope (both green; the
+  r253 Brief-dialog fixes hold). 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503 = intended no-key degradation).
+  0 raw 500/502/504 in the whole round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404/503; every 503 endpoint is a listed
+  AI/no-key route + os/sites noise). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #2 client desktop (r254 was LIGHT → r255 FULL).
+
+### r253 · 2026-08-11 · FULL (rotation #1 staff desktop)
+- Fresh container (pg_hba trust fix, r205; restore-as-postgres + ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN ×2
+  (42 checks, 0 failures; FRESH_BUILD=1 before the fixes and rebuilt
+  bundle after). Two-bot round 253: exit 0, all scenarios ok, 2 logged
+  issues both listed noise (rocketreach-400; commentary-regen 503 =
+  intended no-key degradation).
+- Journey: Victoria desktop 1440px — "MSU3 Bluewater is vacant: brief the
+  unit, set a target operator, log this morning's viewing, then check
+  what the client sees" (FIRST journey coverage of the Targeting Brief
+  dialog): login → /available → search MSU3 → Brief dialog → create brief
+  → add target operator + comment → log viewing via Viewings dialog →
+  cross-check as Mark: staff viewing visible on the unit, Brief dialog
+  opens with the target row (client-instruction parity), rival-brief
+  writes 403 / reads 404 (probed via API). Post-fix run: 0 non-noise
+  console/net errors. All probe rows deleted after.
+- Bugs fixed (2, both in the Targeting Brief dialog):
+  1. The "add target operator" picker was DEAD in its only home — the
+     brand dropdown is a portal'd Popover inside a Radix Dialog (the
+     documented r205 dead-picker class): the list rendered but the
+     dialog's focus trap + pointer-events guard swallowed every click and
+     keystroke, so staff could not add a target operator from the Brief
+     dialog at all. BrandSearchInput gained an `inline` mode (dialog-safe
+     EntityCombobox shape, dropdown in the trigger's own subtree);
+     TargetOperatorsTable passes it. Popover mode untouched — tracker /
+     leasing-schedule inline pickers re-verified working via Playwright.
+  2. Picking a brand never autofilled Category — the pick handler compared
+     companyType ("Tenant - Restaurant") against LETTING_CATEGORIES bare
+     labels ("Restaurant"), so the advertised autofill never fired; now
+     strips the "Tenant - " prefix (Starbucks pick → Category Restaurant,
+     verified visually). Both fixes: tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +2 — staff-brief-target-create (brief + target
+  round-trip via the list route, which is the only brief read path) and
+  client-brief-target-scope (own-property brief + staff target visible to
+  client, client target-add on own brief 200, foreign-brief write
+  403/404; negative-probe listed). Assertions verified standalone via
+  curl both personas; run from round 254 — briefs titled 'QA Brief%' are
+  purged by run-round.sh at round start.
+- Bugs deferred: none. Suggestions added: UX-NOTES #30 (Brief dialog
+  hides the Target operators section until the brief is saved, and
+  "Create brief" only appears once a field is dirty — invisible two-step
+  gate). New flakes: none.
+- NOT bugs (triaged): client CAN add targets to a brief on their own
+  property (200) — client-instruction parity, same decision family as
+  tenancy row edits; rival scoping holds (403/404). GET
+  /api/unit-briefs/:id 404s for everyone — the route doesn't exist, the
+  list endpoint is the read path (dialog + tracker use it).
+- Next journey: rotation #2 client desktop (r253 had the journey → r254
+  may be LIGHT; then #2).
+
+### r252 · 2026-08-10 · LIGHT (r251 had the journey)
+- Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +
+  ALTER owners + schema grant per r249 note). Regression: run-smoke.sh
+  GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1). Two-bot round
+  252: exit 0, all scenarios ok, 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503 = intended no-key degradation).
+  0 raw 500/502/504 in the whole round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404/503; every 503 endpoint is a listed
+  AI/no-key route + os/sites noise; startup RSS fetch errors = no
+  external network, same noise class as favicons). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r252 was LIGHT → r253 FULL).
+
+### r251 · 2026-08-10 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +
+  ALTER owners + schema grant per r249 note). Regression: run-smoke.sh
+  GREEN (42 checks, 0 failures, fresh DB + FRESH_BUILD=1). Two-bot round
+  251: exit 0, all scenarios ok, 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503 = intended no-key degradation).
+  0 raw 500/502/504 in the whole round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404/503; every 503 endpoint is a listed
+  AI/no-key route + os/sites noise).
+- Journey: Victoria @ 390px iPhone UA — "a new operator requirement came
+  in by phone: log it, then check the Bluewater tenancy board for a fit"
+  (FIRST journey coverage of the REQUIREMENTS create flow AND the staff
+  tenancy full board at 390px): login → /requirements (renders, Leasing/
+  Investment tabs, KPI chips) → Create Leasing Requirement dialog
+  end-to-end via manual-name path ("Requirement created" toast, row card
+  lists, group + All chips increment, persisted across reload) →
+  /tenancy-schedule/:bluewaterId staff board (200 units, staff Import/
+  Add/Excel/Re-sync/Columns all present at 390px, KPI tiles, MSU3 search
+  filters to 2 rows, wide table scrolls in its own container — 0 page
+  h-overflow). 0 non-noise console/net errors, 0 page errors. Probe
+  requirement deleted post-journey.
+- NOT bugs (triaged): GET /api/crm/properties/Bluewater 404 mid-journey =
+  tester error (route wants the property ID, not the name); repeating
+  /api/client/sharepoint/root 404s = concurrent two-bot polling, listed
+  noise (IGNORED_RESPONSES); tenancy "151 Available" vs "VACANT 76" =
+  known fixture orphans (r217/r249).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: UX-NOTES #29 (mobile requirement cards drop the desktop Match/
+  fits/Discuss actions — phone user sees "0/1 fit your available units"
+  with no way to open the matches). New flakes: none. Harness growth:
+  none needed (requirement create/scope covered API-side by
+  agent-create-requirement/agent-edit-requirement; mobile-no-overflow
+  covers the shell).
+- Next journey: rotation #1 staff desktop (r251 had the journey → r252
+  may be LIGHT; then #1).
 
 ### r250 · 2026-08-10 · LIGHT (r249 had the journey)
 - Fresh container (pg_hba trust fix, r205 note; restore-as-postgres +

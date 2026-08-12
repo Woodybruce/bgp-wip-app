@@ -831,12 +831,12 @@ export default function TasksPage() {
 
             <Card>
               <CardHeader className="pb-0 pt-4 px-4">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-y-1">
                   <CardTitle className="text-base font-semibold flex items-center gap-2">
                     <CircleDot className="w-4 h-4 text-primary" />
                     Tasks
                   </CardTitle>
-                  <div className="flex gap-1 border-b">
+                  <div className="flex flex-wrap gap-1 border-b">
                     <button
                       className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px flex items-center gap-1 ${
                         viewAssigned

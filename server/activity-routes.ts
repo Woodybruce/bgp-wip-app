@@ -132,6 +132,14 @@ async function buildSubject(type: SubjectType, id: string): Promise<ActivitySubj
 const pendingCurations = new Map<string, Promise<void>>();
 const curationKey = (t: SubjectType, id: string) => `${t}:${id}`;
 
+// Failed curations, keyed like pendingCurations. The GET auto-kick would
+// otherwise relaunch a doomed job on every 4s client poll (and report
+// inFlight: true each time, so the "Analysing…" spinner never resolved
+// when curation fails fast, e.g. AI service not configured). A recent
+// failure suppresses the auto-kick; an explicit POST /curate clears it.
+const recentCurationFailures = new Map<string, number>();
+const CURATION_FAILURE_COOLDOWN_MS = 10 * 60 * 1000;
+
 // Read cached curation. Returns null if no cache row exists.
 async function readCache(type: SubjectType, id: string): Promise<(CuratedActivity & { fromCache: true }) | null> {
   const r = await pool.query(
@@ -216,7 +224,9 @@ export function registerActivityRoutes(app: Express) {
       const STALE_MS = 7 * 24 * 60 * 60 * 1000;
       const cacheAge = cache?.generatedAt ? Date.now() - new Date(cache.generatedAt).getTime() : null;
       const needsCuration = !cache || (cacheAge !== null && cacheAge > STALE_MS);
-      if (needsCuration && !inFlight) {
+      const failedAt = recentCurationFailures.get(key);
+      const coolingDown = failedAt !== undefined && Date.now() - failedAt < CURATION_FAILURE_COOLDOWN_MS;
+      if (needsCuration && !inFlight && !coolingDown) {
         const subject = await buildSubject(subjectType, subjectId);
         if (subject) {
           const job = (async () => {
@@ -228,9 +238,13 @@ export function registerActivityRoutes(app: Express) {
               if (curated) {
                 await writeCache(subjectType, subjectId, curated);
                 await writeLastInteraction(subjectType, subjectId, curated.latestActivityDate);
+                recentCurationFailures.delete(key);
+              } else {
+                recentCurationFailures.set(key, Date.now());
               }
             } catch (err: any) {
               console.error(`[activity auto-refresh ${subjectType}/${subjectId}]`, err?.message || err);
+              recentCurationFailures.set(key, Date.now());
             } finally {
               pendingCurations.delete(key);
             }
@@ -312,6 +326,8 @@ export function registerActivityRoutes(app: Express) {
     if (pendingCurations.has(key)) {
       return res.status(202).json({ accepted: true, inFlight: true, alreadyRunning: true });
     }
+    // An explicit user retry overrides the auto-kick cooldown.
+    recentCurationFailures.delete(key);
 
     const subject = await buildSubject(subjectType, subjectId);
     if (!subject) return res.status(404).json({ error: "subject not found" });
@@ -325,12 +341,15 @@ export function registerActivityRoutes(app: Express) {
         const curated = await curateActivity(subject, req, { timeoutMs: 25 * 60 * 1000 });
         if (!curated) {
           console.warn(`[activity curate ${subjectType}/${subjectId}] ChatBGP returned nothing`);
+          recentCurationFailures.set(key, Date.now());
           return;
         }
         await writeCache(subjectType, subjectId, curated);
         await writeLastInteraction(subjectType, subjectId, curated.latestActivityDate);
+        recentCurationFailures.delete(key);
       } catch (err: any) {
         console.error(`[activity curate ${subjectType}/${subjectId}]`, err?.message || err);
+        recentCurationFailures.set(key, Date.now());
       } finally {
         pendingCurations.delete(key);
       }

@@ -1719,6 +1719,10 @@ export function setupCrmRoutes(app: Express) {
         const { getClientExtraBrandIds } = await import("./company-scope");
         const extraIds = await getClientExtraBrandIds(scopeCompanyId);
         const isAllowedBrand = isClientCrmCategory(ct) || extraIds.has(req.params.id);
+        // Agent companies are market-facing (the contacts list serves their
+        // people to clients; the tracker/requirements boards name them) —
+        // readable with the same stripped fields as brands.
+        const isAgentCompany = /^agent/i.test(ct);
         // Tenant-rep agents are in the client agent directory and linked
         // from brand profiles ("Represented by") — readable too.
         const isTenantRepAgent = company.agentType === "tenant_rep" ||
@@ -1727,7 +1731,7 @@ export function setupCrmRoutes(app: Express) {
               WHERE agent_company_id = $1 AND end_date IS NULL AND agent_type = 'tenant_rep' LIMIT 1`,
             [req.params.id]
           )).rows.length > 0;
-        if (!isAllowedBrand && !isTenantRepAgent) return res.status(403).json({ error: "Access denied" });
+        if (!isAllowedBrand && !isAgentCompany && !isTenantRepAgent) return res.status(403).json({ error: "Access denied" });
         // Strip BGP-internal + KYC/AML/PEP fields for client viewers. NB the
         // company row is camelCase (Drizzle-mapped) — the hunter/distress keys
         // were previously listed in snake_case and so never actually stripped,
@@ -2012,8 +2016,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const scopeCompanyId = await resolveCompanyScope(req);
       if (scopeCompanyId && !(await isContactInScope(scopeCompanyId, req.params.id))) {
         // The client brand directory links to hospitality-brand contacts —
-        // those are readable, same rule as adding/amending them.
-        const ok = await clientCanTouchCompany(scopeCompanyId, (contact as any).companyId);
+        // those are readable, same rule as adding/amending them. Agent-company
+        // contacts are readable too (the list route serves them: market-facing,
+        // named on the tracker/requirements boards) — but never writable.
+        const ok = await clientCanReadContactCompany(scopeCompanyId, (contact as any).companyId);
         if (!ok) return res.status(403).json({ error: "Access denied" });
       }
       res.json(contact);
@@ -2029,6 +2035,21 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     return isClientVisibleBrand(companyId, scopeCompanyId);
   };
 
+  // Reads are wider than writes: the contacts LIST deliberately serves
+  // agent-company contacts to clients (market-facing — the tracker and
+  // requirements boards name the acquiring agent), so the detail GET and
+  // sub-resource reads must accept them too or every agent row in the list
+  // 403s when opened. Writes stay on clientCanTouchCompany.
+  const clientCanReadContactCompany = async (scopeCompanyId: string, companyId: string | null | undefined): Promise<boolean> => {
+    if (await clientCanTouchCompany(scopeCompanyId, companyId)) return true;
+    if (!companyId) return false;
+    const r = await pool.query(
+      `SELECT 1 FROM crm_companies WHERE id = $1 AND company_type ILIKE 'Agent%'`,
+      [companyId]
+    );
+    return r.rows.length > 0;
+  };
+
   // Gate for a contact's sub-resource reads (linked properties/deals/
   // requirements/investment-tracker). Mirrors the contact GET: a client may
   // read the links of a contact they can read — own portfolio or a
@@ -2039,7 +2060,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     if (!scopeCompanyId) return false;
     if (await isContactInScope(scopeCompanyId, contactId)) return false;
     const contact = await storage.getCrmContact(contactId);
-    return !(await clientCanTouchCompany(scopeCompanyId, (contact as any)?.companyId));
+    return !(await clientCanReadContactCompany(scopeCompanyId, (contact as any)?.companyId));
   };
 
   app.post("/api/crm/contacts", requireAuth, async (req, res) => {

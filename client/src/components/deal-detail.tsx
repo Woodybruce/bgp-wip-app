@@ -367,7 +367,10 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   const handlePartySave = async (field: "tenantId" | "landlordId" | "vendorId" | "purchaserId", value: string | null) => {
     await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
     invalidateDealCaches(id);
-    if (value) {
+    // AML screening is a staff-only endpoint — a client linking a party on
+    // their own deal must not fire it (403) or see the "Running AML checks"
+    // toast for a run that never happens.
+    if (value && !isClientDeal) {
       const co = companies.find(c => c.id === value);
       toast({ title: "Running AML checks", description: `Screening ${co?.name || "party"}...` });
       try {
@@ -561,9 +564,14 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 
       <SidebarSection open={sidebarSections.history ?? true} onToggle={() => toggleSidebar("history")} icon={History} title="History & activity" testId="toggle-sidebar-history">
         <div className="space-y-2">
+          {/* Timeline reads /api/deals/:id/timeline, which the client gateway
+              blocks — offering the panel to clients opens an empty box over a
+              403. Clients keep the Audit log below. */}
+          {!isClientDeal && (
           <CollapsibleCard open={mainSections.timeline} onToggle={() => toggleMain("timeline")} icon={CalendarIcon} title="Timeline" testId="toggle-deal-timeline">
             <DealTimeline dealId={id} />
           </CollapsibleCard>
+          )}
           <CollapsibleCard open={mainSections.audit} onToggle={() => toggleMain("audit")} icon={History} title="Audit log" testId="toggle-deal-audit">
             <DealAuditLog dealId={id} />
           </CollapsibleCard>
@@ -703,7 +711,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             );
           })()}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap gap-y-1.5">
           <Link href={`/image-studio?property=${encodeURIComponent(linkedProperty?.name || (deal as any).propertyName || deal.name || "")}&address=${encodeURIComponent(linkedProperty?.address ? (typeof linkedProperty.address === 'object' && linkedProperty.address !== null ? ((linkedProperty.address as any).formatted || (linkedProperty.address as any).line1 || linkedProperty.name) : String(linkedProperty.address || linkedProperty.name)) : ((deal as any).propertyName || deal.name || ""))}&propertyId=${encodeURIComponent(deal.propertyId || "")}`}>
             <Button variant="outline" size="sm" data-testid="button-deal-image-studio">
               <ImageIcon className="w-4 h-4 mr-2" />

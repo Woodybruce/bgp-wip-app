@@ -923,6 +923,10 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
             Clear
           </Button>
         )}
+        {/* Staff only: POST /api/crm/companies is read-only for client
+            accounts, so the dialog could never save for them. Clients add
+            existing brands via the brands-hub Add brand flow instead. */}
+        {!isClientView && (
         <Button
           variant="outline"
           size="sm"
@@ -933,6 +937,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
           <Sparkles className="w-3.5 h-3.5 mr-1 text-purple-500" />
           New Brand
         </Button>
+        )}
         {/* Admin/debug sync + inspect tools — hidden on mobile so the board is
             a clean Search + Add + cards layout, uniform with the others.
             Hidden for clients too: sync/import are staff-only writes. */}
