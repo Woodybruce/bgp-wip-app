@@ -1084,11 +1084,14 @@ export async function sweepStage8ImagesForRun(args: {
   areaCollectionId?: string;
   imagesAdded: number;
   collections: Array<{ id: string; name: string; bucket: "building" | "tenants" | "area"; imageCount: number }>;
+  // Street View captures, wide framing first — the caller promotes [0] to
+  // the run's hero when nothing better exists.
+  streetViewImageIds: string[];
 }> {
   const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) {
     console.warn("[pathway sweep] GOOGLE_API_KEY missing — Stage 8 image sweep skipped");
-    return { imagesAdded: 0, collections: [] };
+    return { imagesAdded: 0, collections: [], streetViewImageIds: [] };
   }
 
   await ensureTable().catch(() => {});
@@ -1106,6 +1109,7 @@ export async function sweepStage8ImagesForRun(args: {
   const brochureBuildingImages: string[] = [];
   const tenantImages: string[] = [];
   const areaImages: string[] = [];
+  const streetViewImageIds: string[] = [];
 
   const geo = await geocodeAddress(args.address, apiKey);
 
@@ -1145,6 +1149,7 @@ export async function sweepStage8ImagesForRun(args: {
           });
           // Lead the Building collection with exteriors, ahead of Places shots.
           brochureBuildingImages.push(stored.id);
+          streetViewImageIds.push(stored.id);
         } catch {}
       }
     }
@@ -1198,9 +1203,22 @@ export async function sweepStage8ImagesForRun(args: {
     // miles away).
     try {
       const bias = geo ? { lat: geo.lat, lng: geo.lng, radiusM: 250 } : undefined;
+      // "<tenant> London" fallback only when geocoding failed — with a known
+      // location, a citywide match is by definition the wrong branch.
       const place = await findPlaceByText(`${tenant}`, apiKey, bias)
         || await findPlaceByText(`${tenant} ${args.address}`, apiKey, bias)
-        || await findPlaceByText(`${tenant} London`, apiKey);
+        || (geo ? null : await findPlaceByText(`${tenant} London`, apiKey));
+      // Location filter: photos of a branch streets away misrepresent the
+      // asset. Bias is a suggestion, not a constraint — verify the distance.
+      if (place?.placeId && geo) {
+        const dLat = (place.lat - geo.lat) * 111_320;
+        const dLng = (place.lng - geo.lng) * 111_320 * Math.cos(geo.lat * Math.PI / 180);
+        const distM = Math.sqrt(dLat * dLat + dLng * dLng);
+        if (distM > 400) {
+          console.log(`[pathway sweep] ${tenant}: nearest Places match "${place.name}" is ${Math.round(distM)}m away — skipping its photos`);
+          continue;
+        }
+      }
       if (place?.placeId) {
         // Up to 4 Places photos (was 2) — actual store shots.
         const refs = await placeDetailsPhotos(place.placeId, apiKey, 4);
@@ -1317,6 +1335,7 @@ export async function sweepStage8ImagesForRun(args: {
     areaCollectionId: areaId,
     imagesAdded: buildingAdded + tenantAdded + areaAdded,
     collections,
+    streetViewImageIds,
   };
 }
 

@@ -4864,8 +4864,11 @@ async function runStage8(runId: string, req: Request): Promise<void> {
   if (!run) throw new Error("Run not found");
   await setStageStatus(runId, "stage8", "running");
 
-  const patch: NonNullable<StageResults["stage8"]> = {};
   const sr = (run.stageResults || {}) as StageResults;
+  // Seed from the existing stage8 blob — the setStageStatus jsonb merge is
+  // top-level, so writing a fresh object on a re-sweep would wipe human-set
+  // fields (retailContextImageId from the map capture, additionalImageIds).
+  const patch: NonNullable<StageResults["stage8"]> = { ...(sr.stage8 || {}) };
 
   // Collect tenant names from every upstream stage Claude has touched.
   const tenantNames: string[] = [];
@@ -4926,6 +4929,12 @@ async function runStage8(runId: string, req: Request): Promise<void> {
       brochurePdfs,
     });
     patch.collections = sweep.collections;
+    // The wide Street View capture becomes the run's hero slot — this is
+    // what the Why Buy deck embeds (deckImageDataUris) and what the stage
+    // card previews. Without it decks were shipping hero-less.
+    if (sweep.streetViewImageIds?.[0]) {
+      patch.streetViewImageId = sweep.streetViewImageIds[0];
+    }
     // Auto-fold the freshly-swept images into property_imagery_assets so
     // they surface in the picker on the Property Intelligence Imagery
     // tab and the WhyBuyCard without anyone having to click Discover.
@@ -4940,6 +4949,26 @@ async function runStage8(runId: string, req: Request): Promise<void> {
         });
       } catch (err: any) {
         console.warn("[pathway stage8] imagery discover post-sweep failed:", err?.message);
+      }
+      // Hero enforcement: if the fold-in left the property with no visible
+      // hero (brochure shots mostly classify as secondary_external), promote
+      // the wide Street View so every run ships with a proper exterior hero.
+      if (sweep.streetViewImageIds?.[0]) {
+        try {
+          const { rows } = await pool.query(
+            `SELECT 1 FROM property_imagery_assets WHERE property_id = $1 AND kind = 'hero' AND hidden = FALSE LIMIT 1`,
+            [run.propertyId],
+          );
+          if (!rows[0]) {
+            const upd = await pool.query(
+              `UPDATE property_imagery_assets SET kind = 'hero' WHERE property_id = $1 AND image_studio_id = $2`,
+              [run.propertyId, sweep.streetViewImageIds[0]],
+            );
+            if ((upd.rowCount || 0) > 0) console.log(`[pathway stage8] promoted Street View ${sweep.streetViewImageIds[0]} to hero for property ${run.propertyId}`);
+          }
+        } catch (err: any) {
+          console.warn("[pathway stage8] hero promotion failed:", err?.message);
+        }
       }
     }
   } catch (err: any) {
