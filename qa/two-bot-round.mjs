@@ -164,6 +164,21 @@ async function visit(page, persona, path, label) {
   }
 }
 
+// r273: goto for the dedicated mobile contexts — right after localStorage
+// auth is planted on "/", the app's hydration can issue a redirect-on-mount
+// that aborts the NEXT navigation (the r204 class; flaked once under round
+// load as ERR_ABORTED at /requirements). Retry once so the page really lands
+// on the target instead of swallowing the abort and asserting elsewhere.
+async function mobGoto(pg, url, nav) {
+  try {
+    await pg.goto(url, nav);
+  } catch (e) {
+    if (!/ERR_ABORTED/.test(String(e))) throw e;
+    await pg.waitForTimeout(1000);
+    await pg.goto(url, nav);
+  }
+}
+
 async function step(page, persona, scenario, fn) {
   currentScenario[persona] = scenario;
   try {
@@ -565,7 +580,7 @@ async function victoriaRound(page, cross) {
       await mob.evaluate(([tok, u]) => {
         localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
       }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
-      await mob.goto(`${BASE}/deals/${deal.id}`, nav);
+      await mobGoto(mob, `${BASE}/deals/${deal.id}`, nav);
       await mob.locator('[data-testid="button-edit-deal"]').waitFor({ timeout: 20000 });
       for (const id of ['button-deal-image-studio', 'button-deal-create-document', 'button-edit-deal']) {
         const box = await mob.locator(`[data-testid="${id}"]`).first().boundingBox();
@@ -3954,7 +3969,7 @@ async function markRound(page, cross) {
       await mob.evaluate(([tok, u]) => {
         localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
       }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
-      await mob.goto(`${BASE}/deals/${deal.id}`, nav);
+      await mobGoto(mob, `${BASE}/deals/${deal.id}`, nav);
       await mob.waitForTimeout(3000);
       if (!(await mob.locator('[data-testid="deal-sidebar-mobile"]').isVisible().catch(() => false))) {
         throw new Error('mobile deal detail lost the sidebar sections (deal-sidebar-mobile not visible at 390px)');
@@ -3992,12 +4007,12 @@ async function markRound(page, cross) {
       await mob.evaluate(([tok, u]) => {
         localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
       }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
-      await mob.goto(`${BASE}/requirements`, nav);
+      await mobGoto(mob, `${BASE}/requirements`, nav);
       await mob.waitForTimeout(3000);
       if (await mob.locator('[data-testid="button-new-brand"]').count()) {
         throw new Error('client requirements shows the staff-only New Brand button (its save 403s for clients)');
       }
-      await mob.goto(`${BASE}/calendar`, nav);
+      await mobGoto(mob, `${BASE}/calendar`, nav);
       await mob.waitForTimeout(3000);
       for (const id of ['view-week', 'toggle-crm-events']) {
         const box = await mob.locator(`[data-testid="${id}"]`).boundingBox();
@@ -4034,7 +4049,7 @@ async function markRound(page, cross) {
       await mob.evaluate(([tok, u]) => {
         localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
       }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
-      await mob.goto(`${BASE}/`, nav);
+      await mobGoto(mob, `${BASE}/`, nav);
       // Dashboard widgets poll (news/map), so networkidle can't settle here.
       await mob.waitForLoadState('networkidle').catch(() => {});
       await mob.waitForTimeout(3000);

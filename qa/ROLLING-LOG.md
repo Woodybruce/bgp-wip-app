@@ -63,7 +63,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r273 · 2026-08-12 · FULL (rotation #3 client mobile 390px) — IN PROGRESS
+### r273 · 2026-08-12 · FULL (rotation #3 client mobile 390px)
 - Fresh container (pg_hba trust per r205 — method-column-only sed;
   restore-as-postgres + per-object ALTER owners + schema grant per r249).
   Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
@@ -71,10 +71,40 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   178 scenarios ok, 3 logged issues — 2 listed noise (rocketreach-400;
   commentary-regen 503), 1 flow-failure client-mobile-controls-reachable
   "page.goto: net::ERR_ABORTED at /requirements" = the r204
-  redirect-on-mount goto race (first flake in this scenario since its
+  redirect-on-mount goto race under round load (first flake since its
   r266 rebuild): standalone re-run 5/5 green, new-brand count 0 every
-  pass. Triage done; journey (tracker Add-Viewing write at client
-  mobile) + scenario hardening pending.
+  pass — NOT an app bug.
+- Journey: Mark Warne @ 390px iPhone UA — "just walked a vacant Bluewater
+  unit with an agent: log the viewing on my phone, then check the unit's
+  asking rent and existing interest" (FIRST coverage of the tracker WRITE
+  path — Add Viewing dialog — at client mobile): login → "/" Portfolio
+  home → tracker link → /available (153 units, 0 h-overflow) → search
+  MSU3 (2 cards) → card "Viewing" button → dialog opens with the Add form
+  → company combobox works inline at 390px in-dialog (typed Starbucks,
+  picked; r253 EntityCombobox shape holds), date defaults today (UX #2
+  holds), Save inside the viewport → "Viewing added" toast, row lists
+  with company/date/attendees, card chip flips to "Viewing (1)" →
+  Interest button opens the Offers dialog clean (Add Offer form, all
+  fields inside 390px). Probe viewing deleted via API (200) — client
+  parity delete works. 0 page errors; only non-listed sighting was
+  3× 503 GET /api/ai-briefing on the client home = keyless-AI noise
+  class (generic "503s from AI/M365 endpoints" line covers it). 0 app
+  bugs.
+- Bugs fixed: 0 (nothing broken found). Harness fix (1): new mobGoto
+  helper retries once on ERR_ABORTED (swallow-only would false-pass
+  assertions against the wrong page) — applied to the post-localStorage
+  gotos in client-mobile-controls-reachable, staff-deal-mobile-action-row
+  and client-mobile-no-overflow (qa/two-bot-round.mjs; node --check
+  clean; live from r274).
+- Bugs deferred: none. Suggestions added: UX #42 (mobile tracker unit
+  card silently drops Rent/Area rows when unset — user can't tell
+  unrecorded from hidden; wants "—"/"not set" per confirmed #4 pattern).
+  New flakes: none new (the /requirements abort joins the documented
+  r204 class, now hardened). FIXTURE NOTE: MSU3 Bluewater exists TWICE
+  in the fixture (both AVA, same name, no rent/sqft) — dupe rows, mind
+  probes that assume one.
+- Next journey: rotation #4 staff mobile 390px (r273 had the journey →
+  r274 may be LIGHT; then #4).
 
 ### r272 · 2026-08-12 · LIGHT (r271 had the journey)
 - Fresh container (pg_hba trust per r205 — method-column-only sed;

@@ -13,6 +13,16 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+42. 2026-08-12 · Landsec client / mobile 390px · checking a vacant unit's
+    asking rent on the Letting Tracker · the mobile unit card silently
+    drops its Rent p.a. / Area rows when the values are unset — the user
+    can't tell "no rent recorded" from "rent hidden on mobile" (desktop at
+    least shows the empty Rent column cell; MSU3 Bluewater has no asking
+    rent in the fixture and the card just shows name + status) · Suggested:
+    keep the rows with an explicit "not set" / "—" value, mirroring the
+    confirmed #4 pattern (client KPI shows "—" + "no passing rent recorded
+    yet" instead of vanishing).
+
 41. 2026-08-12 · Landsec client / desktop 1440px · reviewing a tenant brand
     profile · the Instagram card's empty state reads "Meta Graph API
     credentials not set on server" — server-config copy shown to a client
