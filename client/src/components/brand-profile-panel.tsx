@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { PropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
 import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, Star as StarIcon, UserPlus, ClipboardList } from "lucide-react";
+import { ContactFormDialog } from "@/pages/contacts";
 import { TagChip, TAG_TOKEN_SOURCE, buildTagToken, type TagType } from "@/components/chat-tags";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -1024,6 +1025,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
   if (isLoading || !data) return null;
 
+  const [addContactOpen, setAddContactOpen] = useState(false);
   const c = data.company;
   const aiFields = c.ai_generated_fields || {};
   const stores = data.stores || [];
@@ -1504,6 +1506,18 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 <Sparkles className="w-3 h-3" /> {contactsFinding ? "Finding…" : "Refresh contacts"}
               </button>
               )}
+              {!isClientViewer && (
+              <button
+                type="button"
+                onClick={() => setAddContactOpen(true)}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
+                title="Add a contact to this company by hand"
+                data-testid="button-add-contact-brand"
+              >
+                <Plus className="w-3 h-3" /> Add contact
+              </button>
+              )}
+              {!isClientViewer && <ContactFormDialog open={addContactOpen} onOpenChange={setAddContactOpen} defaultCompanyId={c.id} />}
               {c.stock_ticker && (
                 <a
                   href={`https://finance.yahoo.com/quote/${encodeURIComponent(c.stock_ticker)}`}

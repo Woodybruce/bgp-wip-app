@@ -949,7 +949,11 @@ export function registerInteractionRoutes(app: Express) {
   // (the Outlook item id) dedupes repeat clicks and overlap with the sync.
   app.post("/api/interactions/log", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { contactId, companyId, dealId, subject, preview, senderEmail, senderName, microsoftId, interactionDate, direction } = req.body || {};
+      const { contactId, companyId, dealId, subject, preview, senderEmail, senderName, microsoftId, interactionDate, direction, type } = req.body || {};
+      // Manual "Log activity" entries (UX #34) pass type call/meeting/note;
+      // the Outlook add-in omits it and keeps the original email path.
+      const entryType = ["call", "meeting", "note", "email"].includes(String(type || "")) ? String(type) : "email";
+      const matchMethod = type ? "manual" : "outlook-addin";
       if (!contactId && !companyId && !dealId) {
         return res.status(400).json({ error: "link the interaction to a contact, company, or deal" });
       }
@@ -992,7 +996,7 @@ export function registerInteractionRoutes(app: Express) {
       const ins = await pool.query(
         `INSERT INTO crm_interactions
            (contact_id, company_id, deal_id, type, direction, subject, preview, participants, microsoft_id, match_method, interaction_date, bgp_user)
-         VALUES ($1, $2, $3, 'email', $4, $5, $6, $7, $8, 'outlook-addin', $9, $10)
+         VALUES ($1, $2, $3, $11, $4, $5, $6, $7, $8, $12, $9, $10)
          RETURNING id`,
         [
           resolvedContactId,
@@ -1005,6 +1009,8 @@ export function registerInteractionRoutes(app: Express) {
           microsoftId ? String(microsoftId) : null,
           interactionDate ? new Date(interactionDate) : new Date(),
           (req as any).user?.name || (req as any).user?.username || null,
+          entryType,
+          matchMethod,
         ]
       );
       res.json({ logged: true, id: ins.rows[0].id, contactId: resolvedContactId, contactCreated });

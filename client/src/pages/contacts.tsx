@@ -234,16 +234,19 @@ function MailOutDialog({
   );
 }
 
-function ContactFormDialog({
+export function ContactFormDialog({
   open,
   onOpenChange,
   contact,
   companies,
+  defaultCompanyId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   contact?: CrmContact | null;
   companies?: CrmCompany[];
+  /** Pre-selects the company for new contacts (brand-profile Add contact). */
+  defaultCompanyId?: string;
 }) {
   const { toast } = useToast();
   const isEdit = !!contact;
@@ -251,7 +254,7 @@ function ContactFormDialog({
     name: contact?.name || "",
     groupName: contact?.groupName || "",
     role: contact?.role || "",
-    companyId: contact?.companyId || "",
+    companyId: contact?.companyId || defaultCompanyId || "",
     companyName: contact?.companyName || "",
     email: contact?.email || "",
     phone: contact?.phone || "",
@@ -646,6 +649,7 @@ function ContactDetail({ id }: { id: string }) {
   const { toast } = useToast();
   const { data: cdViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const cdIsClient = cdViewer?.role === "Client" || !!cdViewer?.companyScopeId;
+  const [logActivityOpen, setLogActivityOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
 
   const { data: contact, isLoading } = useQuery<CrmContact>({
@@ -756,6 +760,7 @@ function ContactDetail({ id }: { id: string }) {
   return (
     <div className="p-4 sm:p-6 space-y-6" data-testid="contact-detail">
       <ContactFormDialog open={editOpen} onOpenChange={setEditOpen} contact={contact} companies={companies} />
+      <LogActivityDialog open={logActivityOpen} onOpenChange={setLogActivityOpen} contactId={contact.id} companyId={contact.companyId || undefined} />
 
       <div className="flex items-center gap-3 flex-wrap">
         <Link href="/contacts">
@@ -809,6 +814,12 @@ function ContactDetail({ id }: { id: string }) {
             {enrichMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
             Enrich
           </Button>
+          )}
+          {!cdIsClient && (
+            <Button variant="outline" size="sm" onClick={() => setLogActivityOpen(true)} data-testid="button-log-activity">
+              <Phone className="w-4 h-4 mr-1" />
+              Log activity
+            </Button>
           )}
           {(() => {
             // Clients can only write own-company + brand-slice contacts; agent
@@ -2581,5 +2592,95 @@ function ArchiveInteractionRow({ interaction }: { interaction: ArchiveInteractio
         </div>
       )}
     </div>
+  );
+}
+
+
+// Lightweight manual activity logger (UX #34) — call/meeting/note entries
+// land in crm_interactions via /api/interactions/log and render in the
+// contact's InteractionsBoard alongside synced emails and meetings.
+export function LogActivityDialog({ open, onOpenChange, contactId, companyId }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  contactId: string;
+  companyId?: string;
+}) {
+  const { toast } = useToast();
+  const [actType, setActType] = useState("call");
+  const [actDate, setActDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [actSummary, setActSummary] = useState("");
+  const [actDetail, setActDetail] = useState("");
+  useEffect(() => {
+    if (open) { setActType("call"); setActDate(new Date().toISOString().slice(0, 10)); setActSummary(""); setActDetail(""); }
+  }, [open]);
+  const logMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", "/api/interactions/log", {
+        contactId,
+        companyId: companyId || null,
+        type: actType,
+        subject: actSummary.trim(),
+        preview: actDetail.trim() || null,
+        interactionDate: actDate,
+        direction: "outbound",
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/interactions", "contact", contactId] });
+      toast({ title: "Activity logged" });
+      onOpenChange(false);
+    },
+    onError: (err: Error) => toast({ title: "Couldn't log activity", description: err.message, variant: "destructive" }),
+  });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-[440px]">
+        <DialogHeader>
+          <DialogTitle>Log activity</DialogTitle>
+          <DialogDescription>Record a call, meeting or note against this contact</DialogDescription>
+        </DialogHeader>
+        <form
+          onSubmit={(e) => { e.preventDefault(); if (actSummary.trim()) logMutation.mutate(); }}
+          className="space-y-4"
+        >
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="text-xs font-medium">Type</Label>
+              <Select value={actType} onValueChange={setActType}>
+                <SelectTrigger data-testid="select-activity-type"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="call">Call</SelectItem>
+                  <SelectItem value="meeting">Meeting</SelectItem>
+                  <SelectItem value="note">Note</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs font-medium">Date</Label>
+              <Input type="date" value={actDate} onChange={(e) => setActDate(e.target.value)} data-testid="input-activity-date" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs font-medium">Summary</Label>
+            <Input
+              value={actSummary}
+              onChange={(e) => setActSummary(e.target.value)}
+              placeholder="e.g. Call re Bluewater unit — keen, wants floorplans"
+              data-testid="input-activity-summary"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs font-medium">Detail (optional)</Label>
+            <Textarea value={actDetail} onChange={(e) => setActDetail(e.target.value)} rows={3} data-testid="input-activity-detail" />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type="submit" disabled={!actSummary.trim() || logMutation.isPending} data-testid="button-save-activity">
+              {logMutation.isPending ? "Saving…" : "Log activity"}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

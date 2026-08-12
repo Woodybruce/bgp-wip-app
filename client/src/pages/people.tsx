@@ -1,4 +1,5 @@
 import { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
+import { ContactFormDialog } from "@/pages/contacts";
 import { useRoute, useLocation, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1558,6 +1559,7 @@ function PeopleHub() {
 
   const [tab, setTab] = useState<PeopleTab>(isLandsec ? "agents" : "landlords");
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">("card");
+  const [hubAddContactOpen, setHubAddContactOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ type: "company" | "contact"; id: string; name: string } | null>(null);
 
   const deleteMutation = useMutation({
@@ -1649,9 +1651,13 @@ function PeopleHub() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setHubAddContactOpen(true)} data-testid="button-hub-add-contact">
+            <Plus className="w-4 h-4 mr-1" /> Add contact
+          </Button>
           <ViewToggle view={viewMode} onToggle={setViewMode} />
         </div>
       </div>
+      <ContactFormDialog open={hubAddContactOpen} onOpenChange={setHubAddContactOpen} />
 
       <div className="flex items-center gap-1 border-b">
         {tabs.map((t) => (
