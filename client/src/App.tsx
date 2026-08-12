@@ -152,6 +152,15 @@ function LoginRedirect() {
   return null;
 }
 
+// /messages is the mobile chat list (bottom-nav tab, intercepted before the
+// desktop Router mounts). A mobile bookmark or shared link opened on desktop
+// used to land on "Page not found" — send it to ChatBGP instead.
+function MessagesRedirect() {
+  const [, setLocation] = useLocation();
+  useEffect(() => { setLocation("/chatbgp", { replace: true }); }, [setLocation]);
+  return null;
+}
+
 // Document Studio is now one cockpit with tabs. The old standalone
 // /templates and /decks pages fold in as tabs, so their URLs redirect into
 // the Studio with the right tab pre-selected (the deck editor /decks/:id
@@ -219,7 +228,7 @@ function StudioRoute({ children }: { children: React.ReactNode }) {
 // Everything else redirects home — nav hiding alone doesn't stop a pasted URL.
 const CLIENT_ALLOWED_ROUTES = [
   "/", "/properties", "/property-intelligence", "/map", "/brands",
-  "/contacts", "/companies", "/comps", "/chatbgp", "/requirements",
+  "/contacts", "/companies", "/comps", "/chatbgp", "/messages", "/requirements",
   "/deals", "/tasks", "/today", "/leasing-schedule", "/land-registry",
   "/business-rates", "/m/images", "/image-studio", "/cad-measure", "/settings/profile",
   "/home",
@@ -252,6 +261,7 @@ function Router() {
       {/* /home is the mobile dashboard tab; on desktop it's just the dashboard. */}
       <Route path="/home" component={Dashboard} />
       <Route path="/login" component={LoginRedirect} />
+      <Route path="/messages" component={MessagesRedirect} />
       <Route path="/instructions" component={Instructions} />
       {/* Properties list now lives as a tab inside Deals Hub. /properties
           keeps working but mounts DealsHub so the user sees the unified

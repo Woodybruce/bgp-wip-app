@@ -30,6 +30,8 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   locally; the brand profile auto-fires it and swallows the failure
 - 401 GET /api/client/brand-theme console echo on the login screen (fires
   before auth hydrates; harmless)
+- 503 GET /api/brand/:id/ai-take/* — keyless AI-take panels on company
+  profiles fire these on load; UI shows "AI take unavailable" (r269)
 - ERR_CONNECTION_RESET on google.com/s2/favicons — no external network
 
 ## Known flakes
@@ -61,14 +63,49 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r269 · 2026-08-12 · ROUND IN PROGRESS (provisional)
+### r269 · 2026-08-12 · FULL (rotation #1 staff desktop)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
-  + schema grant per r249). Regression: run-smoke.sh GREEN first pass
-  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake).
-- Plan: FULL round (r268 was LIGHT) — rotation #1 staff desktop journey:
-  Victoria adds a new brand contact via /contacts New Contact, verifies it
-  on the brand profile, then first journey visit to ChatBGP /messages
-  (keyless degradation check). Two-bot round running next.
+  + schema grant per r249). Regression: run-smoke.sh GREEN ×2 (42 checks,
+  0 failures; FRESH_BUILD=1 before the fix, rebuilt bundle after; no
+  cold-build flake either pass). Two-bot round 269: exit 0, all scenarios ok,
+  2 logged issues both listed noise (rocketreach-400; commentary-regen 503).
+  0 raw 500/502/504 in the whole round's server log (the lone " 500 " grep
+  hit is the text "500 articles" in a news-feed log line).
+- Journey: Victoria desktop 1440px — "after an intro call with a new
+  Starbucks contact: get them into the CRM, then ask ChatBGP a question"
+  (FIRST journey hunt for the staff manual add-contact path + FIRST visit
+  to staff-desktop ChatBGP): login → /contacts CRM hub (Landlords/Agents/
+  Lenders render; 0 add-contact controls on any tab) → Landsec + Starbucks
+  profiles (render clean, contacts board has only inbox-scan Add +
+  RocketReach refresh) → /chatbgp (keyless "Not Connected — AI service is
+  not configured" house state, no hang — GREEN). Core task IMPOSSIBLE as
+  the user: no manual add-contact entry point anywhere for staff (the
+  complete New Contact dialog in pages/contacts.tsx is orphaned — /contacts
+  routes to the People hub; staff POST /api/crm/contacts still 201s) —
+  logged as UX #39, not built (entry-point placement is Woody's call).
+  Ai-take 503s on profiles = no-key noise (added to noise list below).
+  NOT bugs (tester errors): /messages is mobile-only by design (bottom-nav
+  tab) — but see the fix below; first "manual-add=1" probe hit was the
+  regex matching "no NEW CONTACTs found" in the scan banner, not a control.
+- Bug fixed (1): desktop /messages showed "Page not found" (r257 /login
+  class): the mobile chat list is intercepted before the desktop Router,
+  which had no /messages route — a mobile bookmark/shared link opened on
+  desktop dead-ended (clients additionally guard-bounced home, since
+  /messages wasn't CLIENT_ALLOWED). Added MessagesRedirect → /chatbgp in
+  the authenticated Router + "/messages" to CLIENT_ALLOWED_ROUTES
+  (client/src/App.tsx). Verified in-browser both personas: staff and Mark
+  land on /chatbgp, no "Page not found". tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +2 — staff-messages-desktop-redirect and
+  client-messages-desktop-redirect (desktop /messages must land on
+  /chatbgp, never Page-not-found/guard-bounce). Assertions verified
+  standalone in-browser both personas; node --check clean; run from r270.
+- Environment noise addition: GET /api/brand/:id/ai-take/* 503s (keyless
+  AI-take panels on company profiles fire them on load; UI shows the
+  intended "AI take unavailable" copy).
+- Bugs deferred: none. Suggestions added: UX #39 (staff have no manual
+  add-contact path; orphaned New Contact dialog). New flakes: none.
+- Next journey: rotation #2 client desktop (r269 had the journey → r270
+  may be LIGHT; then #2).
 
 ### r268 · 2026-08-12 · LIGHT (r267 had the journey)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners

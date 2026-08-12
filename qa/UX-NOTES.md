@@ -13,6 +13,21 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+39. 2026-08-12 · BGP staff / desktop 1440px · after an intro call, tried to
+    add the new Starbucks contact to the CRM by hand · there is NO manual
+    "add contact" entry point anywhere for staff: the CRM hub (Landlords/
+    Agents/Lenders tabs) has none, and a brand/company profile offers only
+    inbox-scan "Add" rows (needs M365 + an email from that person) and
+    RocketReach "Refresh contacts" (needs an API key). A complete "New
+    Contact" dialog exists in pages/contacts.tsx (name/status/type/email/
+    phone/title/company + save to POST /api/crm/contacts, which staff-201s)
+    but became unreachable when /contacts was re-routed to the People hub —
+    the client Brand Directory kept its own Add contact button, staff lost
+    theirs. Someone met at a viewing or event can't be logged at all ·
+    Suggested: an "Add contact" button on the company/brand profile
+    contacts board (and/or the CRM hub header) reusing the existing orphaned
+    dialog. Needs a decision on where it should live — not built.
+
 37. 2026-08-11 · Landsec client / mobile 390px · "when's our next meeting
     with BGP?" — the calendar opens on Day view of today; with no meeting
     today the grid is just empty, and finding the next one means paging

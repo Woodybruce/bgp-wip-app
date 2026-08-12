@@ -1056,6 +1056,18 @@ async function victoriaRound(page, cross) {
     if (await page.getByText('Page not found').count()) throw new Error('authenticated /login landed on Page not found');
   });
 
+  // r269: /messages is the mobile chat list; a mobile bookmark opened on
+  // desktop used to land on "Page not found" (no desktop route). Must now
+  // redirect to /chatbgp.
+  await step(page, p, 'staff-messages-desktop-redirect', async () => {
+    await page.goto(`${BASE}/messages`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2500);
+    const path = new URL(page.url()).pathname;
+    if (path === '/messages') throw new Error('desktop /messages did not redirect');
+    if (path !== '/chatbgp') throw new Error(`desktop /messages landed on ${path}, expected /chatbgp`);
+    if (await page.getByText('Page not found').count()) throw new Error('desktop /messages landed on Page not found');
+  });
+
   // 4m. Deal comments round-trip: Victoria writes a comment on the Bluewater
   // deal and reads it back (the sidebar Comments widget rides this field).
   await step(page, p, 'staff-deal-comment', async () => {
@@ -3800,6 +3812,16 @@ async function markRound(page, cross) {
     await page.goto(`${BASE}/hr`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(1800);
     if (new URL(page.url()).pathname === '/hr') throw new Error('client can open the staff-only /hr route (guard hole)');
+  });
+
+  // r269: a client's mobile /messages bookmark opened on desktop must land
+  // on ChatBGP, not "Page not found" or a guard-bounce home.
+  await step(page, p, 'client-messages-desktop-redirect', async () => {
+    await page.goto(`${BASE}/messages`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2500);
+    const path = new URL(page.url()).pathname;
+    if (path !== '/chatbgp') throw new Error(`client desktop /messages landed on ${path}, expected /chatbgp`);
+    if (await page.getByText('Page not found').count()) throw new Error('client desktop /messages landed on Page not found');
   });
 
   await step(page, p, 'client-deal-detail-name-and-doc-gate', async () => {
