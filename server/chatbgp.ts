@@ -13369,17 +13369,11 @@ export function setupChatBGPRoutes(app: Express) {
         const skipLandReg = !!tcArgs.skipLandRegConfirmation;
         const forceNew = !!tcArgs.forceNew;
 
-        // Dedupe — mirrors POST /api/property-pathway/start. Require an
-        // ADDRESS match (postcode is a tie-breaker only); postcode alone is
-        // far too loose — buildings sharing a postcode (e.g. 3-4 and 5 The
-        // Pavement, or several units on one SW1Y 4DG) would otherwise collapse
-        // into a single run + CRM link. `forceNew` skips dedupe entirely so the
-        // user can deliberately start a fresh investigation for an address that
-        // already has one.
-        const normaliseAddr = (s: string) =>
-          s.trim().toLowerCase().replace(/[—–]/g, "-").replace(/\s*-\s*/g, "-").replace(/[.,]/g, "").replace(/\s+/g, " ");
-        const normalisedAddr = normaliseAddr(address);
-        const normalisedPostcode = (postcode || "").replace(/\s+/g, "").toUpperCase();
+        // Dedupe — the same exact + fuzzy matcher POST /api/property-pathway/start
+        // uses (findDuplicatePathwayRuns), so both front doors ask the same
+        // question. An exact address match reopens the run; a fuzzy match
+        // ("Vesuvius Site" vs "Vesuvius Works") makes the model ask the user
+        // before creating anything. `forceNew` skips dedupe entirely.
 
         // Build the confirmed-title seed: resolve the proprietor for the
         // picked title and lock Stage 1 to it (manualLock) so the runner
@@ -13417,13 +13411,23 @@ export function setupChatBGPRoutes(app: Express) {
 
         if (!forceNew) {
           const existing = await db.select().from(propertyPathwayRuns).orderBy(desc(propertyPathwayRuns.updatedAt)).limit(200);
-          const match = existing.find((r) => {
-            const rAddr = normaliseAddr(r.address || "");
-            const rPostcode = (r.postcode || "").replace(/\s+/g, "").toUpperCase();
-            if (rAddr !== normalisedAddr) return false;
-            if (normalisedPostcode && rPostcode && rPostcode !== normalisedPostcode) return false;
-            return true;
-          });
+          const { findDuplicatePathwayRuns } = await import("./property-pathway");
+          const { exact: match, similar } = findDuplicatePathwayRuns(address, postcode, existing);
+          if (!match && similar.length > 0) {
+            return {
+              data: {
+                duplicateSuspected: true,
+                candidates: similar.map((r) => ({
+                  runId: r.id,
+                  address: r.address,
+                  postcode: r.postcode,
+                  currentStage: r.currentStage,
+                  updatedAt: r.updatedAt,
+                })),
+                nextStep: `Found ${similar.length} existing pathway run${similar.length === 1 ? "" : "s"} that look like the same property ("${address}" vs e.g. "${similar[0].address}"). Do NOT create a new run yet — show the user the candidate(s) and ask whether to open the existing run or genuinely start fresh. To open one, navigate to /property-pathway?runId=<runId>. To start fresh anyway, call start_property_pathway again with forceNew: true.`,
+              },
+            };
+          }
           if (match) {
             // What title is this existing run pinned to?
             const existingPin: string | null =

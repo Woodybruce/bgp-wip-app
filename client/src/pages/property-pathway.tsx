@@ -40,10 +40,27 @@ interface PathwayRun {
   startedAt: string;
   updatedAt: string;
   completedAt?: string | null;
+  startedBy?: string | null;
   // Set by GET /api/property-pathway only — joined from crm_properties +
   // property_imagery_assets so the board can show recognisable cards.
   propertyName?: string | null;
   heroImageStudioId?: string | null;
+  startedByName?: string | null;
+}
+
+// Which human gate (if any) a run is parked at — mirrors the server's
+// review-queue detection so the board can badge runs that need a decision.
+function awaitingGateLabel(run: PathwayRun): string | null {
+  if (run.completedAt) return null;
+  const ss = run.stageStatus || {};
+  if (Object.values(ss).some(s => s === "running")) return null;
+  const sr = run.stageResults || {};
+  const st6 = sr.stage6 || {};
+  const st7 = sr.stage7 || {};
+  if (ss.stage7 === "completed" && (st7.modelRunId || st7.modelVersionId) && !st7.agreed) return "Model sign-off";
+  if (ss.stage6 === "completed" && st6.draft && !st6.agreed) return "Plan sign-off";
+  if (ss.stage3 === "completed" && (!ss.stage4 || ss.stage4 === "pending")) return "Review & confirm";
+  return null;
 }
 
 const STAGE_LABELS = [
@@ -79,6 +96,20 @@ export default function PropertyPathway() {
   // "Loading…" state — which is what made the board look glitchy.
   const [initialLoading, setInitialLoading] = useState(true);
   const [advancing, setAdvancing] = useState(false);
+  // Board attribution filters — whose deal, and what's waiting on a human.
+  const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  const [ownerFilter, setOwnerFilter] = useState<string>("all"); // all | mine | waiting | <userId>
+  const ownerOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const r of runs) if (r.startedBy && r.startedByName) seen.set(r.startedBy, r.startedByName);
+    return Array.from(seen, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [runs]);
+  const visibleRuns = useMemo(() => {
+    if (ownerFilter === "mine") return runs.filter(r => r.startedBy && r.startedBy === viewer?.id);
+    if (ownerFilter === "waiting") return runs.filter(r => awaitingGateLabel(r) !== null);
+    if (ownerFilter !== "all") return runs.filter(r => r.startedBy === ownerFilter);
+    return runs;
+  }, [runs, ownerFilter, viewer?.id]);
   const ctxProperty = usePropertyContext();
   const [newAddress, setNewAddress] = useState(ctxProperty?.name || "");
   const [newPostcode, setNewPostcode] = useState(ctxProperty?.postcode || "");
@@ -252,7 +283,7 @@ export default function PropertyPathway() {
     } catch {}
   }
 
-  async function startRun(addressOverride?: string, postcodeOverride?: string) {
+  async function startRun(addressOverride?: string, postcodeOverride?: string, force?: boolean) {
     const addr = (addressOverride ?? newAddress).trim();
     if (!addr) return;
     const pc = (postcodeOverride ?? newPostcode).trim();
@@ -261,8 +292,30 @@ export default function PropertyPathway() {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         credentials: "include",
-        body: JSON.stringify({ address: addr, postcode: pc || undefined }),
+        body: JSON.stringify({ address: addr, postcode: pc || undefined, force: force || undefined }),
       });
+      // Fuzzy duplicate — the server found run(s) that look like the same
+      // property under a different spelling. Hard prompt: open the existing
+      // run, or deliberately start fresh.
+      if (res.status === 409) {
+        const dup = await res.json().catch(() => null);
+        const cands: Array<{ id: string; address: string; postcode?: string | null }> = dup?.candidates || [];
+        if (cands.length > 0) {
+          const listing = cands.map(c => `• ${c.address}${c.postcode ? ` (${c.postcode})` : ""}`).join("\n");
+          const openExisting = confirm(
+            `There's already an investigation that looks like this property:\n\n${listing}\n\nOK — open the existing run\nCancel — start a genuinely new one anyway`,
+          );
+          if (openExisting) {
+            setNewAddress("");
+            setNewPostcode("");
+            await loadRuns();
+            navigate(`/property-pathway?runId=${cands[0].id}`);
+          } else {
+            await startRun(addr, pc, true);
+          }
+          return;
+        }
+      }
       if (!res.ok) throw new Error("Failed to start");
       const { run, existing } = await res.json();
       setNewAddress("");
@@ -514,16 +567,43 @@ export default function PropertyPathway() {
       </form>
 
       <div>
-        <h2 className="text-sm font-medium text-muted-foreground mb-3">Recent investigations</h2>
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <h2 className="text-sm font-medium text-muted-foreground mr-2">Recent investigations</h2>
+          {ownerOptions.length > 1 && (
+            <>
+              {[{ key: "all", label: "All" }, { key: "mine", label: "Mine" }, { key: "waiting", label: "Needs sign-off" }].map(f => (
+                <button
+                  key={f.key}
+                  onClick={() => setOwnerFilter(ownerFilter === f.key ? "all" : f.key)}
+                  className={`px-2.5 py-1 rounded-full text-xs border transition ${ownerFilter === f.key ? "bg-foreground text-background border-foreground" : "bg-card text-muted-foreground hover:border-foreground/30"}`}
+                  data-testid={`filter-pathway-${f.key}`}
+                >
+                  {f.label}
+                </button>
+              ))}
+              <select
+                value={ownerOptions.some(o => o.id === ownerFilter) ? ownerFilter : ""}
+                onChange={(e) => setOwnerFilter(e.target.value || "all")}
+                className="px-2 py-1 rounded-full text-xs border bg-card text-muted-foreground"
+                data-testid="filter-pathway-owner"
+              >
+                <option value="">By person…</option>
+                {ownerOptions.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </select>
+            </>
+          )}
+        </div>
         {initialLoading && runs.length === 0 ? (
           <div className="text-sm text-muted-foreground">Loading…</div>
         ) : runs.length === 0 ? (
           <div className="text-sm text-muted-foreground">
             No investigations yet — enter an address above to start one.
           </div>
+        ) : visibleRuns.length === 0 ? (
+          <div className="text-sm text-muted-foreground">Nothing matches this filter.</div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {runs.map(r => <PathwayCard key={r.id} run={r} onOpen={() => { setSelectedRun(r); navigate(`/property-pathway?runId=${r.id}`); }} onDelete={() => deleteRun(r.id)} />)}
+            {visibleRuns.map(r => <PathwayCard key={r.id} run={r} onOpen={() => { setSelectedRun(r); navigate(`/property-pathway?runId=${r.id}`); }} onDelete={() => deleteRun(r.id)} />)}
           </div>
         )}
       </div>
@@ -565,6 +645,7 @@ function PathwayCard({ run, onOpen, onDelete }: { run: PathwayRun; onOpen: () =>
   // flashing on refetch.
   const anyRunning = Object.values(run.stageStatus || {}).some(s => s === "running");
   const heroUrl = run.heroImageStudioId ? `/api/image-studio/${run.heroImageStudioId}/thumb` : null;
+  const gateLabel = awaitingGateLabel(run);
 
   return (
     <div
@@ -601,12 +682,19 @@ function PathwayCard({ run, onOpen, onDelete }: { run: PathwayRun; onOpen: () =>
             Running
           </span>
         )}
+        {!anyRunning && gateLabel && (
+          <span className="absolute bottom-2 left-2 px-2 py-1 rounded-md bg-amber-500/90 text-white text-[10px] font-medium">
+            {gateLabel}
+          </span>
+        )}
       </div>
 
       <div className="p-3">
         <p className="text-sm font-semibold truncate" title={heading}>{heading}</p>
         {subline && <p className="text-xs text-muted-foreground truncate mt-0.5" title={subline}>{subline}</p>}
-        {updatedStr && <p className="text-[10px] text-muted-foreground mt-1.5">Updated {updatedStr}</p>}
+        <p className="text-[10px] text-muted-foreground mt-1.5">
+          {run.startedByName ? `${run.startedByName} · ` : ""}{updatedStr ? `Updated ${updatedStr}` : ""}
+        </p>
       </div>
     </div>
   );

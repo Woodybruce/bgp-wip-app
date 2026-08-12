@@ -7180,16 +7180,31 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                         setGoadPanelStartingPathway(true);
                         try {
                           const fullAddress = `${goadPanelUnit.num} ${goadPanelUnit.street}, ${goadPanelUnit.postcode}`.replace(/\s+/g, " ").trim();
-                          const resp = await fetch("/api/property-pathway/start", {
+                          const startReq = (force?: boolean) => fetch("/api/property-pathway/start", {
                             method: "POST",
                             credentials: "include",
                             headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-                            body: JSON.stringify({ address: fullAddress, postcode: goadPanelUnit.postcode }),
+                            body: JSON.stringify({ address: fullAddress, postcode: goadPanelUnit.postcode, force: force || undefined }),
                           });
+                          let resp = await startReq();
+                          // Fuzzy duplicate: make the user choose between the
+                          // existing run and a deliberately fresh one.
+                          if (resp.status === 409) {
+                            const dup = await resp.json().catch(() => null);
+                            const cands = dup?.candidates || [];
+                            if (cands.length > 0) {
+                              const listing = cands.map((c: any) => `• ${c.address}${c.postcode ? ` (${c.postcode})` : ""}`).join("\n");
+                              if (confirm(`There's already an investigation that looks like this property:\n\n${listing}\n\nOK — open the existing run\nCancel — start a genuinely new one anyway`)) {
+                                window.location.href = `/property-pathway?runId=${cands[0].id}`;
+                                return;
+                              }
+                              resp = await startReq(true);
+                            }
+                          }
                           if (resp.ok) {
-                            const run = await resp.json();
-                            if (run?.id || run?.runId) {
-                              const id = run.id || run.runId;
+                            const data = await resp.json();
+                            const id = data?.run?.id || data?.id || data?.runId;
+                            if (id) {
                               window.location.href = `/property-pathway?runId=${id}`;
                               return;
                             }

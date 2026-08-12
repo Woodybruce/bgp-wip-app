@@ -721,6 +721,78 @@ export function nextGateCap(fromStage: number): number {
   return 10;
 }
 
+// ============================================================================
+// DUPLICATE-RUN DETECTION — shared by POST /start and ChatBGP's
+// start_property_pathway tool so both front doors ask the same question.
+// Exact match (normalised address + postcode tie-break) short-circuits to
+// the existing run; fuzzy matches ("Vesuvius Site" vs "Vesuvius Works",
+// same street + postcode with different numbering) come back as `similar`
+// so the caller can put a hard "open it or genuinely start fresh?" prompt
+// in front of the user instead of silently minting run #12.
+// ============================================================================
+
+export function normalisePathwayAddress(s: string): string {
+  return s.trim().toLowerCase().replace(/[—–]/g, "-").replace(/\s*-\s*/g, "-").replace(/[.,]/g, "").replace(/\s+/g, " ");
+}
+
+// Generic words that don't distinguish one asset from another — "Vesuvius
+// Site" and "Vesuvius Works" must reduce to the same core token.
+const ADDR_STOP_WORDS = new Set([
+  "the", "site", "works", "building", "buildings", "house", "estate", "land",
+  "at", "former", "unit", "units", "plot", "phase", "yard", "court", "street",
+  "st", "road", "rd", "lane", "ln", "avenue", "ave", "place", "pl", "square",
+  "sq", "row", "walk", "gardens", "gate", "hill", "park", "of", "and", "&",
+]);
+
+function significantAddrTokens(s: string): Set<string> {
+  return new Set(
+    normalisePathwayAddress(s)
+      .split(/[\s-]+/)
+      .filter(t => t.length > 1 && !ADDR_STOP_WORDS.has(t) && !/^\d+[a-z]?$/.test(t)),
+  );
+}
+
+export function findDuplicatePathwayRuns(
+  address: string,
+  postcode: string | null | undefined,
+  runs: PropertyPathwayRun[],
+): { exact: PropertyPathwayRun | null; similar: PropertyPathwayRun[] } {
+  const normalisedAddr = normalisePathwayAddress(address);
+  const normPc = (postcode || "").trim().replace(/\s+/g, "").toUpperCase();
+
+  const exact = runs.find((r) => {
+    const rAddr = normalisePathwayAddress(r.address || "");
+    const rPc = (r.postcode || "").trim().replace(/\s+/g, "").toUpperCase();
+    if (rAddr !== normalisedAddr) return false;
+    if (normPc && rPc && rPc !== normPc) return false;
+    return true;
+  }) || null;
+
+  const myTokens = significantAddrTokens(address);
+  const outward = (pc: string) => pc.slice(0, -3); // UK inward is always 3 chars
+  const similar = runs.filter((r) => {
+    if (exact && r.id === exact.id) return false;
+    const rTokens = significantAddrTokens(r.address || "");
+    if (myTokens.size === 0 || rTokens.size === 0) return false;
+    let shared = 0;
+    for (const t of myTokens) if (rTokens.has(t)) shared++;
+    const jaccard = shared / (myTokens.size + rTokens.size - shared);
+    const rPc = (r.postcode || "").trim().replace(/\s+/g, "").toUpperCase();
+    if (normPc && rPc) {
+      // Same postcode + any shared core token → almost certainly the same
+      // asset spelled differently. Same district → demand near-identity.
+      // Different districts are different places, however similar the name.
+      if (normPc === rPc) return shared >= 1;
+      if (outward(normPc) === outward(rPc)) return jaccard >= 0.6;
+      return false;
+    }
+    // Postcode missing on one side — go on name similarity alone.
+    return jaccard >= 0.6;
+  }).slice(0, 5);
+
+  return { exact, similar };
+}
+
 async function autoAdvanceDisabled(runId: string): Promise<boolean> {
   try {
     const { rows } = await pool.query(
@@ -4864,8 +4936,11 @@ async function runStage8(runId: string, req: Request): Promise<void> {
   if (!run) throw new Error("Run not found");
   await setStageStatus(runId, "stage8", "running");
 
-  const patch: NonNullable<StageResults["stage8"]> = {};
   const sr = (run.stageResults || {}) as StageResults;
+  // Seed from the existing stage8 blob — the setStageStatus jsonb merge is
+  // top-level, so writing a fresh object on a re-sweep would wipe human-set
+  // fields (retailContextImageId from the map capture, additionalImageIds).
+  const patch: NonNullable<StageResults["stage8"]> = { ...(sr.stage8 || {}) };
 
   // Collect tenant names from every upstream stage Claude has touched.
   const tenantNames: string[] = [];
@@ -4926,6 +5001,12 @@ async function runStage8(runId: string, req: Request): Promise<void> {
       brochurePdfs,
     });
     patch.collections = sweep.collections;
+    // The wide Street View capture becomes the run's hero slot — this is
+    // what the Why Buy deck embeds (deckImageDataUris) and what the stage
+    // card previews. Without it decks were shipping hero-less.
+    if (sweep.streetViewImageIds?.[0]) {
+      patch.streetViewImageId = sweep.streetViewImageIds[0];
+    }
     // Auto-fold the freshly-swept images into property_imagery_assets so
     // they surface in the picker on the Property Intelligence Imagery
     // tab and the WhyBuyCard without anyone having to click Discover.
@@ -4940,6 +5021,26 @@ async function runStage8(runId: string, req: Request): Promise<void> {
         });
       } catch (err: any) {
         console.warn("[pathway stage8] imagery discover post-sweep failed:", err?.message);
+      }
+      // Hero enforcement: if the fold-in left the property with no visible
+      // hero (brochure shots mostly classify as secondary_external), promote
+      // the wide Street View so every run ships with a proper exterior hero.
+      if (sweep.streetViewImageIds?.[0]) {
+        try {
+          const { rows } = await pool.query(
+            `SELECT 1 FROM property_imagery_assets WHERE property_id = $1 AND kind = 'hero' AND hidden = FALSE LIMIT 1`,
+            [run.propertyId],
+          );
+          if (!rows[0]) {
+            const upd = await pool.query(
+              `UPDATE property_imagery_assets SET kind = 'hero' WHERE property_id = $1 AND image_studio_id = $2`,
+              [run.propertyId, sweep.streetViewImageIds[0]],
+            );
+            if ((upd.rowCount || 0) > 0) console.log(`[pathway stage8] promoted Street View ${sweep.streetViewImageIds[0]} to hero for property ${run.propertyId}`);
+          }
+        } catch (err: any) {
+          console.warn("[pathway stage8] hero promotion failed:", err?.message);
+        }
       }
     }
   } catch (err: any) {
@@ -5437,44 +5538,37 @@ export function registerPropertyPathwayRoutes(app: Express) {
       if (!address || typeof address !== "string") {
         return res.status(400).json({ error: "address required" });
       }
-      // Normalise aggressively: lowercase, collapse whitespace, strip spaces
-      // around hyphens, remove punctuation — so "18-22 Haymarket",
-      // "18 - 22 Haymarket", and "18—22 haymarket." all match.
-      const normaliseAddr = (s: string) =>
-        s.trim()
-          .toLowerCase()
-          .replace(/[—–]/g, "-")
-          .replace(/\s*-\s*/g, "-")
-          .replace(/[.,]/g, "")
-          .replace(/\s+/g, " ");
-      const normalisedAddr = normaliseAddr(address);
       // Extract postcode from address if not provided separately
       const UK_POSTCODE_RE = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
       const resolvedPostcode = postcode || address.match(UK_POSTCODE_RE)?.[1] || "";
-      const normalisedPostcode = resolvedPostcode.trim().replace(/\s+/g, "").toUpperCase();
 
-      // Dedupe: only match when BOTH address and postcode line up. Postcode
-      // alone is far too loose — buildings on the same postcode (e.g. multiple
-      // properties sharing SW1Y 4DG) would otherwise share a single pathway
-      // run and CRM link, which has caused bad cross-linkage in the past
-      // (e.g. an 18-22 Haymarket run pointing at a 12-18 Moorgate CRM record
-      // because they once shared a postcode by mistake).
+      // Dedupe at the front door. An exact address match (postcode as
+      // tie-breaker only — postcode alone is far too loose) reopens the
+      // existing run. A fuzzy match ("Vesuvius Site" vs "Vesuvius Works")
+      // comes back as 409 so the client makes the user choose between
+      // opening the existing run and deliberately starting fresh.
       if (!force) {
         const existing = await db
           .select()
           .from(propertyPathwayRuns)
           .orderBy(desc(propertyPathwayRuns.updatedAt))
           .limit(200);
-        const match = existing.find((r) => {
-          const rAddr = normaliseAddr(r.address || "");
-          const rPostcode = (r.postcode || "").trim().replace(/\s+/g, "").toUpperCase();
-          // Require address match. Postcode is a tie-breaker only.
-          if (rAddr !== normalisedAddr) return false;
-          if (normalisedPostcode && rPostcode && rPostcode !== normalisedPostcode) return false;
-          return true;
-        });
-        if (match) {
-          return res.json({ success: true, run: match, existing: true });
+        const { exact, similar } = findDuplicatePathwayRuns(address, resolvedPostcode, existing);
+        if (exact) {
+          return res.json({ success: true, run: exact, existing: true });
+        }
+        if (similar.length > 0) {
+          return res.status(409).json({
+            duplicate: true,
+            message: "There's already a pathway run that looks like this property.",
+            candidates: similar.map(r => ({
+              id: r.id,
+              address: r.address,
+              postcode: r.postcode,
+              currentStage: r.currentStage,
+              updatedAt: r.updatedAt,
+            })),
+          });
         }
       }
 
@@ -5971,6 +6065,17 @@ export function registerPropertyPathwayRoutes(app: Express) {
       const propertyIds = Array.from(new Set(runs.map(r => r.propertyId).filter((id): id is string => !!id)));
       const nameById = new Map<string, string>();
       const heroById = new Map<string, string>();
+      // Whose deal each run is — the board shows attribution and filters
+      // by owner ("mine" / per-person).
+      const starterById = new Map<string, string>();
+      const starterIds = Array.from(new Set(runs.map(r => (r as any).startedBy).filter((id): id is string => !!id)));
+      if (starterIds.length > 0) {
+        const { rows } = await pool.query<{ id: string; name: string }>(
+          `SELECT id, name FROM users WHERE id = ANY($1::varchar[])`,
+          [starterIds],
+        );
+        for (const r of rows) starterById.set(r.id, r.name);
+      }
       if (propertyIds.length > 0) {
         const { rows: nameRows } = await pool.query<{ id: string; name: string }>(
           `SELECT id, name FROM crm_properties WHERE id = ANY($1::varchar[])`,
@@ -6000,6 +6105,7 @@ export function registerPropertyPathwayRoutes(app: Express) {
         ...r,
         propertyName: r.propertyId ? (nameById.get(r.propertyId) || null) : null,
         heroImageStudioId: r.propertyId ? (heroById.get(r.propertyId) || null) : null,
+        startedByName: (r as any).startedBy ? (starterById.get((r as any).startedBy) || null) : null,
       }));
       res.json(enriched);
     } catch (err: any) {
