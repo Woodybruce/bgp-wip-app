@@ -1023,9 +1023,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     retry: false,
   });
 
+  const [addContactOpen, setAddContactOpen] = useState(false);
+
   if (isLoading || !data) return null;
 
-  const [addContactOpen, setAddContactOpen] = useState(false);
   const c = data.company;
   const aiFields = c.ai_generated_fields || {};
   const stores = data.stores || [];
