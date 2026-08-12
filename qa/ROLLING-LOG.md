@@ -63,13 +63,23 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r270 · 2026-08-12 · ROUND IN PROGRESS (provisional)
-- LIGHT round (r269 had the journey). Fresh container (pg_hba trust per
-  r205 — note: blanket sed can mangle scram-sha-256 → trust-sha-256, fix
-  before reload). Regression: run-smoke.sh GREEN first pass (42 checks,
+### r270 · 2026-08-12 · LIGHT (r269 had the journey)
+- Fresh container (pg_hba trust per r205 — note: a blanket sed can mangle
+  scram-sha-256 → trust-sha-256, check the file before reload;
+  restore-as-postgres + per-table ALTER owners + schema grant per r249 —
+  blanket REASSIGN OWNED BY postgres is rejected by pg16, use the
+  per-object loop). Regression: run-smoke.sh GREEN first pass (42 checks,
   0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake). Two-bot
-  round 270 running next — incl. FIRST live runs of r269's
-  staff/client-messages-desktop-redirect scenarios. Triage pending.
+  round 270: exit 0, 179 scenarios ok — incl. the FIRST live runs of
+  r269's staff-messages-desktop-redirect + client-messages-desktop-
+  redirect (both green; the desktop /messages → /chatbgp fix holds).
+  2 logged issues both listed noise (rocketreach-400; commentary-regen
+  503). 0 raw 500/502/504 in the whole round's server log (status tally:
+  only 2xx/3xx/expected 400/401/403/404 + no-key 503s; 403s are the
+  harness's negative probes). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #2 client desktop (r270 was LIGHT → r271 FULL).
 
 ### r269 · 2026-08-12 · FULL (rotation #1 staff desktop)
 - Fresh container (pg_hba trust per r205; restore-as-postgres + ALTER owners
