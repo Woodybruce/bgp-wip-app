@@ -5209,7 +5209,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const urlTeamParam = urlParams.get("team");
   const listFiltersKey = `bgp-deals-list-filters:${mode}`;
   const [savedListFilters] = useState(() => loadSavedDealListFilters(listFiltersKey));
-  const [search, setSearch] = useState(savedListFilters?.search || "");
+  const [search, setSearch] = useState(urlParams.get("search") || savedListFilters?.search || "");
   // Deep links from DealsSummary (the Deals twin of the tracker summary):
   // /deals/list?status=NEG&propertyId=… lands here pre-filtered.
   const [activeGroup, setActiveGroup] = useState(() => legacyToCode(urlParams.get("status")) || savedListFilters?.activeGroup || "all");

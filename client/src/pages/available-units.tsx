@@ -302,6 +302,17 @@ export default function AvailableUnitsPage() {
     } else { setSortBy(key); setSortDir(1); }
   };
   const [targetStatusFilter, setTargetStatusFilter] = useState("all");
+  const [activityFilter, setActivityFilter] = useState<null | "viewings" | "offers">(null);
+  // "Pitch property" from a brand profile carries the brand through
+  // (?pitchBrand=<id>&pitchBrandName=<name>) so units get a one-tap
+  // "add as target" instead of re-finding the brand by hand (UX #15).
+  const [pitchBrand, setPitchBrand] = useState<{ id: string; name: string } | null>(() => {
+    try {
+      const ps = new URLSearchParams(window.location.search);
+      const id = ps.get("pitchBrand"); const name = ps.get("pitchBrandName");
+      return id && name ? { id, name } : null;
+    } catch { return null; }
+  });
   // Column show/hide, mirroring the WIP report's Deal Detail Columns menu.
   // Checkbox + Property/Unit + Target Tenant + Actions always stay.
   const LETTING_COLS: { key: string; label: string }[] = [
@@ -1083,6 +1094,9 @@ export default function AvailableUnitsPage() {
     if (targetStatusFilter !== "all") {
       result = result.filter(u => (briefByUnit[u.id]?.targets || []).some((t: any) => (t.status || "Identified") === targetStatusFilter));
     }
+    // FY strip chips filter to units with live interest (UX #31).
+    if (activityFilter === "viewings") result = result.filter(u => (viewingsCounts[u.id] || 0) > 0);
+    if (activityFilter === "offers") result = result.filter(u => (offersCounts[u.id] || 0) > 0);
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(u => {
@@ -1101,7 +1115,7 @@ export default function AvailableUnitsPage() {
       });
     }
     return result;
-  }, [teamUnits, targetStatusFilter, briefByUnit, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies]);
+  }, [teamUnits, targetStatusFilter, briefByUnit, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies, activityFilter, viewingsCounts, offersCounts]);
 
   const filtered = useMemo(() => {
     // The Letting Tracker is the marketing pipeline (REP / AVA / NEG). Once a
@@ -1299,8 +1313,16 @@ export default function AvailableUnitsPage() {
             const total = data.reduce((a, b) => a + b, 0);
             const max = Math.max(...data, 1);
             const currentMonthIdx = FY_MONTH_NUMS.indexOf(new Date().getMonth() + 1);
+            const filterKey = label === "Viewings" ? "viewings" as const : "offers" as const;
             return (
-              <div key={label} className="flex items-center gap-2.5">
+              <button
+                type="button"
+                key={label}
+                onClick={() => setActivityFilter(activityFilter === filterKey ? null : filterKey)}
+                className={`flex items-center gap-2.5 rounded-md px-1.5 py-0.5 -mx-1.5 transition-colors hover:bg-muted/60 ${activityFilter === filterKey ? "ring-2 ring-primary/60 bg-primary/5" : ""}`}
+                title={`Show only units with ${label.toLowerCase()}`}
+                data-testid={`fy-chip-${filterKey}`}
+              >
                 <Icon className={`h-3.5 w-3.5 ${label === "Viewings" ? "text-blue-500" : "text-amber-500"}`} />
                 <span className="text-xs font-semibold">{label}</span>
                 <span className="text-sm font-bold tabular-nums">{total}</span>
@@ -1313,13 +1335,32 @@ export default function AvailableUnitsPage() {
                     />
                   ))}
                 </div>
-              </div>
+              </button>
             );
           })}
+          {activityFilter && (
+            <span className="text-[11px] text-muted-foreground">
+              showing units with {activityFilter} — click again to clear
+            </span>
+          )}
         </CardContent>
       </Card>
       )}
 
+      {pitchBrand && (
+        <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-900 px-3 py-2 text-xs" data-testid="pitch-brand-banner">
+          <Building2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+          <span>Pitching <span className="font-semibold">{pitchBrand.name}</span> — use the "+ {pitchBrand.name}" button on a unit to add them as a target operator.</span>
+          <button
+            type="button"
+            className="ml-auto text-muted-foreground hover:text-foreground"
+            onClick={() => { setPitchBrand(null); try { window.history.replaceState({}, "", window.location.pathname); } catch {} }}
+            aria-label="Dismiss pitch banner"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -1834,6 +1875,17 @@ export default function AvailableUnitsPage() {
                               onPick={p => addUnitTarget(u, p)}
                               testId={`add-target-${u.id}`}
                             />
+                            {pitchBrand && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-7 px-2 text-[11px] border-blue-300 text-blue-700"
+                                onClick={() => addUnitTarget(u, { name: pitchBrand.name, companyId: pitchBrand.id } as any)}
+                                data-testid={`pitch-here-${u.id}`}
+                              >
+                                <Plus className="w-3 h-3 mr-0.5" /> {pitchBrand.name}
+                              </Button>
+                            )}
                             <Button
                               variant="ghost"
                               size="sm"
