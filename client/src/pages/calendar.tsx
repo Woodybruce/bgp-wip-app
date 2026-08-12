@@ -1651,6 +1651,40 @@ export default function Calendar() {
         </div>
 
         <div className="flex-1 flex flex-col min-w-0 bg-background">
+          {/* Phone: "when's our next meeting?" is the number-one question and
+              Day view of an empty today can't answer it — surface the next
+              five events across days up top (UX #37). Tapping one jumps the
+              grid to that day and opens the event. */}
+          {isMobile && mergedEvents.length > 0 && (() => {
+            const now = new Date();
+            const upcoming = mergedEvents
+              .filter(e => new Date(e.start.dateTime) >= now)
+              .sort((a, b) => new Date(a.start.dateTime).getTime() - new Date(b.start.dateTime).getTime())
+              .slice(0, 5);
+            if (upcoming.length === 0) return null;
+            return (
+              <div className="border-b px-3 py-2 space-y-1" data-testid="mobile-upcoming-agenda">
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Upcoming</p>
+                {upcoming.map((e, i) => {
+                  const d = new Date(e.start.dateTime);
+                  return (
+                    <button
+                      key={e.id || i}
+                      type="button"
+                      className="w-full flex items-center gap-2 text-xs px-1.5 py-1 rounded hover:bg-muted text-left"
+                      onClick={() => { setSelectedDate(d); setSelectedEvent(e); }}
+                      data-testid={`upcoming-event-${i}`}
+                    >
+                      <span className="tabular-nums text-muted-foreground shrink-0 w-24">
+                        {d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })} {d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                      <span className="truncate font-medium">{e.subject || "(no title)"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
           {!status?.connected && !teamEventsRaw && !isClientViewer ? (
             <ConnectPrompt />
           ) : eventsLoading ? (
