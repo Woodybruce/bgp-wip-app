@@ -350,7 +350,12 @@ export function AppSidebar() {
   const viewingAsName = (user as any)?.companyScopeName || activeTeam;
   const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/team-expenses", "/reporting", "/wip-report"];
   const coreNav = isClientUser
-    ? coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
+    ? [
+        ...coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url)),
+        // Clients get the read-only brand-signals feed (UX #35) — News
+        // otherwise lives in the staff/admin nav only.
+        { title: "News", url: "/news", icon: Newspaper },
+      ]
     : coreWithTeamExpenses;
   const unfinishedNavCleaned = isClientUser
     ? unfinishedNav.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))

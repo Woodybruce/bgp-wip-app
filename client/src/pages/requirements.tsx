@@ -1036,18 +1036,33 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
             footer: (() => {
               let pack: { url?: string; name?: string } | null = null;
               if (item.landlordPack) { try { pack = JSON.parse(item.landlordPack); } catch {} }
-              return pack?.url ? (
-                <a
-                  href={pack.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs font-medium text-primary"
-                  data-testid={`download-landlord-pack-${item.id}`}
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  Landlord pack
-                </a>
-              ) : undefined;
+              return (
+                <span className="inline-flex items-center gap-3">
+                  {/* Match was desktop-only, stranding the "N fit your units"
+                      KPI on phones (UX #29). */}
+                  <button
+                    type="button"
+                    onClick={() => setMatchItem(item)}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium text-primary"
+                    data-testid={`mobile-match-${item.id}`}
+                  >
+                    <Target className="w-3.5 h-3.5" />
+                    Match
+                  </button>
+                  {pack?.url && (
+                    <a
+                      href={pack.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-primary"
+                      data-testid={`download-landlord-pack-${item.id}`}
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Landlord pack
+                    </a>
+                  )}
+                </span>
+              );
             })(),
           }))}
         />

@@ -548,7 +548,7 @@ export default function PropertyPathway() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Property Pathway</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Investigations run via ChatBGP — ask it to "start a pathway for 12 Haymarket" and it'll resolve the address and kick the run off. Existing runs appear here.
+            Start an investigation below, or ask ChatBGP ("start a pathway for 12 Haymarket"). Existing runs appear here.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -558,6 +558,26 @@ export default function PropertyPathway() {
           <ReviewQueueButton />
         </div>
       </div>
+
+      {/* Direct start — the board previously only started runs via ChatBGP,
+          forcing a context switch for a one-line address (UX #23). */}
+      <form
+        className="flex items-end gap-2 flex-wrap"
+        onSubmit={(e) => { e.preventDefault(); startRun(); }}
+        data-testid="pathway-start-form"
+      >
+        <div className="flex-1 min-w-[220px] max-w-sm">
+          <label className="text-xs text-muted-foreground">Address</label>
+          <Input value={newAddress} onChange={(e) => setNewAddress(e.target.value)} placeholder="e.g. 12 Haymarket, London" data-testid="input-pathway-address" />
+        </div>
+        <div className="w-[130px]">
+          <label className="text-xs text-muted-foreground">Postcode</label>
+          <Input value={newPostcode} onChange={(e) => setNewPostcode(e.target.value)} placeholder="optional" data-testid="input-pathway-postcode" />
+        </div>
+        <Button type="submit" disabled={!newAddress.trim()} data-testid="button-start-investigation">
+          Start investigation
+        </Button>
+      </form>
 
       <div>
         <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -592,7 +612,7 @@ export default function PropertyPathway() {
           <div className="text-sm text-muted-foreground">Loading…</div>
         ) : runs.length === 0 ? (
           <div className="text-sm text-muted-foreground">
-            No investigations yet — open ChatBGP and ask it to start one.
+            No investigations yet — enter an address above to start one.
           </div>
         ) : visibleRuns.length === 0 ? (
           <div className="text-sm text-muted-foreground">Nothing matches this filter.</div>

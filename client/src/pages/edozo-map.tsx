@@ -3630,6 +3630,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   const dealsLayerRef = useRef<any>(null);
   const compsLayerRef = useRef<any>(null);
   const leaseEventsLayerRef = useRef<any>(null);
+  const clientPortfolioLayerRef = useRef<any>(null);
   const [mapPins, setMapPins] = useState<{ deals: any[]; comps: any[]; leaseEvents: any[]; pathway?: any[] } | null>(null);
 
   // Land Registry title boundaries — always-on red-line layer
@@ -4120,10 +4121,39 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     }).catch(() => {});
   }, []);
 
-  // Fetch CRM map pins (Deals, Comps, Lease Events) on mount
+  // Fetch CRM map pins (Deals, Comps, Lease Events) on mount. Clients get
+  // their own portfolio-only endpoint instead of nothing (UX #21) — the
+  // staff /api/map/pins stays firm-wide and staff-only.
   useEffect(() => {
-    if (mapIsClientRef.current) return;
     const headers = { ...getAuthHeaders(), Authorization: `Bearer ${localStorage.getItem("bgp_token")}` };
+    if (mapIsClientRef.current) {
+      fetch("/api/client/map/pins", { credentials: "include", headers })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          const map = mapRef.current;
+          if (!data?.properties?.length || !map) return;
+          if (!clientPortfolioLayerRef.current) clientPortfolioLayerRef.current = L.layerGroup();
+          const layer = clientPortfolioLayerRef.current;
+          layer.clearLayers();
+          for (const pr of data.properties) {
+            const marker = L.circleMarker([pr.lat, pr.lng], {
+              radius: 8, fillColor: "#2563eb", color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9,
+            });
+            marker.bindPopup(`
+              <div style="min-width:190px;font-family:sans-serif;font-size:12px">
+                <p style="font-weight:700;margin:0 0 4px">${pr.label}</p>
+                ${pr.addressLabel && pr.addressLabel !== pr.label ? `<p style="color:#666;margin:0 0 4px;font-size:11px">${pr.addressLabel}</p>` : ""}
+                ${pr.assetClass ? `<span style="background:#dbeafe;color:#1d4ed8;padding:2px 6px;border-radius:4px;font-size:10px">${pr.assetClass}</span>` : ""}
+                <a href="/properties/${pr.propertyId}" style="display:block;margin-top:8px;font-size:11px;color:#6366f1;text-decoration:none">Open property →</a>
+              </div>
+            `, { maxWidth: 260 });
+            layer.addLayer(marker);
+          }
+          if (!map.hasLayer(layer)) layer.addTo(map);
+        })
+        .catch(() => {});
+      return;
+    }
     fetch("/api/map/pins", { credentials: "include", headers })
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data) setMapPins(data); })

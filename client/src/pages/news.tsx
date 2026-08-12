@@ -1271,7 +1271,62 @@ function MobileNewsFeed() {
   );
 }
 
+// Read-only client news feed (UX #35): brand signals across the client's
+// visible brand slice + self-added brands. Staff keep the full News page.
+function ClientNewsFeed() {
+  const { data: signals = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/client/news-signals"],
+    queryFn: async () => {
+      const r = await fetch("/api/client/news-signals", { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+  const sentimentDot = (sent: string | null) =>
+    sent === "positive" ? "bg-emerald-500" : sent === "negative" ? "bg-red-500" : "bg-zinc-400";
+  return (
+    <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-4" data-testid="client-news-feed">
+      <div>
+        <h1 className="text-2xl font-bold">Brand News</h1>
+        <p className="text-sm text-muted-foreground">Latest signals across your tenant brands</p>
+      </div>
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      ) : signals.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No brand news yet — signals appear here as they're picked up.</p>
+      ) : (
+        <div className="space-y-2">
+          {signals.map((sig: any) => (
+            <Card key={sig.id} data-testid={`client-signal-${sig.id}`}>
+              <CardContent className="p-3">
+                <div className="flex items-start gap-2.5">
+                  <span className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${sentimentDot(sig.sentiment)}`} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium leading-snug">{sig.headline}</p>
+                    {sig.detail && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{sig.detail}</p>}
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      <a href={`/companies/${sig.brand_company_id}`} className="text-primary hover:underline">{sig.brand_name}</a>
+                      {" · "}{sig.signal_type}
+                      {sig.signal_date ? ` · ${new Date(sig.signal_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}` : ""}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function News() {
+  const { data: newsViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
+  if (newsViewer && (newsViewer.role === "Client" || newsViewer.companyScopeId)) return <ClientNewsFeed />;
+  return <StaffNews />;
+}
+
+function StaffNews() {
   const isMobile = useIsMobile();
   const { data: newsUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientNewsPage = newsUser?.role === "Client" || !!(newsUser as any)?.companyScopeId;
