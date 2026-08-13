@@ -3505,9 +3505,12 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   const crmMarkersRef = useRef<L.LayerGroup | null>(null);
   const investmentCompsMarkersRef = useRef<L.LayerGroup | null>(null);
 
-  // A crm_property row that is really an investment comparable, not one of our
-  // own properties. Excluded from the CRM Properties layer/views.
-  const isInvestmentComp = (p: any) => p?.status === "Investment Comp" || p?.groupName === "Investment Comps";
+  // A crm_property row that is really a comparable, not one of our own
+  // properties. Excluded from the CRM Properties layer/views. The bulk loads
+  // tagged rows inconsistently ("Investment Comp" vs "Investment Comps", on
+  // status OR group) — match every variant or comps leak into CRM Properties.
+  const COMP_MARKER_RE = /^(investment|leasing) comps?$/i;
+  const isInvestmentComp = (p: any) => COMP_MARKER_RE.test(String(p?.status || "")) || COMP_MARKER_RE.test(String(p?.groupName || ""));
 
   // OS Data layers
   const [showOSBuildings, setShowOSBuildings] = useState(true);
@@ -6066,7 +6069,8 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
             Current area: <span className="font-semibold text-gray-900">{currentArea}</span>
           </p>
 
-          <p className="text-[11px] font-semibold mb-1.5 text-gray-700">Search new plan</p>
+          <p className="text-[11px] font-semibold mb-0.5 text-gray-700">Property lookup</p>
+          <p className="text-[10px] text-gray-400 mb-1.5 leading-snug">Sets the property for every tab — Investigator, Land Registry, Imagery.</p>
           {/* New resolver — same engine the Property Intelligence page-level
               bar used to call (Address Resolver: autocomplete → resolve →
               canonical crm_property). Replaces the legacy /api/address-search
@@ -6091,6 +6095,12 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
         <div className="px-3 py-3">
           <p className="text-[11px] font-semibold text-gray-700 mb-2.5">Map Layers</p>
           <div className="space-y-2.5">
+            {/* Streamlined (Woody, 2026-08-13): the always-useful base
+                detail (OS Buildings, Named Sites) no longer has toggles —
+                it's simply on, with OS footprints auto-hidden while the
+                Edozo layer covers the same ground. HMLR Titles toggle
+                retired (title/ownership comes through the unit click
+                panel); Street View moved up to the Map/Satellite pills. */}
             {[
               { key: "search", label: "Search History", count: recentSearches.length, dot: "#ef4444", on: showSearchHistory, set: setShowSearchHistory },
               { key: "crm",    label: "CRM Properties", count: crmProperties.filter((p: any) => !isInvestmentComp(p)).length, dot: "#3b82f6", on: showCrmLayer, set: setShowCrmLayer },
@@ -6100,13 +6110,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
               { key: "lease",  label: "Lease Events",   count: mapPins?.leaseEvents.length ?? 0, dot: "#ec4899", on: showLeaseEvents, set: setShowLeaseEvents },
               { key: "pathway",label: "Pathway runs",   count: mapPins?.pathway?.length ?? 0, dot: "#10b981", on: showPathway, set: setShowPathway },
               { key: "avail",  label: "Available Properties", count: availableProps.length, dot: "#06b6d4", on: showAvailable, set: setShowAvailable },
-              { key: "retail", label: retailFetching ? "Retail Context (loading…)" : "Retail Context", count: goadFeatures.length, dot: "#15616D", on: showRetailContext, set: setShowRetailContext },
-              { key: "sv",     label: showStreetView ? "Street View (click map)" : "Street View",      count: 0, dot: "#FBBC04", on: showStreetView, set: setShowStreetView },
-              { key: "osb",    label: showOSBuildings && showRetailContext ? "OS Buildings (hidden — Goad on)" : (mapZoom < 16 && showOSBuildings ? "OS Buildings (zoom 16+)" : "OS Buildings"),     count: 0, dot: "#3b82f6", on: showOSBuildings, set: setShowOSBuildings },
-              { key: "oss",    label: mapZoom < 14 && showOSSites ? "Named Sites (zoom 14+)" : "Named Sites", count: 0, dot: "#15616D", on: showOSSites,     set: setShowOSSites },
-              { key: "tp",     label: "Tenancy Plans",  count: tenancyPlanCount, dot: "#dc2626", on: showTenancyPlans, set: setShowTenancyPlans },
+              { key: "retail", label: retailFetching ? "Edozo (loading…)" : "Edozo", count: goadFeatures.length, dot: "#15616D", on: showRetailContext, set: setShowRetailContext },
+              { key: "tp",     label: "Tenancy Plans (uploaded)",  count: tenancyPlanCount, dot: "#dc2626", on: showTenancyPlans, set: setShowTenancyPlans },
               { key: "annot",  label: "Annotations",     count: annotations.length, dot: "#a855f7", on: showAnnotations, set: setShowAnnotations },
-              { key: "hmlr",   label: "HMLR Titles", count: hmlrPolygons?.features?.length ?? 0, dot: "#1e40af", on: showHmlrTitles, set: setShowHmlrTitles },
             ].filter((row) => !(mapIsClient && CLIENT_HIDDEN_LAYERS.has(row.key))).map((row) => (
               <button
                 key={row.key}
@@ -6134,7 +6140,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
               <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-wide mb-1.5">Retail bands</p>
               {!retailFetching && goadFeatures.length === 0 && (
                 <p className="text-[10px] text-gray-500 italic mb-1.5 leading-snug">
-                  Loading the Goad dataset… If this persists, the layer files may be missing from data/goad/.
+                  Loading the Edozo dataset… If this persists, the layer files may be missing.
                 </p>
               )}
               {goadFeatures.length > 0 && mapZoom < 17 && (
@@ -6496,6 +6502,17 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
               data-testid="base-layer-sat"
             >
               Satellite
+            </button>
+            {/* Street View mode — moved here from the layer list (it's a
+                click-mode, not a data layer). While on, clicking the map
+                opens a Street View panorama at that point. */}
+            <button
+              onClick={() => setShowStreetView(v => !v)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${showStreetView ? "bg-[#FBBC04] text-black" : "text-gray-700 hover:bg-gray-50"}`}
+              data-testid="base-layer-streetview"
+              title={showStreetView ? "Street View on — click anywhere on the map to open a panorama" : "Turn on, then click the map to open Street View there"}
+            >
+              Street View
             </button>
           </div>
         </div>
@@ -7228,7 +7245,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
 
                 {goadPanelUnit.surveyDate && (
                   <p className="text-[9px] text-gray-400 text-right">
-                    Goad surveyed {new Date(goadPanelUnit.surveyDate).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}
+                    Surveyed {new Date(goadPanelUnit.surveyDate).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}
                   </p>
                 )}
               </div>
