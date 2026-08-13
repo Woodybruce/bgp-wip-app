@@ -82,7 +82,39 @@ async function ensureScoreHistoryTable(): Promise<void> {
       ON brand_score_history(brand_company_id, checked_at DESC);
     ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS covenant_score INTEGER;
     ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS covenant_red_flags INTEGER;
+    ALTER TABLE brand_signals ADD COLUMN IF NOT EXISTS ai_relevant BOOLEAN;
   `);
+}
+
+// Alert-grade relevance check. Signals already judged (ai_relevant set at
+// ingest or by the profile-page judge) use that verdict; unjudged rows get
+// judged NOW — an alert email is exactly the wrong place to let a "Sky News"
+// byline or a Fed-governor surname through. Fails open on judge errors.
+async function signalIsRelevant(
+  brand: { id: string; name: string },
+  sig: { id: string; headline: string | null; ai_relevant: boolean | null },
+): Promise<boolean> {
+  if (sig.ai_relevant === false) return false;
+  if (sig.ai_relevant === true) return true;
+  try {
+    const { aiJudgeSignalRelevance } = await import("./news-brand-linking");
+    await aiJudgeSignalRelevance(brand, [{ id: sig.id, headline: sig.headline, detail: null }]);
+    const { rows } = await pool.query(`SELECT ai_relevant FROM brand_signals WHERE id = $1`, [sig.id]);
+    return rows[0]?.ai_relevant !== false;
+  } catch {
+    return true;
+  }
+}
+
+// First signal in the candidate list that survives the relevance check.
+async function firstRelevantSignal<T extends { id: string; headline: string | null; ai_relevant: boolean | null }>(
+  brand: { id: string; name: string },
+  candidates: T[],
+): Promise<T | null> {
+  for (const c of candidates) {
+    if (await signalIsRelevant(brand, c)) return c;
+  }
+  return null;
 }
 
 async function getLastSnapshot(brandId: string): Promise<{
@@ -151,10 +183,14 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
 
   for (const brand of brands.rows) {
     // Fetch recent signals for the score
+    // ai_relevant = false rows are judged junk (wrong-entity matches). The
+    // profile page already filters them — the alert scan and the expansion
+    // score must too, or the email digests exactly the noise the UI hides.
     const sigs = await pool.query(
-      `SELECT signal_type, headline, magnitude, sentiment, created_at, signal_date
+      `SELECT id, signal_type, headline, magnitude, sentiment, created_at, signal_date, ai_relevant
          FROM brand_signals
         WHERE brand_company_id = $1
+          AND ai_relevant IS DISTINCT FROM FALSE
           AND COALESCE(signal_date, created_at) >= now() - interval '365 days'`,
       [brand.id]
     );
@@ -217,11 +253,11 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
         recipients,
       });
     } else {
-      const recentInsolv = sigs.rows.find((s: any) =>
+      const recentInsolv = await firstRelevantSignal(brand, sigs.rows.filter((s: any) =>
         (s.signal_type === "closure" || s.sentiment === "negative") &&
         new Date(s.created_at) >= new Date(Date.now() - 7 * 86400000) &&
         /insolven|administrat|liquidat|wind.up|ccj|adverse/i.test(s.headline || "")
-      );
+      ));
       if (recentInsolv) {
         events.push({
           brandId: brand.id, brandName: brand.name, type: "covenant_risk",
@@ -232,26 +268,35 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
       }
     }
 
-    // 3. Live fundraise — funding signal of any magnitude in last 24h
-    const recentFunding = sigs.rows.find((s: any) =>
+    // 3. Live fundraise — funding signal of any magnitude in last 24h.
+    // The classifier lumps raises, acquisitions and IPOs under "funding" —
+    // only word the alert as "just raised" when the headline actually reads
+    // like a raise (TfL defending its borrowing is not a hot spending moment).
+    const recentFunding = await firstRelevantSignal(brand, sigs.rows.filter((s: any) =>
       s.signal_type === "funding" &&
       new Date(s.created_at) >= new Date(Date.now() - 86400000)
-    );
+    ));
     if (recentFunding) {
+      const isRaise = /\b(rais(e|es|ed|ing)|funding|investment|invests?|series [a-e]|secures|backs|backed)\b/i.test(recentFunding.headline || "");
       events.push({
         brandId: brand.id, brandName: brand.name, type: "fundraise",
-        headline: `${brand.name} just raised`,
-        detail: `${recentFunding.headline}. Hot moment to reach out — they're spending.`,
+        headline: isRaise ? `${brand.name} just raised` : `${brand.name} — money in motion`,
+        detail: `${recentFunding.headline}. ${isRaise ? "Hot moment to reach out — they're spending." : "Funding/M&A signal — worth a look before someone else calls."}`,
         recipients,
       });
     }
 
-    // 4. Major exec change — positive sentiment + magnitude large in last 7d
-    const recentExec = sigs.rows.find((s: any) =>
+    // 4. Major exec change — magnitude large in last 7d. Belt and braces on
+    // top of the relevance judge: the brand must actually be named in the
+    // headline. Retail round-ups name-drop half the high street; "River
+    // Island — major leadership move" over a John Lewis story came from one.
+    const brandToken = brand.name.trim().toLowerCase();
+    const recentExec = await firstRelevantSignal(brand, sigs.rows.filter((s: any) =>
       s.signal_type === "exec_change" &&
       s.magnitude === "large" &&
-      new Date(s.created_at) >= new Date(Date.now() - 7 * 86400000)
-    );
+      new Date(s.created_at) >= new Date(Date.now() - 7 * 86400000) &&
+      (s.headline || "").toLowerCase().includes(brandToken)
+    ));
     if (recentExec) {
       events.push({
         brandId: brand.id, brandName: brand.name, type: "exec_change_major",

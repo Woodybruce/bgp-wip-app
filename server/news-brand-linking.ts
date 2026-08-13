@@ -13,7 +13,7 @@ type Sentiment = "positive" | "neutral" | "negative";
 // Ask Haiku to classify an article headline into a brand_signals row.
 // Returns null if AI unavailable / fails — caller falls back to plain "news".
 async function classifySignal(brandName: string, title: string, summary: string | null): Promise<
-  { signalType: SignalType; magnitude: Magnitude; sentiment: Sentiment } | null
+  { signalType: SignalType; magnitude: Magnitude; sentiment: Sentiment; aboutBrand: boolean | null } | null
 > {
   const haveKey = !!(process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY);
   if (!haveKey) return null;
@@ -25,16 +25,21 @@ ${summary ? `Summary: ${summary.slice(0, 400)}` : ""}
 
 Respond with JSON only:
 {
+  "aboutBrand": true or false,
   "signalType": one of ["opening","closure","funding","exec_change","sector_move","news","rumour"],
   "magnitude":  one of ["small","medium","large"],
   "sentiment":  one of ["positive","neutral","negative"]
 }
 
 Rules:
+- "aboutBrand" = is this story genuinely about the company "${brandName}" (the brand a UK property advisor tracks)?
+  false when the name only appears as an ordinary English word, a person's surname,
+  a news publisher credit (e.g. "- Sky News"), a different company/institution, or when
+  the story is really about ANOTHER company that merely gets compared or mentioned.
 - "opening" = new store/flagship/branch opening
 - "closure" = store closure, administration, bankruptcy
 - "funding" = raise, investment, acquisition, IPO
-- "exec_change" = new CEO/CFO/founder hire or departure
+- "exec_change" = new CEO/CFO/founder hire or departure AT THIS COMPANY
 - "sector_move" = category expansion, strategic pivot, new product line
 - "rumour" = unconfirmed/speculative story
 - "news" = general brand mention that doesn't fit above
@@ -54,6 +59,7 @@ Rules:
       signalType: parsed.signalType as SignalType,
       magnitude: (parsed.magnitude || "medium") as Magnitude,
       sentiment: (parsed.sentiment || "neutral") as Sentiment,
+      aboutBrand: typeof parsed.aboutBrand === "boolean" ? parsed.aboutBrand : null,
     };
   } catch {
     return null;
@@ -388,6 +394,23 @@ export async function ensureBrandSocialFeeds(opts?: {
 
 // For a single article, decides which tracked brands it mentions and writes
 // brand_signals rows. De-duplicates on (brand, article_url).
+// Brand names that double as everyday English words. A lowercase word-boundary
+// match on these pulled in publisher credits ("- Sky News" → Sky), surnames
+// (Fed's Lisa Cook → COOK) and plain prose ("until", "next", "fuel", "pitch").
+// For these we require the token to appear with the brand's own casing —
+// "COOK" or "Sky" as a standalone capitalised token — before linking.
+const COMMON_WORD_BRAND_TOKENS = new Set([
+  "sky", "next", "cook", "until", "fuel", "pitch", "base", "oliver", "supreme",
+  "coach", "monsoon", "jigsaw", "diesel", "pandora", "boots", "river", "bills",
+  "mountain", "fat face", "gap", "mango", "space", "end", "size",
+]);
+
+// Google News (and most aggregators) append " - Publisher" to titles. Strip it
+// before matching so "Story headline - Sky News" can't link the brand Sky.
+function stripPublisherSuffix(title: string): string {
+  return title.replace(/\s[-–—|·]\s[^-–—|·]{2,60}$/, "");
+}
+
 async function linkArticleToBrands(article: {
   id: string;
   url: string;
@@ -397,15 +420,22 @@ async function linkArticleToBrands(article: {
   publishedAt: Date | null;
   aiSummary: string | null;
 }, brandIndex: { id: string; name: string; normalized: string }[]): Promise<string[]> {
-  const haystack = [article.title, article.summary || "", article.aiSummary || ""]
-    .join(" ")
-    .toLowerCase();
+  const rawHaystack = [stripPublisherSuffix(article.title), article.summary || "", article.aiSummary || ""].join(" ");
+  const haystack = rawHaystack.toLowerCase();
   const hits: string[] = [];
   for (const b of brandIndex) {
     if (b.normalized.length < 3) continue;
     const token = b.normalized;
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (COMMON_WORD_BRAND_TOKENS.has(token)) {
+      // Case-sensitive: the brand's own capitalisation, standalone.
+      const brandCased = b.name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const reCased = new RegExp(`(^|[^A-Za-z0-9])${brandCased}([^A-Za-z0-9]|$)`);
+      if (reCased.test(rawHaystack)) hits.push(b.id);
+      continue;
+    }
     // word-boundary match against normalized brand name
-    const re = new RegExp(`(^|[^a-z0-9])${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i");
+    const re = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "i");
     if (re.test(haystack)) hits.push(b.id);
   }
   return hits;
@@ -428,7 +458,7 @@ async function upsertBrandSignal(brandId: string, brandName: string, article: {
 
   const classified = await classifySignal(brandName, article.title, article.summary);
 
-  await db.insert(brandSignals).values({
+  const [inserted] = await db.insert(brandSignals).values({
     brandCompanyId: brandId,
     signalType: classified?.signalType || "news",
     headline: article.title.slice(0, 500),
@@ -438,7 +468,15 @@ async function upsertBrandSignal(brandId: string, brandName: string, article: {
     magnitude: classified?.magnitude || null,
     sentiment: classified?.sentiment || null,
     aiGenerated: !!classified,
-  });
+  }).returning({ id: brandSignals.id });
+
+  // Ingest-time relevance verdict — the same ai_relevant column the lazy
+  // profile-page judge writes, so alerts/profile/score all filter junk the
+  // moment it lands instead of waiting for someone to open the profile.
+  if (inserted && classified && classified.aboutBrand !== null) {
+    await ensureAiRelevantColumn();
+    await pool.query(`UPDATE brand_signals SET ai_relevant = $1 WHERE id = $2`, [classified.aboutBrand, inserted.id]).catch(() => {});
+  }
 }
 
 export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Promise<{ linked: number; articles: number }> {
@@ -507,7 +545,14 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
       brandIndex,
     );
     for (const brandId of hits) {
-      await upsertBrandSignal(brandId, brandNameById.get(brandId) || "", {
+      const brandName = brandNameById.get(brandId) || "";
+      // The per-brand feeds get this filter above; the generic fuzzy path was
+      // skipping it — which is how publisher credits and surnames became
+      // brand signals. Apply it here too.
+      if (brandName && !articleLooksRelevantForBrand(brandName, brandIndustryById.get(brandId), a.title, a.summary)) {
+        continue;
+      }
+      await upsertBrandSignal(brandId, brandName, {
         id: a.id,
         url: a.url,
         title: a.title,

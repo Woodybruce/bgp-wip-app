@@ -151,6 +151,7 @@ async function loadIntelSlice(companyId: string) {
   const signals = await pool.query(
     `SELECT signal_type, headline, signal_date, magnitude, sentiment
        FROM brand_signals WHERE brand_company_id = $1
+        AND ai_relevant IS DISTINCT FROM FALSE
       ORDER BY COALESCE(signal_date, created_at) DESC LIMIT 10`,
     [companyId]
   );

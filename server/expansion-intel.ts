@@ -79,6 +79,7 @@ async function loadFacts(companyId: string): Promise<ExpansionFact[]> {
     `SELECT signal_type, headline, magnitude, sentiment, geography, confidence, signal_date, created_at
        FROM brand_signals
       WHERE brand_company_id = $1
+        AND ai_relevant IS DISTINCT FROM FALSE
         AND COALESCE(signal_date, created_at) >= now() - interval '24 months'`,
     [companyId]
   );
@@ -127,6 +128,7 @@ export async function normaliseBrandFacts(companyId: string): Promise<{ facts: n
     `SELECT headline, detail, signal_type, signal_date, source FROM brand_signals
       WHERE brand_company_id = $1
         AND (ai_generated = true OR source LIKE 'http%')
+        AND ai_relevant IS DISTINCT FROM FALSE
         AND (source IS NULL OR source NOT LIKE 'bgp-deal:%')
         AND COALESCE(signal_date, created_at) >= now() - interval '24 months'
       ORDER BY COALESCE(signal_date, created_at) DESC LIMIT 60`,
