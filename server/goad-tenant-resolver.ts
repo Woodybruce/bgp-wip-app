@@ -283,4 +283,104 @@ router.post("/api/goad/tenant-create", requireAuth, async (req: Request, res: Re
   }
 });
 
+// ─── Ownership narratives — auto "who they really are" ──────────────────
+// When a clicked unit resolves a likely freeholder, the client calls this
+// unprompted. First call per proprietor kicks a background ChatBGP
+// investigation (CH PSC chain + Perplexity + BGP CRM) and returns
+// "generating"; the client polls, and once written the narrative is cached
+// so every later click on any of that proprietor's buildings is instant.
+let narrativeCacheEnsured = false;
+async function ensureNarrativeCache(): Promise<void> {
+  if (narrativeCacheEnsured) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ownership_narratives (
+      key           TEXT PRIMARY KEY,
+      proprietor    TEXT NOT NULL,
+      company_no    TEXT,
+      narrative     TEXT,
+      status        TEXT NOT NULL DEFAULT 'generating',
+      generated_at  TIMESTAMPTZ,
+      requested_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+  narrativeCacheEnsured = true;
+}
+
+const narrativeInFlight = new Set<string>();
+
+router.post("/api/goad/ownership-narrative", requireAuth, async (req: Request, res: Response) => {
+  const proprietorName = String(req.body?.proprietorName || "").trim();
+  const companyRegistrationNo = String(req.body?.companyRegistrationNo || "").trim() || null;
+  const role = String(req.body?.role || "freeholder").trim();
+  const address = String(req.body?.address || "").trim();
+  if (!proprietorName) return res.status(400).json({ error: "proprietorName required" });
+
+  try {
+    await ensureNarrativeCache();
+    const key = (companyRegistrationNo || proprietorName.toLowerCase()).slice(0, 200);
+
+    const { rows } = await pool.query(
+      `SELECT narrative, status, generated_at FROM ownership_narratives WHERE key = $1`,
+      [key],
+    );
+    const row = rows[0];
+    if (row?.status === "ready" && row.narrative) {
+      return res.json({ status: "ready", narrative: row.narrative, generatedAt: row.generated_at, cached: true });
+    }
+    // A run marked generating for over 10 minutes is presumed dead — retry.
+    if (row?.status === "generating" && !narrativeInFlight.has(key)) {
+      const { rows: staleCheck } = await pool.query(
+        `SELECT 1 FROM ownership_narratives WHERE key = $1 AND requested_at > now() - interval '10 minutes'`,
+        [key],
+      );
+      if (staleCheck[0]) return res.json({ status: "generating" });
+    } else if (narrativeInFlight.has(key)) {
+      return res.json({ status: "generating" });
+    }
+
+    await pool.query(
+      `INSERT INTO ownership_narratives (key, proprietor, company_no, status, requested_at)
+       VALUES ($1, $2, $3, 'generating', now())
+       ON CONFLICT (key) DO UPDATE SET status = 'generating', requested_at = now()`,
+      [key, proprietorName, companyRegistrationNo],
+    );
+    narrativeInFlight.add(key);
+
+    const question =
+      `Who really controls "${proprietorName}"` +
+      (companyRegistrationNo ? ` (Companies House #${companyRegistrationNo})` : "") +
+      `, the likely ${role}${address ? ` of ${address}` : ""}?\n\n` +
+      `Walk the Companies House PSC / parent-company chain, check the BGP CRM for any relationship history, and search news if needed. ` +
+      `Reply in UNDER 130 words, plain text with these four lines:\n` +
+      `Controller: <the fund / family office / individual that ultimately controls it, 1-2 sentences>\n` +
+      `BGP link: <deals, properties or contacts we have with them, or "none found">\n` +
+      `Other holdings: <notable UK property they hold, or "none found">\n` +
+      `Flags: <risk flags, or "none">`;
+
+    (async () => {
+      try {
+        const { askChatBgp } = await import("./chatbgp-internal");
+        const answer = await askChatBgp(question, req, { timeoutMs: 4 * 60 * 1000 });
+        if (answer?.trim()) {
+          await pool.query(
+            `UPDATE ownership_narratives SET narrative = $2, status = 'ready', generated_at = now() WHERE key = $1`,
+            [key, answer.trim().slice(0, 4000)],
+          );
+        } else {
+          await pool.query(`UPDATE ownership_narratives SET status = 'failed' WHERE key = $1`, [key]);
+        }
+      } catch (e: any) {
+        console.warn(`[ownership-narrative] ${proprietorName} failed:`, e?.message);
+        await pool.query(`UPDATE ownership_narratives SET status = 'failed' WHERE key = $1`, [key]).catch(() => {});
+      } finally {
+        narrativeInFlight.delete(key);
+      }
+    })();
+
+    res.json({ status: "generating" });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "Narrative lookup failed" });
+  }
+});
+
 export default router;

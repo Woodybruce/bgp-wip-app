@@ -3608,6 +3608,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   const [goadFeatures, setGoadFeatures] = useState<any[]>([]);
   const [retailFetching, setRetailFetching] = useState(false);
   const [excludedRetailCategories, setExcludedRetailCategories] = useState<Set<string>>(new Set());
+  // Band chips live behind a collapsed dropdown — the coloured key took
+  // sidebar space that only matters when actively filtering categories.
+  const [showRetailBands, setShowRetailBands] = useState(false);
   const retailMarkersRef = useRef<L.LayerGroup | null>(null);
   const retailLabelLayerRef = useRef<L.LayerGroup | null>(null);
   // Goad polygon → combined side panel. Holds the clicked feature's
@@ -3653,6 +3656,60 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     runTenantVerify(tp.website, tp.name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [goadPanelContext?.tenantPlace?.website, goadPanelContext?.tenantCompany]);
+
+  // Auto "who they really are" — fires for the likely freeholder /
+  // head-leaseholder the moment the chain resolves. Server caches per
+  // proprietor, so only the first click on any of their buildings pays
+  // the investigation; the panel polls while ChatBGP digs.
+  const [ownershipNarratives, setOwnershipNarratives] = useState<Record<string, { status: string; narrative?: string }>>({});
+  const narrativeKeyOf = (c: any) => String(c?.companyRegistrationNo || (c?.proprietorName || "").toLowerCase()).slice(0, 200);
+  useEffect(() => {
+    const chain: any = (goadPanelContext?.landRegistry as any)?.chain;
+    if (!chain) return;
+    const unitAddr = [goadPanelUnit?.num, goadPanelUnit?.street, goadPanelUnit?.postcode].filter(Boolean).join(" ");
+    const targets = [
+      chain.freeholder ? { c: chain.freeholder, role: "freeholder" } : null,
+      chain.headLeaseholder ? { c: chain.headLeaseholder, role: "head-leaseholder" } : null,
+    ].filter(Boolean) as Array<{ c: any; role: string }>;
+    if (targets.length === 0) return;
+    let cancelled = false;
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
+    const fetchOne = async (t: { c: any; role: string }, attempt: number) => {
+      const key = narrativeKeyOf(t.c);
+      if (!key) return;
+      try {
+        const r = await fetch("/api/goad/ownership-narrative", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({
+            proprietorName: t.c.proprietorName,
+            companyRegistrationNo: t.c.companyRegistrationNo || undefined,
+            role: t.role,
+            address: unitAddr,
+          }),
+        });
+        const j = await r.json();
+        if (cancelled) return;
+        if (j.status === "ready" && j.narrative) {
+          setOwnershipNarratives(prev => ({ ...prev, [key]: { status: "ready", narrative: j.narrative } }));
+        } else if (j.status === "generating") {
+          setOwnershipNarratives(prev => prev[key]?.status === "ready" ? prev : ({ ...prev, [key]: { status: "generating" } }));
+          if (attempt < 40) timers.push(setTimeout(() => fetchOne(t, attempt + 1), 6000));
+          else setOwnershipNarratives(prev => ({ ...prev, [key]: { status: "slow" } }));
+        } else {
+          setOwnershipNarratives(prev => ({ ...prev, [key]: { status: "failed" } }));
+        }
+      } catch { /* transient — next panel open retries */ }
+    };
+    for (const t of targets) {
+      const key = narrativeKeyOf(t.c);
+      if (!key || ownershipNarratives[key]?.status === "ready") continue;
+      fetchOne(t, 0);
+    }
+    return () => { cancelled = true; timers.forEach(clearTimeout); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goadPanelContext?.landRegistry]);
 
   const [goadPanelStartingPathway, setGoadPanelStartingPathway] = useState(false);
   const [goadPanelLoading, setGoadPanelLoading] = useState(false);
@@ -6099,17 +6156,28 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
               when the layer is on. Click to exclude / include a band. */}
           {showRetailContext && (
             <div className="mt-3 pt-2.5 border-t">
-              <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-wide mb-1.5">Retail bands</p>
-              {!retailFetching && goadFeatures.length === 0 && (
-                <p className="text-[10px] text-gray-500 italic mb-1.5 leading-snug">
-                  Loading the Edozo dataset… If this persists, the layer files may be missing.
-                </p>
-              )}
-              {goadFeatures.length > 0 && mapZoom < 17 && (
-                <p className="text-[10px] text-gray-500 italic mb-1.5 leading-snug">
-                  Zoom in (≥ 17) to see fascia labels on each unit.
-                </p>
-              )}
+              <button
+                type="button"
+                onClick={() => setShowRetailBands(v => !v)}
+                className="w-full flex items-center justify-between text-[10px] font-semibold text-gray-600 uppercase tracking-wide mb-1.5"
+                data-testid="toggle-retail-bands"
+              >
+                <span>Retail bands{excludedRetailCategories.size > 0 ? ` (${excludedRetailCategories.size} hidden)` : ""}</span>
+                <span className="text-gray-400 normal-case">{showRetailBands ? "▾" : "▸"}</span>
+              </button>
+              {/* Status line — the units load per viewport at street zoom,
+                  so an empty state usually just means "zoom in", not a
+                  data problem. */}
+              {mapZoom < 16 ? (
+                <p className="text-[10px] text-gray-500 italic mb-1.5 leading-snug">Zoom to street level (16+) and units load for the area in view.</p>
+              ) : retailFetching ? (
+                <p className="text-[10px] text-gray-500 italic mb-1.5 leading-snug">Loading units for this view…</p>
+              ) : goadFeatures.length === 0 ? (
+                <p className="text-[10px] text-gray-500 italic mb-1.5 leading-snug">No Edozo units mapped in this view — coverage is the harvested licensed areas.</p>
+              ) : mapZoom < 17 ? (
+                <p className="text-[10px] text-gray-500 italic mb-1.5 leading-snug">Zoom in (≥ 17) to see fascia labels on each unit.</p>
+              ) : null}
+              {showRetailBands && (
               <div className="grid grid-cols-2 gap-1">
                 {[
                   { k: "fashion",     l: "Fashion",     c: "#C9A961" },
@@ -6139,6 +6207,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                   );
                 })}
               </div>
+              )}
             </div>
           )}
         </div>
@@ -6995,13 +7064,36 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                             {c.reasons?.length > 0 && (
                               <div className="text-[10px] text-gray-500 mt-0.5 italic">{c.reasons.slice(0, 3).join(" · ")}</div>
                             )}
+                            {(() => {
+                              // Auto-investigated "who they really are" — kicked
+                              // off on panel open, cached per proprietor.
+                              const narr = ownershipNarratives[narrativeKeyOf(c)];
+                              if (narr?.status === "ready" && narr.narrative) {
+                                return (
+                                  <div className="mt-1.5 text-[10px] text-gray-800 bg-white/80 border border-gray-200 rounded p-1.5 whitespace-pre-wrap leading-relaxed" data-testid={`narrative-${c.titleNumber}`}>
+                                    {narr.narrative}
+                                  </div>
+                                );
+                              }
+                              if (narr?.status === "generating") {
+                                return (
+                                  <div className="mt-1.5 text-[10px] text-gray-500 italic flex items-center gap-1">
+                                    <Loader2 className="w-2.5 h-2.5 animate-spin shrink-0" /> Investigating who really controls this — first look takes a couple of minutes, then it's saved…
+                                  </div>
+                                );
+                              }
+                              if (narr?.status === "slow") {
+                                return <div className="mt-1.5 text-[10px] text-gray-500 italic">Still digging — reopen this unit shortly and the answer will be here.</div>;
+                              }
+                              return null;
+                            })()}
                             <button
                               type="button"
                               onClick={askChatBGP}
                               className="text-[10px] text-gray-700 hover:text-gray-900 hover:underline mt-1 inline-flex items-center gap-0.5"
                               data-testid={`button-chatbgp-${c.titleNumber}`}
                             >
-                              💬 Ask ChatBGP who they really are
+                              💬 Dig deeper in ChatBGP
                             </button>
                           </div>
                         );
