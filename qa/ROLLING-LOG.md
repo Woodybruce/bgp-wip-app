@@ -63,13 +63,37 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r281 · 2026-08-13 · ROUND IN PROGRESS (FULL — rotation #3 client mobile 390px)
+### r281 · 2026-08-13 · FULL (rotation #3 client mobile 390px)
 - Fresh container (pg_hba trust per r205 — method-column awk;
   restore-as-postgres + per-object ALTER owners + schema grant per r249).
   Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 281 running;
-  journey (client mobile brands hub → brand profile → contact detail)
-  pending. Triage so far: nothing to triage — smoke clean.
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 281: exit 0,
+  all scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server
+  log (the lone " 500 " grep hit is the "500 articles" news-feed text
+  again).
+- Journey: Mark Warne @ 390px iPhone UA — "before meeting a tenant brand:
+  look it up in Brand Intelligence, check its covenant/compliance, find
+  the key contact's details" (FIRST client-mobile coverage of the /brands
+  hub → brand profile → contact detail path): login → "/" Portfolio home
+  (0 h-overflow) → Brands tile → /brands hub (category cards, search
+  narrows to 1 result, 0 h-overflow) → Starbucks profile via the card
+  anchor (Compliance + Covenant present per the 2026-08-01 decision, Key
+  Contacts card, 0 staff-leak buttons, 0 h-overflow) → Tom Barista
+  contact detail (Edit only per r257/r258 gates, email + company
+  rendered, 0 h-overflow). Task completable in reasonable steps; 0 page
+  errors, 0 non-noise console/net errors. Only friction: chat-first
+  profile buries Key Contacts below the tall chat panel — already logged
+  as UX #32 (+r259 addendum), no new note.
+- Bugs fixed: 0 (nothing broken found). Harness growth: two-bot +1
+  client-mobile-brands-hub (iPhone context per r266 pattern — /brands
+  must render the hub with tappable brand cards and no h-overflow;
+  BRAND profile must keep its Key Contacts card at 390px). Assertions
+  verified standalone green against the fixture's Honi Poke; node
+  --check clean; runs from r282.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r281 had the journey →
+  r282 may be LIGHT; then #4).
 
 ### r280 · 2026-08-13 · LIGHT (r279 had the journey)
 - Fresh container (pg_hba trust per r205 — method-column awk;

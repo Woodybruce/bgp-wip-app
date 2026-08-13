@@ -4147,6 +4147,49 @@ async function markRound(page, cross) {
     }
   });
 
+  // r281: client-mobile Brand Intelligence path — the "look up a tenant brand
+  // on my phone before a meeting" journey. The hub, a brand profile and its
+  // Key Contacts drill-in must all render inside a real 390px phone context
+  // (r266 pattern — touch + mobile UA, session cookie copied over).
+  await step(page, p, 'client-mobile-brands-hub', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      const noOverflow = async (label) => {
+        const { scrollW, clientW } = await mob.evaluate(() => ({
+          scrollW: document.documentElement.scrollWidth,
+          clientW: document.documentElement.clientWidth,
+        }));
+        if (scrollW > clientW + 4) throw new Error(`${label} overflows at 390px: scrollWidth ${scrollW} > viewport ${clientW}`);
+      };
+      await mobGoto(mob, `${BASE}/brands`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(3000);
+      if (await mob.getByText('Page not found').count()) throw new Error('/brands is Page not found at client mobile');
+      if (!await mob.getByText(/brand intelligence/i).count()) throw new Error('brands hub heading missing at 390px');
+      if (!await mob.locator('a[href*="/companies/"]').count()) throw new Error('brands hub has no tappable brand cards at 390px');
+      await noOverflow('client brands hub');
+      await mobGoto(mob, `${BASE}/companies/${BRAND}`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(3000);
+      if (!await mob.getByText(/key contacts/i).count()) throw new Error('brand profile Key Contacts card missing at client mobile');
+      await noOverflow('client brand profile');
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // Targeting Brief scope (r253): the staff-created brief on the client's own
   // property is client-readable WITH its targets, the client may add a target
   // there (client-instruction parity — same decision family as tenancy row
