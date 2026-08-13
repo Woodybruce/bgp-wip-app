@@ -43,6 +43,15 @@ Each slide:
 - Supporting data/text below
 - BGP footer band on every slide
 
+PAGE DISCIPLINE (critical — the #1 defect to avoid is content bleeding off the page):
+- A page is a hard, fixed-height budget. Headless Chrome CLIPS anything that overflows the page bottom mid-sentence — there is no reflow. Nothing may run past the footer band.
+- Count your content before laying it out. A sidebar/key/legend column fits roughly 5 card-style entries on A4 landscape — if there are more, switch that content to a compact table, split it into two columns, or continue it on the next page. Never stack a long list into a fixed column and hope.
+- Put break-inside: avoid on every card, row and figure so no item is ever split or clipped.
+- When content is tight, shrink it (font-size, padding) or add a page — clipping is never acceptable.
+
+MAPS:
+- Any embedded Google Static Maps image must use maptype=hybrid (satellite imagery with road labels) — road-map styling only when the brief explicitly asks for it. If the brief supplies a staticmap URL with maptype=roadmap or no maptype parameter, rewrite that one parameter to hybrid and keep the rest of the URL identical.
+
 Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary, no markdown fences.`;
 
 export interface DesignedPdfArgs {
