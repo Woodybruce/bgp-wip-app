@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { OfficialCopyButton } from "@/components/official-copy-button";
@@ -118,6 +119,33 @@ export default function PropertyPathway() {
     if (ownerFilter !== "all") return live.filter(r => r.startedBy === ownerFilter);
     return live;
   }, [runs, ownerFilter, viewer?.id]);
+
+  // Folder / portfolio grouping — free-text label stored on the run
+  // (stage_results._folder). Folders render as collapsible sections above
+  // the ungrouped cards; assignment happens from the folder menu on each card.
+  const folderOf = (r: PathwayRun) => (((r.stageResults as any)?._folder as string) || null);
+  const allFolders = useMemo(
+    () => Array.from(new Set(runs.map(folderOf).filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b)),
+    [runs],
+  );
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  async function setRunFolder(runId: string, folder: string | null) {
+    setRuns(prev => prev.map(r => r.id === runId
+      ? { ...r, stageResults: { ...(r.stageResults || {}), _folder: folder || undefined } }
+      : r));
+    try {
+      const res = await fetch(`/api/property-pathway/${runId}/folder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ folder }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err: any) {
+      toast({ title: "Could not move run", description: err?.message || "Try again", variant: "destructive" });
+      loadRuns();
+    }
+  }
   const ctxProperty = usePropertyContext();
   const [newAddress, setNewAddress] = useState(ctxProperty?.name || "");
   const [newPostcode, setNewPostcode] = useState(ctxProperty?.postcode || "");
@@ -616,11 +644,61 @@ export default function PropertyPathway() {
           </div>
         ) : visibleRuns.length === 0 ? (
           <div className="text-sm text-muted-foreground">Nothing matches this filter.</div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {visibleRuns.map(r => <PathwayCard key={r.id} run={r} onOpen={() => { setSelectedRun(r); navigate(`/property-pathway?runId=${r.id}`); }} onDelete={() => deleteRun(r.id)} />)}
-          </div>
-        )}
+        ) : (() => {
+          const renderGrid = (rs: PathwayRun[]) => (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {rs.map(r => (
+                <PathwayCard
+                  key={r.id}
+                  run={r}
+                  folders={allFolders}
+                  currentFolder={folderOf(r)}
+                  onSetFolder={(f) => setRunFolder(r.id, f)}
+                  onOpen={() => { setSelectedRun(r); navigate(`/property-pathway?runId=${r.id}`); }}
+                  onDelete={() => deleteRun(r.id)}
+                />
+              ))}
+            </div>
+          );
+          const visibleFolders = Array.from(new Set(visibleRuns.map(folderOf).filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b));
+          const ungrouped = visibleRuns.filter(r => !folderOf(r));
+          if (visibleFolders.length === 0) return renderGrid(visibleRuns);
+          return (
+            <div className="space-y-6">
+              {visibleFolders.map(f => {
+                const rs = visibleRuns.filter(r => folderOf(r) === f);
+                const collapsed = collapsedFolders.has(f);
+                return (
+                  <div key={f}>
+                    <button
+                      onClick={() => setCollapsedFolders(prev => {
+                        const next = new Set(prev);
+                        if (next.has(f)) next.delete(f); else next.add(f);
+                        return next;
+                      })}
+                      className="flex items-center gap-2 mb-3 text-sm font-medium hover:text-foreground text-foreground/90"
+                      data-testid={`folder-header-${f}`}
+                    >
+                      <FolderOpen className="w-4 h-4 text-muted-foreground" />
+                      {f}
+                      <span className="text-xs text-muted-foreground font-normal">({rs.length})</span>
+                      <span className="text-muted-foreground text-xs">{collapsed ? "▸" : "▾"}</span>
+                    </button>
+                    {!collapsed && renderGrid(rs)}
+                  </div>
+                );
+              })}
+              {ungrouped.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-3 text-sm font-medium text-muted-foreground">
+                    Ungrouped <span className="text-xs font-normal">({ungrouped.length})</span>
+                  </div>
+                  {renderGrid(ungrouped)}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
@@ -650,7 +728,14 @@ function ReviewQueueButton() {
 // headline, address + last-updated timestamp underneath. No per-stage
 // badges on the card itself — those live on the detail view once the
 // user clicks in. Delete stays on the card (top-right, hover only).
-function PathwayCard({ run, onOpen, onDelete }: { run: PathwayRun; onOpen: () => void; onDelete: () => void }) {
+function PathwayCard({ run, onOpen, onDelete, folders = [], currentFolder = null, onSetFolder }: {
+  run: PathwayRun;
+  onOpen: () => void;
+  onDelete: () => void;
+  folders?: string[];
+  currentFolder?: string | null;
+  onSetFolder?: (folder: string | null) => void;
+}) {
   const heading = run.propertyName || run.address || "Untitled";
   const subline = run.propertyName ? run.address : run.postcode || "";
   const updated = run.updatedAt ? new Date(run.updatedAt) : null;
@@ -679,6 +764,41 @@ function PathwayCard({ run, onOpen, onDelete }: { run: PathwayRun; onOpen: () =>
       >
         <Trash2 className="w-3.5 h-3.5" />
       </button>
+      {onSetFolder && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              onClick={(e) => e.stopPropagation()}
+              className="absolute top-2 right-10 z-10 p-1.5 rounded-md bg-black/40 text-white opacity-0 group-hover:opacity-100 hover:bg-black/60 transition-opacity"
+              title={currentFolder ? `In folder: ${currentFolder}` : "Move to folder"}
+              data-testid={`button-folder-pathway-${run.id}`}
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52" onClick={(e) => e.stopPropagation()}>
+            {folders.map(f => (
+              <DropdownMenuItem key={f} onClick={() => onSetFolder(f)} className={f === currentFolder ? "font-semibold" : undefined}>
+                <FolderOpen className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                {f}{f === currentFolder ? " ✓" : ""}
+              </DropdownMenuItem>
+            ))}
+            {folders.length > 0 && <DropdownMenuSeparator />}
+            <DropdownMenuItem onClick={() => {
+              const name = window.prompt("New folder / portfolio name:");
+              if (name?.trim()) onSetFolder(name.trim());
+            }}>
+              <Plus className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+              New folder…
+            </DropdownMenuItem>
+            {currentFolder && (
+              <DropdownMenuItem onClick={() => onSetFolder(null)} className="text-muted-foreground">
+                Remove from "{currentFolder}"
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       <div className="aspect-[5/3] bg-muted/40 relative overflow-hidden">
         {heroUrl ? (

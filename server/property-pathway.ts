@@ -6205,6 +6205,35 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
+  // Folder / portfolio grouping — a free-text label per run (stored as
+  // stage_results._folder, same side-channel as _disposition) so the board
+  // can group runs into named sets ("Landsec disposal", "Leeds sweep").
+  // body: { folder: string | null } — null/empty clears.
+  app.post("/api/property-pathway/:runId/folder", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const runId = String(req.params.runId);
+      const raw = req.body?.folder;
+      const folder = typeof raw === "string" ? raw.trim().slice(0, 60) : null;
+      const run = await getRun(runId);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      if (!folder) {
+        await pool.query(
+          `UPDATE property_pathway_runs SET stage_results = stage_results - '_folder' WHERE id = $1`,
+          [runId],
+        );
+        return res.json({ ok: true, folder: null });
+      }
+      await pool.query(
+        `UPDATE property_pathway_runs SET stage_results = COALESCE(stage_results, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+        [runId, JSON.stringify({ _folder: folder })],
+      );
+      res.json({ ok: true, folder });
+    } catch (err: any) {
+      console.error("[pathway folder] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
   // Fetch current state of a run
   app.get("/api/property-pathway/:runId", requireAuth, async (req: Request, res: Response) => {
     try {
