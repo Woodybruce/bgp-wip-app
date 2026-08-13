@@ -63,6 +63,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r278 · 2026-08-13 · ROUND IN PROGRESS (provisional heartbeat)
+- LIGHT round (r277 had the journey). Fresh container (pg_hba trust per
+  r205 — method-column awk; restore-as-postgres + per-object ALTER owners
+  + schema grant per r249). Regression: run-smoke.sh GREEN first pass
+  (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake).
+  Two-bot round 278 running — triage pending; final entry replaces this.
+
 ### r277 · 2026-08-12 · FULL (rotation #1 staff desktop)
 - Fresh container (pg_hba trust per r205 — method-column awk;
   restore-as-postgres + per-object ALTER owners + schema grant per r249).
