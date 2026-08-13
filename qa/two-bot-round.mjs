@@ -229,7 +229,11 @@ async function victoriaRound(page, cross) {
     // Leave the fee blank at creation — it's editable on the board later, and
     // entering it without an agent split would 400 the fee-allocations save
     // (BGP House 15% row required). A real user uses the split editor.
-    await page.locator('[data-testid="input-deal-target-date"]').fill('2026-12-31');
+    // Completion date is a month picker on JOGQK (WIP report buckets by
+    // month); older builds use a day input — fill whichever format the
+    // rendered input expects.
+    const targetDate = page.locator('[data-testid="input-deal-target-date"]');
+    await targetDate.fill((await targetDate.getAttribute('type')) === 'month' ? '2026-12' : '2026-12-31');
     await page.locator('[data-testid="button-save-deal"]').click();
     await page.waitForTimeout(1800);
     // Verify via the API, not the deals table — the table is team-filtered
@@ -1120,6 +1124,18 @@ async function victoriaRound(page, cross) {
     if (path === '/messages') throw new Error('desktop /messages did not redirect');
     if (path !== '/chatbgp') throw new Error(`desktop /messages landed on ${path}, expected /chatbgp`);
     if (await page.getByText('Page not found').count()) throw new Error('desktop /messages landed on Page not found');
+  });
+
+  // UX #43 (Woody 2026-08-13): the full /image-studio power page is open to
+  // ALL staff now — non-admin staff must land on it directly (no /m/images
+  // bounce) and see the studio toolbar. Supersedes the r277 redirect check.
+  await step(page, p, 'staff-image-studio-full-access', async () => {
+    await page.goto(`${BASE}/image-studio`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2500);
+    const path = new URL(page.url()).pathname;
+    if (path !== '/image-studio') throw new Error(`non-admin /image-studio landed on ${path}, expected to stay on /image-studio`);
+    if (await page.getByText('Page not found').count()) throw new Error('non-admin /image-studio landed on Page not found');
+    if (!(await page.locator('[data-testid="button-upload"]').count())) throw new Error('full studio toolbar (button-upload) did not render for non-admin staff');
   });
 
   // 4m. Deal comments round-trip: Victoria writes a comment on the Bluewater
@@ -3988,6 +4004,28 @@ async function markRound(page, cross) {
     }, ROUND);
     if (!probe.ok) throw new Error(`contact delete probe setup failed (${probe.why})`);
     if (probe.delStatus !== 403) throw new Error(`client contact DELETE returned ${probe.delStatus} — expected 403`);
+  });
+
+  await step(page, p, 'client-landlord-files-gate', async () => {
+    // r279: the landlord-profile Files card mounted the STAFF SharePoint
+    // browser for clients — Set Up Folders + Upload buttons that 403
+    // (M365 is sealed for client logins) and a per-team folder GET that
+    // fired a 403 on every visit. Clients must get the jailed read-only
+    // Documents panel instead (same swap as the property page).
+    const fired = [];
+    const onResp = (r) => {
+      if (r.status() >= 400 && /\/api\/microsoft\/property-folders/.test(r.url())) fired.push(`${r.status()} ${r.url()}`);
+    };
+    page.on('response', onResp);
+    try {
+      await page.goto(`${BASE}/companies/${FIX.landsec}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForTimeout(4000);
+    } finally { page.off('response', onResp); }
+    if (fired.length) throw new Error(`client landlord profile fired staff folder reads: ${fired.join(', ')}`);
+    if (await page.locator('[data-testid="property-folders-panel"]').count()) throw new Error('client sees the staff SharePoint browser on the landlord profile');
+    if (await page.locator('[data-testid="button-setup-landlord-folders"]').count()) throw new Error('client sees the staff-only Set Up Folders button');
+    if (await page.locator('[data-testid="btn-upload-property-file"]').count()) throw new Error('client sees the staff-only Upload button');
+    if (!(await page.locator('[data-testid="client-property-folders-panel"]').count())) throw new Error('client lost the jailed Documents panel on the landlord profile');
   });
 
   await step(page, p, 'client-deal-mobile-sidebar', async () => {

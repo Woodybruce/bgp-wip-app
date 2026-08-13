@@ -63,6 +63,129 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r280 · 2026-08-13 · LIGHT (r279 had the journey)
+- Fresh container (pg_hba trust per r205 — method-column awk;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 280: exit 0,
+  all scenarios ok — incl. the FIRST live run of r279's
+  client-landlord-files-gate (green; the landlord-profile jailed files
+  panel fix holds). 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server
+  log (the lone " 500 " grep hit is the "500 articles" news-feed text
+  again; status tally: only 2xx/3xx/expected 400/401/403/404 + no-key
+  503s; 403s the harness's negative probes; 404s the listed HR-photo +
+  sharepoint-root polling + the harness's own requirements-leasing
+  probe; the 2 400s the rocketreach + image-studio harness probes).
+  0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r280 was LIGHT → r281
+  FULL).
+
+### r279 · 2026-08-13 · FULL (rotation #2 client desktop)
+- Fresh container (pg_hba trust per r205 — method-column awk;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1
+  before the fix, rebuilt bundle after; no cold-build flake either pass).
+  Two-bot round 279: exit 0, all scenarios ok, 2 logged issues both listed
+  noise (rocketreach-400; commentary-regen 503). First run-round.sh
+  invocation died on its 3s health check while the warm-up curl was still
+  cold-transforming "/" (r276 class — server was fine, re-ran green).
+- Journey: Mark Warne desktop 1440px — "how are my Bluewater lettings
+  progressing, and who do I chase?" (FIRST client-desktop journey coverage
+  of the Letting Tracker at /deals/letting, the Properties tab, and the
+  landlord company profile): login → Portfolio home → /deals/letting
+  (153 units, status chips + FY Viewings/Offers KPIs, search narrows,
+  0 h-overflow) → /deals/list (2 deals, SOL/EXC chips) → deal #1003
+  Gail's letting (r263 gates hold: Timeline hidden, Files jailed copy,
+  Audit log present) → Properties tab (map + 2 rows) → Landsec company
+  profile via ownership chip. NOT bugs (triaged): client tracker shows
+  Add Unit / edit / delete / Target operator — genuine parity by design
+  (server allows own-portfolio unit writes, fee stripped; checked
+  routes.ts gates); 'main' locator absent on /deals/list (page structure,
+  harness visit() already tolerates it).
+- Bug fixed (1): landlord company profile Files card mounted the STAFF
+  SharePoint browser for clients (r223/r265 staff-leak class): "Set Up
+  Folders" + "Upload" + drag-drop invite all 403 for clients (M365
+  sealed), the per-team folder GET fired a 403 on every client visit,
+  and the error state read "No folder linked yet" (misleading). Now
+  swaps per viewer like the property page: staff keep PropertyFoldersPanel
+  + Set Up Folders; clients get the jailed ClientPropertyFoldersPanel
+  (client/src/components/brand-profile-panel.tsx). Verified in-browser
+  both personas: Mark → jailed Documents panel, house copy, 0 staff
+  buttons, 0 property-folders fires; Victoria unchanged (panel + both
+  buttons; her 401 is listed M365-noise). tsc clean, rebuilt, smoke
+  re-green.
+- Harness growth: two-bot +1 client-landlord-files-gate (client on
+  /companies/:landsec must have no staff folders panel / Set Up Folders /
+  Upload, must keep the jailed panel, and zero 4xx property-folders
+  fires — own listener since /api/microsoft/ is globally ignored).
+  Assertions verified standalone via the fix-verify probes; node --check
+  clean; runs from r280.
+- Bugs deferred: none. Suggestions added: UX #44 (client deal page names
+  no BGP owner to chase — lead only findable on the company profile's BGP
+  Team card two hops away). New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r279 had the journey →
+  r280 may be LIGHT; then #3).
+
+### r278 · 2026-08-13 · LIGHT (r277 had the journey)
+- Fresh container (pg_hba trust per r205 — method-column awk;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 278: exit 0,
+  181 scenarios ok — incl. the FIRST live run of r277's
+  staff-image-studio-redirect (green; the /image-studio → /m/images
+  guard holds). 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server
+  log (status tally: only 2xx/3xx/expected 400/401/403/404 + no-key
+  503s; 403s the harness's negative probes; 404s the listed HR-photo +
+  sharepoint-root polling + the harness's own requirements-leasing
+  probe; the 2 400s are the rocketreach + image-studio harness probes).
+  0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #2 client desktop (r278 was LIGHT → r279 FULL).
+
+### r277 · 2026-08-12 · FULL (rotation #1 staff desktop)
+- Fresh container (pg_hba trust per r205 — method-column awk;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 277: exit 0,
+  all scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server
+  log (status tally: only 2xx/3xx/expected 400/401/403/404 + no-key
+  503s; 403s the harness's negative probes).
+- Journey: Victoria desktop 1440px — "a brand asked for photos of a
+  Bluewater unit: find them via Image Studio, add today's new unit
+  photo; also, does a pasted /image-studio admin link dead-end?" (FIRST
+  journey coverage of the staff image gallery /m/images anywhere):
+  login → "/" dashboard → sidebar "Image Studio" (rewritten to /m/images
+  for non-admin staff) → gallery renders, 0 h-overflow → upload leg
+  END-TO-END: Add photos file input → "Uploaded — ready to edit with AI"
+  toast, edit sheet opens (image, phone-upload tag, download/folder/
+  link/trash controls, AI prompt chips) → direct /image-studio goto
+  bounces cleanly to /m/images (StudioRoute guard, no Page-not-found).
+  Probe row deleted after. 0 page errors, 0 non-noise net errors.
+  NOT bugs (tester errors, for future rounds): staff /m/images shows
+  ONLY phone-upload-tagged photos by design ("phone-upload filter is a
+  staff convenience", mobile-images.tsx:190) — 0 tiles with a
+  brands-only fixture is intended, don't triage the empty grid; the
+  fixture qa-unit-photo.jpg row is the harness's own upload probe
+  (run-round.sh purges it at round start). Radix logs a DialogTitle
+  a11y warning from the edit sheet (dev console only, cosmetic).
+- Bugs fixed: 0 (nothing broken found — journey's only real finding is
+  a UX gap, below). Harness growth: two-bot +1 staff-image-studio-
+  redirect (non-admin /image-studio must land on /m/images with the
+  gallery shell rendered; assertions verified standalone green in the
+  browser this round; node --check clean; runs from r278).
+- Bugs deferred: none. Suggestions added: UX #43 (staff desktop "Image
+  Studio" nav lands on the phone-uploads-only gallery — non-admin staff
+  have NO route to the team image library, and the empty-state copy is
+  phone-phrased on desktop). New flakes: none.
+- Next journey: rotation #2 client desktop (r277 had the journey → r278
+  may be LIGHT; then #2).
+
 ### r276 · 2026-08-12 · LIGHT (r275 had the journey)
 - Fresh container (pg_hba trust per r205 — method-column-only sed;
   restore-as-postgres + per-object ALTER owners + schema grant per r249).

@@ -213,16 +213,14 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// The full Image Studio is open to admins AND client viewers (Woody,
-// 2026-08-04: "the image studio needs the full functionality of the BGP
-// image studio" — client parity; the server scope-jails every endpoint).
-// Non-admin staff keep the lightweight /m/images page.
+// The full Image Studio is open to every logged-in user (Woody, 2026-08-13:
+// "image studio for non admin just needs to be the same as it is for admin"
+// — UX #43; previously non-admin staff were bounced to /m/images). Client
+// viewers keep parity per 2026-08-04; the server scope-jails their gallery,
+// and destructive maintenance endpoints stay admin-only server-side.
 function StudioRoute({ children }: { children: React.ReactNode }) {
   const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
-  const [, navigate] = useLocation();
-  const allowed = !!user && (user.isAdmin || user.role === "Client" || !!(user as any).companyScopeId);
-  useEffect(() => { if (user && !allowed) navigate("/m/images"); }, [user, allowed, navigate]);
-  if (!user || !allowed) return <PageLoader />;
+  if (!user) return <PageLoader />;
   return <>{children}</>;
 }
 

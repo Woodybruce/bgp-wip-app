@@ -367,6 +367,9 @@ export default function AvailableUnitsPage() {
   const [filesUnit, setFilesUnit] = useState<AvailableUnit | null>(null);
   const [hotsUnit, setHotsUnit] = useState<AvailableUnit | null>(null);
   const [briefUnit, setBriefUnit] = useState<AvailableUnit | null>(null);
+  // Unit-name rename is behind the pencil (UX #24) — a bare name click opens
+  // the targeting brief instead of dropping straight into an edit input.
+  const [renameUnitId, setRenameUnitId] = useState<string | null>(null);
   const [viewingsUnit, setViewingsUnit] = useState<AvailableUnit | null>(null);
   const [offersUnit, setOffersUnit] = useState<AvailableUnit | null>(null);
   const [addViewingOpen, setAddViewingOpen] = useState(false);
@@ -1811,13 +1814,50 @@ export default function AvailableUnitsPage() {
                               placeholder="Link property"
                             />
                           </div>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <InlineText
-                              value={u.unitName}
-                              onSave={(v) => inlineUpdate(u.id, "unitName", v)}
-                              placeholder="Unit name"
-                              className="text-xs"
-                            />
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground group/uname">
+                            {renameUnitId === u.id ? (
+                              <Input
+                                autoFocus
+                                defaultValue={u.unitName}
+                                className="h-6 text-xs px-1.5 py-0 max-w-[160px]"
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    const v = (e.target as HTMLInputElement).value.trim();
+                                    if (v && v !== u.unitName) inlineUpdate(u.id, "unitName", v);
+                                    setRenameUnitId(null);
+                                  }
+                                  if (e.key === "Escape") setRenameUnitId(null);
+                                }}
+                                onBlur={(e) => {
+                                  const v = e.target.value.trim();
+                                  if (v && v !== u.unitName) inlineUpdate(u.id, "unitName", v);
+                                  setRenameUnitId(null);
+                                }}
+                                data-testid={`input-rename-unit-${u.id}`}
+                              />
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  className="truncate text-left hover:underline hover:text-foreground"
+                                  onClick={() => setBriefUnit(u)}
+                                  title="Open unit brief"
+                                  data-testid={`unit-name-${u.id}`}
+                                >
+                                  {u.unitName || <span className="italic opacity-60">Unit name</span>}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="p-0.5 rounded opacity-0 group-hover/uname:opacity-60 hover:!opacity-100 focus-visible:opacity-100 transition-opacity"
+                                  onClick={() => setRenameUnitId(u.id)}
+                                  title="Rename unit"
+                                  aria-label={`Rename ${u.unitName || "unit"}`}
+                                  data-testid={`button-rename-unit-${u.id}`}
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </button>
+                              </>
+                            )}
                           </div>
                         </div>
                       </TableCell>

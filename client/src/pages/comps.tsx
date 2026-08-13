@@ -2522,7 +2522,22 @@ export default function Comps() {
                 as data loss (UX-NOTES #10). */}
             <span className="flex items-center gap-1.5"><Scale className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{confirmedComps.length}</span> comps</span>
             <span className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-green-600" /> <span className="font-semibold">{stats.verified}</span> verified</span>
-            {leadComps.length > 0 && <span className="flex items-center gap-1.5 text-muted-foreground"><Sparkles className="w-3.5 h-3.5 text-amber-500" /> <span className="font-semibold">{leadComps.length}</span> AI lead{leadComps.length !== 1 ? "s" : ""} awaiting review</span>}
+            {/* Admins click through to the Leads tab; non-admins get a
+                tooltip instead of a dead number (UX #26). */}
+            {leadComps.length > 0 && (compsViewer?.isAdmin ? (
+              <button
+                type="button"
+                onClick={() => setActiveTab("leads")}
+                className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground hover:underline"
+                data-testid="stat-ai-leads"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" /> <span className="font-semibold">{leadComps.length}</span> AI lead{leadComps.length !== 1 ? "s" : ""} awaiting review
+              </button>
+            ) : (
+              <span className="flex items-center gap-1.5 text-muted-foreground" title="An admin reviews these AI-found comps before they join the schedule">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" /> <span className="font-semibold">{leadComps.length}</span> AI lead{leadComps.length !== 1 ? "s" : ""} awaiting review
+              </span>
+            ))}
             <span className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{new Set(confirmedComps.map(c => c.areaLocation).filter(Boolean)).size}</span> areas</span>
           </div>
           <div className="flex-1" />

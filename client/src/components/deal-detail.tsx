@@ -223,6 +223,37 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     queryKey: ["/api/users"],
   });
 
+  // Clients chasing a deal need a BGP owner in sight (UX #44): prefer the
+  // deal's own internalAgent names, fall back to the account team's lead.
+  // The client-teams endpoint is already scope-jailed to the client's own
+  // company and carries emails for mailto links.
+  const ddClientCompanyId = ddUser?.companyScopeId || null;
+  const { data: ddBgpTeam = [] } = useQuery<Array<{ user_id: string; full_name: string | null; username: string | null; email: string | null; is_lead: boolean }>>({
+    queryKey: ["/api/client-teams", ddClientCompanyId],
+    queryFn: async () => {
+      const r = await fetch(`/api/client-teams/${ddClientCompanyId}`, { headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!ddUser && isClientDeal && !!ddClientCompanyId,
+  });
+  const ddBgpLeads: Array<{ name: string; email: string | null }> = (() => {
+    if (!isClientDeal || !deal) return [];
+    const raw = (deal as any).internalAgent;
+    const agentNames = (Array.isArray(raw) ? raw : String(raw || "").split(","))
+      .map((s: string) => String(s).trim()).filter(Boolean);
+    const memberByName = (n: string) =>
+      ddBgpTeam.find(m => (m.full_name || m.username || "").toLowerCase() === n.toLowerCase());
+    if (agentNames.length > 0) {
+      return agentNames.map((n: string) => ({ name: n, email: memberByName(n)?.email || null }));
+    }
+    // No agent on the deal — fall back to the account team's flagged lead,
+    // or failing that the first team member, so the client is never left
+    // with nobody to chase.
+    const lead = ddBgpTeam.find(m => m.is_lead) || ddBgpTeam[0];
+    return lead ? [{ name: lead.full_name || lead.username || "BGP team", email: lead.email || null }] : [];
+  })();
+
   // Look up units on this deal's property so we can show breadcrumb + power
   // the "edit unit / address" overlay on the heading.
   const { data: propertyUnits = [] } = useQuery<Array<{
@@ -667,6 +698,21 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                   {!counterparty && (
                     <span className="text-xs italic">{counterpartyLabel} not set</span>
                   )}
+                  {ddBgpLeads.length > 0 && (
+                    <span className="inline-flex items-center gap-1 text-xs" title="Your BGP contact for this deal" data-testid="deal-bgp-lead">
+                      <Users className="w-3.5 h-3.5" /> BGP contact:{" "}
+                      {ddBgpLeads.map((p, i) => (
+                        <span key={p.name}>
+                          {i > 0 && ", "}
+                          {p.email ? (
+                            <a href={`mailto:${p.email}`} className="font-medium text-foreground hover:underline">{p.name}</a>
+                          ) : (
+                            <span className="font-medium text-foreground">{p.name}</span>
+                          )}
+                        </span>
+                      ))}
+                    </span>
+                  )}
                   {deal.targetDate && (
                     <span className="inline-flex items-center gap-1 text-xs" title="Target date" data-testid="deal-target-date">
                       <CalendarIcon className="w-3.5 h-3.5" /> Target: {formatDate(deal.targetDate)}
@@ -772,6 +818,18 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             <Users className="w-4 h-4 text-muted-foreground" />
             <h3 className="text-sm font-semibold">Parties</h3>
           </div>
+          {/* Clients see WHO at BGP runs this deal (names only, no fees) —
+              "who do I chase?" previously ended in a blank (UX #25). */}
+          {isClientDeal && (() => {
+            const raw = (deal as any).internalAgent;
+            const agents = (Array.isArray(raw) ? raw : String(raw || "").split(",")).map((a: string) => String(a).trim()).filter(Boolean);
+            if (agents.length === 0) return null;
+            return (
+              <p className="text-xs text-muted-foreground" data-testid="client-bgp-contact">
+                Your BGP contact{agents.length > 1 ? "s" : ""}: <span className="font-medium text-foreground">{agents.join(", ")}</span>
+              </p>
+            );
+          })()}
           {/* Leasing deals show Landlord/Tenant; investment (Sale/Purchase)
               deals show Vendor/Purchaser — the unused pair is clutter that
               invites mis-linking (UX #19). Already-linked slots stay visible
