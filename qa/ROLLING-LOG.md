@@ -63,15 +63,53 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r283 · 2026-08-13 · FULL (rotation #4 staff mobile 390px) — IN PROGRESS
+### r283 · 2026-08-13 · FULL (rotation #4 staff mobile 390px)
 - Fresh container (pg_hba trust per r205 — method-column awk;
   restore-as-postgres + per-object ALTER owners + schema grant per r249).
-  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Two-bot + journey pending.
-- Journey planned: Victoria @ 390px iPhone UA — Bluewater property →
-  tenancy schedule → brand key contact (first staff-mobile coverage of
-  the properties/tenancy path). Note: mobile login form is behind the
-  "Client / guest sign in" toggle (journey scripts must click it first).
+  Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1
+  before the fixes, rebuilt bundle after; no cold-build flake either
+  pass). Two-bot round 283: exit 0, all scenarios ok, 2 logged issues
+  both listed noise (rocketreach-400; commentary-regen 503). 0 raw
+  500/502/504 in both servers' logs (the lone " 500 " grep hit is the
+  "500 articles" news-feed text again). Setup note: the mobile login
+  form is behind the "Client / guest sign in" toggle — journey scripts
+  must click it before waiting for inputs.
+- Journey: Victoria @ 390px iPhone UA — "at Bluewater between meetings:
+  open the property, find a unit's tenant on the tenancy schedule, get
+  the brand's key contact" (FIRST staff-mobile coverage of /properties,
+  the property detail page, and /tenancy-schedule/:id): login → "/"
+  dashboard (0 h-overflow) → /properties (tab strip wraps, map + 4
+  property cards fit) → Bluewater property page → /tenancy-schedule
+  (toolbar wraps, KPIs stack, 200 units) → search "Starbucks" narrows to
+  2 rows → tenant link → Starbucks profile (KEY CONTACTS card: Tom
+  Barista, Head of Acquisitions). Task completable; 0 page errors, 0
+  non-noise console/net errors.
+- Bugs fixed (2, both r265/r267 mobile-layout classes):
+  1. Property page header action row (Ask ChatBGP / Image Studio /
+     Create document / Set Up Folders) was a nowrap flex row — 610px at
+     390px, Create document + Set Up Folders past the viewport with no
+     scroll path. flex-wrap gap-y-1.5 added
+     (client/src/components/property-detail.tsx); all four buttons
+     inside the viewport at 390px, desktop 1440px still one line (equal y).
+  2. Tenancy schedule's pinned Unit column grew to 434px — WIDER than
+     the whole 356px scroll window at 390px (long nowrap unit names), so
+     every moving column (tenant, dates, rent) slid underneath it:
+     sheet unreadable beyond column 1 on phones. Unit-cell InlineEdit
+     now capped max-w-[34vw] + truncate below sm
+     (client/src/components/PropertyTenancySchedule.tsx); sticky cell
+     208px → 148px visible window, tenant column readable + tappable,
+     desktop unchanged (0 clipped unit cells at 1440px, sticky 434px as
+     before). Both: tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 staff-property-tenancy-mobile (iPhone
+  context per r266 pattern — all four property action buttons inside
+  390px; tenancy sticky td must leave ≥80px of moving-column window).
+  Assertions verified standalone green via the fix-verify probes; node
+  --check clean; first live run THIS round (exit 0, no issue rows).
+- Bugs deferred: none. Suggestions added: UX #45 (tenancy-schedule
+  search feedback lands ~1.5 screens below the box at 390px — KPI stack
+  buries the filtered table). New flakes: none.
+- Next journey: rotation #1 staff desktop (r283 had the journey → r284
+  may be LIGHT; then #1).
 
 ### r282 · 2026-08-13 · LIGHT (r281 had the journey)
 - Fresh container (pg_hba trust per r205 — method-column awk;
