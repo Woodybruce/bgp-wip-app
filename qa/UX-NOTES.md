@@ -13,6 +13,18 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+44. 2026-08-13 · Landsec client / desktop 1440px · "the Gail's letting is
+    at Solicitors — who at BGP do I chase?" · the client deal page names
+    no BGP owner: Parties is landlord/tenant/vendor/purchaser only (all
+    empty here), the header shows just "Team: National", and there's no
+    deal lead or contact anywhere on the page. The answer (Lead: Victoria
+    Broadhead) only exists on the client's own company profile under the
+    BGP Team card — two hops away and not where a user chasing a deal
+    would look. The Letting Tracker rows equally name no BGP person ·
+    Suggested: surface the deal owner / BGP lead (name + email link) on
+    the client deal detail header or sidebar, and consider the same on
+    tracker unit rows. Needs Woody's numbered confirmation — not built.
+
 43. 2026-08-12 · BGP staff (non-admin) / desktop 1440px · "a brand asked for
     photos of a Bluewater unit — find them in Image Studio" · the sidebar's
     "Image Studio" entry sends non-admin staff to /m/images, which is

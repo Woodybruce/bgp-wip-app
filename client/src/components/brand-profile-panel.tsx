@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
-import { PropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
+import { PropertyFoldersPanel, ClientPropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
 import { MessageSquare, FolderTree, RefreshCw, X as XIcon, ExternalLink as ExternalLinkIcon, Star as StarIcon, UserPlus, ClipboardList } from "lucide-react";
 import { TagChip, TAG_TOKEN_SOURCE, buildTagToken, type TagType } from "@/components/chat-tags";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
@@ -4840,6 +4840,7 @@ function LandlordSidebarBlock({
               {companyName} property tree
             </button>
             )}
+            {sbIsStaff && (
             <button
               type="button"
               onClick={() => setFolderDialogOpen(true)}
@@ -4848,17 +4849,22 @@ function LandlordSidebarBlock({
             >
               <FolderTree className="w-3 h-3" /> Set Up Folders
             </button>
+            )}
           </div>
         </CardHeader>
         <CardContent className="p-3 pt-0">
           {/* Long folder trees (Landsec has 100+ property folders) scroll
               inside the card instead of stretching the whole page. */}
           <div className="max-h-[420px] overflow-y-auto pr-1">
-            <PropertyFoldersPanel
-              propertyName={companyName}
-              folderTeams={folderTeams && folderTeams.length > 0 ? folderTeams : ["Investment"]}
-              sharepointFolderUrl={sharepointFolderUrl || null}
-            />
+            {sbIsStaff ? (
+              <PropertyFoldersPanel
+                propertyName={companyName}
+                folderTeams={folderTeams && folderTeams.length > 0 ? folderTeams : ["Investment"]}
+                sharepointFolderUrl={sharepointFolderUrl || null}
+              />
+            ) : (
+              <ClientPropertyFoldersPanel propertyName="" />
+            )}
           </div>
         </CardContent>
       </Card>

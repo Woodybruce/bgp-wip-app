@@ -63,17 +63,51 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r279 · 2026-08-13 · ROUND IN PROGRESS (heartbeat)
+### r279 · 2026-08-13 · FULL (rotation #2 client desktop)
 - Fresh container (pg_hba trust per r205 — method-column awk;
   restore-as-postgres + per-object ALTER owners + schema grant per r249).
-  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 279 running
-  (first invocation hit the r276 cold-transform health-check flake —
-  server was up, re-ran). Journey underway: rotation #2 client desktop
-  (Mark Warne 1440px) — Bluewater lettings progress via Letting Tracker.
-  Triage so far: home + /deals/letting + /deals/list all render, only
-  listed noise (ai-briefing 503, sharepoint-root 404, ai-take 503,
-  favicon resets). Final entry replaces this one.
+  Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1
+  before the fix, rebuilt bundle after; no cold-build flake either pass).
+  Two-bot round 279: exit 0, all scenarios ok, 2 logged issues both listed
+  noise (rocketreach-400; commentary-regen 503). First run-round.sh
+  invocation died on its 3s health check while the warm-up curl was still
+  cold-transforming "/" (r276 class — server was fine, re-ran green).
+- Journey: Mark Warne desktop 1440px — "how are my Bluewater lettings
+  progressing, and who do I chase?" (FIRST client-desktop journey coverage
+  of the Letting Tracker at /deals/letting, the Properties tab, and the
+  landlord company profile): login → Portfolio home → /deals/letting
+  (153 units, status chips + FY Viewings/Offers KPIs, search narrows,
+  0 h-overflow) → /deals/list (2 deals, SOL/EXC chips) → deal #1003
+  Gail's letting (r263 gates hold: Timeline hidden, Files jailed copy,
+  Audit log present) → Properties tab (map + 2 rows) → Landsec company
+  profile via ownership chip. NOT bugs (triaged): client tracker shows
+  Add Unit / edit / delete / Target operator — genuine parity by design
+  (server allows own-portfolio unit writes, fee stripped; checked
+  routes.ts gates); 'main' locator absent on /deals/list (page structure,
+  harness visit() already tolerates it).
+- Bug fixed (1): landlord company profile Files card mounted the STAFF
+  SharePoint browser for clients (r223/r265 staff-leak class): "Set Up
+  Folders" + "Upload" + drag-drop invite all 403 for clients (M365
+  sealed), the per-team folder GET fired a 403 on every client visit,
+  and the error state read "No folder linked yet" (misleading). Now
+  swaps per viewer like the property page: staff keep PropertyFoldersPanel
+  + Set Up Folders; clients get the jailed ClientPropertyFoldersPanel
+  (client/src/components/brand-profile-panel.tsx). Verified in-browser
+  both personas: Mark → jailed Documents panel, house copy, 0 staff
+  buttons, 0 property-folders fires; Victoria unchanged (panel + both
+  buttons; her 401 is listed M365-noise). tsc clean, rebuilt, smoke
+  re-green.
+- Harness growth: two-bot +1 client-landlord-files-gate (client on
+  /companies/:landsec must have no staff folders panel / Set Up Folders /
+  Upload, must keep the jailed panel, and zero 4xx property-folders
+  fires — own listener since /api/microsoft/ is globally ignored).
+  Assertions verified standalone via the fix-verify probes; node --check
+  clean; runs from r280.
+- Bugs deferred: none. Suggestions added: UX #44 (client deal page names
+  no BGP owner to chase — lead only findable on the company profile's BGP
+  Team card two hops away). New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r279 had the journey →
+  r280 may be LIGHT; then #3).
 
 ### r278 · 2026-08-13 · LIGHT (r277 had the journey)
 - Fresh container (pg_hba trust per r205 — method-column awk;
