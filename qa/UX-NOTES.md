@@ -13,6 +13,18 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+45. 2026-08-13 · BGP staff / mobile 390px · "find a unit's tenant on the
+    Bluewater tenancy schedule" · after typing in the schedule's Search
+    box, the filtered rows give no visible feedback — the KPI stack
+    (NIA / rent / WAULT / occupied / vacant / service charge, 7 stacked
+    cards at phone width) pushes the table ~1.5 screens below the search
+    box, and the status-count chips above it don't change with the search
+    either, so the page looks inert until the user scrolls a long way ·
+    Suggested: on phones collapse the KPI cards into a 2-col grid or a
+    swipeable strip (or move Search directly above the table), so search
+    results are visible near the input. Needs Woody's numbered
+    confirmation — not built.
+
 44. 2026-08-13 · Landsec client / desktop 1440px · "the Gail's letting is
     at Solicitors — who at BGP do I chase?" · the client deal page names
     no BGP owner: Parties is landlord/tenant/vendor/purchaser only (all

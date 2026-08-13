@@ -634,6 +634,55 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r283: staff mobile property + tenancy schedule. The property header
+  // action row was a nowrap flex row (610px at 390px — Create document +
+  // Set Up Folders unreachable, r265/r267 class, fixed with flex-wrap); the
+  // tenancy sheet's pinned Unit column grew to 434px — wider than the whole
+  // 356px scroll window, hiding every moving column (fixed with a mobile
+  // max-w cap on the unit cell). Both must stay inside a 390px phone.
+  await step(page, p, 'staff-property-tenancy-mobile', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobGoto(mob, `${BASE}/properties/${BLUEWATER}`, nav);
+      await mob.locator('[data-testid="button-setup-folders"]').waitFor({ timeout: 30000 });
+      for (const id of ['button-ask-ai-property', 'button-image-studio', 'button-create-document', 'button-setup-folders']) {
+        const box = await mob.locator(`[data-testid="${id}"]`).first().boundingBox();
+        if (!box) throw new Error(`property action ${id} missing at 390px`);
+        if (box.x < 0 || box.x + box.width > 390 + 2) {
+          throw new Error(`property action ${id} clipped at 390px (x ${Math.round(box.x)}, right ${Math.round(box.x + box.width)})`);
+        }
+      }
+      await mobGoto(mob, `${BASE}/tenancy-schedule/${BLUEWATER}`, nav);
+      await mob.locator('table tbody td.sticky').first().waitFor({ timeout: 30000 });
+      const m = await mob.evaluate(() => {
+        const sticky = document.querySelector('table tbody td.sticky');
+        const scroller = sticky ? sticky.closest('.overflow-x-auto') : null;
+        return {
+          stickyW: sticky ? Math.round(sticky.getBoundingClientRect().width) : null,
+          scrollerW: scroller ? scroller.clientWidth : null,
+        };
+      });
+      if (!m.stickyW || !m.scrollerW) throw new Error('tenancy sticky column / scroller not found at 390px');
+      if (m.scrollerW - m.stickyW < 80) {
+        throw new Error(`tenancy pinned Unit column covers the sheet at 390px (sticky ${m.stickyW}px of ${m.scrollerW}px window)`);
+      }
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // Task assignment (terminal, 2026-08-03): a task assigned to another staff
   // member lands on the ASSIGNEE's list. Victoria assigns to Woody; the
   // woody round verifies receipt. Swept by the QA-PROBE task purge.

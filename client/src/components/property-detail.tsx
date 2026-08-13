@@ -523,7 +523,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   })()}
                 </div>
               )}
-              <div className="flex items-center gap-2 ml-auto">
+              <div className="flex items-center gap-2 flex-wrap gap-y-1.5 ml-auto">
                 <Button
                   variant="outline"
                   size="sm"

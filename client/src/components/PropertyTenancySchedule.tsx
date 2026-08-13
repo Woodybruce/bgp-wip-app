@@ -1493,12 +1493,16 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
               // action lives here — visible without scrolling to the
               // actions column (Woody, 2026-08-04).
               <div className="flex items-center gap-1.5">
+                {/* Phones: cap the pinned Unit cell so it can't cover the
+                    whole scroll window (a long unit name made it 434px wide
+                    at 390px — every other column slid underneath, unreadable). */}
                 <InlineEdit
                   value={displayVal}
                   field={c.field as string}
                   unitId={unit.id}
                   onSave={onUpdate}
                   type={editType}
+                  className="inline-block align-middle truncate max-w-[34vw] sm:max-w-none"
                 />
                 {!letting && !unit.is_vacant && onSendToTracker && (
                   <button
