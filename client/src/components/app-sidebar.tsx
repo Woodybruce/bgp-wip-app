@@ -103,9 +103,7 @@ const coreNavBase = [
 
 const aiNav = [
   { title: "ChatBGP", url: "/chatbgp", icon: Sparkles },
-  // Shown to all staff. Admins get the full /image-studio power page; the
-  // render swaps non-admins (e.g. CGI partners like Luke) to /m/images, which
-  // works on auth alone — so they finally have web access, not just mobile.
+  // Full /image-studio for ALL staff, admin or not (Woody 2026-08-13, UX #43).
   { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe, badge: "AI" },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
@@ -444,14 +442,7 @@ export function AppSidebar() {
             // layers, OS data, Edozo) are on the client read allowlist now.
             // Image Studio stays: the server scopes the gallery to the
             // client's own buildings.
-            .filter(i => !(isClientUser && ["/cad-measure"].includes(i.url)))
-            .map(i =>
-              // The full /image-studio page is for admins and client
-              // viewers (client parity — the server scope-jails every
-              // endpoint). Non-admin staff (e.g. CGI partners like Luke)
-              // keep the lightweight images page that works on auth alone.
-              i.url === "/image-studio" && !user?.isAdmin && !isClientUser ? { ...i, url: "/m/images" } : i
-            )}
+            .filter(i => !(isClientUser && ["/cad-measure"].includes(i.url)))}
           storageKey="ai"
         />
         <SidebarSeparator />
