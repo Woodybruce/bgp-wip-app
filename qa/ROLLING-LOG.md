@@ -63,13 +63,44 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r285 · 2026-08-13 · ROUND IN PROGRESS (provisional)
+### r285 · 2026-08-13 · FULL (rotation #1 staff desktop)
 - Fresh container (pg_hba trust per r205 — method-column awk;
   restore-as-postgres + per-object ALTER owners + schema grant per r249).
   Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 285 running.
-  Planned: FULL round, rotation #1 staff desktop — tracker journey (add
-  target operator, log viewing, cross-check client sees it).
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 285: exit 0,
+  all scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server
+  log (the lone " 500 " grep hit is the "500 articles" news-feed text
+  again; status tally: only 2xx/3xx/expected 400/401/403/404 + no-key
+  503s).
+- Journey: Victoria desktop 1440px — "a brand is circling a vacant
+  Bluewater unit: create/extend the targeting brief with a target
+  operator, log the viewing, then check the Landsec client sees the
+  activity" (FIRST staff-desktop journey through the tracker WRITE
+  dialogs — Brief dialog target add via the BrandSearchInput popover +
+  Viewings dialog): login → "/" dashboard → /available (search narrows
+  to the unit) → Brief dialog → operator popover → "Use … as typed" →
+  Add (row lists, adder auto-set as Agent) → Viewings dialog → Add
+  Viewing → save ("Viewing added" toast, row lists, tracker chip count
+  bumps) → AS MARK: /available renders, same unit found by search,
+  target-operator row visible, viewings count matches, viewing detail
+  readable in the dialog (decided client parity holds). Both trackers
+  0 h-overflow; 0 page errors, 0 non-noise console/net errors. Probe
+  viewing/target/brief cleaned via API (200s).
+- NOT bugs (triaged, for future rounds): journey probes on the resolved
+  fixture unit (Bluewater MSU9) COLLIDE with two-bot residue — two-bot's
+  own R285 QA-TGT-/QA-VIEWING- rows live on that same unit until the
+  next round's purge, so "2 rows deleted where I added 1" is residue,
+  not a double-submit. Client tracker screenshot right after Escape
+  catches the dialog's fade-out ghost frame (empty-state flash mid-
+  animation) — cosmetic, invisible at real speed.
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  agent-log-viewing + client-sees-agent-viewing already lock the
+  staff-viewing → client-sees cross-check, client-brief-target-scope
+  locks targets; this round verified the dialog UI paths visually.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #2 client desktop (r285 had the journey → r286
+  may be LIGHT; then #2).
 
 ### r284 · 2026-08-13 · LIGHT (r283 had the journey)
 - Fresh container (pg_hba trust per r205 — method-column awk;
