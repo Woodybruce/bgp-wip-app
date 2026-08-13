@@ -1109,7 +1109,7 @@ You are an active operational agent with full CRM read/write access, internet se
 - **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
 - **Leasing schedule**: query_leasing_schedule for read. If the user uploads / drags in / attaches an Excel file and says anything about leasing schedule, rent schedule, tenant schedule, load / upload / import / populate units, OR says "this is the [property] leasing schedule" — you MUST call import_leasing_schedule with mode="preview" first. DO NOT read the file yourself or summarise its contents — the tool handles parsing. After preview returns, show the user the summary and ask for confirmation, then call again with mode="import".
 - **Editable text documents**: generate_word (Word, .docx — for anything the user wants to edit afterwards), generate_pptx (PowerPoint), export_to_excel.
-- **PDFs are ALWAYS designed.** For ANY PDF — Why Buy memos, pitch decks, brochures, playbooks, placemaking documents, even internal reports — use **generate_claude_designed_pdf**. It produces a properly designed PDF in BGP house style. Pass a substantive brief and the right \`scope\` ('why_buy' for buy-side pitches, 'placemaking' for asset-management decks, 'general' for everything else). The alternative — **compile_brochure_from_pdfs** — is for when you want to stitch real pages from existing BGP brochures verbatim. There is NO text-only PDF tool — Word is the text-output fallback.
+- **PDFs are ALWAYS designed.** For ANY PDF — Why Buy memos, pitch decks, brochures, playbooks, placemaking documents, even internal reports — use **generate_claude_designed_pdf**. It produces a properly designed PDF in BGP house style. Pass a substantive brief and the right \`scope\` ('why_buy' for buy-side pitches, 'placemaking' for asset-management decks, 'general' for everything else). **Editable deck version (per Woody)**: the same tool takes \`format: 'pptx'\` for a native, editable PowerPoint of the same brief, or \`format: 'both'\` for both files in one call — when the user wants to edit the deck afterwards, or asks for "PDF and PowerPoint", use 'both' and hand back both links. The alternative — **compile_brochure_from_pdfs** — is for when you want to stitch real pages from existing BGP brochures verbatim. There is NO text-only PDF tool — Word is the text-output fallback.
 - **Bespoke brochures from existing BGP pages**: **compile_brochure_from_pdfs** — stitches specific pages from source PDFs (SharePoint or Dropbox) into a new PDF preserving all original design. Use when the user wants a custom document made from pages of existing brochures (e.g. "pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard"). Ask browse_sharepoint_folder / browse_dropbox for the source PDF IDs/paths first.
 - **Bulk file-move**: **copy_dropbox_to_sharepoint** — copies raw PDF binaries from Dropbox into a SharePoint folder. Use when the user says "pull these into a SharePoint folder". Do NOT claim SharePoint "glitched" if upload fails — report the exact error.
 - **Email attachment → SharePoint**: when the user asks to save a brochure / floor plans / any email attachment to SharePoint, use **download_email_attachment** with \`action: "save_to_sharepoint"\` and a \`folderPath\`. This is the ONLY correct tool for that flow — it pulls the binary from Graph and uploads it in one step. Do NOT try \`upload_to_sharepoint\` for email attachments; that tool only handles chat-media files (generated docs, files dragged into the chat). If you reach for upload_to_sharepoint and get a "file not found in chat-media" error, that's the signal you should be using download_email_attachment instead.
@@ -4003,7 +4003,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "generate_claude_designed_pdf",
-      description: "Generate a properly designed, visually polished PDF (deck / brochure / pitch / playbook / Why Buy memo / any PDF really) — Claude renders a self-contained HTML document with BGP brand cues + house-style preferences, then headless Chrome converts to a print-ready PDF. THIS IS THE ONLY TOOL THAT MAKES PDFs. Returns a chat-media download link. For text the user will edit afterwards, use generate_word (Word .docx) instead.",
+      description: "Generate a properly designed, visually polished document (deck / brochure / pitch / playbook / Why Buy memo) in BGP house style from one brief. format='pdf' (default) renders a locked, print-ready PDF; format='pptx' renders the SAME brief as a native, fully editable PowerPoint; format='both' returns both download links — the editable master plus the locked final. THIS IS THE ONLY TOOL THAT MAKES DESIGNED PDFs/DECKS. Returns chat-media download link(s). For plain text the user will edit, use generate_word instead.",
       parameters: {
         type: "object",
         properties: {
@@ -4011,6 +4011,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           brief: { type: "string", description: "Structured markdown content (500-3000 words). Sections: cover info, executive summary, property/subject, tenant/counterparty, numbers + comps, risks, next steps. Be specific — Claude designs the layout from this verbatim." },
           scope: { type: "string", enum: ["why_buy", "placemaking", "pitch", "general"], description: "House-style scope to apply. Defaults to 'why_buy'. Picks the accumulated design preferences for that scope (Nick's saved direction etc.)." },
           additionalInstructions: { type: "string", description: "Optional design steer for this specific document, e.g. 'lead with the 4.86% true initial yield, downplay the headline'." },
+          format: { type: "string", enum: ["pdf", "pptx", "both"], description: "Output format. 'pdf' (default) = locked designed PDF. 'pptx' = editable PowerPoint of the same brief. 'both' = one call, both files. When the user says they want to edit the deck, or asks for PowerPoint, use 'pptx' or 'both'." },
         },
         required: ["title", "brief"],
       },
@@ -8176,12 +8177,40 @@ export async function executeCrmToolRaw(
 
   if (fnName === "generate_claude_designed_pdf") {
     try {
+      const format = String(fnArgs.format || "pdf");
+      if (format === "pptx") {
+        const { generateClaudeDesignedPptx } = await import("./claude-designed-pptx");
+        return { data: await generateClaudeDesignedPptx(fnArgs) };
+      }
+      if (format === "both") {
+        const [{ generateClaudeDesignedPdf }, { generateClaudeDesignedPptx }] = await Promise.all([
+          import("./claude-designed-pdf"),
+          import("./claude-designed-pptx"),
+        ]);
+        const [pdf, pptx] = await Promise.all([
+          generateClaudeDesignedPdf(fnArgs),
+          generateClaudeDesignedPptx(fnArgs),
+        ]);
+        const links = [
+          (pdf as any).downloadMarkdown,
+          (pptx as any).downloadMarkdown,
+        ].filter(Boolean).join("\n");
+        return {
+          data: {
+            success: !("error" in pdf) || !("error" in pptx),
+            pdf,
+            pptx,
+            downloadMarkdown: links,
+            message: `Generated both versions — locked PDF + editable PowerPoint. Give the user BOTH download links verbatim from downloadMarkdown.`,
+          },
+        };
+      }
       const { generateClaudeDesignedPdf } = await import("./claude-designed-pdf");
       const result = await generateClaudeDesignedPdf(fnArgs);
       return { data: result };
     } catch (err: any) {
       console.error("[chatbgp] generate_claude_designed_pdf error:", err?.message);
-      return { data: { error: `Claude-designed PDF failed: ${err?.message}` } };
+      return { data: { error: `Claude-designed document failed: ${err?.message}` } };
     }
   }
 
