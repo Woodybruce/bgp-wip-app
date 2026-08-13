@@ -126,16 +126,55 @@ function goadCategoryToCompanyType(category: string | null | undefined): string 
   return "Tenant - Other";
 }
 
+// ─── Verification cache ──────────────────────────────────────────────────
+// The website→entity chain is deterministic per domain, so cache verdicts:
+// the first click on any Pret unit scrapes pret.co.uk once, every other
+// Pret unit (and every re-open) answers instantly and for free. Enables
+// the client to auto-verify on panel open without burning ScraperAPI/CH
+// quota on repeats.
+let verifyCacheEnsured = false;
+async function ensureVerifyCache(): Promise<void> {
+  if (verifyCacheEnsured) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS goad_tenant_verifications (
+      domain       TEXT PRIMARY KEY,
+      website      TEXT,
+      fascia       TEXT,
+      result       JSONB NOT NULL,
+      verified_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+  verifyCacheEnsured = true;
+}
+
+function domainOf(website: string): string {
+  return website.replace(/^https?:\/\//i, "").replace(/\/.*$/, "").replace(/^www\./i, "").toLowerCase();
+}
+
 // ─── POST /api/goad/tenant-verify ────────────────────────────────────────
-// Button #1: takes the website discovered via Google Places, runs the
-// existing website-footer scrape, verifies any extracted CH number against
-// the live CH API, returns a structured candidate. No DB write.
+// Takes the website discovered via Google Places, runs the website-footer
+// scrape, verifies any extracted CH number against the live CH API, returns
+// a structured candidate. Cached per domain (pass force:true to re-scrape).
+// No CRM write — that stays behind the explicit Add to CRM step.
 router.post("/api/goad/tenant-verify", requireAuth, async (req: Request, res: Response) => {
   const website = String(req.body?.website || "").trim();
   const fascia = String(req.body?.fascia || "").trim();
+  const force = req.body?.force === true;
   if (!website) return res.status(400).json({ error: "website required" });
 
   try {
+    await ensureVerifyCache().catch(() => {});
+    const domain = domainOf(website);
+    if (!force && domain) {
+      try {
+        const { rows } = await pool.query(
+          `SELECT result FROM goad_tenant_verifications WHERE domain = $1 AND verified_at > now() - interval '90 days'`,
+          [domain],
+        );
+        if (rows[0]?.result) return res.json({ ...rows[0].result, cached: true });
+      } catch { /* cache miss path below */ }
+    }
+
     const scraped = await scrapeUkEntityFromWebsite(website, fascia ? { name: fascia } : undefined);
 
     // If we got a CH number, verify it against the live API and return the
@@ -148,6 +187,7 @@ router.post("/api/goad/tenant-verify", requireAuth, async (req: Request, res: Re
         chProfile = await chFetch(`/company/${padded}`);
       } catch (e: any) {
         // CH rejected the number — return the scrape but mark unverified
+        // (not cached: a transient CH outage shouldn't stick for 90 days).
         return res.json({
           ok: true,
           scraped,
@@ -157,7 +197,18 @@ router.post("/api/goad/tenant-verify", requireAuth, async (req: Request, res: Re
       }
     }
 
-    res.json({ ok: true, scraped, chProfile });
+    const payload = { ok: true, scraped, chProfile };
+    // Cache only verdicts worth reusing — a CH-verified profile or at least
+    // an extracted entity name. Empty scrapes retry next time.
+    if (domain && (chProfile || scraped.entityName)) {
+      pool.query(
+        `INSERT INTO goad_tenant_verifications (domain, website, fascia, result, verified_at)
+         VALUES ($1, $2, $3, $4, now())
+         ON CONFLICT (domain) DO UPDATE SET result = $4, fascia = $3, verified_at = now()`,
+        [domain, website, fascia || null, JSON.stringify(payload)],
+      ).catch(() => {});
+    }
+    res.json(payload);
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "Verify failed" });
   }

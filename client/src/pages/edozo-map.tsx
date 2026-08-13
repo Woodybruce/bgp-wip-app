@@ -3623,6 +3623,37 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     error: string | null;
   }>({ loading: false, result: null, error: null });
   const [tenantCreateState, setTenantCreateState] = useState<{ loading: boolean; companyId: string | null; error: string | null }>({ loading: false, companyId: null, error: null });
+
+  const runTenantVerify = useCallback(async (website: string, fascia: string) => {
+    setTenantVerifyState({ loading: true, result: null, error: null });
+    try {
+      const r = await fetch("/api/goad/tenant-verify", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ website, fascia }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Verify failed");
+      setTenantVerifyState({ loading: false, result: j, error: null });
+    } catch (e: any) {
+      setTenantVerifyState({ loading: false, result: null, error: e?.message || "Verify failed" });
+    }
+  }, []);
+
+  // Auto-verify: the moment a clicked unit shows an unknown tenant with a
+  // website, run the Companies House chain unprompted — the server caches
+  // verdicts by domain so repeat fascias cost nothing. The button remains
+  // only as a retry after an error.
+  useEffect(() => {
+    const tp = goadPanelContext?.tenantPlace;
+    if (!tp?.website || goadPanelContext?.tenantCompany) return;
+    if (tenantVerifyState.loading || tenantVerifyState.result || tenantVerifyState.error) return;
+    if (tenantCreateState.companyId) return;
+    runTenantVerify(tp.website, tp.name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [goadPanelContext?.tenantPlace?.website, goadPanelContext?.tenantCompany]);
+
   const [goadPanelStartingPathway, setGoadPanelStartingPathway] = useState(false);
   const [goadPanelLoading, setGoadPanelLoading] = useState(false);
   const dealsLayerRef = useRef<any>(null);
@@ -6643,42 +6674,32 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                         <div className="text-[10px] text-gray-600">{goadPanelContext.tenantPlace.phone}</div>
                       )}
 
-                      {/* Stage 1 — Verify on Companies House */}
+                      {/* Stage 1 — Companies House verification. Runs
+                          automatically on panel open (see the auto-verify
+                          effect); this block just shows progress, and the
+                          retry button after a failure. */}
                       {!tenantVerifyState.result && !tenantCreateState.companyId && (
                         <div className="pt-1.5">
-                          <button
-                            type="button"
-                            disabled={tenantVerifyState.loading || !goadPanelContext.tenantPlace.website}
-                            onClick={async () => {
-                              setTenantVerifyState({ loading: true, result: null, error: null });
-                              try {
-                                const r = await fetch("/api/goad/tenant-verify", {
-                                  method: "POST",
-                                  credentials: "include",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({
-                                    website: goadPanelContext.tenantPlace!.website,
-                                    fascia: goadPanelContext.tenantPlace!.name,
-                                  }),
-                                });
-                                const j = await r.json();
-                                if (!r.ok) throw new Error(j.error || "Verify failed");
-                                setTenantVerifyState({ loading: false, result: j, error: null });
-                              } catch (e: any) {
-                                setTenantVerifyState({ loading: false, result: null, error: e?.message || "Verify failed" });
-                              }
-                            }}
-                            className="text-[11px] font-medium px-2 py-1 rounded bg-gray-900 text-white disabled:opacity-40"
-                            data-testid="button-tenant-verify"
-                          >
-                            {tenantVerifyState.loading ? "Verifying…" : "Verify on Companies House"}
-                          </button>
-                          {!goadPanelContext.tenantPlace.website && (
-                            <p className="text-[9px] text-gray-500 italic mt-1">No website on Google Places — can't auto-verify.</p>
-                          )}
-                          {tenantVerifyState.error && (
-                            <p className="text-[9px] text-red-600 mt-1">{tenantVerifyState.error}</p>
-                          )}
+                          {tenantVerifyState.loading ? (
+                            <p className="text-[10px] text-gray-600 flex items-center gap-1.5">
+                              <Loader2 className="w-3 h-3 animate-spin" /> Verifying on Companies House…
+                            </p>
+                          ) : tenantVerifyState.error ? (
+                            <>
+                              <p className="text-[9px] text-red-600 mb-1">{tenantVerifyState.error}</p>
+                              <button
+                                type="button"
+                                disabled={!goadPanelContext.tenantPlace.website}
+                                onClick={() => runTenantVerify(goadPanelContext.tenantPlace!.website!, goadPanelContext.tenantPlace!.name)}
+                                className="text-[11px] font-medium px-2 py-1 rounded bg-gray-900 text-white disabled:opacity-40"
+                                data-testid="button-tenant-verify"
+                              >
+                                Retry verification
+                              </button>
+                            </>
+                          ) : !goadPanelContext.tenantPlace.website ? (
+                            <p className="text-[9px] text-gray-500 italic">No website on Google Places — can't auto-verify.</p>
+                          ) : null}
                         </div>
                       )}
 
