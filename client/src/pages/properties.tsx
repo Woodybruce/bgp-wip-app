@@ -6527,7 +6527,7 @@ function LandlordHealthView({
                             <SelectValue placeholder="Set landlord..." />
                           </SelectTrigger>
                           <SelectContent>
-                            {landlordCompanies.slice(0, 60).map(c => (
+                            {landlordCompanies.map(c => (
                               <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                             ))}
                           </SelectContent>
@@ -6551,7 +6551,6 @@ function LandlordHealthView({
                           <SelectContent>
                             {landlordCompanies
                               .filter(c => c.id !== landlord.id)
-                              .slice(0, 60)
                               .map(c => (
                                 <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                               ))}
@@ -6578,7 +6577,6 @@ function LandlordHealthView({
                             <SelectItem value={landlord.id}>{landlord.name} (current landlord)</SelectItem>
                             {landlordCompanies
                               .filter(c => c.id !== landlord.id)
-                              .slice(0, 30)
                               .map(c => (
                                 <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                               ))}
