@@ -4006,6 +4006,28 @@ async function markRound(page, cross) {
     if (probe.delStatus !== 403) throw new Error(`client contact DELETE returned ${probe.delStatus} — expected 403`);
   });
 
+  await step(page, p, 'client-landlord-files-gate', async () => {
+    // r279: the landlord-profile Files card mounted the STAFF SharePoint
+    // browser for clients — Set Up Folders + Upload buttons that 403
+    // (M365 is sealed for client logins) and a per-team folder GET that
+    // fired a 403 on every visit. Clients must get the jailed read-only
+    // Documents panel instead (same swap as the property page).
+    const fired = [];
+    const onResp = (r) => {
+      if (r.status() >= 400 && /\/api\/microsoft\/property-folders/.test(r.url())) fired.push(`${r.status()} ${r.url()}`);
+    };
+    page.on('response', onResp);
+    try {
+      await page.goto(`${BASE}/companies/${FIX.landsec}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.waitForTimeout(4000);
+    } finally { page.off('response', onResp); }
+    if (fired.length) throw new Error(`client landlord profile fired staff folder reads: ${fired.join(', ')}`);
+    if (await page.locator('[data-testid="property-folders-panel"]').count()) throw new Error('client sees the staff SharePoint browser on the landlord profile');
+    if (await page.locator('[data-testid="button-setup-landlord-folders"]').count()) throw new Error('client sees the staff-only Set Up Folders button');
+    if (await page.locator('[data-testid="btn-upload-property-file"]').count()) throw new Error('client sees the staff-only Upload button');
+    if (!(await page.locator('[data-testid="client-property-folders-panel"]').count())) throw new Error('client lost the jailed Documents panel on the landlord profile');
+  });
+
   await step(page, p, 'client-deal-mobile-sidebar', async () => {
     // r241: below md the deal-detail right sidebar is display:none — the
     // Files/Linked Property/Comments/History sections must be re-rendered
