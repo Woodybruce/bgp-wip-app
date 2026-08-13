@@ -51,6 +51,7 @@ PAGE DISCIPLINE (critical — the #1 defect to avoid is content bleeding off the
 
 MAPS:
 - Any embedded Google Static Maps image must use maptype=hybrid (satellite imagery with road labels) — road-map styling only when the brief explicitly asks for it. If the brief supplies a staticmap URL with maptype=roadmap or no maptype parameter, rewrite that one parameter to hybrid and keep the rest of the URL identical.
+- Write staticmap URLs WITHOUT any key parameter (or drop whatever key the brief carried) — you do not know the real API key and must never invent one. The renderer injects BGP's key and bakes the fetched image into the PDF automatically; a made-up key produces a grey box.
 
 Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary, no markdown fences.`;
 

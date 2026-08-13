@@ -1219,7 +1219,52 @@ function resolveChromiumPath(): Promise<string> {
   return chromiumPathPromise;
 }
 
-async function htmlToPdfBuffer(html: string, options?: { format?: "A4" | "Letter"; landscape?: boolean }): Promise<Buffer> {
+// ─── Google Static Maps inlining ─────────────────────────────────────────
+// AI-designed documents embed maps as <img src="https://maps.googleapis.com/
+// maps/api/staticmap?..."> — but the model doesn't (and must never) know the
+// real API key, so those URLs 403 and the PDF ships a grey box. Before
+// rendering: inject the server's key over whatever the model wrote, default
+// the style to hybrid (satellite + labels, per Woody), fetch the image and
+// bake it in as a data URI so the PDF is self-contained offline. A failed
+// fetch becomes a visible error tile instead of a silent grey box.
+async function inlineGoogleStaticMaps(html: string): Promise<string> {
+  const re = /src=["'](https:\/\/maps\.googleapis\.com\/maps\/api\/staticmap[^"']+)["']/g;
+  const matches = Array.from(html.matchAll(re));
+  if (matches.length === 0) return html;
+  const key = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY || "";
+  let out = html;
+  const seen = new Set<string>();
+  for (const m of matches.slice(0, 8)) {
+    const original = m[1];
+    if (seen.has(original)) continue;
+    seen.add(original);
+    let replacement: string;
+    try {
+      const u = new URL(original.replace(/&amp;/g, "&"));
+      if (key) u.searchParams.set("key", key);
+      // House default is satellite-with-labels. The designer prompt only
+      // writes an explicit maptype=roadmap when the user asked for it, so
+      // respect an explicit value and default only when absent.
+      if (!u.searchParams.get("maptype")) u.searchParams.set("maptype", "hybrid");
+      const resp = await fetch(u.toString(), { signal: AbortSignal.timeout(20000) });
+      if (!resp.ok) throw new Error(`Google Static Maps ${resp.status}`);
+      const buf = Buffer.from(await resp.arrayBuffer());
+      const mime = resp.headers.get("content-type")?.split(";")[0] || "image/png";
+      replacement = `data:${mime};base64,${buf.toString("base64")}`;
+      console.log(`[pdf-maps] embedded static map (${Math.round(buf.length / 1024)}KB)`);
+    } catch (err: any) {
+      console.warn(`[pdf-maps] static map fetch failed: ${err?.message}`);
+      const errSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400"><rect width="100%" height="100%" fill="#f3f4f6"/><text x="50%" y="48%" text-anchor="middle" font-family="sans-serif" font-size="16" fill="#6b7280">Map unavailable</text><text x="50%" y="56%" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#9ca3af">${String(err?.message || "fetch failed").replace(/[<>&"]/g, "")}</text></svg>`;
+      replacement = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(errSvg)}`;
+    }
+    out = out.split(original).join(replacement);
+  }
+  return out;
+}
+
+async function htmlToPdfBuffer(htmlInput: string, options?: { format?: "A4" | "Letter"; landscape?: boolean }): Promise<Buffer> {
+  // Bake external Google map images into the document before Chrome sees it.
+  const html = await inlineGoogleStaticMaps(htmlInput).catch(() => htmlInput);
   let puppeteer: any;
 
   try {

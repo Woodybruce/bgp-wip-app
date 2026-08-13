@@ -112,7 +112,7 @@ PAGE DISCIPLINE (critical — the #1 defect to avoid is content bleeding off the
 - Count content before laying it out: a sidebar/key/legend column fits roughly 5 card-style entries on A4 landscape — more than that becomes a compact table, a second column, or a continuation page.
 - Put break-inside: avoid on every card, row and figure. When content is tight, shrink it or add a page — clipping is never acceptable.
 
-MAPS — any embedded Google Static Maps image uses maptype=hybrid (satellite with road labels) by default; road-map styling only when explicitly requested.
+MAPS — any embedded Google Static Maps image uses maptype=hybrid (satellite with road labels) by default; road-map styling only when explicitly requested. Write staticmap URLs WITHOUT a key parameter — the renderer injects BGP's key and embeds the fetched image; never invent a key.
 
 BGP LOGO — put the BGP logo on the cover slide (top) and in the footer band of EVERY slide. Use an <img> with the EXACT placeholder src below (do not invent or inline any other logo) and a data-edit-id:
 - On light / cream backgrounds: <img src="__BGP_LOGO_DARK__" class="bgp-logo" alt="BGP" data-edit-id="image-{slide}-logo">
