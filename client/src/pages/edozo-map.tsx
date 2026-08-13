@@ -14,7 +14,6 @@ import { Switch } from "@/components/ui/switch";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
-import { loadGoogleMaps } from "@/lib/google-maps-loader";
 import {
   Search,
   X,
@@ -3460,14 +3459,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   const CLIENT_HIDDEN_LAYERS = new Set(["icomps", "pathway"]);
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
-  // Google Places autocomplete input rendered as an overlay on the map.
-  // The autocomplete instance + the marker we drop on the selected place
-  // both live in refs so we can clear them imperatively without re-rendering
-  // the entire map.
-  const placesSearchInputRef = useRef<HTMLInputElement>(null);
-  const placesAutocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+  // The blue pin dropped on the searched/resolved location. Lives in a ref
+  // so it can be swapped imperatively without re-rendering the map.
   const placesMarkerRef = useRef<L.Marker | null>(null);
-  const [placesSearchValue, setPlacesSearchValue] = useState("");
   const buildingLayerRef = useRef<L.LayerGroup | null>(null);
   const markerRef = useRef<L.CircleMarker | null>(null);
   const lastBoundsRef = useRef("");
@@ -4016,70 +4010,28 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     };
   }, []);
 
-  // Google Places autocomplete on the in-map search box. Loads the
-  // Google Maps JS API the same way the rest of the app does (shared
-  // singleton loader), then attaches an Autocomplete to the input ref.
-  // When the user picks a suggestion we flyTo the Leaflet map and drop a
-  // marker — no map provider change needed, Places works standalone.
-  useEffect(() => {
-    let cancelled = false;
-    let listener: google.maps.MapsEventListener | null = null;
-    let inputChangeListener: ((e: Event) => void) | null = null;
-
-    (async () => {
-      const ok = await loadGoogleMaps();
-      if (cancelled || !ok || !placesSearchInputRef.current) return;
-      if (typeof google === "undefined" || !google.maps?.places) return;
-
-      const ac = new google.maps.places.Autocomplete(placesSearchInputRef.current, {
-        types: ["geocode", "establishment"],
-        componentRestrictions: { country: "gb" },
-        fields: ["geometry", "formatted_address", "name", "place_id"],
-      });
-      placesAutocompleteRef.current = ac;
-
-      // Reflect the typed value into state so we know when to show the
-      // clear (X) button. Google's autocomplete writes back to the input
-      // imperatively on select, so we listen to native input events.
-      inputChangeListener = () => {
-        setPlacesSearchValue(placesSearchInputRef.current?.value || "");
-      };
-      placesSearchInputRef.current.addEventListener("input", inputChangeListener);
-
-      listener = ac.addListener("place_changed", () => {
-        const place = ac.getPlace();
-        const loc = place?.geometry?.location;
-        if (!loc || !mapRef.current) return;
-        const lat = loc.lat();
-        const lng = loc.lng();
-
-        mapRef.current.flyTo([lat, lng], 17, { duration: 0.8 });
-
-        if (placesMarkerRef.current) {
-          mapRef.current.removeLayer(placesMarkerRef.current);
-        }
-        placesMarkerRef.current = L.marker([lat, lng], {
-          icon: L.divIcon({
-            className: "places-search-pin",
-            html: `<div style="width:18px;height:18px;border-radius:50%;background:#4285f4;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>`,
-            iconSize: [18, 18],
-            iconAnchor: [9, 9],
-          }),
-        }).addTo(mapRef.current);
-        const label = place.name || place.formatted_address || "Location";
-        placesMarkerRef.current.bindPopup(`<strong>${label}</strong>${place.formatted_address && place.name !== place.formatted_address ? `<br/><span style="color:#666;font-size:11px">${place.formatted_address}</span>` : ""}`, { closeButton: false, offset: L.point(0, -8) }).openPopup();
-        setPlacesSearchValue(placesSearchInputRef.current?.value || "");
-      });
-    })();
-
-    return () => {
-      cancelled = true;
-      if (listener) listener.remove();
-      if (inputChangeListener && placesSearchInputRef.current) {
-        placesSearchInputRef.current.removeEventListener("input", inputChangeListener);
-      }
-      placesAutocompleteRef.current = null;
-    };
+  // Fly the map to a point and drop the blue search pin. Shared by the
+  // resolver bar's onResolve (canonical property) and onPanTo (vague-area
+  // fallback) — this replaced the separate Google Places autocomplete box,
+  // so one search now both navigates the map AND resolves the property.
+  const flyToSearchResult = useCallback((lat: number, lng: number, label: string, sublabel?: string | null) => {
+    if (!mapRef.current) return;
+    mapRef.current.flyTo([lat, lng], 17, { duration: 0.8 });
+    if (placesMarkerRef.current) {
+      mapRef.current.removeLayer(placesMarkerRef.current);
+    }
+    placesMarkerRef.current = L.marker([lat, lng], {
+      icon: L.divIcon({
+        className: "places-search-pin",
+        html: `<div style="width:18px;height:18px;border-radius:50%;background:#4285f4;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>`,
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+      }),
+    }).addTo(mapRef.current);
+    placesMarkerRef.current.bindPopup(
+      `<strong>${label}</strong>${sublabel ? `<br/><span style="color:#666;font-size:11px">${sublabel}</span>` : ""}`,
+      { closeButton: false, offset: L.point(0, -8) },
+    ).openPopup();
   }, []);
 
   // Fetch recent searches and CRM properties on mount
@@ -6064,30 +6016,13 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       `}</style>
 
       <div className="w-[220px] border-r bg-white hidden lg:flex flex-col z-[1001] relative shrink-0">
+        {/* The sidebar resolver box merged into the on-map search (top-left)
+            — one bar now navigates the map AND resolves the canonical
+            property for every Property Intelligence tab. */}
         <div className="px-3 pt-3 pb-2">
-          <p className="text-xs text-gray-500 mb-2.5">
+          <p className="text-xs text-gray-500">
             Current area: <span className="font-semibold text-gray-900">{currentArea}</span>
           </p>
-
-          <p className="text-[11px] font-semibold mb-0.5 text-gray-700">Property lookup</p>
-          <p className="text-[10px] text-gray-400 mb-1.5 leading-snug">Sets the property for every tab — Investigator, Land Registry, Imagery.</p>
-          {/* New resolver — same engine the Property Intelligence page-level
-              bar used to call (Address Resolver: autocomplete → resolve →
-              canonical crm_property). Replaces the legacy /api/address-search
-              dropdown that fed loadPropertyData with stale postcode-only
-              hits. When a property resolves we both navigate the map AND
-              bubble the resolution up so other Property Intelligence tabs
-              prefill via PropertyContext. */}
-          <PropertyResolverBar
-            placeholder="Address, postcode, UPRN, or title number…"
-            onResolve={(id, prop) => {
-              if (prop.postcode) {
-                setSelectedPostcode(prop.postcode);
-                loadPropertyData(prop.postcode, undefined, prop.name || undefined, null);
-              }
-              onResolveProperty?.({ id, name: prop.name, postcode: prop.postcode });
-            }}
-          />
         </div>
 
         <div className="border-t" />
@@ -6436,43 +6371,35 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       <div className="flex-1 relative">
         <div ref={mapContainerRef} className="w-full h-full" data-testid="edozo-map" />
 
-        {/* Google Places search — top-left so it doesn't collide with the
-            Download Plan + base-layer pills at top-right. Lets Woody jump
-            the map to any UK address from his phone instead of pinching
-            around. On mobile this sits at ~calc(100% - 240px) width so the
-            existing pills still fit on the same row; on desktop it's a
-            fixed 320px. The Leaflet flyTo + marker happen via the
-            handlePlaceSelected callback wired up in a useEffect. */}
-        {/* <sm the search takes the full row and the pills drop BELOW it —
-            side-by-side at 390px they overlapped the input (UX #20). */}
-        <div className="absolute top-3 left-3 z-[1000] w-[calc(100%-24px)] sm:w-[320px] max-w-[420px]">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-            <input
-              ref={placesSearchInputRef}
-              type="search"
-              placeholder="Search any address or place…"
-              className="w-full h-10 pl-9 pr-9 rounded-full bg-white border border-border/60 shadow-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              data-testid="map-places-search"
-              autoComplete="off"
+        {/* THE search box — one bar, two engines. Google Places autocomplete
+            for suggestions, then the Property Resolver pins the canonical
+            CRM property (UPRN-verified) so every Property Intelligence tab
+            prefills from it. Vague inputs ("Knightsbridge") fall back to a
+            plain map pan via onPanTo. Replaces the previous pair of boxes
+            (sidebar resolver + separate Places search). */}
+        <div className="absolute top-3 left-3 z-[1000] w-[calc(100%-24px)] sm:w-[400px] max-w-[460px]">
+          <div className="bg-white rounded-xl shadow-lg border border-border/60 px-2.5 py-2" data-testid="map-places-search">
+            <PropertyResolverBar
+              placeholder="Search address, postcode, UPRN or title…"
+              onResolve={(id, prop) => {
+                const lat = prop.latitude != null ? parseFloat(String(prop.latitude)) : NaN;
+                const lng = prop.longitude != null ? parseFloat(String(prop.longitude)) : NaN;
+                if (isFinite(lat) && isFinite(lng)) {
+                  flyToSearchResult(lat, lng, prop.name || "Property", prop.postcode);
+                }
+                if (prop.postcode) {
+                  setSelectedPostcode(prop.postcode);
+                  loadPropertyData(
+                    prop.postcode,
+                    undefined,
+                    prop.name || undefined,
+                    isFinite(lat) && isFinite(lng) ? { lat, lng } : null,
+                  );
+                }
+                onResolveProperty?.({ id, name: prop.name, postcode: prop.postcode });
+              }}
+              onPanTo={(lat, lng, label) => flyToSearchResult(lat, lng, label)}
             />
-            {placesSearchValue && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (placesSearchInputRef.current) placesSearchInputRef.current.value = "";
-                  setPlacesSearchValue("");
-                  if (placesMarkerRef.current && mapRef.current) {
-                    mapRef.current.removeLayer(placesMarkerRef.current);
-                    placesMarkerRef.current = null;
-                  }
-                }}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground"
-                aria-label="Clear search"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
           </div>
         </div>
 
