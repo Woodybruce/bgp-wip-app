@@ -63,6 +63,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r283 · 2026-08-13 · FULL (rotation #4 staff mobile 390px) — IN PROGRESS
+- Fresh container (pg_hba trust per r205 — method-column awk;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot + journey pending.
+- Journey planned: Victoria @ 390px iPhone UA — Bluewater property →
+  tenancy schedule → brand key contact (first staff-mobile coverage of
+  the properties/tenancy path). Note: mobile login form is behind the
+  "Client / guest sign in" toggle (journey scripts must click it first).
+
 ### r282 · 2026-08-13 · LIGHT (r281 had the journey)
 - Fresh container (pg_hba trust per r205 — method-column awk;
   restore-as-postgres + per-object ALTER owners + schema grant per r249).
