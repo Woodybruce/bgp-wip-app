@@ -67,6 +67,7 @@ import {
   Link2,
   Sparkles,
   Download,
+  ArrowLeft,
 } from "lucide-react";
 
 interface SearchResult {
@@ -6018,14 +6019,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
       <div className="w-[220px] border-r bg-white hidden lg:flex flex-col z-[1001] relative shrink-0">
         {/* The sidebar resolver box merged into the on-map search (top-left)
             — one bar now navigates the map AND resolves the canonical
-            property for every Property Intelligence tab. */}
-        <div className="px-3 pt-3 pb-2">
-          <p className="text-xs text-gray-500">
-            Current area: <span className="font-semibold text-gray-900">{currentArea}</span>
-          </p>
-        </div>
-
-        <div className="border-t" />
+            property for every Property Intelligence tab. currentArea state
+            still feeds the PDF export header + property panel; it just no
+            longer renders as a sidebar heading. */}
 
         <div className="px-3 py-3">
           <p className="text-[11px] font-semibold text-gray-700 mb-2.5">Map Layers</p>
@@ -6377,8 +6373,18 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
             prefills from it. Vague inputs ("Knightsbridge") fall back to a
             plain map pan via onPanTo. Replaces the previous pair of boxes
             (sidebar resolver + separate Places search). */}
-        <div className="absolute top-3 left-3 z-[1000] w-[calc(100%-24px)] sm:w-[400px] max-w-[460px]">
-          <div className="bg-white rounded-xl shadow-lg border border-border/60 px-2.5 py-2" data-testid="map-places-search">
+        <div className="absolute top-3 left-3 z-[1000] w-[calc(100%-24px)] sm:w-[440px] max-w-[500px] flex items-start gap-2">
+          <button
+            type="button"
+            onClick={() => window.history.back()}
+            className="h-10 w-10 shrink-0 rounded-full bg-white border border-border/60 shadow-lg flex items-center justify-center text-gray-700 hover:bg-gray-50"
+            title="Back"
+            aria-label="Back"
+            data-testid="map-back-button"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+          <div className="flex-1 bg-white rounded-xl shadow-lg border border-border/60 px-2.5 py-2" data-testid="map-places-search">
             <PropertyResolverBar
               placeholder="Search address, postcode, UPRN or title…"
               onResolve={(id, prop) => {
