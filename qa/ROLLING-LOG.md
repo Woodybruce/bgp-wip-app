@@ -63,6 +63,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r287 · 2026-08-14 · ROUND IN PROGRESS (FULL — rotation #2 client desktop)
+- Fresh container (pg_hba trust per r205 — method-column awk;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 287 running —
+  2 logged issues so far, both listed noise (rocketreach-400;
+  commentary-regen 503). Journey planned: Mark desktop 1440px — property →
+  tenancy schedule expiries → tenant brand → calendar Add-event write path.
+
 ### r286 · 2026-08-14 · LIGHT (r285 had the journey)
 - Fresh container (pg_hba trust per r205 — method-column awk;
   restore-as-postgres + per-object ALTER owners + schema grant per r249).
