@@ -47,6 +47,15 @@ type AskOpts = {
   systemPrompt?: string;
   maxTokens?: number;
   temperature?: number;
+  /** Restrict web search to these domains (≤20 on Agent, ≤10 on Sonar). */
+  searchDomains?: string[];
+  /** Only consider results this fresh. */
+  searchRecency?: "hour" | "day" | "week" | "month" | "year";
+  /** Enforce structured output — the answer comes back as schema-valid JSON. */
+  jsonSchema?: { name: string; schema: any };
+  /** Extra Agent tools, e.g. [{ type: "people_search" }]. Agent-only —
+   *  the Sonar fallback silently degrades to plain web search. */
+  extraTools?: any[];
 };
 
 // Sonar model → Agent API preset, per Perplexity's migration table
@@ -83,6 +92,10 @@ async function askPerplexitySonar(prompt: string, opts: AskOpts, key: string): P
       messages,
       max_tokens: opts.maxTokens ?? 800,
       temperature: opts.temperature ?? 0.2,
+      // Best-effort parity with the Agent path — Sonar supports these natively.
+      ...(opts.searchDomains?.length ? { search_domain_filter: opts.searchDomains.slice(0, 10) } : {}),
+      ...(opts.searchRecency ? { search_recency_filter: opts.searchRecency } : {}),
+      ...(opts.jsonSchema ? { response_format: { type: "json_schema", json_schema: { schema: opts.jsonSchema.schema } } } : {}),
     }),
   });
 
@@ -116,6 +129,25 @@ async function askPerplexityAgent(prompt: string, opts: AskOpts, key: string): P
   if (opts.systemPrompt) body.instructions = opts.systemPrompt;
   if (opts.maxTokens ?? 800) body.max_output_tokens = opts.maxTokens ?? 800;
   if (opts.temperature != null) body.temperature = opts.temperature;
+  // Search scoping + extra tools. Declaring web_search explicitly (to carry
+  // the filters) replaces the preset's implicit search config, so only add
+  // it when a filter is actually requested.
+  const tools: any[] = [];
+  if (opts.searchDomains?.length || opts.searchRecency) {
+    tools.push({
+      type: "web_search",
+      ...(opts.searchDomains?.length ? { filters: { search_domain_filter: opts.searchDomains.slice(0, 20), ...(opts.searchRecency ? { search_recency_filter: opts.searchRecency } : {}) } }
+        : { filters: { search_recency_filter: opts.searchRecency } }),
+    });
+  }
+  if (opts.extraTools?.length) tools.push(...opts.extraTools);
+  if (tools.length) body.tools = tools;
+  if (opts.jsonSchema) {
+    body.response_format = {
+      type: "json_schema",
+      json_schema: { name: opts.jsonSchema.name.replace(/[^a-zA-Z0-9]/g, "").slice(0, 64) || "output", schema: opts.jsonSchema.schema, strict: true },
+    };
+  }
 
   const res = await fetch(`${PERPLEXITY_BASE}/v1/agent`, {
     method: "POST",
@@ -150,7 +182,9 @@ async function askPerplexityAgent(prompt: string, opts: AskOpts, key: string): P
   const seen = new Set<string>();
   const citations: Citation[] = [];
   for (const o of output) {
-    if (o?.type === "search_results" && Array.isArray(o.results)) {
+    // search_results, people_search_results, finance_search_results — all
+    // carry a results[] of {url,title,...}.
+    if (typeof o?.type === "string" && o.type.includes("search") && Array.isArray(o.results)) {
       for (const r of o.results) {
         if (r?.url && !seen.has(r.url)) { seen.add(r.url); citations.push({ url: r.url, title: r.title }); }
       }
@@ -248,7 +282,39 @@ export async function adverseMediaSearch(
   let citations: Citation[] = [];
 
   try {
-    const r = await askPerplexity(userPrompt, { systemPrompt, maxTokens: 900, temperature: 0.1 });
+    const r = await askPerplexity(userPrompt, {
+      systemPrompt,
+      maxTokens: 900,
+      temperature: 0.1,
+      // (No recency filter — the screen looks back 5 years per the prompt.)
+      // Schema-enforced verdict — no more "review" defaults caused by the
+      // model wrapping its JSON in prose. The fence-strip parsing below
+      // stays as the belt-and-braces for the Sonar fallback path.
+      jsonSchema: {
+        name: "adverse_media_verdict",
+        schema: {
+          type: "object",
+          required: ["verdict", "summary", "findings"],
+          properties: {
+            verdict: { type: "string", enum: ["clear", "review", "adverse"] },
+            summary: { type: "string" },
+            findings: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["headline"],
+                properties: {
+                  headline: { type: "string" },
+                  source: { type: "string" },
+                  url: { type: "string" },
+                  category: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
     rawAnswer = r.answer;
     citations = r.citations;
 

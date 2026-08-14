@@ -68,7 +68,9 @@ Skip vague brand-marketing news, social-media campaigns, sponsorship deals, prod
 
 Be UK-focused. ${brand.uk_entity_name ? `The UK operating entity is "${brand.uk_entity_name}".` : ""}`;
 
-    const ppx = await askPerplexity(prompt, { maxTokens: 1500, temperature: 0.2 });
+    // Recency filter matches the prompt's 30-day window — without it the
+    // search happily cites a 2023 store opening as "news".
+    const ppx = await askPerplexity(prompt, { maxTokens: 1500, temperature: 0.2, searchRecency: "month" });
 
     // 2. Use Haiku to extract structured signals from the prose
     const extractPrompt = `You are converting a research paragraph into structured retail-property signals.

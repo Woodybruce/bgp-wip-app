@@ -513,6 +513,7 @@ function getToolProgressLabel(toolName: string): string {
     property_data_lookup: "Querying PropertyData...",
     deep_investigate: "Running deep investigation...",
     rocketreach_person_lookup: "Looking up verified contact details...",
+    perplexity_people_search: "Searching for the right person...",
     search_food_hygiene: "Checking the FSA hygiene register...",
     run_kyc_check: "Running KYC check...",
     create_deal: "Creating deal...",
@@ -4581,6 +4582,21 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           maxReveals: { type: "number", description: "How many top candidates to reveal full contact details for (1-3). Default 1. Each reveal costs credits." },
         },
         required: ["personName"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "perplexity_people_search",
+      description: "Find WHO holds a role — professionals by role + company + location — via Perplexity's people-search (public web info only: names, titles, employers, background; NO emails/phones). Use this FIRST when you don't have a specific name yet ('who is head of acquisitions at Maxima Properties?', 'F&B leasing directors in London', 'who runs the family office behind X') — then pass the name it finds to rocketreach_person_lookup for verified contact details. Very cheap (~£0.004/lookup), so prefer it over guessing names.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Natural-language people query. Combine role + company (or role + location) for best results, e.g. 'current head of property/acquisitions at Greene King' or 'leasing director, Bluewater shopping centre'." },
+        },
+        required: ["query"],
       },
     },
   });
@@ -10576,6 +10592,24 @@ Be thorough — include every unit row you can classify, across all properties i
       } };
     } catch (err: any) {
       return { data: { error: `FSA hygiene lookup failed: ${err?.message || "unknown"}` } };
+    }
+  }
+
+  if (fnName === "perplexity_people_search") {
+    try {
+      const { askPerplexity, isPerplexityConfigured } = await import("./perplexity");
+      if (!isPerplexityConfigured()) return { data: { error: "PERPLEXITY_API_KEY not configured" } };
+      const query = String(fnArgs.query || "").trim();
+      if (!query) return { data: { error: "query is required" } };
+      const r = await askPerplexity(query, {
+        systemPrompt: "You are a UK commercial-property research assistant finding the right person to approach. Use the people-search tool. Return the person/people found with: full name, current job title, employer, and one line of relevant background. If several candidates match, list up to 5, most likely first. If nobody credible is found, say so plainly — never invent a name.",
+        maxTokens: 700,
+        temperature: 0.1,
+        extraTools: [{ type: "people_search" }],
+      });
+      return { data: { answer: r.answer, sources: r.citations.slice(0, 8), note: "Public info only — for verified emails/phones, pass the best name to rocketreach_person_lookup with the company domain." } };
+    } catch (err: any) {
+      return { data: { error: `People search failed: ${err?.message || "unknown"}` } };
     }
   }
 

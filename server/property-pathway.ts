@@ -939,6 +939,17 @@ export async function sweepStalledPathwayRuns(): Promise<void> {
 // and the manual refresh endpoint.
 // ============================================================================
 
+// UK property trade press — the domain allowlist for lease-history research.
+// Perplexity's Agent API takes ≤20 domains (Sonar fallback uses the first 10).
+const PROPERTY_PRESS_DOMAINS = [
+  "egi.co.uk", "estatesgazette.com", "propertyweek.com", "costar.com",
+  "reactnews.com", "greenstreetnews.com", "bisnow.com", "propertywire.com",
+  "savills.co.uk", "cbre.co.uk",
+  "jll.co.uk", "knightfrank.co.uk", "cushmanwakefield.com", "colliers.com",
+  "thetimes.com", "standard.co.uk", "ft.com", "retail-week.com",
+  "thecaterer.com", "bighospitality.co.uk",
+];
+
 async function runMarketIntelCrawl(address: string, postcode: string): Promise<StageResults["marketIntel"] | null> {
   const location = [address, postcode].filter(Boolean).join(", ");
   const area = postcode ? postcode.split(" ")[0] : "central London";
@@ -953,6 +964,10 @@ async function runMarketIntelCrawl(address: string, postcode: string): Promise<S
         systemPrompt: "You are a UK commercial property market researcher. Find factual lease transaction data for this specific building. Include specific rents in £ psf or £ pa, areas in sq ft, lease lengths, and dates. Be specific and cite sources like EG, CoStar, PropertyWeek, Estates Gazette, or CBRE/Savills/JLL/BGP press releases.",
         maxTokens: 1500,
         temperature: 0.1,
+        // Trade press only — keeps the answer grounded in EG/CoStar-grade
+        // reporting instead of listing portals and blog noise. No recency
+        // cap: lease history is deliberately historic.
+        searchDomains: PROPERTY_PRESS_DOMAINS,
       }
     ),
     askPerplexity(
@@ -961,6 +976,9 @@ async function runMarketIntelCrawl(address: string, postcode: string): Promise<S
         systemPrompt: "You are a UK commercial property market researcher. Find current availability listings and recent comparable lease or investment transactions. For availability: address, size, asking rent, agent. For comps: tenant or buyer, rent achieved, size, date, source. Be specific with figures.",
         maxTokens: 1500,
         temperature: 0.1,
+        // Availability goes stale fast — only trust the last few months.
+        // Unfiltered domains here: listings live on portals + agent sites.
+        searchRecency: "month",
       }
     ),
     exaKey
