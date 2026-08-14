@@ -13,6 +13,19 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+48. 2026-08-14 · BGP staff / desktop 1440px · "Monday pipeline review: leave
+    a note on a live deal for the team" · the deal page's Comments card
+    (right rail, "Click to add a comment…") reads like a team thread but is
+    a single shared text blob (crm_deals.comments) — the posted note shows
+    NO author and NO timestamp, and the next person who comments overwrites
+    the previous note entirely (same surface on mobile via the md:hidden
+    duplicate card). A user leaving "chase solicitors Monday" can't tell
+    who wrote it or when, and a colleague's later note silently deletes
+    theirs · Suggested: either relabel the card "Notes" with a visible
+    last-edited-by/when line, or make it a real append-only comment list
+    with author + date per entry. Needs Woody's numbered confirmation —
+    not built.
+
 47. 2026-08-14 · BGP staff / mobile 390px · "pull up comps evidence on the
     train before a rent-review call" · the /comps stats strip shows
     "11 AI leads awaiting review" to every staff viewer, but the Leads tab
