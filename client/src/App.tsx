@@ -161,6 +161,17 @@ function MessagesRedirect() {
   return null;
 }
 
+// The tenancy schedule is per-property (/tenancy-schedule/:propertyId). A
+// bare /tenancy-schedule (bookmark / hand-typed — it's on the client
+// allow-list) dead-ended on "Page not found"; land it on the properties
+// list so the user can pick a property (each property page carries its
+// schedule — the old /leasing-schedule board is retired).
+function TenancyScheduleRedirect() {
+  const [, setLocation] = useLocation();
+  useEffect(() => { setLocation("/properties", { replace: true }); }, [setLocation]);
+  return null;
+}
+
 // Document Studio is now one cockpit with tabs. The old standalone
 // /templates and /decks pages fold in as tabs, so their URLs redirect into
 // the Studio with the right tab pre-selected (the deck editor /decks/:id
@@ -316,6 +327,7 @@ function Router() {
       <Route path="/reporting" component={Reporting} />
       <Route path="/leasing-schedule" component={LeasingSchedule} />
       <Route path="/leasing-schedule/:propertyId" component={LeasingSchedule} />
+      <Route path="/tenancy-schedule" component={TenancyScheduleRedirect} />
       <Route path="/tenancy-schedule/:propertyId" component={TenancyScheduleFull} />
       {/* Everyone gets the full My Tasks page — clients included (Woody,
           2026-08-05: "we need to stop reducing their usability"). The

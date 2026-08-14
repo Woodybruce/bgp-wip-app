@@ -63,6 +63,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r289 · 2026-08-14 · ROUND IN PROGRESS (heartbeat)
+- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1). Two-bot round 289: exit 0, 2 logged issues both
+  listed noise (rocketreach-400; commentary-regen 503). Lone 500 in the
+  server log is GET /api/auth/microsoft from the journey script
+  mis-clicking the SSO button (keyless local).
+- FULL round, rotation #3 client mobile 390px journey done (tenancy
+  expiry hunt — details in final entry). 1 bug found + fixed pending
+  final verify: bare /tenancy-schedule dead-ended on Page not found
+  (redirect added in App.tsx). Final entry to follow.
+
 ### r288 · 2026-08-14 · LIGHT (r287 had the journey)
 - Fresh container (pg_hba trust per r205 — method-column awk;
   restore-as-postgres + per-object ALTER owners + schema grant per r249).
