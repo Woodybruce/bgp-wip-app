@@ -63,16 +63,57 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r289 · 2026-08-14 · ROUND IN PROGRESS (heartbeat)
-- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1). Two-bot round 289: exit 0, 2 logged issues both
-  listed noise (rocketreach-400; commentary-regen 503). Lone 500 in the
-  server log is GET /api/auth/microsoft from the journey script
-  mis-clicking the SSO button (keyless local).
-- FULL round, rotation #3 client mobile 390px journey done (tenancy
-  expiry hunt — details in final entry). 1 bug found + fixed pending
-  final verify: bare /tenancy-schedule dead-ended on Page not found
-  (redirect added in App.tsx). Final entry to follow.
+### r289 · 2026-08-14 · FULL (rotation #3 client mobile 390px)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba
+  trust per r205 — method-column awk; restore-as-postgres + per-object
+  ALTER owners + schema grant per r249). Regression: run-smoke.sh GREEN
+  ×2 (42 checks, 0 failures; FRESH_BUILD=1 before the fix, rebuilt
+  bundle after; no cold-build flake either pass). Two-bot round 289:
+  exit 0, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). Lone 500 in the server log is GET
+  /api/auth/microsoft — the journey script's own mis-click on the
+  "Sign in with Microsoft" button (keyless local); status tally
+  otherwise only 2xx/3xx/expected 400/401/403/404 + no-key 503s.
+- Journey: Mark Warne @ 390px iPhone UA — "a lease event is coming:
+  open my Bluewater property, find which leases expire soonest, and get
+  to the tenant" (FIRST client-mobile coverage of the property page,
+  the embedded Schedule card, and the tenancy Full Board): UI login via
+  the client form → Portfolio home → /properties → Bluewater property
+  page (0 h-overflow) → Schedule card (defaults OPEN — 200 units,
+  Tenancy lens toggle works, sticky Unit cell 208px vs 326px window =
+  118px moving view, r283 cap holds for clients) → "Full Board" link →
+  /tenancy-schedule/:id renders (KPIs, search) → search "Starbucks"
+  narrows to 2 rows with expiry dates (24 Dec 2027) → tenant anchor →
+  Starbucks profile (Compliance + Covenant per the 2026-08-01 decision,
+  0 staff-leak buttons, 0 h-overflow). Task completable; 0 page errors,
+  0 non-noise console/net errors.
+- Bug fixed (1): bare /tenancy-schedule (no propertyId — bookmark or
+  hand-typed; it IS on CLIENT_ALLOWED_ROUTES) rendered "Page not found"
+  for every persona — the Router only had /tenancy-schedule/:propertyId
+  (r269 /messages dead-route class). Added TenancyScheduleRedirect →
+  /properties (client/src/App.tsx); verified in-browser: staff desktop,
+  client desktop AND client mobile all land on /properties, no
+  Page-not-found. tsc clean, rebuilt, smoke re-green. (First redirect
+  target tried was /leasing-schedule — rejected: that board is retired
+  and says so in a banner.)
+- Harness growth: two-bot +2 staff-tenancy-bare-redirect +
+  client-tenancy-bare-redirect (bare /tenancy-schedule must land on
+  /properties, never Page-not-found). Assertions verified standalone
+  green both personas; node --check clean; run from r290.
+- NOT bugs (triaged, for future rounds): property-page Schedule card
+  defaults OPEN — a journey script that clicks toggle-schedule CLOSES
+  it (my first probe's "no tenancy lens" was self-inflicted). Property
+  detail sections hydrate lazily — waitForSelector toggle-schedule
+  (~4s) before asserting, or count()==0 false-fails. Client mobile
+  property page THIS WEEK'S FOCUS task quick-add + tenancy Add/delete/
+  "+ Tracker" = decided client write-parity (r287/r279 class). Fixture
+  row U007 carries lease expiry 30 Dec 2154 — fixture oddity, not an
+  app date bug.
+- Bugs deferred: none. Suggestions added: none (search-below-KPI-stack
+  friction on the mobile full board is already UX #45; chat-first brand
+  profile burying Key Contacts is UX #32). New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r289 had the journey →
+  r290 may be LIGHT; then #4).
 
 ### r288 · 2026-08-14 · LIGHT (r287 had the journey)
 - Fresh container (pg_hba trust per r205 — method-column awk;

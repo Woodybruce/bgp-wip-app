@@ -1171,6 +1171,17 @@ async function victoriaRound(page, cross) {
     if (await page.getByText('Page not found').count()) throw new Error('desktop /messages landed on Page not found');
   });
 
+  // r289: the tenancy schedule is per-property; a bare /tenancy-schedule
+  // (bookmark / hand-typed — it's on the client allow-list) used to render
+  // "Page not found". It must land on /properties instead.
+  await step(page, p, 'staff-tenancy-bare-redirect', async () => {
+    await page.goto(`${BASE}/tenancy-schedule`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2500);
+    const path = new URL(page.url()).pathname;
+    if (path !== '/properties') throw new Error(`bare /tenancy-schedule landed on ${path}, expected /properties`);
+    if (await page.getByText('Page not found').count()) throw new Error('bare /tenancy-schedule landed on Page not found');
+  });
+
   // r277: the full /image-studio power page is admin-only; non-admin staff
   // hitting it directly (pasted admin link / old bookmark) must be redirected
   // to the /m/images gallery by StudioRoute, never dead-end.
@@ -3937,6 +3948,16 @@ async function markRound(page, cross) {
     const path = new URL(page.url()).pathname;
     if (path !== '/chatbgp') throw new Error(`client desktop /messages landed on ${path}, expected /chatbgp`);
     if (await page.getByText('Page not found').count()) throw new Error('client desktop /messages landed on Page not found');
+  });
+
+  // r289: same bare /tenancy-schedule redirect for clients (the route is on
+  // CLIENT_ALLOWED_ROUTES, so a pasted link must land somewhere real).
+  await step(page, p, 'client-tenancy-bare-redirect', async () => {
+    await page.goto(`${BASE}/tenancy-schedule`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2500);
+    const path = new URL(page.url()).pathname;
+    if (path !== '/properties') throw new Error(`client bare /tenancy-schedule landed on ${path}, expected /properties`);
+    if (await page.getByText('Page not found').count()) throw new Error('client bare /tenancy-schedule landed on Page not found');
   });
 
   await step(page, p, 'client-deal-detail-name-and-doc-gate', async () => {
