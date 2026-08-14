@@ -516,7 +516,6 @@ function getToolProgressLabel(toolName: string): string {
     perplexity_people_search: "Searching for the right person...",
     find_similar_brands: "Finding similar brands...",
     get_aged_receivables: "Pulling invoice positions from Xero...",
-    search_green_street: "Searching the Green Street archive...",
     search_food_hygiene: "Checking the FSA hygiene register...",
     run_kyc_check: "Running KYC check...",
     create_deal: "Creating deal...",
@@ -4594,22 +4593,6 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           maxReveals: { type: "number", description: "How many top candidates to reveal full contact details for (1-3). Default 1. Each reveal costs credits." },
         },
         required: ["personName"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "search_green_street",
-      description: "Search the Green Street News archive (BGP is a subscriber) — historic coverage of estates, landlords, brands, deals: 'everything GSN wrote about Gunwharf Quays', 'Fred Perry expansion coverage', 'leisure disposals 2024'. Returns matching article titles + URLs; call ingest_url on the relevant ones to read the FULL text (the subscriber login is applied automatically). Use for pitch support and deal benchmarking. Fetch only the handful of articles actually needed — this is our subscription being read on demand, not a bulk export.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Search terms, e.g. 'Gunwharf Quays' or 'Barry's Bootcamp'." },
-          pages: { type: "number", description: "Result pages to scan (1-3). Default 1 (~10 results)." },
-        },
-        required: ["query"],
       },
     },
   });
@@ -10657,49 +10640,6 @@ Be thorough — include every unit row you can classify, across all properties i
       } };
     } catch (err: any) {
       return { data: { error: `FSA hygiene lookup failed: ${err?.message || "unknown"}` } };
-    }
-  }
-
-  if (fnName === "search_green_street") {
-    try {
-      const { authHeadersForUrl } = await import("./auth-cookies");
-      const query = String(fnArgs.query || "").trim();
-      if (!query) return { data: { error: "query is required" } };
-      const pages = Math.max(1, Math.min(3, Number(fnArgs.pages) || 1));
-      const headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
-        ...authHeadersForUrl("https://greenstreetnews.com/"),
-      };
-      const results: Array<{ title: string; url: string }> = [];
-      const seen = new Set<string>();
-      for (let p = 1; p <= pages; p++) {
-        const searchUrl = p === 1
-          ? `https://greenstreetnews.com/?s=${encodeURIComponent(query)}`
-          : `https://greenstreetnews.com/page/${p}/?s=${encodeURIComponent(query)}`;
-        const resp = await fetch(searchUrl, { headers, redirect: "follow", signal: AbortSignal.timeout(15000) });
-        if (!resp.ok) break;
-        const html = await resp.text();
-        // WordPress search results — collect article-slug anchors, skipping
-        // nav/taxonomy links. Titles come from the anchor text.
-        const linkRe = /<a[^>]+href="(https:\/\/greenstreetnews\.com\/[^"#?]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-        let m: RegExpExecArray | null;
-        while ((m = linkRe.exec(html)) !== null) {
-          const url = m[1].replace(/\/$/, "");
-          const text = m[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
-          if (seen.has(url) || text.length < 15) continue;
-          if (/\/(category|tag|author|page|wp-|about|contact|subscribe|login|my-account)\b/i.test(url)) continue;
-          seen.add(url);
-          results.push({ title: text.slice(0, 200), url });
-          if (results.length >= 12 * pages) break;
-        }
-        if (results.length === 0 && p === 1) break; // no hits — don't page on
-      }
-      if (results.length === 0) {
-        return { data: { query, results: [], note: "No archive matches — check the subscriber cookie is still valid (News → Sources → Paywall logins) or try broader terms." } };
-      }
-      return { data: { query, results: results.slice(0, 30), nextStep: "Call ingest_url on the most relevant URLs (subscriber login applies automatically) — read only what the task needs." } };
-    } catch (err: any) {
-      return { data: { error: `Green Street search failed: ${err?.message || "unknown"}` } };
     }
   }
 
