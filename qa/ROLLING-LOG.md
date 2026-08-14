@@ -63,17 +63,48 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r293 · 2026-08-14 · FULL — IN PROGRESS (heartbeat)
+### r293 · 2026-08-14 · FULL (rotation #1 staff desktop)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205 — method-column awk; restore-as-postgres + per-object ALTER
   owners + schema grant per r249). Regression: run-smoke.sh GREEN first
   pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build
-  flake). Two-bot round 293 running. Journey underway: rotation #1 staff
-  desktop — Victoria 1440px "Monday pipeline review: deals board → deal
-  #1003 → comment write → timeline/audit → calendar → news". Legs so far
-  (dashboard, /deals hub, /deals/list, deal #1003 detail): all render,
-  0 h-overflow, 0 non-noise issues.
-- Triage so far: nothing beyond listed noise. Final entry to follow.
+  flake). Two-bot round 293: exit 0, all scenarios ok, 2 logged issues
+  both listed noise (rocketreach-400; commentary-regen 503). 0 raw
+  500/502/504 in the whole round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404 + no-key 503s; 403s the harness's
+  negative probes; 404s the listed HR-photo + sharepoint-root polling;
+  the 2 400s the rocketreach + image-studio harness probes; 401s
+  pre-auth /api/auth/me + no-key M365 class).
+- Journey: Victoria desktop 1440px — "Monday pipeline review: check the
+  deals board, open the live letting deal, leave a note for the team,
+  scan calendar + news" (FIRST staff-desktop journey through /deals/list
+  → deal DETAIL page, the deal Comments write path, the Timeline/Audit
+  expanders, /calendar and /news): login → "/" dashboard → /deals hub →
+  /deals/list (2 deals, SOL/EXC chips, Table/Cards/Board toggle) → deal
+  #1003 Gail's letting (Parties, Fee Allocation, Xero house copy, KYC,
+  Files, Linked Property all render) → Comments card WRITE end-to-end
+  (posted note persists across reloads; probe cleaned via SQL after) →
+  Timeline expands inline (Deal Timeline 1 event), Audit log expands
+  (Change Log 7) → /calendar work-week (team filter chips, Today's
+  Schedule; QA-CAL-* rows = concurrent two-bot residue) → /news feed
+  (42 sources, tag chips, search). All legs 0 h-overflow, 0 page errors,
+  0 non-noise console/net errors. Task completable.
+- NOT bugs (tester errors, for future rounds): the deal page renders
+  md:hidden MOBILE DUPLICATES of the right-rail cards first in the DOM —
+  getByText('Click to add a comment'/'Timeline').first() grabs the
+  hidden copy and "element is not visible" forever; filter with
+  .locator('visible=true'). Post-comment, the placeholder is REPLACED by
+  the comment text (comments is one text column), so re-runs won't find
+  the affordance.
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  journey exercised the deal-comment write visually; no cheap assertion
+  beyond existing deal-detail gates.
+- Bugs deferred: none. Suggestions added: UX #48 (deal Comments card
+  reads like a team thread but is a single shared text blob — no author/
+  timestamp, next comment silently overwrites the last). New flakes:
+  none.
+- Next journey: rotation #2 client desktop (r293 had the journey → r294
+  may be LIGHT; then #2).
 
 ### r292 · 2026-08-14 · LIGHT (r291 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
