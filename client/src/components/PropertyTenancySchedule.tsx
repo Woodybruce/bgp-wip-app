@@ -674,6 +674,20 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     onError: (err: any) => { toast({ title: "Failed to delete unit", description: err.message, variant: "destructive" }); },
   });
 
+  // VACANT rows are projections of Letting Tracker units (available_units),
+  // not tenancy rows — deleting one means deleting the tracker unit itself.
+  // Previously these rows had no delete control at all, so junk imports
+  // (InPost lockers, power-bank stations) were stuck on the schedule.
+  const deleteTrackerUnitMutation = useMutation({
+    mutationFn: (availableUnitId: string) => apiRequest("DELETE", `/api/available-units/${availableUnitId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      toast({ title: "Tracker unit deleted" });
+    },
+    onError: (err: any) => { toast({ title: "Failed to delete tracker unit", description: err.message, variant: "destructive" }); },
+  });
+
   // Promote vacant/letting-tracker "orphan" units into real editable tenancy
   // rows, so every unit on the schedule behaves the same.
   const promoteMutation = useMutation({
@@ -1205,6 +1219,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                   columns={visibleColumns}
                   onUpdate={inlineUpdate}
                   onDelete={() => deleteMutation.mutate(unit.id)}
+                  onDeleteTracker={readOnly || !unit.available_unit_id ? undefined : () => deleteTrackerUnitMutation.mutate(String(unit.available_unit_id))}
                   onPromote={readOnly ? undefined : () => promoteMutation.mutate()}
                   promoting={promoteMutation.isPending}
                   onSendToTracker={readOnly ? undefined : () => sendToTrackerMutation.mutate(unit)}
@@ -1310,11 +1325,12 @@ function TenantBrandPicker({
   );
 }
 
-function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSendToTracker, sendingToTracker, readOnly, deal, letting }: {
+function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote, promoting, onSendToTracker, sendingToTracker, readOnly, deal, letting }: {
   unit: TenancyUnit;
   columns: Col[];
   onUpdate: (id: string | number, field: string, val: string) => void;
   onDelete: () => void;
+  onDeleteTracker?: () => void;
   onPromote?: () => void;
   promoting?: boolean;
   onSendToTracker?: () => void;
@@ -1355,6 +1371,19 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onPromote, promoting, onSe
                   {unit.deal_ref ? `#${unit.deal_ref}` : "Deal"}
                 </Badge>
               </a>
+            )}
+            {onDeleteTracker && (
+              <button
+                onClick={() => {
+                  const label = unit.unit_number || unit.premises || "this unit";
+                  if (confirm(`Delete "${label}" from the Letting Tracker?\n\nThis removes the tracker unit (and its stub deal if it never progressed). Real rent-roll rows are unaffected.`)) onDeleteTracker();
+                }}
+                className="inline-flex items-center text-amber-700/60 hover:text-red-600"
+                title="Delete this Letting Tracker unit"
+                data-testid={`delete-vacant-${unit.id}`}
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
             )}
           </div>
         </td>
