@@ -610,11 +610,20 @@ function getAnthropicClient(useDirect = false) {
 }
 
 function convertToolsForClaude(tools: any[]): any[] {
-  return tools.map(t => ({
+  const converted = tools.map(t => ({
     name: t.function.name,
     description: t.function.description,
     input_schema: t.function.parameters,
   }));
+  // Prompt-cache the tool block: ~100 tool definitions are tens of
+  // thousands of input tokens resent on EVERY ChatBGP turn. Marking the
+  // last tool caches the whole prefix (tools precede system in the cache
+  // hierarchy) at ~10% of input price on cache hits, and speeds up TTFT.
+  // The system prompt already carries its own cache_control breakpoint.
+  if (converted.length > 0) {
+    (converted[converted.length - 1] as any).cache_control = { type: "ephemeral" };
+  }
+  return converted;
 }
 
 // Claude vision only accepts jpeg / png / gif / webp. iPhone uploads
