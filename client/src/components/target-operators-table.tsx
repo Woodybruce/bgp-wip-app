@@ -43,7 +43,9 @@ export const TARGET_STATUS_COLORS: Record<string, string> = {
 // Curated category taxonomy for the Letting Tracker + targeting brief
 // (Woody, 2026-08): a short hospitality / leisure list, not the full brand
 // companyType set. Exported so the tracker's quick-add can reuse it.
-export const LETTING_CATEGORIES: readonly string[] = ["Care", "Grab and go", "Restaurant", "Leisure", "Food market"];
+// "Care" was a typo for "Cafe" (team feedback, 2026-08-14) — stored rows are
+// healed by the one-off in index.ts.
+export const LETTING_CATEGORIES: readonly string[] = ["Cafe", "Grab and go", "Restaurant", "Leisure", "Food market"];
 
 function CategoryItems({ current }: { current: string }) {
   return (

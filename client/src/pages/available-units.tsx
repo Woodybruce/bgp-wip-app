@@ -20,7 +20,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown, ChevronRight, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, Layers } from "lucide-react";
+  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, Layers } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -287,6 +287,16 @@ export default function AvailableUnitsPage() {
   // were silently ignored before).
   const urlParam = (k: string) => { try { return new URLSearchParams(window.location.search).get(k) || "all"; } catch { return "all"; } };
   const [statusFilter, setStatusFilter] = useState(() => urlParam("status"));
+  // Compact header (team feedback: the fixed header block was so tall the
+  // table barely had scroll room). Hides the FY strip and swaps the big
+  // status cards for thin chips — every filter stays reachable. Persisted.
+  const [compactHeader, setCompactHeader] = useState(() => {
+    try { return localStorage.getItem("tracker_compact_header") === "1"; } catch { return false; }
+  });
+  const toggleCompactHeader = () => setCompactHeader(v => {
+    try { localStorage.setItem("tracker_compact_header", v ? "0" : "1"); } catch {}
+    return !v;
+  });
   // "All statuses" view — every deal-status group laid out down the page
   // (SOL+ included) with the tenancy schedules underneath, instead of
   // clicking each status card in turn (Woody, 2026-08-06).
@@ -317,6 +327,7 @@ export default function AvailableUnitsPage() {
   // Checkbox + Property/Unit + Target Tenant + Actions always stay.
   const LETTING_COLS: { key: string; label: string }[] = [
     { key: "ref", label: "Ref" },
+    { key: "existingTenant", label: "Existing Tenant" },
     { key: "unitStatus", label: "Unit Status" },
     { key: "client", label: "Client" },
     { key: "dealStatus", label: "Deal Status" },
@@ -419,8 +430,13 @@ export default function AvailableUnitsPage() {
   const [wipFeeAllocType, setWipFeeAllocType] = useState<"percentage" | "fixed">("percentage");
   const { toast } = useToast();
 
+  // The two live collaborative datasets poll faster than the app default
+  // (30s felt laggy in team sessions — edits took half a minute to appear
+  // on colleagues' screens). Reference data below stays on defaults.
   const { data: units = [], isLoading } = useQuery<AvailableUnit[]>({
     queryKey: ["/api/available-units"],
+    refetchInterval: 10_000,
+    staleTime: 3_000,
   });
 
   // Client logins get a one-line explainer of what the tracker is for.
@@ -438,6 +454,8 @@ export default function AvailableUnitsPage() {
 
   const { data: deals = [] } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
+    refetchInterval: 10_000,
+    staleTime: 3_000,
   });
 
   const { data: bgpUsers = [] } = useQuery<{ id: string; name: string; team?: string; additionalTeams?: string[] }[]>({
@@ -1298,6 +1316,19 @@ export default function AvailableUnitsPage() {
         >
           <Plus className="h-4 w-4 mr-1" /> Add Unit
         </Button>
+        {!isMobile && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={toggleCompactHeader}
+            className="text-xs text-muted-foreground"
+            title={compactHeader ? "Show the full header (FY activity + status cards)" : "Compact the header for more table room"}
+            data-testid="button-compact-header"
+          >
+            {compactHeader ? <ChevronDown className="h-3.5 w-3.5 mr-1" /> : <ChevronUp className="h-3.5 w-3.5 mr-1" />}
+            {compactHeader ? "Expand" : "Compact"}
+          </Button>
+        )}
         </div>
       </div>
 
@@ -1305,7 +1336,7 @@ export default function AvailableUnitsPage() {
           (~240px) with bar charts that were 16px tall and rarely
           scanned beyond the headline number. Now one row carrying the
           two totals + tiny sparkline of monthly counts. */}
-      {!isMobile && (
+      {!isMobile && !compactHeader && (
       <Card>
         <CardContent className="px-4 py-2.5 flex items-center gap-6 flex-wrap">
           <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
@@ -1484,8 +1515,9 @@ export default function AvailableUnitsPage() {
         </>)}
       </div>
 
-      {/* KPI stat cards — matching Investment Tracker style */}
-      {isMobile ? (
+      {/* KPI stat cards — matching Investment Tracker style. Compact mode
+          renders the thin chip row (same filters, ~1/3 the height). */}
+      {(isMobile || compactHeader) ? (
         <div className="flex flex-wrap gap-1.5">
           <button
             onClick={() => { setViewAll(!viewAll); setStatusFilter("all"); }}
@@ -1697,6 +1729,7 @@ export default function AvailableUnitsPage() {
                 <TableHead className="w-[200px] min-w-[180px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("property")} data-testid="sort-property">
                   Property / Unit{sortBy === "property" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                 </TableHead>
+                {showCol("existingTenant") && <TableHead className="w-[140px] min-w-[140px]">Existing Tenant</TableHead>}
                 {showCol("unitStatus") && <TableHead className="w-[130px] min-w-[130px]">Unit Status</TableHead>}
                 {!hideClientCol && showCol("client") && (
                   <TableHead className="w-[150px] min-w-[150px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
@@ -1722,7 +1755,7 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={3 + targetBlockSpan + ["ref", "unitStatus", "floorAreas", "costs", "dealType", "activity", "files", "brief"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "floorAreas", "costs", "dealType", "activity", "files", "brief"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1744,7 +1777,7 @@ export default function AvailableUnitsPage() {
                     <Fragment key={u.id}>
                     {viewAll && rowCode !== prevRowCode && (
                       <TableRow className="bg-muted/60 hover:bg-muted/60" data-testid={`status-group-${rowCode.toLowerCase()}`}>
-                        <TableCell colSpan={3 + targetBlockSpan + ["ref", "unitStatus", "floorAreas", "costs", "dealType", "activity", "files", "brief"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
+                        <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "floorAreas", "costs", "dealType", "activity", "files", "brief"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
                           <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
                             <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[rowCode] || "bg-gray-400"}`} />
                             {DEAL_STATUS_LABELS[rowCode]}
@@ -1861,6 +1894,17 @@ export default function AvailableUnitsPage() {
                           </div>
                         </div>
                       </TableCell>
+                      {showCol("existingTenant") && (
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5 max-w-[150px]">
+                        {(() => {
+                          const et = String((u as any).existingTenant || "").trim();
+                          const vacant = !et || /^vacant$/i.test(et);
+                          return vacant
+                            ? <span className="text-xs text-muted-foreground italic">Vacant</span>
+                            : <span className="text-xs truncate block" title={et}>{et}</span>;
+                        })()}
+                      </TableCell>
+                      )}
                       {showCol("unitStatus") && (
                       <TableCell rowSpan={unitRowSpan} className="px-1.5">
                         <InlineLabelSelect

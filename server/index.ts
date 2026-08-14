@@ -4121,6 +4121,13 @@ app.use("/api/branding/assets", express.static(
         } catch (e: any) {
           console.error("[junk-unit sweep] failed:", e?.message);
         }
+        // Piggy-back heal: "Care" was a typo for "Cafe" in the letting
+        // categories dropdown — fix stored rows to match the corrected
+        // option. Idempotent, no flag needed.
+        try {
+          const r = await pool.query(`UPDATE unit_target_operators SET category = 'Cafe' WHERE category = 'Care'`);
+          if (r.rowCount) console.log(`[care→cafe] healed ${r.rowCount} target-operator rows`);
+        } catch { /* table may not exist on fresh DBs */ }
       }, 40000);
       // Background crawls only run in production — too slow/fragile over local internet
       const isProduction = process.env.NODE_ENV === "production";
