@@ -4776,6 +4776,15 @@ async function draftBusinessPlan(run: PropertyPathwayRun): Promise<{ plan: Busin
       leasingHistory: (sr.marketIntel.leasingHistory || []).slice(0, 8),
       comparables: (sr.marketIntel.comparables || []).slice(0, 8),
     } : undefined,
+    // PropertyData market tone — Stage 1 fetches quoting rents (£psf) and
+    // rent/sale valuation estimates for this exact postcode, but the plan
+    // never saw them. Anchors targetRentPsf / pricing against live market
+    // aggregates instead of the model's instinct.
+    marketTone: sr.stage1?.pdMarket ? {
+      commercialQuotingRents: sr.stage1.pdMarket.commercial,
+      residential: sr.stage1.pdMarket.residential,
+      note: "Aggregate PropertyData tone for the postcode sector — quoting rents £psf and valuation ranges. Use as the market anchor for targetRentPsf and pricing sanity-checks.",
+    } : undefined,
   };
 
   const resp = await callClaude({

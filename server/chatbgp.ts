@@ -514,6 +514,8 @@ function getToolProgressLabel(toolName: string): string {
     deep_investigate: "Running deep investigation...",
     rocketreach_person_lookup: "Looking up verified contact details...",
     perplexity_people_search: "Searching for the right person...",
+    find_similar_brands: "Finding similar brands...",
+    get_aged_receivables: "Pulling invoice positions from Xero...",
     search_food_hygiene: "Checking the FSA hygiene register...",
     run_kyc_check: "Running KYC check...",
     create_deal: "Creating deal...",
@@ -4591,6 +4593,36 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           maxReveals: { type: "number", description: "How many top candidates to reveal full contact details for (1-3). Default 1. Each reveal costs credits." },
         },
         required: ["personName"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "get_aged_receivables",
+      description: "Who owes BGP money — pulls every awaiting-payment sales invoice from Xero and buckets it by age (current / 1-30 / 31-60 / 61-90 / 90+ days overdue), grouped by client with totals. Use for 'aged debtors', 'who owes us', 'outstanding invoices', 'has X paid us yet', WIP/cash conversations. Read-only.",
+      parameters: {
+        type: "object",
+        properties: {
+          contactName: { type: "string", description: "Optional — filter to one client/contact name (contains-match)." },
+        },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "find_similar_brands",
+      description: "Discover brands SIMILAR to a given brand via Exa's similarity engine — 'more brands like Gail's' / 'who else is like this tenant'. Takes the reference brand's website URL (get it from the CRM row when you only have a name). Returns similar companies with name + website, each cross-checked against the CRM so you can tell Woody which are already tracked and which are genuinely new prospects worth adding to Brand Hunter.",
+      parameters: {
+        type: "object",
+        properties: {
+          websiteUrl: { type: "string", description: "The reference brand's website, e.g. 'https://gails.com'." },
+          numResults: { type: "number", description: "How many similar companies to return (1-25). Default 10." },
+        },
+        required: ["websiteUrl"],
       },
     },
   });
@@ -10601,6 +10633,122 @@ Be thorough — include every unit row you can classify, across all properties i
       } };
     } catch (err: any) {
       return { data: { error: `FSA hygiene lookup failed: ${err?.message || "unknown"}` } };
+    }
+  }
+
+  if (fnName === "get_aged_receivables") {
+    try {
+      const { xeroApiWithFallback } = await import("./xero");
+      const nameFilter = String(fnArgs.contactName || "").trim().toLowerCase();
+      const invoices: any[] = [];
+      // Awaiting-payment sales invoices, paged (Xero caps at 100/page).
+      for (let page = 1; page <= 5; page++) {
+        const data = await xeroApiWithFallback(null, `/Invoices?where=${encodeURIComponent('Type=="ACCREC" AND Status=="AUTHORISED"')}&order=DueDate&page=${page}`);
+        const batch: any[] = data?.Invoices || [];
+        invoices.push(...batch);
+        if (batch.length < 100) break;
+      }
+      const parseXeroDate = (d: any): Date | null => {
+        if (!d) return null;
+        const m = String(d).match(/\/Date\((\d+)/);
+        if (m) return new Date(Number(m[1]));
+        const t = Date.parse(String(d));
+        return Number.isFinite(t) ? new Date(t) : null;
+      };
+      const now = Date.now();
+      const bucketOf = (due: Date | null): string => {
+        if (!due) return "current";
+        const days = Math.floor((now - due.getTime()) / 86400000);
+        if (days <= 0) return "current";
+        if (days <= 30) return "1-30";
+        if (days <= 60) return "31-60";
+        if (days <= 90) return "61-90";
+        return "90+";
+      };
+      type ContactRow = { contact: string; total: number; buckets: Record<string, number>; invoices: any[] };
+      const byContact = new Map<string, ContactRow>();
+      const buckets: Record<string, number> = { "current": 0, "1-30": 0, "31-60": 0, "61-90": 0, "90+": 0 };
+      let grandTotal = 0;
+      for (const inv of invoices) {
+        const contact = inv?.Contact?.Name || "Unknown";
+        if (nameFilter && !contact.toLowerCase().includes(nameFilter)) continue;
+        const due = parseXeroDate(inv.DueDate);
+        const amount = Number(inv.AmountDue) || 0;
+        if (amount <= 0) continue;
+        const b = bucketOf(due);
+        buckets[b] += amount;
+        grandTotal += amount;
+        const row: ContactRow = byContact.get(contact) || { contact, total: 0, buckets: { "current": 0, "1-30": 0, "31-60": 0, "61-90": 0, "90+": 0 }, invoices: [] };
+        row.total += amount;
+        row.buckets[b] += amount;
+        if (row.invoices.length < 8) {
+          row.invoices.push({ number: inv.InvoiceNumber, amountDue: amount, dueDate: due ? due.toISOString().slice(0, 10) : null, overdueBucket: b, reference: inv.Reference || undefined });
+        }
+        byContact.set(contact, row);
+      }
+      const contacts = Array.from(byContact.values()).sort((a, b) => b.total - a.total).slice(0, 40);
+      const round = (n: number) => Math.round(n * 100) / 100;
+      return { data: {
+        totalOutstanding: round(grandTotal),
+        agedBuckets: Object.fromEntries(Object.entries(buckets).map(([k, v]) => [k, round(v)])),
+        byClient: contacts.map(c => ({ ...c, total: round(c.total), buckets: Object.fromEntries(Object.entries(c.buckets).map(([k, v]) => [k, round(v)])) })),
+        invoiceCount: invoices.length,
+        note: "AUTHORISED (awaiting payment) sales invoices only. Amounts are AmountDue in the invoice currency.",
+      } };
+    } catch (err: any) {
+      return { data: { error: `Xero receivables failed: ${err?.message || "unknown"} — is the Xero system connection signed in?` } };
+    }
+  }
+
+  if (fnName === "find_similar_brands") {
+    try {
+      const exaKey = process.env.EXA_API_KEY;
+      if (!exaKey) return { data: { error: "EXA_API_KEY not configured" } };
+      const websiteUrl = String(fnArgs.websiteUrl || "").trim();
+      if (!websiteUrl) return { data: { error: "websiteUrl is required" } };
+      const numResults = Math.max(1, Math.min(25, Number(fnArgs.numResults) || 10));
+      const resp = await fetch("https://api.exa.ai/findSimilar", {
+        method: "POST",
+        headers: { "x-api-key": exaKey, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: websiteUrl,
+          numResults,
+          excludeSourceDomain: true,
+          contents: { text: { maxCharacters: 250 } },
+        }),
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!resp.ok) return { data: { error: `Exa findSimilar ${resp.status}: ${(await resp.text().catch(() => "")).slice(0, 200)}` } };
+      const data: any = await resp.json();
+      const results: any[] = Array.isArray(data?.results) ? data.results : [];
+      const domainOf = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, "").toLowerCase(); } catch { return ""; } };
+      const domains = Array.from(new Set(results.map(r => domainOf(r.url)).filter(Boolean)));
+      // Cross-reference against the CRM so the answer separates "already
+      // tracked" from "new prospect".
+      const known = new Map<string, { id: string; name: string; tracked: boolean }>();
+      if (domains.length) {
+        const { rows } = await pool.query(
+          `SELECT id, name, lower(coalesce(domain, '')) AS domain, coalesce(is_tracked_brand, false) AS tracked
+             FROM crm_companies WHERE lower(coalesce(domain, '')) = ANY($1::text[])`,
+          [domains],
+        );
+        for (const r of rows) known.set(r.domain, { id: r.id, name: r.name, tracked: r.tracked });
+      }
+      const out = results.map(r => {
+        const d = domainOf(r.url);
+        const crm = known.get(d);
+        return {
+          name: r.title || d,
+          website: r.url,
+          snippet: (r.text || "").slice(0, 200) || undefined,
+          inCrm: !!crm,
+          crmCompanyId: crm?.id,
+          tracked: crm?.tracked || false,
+        };
+      });
+      return { data: { referenceUrl: websiteUrl, similar: out, newProspects: out.filter(o => !o.inCrm).length } };
+    } catch (err: any) {
+      return { data: { error: `Similar-brand search failed: ${err?.message || "unknown"}` } };
     }
   }
 

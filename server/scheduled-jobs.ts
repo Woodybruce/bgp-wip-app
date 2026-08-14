@@ -203,6 +203,59 @@ async function runAction(job: JobRow): Promise<{ status: "ok" | "error"; output:
       await pool.query(`UPDATE chat_threads SET updated_at = now() WHERE id = $1`, [threadId]).catch(() => {});
       return { status: "ok", output: `digest posted to thread ${threadId}` };
     }
+    if (job.action_kind === "aml_rescreen") {
+      // Ongoing AML monitoring — re-screens every subject KYC'd in the last
+      // 12 months against ComplyAdvantage and reports anyone whose position
+      // WORSENED (new matches / escalated status) since the last sweep.
+      // A one-off screen at onboarding goes stale the day a name lands on a
+      // list; this closes that gap weekly.
+      const { screenNames, isComplyAdvantageConfigured } = await import("./comply-advantage");
+      if (!isComplyAdvantageConfigured()) return { status: "error", output: "ComplyAdvantage not configured" };
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS aml_monitor_baseline (
+          subject       TEXT PRIMARY KEY,
+          status        TEXT,
+          match_count   INTEGER NOT NULL DEFAULT 0,
+          last_screened TIMESTAMPTZ NOT NULL DEFAULT now()
+        )`);
+      const { rows: subjects } = await pool.query(
+        `SELECT DISTINCT subject_name FROM kyc_investigations
+          WHERE conducted_at > now() - interval '12 months' AND subject_name IS NOT NULL
+          ORDER BY subject_name LIMIT 40`,
+      );
+      if (subjects.length === 0) return { status: "ok", output: "no KYC subjects in the last 12 months" };
+      const results = await screenNames(subjects.map((s: any) => ({ name: s.subject_name, role: "monitored" })));
+      const escalations: string[] = [];
+      for (const r of results) {
+        const { rows: prev } = await pool.query(`SELECT status, match_count FROM aml_monitor_baseline WHERE subject = $1`, [r.name]);
+        const prevCount = prev[0]?.match_count ?? null;
+        const prevStatus = prev[0]?.status ?? null;
+        if (prevCount != null && (r.matches.length > prevCount || (prevStatus === "clear" && r.status !== "clear"))) {
+          escalations.push(`⚠️ ${r.name}: ${prevStatus || "clear"} (${prevCount}) → ${r.status} (${r.matches.length} match${r.matches.length === 1 ? "" : "es"})`);
+        }
+        await pool.query(
+          `INSERT INTO aml_monitor_baseline (subject, status, match_count, last_screened) VALUES ($1, $2, $3, now())
+           ON CONFLICT (subject) DO UPDATE SET status = $2, match_count = $3, last_screened = now()`,
+          [r.name, r.status, r.matches.length],
+        );
+      }
+      if (escalations.length === 0) return { status: "ok", output: `re-screened ${results.length} subjects — no escalations` };
+      // Escalations go to the job creator's ChatBGP, same route as the digest.
+      let threadId = String(job.action_payload?.threadId || "");
+      if (!threadId && job.created_by) {
+        const { rows } = await pool.query(
+          `SELECT id FROM chat_threads WHERE is_ai_chat = TRUE AND linked_type IS NULL AND created_by = $1 ORDER BY updated_at DESC NULLS LAST LIMIT 1`,
+          [job.created_by],
+        );
+        threadId = rows[0]?.id || "";
+      }
+      const msg = `**AML monitoring — screening changes detected**\n\n${escalations.join("\n")}\n\nOpen the Investigator to review before any further work for these subjects.`;
+      if (threadId) {
+        await pool.query(`INSERT INTO chat_messages (thread_id, role, content, user_id) VALUES ($1, 'assistant', $2, $3)`, [threadId, msg, job.created_by]);
+        await pool.query(`UPDATE chat_threads SET updated_at = now() WHERE id = $1`, [threadId]).catch(() => {});
+      }
+      return { status: "ok", output: `re-screened ${results.length}; ${escalations.length} escalation(s)${threadId ? " — posted to chat" : ""}` };
+    }
     if (job.action_kind === "send_email") {
       // Defer to the existing email send pipeline. The Microsoft token must
       // belong to a session; for scheduled jobs, fall back to a system-owned
@@ -304,24 +357,48 @@ async function ensurePathwayDigestJob(): Promise<void> {
     const { rows: existing } = await pool.query(
       `SELECT 1 FROM scheduled_jobs WHERE action_kind = 'pathway_digest' LIMIT 1`,
     );
-    if (existing[0]) return;
     const { rows: woody } = await pool.query(
       `SELECT id FROM users WHERE lower(email) LIKE 'woody@%' LIMIT 1`,
     );
+    // No early returns — the AML seed below must still run when the digest
+    // already exists.
+    if (!existing[0] && woody[0]) {
+      await pool.query(
+        `INSERT INTO scheduled_jobs (name, description, schedule_kind, schedule_value, action_kind, action_payload, enabled, created_by, next_run_at)
+         VALUES ($1, $2, 'daily', '08:00', 'pathway_digest', '{}'::jsonb, true, $3, $4)`,
+        [
+          "Pathway morning digest",
+          "Posts runs completed overnight, runs awaiting sign-off, and failed stages to Woody's ChatBGP each morning. Quiet days post nothing.",
+          woody[0].id,
+          computeNextRun("daily", "08:00"),
+        ],
+      );
+      console.log("[scheduled-jobs] seeded Pathway morning digest (daily 08:00)");
+    }
+  } catch (err: any) {
+    console.warn("[scheduled-jobs] digest seed skipped:", err?.message);
+  }
+  // Weekly AML re-screen (Monday 07:30) — same guarded-seed pattern.
+  try {
+    const { rows: existing } = await pool.query(
+      `SELECT 1 FROM scheduled_jobs WHERE action_kind = 'aml_rescreen' LIMIT 1`,
+    );
+    if (existing[0]) return;
+    const { rows: woody } = await pool.query(`SELECT id FROM users WHERE lower(email) LIKE 'woody@%' LIMIT 1`);
     if (!woody[0]) return;
     await pool.query(
       `INSERT INTO scheduled_jobs (name, description, schedule_kind, schedule_value, action_kind, action_payload, enabled, created_by, next_run_at)
-       VALUES ($1, $2, 'daily', '08:00', 'pathway_digest', '{}'::jsonb, true, $3, $4)`,
+       VALUES ($1, $2, 'weekly', 'MON:07:30', 'aml_rescreen', '{}'::jsonb, true, $3, $4)`,
       [
-        "Pathway morning digest",
-        "Posts runs completed overnight, runs awaiting sign-off, and failed stages to Woody's ChatBGP each morning. Quiet days post nothing.",
+        "AML weekly monitoring",
+        "Re-screens every subject KYC'd in the last 12 months against ComplyAdvantage and posts to ChatBGP when anyone's sanctions/PEP position worsens. Quiet weeks post nothing.",
         woody[0].id,
-        computeNextRun("daily", "08:00"),
+        computeNextRun("weekly", "MON:07:30"),
       ],
     );
-    console.log("[scheduled-jobs] seeded Pathway morning digest (daily 08:00)");
+    console.log("[scheduled-jobs] seeded AML weekly monitoring (MON 07:30)");
   } catch (err: any) {
-    console.warn("[scheduled-jobs] digest seed skipped:", err?.message);
+    console.warn("[scheduled-jobs] AML monitor seed skipped:", err?.message);
   }
 }
 

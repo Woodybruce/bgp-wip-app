@@ -41,6 +41,34 @@ export function registerLeaseEventRoutes(app: Express) {
          ORDER BY event_date ASC NULLS LAST, created_at DESC`,
         params
       );
+
+      // EPC / MEES enrichment — a lease event on an F/G-rated building is a
+      // legal problem (and a lease-advisory instruction) the team should see
+      // inline. Cached certs only in the request path; postcodes we've never
+      // fetched fill in the background for the next load.
+      try {
+        const { epcForAddress, meesRisk, isEpcConfigured } = await import("./epc");
+        const PC_RE = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
+        const events = rows.rows as any[];
+        if (isEpcConfigured()) {
+          // Soft 4s budget: cached postcodes annotate instantly; postcodes
+          // being fetched for the first time keep running past the race and
+          // land in the cache for the next load.
+          const enrichAll = Promise.all(events.slice(0, 100).map(async (ev) => {
+            const pc = (ev.address || "").match(PC_RE)?.[1];
+            if (!pc) return;
+            const cert = await epcForAddress(pc, ev.address || "").catch(() => null);
+            if (cert) {
+              ev.epcBand = cert.band;
+              ev.epcScore = cert.score;
+              ev.epcExpiresAt = cert.expiresAt;
+              ev.meesRisk = meesRisk(cert.band);
+            }
+          }));
+          await Promise.race([enrichAll, new Promise(r => setTimeout(r, 4000))]);
+        }
+      } catch { /* EPC enrichment is best-effort — never block the list */ }
+
       res.json(rows.rows);
     } catch (e: any) {
       res.status(500).json({ error: e.message });

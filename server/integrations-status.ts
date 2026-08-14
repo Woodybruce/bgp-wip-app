@@ -80,6 +80,8 @@ const KEYS: KeyDef[] = [
   { name: "GREENSTREET_AUTH_COOKIE", label: "Green Street News subscriber cookie (set via News → Sources → Paywall logins)", group: "Research" },
 
   // Geospatial
+  { name: "EPC_API_EMAIL", label: "EPC register email (free key — epc.opendatacommunities.org)", group: "Geospatial" },
+  { name: "EPC_API_KEY", label: "EPC register API key (MEES flags on Lease Events)", group: "Geospatial" },
   { name: "OS_PLACES_API_KEY", label: "OS Places / OS Data Hub", group: "Geospatial", fallbacks: ["OS_API_KEY"] },
   { name: "OS_PLACES_API_SECRET", label: "OS Places Secret (optional)", group: "Geospatial" },
 
