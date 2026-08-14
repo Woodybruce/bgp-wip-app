@@ -155,7 +155,22 @@ export default function MobileHome() {
   // selected — the team switcher scopes data, not the phone shell
   // (Woody, 2026-08-07: BGP users on the Landsec account were losing
   // Expenses/billing; reverted the staff-preview behaviour).
-  const showPortfolioHome = isClientHome;
+  // 2026-08-14: that revert never actually landed — this flag was still
+  // isClientHome (role OR scope), so Landsec-scoped staff (Victoria) got
+  // the client phone shell. Real client logins only, as documented.
+  const showPortfolioHome = user?.role === "Client";
+  // Staff currently scoped into a client's view — show an exit banner so
+  // a phone can escape without finding the desktop sidebar.
+  const isViewingAsClient = user?.role !== "Client" && !!(user as any)?.companyScopeId;
+  const exitClientView = async () => {
+    try {
+      await apiRequest("POST", "/api/auth/client-view-mode", { enabled: false }).catch(() => {});
+      await apiRequest("POST", "/api/auth/active-team", { team: "all" });
+      localStorage.setItem("bgp_active_team", "all");
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      queryClient.invalidateQueries();
+    } catch { /* refetch will reflect whatever stuck */ }
+  };
   const { data: alerts = [] } = useQuery<Alert[]>({ queryKey: ["/api/daily-digest"] });
   const { data: tasks = [] } = useQuery<Task[]>({ queryKey: ["/api/tasks"] });
   const { data: commission } = useQuery<Commission>({
@@ -214,6 +229,20 @@ export default function MobileHome() {
       className="bg-[#FAF9F7] dark:bg-background min-h-full px-4 pb-2 space-y-4"
       style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top))" }}
     >
+      {/* Staff scoped into a client's view — plain banner + one-tap exit.
+          Without this, a phone stuck in Landsec view has no way back. */}
+      {isViewingAsClient && (
+        <button
+          type="button"
+          onClick={exitClientView}
+          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium shadow"
+          data-testid="button-mobile-exit-client-view"
+        >
+          <span className="truncate">Viewing as {(user as any)?.companyScopeName || "client"} — this is their view, not yours</span>
+          <span className="shrink-0 text-xs bg-white/20 rounded-full px-2 py-0.5">Exit</span>
+        </button>
+      )}
+
       {/* Greeting */}
       <div className="flex items-center gap-2 pt-1">
         <Sun className="w-5 h-5 text-amber-500" />
