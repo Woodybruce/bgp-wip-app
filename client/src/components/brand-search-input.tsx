@@ -3,9 +3,10 @@
 // targets, Letting Tracker inline add) so targets carry a company_id link
 // back to the brand list instead of a free-text name. Picking a CRM brand
 // links it and reports its brand category; `allowCreate` offers "add to
-// brand list" for names we don't have (staff only — the companies POST is
-// staff-gated); "use as typed" falls back to an unlinked name (the server
-// still auto-links an exact name match at insert time).
+// brand list" for names we don't have (client logins get a bare "Tenant"
+// brand, self-added to their CRM slice server-side); "use as typed" falls
+// back to an unlinked name (the server still auto-links an exact name
+// match at insert time).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronsUpDown, Link2Off, Plus } from "lucide-react";

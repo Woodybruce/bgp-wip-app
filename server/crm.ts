@@ -1756,17 +1756,32 @@ export function setupCrmRoutes(app: Express) {
   app.post("/api/crm/companies", async (req, res) => {
     try {
       const parsed = insertCrmCompanySchema.parse(req.body);
-      // Clients may create BRANDS only — company_type must sit in the client
-      // CRM category slice, so a client login can't mint landlord/agent rows.
+      // Clients may create BRANDS only — never landlord/agent/office rows.
+      // The tracker's quick-create sends just a name, so a missing type
+      // defaults to a bare "Tenant" brand instead of rejecting (team
+      // feedback 2026-08-14: "Landsec accounts can't add new tenant").
       const createScope = await resolveCompanyScope(req);
       if (createScope) {
-        const { isClientCrmCategory } = await import("@shared/tenant-categories");
-        if (!isClientCrmCategory(parsed.companyType || "")) {
+        const ct = String(parsed.companyType || "").trim();
+        if (!ct) {
+          (parsed as any).companyType = "Tenant";
+        } else if (!/^tenant\b/i.test(ct)) {
           return res.status(403).json({ error: "Client accounts can only create tenant brands" });
         }
         (parsed as any).isTrackedBrand = true;
       }
       const company = await storage.createCrmCompany(parsed);
+      if (createScope && (company as any)?.id) {
+        // Self-add: stamp the new brand into the client's extra-brands list
+        // (same mechanism as /api/client/crm/add-brand) so it shows in their
+        // CRM slice even when the category sits outside CLIENT_CRM_CATEGORIES.
+        await pool.query(
+          `UPDATE crm_companies
+              SET crm_extra_brand_ids = (SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(crm_extra_brand_ids, '{}') || $1::text)))
+            WHERE id = $2`,
+          [String((company as any).id), createScope]
+        ).catch((err: any) => console.warn("[crm] client self-add stamp failed:", err?.message));
+      }
       res.status(201).json(company);
     } catch (e: any) { res.status(400).json({ error: e.message }); }
   });

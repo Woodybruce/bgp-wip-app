@@ -2001,7 +2001,7 @@ export default function AvailableUnitsPage() {
                               className="h-7 w-[220px] border-dashed text-[11px]"
                               placeholder="+ Target operator"
                               value=""
-                              allowCreate={!isClientTracker}
+                              allowCreate
                               onPick={p => addUnitTarget(u, p)}
                               testId={`add-target-${u.id}`}
                             />
@@ -2039,7 +2039,7 @@ export default function AvailableUnitsPage() {
                               iconOnly
                               placeholder="Add target operator…"
                               value=""
-                              allowCreate={!isClientTracker}
+                              allowCreate
                               onPick={p => addUnitTarget(u, p)}
                               testId={`add-target-${u.id}`}
                             />
