@@ -8,9 +8,10 @@
 //   news            — new tagged articles since the last cursor, distilled
 //                     against the ACTIVE THEMES so repetition strengthens a
 //                     theme instead of duplicating a card
-//   market-report   — newsletter/report emails arriving at the ChatBGP
-//                     mailbox from trade publishers (Propel, Knight Frank,
-//                     Savills, CoStar…)
+//   market-report   — newsletter/report emails from trade publishers
+//                     (Propel, Green Street News, EG, Property Week…),
+//                     swept from the ChatBGP mailbox AND every active
+//                     staff mailbox — the paid feeds land with individuals
 //   portfolio       — client-safe activity spikes (viewings/offers on the
 //                     client's own portfolio; never BGP email content)
 //
@@ -30,7 +31,40 @@ const INSIGHT_CATEGORIES = ["hospitality", "retail", "leisure", "fitness", "inve
 // The slice a Landsec-type client sees (mirrors CLIENT_CRM_CATEGORIES intent).
 const CLIENT_INSIGHT_CATEGORIES = ["hospitality", "retail", "leisure", "fitness", "market"];
 
-const REPORT_SENDER_DOMAINS = ["propelinfo.com", "propelhospitality.com", "knightfrank.com", "savills.com", "costar.com", "greenstreet.com", "cbre.com"];
+// Publisher senders and where we're allowed to harvest them.
+//   any    — pure trade publishers: everything they send is editorial, safe
+//            to read from any staff mailbox. Suffix match also covers their
+//            sending subdomains (no-reply@email.propertyweek.com etc.).
+//   shared — agent/data firms whose newsletters land at the shared ChatBGP
+//            inbox. Staff mailboxes hold REAL correspondence with these
+//            firms (deals, negotiations) which must never enter the feed.
+const REPORT_SENDER_RULES: { domain: string; scope: "any" | "shared" }[] = [
+  { domain: "propelinfo.com", scope: "any" },        // verified: paul.charity@propelinfo.com
+  { domain: "propelhospitality.com", scope: "any" },
+  { domain: "greenstreetnews.com", scope: "any" },   // GSN bulletins (greenstreet.com is the data firm, below)
+  { domain: "propertyweek.com", scope: "any" },      // verified: no-reply@email.propertyweek.com
+  { domain: "estatesgazette.com", scope: "any" },
+  { domain: "egi.co.uk", scope: "any" },
+  { domain: "reactnews.com", scope: "any" },
+  { domain: "bisnow.com", scope: "any" },
+  { domain: "drapers.com", scope: "any" },
+  { domain: "retail-week.com", scope: "any" },
+  { domain: "businessoffashion.com", scope: "any" },
+  { domain: "voguebusiness.com", scope: "any" },
+  { domain: "knightfrank.com", scope: "shared" },
+  { domain: "savills.com", scope: "shared" },
+  { domain: "costar.com", scope: "shared" },
+  { domain: "cbre.com", scope: "shared" },
+  { domain: "greenstreet.com", scope: "shared" },
+];
+
+function matchReportSender(from: string, isSharedInbox: boolean): boolean {
+  const f = (from || "").toLowerCase();
+  return REPORT_SENDER_RULES.some(r =>
+    (isSharedInbox || r.scope === "any") &&
+    (f.endsWith(`@${r.domain}`) || f.endsWith(`.${r.domain}`))
+  );
+}
 
 async function ensureTables(): Promise<void> {
   await pool.query(`
@@ -62,6 +96,14 @@ async function ensureTables(): Promise<void> {
     CREATE TABLE IF NOT EXISTS insight_state (
       key TEXT PRIMARY KEY,
       cursor TIMESTAMP
+    )`);
+  // Cross-tick dedupe for the report leg: the same Propel edition lands in
+  // ~15 mailboxes, and copies can straddle a tick boundary — sender+subject+
+  // day keys mark what's already been distilled. Pruned after 14 days.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS insight_processed_emails (
+      key TEXT PRIMARY KEY,
+      processed_at TIMESTAMP DEFAULT now()
     )`);
 }
 
@@ -157,48 +199,118 @@ export async function runNewsLeg(): Promise<number> {
   return n;
 }
 
-// Leg 2 — market-report emails at the ChatBGP mailbox (Propel round-ups,
-// Knight Frank / Savills updates). Public-source publisher material only —
-// the domain whitelist keeps BGP's real correspondence out of the feed.
+// Leg 2 — market-report emails from trade publishers. Sweeps the shared
+// ChatBGP inbox PLUS every active staff mailbox (EG Daily only lands with
+// individuals; GSN bulletins hit personal inboxes) — the sender rules keep
+// BGP's real correspondence out of the feed, and agent-firm domains are
+// only ever read from the shared inbox.
 export async function runReportLeg(): Promise<number> {
   await ensureTables();
   const cursor = (await getCursor("reports")) || new Date(Date.now() - 24 * 3600 * 1000);
-  let messages: any[] = [];
+  const since = cursor.toISOString();
+
+  const mailboxes: { address: string; shared: boolean }[] = [
+    { address: "chatbgp@brucegillinghampollard.com", shared: true },
+  ];
+  try {
+    const staff = await pool.query(
+      `SELECT DISTINCT lower(COALESCE(NULLIF(TRIM(email), ''), username)) AS addr
+         FROM users
+        WHERE COALESCE(is_active, true)
+          AND COALESCE(role, '') <> 'Client'
+          AND lower(COALESCE(NULLIF(TRIM(email), ''), username)) LIKE '%@brucegillinghampollard.com'`);
+    for (const r of staff.rows) {
+      if (r.addr && r.addr !== "chatbgp@brucegillinghampollard.com") {
+        mailboxes.push({ address: r.addr, shared: false });
+      }
+    }
+  } catch (e: any) {
+    console.warn("[insights] staff mailbox list failed:", e?.message);
+  }
+
+  const candidates: any[] = [];
   try {
     const { graphRequest } = await import("./shared-mailbox");
-    const since = cursor.toISOString();
-    const r = await graphRequest(
-      `/users/chatbgp@brucegillinghampollard.com/messages?$filter=receivedDateTime gt ${since}&$top=40&$select=subject,from,receivedDateTime,bodyPreview,body&$orderby=receivedDateTime asc`);
-    messages = (r?.value || []).filter((m: any) => {
-      const from = (m.from?.emailAddress?.address || "").toLowerCase();
-      return REPORT_SENDER_DOMAINS.some(d => from.endsWith(`@${d}`) || from.endsWith(`.${d}`));
-    });
+    for (const mb of mailboxes) {
+      try {
+        const r = await graphRequest(
+          `/users/${encodeURIComponent(mb.address)}/messages?$filter=receivedDateTime gt ${since}&$top=30&$select=subject,from,receivedDateTime,bodyPreview,body&$orderby=receivedDateTime asc`);
+        for (const m of r?.value || []) {
+          const from = (m.from?.emailAddress?.address || "").toLowerCase();
+          if (matchReportSender(from, mb.shared)) candidates.push(m);
+        }
+      } catch (e: any) {
+        // Unlicensed / missing mailboxes 404 — skip quietly, sweep the rest.
+        console.warn(`[insights] mailbox sweep skipped ${mb.address}:`, String(e?.message || "").slice(0, 140));
+      }
+    }
   } catch (e: any) {
     console.warn("[insights] report leg mailbox read failed:", e?.message);
     return 0;
   }
-  if (!messages.length) { await setCursor("reports", new Date()); return 0; }
+  if (!candidates.length) { await setCursor("reports", new Date()); return 0; }
+
+  // Dedupe: 15 copies of one edition = one processing pass. In-batch via the
+  // seen set, cross-tick via insight_processed_emails.
+  const keyOf = (m: any) => {
+    const from = (m.from?.emailAddress?.address || "").toLowerCase();
+    const day = String(m.receivedDateTime || "").slice(0, 10);
+    return `${from}|${String(m.subject || "").trim().toLowerCase()}|${day}`;
+  };
+  const seen = new Set<string>();
+  const fresh: any[] = [];
+  for (const m of candidates.sort((a, b) => String(a.receivedDateTime).localeCompare(String(b.receivedDateTime)))) {
+    const k = keyOf(m);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const done = await pool.query(`SELECT 1 FROM insight_processed_emails WHERE key = $1`, [k]);
+    if (!done.rows.length) fresh.push(m);
+  }
+  await pool.query(`DELETE FROM insight_processed_emails WHERE processed_at < now() - interval '14 days'`).catch(() => {});
+
+  const CAP = 12; // per-tick processing budget across the whole sweep
+  const toProcess = fresh.slice(0, CAP);
   let total = 0;
-  for (const m of messages.slice(0, 5)) {
-    const bodyText = String(m.body?.content || m.bodyPreview || "")
-      .replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 8000);
-    const from = m.from?.emailAddress?.address || "publisher";
-    total += await distil(
-      `market update email from ${from}: "${m.subject}"`, bodyText, "market-report",
-      [{ type: "report-email", title: m.subject, from, date: m.receivedDateTime }]);
-    // Same email, second harvest: per-brand events → brand_signals, so the
-    // Propel round-up feeds the expansion engine + daily alerts, not just
-    // the Insights cards.
+  let earliestFailure: string | null = null;
+  for (const m of toProcess) {
     try {
-      const { extractBrandSignalsFromNewsletter } = await import("./news-brand-linking");
-      const n = await extractBrandSignalsFromNewsletter({ subject: m.subject, from, bodyText, receivedAt: m.receivedDateTime });
-      if (n > 0) console.log(`[insights] "${m.subject}" → ${n} brand signal(s)`);
+      const bodyText = String(m.body?.content || m.bodyPreview || "")
+        .replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 8000);
+      const from = m.from?.emailAddress?.address || "publisher";
+      total += await distil(
+        `market update email from ${from}: "${m.subject}"`, bodyText, "market-report",
+        [{ type: "report-email", title: m.subject, from, date: m.receivedDateTime }]);
+      // Same email, second harvest: per-brand events → brand_signals, so the
+      // Propel round-up feeds the expansion engine + daily alerts, not just
+      // the Insights cards.
+      try {
+        const { extractBrandSignalsFromNewsletter } = await import("./news-brand-linking");
+        const n = await extractBrandSignalsFromNewsletter({ subject: m.subject, from, bodyText, receivedAt: m.receivedDateTime });
+        if (n > 0) console.log(`[insights] "${m.subject}" → ${n} brand signal(s)`);
+      } catch (e: any) {
+        console.warn("[insights] newsletter brand-signal extraction failed:", e?.message);
+      }
+      await pool.query(
+        `INSERT INTO insight_processed_emails (key) VALUES ($1) ON CONFLICT (key) DO NOTHING`, [keyOf(m)]);
     } catch (e: any) {
-      console.warn("[insights] newsletter brand-signal extraction failed:", e?.message);
+      // Unmarked → the cursor below parks before it, so it retries next tick.
+      console.warn(`[insights] report email failed ("${m.subject}"):`, e?.message);
+      if (!earliestFailure || String(m.receivedDateTime) < earliestFailure) {
+        earliestFailure = String(m.receivedDateTime);
+      }
     }
   }
-  await setCursor("reports", new Date());
-  console.log(`[insights] report leg: ${messages.length} publisher emails → ${total} insights`);
+
+  // Park the cursor so nothing is lost: just before the earliest failure, or
+  // at the last processed edition when the cap left some unprocessed (the
+  // dedupe table stops the succeeded ones re-running).
+  const capped = fresh.length > toProcess.length && toProcess.length > 0;
+  await setCursor("reports", earliestFailure
+    ? new Date(new Date(earliestFailure).getTime() - 1000)
+    : capped
+    ? new Date(toProcess[toProcess.length - 1].receivedDateTime)
+    : new Date());
+  console.log(`[insights] report leg: ${mailboxes.length} mailboxes, ${candidates.length} publisher emails, ${fresh.length} new → ${total} insights`);
   return total;
 }
 
