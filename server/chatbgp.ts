@@ -7936,6 +7936,33 @@ export async function executeCrmToolRaw(
   }
 
   if (fnName === "ingest_url") {
+    // Digest trade-press articles into structured deal facts — the prose
+    // says "Fred Perry took 4,000 sq ft at £150 ZA"; the comps board wants
+    // fields. Extraction only fires for property-press domains so ordinary
+    // page reads don't pay a Haiku call.
+    const DEAL_PRESS_RE = /greenstreetnews\.com|propertyweek\.com|costar\.com|reactnews\.com|egi\.co\.uk|estatesgazette|bisnow\.com|retail-week\.com|thecaterer\.com|bighospitality\.co\.uk|drapersonline\.com/i;
+    async function extractDealFacts(url: string, title: string, text: string): Promise<any[] | null> {
+      if (!DEAL_PRESS_RE.test(url) || text.length < 600) return null;
+      try {
+        const { callClaude, CHATBGP_HELPER_MODEL } = await import("./utils/anthropic-client");
+        const r = await callClaude({
+          model: CHATBGP_HELPER_MODEL,
+          max_completion_tokens: 900,
+          temperature: 0,
+          messages: [{
+            role: "user",
+            content: `Extract UK property DEAL FACTS from this trade-press article. Return a STRICT JSON array (possibly empty), no prose:\n` +
+              `[{"kind":"letting"|"investment","address":string,"scheme":string?,"tenant":string?,"buyer":string?,"seller":string?,"landlord":string?,"rent":string?,"rentPsfZa":string?,"price":string?,"yield":string?,"areaSqFt":number?,"leaseTermYears":number?,"date":string?}]\n` +
+              `Only include transactions the article actually reports, each with at least an address/scheme and one commercial number.\n\nTitle: ${title}\n\n${text.slice(0, 9000)}`,
+          }],
+        });
+        const raw = r.choices?.[0]?.message?.content || "";
+        const s = raw.indexOf("["), e = raw.lastIndexOf("]");
+        if (s < 0 || e <= s) return null;
+        const arr = JSON.parse(raw.slice(s, e + 1));
+        return Array.isArray(arr) && arr.length ? arr.slice(0, 10) : null;
+      } catch { return null; }
+    }
     const targetUrl = fnArgs.url as string;
     try {
       // Subscriber cookies (Green Street, Property Week, Drapers...) ride
@@ -7988,7 +8015,14 @@ export async function executeCrmToolRaw(
         return { data: { success: true, action: "ingested_and_saved", title, contentLength: extractedText.length, articleId, content: truncated } };
       }
 
-      return { data: { success: true, action: "ingested", title, contentLength: extractedText.length, content: truncated } };
+      const dealFacts = await extractDealFacts(targetUrl, title, extractedText);
+      return { data: {
+        success: true, action: "ingested", title, contentLength: extractedText.length, content: truncated,
+        ...(dealFacts ? {
+          dealFacts,
+          dealFactsNote: "Structured transactions extracted from this article. Offer to save the relevant ones — lettings to retail_leasing_comps, investment deals to the comps board (sql_write) — citing this URL as the source. Ask before writing.",
+        } : {}),
+      } };
     } catch (err: any) {
       return { data: { error: `Failed to ingest URL: ${err.message}` } };
     }
