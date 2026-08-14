@@ -5433,8 +5433,10 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
 
       // 2. Create listings for in-play strategy rows missing from the tracker.
+      const { isJunkUnitName } = await import("./unit-junk");
       let added = 0;
       for (const m of missing) {
+        if (isJunkUnitName(m.unit_name || m.unit_number || m.premises)) continue;
         try {
           const ins = await pool.query(
             `INSERT INTO available_units (property_id, unit_name, sqft, asking_rent, marketing_status, tenancy_unit_id)

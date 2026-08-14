@@ -159,11 +159,16 @@ export async function fanOutTenancyStatus(pool: Pool, tenancyId: string): Promis
     } else if (marketingStatus !== "COM" && marketingStatus !== "WIT") {
       // Only auto-create a Letting Tracker row for active statuses —
       // no point spawning a fresh row for a unit that's already let.
-      await pool.query(
-        `INSERT INTO available_units (property_id, unit_name, sqft, asking_rent, marketing_status, tenancy_unit_id)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [t.property_id, t.unit_number, sqft, askingRent, marketingStatus, tenancyId]
-      );
+      // Non-lettable revenue lines (lockers, vending, ATMs) never mirror
+      // onto the tracker — they're schedule furniture, not shops.
+      const { isJunkUnitName } = await import("./unit-junk");
+      if (!isJunkUnitName(t.unit_number)) {
+        await pool.query(
+          `INSERT INTO available_units (property_id, unit_name, sqft, asking_rent, marketing_status, tenancy_unit_id)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [t.property_id, t.unit_number, sqft, askingRent, marketingStatus, tenancyId]
+        );
+      }
     }
 
     // leasing_schedule_units: same pattern. Default rent_pa + sqft on

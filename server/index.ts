@@ -4086,6 +4086,42 @@ app.use("/api/branding/assets", express.static(
           console.error("[goad datum fix] Failed:", e?.message);
         }
       }, 30000);
+      // One-off (per Woody, 2026-08-14): purge non-lettable "units" (InPost
+      // lockers, power-bank stations, vending, ATMs...) that schedule imports
+      // carried onto the Letting Tracker app-wide. Stub deals still at AVA go
+      // with them; progressed deals are kept and just lose the unit link.
+      // Deleted rows are recorded in the flag value for audit. Guarded.
+      setTimeout(async () => {
+        const FLAG = "migration:tracker_junk_sweep_v1";
+        try {
+          const { rows: done } = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [FLAG]);
+          if (done[0]) return;
+          const { isJunkUnitName } = await import("./unit-junk");
+          const { rows: units } = await pool.query(
+            `SELECT au.id, au.unit_name, au.property_id, au.deal_id, d.status AS deal_status
+               FROM available_units au LEFT JOIN crm_deals d ON d.id = au.deal_id`,
+          );
+          const junk = units.filter((u: any) => isJunkUnitName(u.unit_name));
+          const audit: any[] = [];
+          const { legacyToCode } = await import("@shared/deal-status");
+          for (const u of junk) {
+            await pool.query(`DELETE FROM available_units WHERE id = $1`, [u.id]);
+            let dealDeleted = false;
+            if (u.deal_id && legacyToCode(u.deal_status) === "AVA") {
+              await pool.query(`DELETE FROM crm_deals WHERE id = $1`, [u.deal_id]).catch(() => {});
+              dealDeleted = true;
+            }
+            audit.push({ id: u.id, name: u.unit_name, propertyId: u.property_id, dealDeleted });
+          }
+          await pool.query(
+            `INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2`,
+            [FLAG, JSON.stringify({ at: new Date().toISOString(), deleted: audit.length, rows: audit.slice(0, 200) })],
+          );
+          console.log(`[junk-unit sweep] removed ${audit.length} non-lettable tracker unit(s): ${audit.slice(0, 12).map(a => a.name).join("; ")}${audit.length > 12 ? "…" : ""}`);
+        } catch (e: any) {
+          console.error("[junk-unit sweep] failed:", e?.message);
+        }
+      }, 40000);
       // Background crawls only run in production — too slow/fragile over local internet
       const isProduction = process.env.NODE_ENV === "production";
       if (isProduction) {
