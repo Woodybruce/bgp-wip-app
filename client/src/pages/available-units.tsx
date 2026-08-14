@@ -59,6 +59,13 @@ import { FeeAllocationEditor, type FeeAllocationRow } from "@/components/fee-all
 
 import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
 const MARKETING_STATUSES = LETTING_STATUSES;
+// Feedback (2026-08-14): a unit itself is only ever an Opportunity or
+// Available — everything past that (NEG/HOT/SOL/…) is the DEAL's status,
+// which drives the boards. The unit-stage select offers just these two;
+// UNIT_STAGE_EDITABLE is the set of effective codes where flipping the
+// unit stage can't regress a live deal via the 4-way status mirror.
+const UNIT_STATUSES: DealStatusCode[] = ["OPP", "AVA"];
+const UNIT_STAGE_EDITABLE = new Set<DealStatusCode>(["OPP", "AVA", "REP", "SPEC", "LIVE"]);
 const USE_CLASSES = ["E", "E(a)", "E(b)", "E(c)", "E(d)", "E(e)", "A1", "A2", "A3", "A4", "A5", "B1", "B2", "B8", "C1", "C3", "D1", "D2", "F1", "F2", "Sui Generis"];
 const FLOORS = ["Basement", "Lower Ground", "Ground", "Mezzanine", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "Upper"];
 const CONDITIONS = ["Shell & Core", "Cat A", "Cat A+", "Cat B", "Fitted", "Turn Key", "As Is"];
@@ -329,8 +336,9 @@ export default function AvailableUnitsPage() {
     { key: "ref", label: "Ref" },
     { key: "existingTenant", label: "Existing Tenant" },
     { key: "unitStatus", label: "Unit Status" },
+    { key: "pipelineStatus", label: "Deal Status" },
     { key: "client", label: "Client" },
-    { key: "dealStatus", label: "Deal Status" },
+    { key: "dealStatus", label: "Target Status" },
     { key: "category", label: "Category" },
     { key: "priority", label: "Priority" },
     { key: "agent", label: "Agent" },
@@ -648,6 +656,18 @@ export default function AvailableUnitsPage() {
     for (const d of deals) m[d.id] = d;
     return m;
   }, [deals]);
+
+  // Effective pipeline code per unit: the linked deal's status when a deal
+  // exists (the deal drives the process), else the unit's own marketing
+  // status. Boards, chips, grouping and filters all key off this.
+  const effByUnit = useMemo(() => {
+    const m: Record<string, DealStatusCode> = {};
+    for (const u of units) {
+      const d = u.dealId ? dealMap[u.dealId] : null;
+      m[u.id] = (d ? legacyToCode(d.status) : null) || legacyToCode(u.marketingStatus) || "AVA";
+    }
+    return m;
+  }, [units, dealMap]);
 
   // Landlord for the Edit Unit dialog: the unit row doesn't carry one, so
   // fall back to the linked deal's landlord, then the property's.
@@ -1147,9 +1167,9 @@ export default function AvailableUnitsPage() {
     let result = viewAll
       ? [...toolbarFiltered]
       : statusFilter !== "all"
-      ? toolbarFiltered.filter(u => legacyToCode(u.marketingStatus) === statusFilter)
+      ? toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === statusFilter)
       : toolbarFiltered.filter(u => {
-          const code = legacyToCode(u.marketingStatus) || "AVA";
+          const code = effByUnit[u.id] || "AVA";
           return PRE_SOL_CODES.has(code);
         });
     if (sortBy !== "none") {
@@ -1169,23 +1189,23 @@ export default function AvailableUnitsPage() {
       // Status is the primary grouping key; the stable sort keeps any
       // property/client ordering from above within each group.
       const orderOf = (u: AvailableUnit) => {
-        const i = MARKETING_STATUSES.indexOf(legacyToCode(u.marketingStatus) || "AVA");
+        const i = MARKETING_STATUSES.indexOf(effByUnit[u.id] || "AVA");
         return i === -1 ? MARKETING_STATUSES.length : i;
       };
       result = [...result].sort((a, b) => orderOf(a) - orderOf(b));
     }
     return result;
-  }, [toolbarFiltered, statusFilter, viewAll, sortBy, sortDir, propertyMap, dealMap, crmCompanies]);
+  }, [toolbarFiltered, statusFilter, viewAll, sortBy, sortDir, propertyMap, dealMap, crmCompanies, effByUnit]);
 
   const stats = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const s of MARKETING_STATUSES) counts[s] = 0;
     for (const u of teamUnits) {
-      const code = legacyToCode(u.marketingStatus) || "AVA";
+      const code = effByUnit[u.id] || "AVA";
       counts[code] = (counts[code] || 0) + 1;
     }
     return counts;
-  }, [teamUnits]);
+  }, [teamUnits, effByUnit]);
 
   const activeAssetClasses = useMemo(() => {
     const classes = new Set<string>();
@@ -1529,7 +1549,7 @@ export default function AvailableUnitsPage() {
             <span className="font-bold tabular-nums">{toolbarFiltered.length}</span>
           </button>
           {MARKETING_STATUSES.map(s => {
-            const count = toolbarFiltered.filter(u => legacyToCode(u.marketingStatus) === s).length;
+            const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
             return (
               <button
                 key={s}
@@ -1563,7 +1583,7 @@ export default function AvailableUnitsPage() {
             </CardContent>
           </Card>
           {MARKETING_STATUSES.map(s => {
-            const count = toolbarFiltered.filter(u => legacyToCode(u.marketingStatus) === s).length;
+            const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
             return (
               <Card
                 key={s}
@@ -1635,8 +1655,8 @@ export default function AvailableUnitsPage() {
             {filtered.map((u, idx) => {
               const prop = propertyMap[u.propertyId];
               const deal = u.dealId ? dealMap[u.dealId] : null;
-              const code = legacyToCode(u.marketingStatus) || "AVA";
-              const prevCode = idx > 0 ? (legacyToCode(filtered[idx - 1].marketingStatus) || "AVA") : null;
+              const code = effByUnit[u.id] || "AVA";
+              const prevCode = idx > 0 ? (effByUnit[filtered[idx - 1].id] || "AVA") : null;
               const tenant = deal?.tenantId ? companyMap[deal.tenantId] : null;
               const rent = deal?.rentPa ?? (u as any).askingRent;
               const size = deal?.totalAreaSqft ?? u.sqft;
@@ -1657,7 +1677,7 @@ export default function AvailableUnitsPage() {
                     <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[code] || "bg-gray-400"}`} />
                     {DEAL_STATUS_LABELS[code]}
                     <span className="text-muted-foreground font-normal normal-case tracking-normal tabular-nums">
-                      {filtered.filter(x => (legacyToCode(x.marketingStatus) || "AVA") === code).length}
+                      {filtered.filter(x => (effByUnit[x.id] || "AVA") === code).length}
                     </span>
                   </div>
                 )}
@@ -1730,14 +1750,15 @@ export default function AvailableUnitsPage() {
                   Property / Unit{sortBy === "property" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                 </TableHead>
                 {showCol("existingTenant") && <TableHead className="w-[140px] min-w-[140px]">Existing Tenant</TableHead>}
-                {showCol("unitStatus") && <TableHead className="w-[130px] min-w-[130px]">Unit Status</TableHead>}
+                {showCol("unitStatus") && <TableHead className="w-[120px] min-w-[120px]">Unit Status</TableHead>}
+                {showCol("pipelineStatus") && <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>}
                 {!hideClientCol && showCol("client") && (
                   <TableHead className="w-[150px] min-w-[150px] cursor-pointer select-none hover:text-foreground" onClick={() => toggleSort("client")} data-testid="sort-client">
                     Client{sortBy === "client" ? (sortDir === 1 ? " ↑" : " ↓") : ""}
                   </TableHead>
                 )}
                 <TableHead className="w-[170px] min-w-[170px]">Target Tenant</TableHead>
-                {showCol("dealStatus") && <TableHead className="w-[130px] min-w-[130px]">Deal Status</TableHead>}
+                {showCol("dealStatus") && <TableHead className="w-[130px] min-w-[130px]">Target Status</TableHead>}
                 {showCol("category") && <TableHead className="w-[150px] min-w-[150px]">Category</TableHead>}
                 {showCol("priority") && <TableHead className="w-[60px] min-w-[60px]">Priority</TableHead>}
                 {showCol("agent") && <TableHead className="w-[140px] min-w-[140px]">Agent</TableHead>}
@@ -1755,7 +1776,7 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "floorAreas", "costs", "dealType", "activity", "files", "brief"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "floorAreas", "costs", "dealType", "activity", "files", "brief"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -1764,8 +1785,8 @@ export default function AvailableUnitsPage() {
                 filtered.map((u, idx) => {
                   const prop = propertyMap[u.propertyId];
                   const deal = u.dealId ? dealMap[u.dealId] : null;
-                  const rowCode = legacyToCode(u.marketingStatus) || "AVA";
-                  const prevRowCode = idx > 0 ? (legacyToCode(filtered[idx - 1].marketingStatus) || "AVA") : null;
+                  const rowCode = effByUnit[u.id] || "AVA";
+                  const prevRowCode = idx > 0 ? (effByUnit[filtered[idx - 1].id] || "AVA") : null;
                   const unitTargets: any[] = briefByUnit[u.id]?.targets || [];
                   // Unit-level cells span every target row, so targets read
                   // as first-class columns. Adding after the first target
@@ -1777,12 +1798,12 @@ export default function AvailableUnitsPage() {
                     <Fragment key={u.id}>
                     {viewAll && rowCode !== prevRowCode && (
                       <TableRow className="bg-muted/60 hover:bg-muted/60" data-testid={`status-group-${rowCode.toLowerCase()}`}>
-                        <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "floorAreas", "costs", "dealType", "activity", "files", "brief"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
+                        <TableCell colSpan={3 + targetBlockSpan + ["ref", "existingTenant", "unitStatus", "pipelineStatus", "floorAreas", "costs", "dealType", "activity", "files", "brief"].filter((k) => showCol(k)).length + (!hideClientCol && showCol("client") ? 1 : 0)} className="py-1.5">
                           <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
                             <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[rowCode] || "bg-gray-400"}`} />
                             {DEAL_STATUS_LABELS[rowCode]}
                             <span className="text-muted-foreground font-normal normal-case tracking-normal tabular-nums">
-                              {filtered.filter(x => (legacyToCode(x.marketingStatus) || "AVA") === rowCode).length}
+                              {filtered.filter(x => (effByUnit[x.id] || "AVA") === rowCode).length}
                             </span>
                           </span>
                         </TableCell>
@@ -1907,8 +1928,33 @@ export default function AvailableUnitsPage() {
                       )}
                       {showCol("unitStatus") && (
                       <TableCell rowSpan={unitRowSpan} className="px-1.5">
+                        {UNIT_STAGE_EDITABLE.has(rowCode) ? (
+                          <InlineLabelSelect
+                            value={legacyToCode(u.marketingStatus) === "OPP" ? "OPP" : "AVA"}
+                            options={UNIT_STATUSES}
+                            colorMap={STATUS_LABEL_COLORS}
+                            labelMap={DEAL_STATUS_LABELS}
+                            onSave={v => inlineUpdate(u.id, "marketingStatus", v || "AVA")}
+                            allowClear={false}
+                          />
+                        ) : (
+                          // Deal past marketing — the deal drives; freeze the
+                          // unit stage so a flip here can't regress the deal
+                          // through the status mirror.
+                          <span
+                            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+                            title="Deal in progress — status is driven by the deal"
+                          >
+                            <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS["AVA"] || "bg-gray-400"}`} />
+                            Available
+                          </span>
+                        )}
+                      </TableCell>
+                      )}
+                      {showCol("pipelineStatus") && (
+                      <TableCell rowSpan={unitRowSpan} className="px-1.5">
                         <InlineLabelSelect
-                          value={legacyToCode(u.marketingStatus) || "AVA"}
+                          value={rowCode}
                           options={MARKETING_STATUSES}
                           colorMap={STATUS_LABEL_COLORS}
                           labelMap={DEAL_STATUS_LABELS}
@@ -3834,13 +3880,27 @@ function UnitFormDialog({
             <CurrencyInput value={form.sqft} onChange={v => upd("sqft", v)} placeholder="e.g. 1,500" />
           </div>
           <div>
-            <Label>Marketing Status</Label>
-            <Select value={legacyToCode(form.marketingStatus) || "AVA"} onValueChange={v => upd("marketingStatus", v)}>
-              <SelectTrigger><SelectValue placeholder="Status..." /></SelectTrigger>
-              <SelectContent>
-                {MARKETING_STATUSES.map(s => <SelectItem key={s} value={s}>{DEAL_STATUS_LABELS[s]}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <Label>Unit Status</Label>
+            {(() => {
+              const code = legacyToCode(form.marketingStatus) || "AVA";
+              // Past marketing the deal drives — freeze the field so saving
+              // the dialog can't regress the deal via the status mirror.
+              if (!UNIT_STAGE_EDITABLE.has(code)) {
+                return (
+                  <div className="h-9 flex items-center px-3 text-sm text-muted-foreground border rounded-md bg-muted/40">
+                    {DEAL_STATUS_LABELS[code]} — driven by the deal
+                  </div>
+                );
+              }
+              return (
+                <Select value={code === "OPP" ? "OPP" : "AVA"} onValueChange={v => upd("marketingStatus", v)}>
+                  <SelectTrigger><SelectValue placeholder="Status..." /></SelectTrigger>
+                  <SelectContent>
+                    {UNIT_STATUSES.map(s => <SelectItem key={s} value={s}>{DEAL_STATUS_LABELS[s]}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              );
+            })()}
           </div>
           <div>
             <Label>Available Date</Label>
