@@ -232,29 +232,69 @@ export async function aiJudgeSignalRelevance(
 // email into theme cards; this extracts the per-brand EVENTS and writes
 // them as brand_signals so newsletter intelligence reaches the expansion
 // engine and the daily alerts — not just the Insights page.
+// Category guess from the extraction → crm company_type. Unknown/other
+// falls back to a bare "Tenant" brand for the team to categorise.
+const NEWSLETTER_CATEGORY_TO_TYPE: Record<string, string> = {
+  "restaurant": "Tenant - Restaurant",
+  "cafe": "Tenant - Café",
+  "bar": "Tenant - Bar",
+  "pub": "Tenant - Bar",
+  "quick service": "Tenant - Quick Service",
+  "bakery": "Tenant - Bakery",
+  "gym": "Tenant - Gym",
+  "wellness": "Tenant - Wellness",
+  "cinema": "Tenant - Cinema",
+  "leisure": "Tenant - Leisure",
+  "grocery": "Tenant - Grocery",
+  "fashion": "Tenant - Fashion",
+  "retail": "Tenant - Retail",
+};
+
+// Sanity gate before minting a CRM row from a newsletter mention — the
+// extraction is good but not infallible, and a junk brand poisons feeds,
+// scores and the brand book until someone notices.
+function plausibleNewBrandName(name: string): boolean {
+  const t = name.trim();
+  if (t.length < 3 || t.length > 60) return false;
+  if (!/[a-zA-Z]/.test(t)) return false;
+  const norm = normalizeBrandName(t);
+  if (!norm || norm.length < 3) return false;
+  if (COMMON_WORD_BRAND_TOKENS.has(norm)) return false;
+  // Sector phrases masquerading as names ("Hospitality Sector", "QSR Market")
+  if (/^(the )?(uk |british )?(hospitality|restaurant|pub|retail|leisure|grocery|qsr|f&b)s? ?(sector|industry|market|operators?|report)?$/i.test(t)) return false;
+  return true;
+}
+
 export async function extractBrandSignalsFromNewsletter(opts: {
   subject: string;
   from: string;
   bodyText: string;
   receivedAt?: string;
 }): Promise<number> {
-  const tracked = await db
-    .select({ id: crmCompanies.id, name: crmCompanies.name })
+  // All live companies, not just tracked brands — an unmatched operator may
+  // exist in the CRM untracked (flip tracking on) or not at all (auto-add).
+  const all = await db
+    .select({ id: crmCompanies.id, name: crmCompanies.name, isTrackedBrand: crmCompanies.isTrackedBrand })
     .from(crmCompanies)
-    .where(and(eq(crmCompanies.isTrackedBrand, true), sql`${crmCompanies.mergedIntoId} IS NULL`));
-  if (tracked.length === 0) return 0;
-  const byNorm = new Map(tracked.map((b) => [normalizeBrandName(b.name), b]));
+    .where(sql`${crmCompanies.mergedIntoId} IS NULL`);
+  const byNorm = new Map<string, { id: string; name: string; isTrackedBrand: boolean | null }>();
+  for (const c of all) {
+    const k = normalizeBrandName(c.name);
+    const prev = byNorm.get(k);
+    if (!prev || (!prev.isTrackedBrand && c.isTrackedBrand)) byNorm.set(k, c);
+  }
 
   let items: any[] = [];
   try {
     const r = await callClaude({
       model: CHATBGP_HELPER_MODEL,
-      max_completion_tokens: 1500,
+      max_completion_tokens: 2000,
       temperature: 0,
       messages: [{
         role: "user",
         content: `Extract the brand/operator-specific events from this trade newsletter. Return STRICT JSON array only (possibly empty):\n` +
-          `[{"brand": "operator name exactly as written", "headline": "one-line event summary", "signalType": "opening"|"closure"|"funding"|"exec_change"|"sector_move"|"news", "magnitude": "small"|"medium"|"large", "sentiment": "positive"|"neutral"|"negative"}]\n` +
+          `[{"brand": "operator name exactly as written", "brandKind": "operator"|"landlord_or_investor"|"other", "category": "restaurant"|"cafe"|"bar"|"pub"|"quick service"|"bakery"|"gym"|"wellness"|"cinema"|"leisure"|"grocery"|"fashion"|"retail"|"other", "headline": "one-line event summary", "signalType": "opening"|"closure"|"funding"|"exec_change"|"sector_move"|"news", "magnitude": "small"|"medium"|"large", "sentiment": "positive"|"neutral"|"negative"}]\n` +
+          `"brandKind": "operator" = a business that occupies/trades from premises (restaurant group, retailer, gym chain); "landlord_or_investor" = landlord, REIT, investor, developer or property agent; "other" = anything else.\n` +
           `Include ONLY material events: site openings/closings, expansion plans, funding/M&A/administration, leadership changes, major trading updates. Skip commentary, opinion pieces, people-round-up trivia, and sector statistics with no named operator. One entry per brand+event.\n\n` +
           `Subject: ${opts.subject}\nFrom: ${opts.from}\n\n${opts.bodyText.slice(0, 9000)}`,
       }],
@@ -269,15 +309,62 @@ export async function extractBrandSignalsFromNewsletter(opts: {
     return 0;
   }
 
-  // Match extracted names against tracked brands locally — the model names
-  // the brand explicitly, so exact normalised-name equality is safe (no
+  // Match extracted names against the CRM locally — the model names the
+  // brand explicitly, so exact normalised-name equality is safe (no
   // substring collisions possible here).
   await ensureAiRelevantColumn();
   const sourceKey = `newsletter:${(opts.receivedAt || "").slice(0, 10)}:${opts.subject.slice(0, 100)}`;
+  // A material event about an operator we don't track is precisely the
+  // intel Propel is for — operators surface here BEFORE they're on anyone's
+  // radar. Auto-add them (capped per email), stamped so the team can prune.
+  const materialFor = (it: any) =>
+    ["opening", "closure", "funding", "exec_change", "sector_move"].includes(it.signalType) &&
+    ["medium", "large"].includes(it.magnitude || "medium");
+  const autoReason = (it: any) =>
+    `Auto-added from newsletter (${opts.from}, ${(opts.receivedAt || "").slice(0, 10) || "today"}): ${String(it.headline).slice(0, 200)}`;
+  let autoCreated = 0;
+  const AUTO_CREATE_CAP = 5;
   let inserted = 0;
   for (const it of items) {
-    const brand = byNorm.get(normalizeBrandName(String(it.brand || "")));
-    if (!brand || !it.headline) continue;
+    if (!it.headline) continue;
+    const rawName = String(it.brand || "").trim();
+    const norm = normalizeBrandName(rawName);
+    let brand = byNorm.get(norm);
+    const isOperator = (it.brandKind || "operator") === "operator";
+
+    if (brand && !brand.isTrackedBrand && isOperator && materialFor(it)) {
+      // Known company, untracked — start tracking instead of duplicating.
+      await db.update(crmCompanies)
+        .set({ isTrackedBrand: true, trackingReason: autoReason(it) })
+        .where(eq(crmCompanies.id, brand.id))
+        .catch((e: any) => console.warn("[newsletter-signals] track flip failed:", e?.message));
+      brand.isTrackedBrand = true;
+      console.log(`[newsletter-signals] now tracking existing company "${brand.name}" (${it.signalType})`);
+    }
+
+    if (!brand) {
+      if (!isOperator || !materialFor(it) || !plausibleNewBrandName(rawName) || autoCreated >= AUTO_CREATE_CAP) continue;
+      try {
+        const companyType = NEWSLETTER_CATEGORY_TO_TYPE[String(it.category || "").toLowerCase()] || "Tenant";
+        const [created] = await db.insert(crmCompanies)
+          .values({
+            name: rawName,
+            companyType,
+            isTrackedBrand: true,
+            trackingReason: autoReason(it),
+          } as any)
+          .returning({ id: crmCompanies.id, name: crmCompanies.name });
+        if (!created) continue;
+        brand = { id: created.id, name: created.name, isTrackedBrand: true };
+        byNorm.set(norm, brand);
+        autoCreated++;
+        console.log(`[newsletter-signals] auto-added brand "${rawName}" (${companyType}) — ${it.signalType}: ${String(it.headline).slice(0, 120)}`);
+      } catch (e: any) {
+        console.warn(`[newsletter-signals] auto-add failed for "${rawName}":`, e?.message);
+        continue;
+      }
+    }
+    if (!brand.isTrackedBrand) continue; // non-material mention of an untracked company — not signal-worthy
     const { rows: dupe } = await pool.query(
       `SELECT 1 FROM brand_signals WHERE brand_company_id = $1 AND source = $2 AND headline = $3 LIMIT 1`,
       [brand.id, sourceKey, String(it.headline).slice(0, 500)],
