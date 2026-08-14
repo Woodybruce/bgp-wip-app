@@ -63,6 +63,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r293 · 2026-08-14 · FULL — IN PROGRESS (heartbeat)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205 — method-column awk; restore-as-postgres + per-object ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN first
+  pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build
+  flake). Two-bot round 293 running. Journey underway: rotation #1 staff
+  desktop — Victoria 1440px "Monday pipeline review: deals board → deal
+  #1003 → comment write → timeline/audit → calendar → news". Legs so far
+  (dashboard, /deals hub, /deals/list, deal #1003 detail): all render,
+  0 h-overflow, 0 non-noise issues.
+- Triage so far: nothing beyond listed noise. Final entry to follow.
+
 ### r292 · 2026-08-14 · LIGHT (r291 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205 — method-column awk; restore-as-postgres + per-object ALTER
