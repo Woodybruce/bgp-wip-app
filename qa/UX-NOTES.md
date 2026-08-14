@@ -13,6 +13,18 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+47. 2026-08-14 · BGP staff / mobile 390px · "pull up comps evidence on the
+    train before a rent-review call" · the /comps stats strip shows
+    "11 AI leads awaiting review" to every staff viewer, but the Leads tab
+    is deliberately parked admin-only (reached via /admin/comps-leads →
+    /comps?tab=leads; the tab trigger only renders once you're already on
+    it) — so a non-admin sees 11 items "awaiting review" with NO route to
+    review them, on desktop or mobile; the count reads like a to-do the
+    app won't let them do · Suggested: hide the AI-leads stat for viewers
+    without access to the Leads tab, or make it a link for those with
+    access (admin), so the count and the path to act on it always travel
+    together. Needs Woody's numbered confirmation — not built.
+
 46. 2026-08-14 · Landsec client / desktop 1440px · "check my property before
     a lease-expiry chat with BGP" · the property page's Compliance & KYC
     sidebar (deliberately client-visible per the 2026-08-01 decision) also

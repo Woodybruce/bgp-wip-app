@@ -683,6 +683,51 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r291: staff mobile comps board. /comps must render the Leasing board at
+  // 390px (search box + Add Comp inside the viewport, no page h-scroll) and
+  // the Add Comp dialog's controls must all sit inside the phone viewport
+  // (r265/r275/r283 mobile-clipping class — dialogs are where it recurs).
+  await step(page, p, 'staff-comps-mobile', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobGoto(mob, `${BASE}/comps`, nav);
+      await mob.locator('[data-testid="button-create-comp"]').waitFor({ timeout: 30000 });
+      const addBox = await mob.locator('[data-testid="button-create-comp"]').boundingBox();
+      if (!addBox || addBox.x < 0 || addBox.x + addBox.width > 390 + 2) {
+        throw new Error(`Add Comp button clipped/missing at 390px (${addBox ? `x ${Math.round(addBox.x)}, right ${Math.round(addBox.x + addBox.width)}` : 'no box'})`);
+      }
+      const pageOverflow = await mob.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      if (pageOverflow > 4) throw new Error(`/comps h-scrolls at 390px (${pageOverflow}px overflow)`);
+      await mob.locator('[data-testid="button-create-comp"]').click();
+      await mob.locator('[role="dialog"] [data-testid="create-comp-tenant"]').waitFor({ timeout: 15000 });
+      const clipped = await mob.evaluate(() => {
+        const d = document.querySelector('[role="dialog"]');
+        const bad = [];
+        d.querySelectorAll('input, button, select, textarea, [role="combobox"]').forEach((el) => {
+          const b = el.getBoundingClientRect();
+          if (b.width > 0 && (b.x < -2 || b.x + b.width > 392)) bad.push(el.tagName);
+        });
+        return bad;
+      });
+      if (clipped.length) throw new Error(`Add Comp dialog controls clipped at 390px: ${clipped.join(',')}`);
+      await mob.keyboard.press('Escape');
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // Task assignment (terminal, 2026-08-03): a task assigned to another staff
   // member lands on the ASSIGNEE's list. Victoria assigns to Woody; the
   // woody round verifies receipt. Swept by the QA-PROBE task purge.

@@ -63,13 +63,52 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r291 · 2026-08-14 · ROUND IN PROGRESS (provisional)
+### r291 · 2026-08-14 · FULL (rotation #4 staff mobile 390px)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205 — method-column awk; restore-as-postgres + per-object ALTER
   owners + schema grant per r249). Regression: run-smoke.sh GREEN first
   pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build
-  flake). Two-bot round 291 running. Planned: FULL round, rotation #4
-  staff mobile 390px journey (r290 was LIGHT).
+  flake). Two-bot round 291: exit 0, all scenarios ok, 2 logged issues
+  both listed noise (rocketreach-400; commentary-regen 503). Lone 500 in
+  the server log is GET /api/auth/microsoft — my own journey script's
+  first-pass mis-click on "Sign in with Microsoft" (r289 class; fixed the
+  script to use data-testid button-guest-login). Status tally otherwise
+  only 2xx/3xx/expected 400/401/403/404 + no-key 503s.
+- Journey: Victoria @ 390px iPhone UA — "on the train to a rent-review
+  call: pull up the comps board for lettings evidence, then find the
+  Landsec key contact in People" (FIRST staff-mobile coverage of /comps
+  and the /contacts People hub): UI login via the guest form → "/"
+  dashboard (0 h-overflow) → /comps (Leasing board renders, KPI strip,
+  search narrows, 0 h-overflow) → comp card opens inline detail (NER
+  Calculator + property/transaction sections) → Add Comp dialog probe:
+  all controls inside 390px, Create/Cancel visible → /contacts People hub
+  (Table/Cards toggle, Landlords/Agents/Lenders tabs, KPI cards, 0
+  h-overflow) → search "Landsec" → View People → Landsec company profile
+  → Key Contacts "Show all 4" expand works at 390px → contact reachable
+  (Maria Portfolio — the fixture's Landsec key contact; Mark Warne is a
+  login USER, not a crm_contact, so he's not in Key Contacts — that's
+  data, not a bug). Task completable; 0 page errors, 0 non-noise
+  console/net errors.
+- NOT bugs (triaged, for future rounds): CRM hub "BGP Clients" KPI shows
+  0 — the fixture's Landsec row is company_type='Landlord' with
+  is_portfolio_account=false, and the KPI keys off companyType/portfolio
+  flag (people.tsx clientLandlords); production data sets the flag, so
+  fixture artifact, not app logic. "Search landlords…" box on /contacts
+  searches COMPANIES on the active tab — a person-name search ("Mark
+  Warne") correctly 0-hits (UX #13's brand hint already covers the
+  zero-hit case). QA-COMP R291 / QA Contact rows in journey screenshots
+  are the concurrent two-bot round's residue (purged next round).
+- Bugs fixed: 0 (nothing broken found). Harness growth: two-bot +1
+  staff-comps-mobile (/comps at 390px: Add Comp button + page no
+  h-scroll; Add Comp dialog controls all inside the viewport —
+  r265/r275/r283 mobile-clipping class). Assertions verified live this
+  round via the journey's geometry probes (dialog 374px @ x8, 0 clipped
+  controls); node --check clean; first live run from r292.
+- Bugs deferred: none. Suggestions added: UX #47 (staff /comps shows
+  "N AI leads awaiting review" but the Leads tab is admin-parked — count
+  with no path to act). New flakes: none.
+- Next journey: rotation #1 staff desktop (r291 had the journey → r292
+  may be LIGHT; then #1).
 
 ### r290 · 2026-08-14 · LIGHT (r289 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
