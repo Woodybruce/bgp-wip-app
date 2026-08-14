@@ -63,14 +63,25 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r290 · 2026-08-14 · ROUND IN PROGRESS (provisional)
-- LIGHT round (r289 had the journey). Fresh container (repo pre-cloned at
-  /home/user/bgp-wip-app; pg_hba trust per r205 — method-column awk;
-  restore-as-postgres + per-object ALTER owners + schema grant per r249).
-- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 290 running —
-  first live run of r289's staff/client-tenancy-bare-redirect scenarios;
-  triage pending.
+### r290 · 2026-08-14 · LIGHT (r289 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205 — method-column awk; restore-as-postgres + per-object ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN first
+  pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build
+  flake). Two-bot round 290: exit 0, 186 scenarios ok — incl. the FIRST
+  live runs of r289's staff-tenancy-bare-redirect +
+  client-tenancy-bare-redirect (both green; the bare /tenancy-schedule →
+  /properties redirect holds). 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503). 0 raw 500/502/504 in the whole
+  round's server log (the lone " 500 " grep hit is the "500 articles"
+  news-feed text again; API status tally: only 2xx/3xx/expected
+  400/401/403/404 + no-key 503s; 404s the listed HR-photo +
+  sharepoint-root polling; the 2 400s the rocketreach + image-studio
+  harness probes; 401s pre-auth /api/auth/me + no-key class). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r290 was LIGHT → r291
+  FULL).
 
 ### r289 · 2026-08-14 · FULL (rotation #3 client mobile 390px)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba
