@@ -186,6 +186,16 @@ export async function runReportLeg(): Promise<number> {
     total += await distil(
       `market update email from ${from}: "${m.subject}"`, bodyText, "market-report",
       [{ type: "report-email", title: m.subject, from, date: m.receivedDateTime }]);
+    // Same email, second harvest: per-brand events → brand_signals, so the
+    // Propel round-up feeds the expansion engine + daily alerts, not just
+    // the Insights cards.
+    try {
+      const { extractBrandSignalsFromNewsletter } = await import("./news-brand-linking");
+      const n = await extractBrandSignalsFromNewsletter({ subject: m.subject, from, bodyText, receivedAt: m.receivedDateTime });
+      if (n > 0) console.log(`[insights] "${m.subject}" → ${n} brand signal(s)`);
+    } catch (e: any) {
+      console.warn("[insights] newsletter brand-signal extraction failed:", e?.message);
+    }
   }
   await setCursor("reports", new Date());
   console.log(`[insights] report leg: ${messages.length} publisher emails → ${total} insights`);

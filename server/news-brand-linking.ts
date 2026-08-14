@@ -226,6 +226,82 @@ export async function aiJudgeSignalRelevance(
   return totalJudged;
 }
 
+// ─── Newsletter → brand signals ──────────────────────────────────────────
+// Trade newsletters (Propel's daily round-up especially) pack dozens of
+// operator-specific items into one email. The insights feed distils the
+// email into theme cards; this extracts the per-brand EVENTS and writes
+// them as brand_signals so newsletter intelligence reaches the expansion
+// engine and the daily alerts — not just the Insights page.
+export async function extractBrandSignalsFromNewsletter(opts: {
+  subject: string;
+  from: string;
+  bodyText: string;
+  receivedAt?: string;
+}): Promise<number> {
+  const tracked = await db
+    .select({ id: crmCompanies.id, name: crmCompanies.name })
+    .from(crmCompanies)
+    .where(and(eq(crmCompanies.isTrackedBrand, true), sql`${crmCompanies.mergedIntoId} IS NULL`));
+  if (tracked.length === 0) return 0;
+  const byNorm = new Map(tracked.map((b) => [normalizeBrandName(b.name), b]));
+
+  let items: any[] = [];
+  try {
+    const r = await callClaude({
+      model: CHATBGP_HELPER_MODEL,
+      max_completion_tokens: 1500,
+      temperature: 0,
+      messages: [{
+        role: "user",
+        content: `Extract the brand/operator-specific events from this trade newsletter. Return STRICT JSON array only (possibly empty):\n` +
+          `[{"brand": "operator name exactly as written", "headline": "one-line event summary", "signalType": "opening"|"closure"|"funding"|"exec_change"|"sector_move"|"news", "magnitude": "small"|"medium"|"large", "sentiment": "positive"|"neutral"|"negative"}]\n` +
+          `Include ONLY material events: site openings/closings, expansion plans, funding/M&A/administration, leadership changes, major trading updates. Skip commentary, opinion pieces, people-round-up trivia, and sector statistics with no named operator. One entry per brand+event.\n\n` +
+          `Subject: ${opts.subject}\nFrom: ${opts.from}\n\n${opts.bodyText.slice(0, 9000)}`,
+      }],
+    });
+    const raw = r.choices?.[0]?.message?.content || "";
+    const s = raw.indexOf("["), e = raw.lastIndexOf("]");
+    if (s < 0 || e <= s) return 0;
+    const parsed = JSON.parse(raw.slice(s, e + 1));
+    items = Array.isArray(parsed) ? parsed.slice(0, 20) : [];
+  } catch (e: any) {
+    console.warn(`[newsletter-signals] extraction failed for "${opts.subject}":`, e?.message);
+    return 0;
+  }
+
+  // Match extracted names against tracked brands locally — the model names
+  // the brand explicitly, so exact normalised-name equality is safe (no
+  // substring collisions possible here).
+  await ensureAiRelevantColumn();
+  const sourceKey = `newsletter:${(opts.receivedAt || "").slice(0, 10)}:${opts.subject.slice(0, 100)}`;
+  let inserted = 0;
+  for (const it of items) {
+    const brand = byNorm.get(normalizeBrandName(String(it.brand || "")));
+    if (!brand || !it.headline) continue;
+    const { rows: dupe } = await pool.query(
+      `SELECT 1 FROM brand_signals WHERE brand_company_id = $1 AND source = $2 AND headline = $3 LIMIT 1`,
+      [brand.id, sourceKey, String(it.headline).slice(0, 500)],
+    );
+    if (dupe[0]) continue;
+    await pool.query(
+      `INSERT INTO brand_signals (brand_company_id, signal_type, headline, detail, source, signal_date, magnitude, sentiment, ai_generated, ai_relevant)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, true)`,
+      [
+        brand.id,
+        ["opening", "closure", "funding", "exec_change", "sector_move", "news"].includes(it.signalType) ? it.signalType : "news",
+        String(it.headline).slice(0, 500),
+        `Via newsletter: ${opts.subject} (${opts.from})`,
+        sourceKey,
+        opts.receivedAt ? new Date(opts.receivedAt) : new Date(),
+        ["small", "medium", "large"].includes(it.magnitude) ? it.magnitude : "medium",
+        ["positive", "neutral", "negative"].includes(it.sentiment) ? it.sentiment : "neutral",
+      ],
+    ).catch(() => {});
+    inserted++;
+  }
+  return inserted;
+}
+
 export async function ensureBrandGoogleNewsFeeds(): Promise<{ created: number; total: number; refreshed: number }> {
   const tracked = await db
     .select({ id: crmCompanies.id, name: crmCompanies.name, industry: crmCompanies.industry })
