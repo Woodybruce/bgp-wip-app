@@ -42,23 +42,29 @@ export type PerplexityResponse = {
   raw?: any;
 };
 
-/**
- * Core client. OpenAI-compatible chat/completions schema.
- * Throws if Perplexity isn't configured or returns non-2xx.
- */
-export async function askPerplexity(
-  prompt: string,
-  opts: {
-    model?: string;
-    systemPrompt?: string;
-    maxTokens?: number;
-    temperature?: number;
-  } = {},
-): Promise<PerplexityResponse> {
-  const key = getPerplexityKey();
-  if (!key) throw new Error("Perplexity not configured (set PERPLEXITY_API_KEY on Railway)");
+type AskOpts = {
+  model?: string;
+  systemPrompt?: string;
+  maxTokens?: number;
+  temperature?: number;
+};
 
-  const model = opts.model || DEFAULT_MODEL;
+// Sonar model → Agent API preset, per Perplexity's migration table
+// (docs.perplexity.ai/docs/agent-api/migrate-from-sonar). Callers can also
+// pass a preset name directly as `model`.
+const AGENT_PRESETS = new Set(["fast", "low", "medium", "high", "xhigh"]);
+const SONAR_TO_PRESET: Record<string, string> = {
+  "sonar": "fast",
+  "sonar-pro": "low",
+  "sonar-reasoning": "medium",
+  "sonar-reasoning-pro": "medium",
+  "sonar-deep-research": "high",
+};
+
+// Legacy Sonar chat/completions — kept as the automatic fallback while the
+// Agent API beds in (Perplexity supports both; Agent is faster + cheaper).
+async function askPerplexitySonar(prompt: string, opts: AskOpts, key: string): Promise<PerplexityResponse> {
+  const model = opts.model && !AGENT_PRESETS.has(opts.model) ? opts.model : DEFAULT_MODEL;
   const messages: Array<{ role: string; content: string }> = [];
   if (opts.systemPrompt) messages.push({ role: "system", content: opts.systemPrompt });
   messages.push({ role: "user", content: prompt });
@@ -98,6 +104,96 @@ export async function askPerplexity(
   );
 
   return { answer, citations, model, raw: data };
+}
+
+// New Agent API (POST /v1/agent) — Perplexity's recommended replacement for
+// Sonar chat/completions: same key, typed `output` array in the response.
+async function askPerplexityAgent(prompt: string, opts: AskOpts, key: string): Promise<PerplexityResponse> {
+  const requested = opts.model || DEFAULT_MODEL;
+  const preset = AGENT_PRESETS.has(requested) ? requested : (SONAR_TO_PRESET[requested] || "fast");
+
+  const body: any = { preset, input: prompt };
+  if (opts.systemPrompt) body.instructions = opts.systemPrompt;
+  if (opts.maxTokens ?? 800) body.max_output_tokens = opts.maxTokens ?? 800;
+  if (opts.temperature != null) body.temperature = opts.temperature;
+
+  const res = await fetch(`${PERPLEXITY_BASE}/v1/agent`, {
+    method: "POST",
+    // Agent runs are multi-step; give them a little longer than Sonar had.
+    signal: AbortSignal.timeout(60_000),
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "");
+    throw new Error(`Perplexity Agent ${res.status}: ${errBody.slice(0, 240)}`);
+  }
+
+  const data = await res.json();
+  const output: any[] = Array.isArray(data?.output) ? data.output : [];
+
+  // Answer text: concatenate output_text content from message items (the
+  // final message is the answer; earlier ones are intermediate steps).
+  const messageItems = output.filter((o) => o?.type === "message");
+  const answer = messageItems
+    .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+    .filter((c: any) => c?.type === "output_text" && typeof c.text === "string")
+    .map((c: any) => c.text)
+    .join("\n")
+    .trim();
+
+  // Citations: search_results steps + any URL annotations on the message.
+  const seen = new Set<string>();
+  const citations: Citation[] = [];
+  for (const o of output) {
+    if (o?.type === "search_results" && Array.isArray(o.results)) {
+      for (const r of o.results) {
+        if (r?.url && !seen.has(r.url)) { seen.add(r.url); citations.push({ url: r.url, title: r.title }); }
+      }
+    }
+  }
+  for (const m of messageItems) {
+    for (const c of (Array.isArray(m.content) ? m.content : [])) {
+      for (const a of (Array.isArray(c?.annotations) ? c.annotations : [])) {
+        const url = a?.url || a?.url_citation?.url;
+        if (url && !seen.has(url)) { seen.add(url); citations.push({ url, title: a?.title || a?.url_citation?.title }); }
+      }
+    }
+  }
+
+  if (!answer) throw new Error("Perplexity Agent returned no message text");
+  return { answer, citations, model: `agent:${preset}`, raw: data };
+}
+
+let agentFallbackWarned = false;
+
+/**
+ * Core client — every Perplexity consumer in the app goes through here.
+ * Tries the Agent API first (Perplexity's recommended, cheaper path), and
+ * falls back to the legacy Sonar chat/completions on any failure so a
+ * rollout hiccup can't take out market intel / AML screening / brand
+ * research. Set PERPLEXITY_FORCE_SONAR=1 to pin the legacy path.
+ */
+export async function askPerplexity(prompt: string, opts: AskOpts = {}): Promise<PerplexityResponse> {
+  const key = getPerplexityKey();
+  if (!key) throw new Error("Perplexity not configured (set PERPLEXITY_API_KEY on Railway)");
+
+  if (process.env.PERPLEXITY_FORCE_SONAR === "1") {
+    return askPerplexitySonar(prompt, opts, key);
+  }
+  try {
+    return await askPerplexityAgent(prompt, opts, key);
+  } catch (err: any) {
+    if (!agentFallbackWarned) {
+      agentFallbackWarned = true;
+      console.warn(`[perplexity] Agent API failed (${err?.message}) — falling back to Sonar chat/completions. Further fallbacks logged silently.`);
+    }
+    return askPerplexitySonar(prompt, opts, key);
+  }
 }
 
 export type AdverseMediaResult = {
