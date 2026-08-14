@@ -256,6 +256,7 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
             const existing = Array.isArray(t.comments) ? t.comments : [];
             patchTarget({ comments: [...existing, { userId: me?.id || null, userName: me?.name || me?.username || "Unknown", text, at: new Date().toISOString() }] });
           }}
+          onReplace={next => patchTarget({ comments: next })}
         />
       </TableCell>
       )}
@@ -370,16 +371,60 @@ export function TargetOperatorsTable({ targets, clientCompanyId, ensureBriefId, 
 
 // Attributed comment log on a target — each entry names its author so the
 // thread reads "who said what" rather than one anonymous free-text blob.
-function TargetComments({ comments, onAdd }: { comments: unknown; onAdd: (text: string) => void }) {
+function TargetComments({ comments, onAdd, onReplace }: {
+  comments: unknown;
+  onAdd: (text: string) => void;
+  // Full-list replacement — powers edit + delete (team feedback 2026-08-14).
+  onReplace?: (next: Array<{ userId?: string | null; userName?: string; text?: string; at?: string; editedAt?: string }>) => void;
+}) {
   const [draft, setDraft] = useState("");
-  const list: Array<{ userName?: string; text?: string; at?: string }> = Array.isArray(comments) ? comments : [];
+  const [editIdx, setEditIdx] = useState<number | null>(null);
+  const [editText, setEditText] = useState("");
+  const list: Array<{ userId?: string | null; userName?: string; text?: string; at?: string; editedAt?: string }> = Array.isArray(comments) ? comments : [];
+
+  const saveEdit = (i: number) => {
+    const text = editText.trim();
+    setEditIdx(null);
+    if (!onReplace || !text || text === list[i]?.text) return;
+    const next = list.map((c, ci) => ci === i ? { ...c, text, editedAt: new Date().toISOString() } : c);
+    onReplace(next);
+  };
+  const remove = (i: number) => {
+    if (!onReplace) return;
+    if (!confirm("Delete this comment?")) return;
+    onReplace(list.filter((_, ci) => ci !== i));
+  };
+
   return (
     <div className="space-y-1 min-w-[160px]">
-      {list.map((c, i) => (
-        <div key={i} className="text-[11px] leading-tight" title={c.at ? new Date(c.at).toLocaleString("en-GB") : undefined}>
-          <span className="font-semibold text-primary">{c.userName || "Unknown"}</span>
-          {c.at && <span className="text-muted-foreground/70 text-[10px]"> {new Date(c.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>}{" "}
-          <span>{c.text}</span>
+      {list.map((c, i) => editIdx === i ? (
+        <input
+          key={i}
+          autoFocus
+          value={editText}
+          onChange={e => setEditText(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === "Enter") saveEdit(i);
+            if (e.key === "Escape") setEditIdx(null);
+          }}
+          onBlur={() => saveEdit(i)}
+          className="w-full bg-transparent border-0 border-b border-primary/50 text-[11px] focus:outline-none"
+          data-testid={`edit-target-comment-${i}`}
+        />
+      ) : (
+        <div key={i} className="group/comment text-[11px] leading-tight flex items-start gap-1" title={c.at ? new Date(c.at).toLocaleString("en-GB") : undefined}>
+          <span className="min-w-0">
+            <span className="font-semibold text-primary">{c.userName || "Unknown"}</span>
+            {c.at && <span className="text-muted-foreground/70 text-[10px]"> {new Date(c.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>}
+            {c.editedAt && <span className="text-muted-foreground/50 text-[10px]"> (edited)</span>}{" "}
+            <span>{c.text}</span>
+          </span>
+          {onReplace && (
+            <span className="shrink-0 flex gap-0.5 opacity-0 group-hover/comment:opacity-100 transition-opacity">
+              <button type="button" className="text-muted-foreground hover:text-foreground" title="Edit comment" onClick={() => { setEditIdx(i); setEditText(c.text || ""); }} data-testid={`button-edit-comment-${i}`}>✎</button>
+              <button type="button" className="text-muted-foreground hover:text-red-600" title="Delete comment" onClick={() => remove(i)} data-testid={`button-delete-comment-${i}`}>✕</button>
+            </span>
+          )}
         </div>
       ))}
       <input

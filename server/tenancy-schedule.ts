@@ -1241,8 +1241,18 @@ router.post("/api/tenancy-schedule/bulk-delete", requireAuth, async (req, res) =
     const pool = await getPool();
     const { propertyId } = req.body;
     if (!propertyId) return res.status(400).json({ error: "propertyId required" });
+    // Optional ids[] — delete only the ticked rows (the schedule's
+    // multi-select). Without ids the whole property clears, as before.
+    const ids: string[] = Array.isArray(req.body.ids) ? req.body.ids.map(String).filter(Boolean) : [];
     // Same unlink cascade as the single-row delete — leaving dangling
     // tenancy_unit_ids makes the next import duplicate the boards.
+    if (ids.length > 0) {
+      await pool.query(`UPDATE leasing_schedule_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id::text = ANY($2::text[])`, [propertyId, ids]);
+      await pool.query(`UPDATE available_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id::text = ANY($2::text[])`, [propertyId, ids]);
+      await pool.query(`UPDATE crm_deals SET tenancy_unit_id = NULL WHERE tenancy_unit_id::text = ANY($2::text[]) AND tenancy_unit_id IN (SELECT id FROM tenancy_schedule_units WHERE property_id = $1)`, [propertyId, ids]);
+      await pool.query(`DELETE FROM tenancy_schedule_units WHERE property_id = $1 AND id::text = ANY($2::text[])`, [propertyId, ids]);
+      return res.json({ ok: true, deleted: ids.length });
+    }
     await pool.query(`UPDATE leasing_schedule_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
     await pool.query(`UPDATE available_units SET tenancy_unit_id = NULL WHERE property_id = $1 AND tenancy_unit_id IS NOT NULL`, [propertyId]);
     await pool.query(`UPDATE crm_deals SET tenancy_unit_id = NULL WHERE tenancy_unit_id IN (SELECT id FROM tenancy_schedule_units WHERE property_id = $1)`, [propertyId]);

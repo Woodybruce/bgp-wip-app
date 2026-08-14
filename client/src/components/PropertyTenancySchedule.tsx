@@ -688,6 +688,19 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     onError: (err: any) => { toast({ title: "Failed to delete tracker unit", description: err.message, variant: "destructive" }); },
   });
 
+  // Multi-select for bulk delete (team feedback) — ticks live in the sticky
+  // Actions column; vacant projections are excluded (they're tracker rows).
+  const [selectedForDelete, setSelectedForDelete] = useState<Set<string | number>>(new Set());
+  const bulkDeleteMutation = useMutation({
+    mutationFn: (ids: Array<string | number>) => apiRequest("POST", "/api/tenancy-schedule/bulk-delete", { propertyId, ids }),
+    onSuccess: (_d, ids) => {
+      setSelectedForDelete(new Set());
+      queryClient.invalidateQueries({ queryKey: ["/api/tenancy-schedule/property", propertyId] });
+      toast({ title: `${ids.length} row${ids.length === 1 ? "" : "s"} deleted` });
+    },
+    onError: (err: any) => { toast({ title: "Bulk delete failed", description: err.message, variant: "destructive" }); },
+  });
+
   // Promote vacant/letting-tracker "orphan" units into real editable tenancy
   // rows, so every unit on the schedule behaves the same.
   const promoteMutation = useMutation({
@@ -1140,6 +1153,25 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
       )}
 
       <div className="overflow-x-auto border rounded-lg">
+        {selectedForDelete.size > 0 && (
+          <div className="flex items-center gap-3 rounded-md border bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-900 px-3 py-1.5 mb-2 text-xs sticky left-0">
+            <span className="font-medium">{selectedForDelete.size} row{selectedForDelete.size === 1 ? "" : "s"} ticked</span>
+            <button
+              type="button"
+              className="px-2 py-1 rounded bg-red-600 text-white font-medium disabled:opacity-50"
+              disabled={bulkDeleteMutation.isPending}
+              onClick={() => {
+                if (confirm(`Delete ${selectedForDelete.size} tenancy row${selectedForDelete.size === 1 ? "" : "s"}? Undo by re-importing the schedule.`)) {
+                  bulkDeleteMutation.mutate(Array.from(selectedForDelete));
+                }
+              }}
+              data-testid="tenancy-bulk-delete"
+            >
+              {bulkDeleteMutation.isPending ? "Deleting…" : "Delete selected"}
+            </button>
+            <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setSelectedForDelete(new Set())}>Clear</button>
+          </div>
+        )}
         <table className="text-xs" style={{ minWidth: 100 + visibleColumns.reduce((s, c) => s + c.width, 0) + 200 }}>
           <thead>
             {/* Category-band row — one cell per contiguous band, merged via
@@ -1202,7 +1234,21 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
               <th className="text-center p-2 font-medium" style={{ minWidth: 80 }}>Links</th>
               {/* Sticky right so the delete button is always visible
                   without horizontal scrolling to the end of the table. */}
-              <th className="text-center p-2 font-medium w-10 sticky right-0 bg-gray-100 dark:bg-gray-800 border-l z-10"></th>
+              <th className="text-center p-2 font-medium w-10 sticky right-0 bg-gray-100 dark:bg-gray-800 border-l z-10">
+                {!readOnly && (
+                  <input
+                    type="checkbox"
+                    className="accent-red-500 cursor-pointer"
+                    title="Select all rows for bulk delete"
+                    checked={filtered.filter(u => !u.is_vacant).length > 0 && filtered.filter(u => !u.is_vacant).every(u => selectedForDelete.has(u.id))}
+                    onChange={(e) => {
+                      const real = filtered.filter(u => !u.is_vacant).map(u => u.id);
+                      setSelectedForDelete(e.target.checked ? new Set(real) : new Set());
+                    }}
+                    data-testid="tenancy-select-all"
+                  />
+                )}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -1220,6 +1266,12 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                   onUpdate={inlineUpdate}
                   onDelete={() => deleteMutation.mutate(unit.id)}
                   onDeleteTracker={readOnly || !unit.available_unit_id ? undefined : () => deleteTrackerUnitMutation.mutate(String(unit.available_unit_id))}
+                  selected={selectedForDelete.has(unit.id)}
+                  onToggleSelect={readOnly || unit.is_vacant ? undefined : () => setSelectedForDelete(prev => {
+                    const next = new Set(prev);
+                    if (next.has(unit.id)) next.delete(unit.id); else next.add(unit.id);
+                    return next;
+                  })}
                   onPromote={readOnly ? undefined : () => promoteMutation.mutate()}
                   promoting={promoteMutation.isPending}
                   onSendToTracker={readOnly ? undefined : () => sendToTrackerMutation.mutate(unit)}
@@ -1325,12 +1377,14 @@ function TenantBrandPicker({
   );
 }
 
-function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote, promoting, onSendToTracker, sendingToTracker, readOnly, deal, letting }: {
+function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote, promoting, onSendToTracker, sendingToTracker, readOnly, deal, letting, selected, onToggleSelect }: {
   unit: TenancyUnit;
   columns: Col[];
   onUpdate: (id: string | number, field: string, val: string) => void;
   onDelete: () => void;
   onDeleteTracker?: () => void;
+  selected?: boolean;
+  onToggleSelect?: () => void;
   onPromote?: () => void;
   promoting?: boolean;
   onSendToTracker?: () => void;
@@ -1666,6 +1720,17 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
       </td>
       <td className="p-1 text-center sticky right-0 bg-background border-l shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.1)] z-[5]">
         {readOnly ? <span className="text-muted-foreground">—</span> : (
+        <span className="inline-flex items-center gap-1">
+        {onToggleSelect && (
+          <input
+            type="checkbox"
+            checked={!!selected}
+            onChange={onToggleSelect}
+            className="accent-red-500 cursor-pointer"
+            title="Select for bulk delete"
+            data-testid={`tenancy-select-${unit.id}`}
+          />
+        )}
         <button
           onClick={() => {
             const label = unit.unit_number || unit.tenant_name || "this unit";
@@ -1677,6 +1742,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
+        </span>
         )}
       </td>
     </tr>
