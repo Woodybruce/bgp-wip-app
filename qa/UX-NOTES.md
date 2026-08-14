@@ -13,6 +13,19 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+46. 2026-08-14 · Landsec client / desktop 1440px · "check my property before
+    a lease-expiry chat with BGP" · the property page's Compliance & KYC
+    sidebar (deliberately client-visible per the 2026-08-01 decision) also
+    exposes the BILLING ENTITY row as an EDITABLE control to clients —
+    "+ Set billing entity" opens the full company-search dropdown and the
+    PUT succeeds (own-portfolio property writes are open), letting a client
+    change the SPV that BGP invoices its own fees to; the copy ("The
+    corporate entity invoiced for fees") is BGP-internal plumbing a
+    landlord viewer shouldn't be steering · Suggested: render the billing
+    entity read-only (name badge only, no dropdown/clear button) for client
+    viewers, same pattern as the brand-profile KYC staff-action gating.
+    Needs Woody's numbered confirmation — not built.
+
 45. 2026-08-13 · BGP staff / mobile 390px · "find a unit's tenant on the
     Bluewater tenancy schedule" · after typing in the schedule's Search
     box, the filtered rows give no visible feedback — the KPI stack
