@@ -63,6 +63,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r297 · 2026-08-15 · ROUND IN PROGRESS (provisional)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Triage: nothing to triage yet
+  — two-bot round backgrounded, journey next.
+- Plan: FULL round (r296 was LIGHT), rotation #3 client mobile 390px —
+  Mark Warne letting-tracker progress journey (/deals/letting +
+  /deals/list + deal detail at 390px; r279 covered these client DESKTOP).
+
 ### r296 · 2026-08-15 · LIGHT (r295 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205 — method-column awk; restore-as-postgres + per-object ALTER
