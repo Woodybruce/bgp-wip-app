@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+52. 2026-08-15 · BGP staff / desktop · "a brand wants space — log the new
+    leasing requirement" · the Add Requirement dialog has no date field and
+    the server stores requirementDate NULL, so a requirement created seconds
+    ago shows Date "—", gets no Fresh badge, and the "active in the last 90
+    days" KPI reads 0 right after creating one — the board looks stale the
+    moment you add fresh demand; the user must know to inline-edit the Date
+    column afterwards · Suggested: default requirementDate to the creation
+    day for hand-added requirements (imports keep their own dates), or add
+    a pre-filled date field to the dialog. Needs Woody's numbered
+    confirmation — not built.
+
 51. 2026-08-15 · BGP staff / mobile 390px · "on the train: how's the letting
     pipeline moving and who do I chase?" · the /deals/list mobile cards
     show name, property, status chip and deal type — but no target date and
