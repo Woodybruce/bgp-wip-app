@@ -63,15 +63,55 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r297 · 2026-08-15 · ROUND IN PROGRESS (provisional)
+### r297 · 2026-08-15 · FULL (rotation #3 client mobile 390px)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore-as-postgres + ALTER owners + schema grant per r249).
-- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Triage: nothing to triage yet
-  — two-bot round backgrounded, journey next.
-- Plan: FULL round (r296 was LIGHT), rotation #3 client mobile 390px —
-  Mark Warne letting-tracker progress journey (/deals/letting +
-  /deals/list + deal detail at 390px; r279 covered these client DESKTOP).
+  Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1
+  before the fix, rebuilt bundle after; no cold-build flake either pass).
+  Two-bot round 297: exit 0, 188 scenarios ok — incl. FIRST live run of
+  r296's extended client-news-save-unsave-roundtrip (green; tombstone fix
+  holds). 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the round's dev-server log.
+- Journey: Mark Warne @ 390px iPhone UA — "on my phone: how are my
+  Bluewater lettings progressing, and what's the state of the live deal?"
+  (FIRST client-mobile coverage of /deals/letting, /deals/list, deal
+  detail + its dialogs — r279 covered these client DESKTOP): UI login via
+  the client form → Portfolio home (0 h-overflow) → /deals/letting (153
+  units, status KPIs, Brochure/Viewing/Interest/Edit per row, search
+  narrows 153→7, 0 h-overflow) → Viewings dialog (374px @ x8, 10
+  controls, 0 clipped) → Offers dialog (14 controls, 0 clipped) →
+  /deals/list (2 deals, SOL/EXC chips) → deal detail (r263 gates hold:
+  Timeline hidden, jailed Files copy, Audit log present; Image Studio +
+  Edit + party links = decided parity, checked) → Edit Deal dialog (48
+  controls, 0 clipped, no fee inputs). Task completable; 0 page errors,
+  0 non-noise sightings except the bug below.
+- Bug fixed (1): the deal Edit dialog's unit picker GET
+  /api/property-units 403'd for clients (not on CLIENT_ALLOWED_API), so
+  in the decided-parity deal-edit flow the picker silently fell back to
+  [] — saved unit ids couldn't resolve to names, property_units-only
+  options were missing, and a 403 fired on every dialog open. Fix:
+  allowlisted the read (server/index.ts) + scope check in the GET handler
+  (server/routes.ts — scoped callers must pass an own-portfolio
+  propertyId; unfiltered firm-wide list, foreign property and all unit
+  writes stay 403). Verified via API probes on the rebuilt prod bundle
+  (:5100 — own 200/71 rows, unfiltered 403, foreign 403, write 403,
+  staff unchanged 200/200) AND in-browser as Mark on the restarted dev
+  server (Edit dialog fires 200, unit picker 195 options). tsc clean,
+  rebuilt, smoke re-green.
+- NOT bugs (triaged, for future rounds): my dialog "fee leak" grep hit
+  was /fee/i matching "Coffee" — tune the regex. Deals #302/#303 show
+  "Select unit" in the Edit trigger post-fix because the fixture deals
+  have NULL unit_id — data, not a resolution failure.
+- Harness growth: two-bot +1 client-property-units-scoped (own-property
+  list 200 + array, unfiltered 403, POST 403; in the negative-probe set
+  so its 403s aren't logged). node --check clean; the round-297 run
+  loaded the pre-edit file, so first live run is r298; assertions
+  verified standalone via the API probes this round.
+- Bugs deferred: none. Suggestions added: UX #50 (client deal page shows
+  the amber "Off tenancy spine" chip whose tooltip tells the client to
+  use a staff-side Resolve tool — internal jargon on a client surface).
+- Next journey: rotation #4 staff mobile 390px (r297 had the journey →
+  r298 may be LIGHT; then #4).
 
 ### r296 · 2026-08-15 · LIGHT (r295 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
