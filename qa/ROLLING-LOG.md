@@ -63,13 +63,45 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r301 · 2026-08-15 · FULL — IN PROGRESS (rotation #1 staff desktop)
+### r301 · 2026-08-15 · FULL (rotation #1 staff desktop)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore-as-postgres + ALTER owners + schema grant per r249).
   Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 301 running
-  backgrounded; journey next (staff desktop, Victoria). Triage so far:
-  nothing beyond listed noise.
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 301: exit 0,
+  189 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/404 +
+  no-key 503s; 404s the listed HR-photo + sharepoint-root polling; the
+  lone 400 the rocketreach probe; 401s pre-auth /api/auth/me + no-key
+  M365 class).
+- Journey: Victoria desktop 1440px — "a brand wants space: log the new
+  leasing requirement, see if any vacant units fit, then pull the brand's
+  key contact" (FIRST staff-desktop coverage of the /requirements WRITE
+  path — Add Requirement dialog, inline row, edit dialog, UI delete):
+  UI login via guest form → dashboard → /requirements (Leasing tab, 0
+  h-overflow; fixture ships ZERO leasing requirements so the board opens
+  as a bare empty table — data, not a bug) → Add Requirement dialog →
+  name + Restaurant use toggle + comments → "Requirement created" toast
+  → row lists with Active + Restaurant chips, fits/fresh KPI cards
+  appear → search narrows → survives reload → edit dialog pre-fills name
+  → UI delete confirm → row gone → fits-only KPI toggle works → /brands
+  search → Starbucks profile (Key Contacts: Tom Barista; Compliance &
+  KYC + Covenant render; signals feed populated). Task completable; 0
+  page errors, 0 non-noise console/net sightings.
+- Checked, NOT a bug: /api/crm/requirements-leasing CRUD handlers carry
+  no per-route requireAuth but the global auth gate 401s all unauth'd
+  /api probes (verified via curl: GET/POST both 401).
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  requirements-leasing create/PUT/DELETE already API-covered (two-bot
+  lines ~344/~842); this round verified the dialog UI paths visually.
+- Bugs deferred: none. Suggestions added: UX #52 (Add Requirement dialog
+  never sets requirementDate → new requirement shows Date "—", no Fresh
+  badge, and the "active in the last 90 days" KPI reads 0 seconds after
+  adding fresh demand). New flakes: none. Journey-script note: scratchpad
+  scripts can't `import 'playwright'` by name — import
+  /home/user/bgp-wip-app/node_modules/playwright/index.mjs directly.
+- Next journey: rotation #2 client desktop (r301 had the journey → r302
+  may be LIGHT; then #2).
 
 ### r300 · 2026-08-15 · LIGHT (r299 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
