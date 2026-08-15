@@ -1783,13 +1783,22 @@ async function markRound(page, cross) {
         body: JSON.stringify({ articleId: id }) })).status;
       const savedAfter = await (await fetch('/api/news-feed/saved', { credentials: 'include', headers: auth })).json();
       const stillSaved = Array.isArray(savedAfter) && savedAfter.some((a) => a.id === id);
-      return { save, inSaved, unsave, stillSaved };
+      // Re-save after unsave must bring the article back (r295 tombstone bug:
+      // any historical unsave row hid the article from /saved forever).
+      await new Promise((res) => setTimeout(res, 1100));
+      const resave = (await fetch('/api/news-feed/engage', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ articleId: id, action: 'save' }) })).status;
+      const savedFinal = await (await fetch('/api/news-feed/saved', { credentials: 'include', headers: auth })).json();
+      const backSaved = Array.isArray(savedFinal) && savedFinal.some((a) => a.id === id);
+      return { save, inSaved, unsave, stillSaved, resave, backSaved };
     });
     if (r.skip) return;
     if (!(r.save >= 200 && r.save < 300)) throw new Error(`client save blocked (${r.save})`);
     if (!r.inSaved) throw new Error('saved article missing from /api/news-feed/saved');
     if (!(r.unsave >= 200 && r.unsave < 300)) throw new Error(`client unsave blocked (${r.unsave}) — saved article is stuck`);
     if (r.stillSaved) throw new Error('article still in saved list after unsave');
+    if (!(r.resave >= 200 && r.resave < 300)) throw new Error(`client re-save blocked (${r.resave})`);
+    if (!r.backSaved) throw new Error('re-saved article missing from /saved — unsave tombstone is back (r295)');
   });
 
   // Client requirements page renders without a dead route / blank / staff
