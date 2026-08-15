@@ -63,13 +63,75 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r295 · 2026-08-15 · ROUND IN PROGRESS (FULL — rotation #2 client desktop)
+### r295 · 2026-08-15 · FULL (rotation #2 client desktop)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205 — method-column awk; restore-as-postgres + per-object ALTER
-  owners + schema grant per r249). Regression: run-smoke.sh GREEN first
-  pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build
-  flake). Triage: nothing to triage from smoke. Two-bot + journey
-  (client-desktop /news depth + brand-profile news) running next.
+  owners + schema grant per r249; NOTE killing `npm run dev`'s pid does
+  NOT kill the tsx child — pkill the tsx processes or server fixes never
+  load). Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
+  FRESH_BUILD=1 before the fixes, rebuilt bundle after; no cold-build
+  flake either pass). Two-bot round 295: exit 0, 3 logged issues — 2
+  listed noise (rocketreach-400; commentary-regen 503), 1 flow-failure on
+  the NEW client-news-save-unsave-roundtrip = the deferred tombstone bug
+  below (my pre-run probes had already unsaved the same top article, so
+  the re-save never surfaced — deterministic, not flake). 0 raw
+  500/502/504 in the whole round's server log (lone " 500 " grep hit is
+  the "500 articles" news-feed text; status tally only 2xx/3xx/expected
+  400/401/403/404 + no-key 503s).
+- Journey: Mark Warne desktop 1440px — "board asked for a tenant-news
+  roundup: work the News feed, filter by topic, search, save for later,
+  then check news on a tenant brand" (FIRST client-desktop DEPTH pass on
+  /news — r223 only glanced at it): login → Portfolio home → /news via
+  nav (0 h-overflow) → feed renders (For You/Insights/Saved tabs, tag
+  chips, 100 articles) → tag chip filters (client feed zero-hits most
+  tags — UX #49) → search box narrows server-side → Save → Saved tab
+  shows card → Unsave → gone after hard reload (post-fix) → Read fires
+  engage + window.open with correct article URL → Stats/Insights render
+  → /brands search → Starbucks profile (Compliance + Covenant per
+  2026-08-01 decision, news content present). Task completable; 0 page
+  errors, 0 non-noise console/net errors.
+- Bugs fixed (2):
+  1. Client news UNSAVE 403'd — /api/news-feed/engage (save) is in
+     CLIENT_ALLOWED_WRITES but /api/news-feed/unsave never was, so a
+     client could save an article but NEVER remove it; the UI toasts
+     "Removed" optimistically with no onError, so the failure was
+     silent until reload. Allowlisted unsave beside engage
+     (server/index.ts). Verified in-browser as Mark: save → Saved tab →
+     Unsave → hard reload → gone, empty state back.
+  2. News zero-result state under active filters read "No articles yet —
+     Click Refresh to fetch…" + an ungated Fetch News button — for a
+     client every tag-chip zero-hit (common, see UX #49) dead-ended in a
+     button that 403s (fetch is deliberately staff-only). Empty state is
+     now filter-aware ("No matching articles / try clearing filters")
+     and the Fetch News button is hidden for role=Client in the truly-
+     empty case (client/src/pages/news.tsx, matches the header refresh
+     gate). Verified both personas; staff header Refresh + genuine-empty
+     Fetch News unchanged.
+- Bug deferred (1): /api/news-feed/saved treats ANY historical unsave
+  row as a permanent tombstone — it drops every articleId with an
+  unsave engagement regardless of ordering, so save → unsave → save
+  again NEVER reappears in Saved (server/news-feeds.ts ~1690, the
+  unsavedSet filter). Fix: keep an article if its latest save is newer
+  than its latest unsave. Found via the new harness scenario; hit the
+  2-bug cap this round.
+- Harness growth: two-bot +1 client-news-save-unsave-roundtrip (client
+  save must 2xx, appear in /saved, unsave must 2xx — the r295 allowlist
+  gap — and disappear after). node --check clean; ran live this round
+  (failed only on the deferred tombstone, see above — passes on a fresh
+  DB first run).
+- NOT bugs (triaged, for future rounds): Playwright popup events NEVER
+  fire in this container's Chromium even though window.open returns a
+  window (sanity-tested on a blank page) — verify Read buttons via a
+  window.open wrapper, not waitForEvent('popup'). Staff "New openings"
+  tag chip has matches (their team feed carries tagged articles), so
+  the filtered empty state is client-data-dependent, not a staff
+  regression. locator('button:has-text("Save")') substring-matches the
+  Saved TAB — use the button-save-/button-unsave- testids.
+- Suggestions added: UX #49 (global tag chips mostly zero-out the
+  client's For You slice — hide/grey zero-match chips or show counts).
+  New flakes: the popup-event note above + the npm-kill note in setup.
+- Next journey: rotation #3 client mobile 390px (r295 had the journey →
+  r296 may be LIGHT; then #3).
 
 ### r294 · 2026-08-14 · LIGHT (r293 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
