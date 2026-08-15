@@ -13,6 +13,16 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+51. 2026-08-15 · BGP staff / mobile 390px · "on the train: how's the letting
+    pipeline moving and who do I chase?" · the /deals/list mobile cards
+    show name, property, status chip and deal type — but no target date and
+    no time-in-status, even though Target Date is required on every deal
+    ("drives the WIP report bucket") and is exactly what a phone triage
+    needs to pick which deal to chase; the user must open each deal
+    one-by-one to see dates · Suggested: surface the target date (or a
+    "n days in Solicitors" age) on the mobile deal card. Needs Woody's
+    numbered confirmation — not built.
+
 50. 2026-08-15 · Landsec client / mobile 390px · "check how my Bluewater
     lettings are progressing: open the live deal" · the deal header shows
     an amber "Off tenancy spine" chip to the client, whose tooltip reads
