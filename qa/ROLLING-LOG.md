@@ -63,15 +63,46 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r299 · 2026-08-15 · ROUND IN PROGRESS (provisional)
+### r299 · 2026-08-15 · FULL (rotation #4 staff mobile 390px)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore-as-postgres + ALTER owners + schema grant per r249).
   Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Triage: journey sightings so
-  far all listed noise (pre-auth 401 auth/me + brand-theme, keyless
-  /api/ai-briefing 503s). FULL round (r298 was LIGHT), rotation #4 staff
-  mobile 390px — letting tracker / deals list / deal detail / tasks
-  quick-add journey in progress; two-bot next.
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 299: exit 0,
+  189 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/403/404 +
+  no-key 503s; 403s the harness's negative probes; the 2 400s the
+  rocketreach + image-studio harness probes).
+- Journey: Victoria @ 390px iPhone UA — "on the train before a Bluewater
+  call: how's the letting pipeline moving, open the live deal, then jot a
+  chase task and make sure it stuck" (FIRST staff-mobile coverage of
+  /deals/letting, /deals/list, deal DETAIL full page + Edit Deal dialog,
+  and the /tasks quick-add WRITE): UI login via guest form → dashboard
+  (0 h-overflow) → /deals/letting (156 units, status-chip counts, search
+  narrows 156→7 CARDS — mobile renders cards not tbody rows, count
+  '[data-testid^=tracker-row], .card' next time) → Viewings dialog
+  (374px @ x8, 0 clipped) → /deals/list (2 deals, SOL/EXC chips, View
+  buttons — NO numeric /deals/:id anchors, navigate via View) → deal
+  detail U124 Gail's letting (0 h-overflow at 4 scroll depths; action
+  row wraps per r267; Parties/Fee Allocation/KYC/Files/Timeline/Comments
+  all render) → Edit Deal dialog (48 controls, 0 clipped) → /tasks
+  (tab strip wraps per r275, quick-add → "Task created" toast → row
+  renders → survives reload; probe purged by run-round's QA-PROBE sweep).
+  Task completable; 0 page errors, 0 non-noise console/net sightings.
+- NOT bugs (triaged, for future rounds): "Tenant not set" + empty Parties
+  links + "Select unit" on deal #302 are fixture NULLs (r297 class); Edit
+  Deal Target Date shows mm/dd/yyyy — native date input in the
+  container's en-US Chromium, locale-dependent, not app copy; "Off
+  tenancy spine" chip on STAFF deal header is fine (staff have Resolve —
+  the client-side copy is already UX #50).
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  staff-deal-mobile-action-row + staff-tasks-mobile-tabs already lock
+  this journey's geometry; task write paths already scenario-covered.
+- Bugs deferred: none. Suggestions added: UX #51 (staff /deals/list
+  mobile cards show no target date / time-in-status — phone pipeline
+  triage must open each deal one-by-one). New flakes: none.
+- Next journey: rotation #1 staff desktop (r299 had the journey → r300
+  may be LIGHT; then #1).
 
 ### r298 · 2026-08-15 · LIGHT (r297 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
