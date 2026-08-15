@@ -63,6 +63,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r296 · 2026-08-15 · ROUND IN PROGRESS (provisional)
+- LIGHT round (r295 had the journey). Fresh container, repo pre-cloned at
+  /home/user/bgp-wip-app; postgres started clean, pg_hba trust per r205.
+- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake).
+- Triage list: none from smoke. Next: fix r295's deferred saved-news
+  tombstone bug (server/news-feeds.ts unsavedSet filter), then two-bot.
+
 ### r295 · 2026-08-15 · FULL (rotation #2 client desktop)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205 — method-column awk; restore-as-postgres + per-object ALTER
