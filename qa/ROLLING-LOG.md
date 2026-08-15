@@ -63,17 +63,50 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r303 · 2026-08-15 · ROUND IN PROGRESS (FULL, rotation #2 client desktop)
+### r303 · 2026-08-15 · FULL (rotation #2 client desktop)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore-as-postgres + ALTER owners + schema grant per r249).
-  run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh DB +
-  FRESH_BUILD=1). Two-bot round 303 still running (backgrounded per r296).
-- Journey (done): Mark Warne desktop 1440px — brand self-add round-trip
-  (FIRST visual coverage of the client Add-brand dialog + extra-ids
-  profile path). All green — details in the final entry. Triage so far:
-  0 app bugs; fixture ships Landsec with Testco Fashion self-added
-  (crm_extra_brand_ids={…0002}) — pre-add explorer hit is DATA, not a
-  slice leak.
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 303: exit 0, all
+  scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  keyless-AI 503). 0 raw 500/502/504 in the whole round's dev-server log
+  (status tally: only 2xx/3xx/expected 400/401/403/404 + no-key 503s; the
+  2 400s the rocketreach + image-studio harness probes).
+- Journey: Mark Warne desktop 1440px — "a jeweller is circling Bluewater:
+  add it to Brand Intelligence from the wider directory, review its
+  profile, then take it back off my list" (FIRST visual coverage of the
+  client Add-brand dialog round-trip + the extra-ids brand-profile path;
+  r281 only skimmed the hub on mobile): UI login via client form →
+  Portfolio home → /brands (Overview KPIs; search lives in the Brand
+  Explorer TAB, not Overview) → explorer pre-state correct (Jewellers
+  absent, Fashion present — fixture ships Landsec with Testco Fashion
+  self-added, crm_extra_brand_ids={…0002}; NOT a slice leak) → Fashion
+  profile renders full (Tracked-brand badge, chat, ChatBGP chips, UK
+  Stores, Compliance + Covenant per 2026-08-01; 0 staff-leak buttons) →
+  Add-brand dialog (slice brands "In CRM", fixture self-add "Added +
+  Remove", out-of-slice "Add" — all three badge states correct) → Add
+  Jewellers → toast, explorer card appears, category tile bumps → Jewellers
+  profile renders full → dialog Remove → explorer 0 hits → direct
+  /companies/:id lands on "Company not found" gate (API 403s, no broken
+  page). All legs 0 h-overflow, 0 page errors, 0 non-noise sightings.
+  Task completable.
+- NOT bugs (tester errors, for future rounds): the dialog's per-row Add
+  buttons — locator('button:has-text("Add")').first() clicks the FIRST
+  result row's Add (alphabetical), not your target's; scope to the row.
+  getByText(name).click() on explorer cards misses the a[aria-label=name]
+  inset-0 overlay Link — click the anchor. "rendersName=true" after
+  removal was the sidebar Quick Access recent-history links (see UX #53),
+  not a data leak. My journey v1 mutated Landsec's fixture extras
+  (removed 0002 / added 0007) — restored to {…0002} via SQL same round.
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  client-add-brand-from-directory + client-add-brand-remove-ui already
+  lock the API + dialog Remove/In-CRM paths; this round verified the
+  three badge states + profile round-trip visually.
+- Bugs deferred: none. Suggestions added: UX #53 (sidebar Quick Access
+  keeps a removed self-added brand and dead-ends on "Company not found").
+  New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r303 had the journey →
+  r304 may be LIGHT; then #3).
 
 ### r302 · 2026-08-15 · LIGHT (r301 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
