@@ -63,6 +63,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r298 · 2026-08-15 · ROUND IN PROGRESS (provisional)
+- LIGHT round (r297 had the journey). Fresh container (repo pre-cloned at
+  /home/user/bgp-wip-app; pg_hba trust per r205; restore-as-postgres +
+  ALTER owners + schema grant per r249). Regression: run-smoke.sh GREEN
+  first pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no
+  cold-build flake). Two-bot round 298 running (first live run of r297's
+  client-property-units-scoped scenario) — triage next.
+
 ### r297 · 2026-08-15 · FULL (rotation #3 client mobile 390px)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore-as-postgres + ALTER owners + schema grant per r249).
