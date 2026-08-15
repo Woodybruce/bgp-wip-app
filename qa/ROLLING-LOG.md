@@ -63,13 +63,38 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r296 · 2026-08-15 · ROUND IN PROGRESS (provisional)
-- LIGHT round (r295 had the journey). Fresh container, repo pre-cloned at
-  /home/user/bgp-wip-app; postgres started clean, pg_hba trust per r205.
-- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake).
-- Triage list: none from smoke. Next: fix r295's deferred saved-news
-  tombstone bug (server/news-feeds.ts unsavedSet filter), then two-bot.
+### r296 · 2026-08-15 · LIGHT (r295 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205 — method-column awk; restore-as-postgres + per-object ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN ×2 (42
+  checks, 0 failures; FRESH_BUILD=1 before the fix, rebuilt bundle after;
+  no cold-build flake either pass). Two-bot round 296: exit 0, 188
+  scenarios ok — incl. r295's client-news-save-unsave-roundtrip (green
+  post-fix). 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server
+  log (lone " 500 " grep hit is the "500 articles" news-feed text; 244
+  503s all keyless-AI class).
+- Bug fixed (1, r295's deferred): /api/news-feed/saved treated ANY
+  historical unsave row as a permanent tombstone — save → unsave → save
+  again never reappeared in Saved. Now compares latest save vs latest
+  unsave per article (server/news-feeds.ts saved handler); an unsave only
+  hides saves that came before it. Verified via API probe as Mark on BOTH
+  the prod bundle (:5100) and the dev server (:5000): save 200 → in
+  /saved, unsave 200 → gone, re-save 200 → REAPPEARS (was: gone forever).
+  tsc clean, rebuilt, smoke re-green.
+- Harness growth: client-news-save-unsave-roundtrip extended — after the
+  unsave leg it now re-saves and asserts the article is back in /saved
+  (locks the tombstone fix). node --check clean; the round-296 run loaded
+  the pre-edit scenario, so first live run of the extended version is
+  r297; assertions verified standalone this round via the API probes.
+- Bugs deferred: none. Suggestions added: none. New flakes/setup notes:
+  run-round.sh takes >10 min wall-clock now (188 scenarios) — run it
+  backgrounded, a 10-min foreground cap kills it mid-run and ORPHANS the
+  node two-bot child (kill it before re-running); pkill/pgrep -f
+  'two-bot-round' self-matches the caller's own command line (exit 144) —
+  use a character class like 'two-[b]ot-round'.
+- Next journey: rotation #3 client mobile 390px (r296 was LIGHT → r297
+  FULL).
 
 ### r295 · 2026-08-15 · FULL (rotation #2 client desktop)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
