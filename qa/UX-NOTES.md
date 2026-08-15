@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+49. 2026-08-15 · Landsec client / desktop 1440px · "board asked for a
+    tenant-news roundup: filter the News feed by topic" · the tag chip row
+    (New openings / Flagships / DTC / …) is global, but the client's
+    "For You" feed slice often has ZERO articles for a given tag — most
+    chips Mark clicks just empty the feed (now with a correct "No matching
+    articles" state, r295), which makes the chips feel broken. Staff feeds
+    have matches, so staff never see this. Suggested: hide (or grey out)
+    tag chips with no matches in the currently loaded feed, or show a
+    per-chip match count so a zero-tag is visibly a data gap rather than
+    a broken filter.
+
 48. 2026-08-14 · BGP staff / desktop 1440px · "Monday pipeline review: leave
     a note on a live deal for the team" · the deal page's Comments card
     (right rail, "Click to add a comment…") reads like a team thread but is

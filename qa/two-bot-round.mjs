@@ -1765,6 +1765,33 @@ async function markRound(page, cross) {
     if (leaked.length) throw new Error(`client allowed a staff-only news-feed write: ${leaked.join(', ')}`);
   });
 
+  // Save → Saved list → UNSAVE must round-trip for a client. Save goes via
+  // the allowed engage endpoint but unsave is its own route — r295 found it
+  // missing from the write allowlist, leaving saved articles stuck forever
+  // (the UI toasts "Removed" optimistically, so the failure was silent).
+  await step(page, p, 'client-news-save-unsave-roundtrip', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const arts = await (await fetch('/api/news-feed/articles?limit=1', { credentials: 'include', headers: auth })).json();
+      if (!Array.isArray(arts) || !arts.length) return { skip: true };
+      const id = arts[0].id;
+      const save = (await fetch('/api/news-feed/engage', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ articleId: id, action: 'save' }) })).status;
+      const savedList = await (await fetch('/api/news-feed/saved', { credentials: 'include', headers: auth })).json();
+      const inSaved = Array.isArray(savedList) && savedList.some((a) => a.id === id);
+      const unsave = (await fetch('/api/news-feed/unsave', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ articleId: id }) })).status;
+      const savedAfter = await (await fetch('/api/news-feed/saved', { credentials: 'include', headers: auth })).json();
+      const stillSaved = Array.isArray(savedAfter) && savedAfter.some((a) => a.id === id);
+      return { save, inSaved, unsave, stillSaved };
+    });
+    if (r.skip) return;
+    if (!(r.save >= 200 && r.save < 300)) throw new Error(`client save blocked (${r.save})`);
+    if (!r.inSaved) throw new Error('saved article missing from /api/news-feed/saved');
+    if (!(r.unsave >= 200 && r.unsave < 300)) throw new Error(`client unsave blocked (${r.unsave}) — saved article is stuck`);
+    if (r.stillSaved) throw new Error('article still in saved list after unsave');
+  });
+
   // Client requirements page renders without a dead route / blank / staff
   // leak. Requirements are the brand demand side of the portfolio.
   await step(page, p, 'client-requirements', async () => {
