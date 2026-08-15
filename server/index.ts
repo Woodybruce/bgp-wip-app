@@ -3451,6 +3451,10 @@ app.use("/api/branding/assets", express.static(
     // stay staff-only via the write allowlist) and the saved dashboard
     // template (read-only layout defaults).
     "/api/turnover", "/api/dashboard-template",
+    // Unit picker on the deal Edit dialog (decided deal parity) — the GET
+    // handler confines scoped callers to a propertyId in their own
+    // portfolio; unit writes stay staff-only via the write allowlist.
+    "/api/property-units",
     // Operator Targeting Briefs on the client's own units — the Letting
     // Tracker lists these, and the handler scopes the rows (and their target
     // operators) to the caller's portfolio.

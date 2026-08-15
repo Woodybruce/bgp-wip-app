@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+50. 2026-08-15 · Landsec client / mobile 390px · "check how my Bluewater
+    lettings are progressing: open the live deal" · the deal header shows
+    an amber "Off tenancy spine" chip to the client, whose tooltip reads
+    "This deal isn't yet linked to a tenancy schedule row. Use Resolve on
+    the property page to fix." — BGP-internal jargon plus an instruction
+    to use a staff-side tool Mark doesn't have. To a landlord it reads
+    like something is wrong with their deal that they're expected to fix ·
+    Suggested: hide the chip for client viewers (it's an internal
+    data-hygiene flag), or swap in client-facing copy without the staff
+    instruction.
+
 49. 2026-08-15 · Landsec client / desktop 1440px · "board asked for a
     tenant-news roundup: filter the News feed by topic" · the tag chip row
     (New openings / Flagships / DTC / …) is global, but the client's
