@@ -161,10 +161,15 @@ export function NewsTagFilterChips({
   selected,
   onChange,
   className,
+  counts,
 }: {
   selected: Set<string>;
   onChange: (next: Set<string>) => void;
   className?: string;
+  /** Matches per tag in the currently loaded feed (UX #49). When provided,
+   *  zero-match chips grey out and disable so a sparse feed (e.g. a client's
+   *  hospitality-led slice) reads as a data gap, not a broken filter. */
+  counts?: Record<string, number>;
 }) {
   const { data: tags = [] } = useQuery<Tag[]>({
     queryKey: ["/api/news-feed/tags"],
@@ -182,10 +187,14 @@ export function NewsTagFilterChips({
     <div className={cn("flex flex-wrap gap-1.5", className)}>
       {activeTags.map((t) => {
         const on = selected.has(t.name);
+        const n = counts ? (counts[t.name] ?? 0) : null;
+        const dead = n === 0 && !on;
         return (
           <button
             key={t.id}
             type="button"
+            disabled={dead}
+            title={dead ? "No matching articles in this feed" : undefined}
             onClick={() => {
               const next = new Set(selected);
               if (on) next.delete(t.name); else next.add(t.name);
@@ -195,9 +204,14 @@ export function NewsTagFilterChips({
           >
             <Badge
               variant={on ? "default" : "outline"}
-              className={cn("cursor-pointer hover:bg-accent transition-colors", on && "bg-foreground text-background")}
+              className={cn(
+                "transition-colors",
+                dead ? "opacity-40 cursor-default" : "cursor-pointer hover:bg-accent",
+                on && "bg-foreground text-background"
+              )}
             >
               {t.label}
+              {n !== null && n > 0 && <span className="ml-1 opacity-60 tabular-nums">{n}</span>}
             </Badge>
           </button>
         );

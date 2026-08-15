@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+46. 2026-08-14 · Landsec client / desktop 1440px (logged by QA r294 on the
+    staging branch) · "check my property before a lease-expiry chat with
+    BGP" · the property page's Compliance & KYC sidebar (deliberately
+    client-visible per the 2026-08-01 decision) also exposes the BILLING
+    ENTITY row as an EDITABLE control to clients — "+ Set billing entity"
+    opens the full company-search dropdown and the PUT succeeds, letting a
+    client change the SPV that BGP invoices its own fees to · Suggested:
+    render the billing entity read-only (name badge only) for client
+    viewers, same pattern as the brand-profile KYC staff-action gating.
+    Needs Woody's numbered confirmation — not built.
+
 32. 2026-08-11 · Landsec client / mobile 390px · "a colleague asked who our
     contact at Starbucks is — find them on my phone" · the brand profile at
     390px leads with the full-height Chat panel, so the KEY CONTACTS card
@@ -26,6 +37,25 @@ what happened · concrete suggested improvement.
     so the fix should cover /companies/:id for both personas.)
 
 ## Confirmed / done
+
+Confirmed by Woody 2026-08-15 ("45 48 49"); built same day (suggestions 45,
+48, 49 were logged by QA rounds r292-r295 on the staging branch — recorded
+here since JOGQK is the canonical copy):
+45. Tenancy schedule search feedback: the header clear-badge now covers
+   search + status filters ("N of M · clear", clears all three), and on
+   phones a match count renders directly under the Search box so typing
+   gives visible feedback without scrolling past the KPI tiles.
+48. Deal Comments card is append-only: comments POST to
+   /api/crm/deals/:id/comments, which stamps author + time into the
+   existing comments blob ("[15 Aug 2026, 10:47 · Name]" blocks) — a later
+   comment can never overwrite an earlier one; each append is also written
+   to the deal audit log. The card renders entries as a list with
+   author/date lines; pre-existing free text shows as "Earlier note".
+   API-verified both directions; not yet browser-verified.
+49. News tag chips show per-tag match counts from the loaded feed and grey
+   out / disable zero-match tags ("No matching articles in this feed"
+   tooltip) — a sparse feed slice reads as a data gap, not a broken filter.
+   Not yet browser-verified.
 
 Confirmed by Woody 2026-08-13 ("image studio for non admin just needs to be
 the same as it is for admin. 44 yes go ahead"); built + browser-verified

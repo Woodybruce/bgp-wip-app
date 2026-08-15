@@ -3290,6 +3290,58 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     return { pricePsf, priceItza };
   }
 
+  // Append-only deal comments (UX #48). Entries are stamped with author +
+  // time inside the existing crm_deals.comments text blob — everything else
+  // that reads the field (exports, ChatBGP context) keeps working, and a
+  // later comment can never overwrite an earlier one. The append happens in
+  // one UPDATE so two simultaneous commenters both land.
+  app.post("/api/crm/deals/:id/comments", async (req, res) => {
+    try {
+      const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
+      if (!text) return res.status(400).json({ error: "Comment text required" });
+      const deal = await storage.getCrmDeal(req.params.id);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const scope = await resolveCompanyScope(req);
+      if (scope && !(await isDealInScope(scope, req.params.id))) {
+        return res.status(403).json({ error: "Not available for client accounts" });
+      }
+      const userId = (req as any).session?.userId || (req as any).tokenUserId;
+      let authorName = "Unknown";
+      if (userId) {
+        const uRes = await pool.query(`SELECT name, email, username FROM users WHERE id = $1 LIMIT 1`, [userId]);
+        if (uRes.rows[0]) authorName = uRes.rows[0].name || uRes.rows[0].email || uRes.rows[0].username;
+      }
+      const stamp = new Date().toLocaleString("en-GB", {
+        day: "numeric", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit", timeZone: "Europe/London",
+      });
+      const entry = `[${stamp} · ${authorName}]\n${text}`;
+      const { rows } = await pool.query(
+        `UPDATE crm_deals
+            SET comments = CASE WHEN comments IS NULL OR comments = '' THEN $2
+                                ELSE comments || E'\n\n' || $2 END
+          WHERE id = $1
+          RETURNING comments`,
+        [req.params.id, entry]
+      );
+      try {
+        await db.insert(dealAuditLog).values({
+          dealId: req.params.id,
+          field: "comments",
+          oldValue: null,
+          newValue: text.length > 500 ? text.slice(0, 500) + "…" : text,
+          reason: "Comment added",
+          changedBy: userId || null,
+          changedByName: authorName,
+        });
+      } catch {}
+      res.json({ comments: rows[0]?.comments ?? entry });
+    } catch (err: any) {
+      console.error("Deal comment error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.put("/api/crm/deals/:id", async (req, res) => {
     try {
       const oldDeal = await storage.getCrmDeal(req.params.id);

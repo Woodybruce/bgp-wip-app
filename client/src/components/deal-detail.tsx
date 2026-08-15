@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -581,16 +582,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       )}
 
       <SidebarSection open={sidebarSections.comments} onToggle={() => toggleSidebar("comments")} icon={MessageSquare} title="Comments" testId="toggle-sidebar-comments">
-        <InlineText
-          value={deal.comments}
-          multiline
-          placeholder="Click to add a comment…"
-          className="text-xs whitespace-pre-wrap text-muted-foreground w-full"
-          onSave={async (val) => {
-            await apiRequest("PUT", `/api/crm/deals/${id}`, { comments: val || null });
-            invalidateDealCaches(id);
-          }}
-        />
+        <DealComments dealId={id} comments={deal.comments} />
       </SidebarSection>
 
       <SidebarSection open={sidebarSections.history ?? true} onToggle={() => toggleSidebar("history")} icon={History} title="History & activity" testId="toggle-sidebar-history">
@@ -1225,6 +1217,66 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           </ScrollArea>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Append-only comments (UX #48). Entries live in crm_deals.comments as
+// "[stamp · author]\ntext" blocks separated by blank lines — parsed here for
+// display; anything that predates the format renders as one "Earlier note".
+function parseDealComments(blob: string | null | undefined): Array<{ meta: string | null; text: string }> {
+  if (!blob?.trim()) return [];
+  const parts = blob.split(/\n\n(?=\[[^\]\n]+ · [^\]\n]+\]\n)/);
+  return parts.map((p) => {
+    const m = p.match(/^\[([^\]\n]+ · [^\]\n]+)\]\n([\s\S]*)$/);
+    return m ? { meta: m[1], text: m[2] } : { meta: null, text: p.trim() };
+  }).filter((e) => e.text);
+}
+
+function DealComments({ dealId, comments }: { dealId: string; comments: string | null | undefined }) {
+  const [draft, setDraft] = useState("");
+  const [posting, setPosting] = useState(false);
+  const entries = parseDealComments(comments);
+  const post = async () => {
+    const text = draft.trim();
+    if (!text || posting) return;
+    setPosting(true);
+    try {
+      await apiRequest("POST", `/api/crm/deals/${dealId}/comments`, { text });
+      setDraft("");
+      invalidateDealCaches(dealId);
+    } finally {
+      setPosting(false);
+    }
+  };
+  return (
+    <div className="space-y-2" data-testid="deal-comments">
+      {entries.length === 0 && (
+        <p className="text-xs text-muted-foreground italic">No comments yet.</p>
+      )}
+      {entries.map((e, i) => (
+        <div key={i} className="text-xs border rounded-md p-2" data-testid={`deal-comment-${i}`}>
+          <p className="text-[10px] text-muted-foreground mb-0.5">{e.meta ?? "Earlier note"}</p>
+          <p className="whitespace-pre-wrap">{e.text}</p>
+        </div>
+      ))}
+      <Textarea
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        placeholder="Add a comment…"
+        className="text-xs min-h-[56px]"
+        data-testid="input-deal-comment"
+      />
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 text-xs"
+        onClick={post}
+        disabled={posting || !draft.trim()}
+        data-testid="btn-add-deal-comment"
+      >
+        {posting ? "Posting…" : "Add comment"}
+      </Button>
     </div>
   );
 }
