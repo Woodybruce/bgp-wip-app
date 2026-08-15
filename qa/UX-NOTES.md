@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+53. 2026-08-15 · Landsec client / desktop 1440px · "took a brand back off my
+    CRM watchlist after checking it out" · after removing a self-added brand
+    via the Add-brand dialog (working as designed), the sidebar's Quick
+    Access section still lists the removed brand from recent history —
+    clicking it dead-ends on "Company not found — it may have been merged
+    or removed", which reads like data loss rather than "you removed this
+    from your list" · Suggested: filter Quick Access to brands the viewer
+    can still access, or give the not-found state client-aware copy with a
+    "re-add from the directory" pointer. Needs Woody's numbered
+    confirmation — not built.
+
 52. 2026-08-15 · BGP staff / desktop · "a brand wants space — log the new
     leasing requirement" · the Add Requirement dialog has no date field and
     the server stores requirementDate NULL, so a requirement created seconds
