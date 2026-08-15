@@ -62,6 +62,8 @@ async function ensureGapColumns() {
   await pool.query(`ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS fnb_sector TEXT`).catch(() => {});
   await pool.query(`ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS gap_commentary TEXT`).catch(() => {});
   await pool.query(`ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS gap_commentary_at TIMESTAMPTZ`).catch(() => {});
+  await pool.query(`ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS gap_live_intel JSONB`).catch(() => {});
+  await pool.query(`ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS gap_live_intel_at TIMESTAMPTZ`).catch(() => {});
   gapColumnsEnsured = true;
 }
 
@@ -518,12 +520,28 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       ? matchingRequirements.filter((r: any) => !r.company_id || sliceFilter!(String(r.company_id)))
       : matchingRequirements;
 
+    // Cached Perplexity expansion intel (the live-intel route below) rides
+    // along keyed by lowercased brand name so every lens can badge
+    // "actively expanding" without a second round-trip.
+    const intelRow = await pool.query(
+      `SELECT gap_live_intel, gap_live_intel_at FROM crm_properties WHERE id = $1`, [propertyId]
+    ).then(r => r.rows[0]).catch(() => null);
+    const liveIntel = intelRow?.gap_live_intel?.brands
+      ? {
+          byBrand: Object.fromEntries(
+            (intelRow.gap_live_intel.brands as any[]).map((b: any) => [String(b.name || "").toLowerCase(), b])
+          ),
+          generatedAt: intelRow.gap_live_intel_at,
+        }
+      : null;
+
     // Sets don't survive JSON — strip the working field from every bucket.
     const publish = (b: any) => {
       const { peer_scheme_set, ...rest } = b;
       return { ...rest, nearest_distance_km: Number(b.nearest_distance_km.toFixed(2)) };
     };
     res.json({
+      liveIntel,
       property: { id: propertyId, name: location.name, postcode: location.postcode, lat: location.lat, lng: location.lng },
       onScheme: sliced(onScheme).map(publish),
       wider: sliced(wider).map(publish),
@@ -568,7 +586,7 @@ router.get("/api/property/:propertyId/brand-gaps/commentary", requireAuth, async
     }
     const force = req.query.refresh === "1";
     const cached = await pool.query(
-      `SELECT name, gap_commentary, gap_commentary_at FROM crm_properties WHERE id = $1`, [propertyId]
+      `SELECT name, gap_commentary, gap_commentary_at, gap_live_intel FROM crm_properties WHERE id = $1`, [propertyId]
     );
     if (!cached.rows[0]) return res.status(404).json({ error: "Property not found" });
     const row = cached.rows[0];
@@ -616,7 +634,16 @@ Sector coverage (hospitality/F&B/wellness/leisure):
 ${sectorLines}
 
 Live brand requirements matching an available unit: ${(g.matchingRequirements || []).map((r: any) => r.company_name || r.name).filter(Boolean).slice(0, 10).join(", ") || "none"}
-
+${(() => {
+  // Cached Perplexity expansion sweep (live-intel route) — fold confirmed
+  // expanders into the read so "actionable now" reflects live market intent,
+  // not just CRM state.
+  const li = row.gap_live_intel;
+  if (!li?.brands?.length) return "";
+  const expanding = (li.brands as any[]).filter((b: any) => b.expanding).slice(0, 10);
+  if (!expanding.length) return "";
+  return `\nLive web intel — brands with cited evidence of ACTIVE EXPANSION in the last year:\n${expanding.map((b: any) => `${b.name}: ${b.note}`).join("\n")}\n`;
+})()}
 Write FOUR SHORT paragraphs separated by blank lines, each opening with a bold lead-in exactly like: **Competitive gaps.** / **Missing sectors.** / **Actionable now.** / **Mix strategy.** — covering (1) the sharpest competitive gaps, naming brands and which competing centre they trade at; (2) whole sectors missing versus the peer set with the obvious target brands; (3) what's actionable NOW because a live requirement fits an available unit; (4) one forward-looking line on mix strategy. Keep each paragraph to 1-3 sentences; bold key brand names with **double asterisks**. No headings beyond the lead-ins, no lists, no preamble.`;
 
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
@@ -708,6 +735,130 @@ Reply as strict JSON array only: [{"name": "...", "sector": "...", "origin": "..
     res.json({ items, generatedAt: new Date().toISOString(), cached: false });
   } catch (err: any) {
     console.error("[gap-international]", err?.message);
+    res.status(500).json({ error: err?.message || "failed" });
+  }
+});
+
+// ── Live expansion intel — Perplexity layer over the gap board (Woody,
+//    2026-08-15). The DB lenses say WHERE brands already trade; this asks
+//    the live web whether the top gap candidates are actively taking sites
+//    right now — openings, announced pipeline, stated requirements, rollout
+//    funding — with citations. Cached a week on the property; ?refresh=1
+//    re-sweeps. Degrades to house copy when no Perplexity key is set.
+router.get("/api/property/:propertyId/brand-gaps/live-intel", requireAuth, async (req: Request, res: Response) => {
+  try {
+    await ensureGapColumns();
+    const propertyId = String(req.params.propertyId);
+    const { resolveCompanyScope, isPropertyInScope, isClientRequestUser } = await import("./company-scope");
+    if (await isClientRequestUser(req as any)) {
+      const scope = await resolveCompanyScope(req as any);
+      if (!scope || !(await isPropertyInScope(scope, propertyId))) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+    }
+    const force = req.query.refresh === "1";
+    const { rows } = await pool.query(
+      `SELECT name, postcode, gap_live_intel, gap_live_intel_at FROM crm_properties WHERE id = $1`, [propertyId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: "Property not found" });
+    const row = rows[0];
+    const serveCache = () =>
+      res.json({ ...row.gap_live_intel, generatedAt: row.gap_live_intel_at, cached: true });
+    const ageMs = row.gap_live_intel_at ? Date.now() - new Date(row.gap_live_intel_at).getTime() : null;
+    if (row.gap_live_intel && !force && ageMs !== null && ageMs < 7 * 24 * 60 * 60 * 1000) {
+      return serveCache();
+    }
+
+    const { isPerplexityConfigured, askPerplexity } = await import("./perplexity");
+    if (!isPerplexityConfigured()) {
+      if (row.gap_live_intel) return serveCache();
+      return res.status(503).json({ error: "Live intel unavailable — research service is not configured" });
+    }
+
+    // Same self-fetch pattern as the commentary route: candidates come from
+    // exactly what the requester sees (client slice included).
+    const baseUrl = `http://127.0.0.1:${process.env.PORT || "5000"}`;
+    const cookie = (req.headers?.cookie as string) || "";
+    const auth = (req.headers?.authorization as string) || "";
+    const gapsRes = await fetch(`${baseUrl}/api/property/${propertyId}/brand-gaps`, {
+      headers: { ...(cookie ? { Cookie: cookie } : {}), ...(auth ? { Authorization: auth } : {}) },
+    });
+    if (!gapsRes.ok) {
+      if (row.gap_live_intel) return serveCache();
+      return res.status(gapsRes.status).json({ error: "Couldn't load gap analysis" });
+    }
+    const g: any = await gapsRes.json();
+    const seen = new Set<string>();
+    const candidates: string[] = [];
+    for (const b of [...(g.competitorGaps || []), ...(g.peerGaps || []), ...(g.gap || []), ...(g.localMarket || [])]) {
+      const name = String(b.brand_name || "").trim();
+      if (!name || seen.has(name.toLowerCase())) continue;
+      seen.add(name.toLowerCase());
+      candidates.push(name);
+      if (candidates.length >= 15) break;
+    }
+    if (!candidates.length) {
+      return res.json({ brands: [], market_notes: "No gap candidates to research yet.", citations: [], generatedAt: new Date().toISOString(), cached: false });
+    }
+
+    const region = [row.name, row.postcode, ...(g.competingCentres || []).map((c: any) => c.name)]
+      .filter(Boolean).join(", ");
+    let px;
+    try {
+      px = await askPerplexity(
+        `These UK hospitality/F&B/leisure brands trade elsewhere but NOT at ${row.name}${row.postcode ? ` (${row.postcode})` : ""}. For EACH brand, is there evidence from roughly the last 12 months that it is ACTIVELY EXPANDING — new site openings, announced pipeline, publicly stated site requirements, or funding raised for rollout? Prefer evidence relevant to this area: ${region}. Be factual; where there is no evidence, return expanding=false with a short note. Also give 2-3 sentences of market_notes on hospitality leasing momentum relevant to schemes like this. Brands:\n${candidates.map((n, i) => `${i + 1}. ${n}`).join("\n")}`,
+        {
+          searchRecency: "year",
+          maxTokens: 2200,
+          jsonSchema: {
+            name: "gap_live_intel",
+            schema: {
+              type: "object",
+              properties: {
+                brands: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      name: { type: "string" },
+                      expanding: { type: "boolean" },
+                      confidence: { type: "string", enum: ["high", "medium", "low"] },
+                      note: { type: "string" },
+                      source_url: { type: "string" },
+                    },
+                    required: ["name", "expanding", "note"],
+                  },
+                },
+                market_notes: { type: "string" },
+              },
+              required: ["brands"],
+            },
+          },
+        }
+      );
+    } catch (pxErr: any) {
+      if (row.gap_live_intel) return serveCache();
+      return res.status(502).json({ error: `Live intel failed: ${pxErr?.message || "research error"}` });
+    }
+    let parsed: any = null;
+    try { parsed = JSON.parse(px.answer.replace(/^```(json)?/m, "").replace(/```$/m, "").trim()); } catch {}
+    if (!Array.isArray(parsed?.brands) || !parsed.brands.length) {
+      if (row.gap_live_intel) return serveCache();
+      return res.status(502).json({ error: "No live intel returned" });
+    }
+    const payload = {
+      brands: parsed.brands,
+      market_notes: parsed.market_notes || "",
+      citations: px.citations || [],
+      model: px.model,
+    };
+    await pool.query(
+      `UPDATE crm_properties SET gap_live_intel = $1, gap_live_intel_at = NOW() WHERE id = $2`,
+      [JSON.stringify(payload), propertyId]
+    ).catch(() => {});
+    res.json({ ...payload, generatedAt: new Date().toISOString(), cached: false });
+  } catch (err: any) {
+    console.error("[gap-live-intel]", err?.message);
     res.status(500).json({ error: err?.message || "failed" });
   }
 });

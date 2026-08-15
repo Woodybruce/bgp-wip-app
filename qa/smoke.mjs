@@ -47,7 +47,7 @@ const IGNORED_RESPONSES = [
   /\/api\/land-registry/,
   // Brand-gap AI panels + interaction summarise call Claude directly — no
   // key in CI, so they 500 by design here (same class as ai-briefing).
-  /\/api\/property\/[^/]+\/brand-gaps\/(international|commentary)/,
+  /\/api\/property\/[^/]+\/brand-gaps\/(international|commentary|live-intel)/,
   /\/api\/interactions\/[^/]+\/summarise/,
   /fonts|\.woff|\.map$/,
 ];

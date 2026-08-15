@@ -12,8 +12,16 @@ import { getAuthHeaders } from "@/lib/queryClient";
 import { renderAiCommentary } from "@/components/property-asset-brief";
 import {
   Target, MapPin, TrendingUp, AlertCircle, FileText, Sparkles, RefreshCw,
-  Swords, Globe2, Store, ChevronRight, Loader2,
+  Swords, Globe2, Store, ChevronRight, Loader2, Radar, ExternalLink,
 } from "lucide-react";
+
+type LiveIntelBrand = {
+  name: string;
+  expanding: boolean;
+  confidence?: "high" | "medium" | "low";
+  note: string;
+  source_url?: string;
+};
 
 type GapBrand = {
   brand_company_id: string;
@@ -51,12 +59,13 @@ interface BrandGapResult {
     company_name: string | null; domain: string | null;
   }>;
   stats: { totalBrands: number; hospitalityBrands?: number; brandsWithStores: number };
+  liveIntel?: { byBrand: Record<string, LiveIntelBrand>; generatedAt: string } | null;
 }
 
 // Two-line row: the brand NAME owns the first line (badges after it, name
 // never crushed to "W…"), the scheme evidence sits underneath (Woody,
 // 2026-08-04: "design issues on the brand names").
-function BrandRow({ b, context }: { b: GapBrand; context?: string }) {
+function BrandRow({ b, context, intel }: { b: GapBrand; context?: string; intel?: LiveIntelBrand }) {
   return (
     <Link
       href={`/companies/${b.brand_company_id}`}
@@ -66,6 +75,11 @@ function BrandRow({ b, context }: { b: GapBrand; context?: string }) {
         <span className="font-medium truncate min-w-0" title={b.brand_name}>{b.brand_name}</span>
         {b.has_live_requirement && (
           <Badge className="text-[9px] bg-violet-100 text-violet-700 border-violet-200 shrink-0">live req</Badge>
+        )}
+        {intel?.expanding && (
+          <Badge className="text-[9px] bg-sky-100 text-sky-700 border-sky-200 shrink-0" title={intel.note}>
+            <Radar className="w-2 h-2 mr-0.5" />expanding
+          </Badge>
         )}
         {(b.rollout_status === "scaling" || b.rollout_status === "entering_uk") && (
           <Badge className="text-[9px] bg-emerald-100 text-emerald-700 border-emerald-200 shrink-0">
@@ -82,9 +96,10 @@ function BrandRow({ b, context }: { b: GapBrand; context?: string }) {
   );
 }
 
-function GapColumn({ icon: Icon, tint, title, sub, brands, contextFor, emptyText }: {
+function GapColumn({ icon: Icon, tint, title, sub, brands, contextFor, emptyText, intelByBrand }: {
   icon: any; tint: string; title: string; sub?: string;
   brands: GapBrand[]; contextFor: (b: GapBrand) => string; emptyText: string;
+  intelByBrand?: Record<string, LiveIntelBrand>;
 }) {
   return (
     <div className="rounded-lg border p-2.5 min-w-0">
@@ -98,7 +113,9 @@ function GapColumn({ icon: Icon, tint, title, sub, brands, contextFor, emptyText
         <p className="text-[11px] text-muted-foreground italic py-2">{emptyText}</p>
       ) : (
         <div className="space-y-0.5 max-h-[300px] overflow-y-auto pr-1">
-          {brands.slice(0, 20).map(b => <BrandRow key={b.brand_company_id} b={b} context={contextFor(b)} />)}
+          {brands.slice(0, 20).map(b => (
+            <BrandRow key={b.brand_company_id} b={b} context={contextFor(b)} intel={intelByBrand?.[b.brand_name.toLowerCase()]} />
+          ))}
           {brands.length > 20 && <p className="text-[10px] text-muted-foreground pl-1">+{brands.length - 20} more</p>}
         </div>
       )}
@@ -156,6 +173,100 @@ function GapCommentary({ propertyId }: { propertyId: string }) {
         <div className="text-xs leading-relaxed [&_p]:text-xs">{renderAiCommentary(data.text)}</div>
       ) : (
         <p className="text-xs text-muted-foreground italic">No read yet — hit refresh to generate.</p>
+      )}
+    </div>
+  );
+}
+
+// Perplexity sweep over the top gap candidates: who is actively taking
+// sites right now, with citations. Web-researched — labelled as such.
+function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
+  const qc = useQueryClient();
+  const key = ["/api/property", propertyId, "gap-live-intel"];
+  const { data, isLoading, error } = useQuery<{
+    brands: LiveIntelBrand[]; market_notes?: string;
+    citations?: Array<{ url: string; title?: string }>; generatedAt: string;
+  }>({
+    queryKey: key,
+    queryFn: async () => {
+      const r = await fetch(`/api/property/${propertyId}/brand-gaps/live-intel`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${r.status}`);
+      }
+      return r.json();
+    },
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+  });
+  const refresh = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`/api/property/${propertyId}/brand-gaps/live-intel?refresh=1`, { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${r.status}`);
+      }
+      return r.json();
+    },
+    onSuccess: (fresh) => {
+      qc.setQueryData(key, fresh);
+      // Re-pull the gap board so the "expanding" badges pick up the sweep.
+      qc.invalidateQueries({ queryKey: ["/api/property", propertyId, "brand-gaps"] });
+    },
+  });
+  const expanding = (data?.brands || []).filter(b => b.expanding);
+  return (
+    <div className="rounded-lg border border-sky-200 bg-sky-50/50 dark:bg-sky-950/20 dark:border-sky-900 p-3" data-testid="gap-live-intel">
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-[11px] font-semibold text-sky-700 dark:text-sky-300 flex items-center gap-1.5">
+          <Radar className="w-3.5 h-3.5" /> Live expansion intel
+          <span className="text-[10px] font-normal text-muted-foreground">web-researched, cited · verify before pitching</span>
+          {data?.generatedAt && (
+            <span className="font-normal text-sky-500/70">
+              — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => refresh.mutate()}
+          disabled={refresh.isPending}
+          className="p-1 rounded hover:bg-sky-100 dark:hover:bg-sky-900/40"
+          title="Re-sweep the web for expansion signals on the top gap candidates"
+          data-testid="gap-live-intel-refresh"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 text-sky-500 ${refresh.isPending ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+      {isLoading || refresh.isPending ? (
+        <p className="text-xs text-muted-foreground italic flex items-center gap-1.5">
+          <Loader2 className="w-3 h-3 animate-spin" /> Sweeping the web — openings, requirements, rollout funding…
+        </p>
+      ) : error ? (
+        <p className="text-xs text-muted-foreground italic">{(error as Error).message}</p>
+      ) : !data?.brands?.length ? (
+        <p className="text-xs text-muted-foreground italic">No sweep yet — hit refresh to research the top gap candidates.</p>
+      ) : (
+        <div className="space-y-1.5">
+          {data.market_notes && <p className="text-xs leading-relaxed">{data.market_notes}</p>}
+          {expanding.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic">No cited expansion evidence on the current candidates.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
+              {expanding.map((b, i) => (
+                <div key={i} className="text-xs rounded border bg-white/60 dark:bg-white/5 px-2 py-1 min-w-0">
+                  <span className="font-semibold">{b.name}</span>
+                  {b.confidence && <span className="text-[10px] text-muted-foreground ml-1">({b.confidence})</span>}
+                  {b.source_url && (
+                    <a href={b.source_url} target="_blank" rel="noreferrer" className="inline-flex align-middle ml-1 text-sky-600 hover:text-sky-800" title={b.source_url}>
+                      <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  )}
+                  <span className="block text-[11px] text-muted-foreground mt-0.5">{b.note}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -300,6 +411,9 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
         {/* AI gap read */}
         <GapCommentary propertyId={propertyId} />
 
+        {/* Live web sweep — who is actively taking sites right now */}
+        <LiveExpansionIntel propertyId={propertyId} />
+
         {/* Minimise everything below the read */}
         <button
           onClick={() => setDetailsOpen(o => !o)}
@@ -353,6 +467,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
             brands={data.competitorGaps || []}
             contextFor={(b) => (b.competing_at || []).join(", ")}
             emptyText="No competing-centre gaps found — or no competing centre within range."
+            intelByBrand={data.liveIntel?.byBrand}
           />
           <GapColumn
             icon={AlertCircle}
@@ -365,6 +480,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
               return ps.slice(0, 2).join(", ") + (ps.length > 2 ? ` +${ps.length - 2}` : "");
             }}
             emptyText="No national peer-scheme gaps."
+            intelByBrand={data.liveIntel?.byBrand}
           />
           <GapColumn
             icon={MapPin}
@@ -374,6 +490,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
             brands={data.localMarket || []}
             contextFor={(b) => `${b.nearest_distance_km.toFixed(1)}km away`}
             emptyText="Nothing nearby that isn't already on scheme."
+            intelByBrand={data.liveIntel?.byBrand}
           />
         </div>
 
