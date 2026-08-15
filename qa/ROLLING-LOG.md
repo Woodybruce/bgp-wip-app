@@ -63,6 +63,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r303 · 2026-08-15 · ROUND IN PROGRESS (FULL, rotation #2 client desktop)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh DB +
+  FRESH_BUILD=1). Two-bot round 303 still running (backgrounded per r296).
+- Journey (done): Mark Warne desktop 1440px — brand self-add round-trip
+  (FIRST visual coverage of the client Add-brand dialog + extra-ids
+  profile path). All green — details in the final entry. Triage so far:
+  0 app bugs; fixture ships Landsec with Testco Fashion self-added
+  (crm_extra_brand_ids={…0002}) — pre-add explorer hit is DATA, not a
+  slice leak.
+
 ### r302 · 2026-08-15 · LIGHT (r301 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore-as-postgres + ALTER owners + schema grant per r249).
