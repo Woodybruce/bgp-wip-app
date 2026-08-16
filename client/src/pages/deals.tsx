@@ -2131,7 +2131,17 @@ export function DealFormDialog({
 }) {
   const { toast } = useToast();
   const isEdit = !!deal;
-  const [form, setForm] = useState<DealFormData>(deal ? dealToForm(deal) : { ...emptyForm });
+  const { activeTeam } = useTeam();
+  // Seed a created deal with the creator's own team. Deal types without an
+  // auto-team rule (New Letting, Sub-Letting, Temp Lease, Consultancy) would
+  // otherwise save team-less, and the deals list's default own-team filter
+  // hides team-less deals — so the deal vanished the moment it was created.
+  // "Landsec" is the client pseudo-team, never a deal team; clients keep [].
+  const freshForm = () => ({
+    ...emptyForm,
+    team: activeTeam && activeTeam !== "all" && activeTeam !== "Landsec" ? [activeTeam] : [],
+  });
+  const [form, setForm] = useState<DealFormData>(deal ? dealToForm(deal) : freshForm());
   const [changeReason, setChangeReason] = useState("");
   const [learning, setLearning] = useState("");
   // When creating a deal, the form defaults to a stripped-down view
@@ -2160,7 +2170,7 @@ export function DealFormDialog({
   // dropped on reopen (acceptable — they weren't saved).
   useEffect(() => {
     if (!open) return;
-    setForm(deal ? dealToForm(deal) : { ...emptyForm });
+    setForm(deal ? dealToForm(deal) : freshForm());
     setChangeReason("");
     setLearning("");
     setShowAllFields(false);

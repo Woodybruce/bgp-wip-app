@@ -63,15 +63,67 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r309 · 2026-08-16 · ROUND IN PROGRESS (FULL — rotation #1 staff desktop)
-- Provisional heartbeat. Fresh container (repo pre-cloned at
-  /home/user/bgp-wip-app; pg_hba trust per r205; restore-as-postgres +
-  ALTER owners + schema grant per r249). Regression: run-smoke.sh GREEN
-  first pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no
-  cold-build flake). Two-bot round 309 running in background. Journey
-  planned: Victoria desktop 1440px — staff deal CREATE via the New Deal
-  dialog (first journey coverage), list persistence, detail, client
-  stays-hidden cross-check. Final entry to follow.
+### r309 · 2026-08-16 · FULL (rotation #1 staff desktop)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1
+  before the fix, rebuilt bundle after; no cold-build flake either pass).
+  Two-bot round 309: exit 0, 190 scenarios ok; 2 logged issues both
+  listed noise (rocketreach-400; commentary-regen 503). 0 raw 500/502/504
+  in the whole round's dev-server log (lone " 500 " grep hit is the "500
+  articles" news-feed text; status tally only 2xx/3xx/expected
+  400/401/403/404 + no-key 503s).
+- Journey: Victoria desktop 1440px — "terms agreed with an espresso
+  operator on a Bluewater unit: create the deal, confirm it's on the
+  board, open it, and check what the client sees" (FIRST journey coverage
+  of the staff New Deal dialog WRITE path end-to-end — r293/r299 only
+  viewed/edited existing deals): UI login via guest form → /deals/list
+  (0 h-overflow) → New Deal dialog (22 controls, 0 clipped; property
+  combobox → Bluewater auto-fills Landsec as landlord + deal name; New
+  Letting; unit picker required-and-works; tenant → Starbucks; target
+  date) → POST 201 → row appears in the team-filtered table (post-fix),
+  survives reload, SOL KPI bumps → deal detail renders full (Parties/
+  Fee Allocation/KYC both parties/Files/Linked Property/Timeline/Audit,
+  "On tenancy spine" chip, 0 h-overflow) → as Mark: the Landsec-linked
+  deal is correctly VISIBLE in his 6-deal list + detail renders with 0
+  fee-section leaks (decided own-portfolio parity, r263/r297 gates).
+  Unit-less New Letting is correctly blocked with a clear toast. QA deal
+  deleted after; journey scripts under the round's scratchpad.
+- Bug fixed (1): a created deal with no team VANISHED from the creator's
+  deals list the moment the "Deal created" toast fired — the New Deal
+  dialog only auto-assigns teams for some deal types (New Letting,
+  Sub-Letting, Temp Lease, Consultancy get NONE), the list defaults its
+  team filter to the user's own team, and teamFilteredDeals hides
+  team-less deals whenever a team filter is active. Fix: the create form
+  now seeds the creator's active internal team (never the client
+  "Landsec" pseudo-team; clients keep [] — their list isn't
+  team-filtered), still editable in the team picker
+  (client/src/pages/deals.tsx DealFormDialog freshForm). Verified
+  in-browser pre/post: pre-fix the 201'd deal was absent from the list
+  even after reload; post-fix it lists immediately with the National
+  Leasing chip + team lands in the DB row. tsc clean, rebuilt, smoke
+  re-green.
+- Harness growth: two-bot create-deal scenario extended — after the
+  create it now asserts the deal carries a non-empty team via the API
+  (locks the r309 seeding; its old comment documenting "Consultant deals
+  carry no team so they won't appear in her filtered view" was the bug's
+  own footprint and is updated). node --check clean; round 309 ran the
+  pre-edit file, so first live run is r310; assertion verified live this
+  round via the journey (dialog-created deal → team ["National Leasing"]
+  in DB + API).
+- NOT bugs (triaged, for future rounds): the deals TABLE has no deal-name
+  column in the default 10/44 set — getByText(dealName) finds nothing
+  even when the row is present; assert via ref #/Property/Tenant cells
+  or the API. The simplified New Deal form's date input is
+  #deal-target-date (NO data-testid; input-deal-target-date is the
+  full/consultant form). "New Letting needs a unit" destructive toast on
+  unit-less create is intended validation, not a bug. Journey login must
+  retry on 429 while two-bot runs concurrently (login rate limiter).
+- Bugs deferred: none. Suggestions added: UX #57 (Deal-created toast has
+  no "View deal" link and the name-less table makes the new row hard to
+  find). New flakes: none.
+- Next journey: rotation #2 client desktop (r309 had the journey → r310
+  may be LIGHT; then #2).
 
 ### r308 · 2026-08-16 · LIGHT (r307 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust

@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+57. 2026-08-16 · BGP staff / desktop 1440px · "terms agreed — create the
+    new letting deal, then carry on working it" · after Create Deal the
+    dialog closes with a "Deal created" toast, but nothing points at the
+    deal just made: the toast has no link, the table's default 10/44
+    columns don't include the deal NAME, and the new row is only
+    findable by knowing its ref # or scanning Property/Unit cells (three
+    near-identical "Bluewater Shopping Centre" rows in the fixture).
+    Suggested: add a "View deal →" action on the Deal-created toast
+    (and/or highlight the new row briefly). Needs Woody's numbered
+    confirmation — not built.
+
 56. 2026-08-16 · BGP staff / mobile 390px · "on the phone: put a Bluewater
     lease-review call on the calendar" · staff /calendar has NO in-app
     Add-event — the button is isClientViewer-gated (clients write a

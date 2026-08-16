@@ -232,17 +232,22 @@ async function victoriaRound(page, cross) {
     await page.locator('[data-testid="input-deal-target-date"]').fill('2026-12-31');
     await page.locator('[data-testid="button-save-deal"]').click();
     await page.waitForTimeout(1800);
-    // Verify via the API, not the deals table — the table is team-filtered
-    // (Victoria = National Leasing) and Consultant deals carry no team, so a
-    // freshly-created one legitimately won't appear in her filtered view.
+    // Verify via the API, not the deals table (the table is team-filtered).
+    // Since r309 the create dialog seeds the creator's own team when no
+    // auto-team rule fires (Consultant/New Letting class) — assert the
+    // created deal carries it, else it vanishes from the creator's default
+    // team-filtered view the moment it's created.
     const check = await page.evaluate(async (needle) => {
       const r = await fetch('/api/crm/deals', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
       if (!r.ok) return { ok: false, status: r.status };
       const deals = await r.json();
-      return { ok: true, found: deals.some((d) => (d.name || '').includes(needle)) };
+      const deal = deals.find((d) => (d.name || '').includes(needle));
+      return { ok: true, found: !!deal, team: deal ? deal.team : null };
     }, `${stamp} Consultancy`);
     if (!check.ok) throw new Error(`deals API returned ${check.status} after create`);
     if (!check.found) throw new Error('deal saved (toast shown) but absent from /api/crm/deals');
+    const teams = Array.isArray(check.team) ? check.team : check.team ? [check.team] : [];
+    if (!teams.length) throw new Error('created deal has no team — it is invisible in the creator\'s team-filtered deals list (r309 seeding regressed)');
   });
 
   // 3. Letting tracker: open the first property, flip a status band
