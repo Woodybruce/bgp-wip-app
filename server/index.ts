@@ -4129,6 +4129,31 @@ app.use("/api/branding/assets", express.static(
           if (r.rowCount) console.log(`[care→cafe] healed ${r.rowCount} target-operator rows`);
         } catch { /* table may not exist on fresh DBs */ }
       }, 40000);
+      // One-off: clear mangled UK trading entities like "UK) Limited" — the
+      // entity scraper's broad fallback couldn't cross "("-prefixed tokens
+      // and stored the fragment after the bracket (Starbucks, spotted by
+      // Woody 2026-08-16). A ")" appearing before any "(" marks a truncated
+      // name. Cleared rows re-resolve via the weekly rescrape / the profile
+      // re-resolve button, both now on the fixed extractor. Audit in flag.
+      setTimeout(async () => {
+        const FLAG = "migration:uk_entity_paren_fragments_v1";
+        try {
+          const { rows: done } = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [FLAG]);
+          if (done[0]) return;
+          const { rows: bad } = await pool.query(
+            `SELECT id, name, uk_entity_name FROM crm_companies WHERE uk_entity_name ~ '^[^(]*\\)'`);
+          if (bad.length) {
+            await pool.query(`UPDATE crm_companies SET uk_entity_name = NULL WHERE uk_entity_name ~ '^[^(]*\\)'`);
+          }
+          await pool.query(
+            `INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2`,
+            [FLAG, JSON.stringify({ at: new Date().toISOString(), cleared: bad.length, rows: bad.slice(0, 200).map((b: any) => ({ id: b.id, name: b.name, was: b.uk_entity_name })) })],
+          );
+          console.log(`[uk-entity heal] cleared ${bad.length} truncated entity name(s): ${bad.slice(0, 10).map((b: any) => `${b.name} ("${b.uk_entity_name}")`).join("; ")}${bad.length > 10 ? "…" : ""}`);
+        } catch (e: any) {
+          console.error("[uk-entity heal] failed:", e?.message);
+        }
+      }, 45000);
       // Background crawls only run in production — too slow/fragile over local internet
       const isProduction = process.env.NODE_ENV === "production";
       if (isProduction) {

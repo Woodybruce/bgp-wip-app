@@ -2384,6 +2384,18 @@ export async function scrapeUkEntityFromWebsite(
     /org\.\s*no\.?\s*(0?\d{7,8})/i,   // H&M Group / Scandinavian phrasing
   ];
 
+  // Reject bracket fragments: a match that starts inside "(UK)" captures
+  // "UK) Limited" instead of "Starbucks Coffee Company (UK) Limited" —
+  // any candidate whose parens don't balance is a truncation, not a name.
+  const balancedParens = (s: string): boolean => {
+    let depth = 0;
+    for (const ch of s) {
+      if (ch === "(") depth++;
+      else if (ch === ")") { depth--; if (depth < 0) return false; }
+    }
+    return depth === 0;
+  };
+
   // ── Helper: extract entity/CH from a block of plain text ─────────────────
   function extractFromText(text: string, sourceUrl: string): { entityName: string | null; chNumber: string | null; sourceUrl: string } | null {
     let entityName: string | null = null;
@@ -2392,7 +2404,7 @@ export async function scrapeUkEntityFromWebsite(
       const m = text.match(pat);
       if (m?.[1]) {
         const candidate = m[1].trim().replace(/\s+/g, " ");
-        if (candidate.length <= 80 && !/[\[\]<>{}|]/.test(candidate)) {
+        if (candidate.length <= 80 && !/[\[\]<>{}|]/.test(candidate) && balancedParens(candidate)) {
           entityName = candidate;
           break;
         }
@@ -2406,14 +2418,17 @@ export async function scrapeUkEntityFromWebsite(
     // Limited entities (Stripe, Klarna, Google Payment, etc.) from winning.
     if (!entityName) {
       // Find any "X Ltd / X PLC / X LLP" on the page and score candidates.
-      // Pattern allows standalone & as a word (e.g. "H&M Hennes & Mauritz UK Ltd.").
-      const BROAD = /\b([A-Z][A-Za-z0-9&'.,()\-]+(?:\s+(?:&\s+)?[A-Z0-9][A-Za-z0-9&'.,()\-]+){0,5}\s+(?:Limited|Ltd\.?|PLC|plc|LLP|LP))\b/g;
+      // Pattern allows standalone & as a word (e.g. "H&M Hennes & Mauritz UK Ltd.")
+      // and "("-prefixed tokens ("Starbucks Coffee Company (UK) Limited") —
+      // without \(? the match started INSIDE the bracket and stored the
+      // fragment "UK) Limited".
+      const BROAD = /\b([A-Z][A-Za-z0-9&'.,()\-]+(?:\s+(?:&\s+)?\(?[A-Z0-9][A-Za-z0-9&'.,()\-]*\)?){0,5}\s+(?:Limited|Ltd\.?|PLC|plc|LLP|LP))\b/g;
       const scores = new Map<string, number>();
       let m: RegExpExecArray | null;
       while ((m = BROAD.exec(text)) !== null) {
         const name = m[1].trim().replace(/\s+/g, " ");
         if (name.length < 6 || name.length > 80) continue;
-        if (/[\[\]<>{}|]/.test(name)) continue;
+        if (/[\[\]<>{}|]/.test(name) || !balancedParens(name)) continue;
         if (/^(?:The|This|These|Our|Your|Their|All|Any|Some|Such|Other|Same|Both|Each|Every)\b/i.test(name)) continue;
         const win = text.slice(Math.max(0, m.index - 200), m.index + name.length + 200);
         let score = (scores.get(name) ?? 0) + 1;
@@ -2482,7 +2497,7 @@ Return both null if the page doesn't disclose a UK trading entity.`;
       const match = txt.match(/\{[\s\S]*?\}/);
       if (!match) return null;
       const parsed = JSON.parse(match[0]);
-      const entityName = typeof parsed?.entityName === "string" && parsed.entityName.trim() ? parsed.entityName.trim() : null;
+      const entityName = typeof parsed?.entityName === "string" && parsed.entityName.trim() && balancedParens(parsed.entityName) ? parsed.entityName.trim() : null;
       let chNumber: string | null = parsed?.chNumber || null;
       if (chNumber) {
         chNumber = String(chNumber).replace(/[^0-9A-Za-z]/g, "").toUpperCase();
