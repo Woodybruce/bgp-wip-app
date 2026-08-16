@@ -63,14 +63,50 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r305 · 2026-08-16 · FULL (rotation #3 client mobile 390px) — IN PROGRESS
+### r305 · 2026-08-16 · FULL (rotation #3 client mobile 390px)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore-as-postgres + ALTER owners + schema grant per r249).
   Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Journey done (client mobile
-  news + brand lookup — details in final entry); two-bot round 305
-  underway. Triage so far: journey sightings all listed noise (pre-auth
-  401s, ai-briefing 503 keyless).
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 305: exit 0,
+  189 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/403/404 +
+  no-key 503s; 403s the harness's negative probes; the 2 400s the
+  rocketreach + image-studio harness probes).
+- Journey: Mark Warne @ 390px iPhone UA — "over breakfast on my phone:
+  catch up on tenant news for the board, save an article for later, then
+  look up a tenant brand's contact" (FIRST client-mobile coverage of
+  /news and the bottom-nav round trip; r295 covered client news
+  DESKTOP): UI login via client form → Portfolio home (0 h-overflow) →
+  News via mobile-home-link-news tile → mobile feed renders (50 article
+  cards, external hrefs correct) → bottom-nav round trip Deals → Tasks
+  (quick-add strip + 1 open task render) → Messages (ChatBGP pinned,
+  clean empty state) → Portfolio → News, every tab lands right, 0
+  h-overflow on all legs → /brands hub (8-brand slice, category tiles,
+  search) → Starbucks profile (Key Contacts: Tom Barista; Compliance +
+  Covenant per 2026-08-01; 0 staff-leak buttons). All legs 0 page
+  errors, 0 non-noise sightings. Task NOT fully completable — the
+  save-for-later leg has no affordance on mobile (see UX #54): mobile
+  /news is the deliberately read-only MobileNewsFeed (no Save/Saved/
+  search/tags), works as designed but misses the desktop workflow.
+- NOT bugs (triaged, for future rounds): Tasks-page AI briefing card
+  shows "Preparing your briefing..." for a while before settling — just
+  react-query's retry window on the keyless ai-briefing 503, ends in the
+  "Generate Briefing" empty state (dashboard card shows the settled
+  state). Mobile news cards render a blank 16:9 image box while the
+  external image fetch hangs — no-external-network container artifact,
+  onError hides it once the fetch fails. Sidebar-trigger selectors find
+  nothing on client mobile — nav is mobile-home-link-* tiles +
+  bottom-nav-* testids, no hamburger.
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  client-mobile-brands-hub / client-mobile-no-overflow already lock the
+  geometry; /api/news-feed client reads locked by r295-6 scenarios;
+  this round's mobile-news + bottom-nav coverage was visual.
+- Bugs deferred: none. Suggestions added: UX #54 (mobile news feed is
+  read-only — no save/Saved path on the phone while desktop has the
+  full workflow). New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r305 had the journey →
+  r306 may be LIGHT; then #4).
 
 ### r304 · 2026-08-15 · LIGHT (r303 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
