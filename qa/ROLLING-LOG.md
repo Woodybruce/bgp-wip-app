@@ -63,6 +63,24 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r307 · 2026-08-16 · ROUND IN PROGRESS (FULL, rotation #4 staff mobile)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + per-object ALTER owners + schema grant
+  per r249). Regression: run-smoke.sh GREEN first pass (42 checks, 0
+  failures, fresh DB + FRESH_BUILD=1; no cold-build flake). Two-bot round
+  307 still running at heartbeat.
+- Journey done (triage underway): Victoria @ 390px — /properties →
+  Bluewater property page → tenancy Full Board (search Starbucks →
+  expiries visible) → /calendar. 0 h-overflow all legs, 0 page errors.
+  Triage list: (a) staff property page fires one doomed GET
+  /api/client/sharepoint/root 403 per load — property-detail.tsx:272
+  isClientViewer defaults TRUE while /api/auth/me loads, briefly
+  mounting the client files panel (fail-closed render, cosmetic 403);
+  (b) staff /calendar has NO Add-event on mobile — button is
+  isClientViewer-gated by design (staff events come from Outlook), not
+  a bug; (c) calendar day-view shows two clipped all-day event slivers
+  at the 06:00 top edge — to check.
+
 ### r306 · 2026-08-16 · LIGHT (r305 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore-as-postgres + ALTER owners + schema grant per r249).
