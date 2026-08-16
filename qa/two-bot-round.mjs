@@ -2989,6 +2989,27 @@ async function markRound(page, cross) {
       return { ok: v.ok && o.ok, vStatus: v.status, oStatus: o.status };
     });
     if (!r.ok) throw new Error(r.why || `viewings ${r.vStatus} / offers ${r.oStatus} for an in-scope unit`);
+    // Client-parity WRITE round-trip (r311: journey-verified in the dialogs;
+    // this locks the API path): the client logs a viewing on their own unit,
+    // it must land in the unit's list, and the client can remove it again.
+    const w = await page.evaluate(async (marker) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = Array.isArray(units) ? units[0] : null;
+      if (!unit) return { ok: false, why: 'no available units in client scope' };
+      const post = await fetch(`/api/available-units/${unit.id}/viewings`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ viewingDate: new Date().toISOString().slice(0, 10), attendees: marker }) });
+      if (!post.ok) return { ok: false, why: `client viewing POST ${post.status}` };
+      const made = await post.json();
+      const list = await (await fetch(`/api/available-units/${unit.id}/viewings`, { headers: auth })).json();
+      if (!(Array.isArray(list) && list.some((x) => x.id === made.id))) return { ok: false, why: 'client-logged viewing missing from unit list' };
+      const del = await fetch(`/api/available-units/viewings/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      if (!del.ok) return { ok: false, why: `client viewing DELETE ${del.status}` };
+      const after = await (await fetch(`/api/available-units/${unit.id}/viewings`, { headers: auth })).json();
+      if (Array.isArray(after) && after.some((x) => x.id === made.id)) return { ok: false, why: 'deleted viewing still listed' };
+      return { ok: true };
+    }, `QA-VIEWING-R${ROUND}-CLIENT`);
+    if (!w.ok) throw new Error(w.why);
     // And the Letting Tracker UI must render the controls that open them.
     // NB the client's tracker is the Deals-hub tab at /deals/letting —
     // /leasing-schedule is the leasing STRATEGY board (zones/positioning) and

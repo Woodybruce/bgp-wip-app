@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+58. 2026-08-16 · Landsec client / desktop 1440px · "a prospect viewed my
+    unit — log it quickly" · the Viewings/Offers dialog cards headline
+    the COMPANY name with a "No company" fallback, but the quick way to
+    log a viewing is date + attendees (Company/Contact pickers are
+    optional and easy to skip), so most hand-logged rows read "No
+    company" in bold with the actually-useful attendees line beneath.
+    Suggested: extend the headline fallback chain to attendees
+    (companyName || contactName || attendees || "No company") in the
+    viewings + offers cards (available-units.tsx ~2636/~2757). Needs
+    Woody's numbered confirmation — not built.
+
 57. 2026-08-16 · BGP staff / desktop 1440px · "terms agreed — create the
     new letting deal, then carry on working it" · after Create Deal the
     dialog closes with a "Deal created" toast, but nothing points at the
