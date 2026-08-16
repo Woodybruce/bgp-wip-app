@@ -63,13 +63,51 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r311 · 2026-08-16 · ROUND IN PROGRESS (provisional)
+### r311 · 2026-08-16 · FULL (rotation #2 client desktop)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore-as-postgres + ALTER owners + schema grant per r249).
   Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Triage: nothing to triage —
-  suite green. Two-bot round 311 + FULL journey (rotation #2 client
-  desktop — tracker viewing/offer WRITE dialogs) underway.
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 311: exit 0,
+  190 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (lone " 500 " grep hit is the "500 articles" news-feed
+  text; status tally only 2xx/3xx/expected 400/401/403/404 + no-key
+  503s; the 2 guest-login 404s were my own probe at the wrong endpoint —
+  the app's login POST is /api/auth/login).
+- Journey: Mark Warne desktop 1440px — "a prospect viewed my Bluewater
+  unit last week: log the viewing in the letting tracker, record their
+  interest, and check it all rolls up" (FIRST journey coverage of the
+  client tracker WRITE dialogs — r279/r297/r303 only opened them
+  read-only): UI login via client form → Portfolio home (0 h-overflow) →
+  /deals/letting (153 units, FY strip, search narrows to U124 rows, 0
+  h-overflow) → Viewings dialog → Add Viewing (date/time/attendees/
+  notes) → POST 201, "Viewing added" toast, row renders with edit pencil
+  + delete → Offers dialog → Add Offer → POST 201, "Offer added" toast,
+  Pending chip → both counts roll up on the unit row (1·1) AND the FY
+  KPI strip (Viewings/Offers bump), survive reload. Company/Contact
+  CrmPickers populate for clients from the SCOPED lists (probe: 10
+  companies / 5 contacts as Mark — not empty, not firm-wide). Client
+  viewing DELETE verified via API round-trip (200, gone from list).
+  Task completable; 0 page errors, 0 non-noise sightings; probe rows
+  cleaned up after (attendees/comments 'QA-R311%' aren't in run-round's
+  purge patterns — swept via SQL this round).
+- NOT bugs (triaged, for future rounds): tracker desktop TABLE uses
+  button-viewings-*/button-offers-* testids (unit-viewing-*/
+  unit-interest-* are the card layout); dialog quick entries left with
+  empty Company headline "No company" — pickers are optional by design
+  (see UX #58); 3 near-identical "U124/U125/U126 Bluewater" fixture rows
+  are data, not dupes (r309 note).
+- Bugs fixed: 0 (nothing broken found). Harness growth: two-bot
+  client-viewings-offers extended — client WRITE round-trip (POST a
+  viewing on an own unit → in list → client DELETE → gone) locking the
+  r311-journey-verified parity path. node --check clean; round 311 ran
+  the pre-edit file, so first live run is r312; assertions verified
+  standalone this round via API probes.
+- Bugs deferred: none. Suggestions added: UX #58 (viewing/offer cards
+  headline "No company" on quick entries — fall back to attendees).
+  New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r311 had the journey →
+  r312 may be LIGHT; then #3).
 
 ### r310 · 2026-08-16 · LIGHT (r309 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
