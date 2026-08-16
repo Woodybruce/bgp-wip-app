@@ -745,7 +745,9 @@ async function victoriaRound(page, cross) {
         localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
       }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
       await mobGoto(mob, `${BASE}/properties/${BLUEWATER}`, nav);
-      await mob.locator('[data-testid="toggle-files-section"]').first().waitFor({ timeout: 30000 });
+      // 60s to match nav: a fresh context's first property-page load can
+      // exceed 30s when another build is hogging the box (r308 flake).
+      await mob.locator('[data-testid="toggle-files-section"]').first().waitFor({ timeout: 60000 });
       await mob.waitForTimeout(4000);
       if (doomed.length) throw new Error(`staff property page fired client sharepoint fetch ×${doomed.length} (isClientViewer loading-window regression)`);
     } finally {
