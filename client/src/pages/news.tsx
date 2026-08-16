@@ -332,6 +332,25 @@ function FeedTab() {
     });
   }, [articles, categoryFilter, tagFilter, dismissedArticles]);
 
+  // Matches per tag in the loaded feed, ignoring the tag filter itself, so
+  // the chips can grey out zero-hit tags instead of silently emptying the
+  // feed when clicked (UX #49).
+  const tagCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const a of articles || []) {
+      if (dismissedArticles.has(a.id)) continue;
+      if (categoryFilter !== "All") {
+        const articleCat = (a.category || "").toLowerCase();
+        if (!articleCat.includes(categoryFilter.toLowerCase())) continue;
+      }
+      for (const t of a.aiTags || []) {
+        const key = t.toLowerCase();
+        counts[key] = (counts[key] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [articles, categoryFilter, dismissedArticles]);
+
   const totalArticles = articles?.length || 0;
   const scoredArticles = articles?.filter((a) => a.processed)?.length || 0;
   const activeSources = sources?.filter((s: any) => s.active)?.length || 0;
@@ -457,7 +476,7 @@ function FeedTab() {
         </Select>
       </div>
 
-      <NewsTagFilterChips selected={tagFilter} onChange={setTagFilter} />
+      <NewsTagFilterChips selected={tagFilter} onChange={setTagFilter} counts={tagCounts} />
 
       {isInsightsTab ? (
         <InsightsFeed isStaff={!isClientNews} />

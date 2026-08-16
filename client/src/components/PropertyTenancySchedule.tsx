@@ -623,7 +623,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
       return next;
     });
   };
-  const clearAllFilters = () => setColFilters({});
+  const clearAllFilters = () => { setColFilters({}); setSearch(""); setStatusFilter(null); };
 
   const { data: units = [], isLoading, error: unitsError } = useQuery<TenancyUnit[]>({
     queryKey: ["/api/tenancy-schedule/property", propertyId],
@@ -948,21 +948,31 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
             </a>
           </Button>
           <Badge variant="secondary" className="text-[10px]">{units.length} units</Badge>
-          {Object.keys(colFilters).length > 0 && (
+          {(Object.keys(colFilters).length > 0 || search || statusFilter) && (
             <Badge
               variant="outline"
               className="text-[10px] cursor-pointer border-indigo-400 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
               onClick={clearAllFilters}
               data-testid="tenancy-clear-filters"
             >
-              {filtered.length} filtered · clear
+              {filtered.length} of {units.length} · clear
             </Badge>
           )}
         </div>
         <div className="flex gap-2 flex-wrap">
-          <div className="relative">
-            <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
-            <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." className="h-7 text-xs pl-7 w-40" data-testid="tenancy-search" />
+          <div>
+            <div className="relative">
+              <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+              <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search..." className="h-7 text-xs pl-7 w-40" data-testid="tenancy-search" />
+            </div>
+            {/* Phones: the KPI tiles sit between this input and the table, so
+                typing gave no visible feedback (UX #45) — echo the match
+                count right under the box. Desktop sees the table move. */}
+            {search && (
+              <div className="text-[10px] text-muted-foreground mt-0.5 sm:hidden" data-testid="tenancy-search-count">
+                {filtered.length} of {units.length} units match
+              </div>
+            )}
           </div>
           <input type="file" ref={fileInputRef} accept=".xlsx,.xls" onChange={handleImport} className="hidden" />
           {!readOnly && !isClientViewer && (
