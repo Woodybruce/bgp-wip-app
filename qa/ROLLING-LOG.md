@@ -63,23 +63,62 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r307 · 2026-08-16 · ROUND IN PROGRESS (FULL, rotation #4 staff mobile)
+### r307 · 2026-08-16 · FULL (rotation #4 staff mobile 390px)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore-as-postgres + per-object ALTER owners + schema grant
-  per r249). Regression: run-smoke.sh GREEN first pass (42 checks, 0
-  failures, fresh DB + FRESH_BUILD=1; no cold-build flake). Two-bot round
-  307 still running at heartbeat.
-- Journey done (triage underway): Victoria @ 390px — /properties →
-  Bluewater property page → tenancy Full Board (search Starbucks →
-  expiries visible) → /calendar. 0 h-overflow all legs, 0 page errors.
-  Triage list: (a) staff property page fires one doomed GET
-  /api/client/sharepoint/root 403 per load — property-detail.tsx:272
-  isClientViewer defaults TRUE while /api/auth/me loads, briefly
-  mounting the client files panel (fail-closed render, cosmetic 403);
-  (b) staff /calendar has NO Add-event on mobile — button is
-  isClientViewer-gated by design (staff events come from Outlook), not
-  a bug; (c) calendar day-view shows two clipped all-day event slivers
-  at the 06:00 top edge — to check.
+  per r249). Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
+  FRESH_BUILD=1 before the fixes, rebuilt bundle after; no cold-build
+  flake either pass). Two-bot round 307: exit 0, 189 scenarios ok; 2
+  logged issues both listed noise (rocketreach-400; commentary-regen
+  503). 0 raw 500/502/504 in the whole round's dev-server log.
+- Journey: Victoria @ 390px iPhone UA — "Landsec asked about upcoming
+  lease events at Bluewater: open the property, find which leases expire
+  soonest on the full tenancy board, then put a review call on the
+  calendar" (FIRST staff-mobile coverage of /properties → property page →
+  tenancy Full Board → /calendar): UI login via guest form → dashboard →
+  /properties (Bluewater found) → property page (sections hydrate,
+  Schedule card open) → Full Board link → /tenancy-schedule/:id (KPIs,
+  200 units, search Starbucks → 2 rows, expiry 2027 visible) →
+  /calendar day view. 0 h-overflow all legs, 0 page errors. Calendar
+  leg NOT completable in-app for staff — Add-event is client-only by
+  design (staff events come from Outlook sync); logged as UX #56, not
+  a bug.
+- Bugs fixed (2):
+  1. Calendar events starting before the grid's 06:00 first hour got a
+     negative top and rendered as unreadable clipped slivers (seen with
+     two-bot's 05:06 QA-CAL rows on the day view). Now pinned to the
+     grid top with the block bottom kept at the real end time
+     (client/src/pages/calendar.tsx event positioning). Verified
+     in-browser: both 05:06 events render as full readable blocks at
+     top 0px / 44px height.
+  2. Staff property-page loads fired a doomed GET
+     /api/client/sharepoint/root → 403 on every view —
+     property-detail.tsx isClientViewer defaults TRUE while
+     /api/auth/me loads (deliberate fail-closed), briefly mounting the
+     client files panel for staff. The client branch now waits for
+     pdViewer before mounting the panel (fail-closed UI unchanged).
+     Verified in-browser: staff property load fires 0 sharepoint
+     requests + staff Files panel renders; client (Mark) panel still
+     mounts and fetches. tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 staff-property-no-client-sharepoint (fresh
+  context, staff property load must fire zero /api/client/sharepoint/root
+  requests). node --check clean; round 307 loaded the pre-edit file, so
+  first live run is r308; assertion verified standalone this round via
+  the verify script. Calendar clamp NOT harness-assertable cheaply —
+  /api/team-events only serves future events, so a deterministic
+  pre-6am fixture isn't available at arbitrary run times.
+- NOT bugs (triaged, for future rounds): staff /calendar has no
+  Add-event button (isClientViewer-gated by design — clients write
+  team_events, staff sync Outlook; UX #56 covers the gap). The two
+  clipped-sliver events were two-bot's own QA-CAL residue (start 05:06
+  = round start time), but the clipping defect was real for any
+  pre-6am event. Property page at 390px stacks 3 nav rows (top bar +
+  breadcrumb + back-link) — works, logged as UX #55.
+- Bugs deferred: none. Suggestions added: UX #55 (mobile property page
+  triple nav stack), UX #56 (staff have no in-app calendar add-event —
+  phone users lose CRM-linked quick capture). New flakes: none.
+- Next journey: rotation #1 staff desktop (r307 had the journey → r308
+  may be LIGHT; then #1).
 
 ### r306 · 2026-08-16 · LIGHT (r305 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
