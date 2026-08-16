@@ -63,12 +63,52 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r313 · 2026-08-16 · ROUND IN PROGRESS (heartbeat)
-- Fresh container. Regression: run-smoke.sh GREEN first pass (42 checks,
-  0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake). Two-bot
-  round 313 underway. Journey planned: rotation #3 client mobile 390px —
-  calendar add-event write + contacts + tasks quick-add.
-- Triage so far: nothing non-noise in smoke.
+### r313 · 2026-08-16 · FULL (rotation #3 client mobile 390px)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 313: exit 0,
+  190 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (lone " 500 " grep hit is the "500 articles" news-feed
+  text; status tally only 2xx/3xx/expected 400/401/403/404 + no-key
+  503s: 503s keyless-AI class, 404s HR-photo + sharepoint-root polling,
+  401s pre-auth /api/auth/me + M365 + login-screen brand-theme echo,
+  403s the harness's negative probes, the 400 the rocketreach probe).
+- Journey: Mark Warne @ 390px iPhone UA — "BGP are coming to Bluewater
+  Tuesday for a leasing review: put it in my calendar, find my BGP
+  contact to confirm, and jot a prep task" (FIRST journey coverage of
+  the client mobile CALENDAR WRITE + /contacts CRM tabs; r305/r297
+  covered news/brands/deals mobile): UI login via client form →
+  Portfolio home (0 h-overflow) → Calendar tile → day view renders
+  (concurrent two-bot QA-CAL rows visible, day-summary bar) → Add event
+  dialog (374px in 390 viewport, 0 clipped) → POST /api/team-events
+  200 → next-day ×2 to Tue 18 → event block renders 10:00 "Landsec"
+  attribution, survives reload → /contacts via CRM tile (Brand
+  Directory / Agents / Landsec Contacts tabs, 0 h-overflow) → Landsec
+  Contacts lists own people (incl. two-bot residue rows) → Tasks via
+  bottom nav → quick-add → POST /api/tasks 200, "Task created" toast,
+  row renders with Medium chip. 0 page errors, 0 non-noise sightings
+  all legs. Task PARTLY completable — the find-my-BGP-contact leg
+  dead-ends on mobile (UX #59): ClientTeamOrgChart is desktop
+  dashboard + company-profile only, Landsec Contacts tab has no BGP
+  staff and no search ("Search brands or people…" only exists on the
+  Brand Directory tab, and it doesn't match staff).
+- NOT bugs (triaged, for future rounds): mini month picker
+  (cal-day-N testids) is a hidden desktop rail on mobile — navigate the
+  day view via button-next-day/button-prev-day. Login form hides
+  behind button-show-guest-login ("Client / guest sign in") — 0 inputs
+  until clicked. My journey probe rows (QA-R313 team_event, QA-PROBE
+  task r313) aren't in run-round's purge patterns — swept via SQL this
+  round.
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  client-calendar-add-event already locks the calendar write API path;
+  this round's mobile dialog/day-view coverage was visual.
+- Bugs deferred: none. Suggestions added: UX #59 (client mobile has no
+  path to the BGP account team — no org-chart card on mobile home, no
+  staff in Landsec Contacts, no contact search). New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r313 had the journey →
+  r314 may be LIGHT; then #4).
 
 ### r312 · 2026-08-16 · LIGHT (r311 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust

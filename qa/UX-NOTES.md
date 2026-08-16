@@ -13,6 +13,21 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+59. 2026-08-16 · Landsec client / mobile 390px · "BGP are coming to
+    Bluewater — put it in my calendar, then find my BGP contact to
+    confirm" · the calendar + task legs work, but the find-my-BGP-
+    contact leg dead-ends on the phone: the ClientTeamOrgChart (the
+    "your BGP team" card) renders only on the desktop client dashboard
+    and company profiles — the mobile Portfolio home replaces the
+    dashboard and has no team card, /contacts' "Landsec Contacts" tab
+    lists only the client's OWN people with no BGP staff and no search
+    (the "Search brands or people…" box exists only on the Brand
+    Directory tab). A client on a phone has no way to look up who to
+    chase at BGP. Suggested: surface the BGP account team on mobile —
+    e.g. a compact "Your BGP team" row on the Portfolio home or a
+    third group in Landsec Contacts. Needs Woody's numbered
+    confirmation — not built.
+
 58. 2026-08-16 · Landsec client / desktop 1440px · "a prospect viewed my
     unit — log it quickly" · the Viewings/Offers dialog cards headline
     the COMPANY name with a "No company" fallback, but the quick way to
