@@ -741,9 +741,12 @@ async function victoriaRound(page, cross) {
       const doomed = [];
       mob.on('request', (r) => { if (r.url().includes('/api/client/sharepoint/root')) doomed.push(r.url()); });
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      // No cookies in this context, so the app's REAL token key must carry
+      // the auth — the UI reads bgp_auth_token (queryClient getAuthHeaders),
+      // not the legacy authToken key the cookie-backed scenarios plant.
+      await mob.evaluate((tok) => {
+        localStorage.setItem('bgp_auth_token', tok);
+      }, page.qaToken);
       await mobGoto(mob, `${BASE}/properties/${BLUEWATER}`, nav);
       // 60s to match nav: a fresh context's first property-page load can
       // exceed 30s when another build is hogging the box (r308 flake).
