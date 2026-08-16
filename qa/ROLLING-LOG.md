@@ -63,13 +63,39 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r308 · 2026-08-16 · ROUND IN PROGRESS (provisional heartbeat)
-- LIGHT round (r307 had the journey). Fresh container (repo pre-cloned at
-  /home/user/bgp-wip-app; pg_hba trust per r205; restore-as-postgres +
-  ALTER owners + schema grant per r249). Regression: run-smoke.sh GREEN
-  first pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no
-  cold-build flake). Two-bot round 308 underway — first live run of
-  r307's staff-property-no-client-sharepoint scenario; triage to follow.
+### r308 · 2026-08-16 · LIGHT (r307 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 308 final run:
+  exit 0, 190 scenarios ok; 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503). 0 raw 500/502/504 across the
+  whole day's dev-server log (status tally: only 2xx/3xx/expected
+  400/401/403/404 + no-key 503s; the extra 400s were my own repro
+  scripts' wrong-shape login probes).
+- HARNESS BUG fixed (not an app bug): r307's new
+  staff-property-no-client-sharepoint scenario failed its first live runs
+  (30s then 60s locator timeout) — it plants the legacy 'authToken'
+  localStorage key in a deliberately cookie-less fresh context, but the
+  app's UI reads its Bearer token from 'bgp_auth_token'
+  (queryClient.ts getAuthHeaders; login.tsx stores only that key). Every
+  other fresh-context scenario also copies session cookies, which mask
+  the wrong key — cookie-less runs land on the Sign-in screen
+  unauthenticated (r307's standalone verify, like my first repro, leaked
+  a session cookie via the request-context login, which is why it looked
+  green). Fix: the scenario now plants page.qaToken as 'bgp_auth_token'
+  (qa/two-bot-round.mjs); also kept a 60s selector wait to survive
+  builds hogging the box. Verified standalone cookie-less (selector 3s,
+  0 sharepoint fetches — the r307 app fix holds) AND live in-round
+  (green in the 190-ok run). App verified fine throughout: staff
+  property loads fire 0 /api/client/sharepoint/root fetches.
+- NOTE for future scenarios: 'authToken'/'user' localStorage plants are
+  no-ops for the app UI — auth in the harness contexts really rides on
+  the copied session cookies; cookie-less contexts must plant
+  'bgp_auth_token'.
+- Bugs fixed: 0 app bugs (nothing broken found); 1 harness auth-key bug
+  as above. Deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r308 was LIGHT → r309 FULL).
 
 ### r307 · 2026-08-16 · FULL (rotation #4 staff mobile 390px)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
