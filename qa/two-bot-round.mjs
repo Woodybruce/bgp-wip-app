@@ -728,6 +728,32 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r307: a STAFF property-page load must never fire the client-jailed
+  // sharepoint fetch. isClientViewer defaults true while /api/auth/me loads,
+  // which used to briefly mount ClientPropertyFoldersPanel for staff and 403
+  // GET /api/client/sharepoint/root on every staff property view. Fresh
+  // context so nothing is cached and the loading window really happens.
+  await step(page, p, 'staff-property-no-client-sharepoint', async () => {
+    const mobCtx = await page.context().browser().newContext();
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      const doomed = [];
+      mob.on('request', (r) => { if (r.url().includes('/api/client/sharepoint/root')) doomed.push(r.url()); });
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobGoto(mob, `${BASE}/properties/${BLUEWATER}`, nav);
+      await mob.locator('[data-testid="toggle-files-section"]').first().waitFor({ timeout: 30000 });
+      await mob.waitForTimeout(4000);
+      if (doomed.length) throw new Error(`staff property page fired client sharepoint fetch ×${doomed.length} (isClientViewer loading-window regression)`);
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // Task assignment (terminal, 2026-08-03): a task assigned to another staff
   // member lands on the ASSIGNEE's list. Victoria assigns to Woody; the
   // woody round verifies receipt. Swept by the QA-PROBE task purge.

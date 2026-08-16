@@ -950,7 +950,11 @@ export function PropertyDetail({ id }: { id: string }) {
                 testId="toggle-files-section"
               >
                 {isClientViewer ? (
-                  <ClientPropertyFoldersPanel propertyName={property.name} />
+                  // Wait for /api/auth/me before mounting: isClientViewer
+                  // defaults true while it loads, so staff loads briefly
+                  // mounted this panel and fired a doomed client-scoped
+                  // sharepoint fetch (403 on every staff property view).
+                  pdViewer ? <ClientPropertyFoldersPanel propertyName={property.name} /> : null
                 ) : (
                   <>
                     <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} />

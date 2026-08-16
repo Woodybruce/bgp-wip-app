@@ -13,6 +13,28 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+56. 2026-08-16 · BGP staff / mobile 390px · "on the phone: put a Bluewater
+    lease-review call on the calendar" · staff /calendar has NO in-app
+    Add-event — the button is isClientViewer-gated (clients write a
+    team_events row; staff events come from Outlook sync). Locally/on
+    the move that means a staff user on the phone can't jot a CRM
+    meeting at all: the page is view-only and the only write path is
+    switching to the Outlook app, losing the CRM linkage (company/
+    property tags) that client-created events get. Suggested: offer
+    staff the same lightweight Add-event dialog writing a team_events
+    row (kept separate from Outlook sync), or at least a deep link into
+    Outlook new-event. Needs Woody's numbered confirmation — not built.
+
+55. 2026-08-16 · BGP staff / mobile 390px · "open the Bluewater property
+    page" · the property page stacks THREE navigation rows before any
+    content at 390px: the mobile top bar ("← Property"), a breadcrumb
+    row ("Properties › Bluewater Shopping Centre"), and a second
+    back-link row ("← Properties /") — ~200px of a phone screen spent
+    on three ways to say the same thing before the property name
+    appears. Suggested: collapse to the top bar + one breadcrumb (drop
+    the duplicate back-link row on mobile). Needs Woody's numbered
+    confirmation — not built.
+
 54. 2026-08-16 · Landsec client / mobile 390px · "over breakfast: catch up
     on tenant news for the board and save an article for later" · the
     mobile /news feed (MobileNewsFeed in client/src/pages/news.tsx) is a
