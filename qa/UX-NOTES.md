@@ -13,6 +13,20 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+54. 2026-08-16 · Landsec client / mobile 390px · "over breakfast: catch up
+    on tenant news for the board and save an article for later" · the
+    mobile /news feed (MobileNewsFeed in client/src/pages/news.tsx) is a
+    read-only card list — no Save button, no Saved tab, no search, no tag
+    filters — while client desktop has the full save/Saved workflow
+    (r295/r296 even fixed bugs in it). An article spotted on the phone
+    can't be saved for later, and articles saved on desktop can't be
+    found on the phone; the user's only option is an external open in the
+    browser tab. Renders fine (0 overflow), so it works as designed —
+    just missing what this user wanted · Suggested: add a save/bookmark
+    affordance to the mobile news card and a way to reach the Saved list
+    (chip row or tab), reusing the existing /api/news-feed/engage +
+    /saved endpoints. Needs Woody's numbered confirmation — not built.
+
 53. 2026-08-15 · Landsec client / desktop 1440px · "took a brand back off my
     CRM watchlist after checking it out" · after removing a self-added brand
     via the Add-brand dialog (working as designed), the sidebar's Quick
