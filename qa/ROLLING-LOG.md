@@ -63,15 +63,59 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r317 · 2026-08-17 · ROUND IN PROGRESS (provisional heartbeat)
+### r317 · 2026-08-17 · FULL (rotation #1 staff desktop)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore-as-postgres + ALTER owners + schema grant per r249).
   Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 317 underway.
-- Plan: FULL round (r316 was LIGHT), rotation #1 staff desktop — comps
-  WRITE end-to-end (Add Comp dialog save, first visual coverage; r291
-  only geometry-probed the dialog on mobile) + client scoped-comps
-  cross-check as Mark.
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 317: exit 0,
+  190 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/403/404 +
+  no-key 503s; 403s the harness's negative probes + my journey's own
+  client comp write probes; 404s the listed HR-photo + sharepoint-root
+  polling; the 2 400s the rocketreach + image-studio harness probes;
+  401s pre-auth /api/auth/me + no-key M365 class; 503s all keyless-AI
+  class).
+- Journey: Victoria desktop 1440px — "just agreed a letting at
+  Bluewater: log the comp as rent-review evidence, check it's usable,
+  then confirm what the client sees" (FIRST staff-desktop WRITE
+  coverage of the Add Comp dialog — r291 only geometry-probed it on
+  mobile; r245 saw the empty board): UI login via guest form → /comps
+  (Leasing board, KPI strip, area chips, 0 h-overflow) → Add Comp
+  dialog → property picker types "Bluewater" → BGP-property dropdown
+  hit → "Linked to BGP property" badge → tenant/rent/Zone A/date →
+  POST 201, "Comp created" toast → row lists with BGP chip + £92,500
+  headline + computed £92,500 NET EFFECTIVE → search narrows →
+  survives reload → row detail renders (NER/property sections) → Rent
+  Analysis calculator: 92,500 headline / 10yr / 12mo RF amortised →
+  £83,250 pa NER + £33.30 net psf, maths correct → AS MARK: /comps is
+  the scoped read-only board (sees the Bluewater-linked comp per the
+  scheme scope, toolbar is calculators+Export only — 0 Add/Scan/Import/
+  bulk-verify leaks; API GET own-scheme comp 200, POST 403, DELETE 403).
+  Probe comp deleted via staff API (200) after. Task completable; 0
+  page errors, 0 non-noise sightings all legs.
+- NOT bugs (triaged, for future rounds): a second "QA-COMP R317,
+  Bluewater Shopping Centre" all-dash row mid-journey is two-bot's OWN
+  round-317 probe (line ~1150 stamps the round number — r285 residue-
+  collision class, not a double-submit). Comp row delete lives in the
+  per-row "…" dropdown menu (no button-delete-comp testid) — my row
+  locator missed it, cleaned via API instead; not a missing affordance.
+  Area doesn't auto-fill from the fixture Bluewater property (its
+  address JSON lacks city) — data, not the dialog.
+- Bugs fixed: 0 (nothing broken found). Harness growth: two-bot
+  client-comps-readonly extended — staff toolbar controls
+  (Add/Scan/Import) must not render for the client AND client comp
+  POST + DELETE must 403 (locks the journey-verified write guard;
+  scenario added to the negative-probe set so its 403s aren't logged).
+  node --check clean; round 317 ran the pre-edit file, so first live
+  run is r318; assertions verified live this round via the journey's
+  API probes (403/403) + client screenshot (0 leaks).
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+  (Round note: r317's heartbeat commit footer carries a non-standard
+  co-author name — r306 class, history kept, no force-push; final
+  commits use the repo-standard footer.)
+- Next journey: rotation #2 client desktop (r317 had the journey →
+  r318 may be LIGHT; then #2).
 
 ### r316 · 2026-08-17 · LIGHT (r315 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
