@@ -63,6 +63,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r319 · 2026-08-17 · ROUND IN PROGRESS (heartbeat)
+- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1). Two-bot round 319: first attempt crashed with
+  ECONNRESET on POST /api/auth/login during dev-server cold start (news
+  startup fetch running); clean re-run exit 0, all scenarios ok. 2 logged
+  issues both listed noise (rocketreach-400; commentary-regen 503). 0 raw
+  500/502/504 in the dev-server log (58 5xx all keyless-AI 503s; the 2
+  400s the rocketreach + image-studio harness probes).
+- Triage list: nothing app-side to triage. Journey (rotation #2 client
+  desktop, FULL) underway: Mark @1440px Image Studio first-coverage.
+
 ### r318 · 2026-08-17 · LIGHT (r317 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore-as-postgres + per-object ALTER owners + schema grant
