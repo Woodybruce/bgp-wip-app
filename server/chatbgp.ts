@@ -556,6 +556,7 @@ function getToolProgressLabel(toolName: string): string {
     read_sharepoint_file: "Reading file...",
     search_news: "Searching news...",
     search_green_street: "Searching Green Street...",
+    manage_chat_members: "Updating chat members...",
     query_leasing_schedule: "Querying leasing schedule...",
     import_leasing_schedule: "Importing leasing schedule...",
     query_turnover: "Querying turnover data...",
@@ -1150,6 +1151,9 @@ You have read AND write access to almost every operational table in the BGP data
 - **sql_write**: insert / update / delete. Every write is audited. \`where\` is required for update + delete (you can't accidentally wipe a table). Off-limits: users, sessions, api_keys, msal_token_cache, file_storage.
 - **Confirmation rule for destructives**: Before any DELETE that could affect more than ~10 rows, run sql_query first to count + sample, show the user the number and a few representative rows, then wait for explicit "yes" / "do it" before running sql_write. For UPDATEs of more than ~50 rows, same pattern. Single-row or trivially-small ops can run without a preview.
 - The Brand Library (\`category = 'Brands'\` in image_studio_images) is curated — only delete from it if the user is explicit about wanting to.
+
+## Sharing this chat with colleagues (manage_chat_members)
+You CAN add BGP colleagues to the current chat thread — never claim you can't. \`manage_chat_members(action:'add', personName:'Jonny Palmer')\` shares THIS thread: they see it in their own ChatBGP sidebar with the full history and can join the conversation. 'remove' and 'list' work too. Staff only — client logins can never be added. (Users can also do it themselves: tapping the chat title opens the thread panel with Team Members → Add Member.)
 
 ## Memory Systems
 1. **Auto-memories** (per-user): Extracted automatically after conversations. Loaded in future chats.
@@ -1873,7 +1877,7 @@ export const CLIENT_BLOCKED_TOOLS = new Set([
   "trigger_archivist_crawl", "run_brand_enrichment_backfill", "import_wip_excel",
   // 3. BGP money + internal memory
   "query_wip", "query_xero", "search_knowledge_base", "save_learning",
-  "search_chat_history",
+  "search_chat_history", "manage_chat_members",
 ]);
 
 export function isToolAllowedForClient(name: string): boolean {
@@ -4007,6 +4011,22 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           returning: { type: "boolean", description: "Default true — return the affected rows. Set false for huge bulk ops where you don't need them." },
         },
         required: ["table", "op"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "manage_chat_members",
+      description: "Add or remove a BGP colleague on the CURRENT chat thread, or list who's in it. Added members see this thread in their own ChatBGP sidebar with the full history and can join the conversation. Use whenever someone says 'add <name> to this chat' / 'share this thread with <name>'. Staff only — client logins can never be added. Only works inside a saved thread.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["add", "remove", "list"], description: "What to do." },
+          personName: { type: "string", description: "The colleague's name, e.g. 'Jonny Palmer'. Fuzzy-matched against BGP staff. Required for add/remove." },
+        },
+        required: ["action"],
       },
     },
   });
@@ -7920,6 +7940,76 @@ export async function executeCrmToolRaw(
       ? { type: "db_changed" as const, table: String(fnArgs.table || ""), op: fnArgs.op }
       : undefined;
     return { data: result, ...(action ? { action } : {}) };
+  }
+
+  if (fnName === "manage_chat_members") {
+    // Share the CURRENT thread with a colleague (or remove / list). Members
+    // get the thread in their own sidebar via the existing chat_thread_members
+    // mechanics — same rows the group-chat UI writes.
+    const threadId = (req.body?.threadId as string) || null;
+    if (!threadId) return { data: { error: "This chat isn't a saved thread yet — once the conversation has a thread (send one message first), people can be added." } };
+    const sessionUserId = req.session?.userId || (req as any).tokenUserId || null;
+    const action = String(fnArgs.action || "list");
+    try {
+      const t = await pool.query(`SELECT id, created_by FROM chat_threads WHERE id = $1`, [threadId]);
+      if (!t.rows[0]) return { data: { error: "Thread not found." } };
+      if (action === "list") {
+        const m = await pool.query(
+          `SELECT u.id, u.name, 'owner' AS kind FROM users u WHERE u.id = $2
+           UNION ALL
+           SELECT u.id, u.name, 'member' AS kind
+             FROM chat_thread_members tm JOIN users u ON u.id = tm.user_id
+            WHERE tm.thread_id = $1`,
+          [threadId, t.rows[0].created_by],
+        );
+        return { data: { members: m.rows } };
+      }
+      const name = String(fnArgs.personName || "").trim();
+      if (!name) return { data: { error: "personName is required for add/remove." } };
+      // Staff only: client logins must never be pulled into internal threads.
+      let candidates = await pool.query(
+        `SELECT id, name FROM users
+          WHERE COALESCE(role, '') <> 'Client' AND name ILIKE '%' || $1 || '%'
+          ORDER BY name LIMIT 5`,
+        [name],
+      );
+      if (candidates.rows.length === 0 && name.includes(" ")) {
+        // Fall back to first-name match ("Jonny" for "Jonny Palmer" typos)
+        candidates = await pool.query(
+          `SELECT id, name FROM users
+            WHERE COALESCE(role, '') <> 'Client' AND name ILIKE '%' || $1 || '%'
+            ORDER BY name LIMIT 5`,
+          [name.split(/\s+/)[0]],
+        );
+      }
+      if (candidates.rows.length === 0) return { data: { error: `No BGP staff member matching "${name}" found.` } };
+      if (candidates.rows.length > 1) {
+        return { data: { needsClarification: true, note: "Multiple staff match — ask which one.", candidates: candidates.rows.map((c: any) => c.name) } };
+      }
+      const person = candidates.rows[0];
+      if (action === "add") {
+        if (person.id === t.rows[0].created_by) return { data: { ok: true, note: `${person.name} owns this thread already.` } };
+        const dupe = await pool.query(`SELECT 1 FROM chat_thread_members WHERE thread_id = $1 AND user_id = $2 LIMIT 1`, [threadId, person.id]);
+        if (dupe.rows[0]) return { data: { ok: true, note: `${person.name} is already in this chat.` } };
+        await storage.addChatThreadMember({ threadId, userId: person.id, addedBy: sessionUserId, seen: false });
+        try {
+          const { emitMemberAdded } = await import("./websocket");
+          emitMemberAdded(threadId, person.id, person.name);
+        } catch {}
+        return { data: { ok: true, added: person.name, note: `${person.name} now sees this thread in their ChatBGP sidebar with the full history and can join the conversation.` } };
+      }
+      if (action === "remove") {
+        await storage.removeChatThreadMember(threadId, person.id);
+        try {
+          const { emitMemberRemoved } = await import("./websocket");
+          emitMemberRemoved(threadId, person.id);
+        } catch {}
+        return { data: { ok: true, removed: person.name } };
+      }
+      return { data: { error: `Unknown action "${action}".` } };
+    } catch (err: any) {
+      return { data: { error: err?.message || String(err) } };
+    }
   }
 
   if (fnName === "web_search") {
@@ -14262,8 +14352,21 @@ export function setupChatBGPRoutes(app: Express) {
         const thread = await storage.getChatThread(sseThreadId);
         if (thread && thread.createdBy === req.session.userId) {
           verifiedThreadId = sseThreadId;
+        } else if (thread) {
+          // Shared thread: members chat in the same thread (that's what
+          // "add <name> to this chat" means), so their assistant replies
+          // must save too — creator-only would silently drop them.
+          const m = await pool.query(
+            `SELECT 1 FROM chat_thread_members WHERE thread_id = $1 AND user_id = $2 LIMIT 1`,
+            [sseThreadId, req.session.userId],
+          );
+          if (m.rows[0]) {
+            verifiedThreadId = sseThreadId;
+          } else {
+            console.warn(`[ChatBGP] threadId ${sseThreadId} not owned by or shared with user ${req.session.userId}`);
+          }
         } else {
-          console.warn(`[ChatBGP] threadId ${sseThreadId} not owned by user ${req.session.userId}`);
+          console.warn(`[ChatBGP] threadId ${sseThreadId} not found`);
         }
       } catch {}
     }
