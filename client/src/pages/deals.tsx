@@ -1498,13 +1498,16 @@ function SimplifiedCreateBody({
   hideFees?: boolean;
 }) {
   // Counterparty picker contextual label + filter — driven by deal type.
-  // Tenant Acquisition + New Letting + Sub-Letting + Consultancy + Secondment
-  // fall through to "auto", which renders BOTH landlord and tenant pickers
+  // Tenant Acquisition + New Letting + Sub-Letting + Consultancy fall
+  // through to "auto", which renders BOTH landlord and tenant pickers
   // so the agent can link either side as the deal needs.
   // Sale + Purchase use "investment" which renders BOTH vendor and
   // purchaser pickers — the * marker on the client side comes from
   // clientRole below.
+  // Secondment is landlord-only (Woody, 2026-08): no property, no tenant —
+  // we're placing a person with the landlord, not doing a property deal.
   const dt = form.dealType || "";
+  const isSecondment = dt === "Secondment";
   const isInvestment = dt === "Purchase" || dt === "Sale";
   // Sale / Purchase use "investment" (vendor + purchaser pickers).
   // Everything else uses "leasing" (landlord + tenant pickers). Both
@@ -1522,13 +1525,15 @@ function SimplifiedCreateBody({
   //   Lease Disposal → tenant
   //   New Letting → landlord
   //   Lease Renewal / Rent Review / Regear → either (ambiguous, user picks)
-  //   Tenant Acquisition / Sub-Letting / Consultancy / Secondment → either
+  //   Secondment → landlord (we second staff to the landlord)
+  //   Tenant Acquisition / Sub-Letting / Consultancy → either
   const clientRole: "landlord" | "tenant" | "vendor" | "purchaser" | null =
     dt === "Sale" ? "vendor"
     : dt === "Purchase" ? "purchaser"
     : dt === "Lease Acquisition" ? "tenant"
     : dt === "Lease Disposal" ? "tenant"
     : dt === "New Letting" ? "landlord"
+    : dt === "Secondment" ? "landlord"
     : null;
 
   // Deal name auto-fill rule (Woody, 2026-05): non-investment uses
@@ -1641,6 +1646,9 @@ function SimplifiedCreateBody({
         For marketing / viewings / negotiating units, use the{" "}
         <a href="/deals/letting" className="underline">Letting Tracker → Add Unit</a> instead.
       </div>
+      {/* Secondment has no property — the deal is a person placed with a
+          landlord, so the picker is hidden and the deal is named manually. */}
+      {!isSecondment && (
       <div>
         <Label>Property *</Label>
         <PropertyCombobox
@@ -1693,6 +1701,7 @@ function SimplifiedCreateBody({
           }}
         />
       </div>
+      )}
 
       <div>
         <Label>Deal Type *</Label>
@@ -1708,6 +1717,18 @@ function SimplifiedCreateBody({
             else if (["Lease Disposal", "Lease Renewal", "Rent Review", "Regear"].includes(val)) autoTeam = "Lease Advisory";
             if (autoTeam && !form.team.includes(autoTeam)) {
               setForm((p: any) => ({ ...p, team: [...p.team, autoTeam] }));
+            }
+            // Switching to Secondment hides the Property + Tenant fields —
+            // drop anything already picked so it doesn't save invisibly,
+            // including a name auto-filled from those now-cleared fields.
+            if (val === "Secondment") {
+              setForm((p: any) => ({
+                ...p,
+                propertyId: "", unitId: "",
+                tenantId: "", tenantEntityId: "", tenantEntityName: "",
+                ...(nameAutoFilled ? { name: "" } : {}),
+              }));
+              return;
             }
             applyAutoName({ ...form, dealType: val });
           }}
@@ -1809,7 +1830,7 @@ function SimplifiedCreateBody({
           Both names are needed to fire the right AML chain (full KYC
           on the client, lighter screen on the counterparty). */}
       {counterpartyKind === "leasing" && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className={`grid grid-cols-1 ${isSecondment ? "" : "sm:grid-cols-2"} gap-3`}>
           <div className="space-y-1.5">
             <Label>Landlord{clientRole === "landlord" ? " * (client)" : " *"}</Label>
             <EntityCombobox
@@ -1841,6 +1862,7 @@ function SimplifiedCreateBody({
               </div>
             )}
           </div>
+          {!isSecondment && (
           <div className="space-y-1.5">
             <Label>Tenant{form.dealType === "Consultancy" ? " (optional)" : clientRole === "tenant" ? " * (client)" : " *"}</Label>
             <EntityCombobox
@@ -1872,6 +1894,7 @@ function SimplifiedCreateBody({
               </div>
             )}
           </div>
+          )}
         </div>
       )}
       {counterpartyKind === "investment" && (
@@ -1942,7 +1965,9 @@ function SimplifiedCreateBody({
       )}
 
       <div>
-        <Label htmlFor="deal-name">Deal Name <span className="text-muted-foreground text-xs">(auto-fills as {counterpartyKind === "investment" ? "Client – Property" : "Tenant – Property"})</span></Label>
+        <Label htmlFor="deal-name">Deal Name {isSecondment
+          ? <span className="text-rose-600">*</span>
+          : <span className="text-muted-foreground text-xs">(auto-fills as {counterpartyKind === "investment" ? "Client – Property" : "Tenant – Property"})</span>}</Label>
         <Input
           id="deal-name"
           value={form.name}
@@ -2289,7 +2314,11 @@ export function DealFormDialog({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim() && !form.propertyId) {
-      toast({ title: "Either a property or deal name is required", variant: "destructive" });
+      // Secondment has no property field, so the name is the only handle.
+      toast({
+        title: form.dealType === "Secondment" ? "Deal name required" : "Either a property or deal name is required",
+        variant: "destructive",
+      });
       return;
     }
     // Target Date is mandatory — without it the deal floats around the
@@ -2340,7 +2369,8 @@ export function DealFormDialog({
         // Leasing-side deal types — landlord + tenant both required so AML
         // can fire on the client + counterparty. Consultancy is advisory work
         // that often has no tenant yet, so tenant is optional there.
-        const tenantRequired = form.dealType !== "Consultancy";
+        // Secondment is landlord-only — no tenant (or property) on the form.
+        const tenantRequired = form.dealType !== "Consultancy" && form.dealType !== "Secondment";
         if (!form.landlordId || (tenantRequired && !form.tenantId)) {
           toast({
             title: tenantRequired ? "Landlord and Tenant required" : "Landlord required",
