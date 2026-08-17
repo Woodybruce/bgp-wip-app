@@ -169,11 +169,13 @@ async function visit(page, persona, path, label) {
 // that aborts the NEXT navigation (the r204 class; flaked once under round
 // load as ERR_ABORTED at /requirements). Retry once so the page really lands
 // on the target instead of swallowing the abort and asserting elsewhere.
+// r320: the same race also surfaces as Playwright's "is interrupted by
+// another navigation" wording (seen at /properties/:id) — retry that too.
 async function mobGoto(pg, url, nav) {
   try {
     await pg.goto(url, nav);
   } catch (e) {
-    if (!/ERR_ABORTED/.test(String(e))) throw e;
+    if (!/ERR_ABORTED|interrupted by another navigation/.test(String(e))) throw e;
     await pg.waitForTimeout(1000);
     await pg.goto(url, nav);
   }
