@@ -63,13 +63,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r322 · 2026-08-17 · LIGHT — ROUND IN PROGRESS (provisional)
+### r322 · 2026-08-17 · LIGHT (r321 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore + SUPERUSER bgp role + schema grant per r249/r321).
   Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 322 running next
-  (dev server warmed >60s before start per r319 note). Triage so far: none —
-  smoke clean. r321 deferred: none to pick up.
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 322: exit 0,
+  all scenarios ok first run (dev server warmed ~4min before start per
+  the r319 note — no ECONNRESET). 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503). 0 raw 500/502/504 in the
+  round's dev-server log (140 5xx all keyless-AI 503s — ai-briefing /
+  ai-take / brand-gaps / chatbgp / os-sites / contact-verify classes;
+  the 2 400s the rocketreach + image-studio harness probes). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r322 was LIGHT → r323
+  FULL).
 
 ### r321 · 2026-08-17 · FULL (rotation #3 client mobile 390px)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
