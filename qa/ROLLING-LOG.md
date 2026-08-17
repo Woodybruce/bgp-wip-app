@@ -63,14 +63,52 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r323 · 2026-08-17 · ROUND IN PROGRESS (provisional)
-- FULL round (r322 was LIGHT); journey planned: rotation #4 staff mobile
-  390px. Fresh container (repo pre-cloned at /home/user/bgp-wip-app;
-  pg_hba trust per r205; restore + SUPERUSER bgp role + schema grant per
-  r249). Regression: run-smoke.sh GREEN first pass (42 checks, 0
-  failures, fresh DB + FRESH_BUILD=1; no cold-build flake). Triage: no
-  failures to triage. Two-bot round 323 next (dev server warmed before
-  start per r319 note), then the journey.
+### r323 · 2026-08-17 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore + SUPERUSER bgp role + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 323: exit 0,
+  192/192 ok first run (dev server warmed ~5min before start per the r319
+  note — no ECONNRESET). 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503). 0 raw 500/502/504 in the
+  round's dev-server log (148 5xx all keyless-AI 503s — ai-briefing /
+  ai-take / brand-gaps / chatbgp / os-sites / contact-verify /
+  rocketreach-refresh / competitors-research classes).
+- Journey: Victoria @ 390px iPhone UA — "on the move: check how my
+  Bluewater letting deals are progressing, open one, then jot a chase-up
+  task from my phone" (FIRST staff-mobile coverage of the /deals/list
+  board + deal detail + /tasks quick-add WRITE; r307 covered
+  properties/tenancy/calendar, r315 brands/contacts): UI login via guest
+  form → staff mobile home (tile grid + bottom nav render, ChatBGP bar,
+  billing KPIs; 0 h-overflow) → Deals via home tile → /deals/list card
+  layout (stage chips All/SOL/EXC, New Deal button, search) → search
+  "Bluewater" narrows 3→2 cards, header recounts → deal detail
+  ("U124 Bluewater — Gail's letting") renders full stacked (Parties/Fee
+  Allocation/Xero/Deal Activity/KYC sections, breadcrumb, Edit; 0
+  h-overflow) → /tasks → quick-add "Add a task..." input → Enter → POST
+  /api/tasks 200, "Task created" toast, row renders in All tab. Task
+  completable; 0 page errors, 0 non-noise sightings all legs. Probe rows
+  swept via SQL after (lowercase 'r323' titles dodge run-round's purge
+  AND two-bot's uppercase R323 rows — LIKE is case-sensitive).
+- Tester notes for future rounds: (1) staff mobile layout REQUIRES touch
+  emulation — useIsMobile is narrow-viewport AND isTouchDevice, so a
+  Playwright context without hasTouch:true gets the pinned desktop
+  sidebar squeezing content into ~166px at 390px (looks like a horrid
+  bug; it's the deliberate narrow-desktop-window behaviour — set
+  hasTouch:true + isMobile:true). (2) psql -tA prints the "DELETE n"
+  command tag as an output line — `RETURNING id | wc -l` overcounts by
+  1; a phantom "duplicate task" chased this round was exactly that
+  (clean repro: 1 Enter = 1 POST = 1 row; POST-count arithmetic across
+  the dev log matched).
+- Bugs fixed: 0 (nothing broken found — the one suspect above
+  adversarially verified as tester error). Deferred: none. Suggestions
+  added: UX #63 (deals-board stage chips keep unfiltered counts while
+  search narrows the list + header — numbers disagree, UX #61 class).
+  Harness growth: none needed — task create/PATCH/DELETE already covered
+  (two-bot ~794/~4023); this round's mobile coverage was visual.
+  New flakes: none.
+- Next journey: rotation #1 staff desktop (r323 had the journey → r324
+  may be LIGHT; then #1).
 
 ### r322 · 2026-08-17 · LIGHT (r321 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust

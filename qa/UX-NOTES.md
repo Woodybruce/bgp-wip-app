@@ -13,6 +13,15 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+63. 2026-08-17 · BGP staff / mobile 390px (desktop chips behave the same
+    on search) · "find my Bluewater deals on the phone" · typing in the
+    deals-board search narrows the card list and the header count
+    ("2 deals — National Leasing") but the stage filter chips keep their
+    unfiltered totals ("All 3 · SOL 2 · EXC 1"), so the header says 2
+    while the chip row says 3 — same numbers-vs-cards disagreement class
+    as UX #61. Suggested: recount the stage chips against the searched
+    set (or visually mute them while a search is active).
+
 62. 2026-08-17 · Landsec client / mobile 390px (staff mobile has the same
     board) · "which of my Bluewater leases expire soonest?" · the tenancy
     Full Board on a phone is the full 34-column desktop sheet in a
