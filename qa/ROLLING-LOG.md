@@ -63,6 +63,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r315 · 2026-08-17 · ROUND IN PROGRESS (heartbeat)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 315 underway.
+- FULL round (r314 was LIGHT): rotation #4 staff mobile 390px — journey
+  targets the staff-mobile New Contact WRITE (first coverage). Triage so
+  far: journey leg 2 found button-create-contact not visible on /contacts
+  at 390px — investigating whether the header actions are hidden on
+  mobile (possible bug) or a selector issue.
+
 ### r314 · 2026-08-16 · LIGHT (r313 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore-as-postgres + ALTER owners + schema grant per r249).
