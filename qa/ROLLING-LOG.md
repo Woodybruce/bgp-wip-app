@@ -63,6 +63,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r321 · 2026-08-17 · FULL (rotation #3 client mobile 390px) — IN PROGRESS
+- Provisional heartbeat. Fresh container (repo pre-cloned at
+  /home/user/bgp-wip-app; pg_hba trust per r205; restore + schema grant per
+  r249 — reassign-owned errors out on system objects, superuser bgp role +
+  schema grant suffice). Regression: run-smoke.sh GREEN first pass (42
+  checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake).
+  Two-bot round 321 running now. Journey planned: Mark Warne @ 390px —
+  Bluewater tenancy expiries + comps evidence from the phone.
+- Triage so far: nothing to triage from smoke (0 failures).
+
 ### r320 · 2026-08-17 · LIGHT (r319 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore-as-postgres + ALTER owners + schema grant per r249).
