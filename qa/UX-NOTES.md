@@ -13,6 +13,20 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+62. 2026-08-17 · Landsec client / mobile 390px (staff mobile has the same
+    board) · "which of my Bluewater leases expire soonest?" · the tenancy
+    Full Board on a phone is the full 34-column desktop sheet in a
+    horizontal-scroll container: only Unit is pinned, so reaching the
+    Expiry / Unexp columns means swiping through Tenant, Lease, GIA, NIA,
+    Rental, MLA, Occupational-cost bands one screen at a time — and the
+    column headers offer filters but no sort, so "soonest expiry" can't
+    be surfaced at all without reading every row. The KPI cards (WAULT,
+    occupied/vacant) render mobile-friendly, so the page LOOKS adapted
+    until you hit the table. Suggested: a mobile card view (unit / tenant
+    / expiry / rent per card, like the tracker's card layout) or at least
+    tap-to-sort on date columns so lease-event questions are answerable
+    from a phone.
+
 61. 2026-08-17 · Landsec client / desktop 1440px (staff see it too) ·
     "browse my imagery in Image Studio" · the section tabs count
     non-Brands images ("Library (1)") and the Categories rail's "All"
