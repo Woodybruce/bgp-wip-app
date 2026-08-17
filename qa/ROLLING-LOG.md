@@ -63,14 +63,25 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r318 · 2026-08-17 · ROUND IN PROGRESS (provisional)
-- LIGHT round (r317 had the journey). Fresh container (repo pre-cloned at
-  /home/user/bgp-wip-app; pg_hba trust per r205; restore-as-postgres +
-  per-object ALTER owners + schema grant per r249).
-- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 318 underway —
-  FIRST live run of r317's extended client-comps-readonly assertions.
-- Triage list: pending two-bot completion.
+### r318 · 2026-08-17 · LIGHT (r317 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + per-object ALTER owners + schema grant
+  per r249). Regression: run-smoke.sh GREEN first pass (42 checks, 0
+  failures, fresh DB + FRESH_BUILD=1; no cold-build flake). Two-bot round
+  318: exit 0, all scenarios ok — incl. the FIRST live run of r317's
+  extended client-comps-readonly (green; staff toolbar controls stay
+  hidden for the client AND client comp POST + DELETE 403 — the write
+  guard holds). 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/403/404 +
+  no-key 503s; 403s the harness's negative probes; 404s the listed
+  HR-photo + sharepoint-root polling + the harness's requirements-leasing
+  probe; the 2 400s the rocketreach + image-studio harness probes; 401s
+  pre-auth /api/auth/me + no-key M365 class + the login-screen
+  brand-theme echo; 503s all keyless-AI/OS_API_KEY class). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #2 client desktop (r318 was LIGHT → r319 FULL).
 
 ### r317 · 2026-08-17 · FULL (rotation #1 staff desktop)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
