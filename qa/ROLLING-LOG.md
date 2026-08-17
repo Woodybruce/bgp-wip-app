@@ -63,6 +63,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r320 · 2026-08-17 · ROUND IN PROGRESS (provisional)
+- LIGHT round (r319 had the journey). Regression: run-smoke.sh GREEN first
+  pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1). Two-bot round
+  320: exit 0, 191 scenarios ok — incl. the FIRST live runs of r319's
+  agent-seed-firm-pool-image + client-image-bytes-scoped (both green; the
+  image byte scope-jail holds live). 3 logged issues: 2 listed noise
+  (rocketreach-400; commentary-regen 503) + 1 flow-failure
+  staff-property-tenancy-mobile — goto "interrupted by another navigation
+  to /" right after the localStorage plant (r204/r273 redirect-on-mount
+  race under a NEW Playwright error wording; mobGoto only retries
+  ERR_ABORTED). App verified fine standalone: 3/3 exact-pattern repro
+  attempts loaded /properties/:id + tenancy sheet at 390px. Triage: 0 raw
+  500/502/504 in dev-server log. Plan: harden mobGoto to retry the
+  interrupted-navigation wording, re-verify.
+
 ### r319 · 2026-08-17 · FULL (rotation #2 client desktop)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore-as-postgres + ALTER owners + schema grant per r249).
