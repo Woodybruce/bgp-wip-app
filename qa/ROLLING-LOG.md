@@ -63,6 +63,12 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r324 · 2026-08-17 · ROUND IN PROGRESS (provisional)
+- LIGHT round (r323 had the journey). Fresh container (repo pre-cloned at
+  /home/user/bgp-wip-app; pg_hba trust per r205). Regression: run-smoke.sh
+  GREEN first pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1).
+  Two-bot sweep next; triage to follow.
+
 ### r323 · 2026-08-17 · FULL (rotation #4 staff mobile 390px)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; restore + SUPERUSER bgp role + schema grant per r249).
