@@ -65,7 +65,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -851,6 +851,27 @@ async function victoriaRound(page, cross) {
     cross.briefUnitId = r.unitId;
     cross.briefStamp = title;
     cross.briefId = r.briefId;
+  });
+
+  // Seed a firm-pool-only image (no property/company link) for the client
+  // bytes-scope probe below — staff uploads carry no scope stamp, so this
+  // row must never be readable by a scoped caller. Reuses the
+  // qa-unit-photo.jpg name so run-round's purge sweeps it.
+  await step(page, p, 'agent-seed-firm-pool-image', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const b64 = '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAA//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AfwD/2Q==';
+      const bin = atob(b64); const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const fd = new FormData();
+      fd.append('images', new Blob([arr], { type: 'image/jpeg' }), 'qa-unit-photo.jpg');
+      const up = await fetch('/api/image-studio/upload', { method: 'POST', headers: auth, body: fd });
+      if (!up.ok) return { ok: false, status: up.status };
+      const rows = await up.json();
+      return { ok: true, id: (Array.isArray(rows) ? rows : rows?.results || [])[0]?.id || null };
+    });
+    if (!r.ok || !r.id) throw new Error(`firm-pool image seed failed (${r.status || 'no id'})`);
+    cross.firmPoolImageId = r.id;
   });
 
   // 4h. Staff ChatBGP panel suggestion chips load into the composer.
@@ -3883,6 +3904,28 @@ async function markRound(page, cross) {
       throw new Error(`client filed their image onto a rival property (bulk-assign → ${r.rivalProp})`);
     if (r.foreignImg >= 200 && r.foreignImg < 300)
       throw new Error(`client bulk-assigned an out-of-scope image id (→ ${r.foreignImg})`);
+  });
+
+  // Raw image bytes are scope-jailed (r319): /thumb + /full must serve the
+  // client's own gallery and 404 on a firm-pool image outside their scope —
+  // the list endpoints were already scoped, this locks the byte endpoints.
+  await step(page, p, 'client-image-bytes-scoped', async () => {
+    const r = await page.evaluate(async (foreignId) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const get = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      const gallery = await (await fetch('/api/image-studio', { headers: auth })).json().catch(() => []);
+      const own = (Array.isArray(gallery) ? gallery : []).find((i) => i.hasThumbnail)?.id || null;
+      return {
+        ownThumb: own ? await get(`/api/image-studio/${own}/thumb`) : null,
+        ownFull: own ? await get(`/api/image-studio/${own}/full`) : null,
+        foreignThumb: foreignId ? await get(`/api/image-studio/${foreignId}/thumb`) : null,
+        foreignFull: foreignId ? await get(`/api/image-studio/${foreignId}/full`) : null,
+      };
+    }, cross.firmPoolImageId || null);
+    if (r.ownThumb !== null && r.ownThumb !== 200) throw new Error(`client blocked from their OWN thumb (${r.ownThumb})`);
+    if (r.ownFull !== null && r.ownFull !== 200) throw new Error(`client blocked from their OWN full image (${r.ownFull})`);
+    if (r.foreignThumb !== null && r.foreignThumb !== 404) throw new Error(`client read a firm-pool thumb outside scope (${r.foreignThumb})`);
+    if (r.foreignFull !== null && r.foreignFull !== 404) throw new Error(`client read a firm-pool full image outside scope (${r.foreignFull})`);
   });
 
   // Client creates a ChatBGP thread (no AI key needed for the thread itself)

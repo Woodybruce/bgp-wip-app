@@ -63,16 +63,66 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r319 · 2026-08-17 · ROUND IN PROGRESS (heartbeat)
-- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
-  DB + FRESH_BUILD=1). Two-bot round 319: first attempt crashed with
-  ECONNRESET on POST /api/auth/login during dev-server cold start (news
-  startup fetch running); clean re-run exit 0, all scenarios ok. 2 logged
-  issues both listed noise (rocketreach-400; commentary-regen 503). 0 raw
-  500/502/504 in the dev-server log (58 5xx all keyless-AI 503s; the 2
-  400s the rocketreach + image-studio harness probes).
-- Triage list: nothing app-side to triage. Journey (rotation #2 client
-  desktop, FULL) underway: Mark @1440px Image Studio first-coverage.
+### r319 · 2026-08-17 · FULL (rotation #2 client desktop)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1
+  before the fix, rebuilt bundle after). Two-bot round 319: first attempt
+  crashed with ECONNRESET on POST /api/auth/login during dev-server cold
+  start (news startup fetch in flight) — new flake, see below; clean
+  re-run exit 0, all scenarios ok. 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503). 0 raw 500/502/504 in the
+  round's dev-server log (58 5xx all keyless-AI 503s; the 2 400s the
+  rocketreach + image-studio harness probes).
+- Journey: Mark Warne desktop 1440px — "I need imagery for a Landsec
+  board pack: open Image Studio, see what BGP hold for me, upload my own
+  unit photo, and confirm it's usable" (FIRST client-desktop coverage of
+  the full /image-studio page + client upload WRITE — clients get the
+  full studio per the 2026-08-04 parity decision): UI login via client
+  form → Portfolio home → sidebar Image Studio → /image-studio renders
+  (Library/Brand Library/Collections tabs, category rail, 6 scoped rows —
+  5 Landsec brand images + two-bot's Bluewater residue; 0 h-overflow) →
+  staff maintenance controls correctly hidden (dedupe/near-dedupe/
+  ai-tag-uncategorised/rebuild-folders; hard-delete absent on cards) →
+  Upload dialog → PNG via file input → POST /upload 200, card renders
+  with thumbnail + Uncategorised chip, Library count bumps 1→2, search
+  narrows, survives reload → staff cross-check: upload lands in the firm
+  pool company-stamped to Landsec (companyId + uploadedBy correct). API
+  probes: own image PATCH 200 / foreign image PATCH 403 (write jail
+  holds). 0 page errors, 0 non-noise sightings.
+- Bug fixed (1): GET /api/image-studio/:id/thumb and /:id/full served
+  raw image bytes for ANY id to ANY authenticated caller — a scoped
+  client could read firm-pool/foreign imagery bytes by id, contradicting
+  the documented "every handler scope-jails" invariant (journey probe:
+  Mark fetched the Honi Poke brand image's /full → 200 pre-fix). Every
+  LIST surface was already scoped (incl. /orphans client-blocked), so
+  ids don't leak in-app — defence-in-depth class. Fix: both endpoints
+  now imageInScope-check and 404 (not 403, so existence isn't confirmed)
+  on out-of-scope ids (server/image-studio.ts). Verified via API on the
+  restarted dev server: Mark own thumb/full 200 + foreign thumb/full
+  404; Victoria all 200 (staff unaffected); in-browser post-fix Mark's
+  grid renders all 7 in-scope thumbs (7×200). tsc clean, rebuilt, smoke
+  re-green.
+- Harness growth: two-bot +2 — agent-seed-firm-pool-image (staff uploads
+  an unscoped qa-unit-photo.jpg, id stashed on cross) +
+  client-image-bytes-scoped (client own thumb/full must 200, firm-pool
+  foreign thumb/full must 404; added to the negative-probe set so its
+  404s aren't logged). node --check clean; round 319 ran the pre-edit
+  file, so first live run is r320; assertions verified this round via
+  the journey's API probes.
+- NOT bugs (triaged, for future rounds): client card hover shows
+  view/edit/AI-edit affordances — decided parity (PATCH + ai-edit are
+  client-allowed, handlers scope-jail; verified 403 on foreign). The
+  grey no-thumbnail Bluewater card is two-bot's own residue row (no
+  thumbnail stored), purged at next round start. "Library (1)" vs 6
+  grid cards is a count/grid mismatch → UX #61, not a data leak.
+- Bugs deferred: none. Suggestions added: UX #61 (Library tab/"All"
+  counts exclude Brands but the grid shows them — numbers disagree with
+  the cards). New flakes: two-bot can die with ECONNRESET on login if
+  started right after the dev server boots (news startup fetch); wait
+  ~30s after DEV-UP or just re-run.
+- Next journey: rotation #3 client mobile 390px (r319 had the journey →
+  r320 may be LIGHT; then #3).
 
 ### r318 · 2026-08-17 · LIGHT (r317 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust

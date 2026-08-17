@@ -13,6 +13,17 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+61. 2026-08-17 · Landsec client / desktop 1440px (staff see it too) ·
+    "browse my imagery in Image Studio" · the section tabs count
+    non-Brands images ("Library (1)") and the Categories rail's "All"
+    badge matches, but the grid under Library → All renders EVERY
+    image including the 5 Brand Library ones — 6 cards under a header
+    saying 1. The numbers and the pictures disagree at first glance;
+    the user can't tell which count is "right". Suggested: exclude
+    category='Brands' from the Library grid's "All" view (they have
+    their own tab), or include them in the count — either way make
+    the number match the cards.
+
 60. 2026-08-17 · BGP staff / mobile 390px (applies to desktop too) · "a
     new person joined a tenant brand — add them to the CRM by hand" ·
     there is no manual New Contact path anywhere in the live app: staff
