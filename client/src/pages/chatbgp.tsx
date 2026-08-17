@@ -2176,6 +2176,10 @@ export default function ChatBGP() {
     onSuccess: (thread: ThreadData) => {
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
       setActiveThreadId(thread.id);
+      // Prime the ref immediately — callers fire sendMutation in the same
+      // tick, before the state-sync effect runs, and the send body needs
+      // the thread id (server-side reply save + thread-aware tools).
+      activeThreadIdRef.current = thread.id;
     },
   });
 
@@ -2291,7 +2295,11 @@ export default function ChatBGP() {
           const res = await fetch("/api/chatbgp/chat", {
             method: "POST",
             headers,
-            body: JSON.stringify({ messages: newMessages }),
+            // threadId anchors the request to the saved thread — without it
+            // the server can't save the assistant reply or run thread-aware
+            // tools (chat sharing said "isn't a saved thread yet" forever).
+            // chat-panel and mobile-app already send it; this page didn't.
+            body: JSON.stringify({ messages: newMessages, threadId: activeThreadIdRef.current || undefined }),
             credentials: "include",
             signal: controller.signal,
           });
