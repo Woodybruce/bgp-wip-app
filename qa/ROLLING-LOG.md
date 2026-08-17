@@ -63,15 +63,60 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r321 · 2026-08-17 · FULL (rotation #3 client mobile 390px) — IN PROGRESS
-- Provisional heartbeat. Fresh container (repo pre-cloned at
-  /home/user/bgp-wip-app; pg_hba trust per r205; restore + schema grant per
-  r249 — reassign-owned errors out on system objects, superuser bgp role +
-  schema grant suffice). Regression: run-smoke.sh GREEN first pass (42
-  checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake).
-  Two-bot round 321 running now. Journey planned: Mark Warne @ 390px —
-  Bluewater tenancy expiries + comps evidence from the phone.
-- Triage so far: nothing to triage from smoke (0 failures).
+### r321 · 2026-08-17 · FULL (rotation #3 client mobile 390px)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore + schema grant per r249 — note reassign-owned errors on
+  system objects, a SUPERUSER bgp role + schema grant suffice). Regression:
+  run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh DB +
+  FRESH_BUILD=1; no cold-build flake). Two-bot round 321: exit 0, 192/192
+  ok first run (no ECONNRESET — started ~60s after DEV-UP per the r319
+  note). 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). Dev-server log 5xx tally: 143 keyless-AI 503s +
+  9 GET /api/auth/microsoft 500s — the latter are the explicit "Microsoft
+  SSO not configured" no-key guard, all fired by my own journey v1 whose
+  button:has-text("Sign in") selector matched "Sign in with Microsoft"
+  first (tester error, noted below); 0 other raw 500/502/504. 400s the
+  rocketreach + image-studio harness probes; 401/403/404s the listed
+  pre-auth/negative-probe/HR-photo+sharepoint-root classes.
+- Journey: Mark Warne @ 390px iPhone UA — "my asset manager wants to know
+  which Bluewater leases expire soonest and what lettings evidence we
+  have — from my phone" (FIRST client-mobile coverage of /properties list,
+  property page, tenancy Full Board, and /comps; r313/r305 covered
+  calendar/contacts/news/brands): UI login via client form → Portfolio
+  home (tiles render, 0 h-overflow) → /properties (2-property Landsec
+  portfolio, KPI strip, map, Bluewater card) → property page (ownership
+  card, week's-focus task widget; triple nav stack = UX #55 applies to
+  client too) → Full Board link → /tenancy-schedule/:id renders (KPI
+  cards incl. WAULT 9.9yrs / occupied 88 / vacant 76, status chips, 200
+  units, 0 h-overflow — table scrolls in its own container) → search
+  "Starbucks" narrows to its 2 units → /comps (Leasing board scoped to
+  1 comp = two-bot's live QA-COMP residue; Leasing/Investment tabs,
+  search, area filter; 0 staff toolbar leaks — no Add/Scan/Import/
+  Verify). 0 page errors, 0 non-noise sightings all legs. Task PARTLY
+  completable: reaching the board is easy, but answering "expires
+  soonest" means swiping the full 34-column desktop sheet with only
+  Unit pinned and no date sort → UX #62.
+- Triaged, NOT bugs: client tenancy board shows Add + per-row delete +
+  "+ Tracker" — decided parity, verified: server allow-list documents
+  client tenancy-row edits (import/bulk-delete stay staff-only, and the
+  UI hides exactly Import + Re-sync via isClientViewer), DELETE handler
+  scope-checks isPropertyInScope (server/tenancy-schedule.ts). Harness
+  already locks this (client-tenancy-write-scoped /
+  client-tenancy-staff-ops-guard / client-tenancy-edit) — no growth
+  needed. Brand-gaps international/commentary 503s on the client
+  property page = keyless-AI class (cache empty → generate → no key).
+- Tester notes for future rounds: 'button:has-text("Sign in")' matches
+  "Sign in with Microsoft" FIRST on the login page — use
+  [data-testid="button-guest-login"] (+ input-guest-email/-password);
+  each stray Microsoft click burns a loginLimiter slot AND logs a
+  noise 500. Client /comps mobile renders comps as cards, not tbody
+  rows.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: UX #62 (mobile tenancy board is the raw 34-column sheet — no
+  card view, no date sort; lease-event questions unanswerable on a
+  phone). New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r321 had the journey →
+  r322 may be LIGHT; then #4).
 
 ### r320 · 2026-08-17 · LIGHT (r319 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
