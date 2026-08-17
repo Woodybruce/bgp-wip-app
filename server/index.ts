@@ -2966,6 +2966,7 @@ import propertyAssetBriefRouter from "./property-asset-brief";
 import { registerPropertyBrochureRoutes } from "./property-brochures";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
+import portfolioPropertiesRouter from "./portfolio-properties";
 import clientTeamsRouter from "./client-teams";
 import clientSharepointRouter from "./client-sharepoint";
 import activitySummaryRouter from "./activity-summary";
@@ -3838,6 +3839,7 @@ app.use("/api/branding/assets", express.static(
   registerMapLayerRoutes(app);
   app.use(leasingScheduleRouter);
   app.use(tenancyScheduleRouter);
+  app.use(portfolioPropertiesRouter);
   app.use(clientTeamsRouter);
   app.use(clientSharepointRouter);
   app.use(activitySummaryRouter);

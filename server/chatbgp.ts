@@ -1152,6 +1152,9 @@ You have read AND write access to almost every operational table in the BGP data
 - **Confirmation rule for destructives**: Before any DELETE that could affect more than ~10 rows, run sql_query first to count + sample, show the user the number and a few representative rows, then wait for explicit "yes" / "do it" before running sql_write. For UPDATEs of more than ~50 rows, same pattern. Single-row or trivially-small ops can run without a preview.
 - The Brand Library (\`category = 'Brands'\` in image_studio_images) is curated — only delete from it if the user is explicit about wanting to.
 
+## Portfolios
+One portfolio entity (e.g. "CEG Portfolio") with two kinds of members: \`portfolios\` + \`portfolio_runs\` (pathway runs → combined Excel / Why Buy outputs) and \`portfolio_properties\` (portfolio_id, property_id → crm_properties, drives the expandable head rows on the Investment Tracker). Each portfolio has a page at /portfolios/<id>. Use sql_query/sql_write on those tables to answer "what's in the X portfolio" or add/remove members. Deleting a portfolio removes ONLY the grouping — never properties or runs.
+
 ## Sharing this chat with colleagues (manage_chat_members)
 You CAN add BGP colleagues to the current chat thread — never claim you can't. \`manage_chat_members(action:'add', personName:'Jonny Palmer')\` shares THIS thread: they see it in their own ChatBGP sidebar with the full history and can join the conversation. 'remove' and 'list' work too. Staff only — client logins can never be added. (Users can also do it themselves: tapping the chat title opens the thread panel with Team Members → Add Member.)
 

@@ -213,6 +213,166 @@ function PortfolioDetailView({ id }: { id: string }) {
           </table>
         </div>
       )}
+
+      <PortfolioProperties id={id} />
+    </div>
+  );
+}
+
+// ─── Properties section ──────────────────────────────────────────────────
+// The second membership axis: crm properties grouped under this portfolio
+// (drives the expandable head row on the Investment Tracker). Runs above
+// are pathway analyses; these are the actual CRM property records.
+function PortfolioProperties({ id }: { id: string }) {
+  const { toast } = useToast();
+  const [addOpen, setAddOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const { data, isLoading } = useQuery<{
+    properties: Array<{
+      id: string; name: string; postcode: string | null; trackerStatus: string | null;
+      guidePrice: number | null; niy: number | null; sqft: number | null; currentRent: number | null;
+      tenure: string | null; lettingUnits: number; pathwayRuns: number;
+    }>;
+    aggregates: { propertyCount: number; totalGuidePrice: number; totalSqft: number; totalRent: number; blendedNiy: number | null };
+  }>({ queryKey: [`/api/portfolio-properties/${id}`] });
+
+  const { data: allProperties = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ["/api/crm/properties"],
+    enabled: addOpen,
+  });
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: [`/api/portfolio-properties/${id}`] });
+    queryClient.invalidateQueries({ queryKey: ["/api/portfolio-properties"] });
+  };
+
+  const addMutation = useMutation({
+    mutationFn: async (propertyId: string) =>
+      (await apiRequest("POST", "/api/portfolio-properties", { portfolioId: id, propertyIds: [propertyId] })).json(),
+    onSuccess: () => { invalidate(); toast({ title: "Property added" }); },
+    onError: (e: any) => toast({ title: "Couldn't add property", description: e?.message, variant: "destructive" }),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: async (propertyId: string) =>
+      (await apiRequest("DELETE", `/api/portfolio-properties/${id}/${propertyId}`)).json(),
+    onSuccess: () => { invalidate(); toast({ title: "Removed from portfolio" }); },
+    onError: (e: any) => toast({ title: "Couldn't remove", description: e?.message, variant: "destructive" }),
+  });
+
+  const props = data?.properties || [];
+  const agg = data?.aggregates;
+  const memberIds = new Set(props.map(p => p.id));
+  const addable = allProperties
+    .filter(p => !memberIds.has(p.id))
+    .filter(p => !searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    .slice(0, 12);
+
+  return (
+    <div className="mt-8">
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div>
+          <h2 className="text-lg font-semibold">Properties</h2>
+          <p className="text-xs text-muted-foreground">
+            CRM properties grouped under this portfolio — they render as one expandable row on the Investment Tracker.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => setAddOpen(v => !v)} data-testid="button-toggle-add-property">
+          <Plus className="w-4 h-4" /> Add property
+        </Button>
+      </div>
+
+      {addOpen && (
+        <div className="rounded-xl border border-border p-3 mb-3 bg-muted/30">
+          <Input
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Search CRM properties..."
+            autoFocus
+            data-testid="input-search-add-property"
+          />
+          {searchTerm && (
+            <div className="mt-2 space-y-1 max-h-48 overflow-y-auto">
+              {addable.length === 0 ? (
+                <p className="text-xs text-muted-foreground px-1 py-2">No matching properties.</p>
+              ) : addable.map(p => (
+                <button
+                  key={p.id}
+                  className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-muted"
+                  onClick={() => { addMutation.mutate(p.id); setSearchTerm(""); }}
+                  data-testid={`add-portfolio-property-${p.id}`}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="py-8 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" /></div>
+      ) : props.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+          No properties yet — add them here, or select rows on the Investment Tracker and "Group into portfolio".
+        </div>
+      ) : (
+        <>
+          {agg && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+              {[
+                { label: "Total guide price", value: agg.totalGuidePrice ? fmtMoney(agg.totalGuidePrice) : "—" },
+                { label: "Total rent PA", value: agg.totalRent ? fmtMoney(agg.totalRent) : "—" },
+                { label: "Total sq ft", value: agg.totalSqft ? agg.totalSqft.toLocaleString("en-GB") : "—" },
+                { label: "Blended yield", value: agg.blendedNiy != null ? `${agg.blendedNiy.toFixed(2)}%` : "—" },
+              ].map(s => (
+                <div key={s.label} className="rounded-xl border border-border bg-card p-3">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{s.label}</div>
+                  <div className="text-lg font-bold mt-0.5">{s.value}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="overflow-x-auto rounded-xl border border-border">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-muted/60 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+                  <th className="px-3 py-2">Property</th>
+                  <th className="px-3 py-2">Tracker status</th>
+                  <th className="px-3 py-2 text-right">Guide</th>
+                  <th className="px-3 py-2 text-right">Rent PA</th>
+                  <th className="px-3 py-2 text-right">Sq ft</th>
+                  <th className="px-3 py-2 text-center">Letting units</th>
+                  <th className="px-3 py-2 text-center">Pathways</th>
+                  <th className="px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {props.map(p => (
+                  <tr key={p.id} className="border-t border-border" data-testid={`portfolio-property-${p.id}`}>
+                    <td className="px-3 py-2">
+                      <Link href={`/properties/${p.id}`} className="font-medium hover:underline">{p.name}</Link>
+                      <div className="text-[11px] text-muted-foreground">{p.postcode || ""}</div>
+                    </td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">{p.trackerStatus || "Not on tracker"}</td>
+                    <td className="px-3 py-2 text-right font-mono">{p.guidePrice ? fmtMoney(p.guidePrice) : "—"}</td>
+                    <td className="px-3 py-2 text-right font-mono">{p.currentRent ? fmtMoney(p.currentRent) : "—"}</td>
+                    <td className="px-3 py-2 text-right font-mono">{p.sqft ? p.sqft.toLocaleString("en-GB") : "—"}</td>
+                    <td className="px-3 py-2 text-center text-xs">{Number(p.lettingUnits) || "—"}</td>
+                    <td className="px-3 py-2 text-center text-xs">{Number(p.pathwayRuns) || "—"}</td>
+                    <td className="px-3 py-2 text-right">
+                      <button onClick={() => removeMutation.mutate(p.id)} className="text-muted-foreground hover:text-red-600" title="Remove from portfolio" data-testid={`remove-property-${p.id}`}>
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }

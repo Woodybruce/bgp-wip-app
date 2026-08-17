@@ -988,8 +988,26 @@ export default function InvestmentTrackerPage() {
   const PAGE_SIZE = 50;
   const { toast } = useToast();
 
+  // Portfolios: named property groups (e.g. "CEG Portfolio"). Member rows
+  // render under an expandable head row instead of loose in the table.
+  const [portfolioDialogOpen, setPortfolioDialogOpen] = useState(false);
+  const [portfolioName, setPortfolioName] = useState("");
+  const [expandedPortfolios, setExpandedPortfolios] = useState<Set<string>>(() => {
+    try { return new Set<string>(JSON.parse(localStorage.getItem("bgp_inv_portfolios_open") || "[]")); } catch { return new Set(); }
+  });
+  const togglePortfolio = (id: string) => setExpandedPortfolios(prev => {
+    const n = new Set(prev);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    try { localStorage.setItem("bgp_inv_portfolios_open", JSON.stringify([...n])); } catch {}
+    return n;
+  });
+
   const { data: items = [], isLoading } = useQuery<InvestmentTracker[]>({
     queryKey: ["/api/investment-tracker"],
+  });
+
+  const { data: portfolios = [] } = useQuery<{ id: string; name: string; vendorName?: string | null; propertyIds: string[] }[]>({
+    queryKey: ["/api/portfolio-properties"],
   });
 
   const { data: properties = [] } = useQuery<CrmProperty[]>({
@@ -1235,8 +1253,75 @@ export default function InvestmentTrackerPage() {
         fee: (i: any) => i.fee,
       })
     : filtered;
-  const totalPages = Math.ceil(sortedFiltered.length / PAGE_SIZE);
-  const paginatedData = sortedFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // Portfolio grouping: rows whose property belongs to a portfolio render
+  // under that portfolio's head row (exempt from pagination); everything
+  // else paginates as before.
+  const portfolioBlocks = useMemo(() => {
+    const blocks: { portfolio: { id: string; name: string; vendorName?: string | null }; rows: InvestmentTracker[] }[] = [];
+    for (const pf of portfolios) {
+      const ids = new Set(pf.propertyIds || []);
+      const rows = sortedFiltered.filter(r => r.propertyId && ids.has(r.propertyId));
+      if (rows.length > 0) blocks.push({ portfolio: pf, rows });
+    }
+    return blocks;
+  }, [portfolios, sortedFiltered]);
+  const groupedRowIds = useMemo(() => new Set(portfolioBlocks.flatMap(b => b.rows.map(r => r.id))), [portfolioBlocks]);
+  const ungrouped = useMemo(() => sortedFiltered.filter(r => !groupedRowIds.has(r.id)), [sortedFiltered, groupedRowIds]);
+  const totalPages = Math.ceil(ungrouped.length / PAGE_SIZE);
+  const paginatedData = ungrouped.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // Flat render list for the table: portfolio head rows with their member
+  // rows directly beneath (when expanded), then the paginated singles.
+  const tableEntries = useMemo(() => {
+    const out: Array<
+      | { kind: "head"; pf: { id: string; name: string; vendorName?: string | null }; rows: InvestmentTracker[] }
+      | { kind: "item"; item: InvestmentTracker }
+    > = [];
+    for (const b of portfolioBlocks) {
+      out.push({ kind: "head", pf: b.portfolio, rows: b.rows });
+      if (expandedPortfolios.has(b.portfolio.id)) {
+        for (const r of b.rows) out.push({ kind: "item", item: r });
+      }
+    }
+    for (const r of paginatedData) out.push({ kind: "item", item: r });
+    return out;
+  }, [portfolioBlocks, expandedPortfolios, paginatedData]);
+
+  const selectedPropertyIds = useMemo(
+    () => [...new Set(boardItems.filter(i => selectedIds.has(i.id)).map(i => i.propertyId).filter(Boolean))],
+    [boardItems, selectedIds],
+  );
+
+  const createPortfolioMutation = useMutation({
+    mutationFn: async (body: { name: string; propertyIds: string[] }) => {
+      const res = await apiRequest("POST", "/api/portfolio-properties", body);
+      return res.json();
+    },
+    onSuccess: (pf: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolio-properties"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolios"] });
+      setPortfolioDialogOpen(false);
+      setPortfolioName("");
+      setSelectedIds(new Set());
+      setExpandedPortfolios(prev => new Set([...prev, pf.id]));
+      toast({ title: "Portfolio created", description: `${pf.name} — ${pf.propertyCount} propert${pf.propertyCount === 1 ? "y" : "ies"} grouped.` });
+    },
+    onError: (e: any) => toast({ title: "Couldn't create portfolio", description: e?.message, variant: "destructive" }),
+  });
+
+  const addToPortfolioMutation = useMutation({
+    mutationFn: async ({ portfolioId, propertyIds }: { portfolioId: string; propertyIds: string[] }) => {
+      const res = await apiRequest("POST", "/api/portfolio-properties", { portfolioId, propertyIds });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolio-properties"] });
+      setSelectedIds(new Set());
+      toast({ title: "Added to portfolio" });
+    },
+    onError: (e: any) => toast({ title: "Couldn't add to portfolio", description: e?.message, variant: "destructive" }),
+  });
 
   useEffect(() => {
     setPage(1);
@@ -1652,6 +1737,34 @@ export default function InvestmentTrackerPage() {
           <Button
             variant="outline"
             size="sm"
+            className="h-7 text-xs gap-1"
+            disabled={selectedPropertyIds.length === 0}
+            title={selectedPropertyIds.length === 0 ? "Selected rows need a linked property to group" : undefined}
+            onClick={() => setPortfolioDialogOpen(true)}
+            data-testid="button-group-portfolio"
+          >
+            Group into portfolio
+          </Button>
+          {portfolios.length > 0 && selectedPropertyIds.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-7 text-xs gap-1" data-testid="button-add-to-portfolio">
+                  Add to portfolio
+                  <ChevronDown className="h-3 w-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {portfolios.map(pf => (
+                  <DropdownMenuItem key={pf.id} onClick={() => addToPortfolioMutation.mutate({ portfolioId: pf.id, propertyIds: selectedPropertyIds as string[] })} data-testid={`add-to-portfolio-${pf.id}`}>
+                    {pf.name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
             className="h-7 text-xs text-red-600 hover:text-red-700 gap-1"
             onClick={() => setBulkDeleteOpen(true)}
             data-testid="button-bulk-delete"
@@ -1800,7 +1913,38 @@ export default function InvestmentTrackerPage() {
                     </TableCell>
                   </TableRow>
                 )}
-                {paginatedData.map(item => (
+                {tableEntries.map(entry => entry.kind === "head" ? (
+                  <TableRow
+                    key={`pf-${entry.pf.id}`}
+                    className="bg-muted/70 hover:bg-muted cursor-pointer"
+                    onClick={() => togglePortfolio(entry.pf.id)}
+                    data-testid={`portfolio-head-${entry.pf.id}`}
+                  >
+                    <TableCell colSpan={boardType === "Purchases" ? 23 : 22} className="px-3 py-2">
+                      <div className="flex items-center gap-3 text-xs flex-wrap">
+                        {expandedPortfolios.has(entry.pf.id) ? <ChevronUp className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
+                        <span className="font-semibold text-sm">{entry.pf.name}</span>
+                        <Badge variant="secondary" className="text-[10px]">{entry.rows.length} site{entry.rows.length !== 1 ? "s" : ""}</Badge>
+                        {(() => {
+                          const gp = entry.rows.reduce((a, r) => a + (r.guidePrice || 0), 0);
+                          const rent = entry.rows.reduce((a, r) => a + (r.currentRent || 0), 0);
+                          const sq = entry.rows.reduce((a, r) => a + (r.sqft || 0), 0);
+                          return (
+                            <>
+                              {gp > 0 && <span className="text-muted-foreground">Guide {fmtCurrency(gp)}</span>}
+                              {rent > 0 && <span className="text-muted-foreground">Rent {fmtCurrency(rent)} pa</span>}
+                              {sq > 0 && <span className="text-muted-foreground">{fmtNum(sq)} sq ft</span>}
+                              {gp > 0 && rent > 0 && <span className="text-muted-foreground">≈{((rent / gp) * 100).toFixed(2)}% blended</span>}
+                            </>
+                          );
+                        })()}
+                        <Link href={`/portfolios/${entry.pf.id}`} onClick={(e: any) => e.stopPropagation()} className="text-primary hover:underline inline-flex items-center gap-1 ml-auto">
+                          Open portfolio <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ) : (() => { const item = entry.item; return (
                   <TableRow key={item.id} className={`text-xs ${selectedIds.has(item.id) ? "bg-primary/5" : ""}`} data-testid={`row-asset-${item.id}`}>
                     <TableCell className="px-2 py-1.5">
                       <Checkbox
@@ -2120,7 +2264,7 @@ export default function InvestmentTrackerPage() {
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                ); })())}
               </TableBody>
             </Table>
         </ScrollableTable>
@@ -2364,6 +2508,38 @@ export default function InvestmentTrackerPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteItem(null)}>Cancel</Button>
             <Button variant="destructive" onClick={() => deleteItem && deleteMutation.mutate(deleteItem.id)} data-testid="button-confirm-delete">Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Group selected assets into a new portfolio */}
+      <Dialog open={portfolioDialogOpen} onOpenChange={setPortfolioDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Group into portfolio</DialogTitle>
+            <DialogDescription>
+              {selectedPropertyIds.length} propert{selectedPropertyIds.length === 1 ? "y" : "ies"} will be grouped under one expandable head row on the tracker, with a portfolio page showing the combined picture.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label>Portfolio name</Label>
+            <Input
+              value={portfolioName}
+              onChange={e => setPortfolioName(e.target.value)}
+              placeholder="e.g. CEG Portfolio"
+              autoFocus
+              data-testid="input-portfolio-name"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPortfolioDialogOpen(false)}>Cancel</Button>
+            <Button
+              disabled={!portfolioName.trim() || createPortfolioMutation.isPending}
+              onClick={() => createPortfolioMutation.mutate({ name: portfolioName.trim(), propertyIds: selectedPropertyIds as string[] })}
+              data-testid="button-confirm-create-portfolio"
+            >
+              {createPortfolioMutation.isPending ? "Creating..." : "Create portfolio"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
