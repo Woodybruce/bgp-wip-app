@@ -13,6 +13,23 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+60. 2026-08-17 · BGP staff / mobile 390px (applies to desktop too) · "a
+    new person joined a tenant brand — add them to the CRM by hand" ·
+    there is no manual New Contact path anywhere in the live app: staff
+    contacts arrive only via discovery (Rescan / promote-from-inbox /
+    RocketReach "Add") on the company profile board, and the old
+    contacts page that carried the full New Contact dialog
+    (client/src/pages/contacts.tsx ContactList — button-create-contact,
+    name/email/role/company form, plus the "Interaction Archive" view)
+    is unrouted dead code — /contacts now renders the PeopleHub CRM
+    (people.tsx) which has no create button; only CLIENT logins get an
+    "Add contact" affordance in their hub. If BGP staff meet someone at
+    a viewing whose email isn't in any BGP inbox, they can't record
+    them. Suggested: either add a New Contact button to the PeopleHub
+    header reusing the existing (working) ContactFormDialog from
+    contacts.tsx, or delete the dead code if discovery-only is the
+    intent. Needs Woody's numbered confirmation — not built.
+
 59. 2026-08-16 · Landsec client / mobile 390px · "BGP are coming to
     Bluewater — put it in my calendar, then find my BGP contact to
     confirm" · the calendar + task legs work, but the find-my-BGP-
