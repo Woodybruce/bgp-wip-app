@@ -63,20 +63,39 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r320 · 2026-08-17 · ROUND IN PROGRESS (provisional)
-- LIGHT round (r319 had the journey). Regression: run-smoke.sh GREEN first
-  pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1). Two-bot round
-  320: exit 0, 191 scenarios ok — incl. the FIRST live runs of r319's
+### r320 · 2026-08-17 · LIGHT (r319 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 320: exit 0 ×2 —
+  first run 191/192 ok incl. the FIRST live runs of r319's
   agent-seed-firm-pool-image + client-image-bytes-scoped (both green; the
-  image byte scope-jail holds live). 3 logged issues: 2 listed noise
-  (rocketreach-400; commentary-regen 503) + 1 flow-failure
-  staff-property-tenancy-mobile — goto "interrupted by another navigation
-  to /" right after the localStorage plant (r204/r273 redirect-on-mount
-  race under a NEW Playwright error wording; mobGoto only retries
-  ERR_ABORTED). App verified fine standalone: 3/3 exact-pattern repro
-  attempts loaded /properties/:id + tenancy sheet at 390px. Triage: 0 raw
-  500/502/504 in dev-server log. Plan: harden mobGoto to retry the
-  interrupted-navigation wording, re-verify.
+  image byte scope-jail holds live); re-run after the harness fix 192/192
+  ok. 2 remaining logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 across both runs' dev-server
+  log (status tally: only 2xx/3xx/expected 400/401/403/404 + no-key 503s;
+  403s the harness's negative probes; 404s the listed HR-photo +
+  sharepoint-root polling + client-image-bytes-scoped's own asserted
+  foreign thumb/full 404s + the requirements-leasing probe; 400s the
+  rocketreach + image-studio harness probes + my own 2 wrong-shape login
+  probes — /api/auth/login takes {username}, not {email}; 401s pre-auth
+  /api/auth/me + no-key M365 class; 503s all keyless-AI class).
+- HARNESS FLAKE fixed (not an app bug): staff-property-tenancy-mobile
+  failed run 1 with goto "is interrupted by another navigation to /" right
+  after the localStorage plant — the r204/r273 redirect-on-mount race
+  surfacing under Playwright's OTHER error wording, which mobGoto's
+  ERR_ABORTED-only retry didn't catch. App verified fine standalone: 3/3
+  exact-pattern repro attempts loaded /properties/:id (setup-folders
+  visible) + tenancy sticky sheet at 390px. Fix: mobGoto now also retries
+  on /interrupted by another navigation/ (qa/two-bot-round.mjs). node
+  --check clean; verified live — re-run 192/192 ok incl. the scenario.
+- Bugs fixed: 0 app bugs; 1 harness flake as above. Deferred: none.
+  Suggestions added: none. New flakes: none beyond the wording variant
+  above (now handled). (Round note: r320's heartbeat commit footer carries
+  a non-standard co-author name — r306 class, history kept, no force-push;
+  final commits use the repo-standard footer.)
+- Next journey: rotation #3 client mobile 390px (r320 was LIGHT → r321
+  FULL).
 
 ### r319 · 2026-08-17 · FULL (rotation #2 client desktop)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
