@@ -938,6 +938,12 @@ async function victoriaRound(page, cross) {
         body: JSON.stringify({ name: needle, status: 'Active' }) });
       if (!create.ok) return { ok: false, why: `create ${create.status}` };
       const made = await create.json();
+      // UX #52: hand-added requirements (no date sent) default to today
+      // server-side — a NULL date kills the Fresh badge + 90-day KPI.
+      const today = new Date().toISOString().slice(0, 10);
+      if ((made.requirementDate || '').slice(0, 10) !== today) {
+        return { ok: false, why: `requirementDate did not default to today (got ${made.requirementDate})` };
+      }
       const put = await fetch(`/api/crm/requirements-leasing/${made.id}`, { method: 'PUT', credentials: 'include', headers: auth,
         body: JSON.stringify({ name: needle, status: 'On Hold' }) });
       if (!put.ok) return { ok: false, why: `edit ${put.status}` };

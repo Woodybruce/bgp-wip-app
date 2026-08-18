@@ -67,15 +67,47 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r330 · 2026-08-18 · ROUND IN PROGRESS (LIGHT — r329 had the journey)
+### r330 · 2026-08-18 · LIGHT (r329 had the journey)
 - Staging merged with origin/JOGQK (already up to date at checkout). Fresh
   container (repo pre-cloned; pg_hba trust per r205; SUPERUSER bgp role +
   restore + schema grant per r249). Regression: run-smoke.sh GREEN first
-  pass (42 checks, 0 failures, FRESH_BUILD=1, fresh DB). Two-bot round 330
-  running. UX #52 verified via API (POST requirement without date →
-  requirementDate = today, probe row swept). Plan: browser-verify UX
-  50/51/53/56/57/58/61 (the 50-64 batch legs r329 didn't cover).
-- (provisional — final entry replaces this)
+  pass (42 checks, 0 failures, FRESH_BUILD=1, fresh DB). Two-bot round
+  330: exit 0, 193 ok first run — incl. the FIRST live run of r329's
+  staff-deals-all-chip-recounts (green). 3 logged issues all listed noise
+  (rocketreach-400; brand-gaps/live-intel 503; commentary-regen 503 —
+  qa/logs/round-330.jsonl). Dev-server log: 150 5xx all keyless-AI 503s;
+  lone " 500 " hit is the "500 articles" news-feed text.
+- Light-round focus: browser-verified the UX 50-64 batch legs r329 didn't
+  cover — ALL GREEN (18 Playwright checks, 3 legs, 0 page errors):
+  #50 staff desktop sees the off-spine chip on Gail's deal with the
+  auto-link tooltip AND Mark's client view of the same deal hides it
+  (0 chips); relinkOffSpineDeals wired at server/index.ts:4523. #51 staff
+  mobile 390px deal cards show Target (Dec 2026) + "In status: today"
+  time-in-status, 0 h-overflow. #52 via API: POST requirement without
+  date → requirementDate = today (probe swept). #53 planted dead+live
+  recents → dead company page shows "Company not found", dead entry
+  dropped from bgp_recent_items, live Starbucks kept. #56 staff /calendar
+  Add-event button + dialog → POST /api/team-events 200, created_by
+  stamped (DB-verified; probe swept). #57 New Deal (simplified body) →
+  "Deal created" toast with "View deal →" navigating to /deals/:id
+  (probe deal swept). #58 attendees-only viewing headlines the attendees
+  on the tracker dialog, no "No company". #61 Image Studio Library tab
+  count matches the grid (2=2; grid excludes Brands at line 754). The
+  whole confirmed 50-64 batch is now browser-verified (54/55/59/62/63/64
+  in r329).
+- Tester notes: /deals is now the DealsHub tab wrapper — button-create-deal
+  lives on /deals/list. The simplified New Deal body's Target month picker
+  is #deal-target-date (type=month, NO testid; input-deal-target-date only
+  exists on the full/Consultant forms). No dealType selected = no
+  unit/party validation, so name + target month creates a bare deal.
+- Bugs fixed: 0 (nothing broken found; the one FAIL mid-run was my own
+  selector against the full-form testid). Harness growth: two-bot
+  agent-edit-requirement now also asserts the UX #52 today-default on
+  create (node --check clean; round 330 ran the pre-edit file, first live
+  run r331). Bugs deferred: none. Suggestions added: none. New flakes:
+  none.
+- Next journey: rotation #4 staff mobile 390px (r330 was LIGHT → r331
+  FULL).
 
 ### r329 · 2026-08-18 · FULL (rotation #3 client mobile 390px)
 - Staging merged with origin/JOGQK head d6e83a3 first (standing branch rule;
