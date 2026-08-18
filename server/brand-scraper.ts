@@ -329,12 +329,18 @@ export async function runDailyBrandScraper(): Promise<{ scanned: number; signals
 // paths (instagram.com/p/..., /explore/, /reel/, etc).
 function extractInstagramHandle(html: string): string | null {
   if (!html) return null;
-  // Match instagram.com/handle — handle is 1-30 chars, letters/digits/._
-  const re = /instagram\.com\/([a-zA-Z0-9._]{1,30})/gi;
-  const banned = new Set(["p", "explore", "reel", "reels", "tv", "stories", "accounts", "about", "developer", "directory", "legal"]);
+  // Match instagram.com/handle — handle is 2-30 chars, letters/digits/._
+  // (single-char "handles" are URL path segments like /v/ video and /s/
+  // story-share links, which poisoned rows before — see ig_handle_poison_v1).
+  const re = /instagram\.com\/([a-zA-Z0-9._]{2,30})/gi;
+  const banned = new Set([
+    "p", "explore", "reel", "reels", "tv", "stories", "accounts", "about",
+    "developer", "directory", "legal", "share", "web", "api", "oauth",
+    "invites", "graphql", "static",
+  ]);
   for (const m of html.matchAll(re)) {
     const h = m[1].toLowerCase().replace(/[._]+$/, "");
-    if (!h || banned.has(h)) continue;
+    if (!h || h.length < 2 || banned.has(h) || h.includes("togel")) continue;
     return m[1];
   }
   return null;

@@ -315,23 +315,48 @@ router.get("/api/instagram/probe", requireAuth, async (req: Request, res: Respon
   });
 });
 
+// Brand profile Instagram card — fed by the brand's RSS.app Instagram feed
+// (Meta rejected Public Content Access, so Business Discovery never went
+// live for lookups; getBrandInstagram above remains for anything Meta does
+// still serve from cache). Three states for the UI:
+//   feed        → latest posts from the RSS.app feed (news_articles rows)
+//   handle_only → handle on file but no paid feed slot yet
+//   no_handle   → nothing to show; the card hides itself
+// Follower counts come from brand_social_stats — the weekly scrape.
 router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, res: Response) => {
   try {
-    const force = req.query.force === "true" || req.query.force === "1";
     const companyId = String(req.params.companyId);
-    const profile = await getBrandInstagram(companyId, { force });
-    if (profile) return res.json(profile);
-
-    // Lookup returned null — figure out WHY so the UI can render a useful
-    // empty-state card instead of just hiding itself.
     const handleRow = await pool.query<{ instagram_handle: string | null }>(
       `SELECT instagram_handle FROM crm_companies WHERE id = $1`, [companyId]
     );
-    const handle = (handleRow.rows[0]?.instagram_handle || "").replace(/^@/, "").trim();
-    let status: "not_configured" | "no_handle" | "lookup_failed" = "lookup_failed";
-    if (!process.env.META_ACCESS_TOKEN || !process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID) status = "not_configured";
-    else if (!handle) status = "no_handle";
-    res.json({ status, handle: handle || null, profile: null });
+    const handle = extractUsername(handleRow.rows[0]?.instagram_handle);
+    if (!handle) return res.json({ status: "no_handle", handle: null, posts: [] });
+
+    const stats = await pool.query<{ followers: number | null; posts: number | null }>(
+      `SELECT followers, posts FROM brand_social_stats
+        WHERE brand_company_id = $1 AND platform = 'instagram'
+        ORDER BY fetched_at DESC LIMIT 1`, [companyId]
+    );
+    const followers = stats.rows[0]?.followers ?? null;
+    const postCount = stats.rows[0]?.posts ?? null;
+
+    const src = await pool.query<{ id: string }>(
+      `SELECT id FROM news_sources
+        WHERE category = $1 AND type = 'rssapp_instagram' AND active = true
+        LIMIT 1`, [`brand:${companyId}`]
+    );
+    if (!src.rows[0]) {
+      return res.json({ status: "handle_only", handle, followers, postCount, posts: [] });
+    }
+
+    const posts = await pool.query(
+      `SELECT title, url, image_url AS "imageUrl", published_at AS "publishedAt"
+         FROM news_articles
+        WHERE source_id = $1
+        ORDER BY published_at DESC NULLS LAST
+        LIMIT 9`, [src.rows[0].id]
+    );
+    res.json({ status: "feed", handle, followers, postCount, posts: posts.rows });
   } catch (e: any) {
     console.error("[/api/brand/:companyId/instagram]", e?.message);
     res.status(500).json({ error: e?.message || "failed" });
