@@ -63,6 +63,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r325 · 2026-08-18 · ROUND IN PROGRESS (FULL — rotation #1 staff desktop)
+- Provisional heartbeat. Regression: run-smoke.sh GREEN first pass (42
+  checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake).
+  Two-bot round 325 + staff-desktop journey (Bluewater tenancy-board rent
+  edit + client cross-check) up next. Triage so far: nothing beyond listed
+  noise in the smoke pass.
+
 ### r324 · 2026-08-17 · LIGHT (r323 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; SUPERUSER bgp role + restore + schema grant per r249/r321).
