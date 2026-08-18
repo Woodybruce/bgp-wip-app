@@ -67,16 +67,57 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r331 · 2026-08-18 · FULL (rotation #4 staff mobile 390px) — IN PROGRESS
-- Provisional heartbeat. Staging merged with origin/JOGQK (already up to
-  date). Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures,
-  FRESH_BUILD=1, fresh DB). Two-bot round 331 still running. Journey done
-  GREEN: Victoria @390px logs a viewing on Bluewater L112 from the tracker
-  mobile card (POST 200, survives reload) → Mark client mobile sees the
-  same viewing (UI dialog + scoped API 200). 0 page errors, 0 non-noise
-  sightings. Staff mobile login now lands on /chatbgp — deliberate
-  (JOGQK bf9e6e5 "Mobile opens on ChatBGP"), not a bug. Triage of two-bot
-  + final entry to follow.
+### r331 · 2026-08-18 · FULL (rotation #4 staff mobile 390px)
+- Staging merged with origin/JOGQK (already up to date at checkout). Fresh
+  container (repo pre-cloned; pg_hba trust per r205; SUPERUSER bgp role +
+  restore + schema grant per r249). Regression: run-smoke.sh GREEN first
+  pass (42 checks, 0 failures, FRESH_BUILD=1, fresh DB). Two-bot round
+  331: exit 0, 193 ok — incl. the FIRST live run of r330's extended
+  agent-edit-requirement today-default assert (green). 3 logged issues
+  all listed noise (rocketreach-400; brand-gaps/live-intel 503;
+  commentary-regen 503). Dev-server log: 85 5xx all keyless-AI 503s, 0
+  raw 500/502/504; lone " 500 " hit is the "500 articles" news-feed text.
+- Journey: Victoria @390px iPhone UA — "on the train back from Bluewater:
+  log this morning's viewing on the unit tracker from my phone, then make
+  sure the client can see it" (FIRST staff-mobile coverage of the
+  /available Letting Tracker mobile card layout + the viewings-dialog
+  WRITE; r323 covered deals/tasks, r315 brands/contacts): UI login →
+  lands on /chatbgp (deliberate — JOGQK bf9e6e5 "Mobile opens on
+  ChatBGP", bottom nav renders, NOT a bug) → /available mobile cards
+  (156 units, status chips with counts, search; 0 h-overflow) → search
+  "Bluewater" 156→151 cards (matches SQL: exactly 151 Bluewater units) →
+  card Viewing button → dialog fits 390px (374px wide), date pre-filled
+  today → save → POST 200, "Viewing added" toast, card button recounts
+  "Viewing (1)", survives reload → AS MARK mobile: /available renders
+  the client-scoped tracker (153 = 151 Bluewater + 2 Westgate; the 3
+  out-of-scope Broadgate-rival/Brent-Cross units hidden — verified vs
+  SQL; fees stripped, client subtitle) and his viewing dialog + scoped
+  API GET both show Victoria's viewing. Task completable; 0 page errors,
+  0 non-noise sightings all legs.
+- Triaged, NOT bugs: two-bot's stale comment says clients are REDIRECTED
+  off /available — the page now has a full isClientTracker branch and
+  server-side scope (routes.ts /api/available-units landlord_id +
+  crm_company_properties filter, verified exact); decided client
+  write-parity incl. Add Unit. Scope already harness-locked
+  (client-available-unit-read-scoped + rival guards) — no growth needed.
+- TESTER TRAP (r285 residue-collision class, nearly self-inflicted):
+  journey probes stamped QA-VIEWING-R331 COLLIDE with two-bot round 331's
+  own stamps — my mid-run sweep `LIKE 'QA-VIEWING-R331%'` deleted
+  two-bot's cross-persona viewing row (already PATCHed to -EDITED) while
+  client-sees-agent-viewing / rival-viewing-offer-patch-guard still
+  needed it. Restored both ids by SQL insert before those scenarios ran —
+  all passed. Rule: never sweep QA-<type>-R<round> patterns while two-bot
+  round <round> is running; use a distinct probe stamp or sweep after
+  exit 0.
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  viewing POST/PATCH/DELETE + client round-trip + scope already covered
+  (agent-log-viewing, client-sees-agent-viewing, rival guards); this
+  round's mobile coverage was visual. Bugs deferred: none. Suggestions
+  added: UX #67 (company-less viewing card headlines the attendees AND
+  repeats them on the Attendees: line — duplicate text both personas).
+  New flakes: none.
+- Next journey: rotation #1 staff desktop (r331 had the journey → r332
+  may be LIGHT; then #1).
 
 ### r330 · 2026-08-18 · LIGHT (r329 had the journey)
 - Staging merged with origin/JOGQK (already up to date at checkout). Fresh

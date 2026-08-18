@@ -16,6 +16,15 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+67. 2026-08-18 · both personas / mobile 390px (QA r331) · "log this
+    morning's viewing from my phone" · When a viewing is saved with no
+    Company (common quick-log path — the dialog's required field is only
+    the date), the viewing card's HEADLINE is the attendees string (per
+    UX #58) and the "Attendees:" line directly beneath repeats the exact
+    same text — every company-less viewing reads twice. · Suggested: hide
+    the "Attendees:" sub-line when it already headlines the card (or
+    headline "Viewing — 18 Aug" and keep the attendees line).
+
 66. 2026-08-18 · Landsec client / mobile 390px (QA r329) · "which Bluewater
     leases expire soonest — from my phone" · Tap-to-sort (UX #62) WORKS, but
     on a 390px phone the tenancy Full Board's sticky Unit column (~225px)
