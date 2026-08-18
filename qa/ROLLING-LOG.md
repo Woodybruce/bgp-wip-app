@@ -67,6 +67,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r327 · 2026-08-18 · ROUND IN PROGRESS (heartbeat)
+- FULL round (r326 was LIGHT), rotation #2 client desktop. Staging merged
+  with origin/JOGQK head 600b618 first (per standing branch rule).
+- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures,
+  FRESH_BUILD=1, fresh DB).
+- Journey in progress: Mark Warne desktop 1440px — "how are my Bluewater
+  lettings progressing, who do I chase". Triage list so far: client deals
+  table shows inline "+ Link landlord/+ Link tenant/+ Add terms"
+  affordances; client tracker rows show edit pencil + red delete; checking
+  intended-vs-doomed. /api/client/sharepoint/root 404 (likely keyless
+  noise, verifying).
+
 ### r326 · 2026-08-18 · LIGHT (r325 had the journey)
 - FIRST round on the post-merge staging head (f382235 pulled the JOGQK UX
   batches + client-view fixes into staging). Fresh container (repo
