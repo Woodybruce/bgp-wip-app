@@ -3484,6 +3484,10 @@ app.use("/api/branding/assets", express.static(
     // stay staff-only via the write allowlist) and the saved dashboard
     // template (read-only layout defaults).
     "/api/turnover", "/api/dashboard-template",
+    // Unit picker on the deal Edit dialog (decided deal parity) — the GET
+    // handler confines scoped callers to a propertyId in their own
+    // portfolio; unit writes stay staff-only via the write allowlist.
+    "/api/property-units",
     // Operator Targeting Briefs on the client's own units — the Letting
     // Tracker lists these, and the handler scopes the rows (and their target
     // operators) to the caller's portfolio.
@@ -3553,9 +3557,10 @@ app.use("/api/branding/assets", express.static(
     // Clients may manage their OWN tasks (every task endpoint is scoped to
     // user_id); the My Tasks dashboard widget needs create/complete/reorder.
     "/api/tasks",
-    // Per-user news actions (click/save/dismiss tracking) — harmless and
-    // needed for the News tab; the fetch/scrape trigger stays staff-only.
-    "/api/news-feed/engage",
+    // Per-user news actions (click/save/dismiss tracking, plus removing an
+    // article the user saved) — harmless and needed for the News tab; the
+    // fetch/scrape trigger stays staff-only.
+    "/api/news-feed/engage", "/api/news-feed/unsave",
     // The client app's "Your BGP Team" board is a full mirror of the
     // internal client-team board — same data, same editing (Woody,
     // 2026-07). Covers member add/edit/reorder and column management.
