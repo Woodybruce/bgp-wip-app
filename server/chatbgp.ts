@@ -14436,6 +14436,10 @@ export function setupChatBGPRoutes(app: Express) {
       });
     }
 
+    // Declared before sendResult so the save path can tell whether the
+    // client is still listening; set by the req "close" handler below.
+    let clientDisconnected = false;
+
     const sendResult = async (data: any) => {
       clearInterval(heartbeat);
       if (verifiedThreadId) activeChatRuns.delete(verifiedThreadId);
@@ -14450,6 +14454,18 @@ export function setupChatBGPRoutes(app: Express) {
           });
           saved = true;
           console.log(`[ChatBGP] Saved assistant reply to thread ${verifiedThreadId} (${data.reply.length} chars)`);
+          if (clientDisconnected) {
+            // The user left before the reply landed — nudge them back in.
+            // Same shape as team-chat pushes; the deep link opens the thread.
+            import("./push-notifications")
+              .then(p => p.sendPushNotification(req.session.userId!, {
+                title: "ChatBGP",
+                body: String(data.reply).slice(0, 80),
+                tag: `chat-${verifiedThreadId}`,
+                url: `/chatbgp?thread=${verifiedThreadId}`,
+              }))
+              .catch(() => {});
+          }
         } catch (saveErr: any) {
           console.error(`[ChatBGP] Failed to save reply to thread:`, saveErr?.message);
         }
@@ -14495,7 +14511,6 @@ export function setupChatBGPRoutes(app: Express) {
       Math.max(Number((req.body as any)?.deadlineMs) || 10 * 60 * 1000, 60 * 1000),
       30 * 60 * 1000,
     );
-    let clientDisconnected = false;
     // A dropped connection must NOT kill the work when the chat is a saved
     // thread: phones tear down the SSE the moment the user backs out of the
     // chat or the app is backgrounded, and the reply used to die with it
@@ -14933,6 +14948,14 @@ export function setupChatBGPRoutes(app: Express) {
       if (verifiedThreadId && clientDisconnected) {
         try {
           await storage.createChatMessage({ threadId: verifiedThreadId, role: "assistant", content: errorMsg });
+          import("./push-notifications")
+            .then(p => p.sendPushNotification(req.session.userId!, {
+              title: "ChatBGP",
+              body: errorMsg.slice(0, 80),
+              tag: `chat-${verifiedThreadId}`,
+              url: `/chatbgp?thread=${verifiedThreadId}`,
+            }))
+            .catch(() => {});
         } catch {}
       }
       safeSseWrite(`data: ${JSON.stringify({ reply: errorMsg, error: !lastAssistantContent, errorStatus: err?.status || 500 })}\n\n`);

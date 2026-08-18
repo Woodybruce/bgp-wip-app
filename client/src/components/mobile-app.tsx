@@ -1217,7 +1217,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   // the thread. This poll notices a run still in flight when the user
   // returns, so the typing indicator + progress show instead of a blank;
   // the finished reply then arrives via the thread poll above.
-  const { data: activeRun } = useQuery<{ active: boolean; progress?: string }>({
+  const { data: activeRun } = useQuery<{ active: boolean; progress?: string; partial?: string }>({
     queryKey: ["/api/chatbgp/threads", threadId, "active-run"],
     queryFn: async () => {
       const r = await fetch(`/api/chatbgp/threads/${threadId}/active-run`, {
@@ -1278,6 +1278,9 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   });
 
   const [streamingProgress, setStreamingProgress] = useState<string | null>(null);
+  // Live text as it's composed — SSE deltas append here so the reply writes
+  // itself into the bubble Claude-style instead of appearing all at once.
+  const [streamingText, setStreamingText] = useState("");
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [searchInChat, setSearchInChat] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState("");
@@ -1418,7 +1421,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
             if (line.startsWith("data: ")) {
               try {
                 const parsed = JSON.parse(line.slice(6));
-                if (parsed.progress) setStreamingProgress(parsed.progress);
+                if (parsed.progress) { setStreamingProgress(parsed.progress); setStreamingText(""); }
+                if (parsed.delta) setStreamingText(prev => prev + parsed.delta);
                 if (parsed.reply !== undefined || parsed.error !== undefined) lastData = line.slice(6);
               } catch {}
             }
@@ -1430,7 +1434,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
             if (parsed.reply !== undefined || parsed.error !== undefined) lastData = buffer.slice(6);
           } catch {}
         }
-        setStreamingProgress(null);
+        setStreamingProgress(null); setStreamingText("");
         if (!lastData) throw new Error("Server closed the stream before sending a reply.");
         const data = JSON.parse(lastData);
         if (data.error !== undefined) throw new Error(String(data.error));
@@ -1488,7 +1492,10 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                   try {
                     const parsed = JSON.parse(line.slice(6));
                     if (parsed.reply) lastData = line.slice(6);
-                    if (parsed.progress) { setStreamingProgress(parsed.progress); sawProgress = true; }
+                    // A new progress phase = a new composition pass — reset
+                    // the live text (mirrors the server's active-run partial).
+                    if (parsed.progress) { setStreamingProgress(parsed.progress); sawProgress = true; setStreamingText(""); }
+                    if (parsed.delta) setStreamingText(prev => prev + parsed.delta);
                   } catch {}
                 }
               }
@@ -1499,7 +1506,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 if (parsed.reply) lastData = buffer.slice(6);
               } catch {}
             }
-            setStreamingProgress(null);
+            setStreamingProgress(null); setStreamingText("");
             if (!lastData) {
               if (currentThreadId) {
                 const checkRes = await fetch(`/api/chat/threads/${currentThreadId}`, { credentials: "include", headers: getAuthHeaders() });
@@ -1528,7 +1535,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
             return { ...JSON.parse(lastData), threadId: currentThreadId };
           } catch (err: any) {
             clearTimeout(timeoutId);
-            setStreamingProgress(null);
+            setStreamingProgress(null); setStreamingText("");
             if (err.name === "AbortError") throw err;
             const isNetworkError = err.message === "Failed to fetch" || err.message === "Load failed" || err.message?.includes("network");
             if (isNetworkError && attempt < 2) {
@@ -2040,7 +2047,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     setInput("");
     setAttachedFiles([]);
     setQueuedMessages([]);
-    setStreamingProgress(null);
+    setStreamingProgress(null); setStreamingText("");
     setSearchInChat(false);
     setChatSearchQuery("");
     initialMsgCountRef.current = null;
@@ -2363,13 +2370,23 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
               <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }}>
                 <Sparkles className="w-4 h-4 text-white" />
               </div>
-              <div className="flex items-center gap-2.5 pt-2">
-                <div className="flex gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "0ms" }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "150ms" }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+              <div className="flex-1 min-w-0 pt-2 space-y-1.5">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+                  </div>
+                  <span className="text-[14px] text-gray-400 italic">{streamingProgress || activeRun?.progress || "Thinking..."}</span>
                 </div>
-                <span className="text-[14px] text-gray-400 italic">{streamingProgress || activeRun?.progress || "Thinking..."}</span>
+                {/* Reply writes itself in live — deltas while connected, the
+                    server's partial when re-attaching mid-composition. The
+                    saved message re-renders it with full markdown at the end. */}
+                {(isSending ? streamingText : activeRun?.partial) && (
+                  <p className="text-[15px] text-gray-800 dark:text-gray-200 whitespace-pre-wrap leading-relaxed">
+                    {isSending ? streamingText : activeRun?.partial}
+                  </p>
+                )}
               </div>
             </div>
           ) : (
