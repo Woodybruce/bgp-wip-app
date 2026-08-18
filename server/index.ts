@@ -4224,6 +4224,28 @@ app.use("/api/branding/assets", express.static(
           console.error("[ig-handle heal] failed:", e?.message);
         }
       }, 50000);
+      // One-shot: build the curated Instagram feed set on RSS.app (Woody
+      // signed off the 100-feed plan, 2026-08-18). Waits silently until
+      // RSSAPP_API_KEY/SECRET land on Railway, then runs exactly once —
+      // after the handle heal above so poisoned rows can't win paid slots.
+      setTimeout(async () => {
+        const FLAG = "migration:rssapp_curated_ig_feeds_v1";
+        try {
+          if (!process.env.RSSAPP_API_KEY || !process.env.RSSAPP_API_SECRET) return; // not configured yet — retry next boot
+          const { rows: done } = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [FLAG]);
+          if (done[0]) return;
+          const { ensureCuratedInstagramFeeds } = await import("./news-brand-linking");
+          const result = await ensureCuratedInstagramFeeds(100);
+          await pool.query(
+            `INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2`,
+            [FLAG, JSON.stringify({ at: new Date().toISOString(), created: result.created, skipped: result.skipped, quotaRemaining: result.quotaRemaining, excluded: result.excluded, errors: result.errors.slice(0, 30) })],
+          );
+          console.log(`[rssapp curated] created ${result.created} brand Instagram feed(s), ${result.skipped} failed, quota left ${result.quotaRemaining}`);
+        } catch (e: any) {
+          // Health/API failure → no flag written, retries on next deploy.
+          console.error("[rssapp curated] failed:", e?.message);
+        }
+      }, 120000);
       // Background crawls only run in production — too slow/fragile over local internet
       const isProduction = process.env.NODE_ENV === "production";
       if (isProduction) {
