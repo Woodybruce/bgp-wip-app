@@ -4102,7 +4102,10 @@ app.use("/api/branding/assets", express.static(
         const FLAG = "migration:tracker_junk_sweep_v1";
         try {
           const { rows: done } = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [FLAG]);
-          if (done[0]) return;
+          // Guard skips only THIS sweep. It used to `return`, which killed
+          // every piggy-backed heal below on every boot once the flag
+          // existed — they all silently never ran (found 2026-08-18).
+          if (!done[0]) {
           const { isJunkUnitName } = await import("./unit-junk");
           const { rows: units } = await pool.query(
             `SELECT au.id, au.unit_name, au.property_id, au.deal_id, d.status AS deal_status
@@ -4125,6 +4128,7 @@ app.use("/api/branding/assets", express.static(
             [FLAG, JSON.stringify({ at: new Date().toISOString(), deleted: audit.length, rows: audit.slice(0, 200) })],
           );
           console.log(`[junk-unit sweep] removed ${audit.length} non-lettable tracker unit(s): ${audit.slice(0, 12).map(a => a.name).join("; ")}${audit.length > 12 ? "…" : ""}`);
+          }
         } catch (e: any) {
           console.error("[junk-unit sweep] failed:", e?.message);
         }
@@ -4150,21 +4154,37 @@ app.use("/api/branding/assets", express.static(
         } catch (e: any) {
           console.error("[uk-entity backfill] failed:", e?.message);
         }
-        // Piggy-back heal: Bill's Instagram handle pointed at a US namesake
-        // (@bills_restaurant — a Gulf-seafood spot, not the UK chain). The
-        // right account is @billsrestaurant (verified 113k followers,
-        // 2026-08-18). Fix the handle and drop the poisoned feed sources —
-        // the feed top-up recreates them against the right account. The
-        // wrong RSS.app feeds were already deleted account-side.
+        // Piggy-back heal: Bill's Instagram. The handle pointed at a US
+        // namesake (@bills_restaurant — Gulf seafood, not the UK chain);
+        // the right account is @billsrestaurant (verified, 113k followers).
+        // Bulk feed creation kept flaking on RSS.app, so the correct feed
+        // was created by hand (QzQXbDchpuJcVjBz) and is wired straight to
+        // every Bill's brand row here. Idempotent throughout.
         try {
           const h = await pool.query(`
             UPDATE crm_companies SET instagram_handle = 'billsrestaurant'
-             WHERE lower(regexp_replace(instagram_handle, '^@', '')) = 'bills_restaurant'`);
+             WHERE lower(instagram_handle) LIKE '%bills\\_restaurant%'`);
           const s = await pool.query(`
             DELETE FROM news_sources
-             WHERE type = 'rssapp_instagram' AND url ILIKE '%instagram.com/bills\\_restaurant%'`);
-          if ((h.rowCount || 0) + (s.rowCount || 0) > 0) {
-            console.log(`[bills-ig heal] fixed ${h.rowCount} handle(s), removed ${s.rowCount} poisoned source(s)`);
+             WHERE type = 'rssapp_instagram'
+               AND (url ILIKE '%instagram.com/bills\\_restaurant%'
+                    OR feed_url LIKE '%eI7KNBwmCZGfkb5O%'
+                    OR feed_url LIKE '%8OltQ1HKUNON5iKQ%')`);
+          const ins = await pool.query(`
+            INSERT INTO news_sources (name, url, feed_url, type, category, active)
+            SELECT c.name || ' (instagram)',
+                   'https://www.instagram.com/billsrestaurant/',
+                   'https://rss.app/feeds/QzQXbDchpuJcVjBz.xml',
+                   'rssapp_instagram',
+                   'brand:' || c.id,
+                   true
+              FROM crm_companies c
+             WHERE regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') = 'bills'
+               AND c.merged_into_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM news_sources ns
+                                WHERE ns.category = 'brand:' || c.id AND ns.type = 'rssapp_instagram')`);
+          if ((h.rowCount || 0) + (s.rowCount || 0) + (ins.rowCount || 0) > 0) {
+            console.log(`[bills-ig heal] handles fixed=${h.rowCount}, dead sources removed=${s.rowCount}, feed wired to ${ins.rowCount} brand row(s)`);
           }
         } catch (e: any) {
           console.error("[bills-ig heal] failed:", e?.message);
@@ -4288,7 +4308,7 @@ app.use("/api/branding/assets", express.static(
               `INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2`,
               [KEY, JSON.stringify({ at: new Date().toISOString(), created: result.created, skipped: result.skipped, quotaRemaining: result.quotaRemaining, excluded: result.excluded, errors: result.errors.slice(0, 30) })],
             );
-            console.log(`[rssapp curated] created ${result.created} brand Instagram feed(s), ${result.skipped} failed, quota left ${result.quotaRemaining}`);
+            console.log(`[rssapp curated] created ${result.created} brand Instagram feed(s), ${result.skipped} failed, quota left ${result.quotaRemaining}${result.errors.length ? ` | e.g. ${result.errors.slice(0, 3).map((e: any) => `${e.brandName}: ${String(e.error).slice(0, 90)}`).join(" · ")}` : ""}`);
           }
         } catch (e: any) {
           console.error("[rssapp curated] failed:", e?.message);
@@ -4446,6 +4466,19 @@ app.use("/api/branding/assets", express.static(
             );
           }
         }, 60 * 60 * 1000);
+      }
+
+      // AML orchestrator top-up on boot (production): screens up to 12
+      // never-screened / overdue companies ~4 min after deploy, so a brand
+      // whose CH entity resolved during the day gets its PEP / adverse-media
+      // pass the same hour instead of waiting for the 02:00 sweep.
+      // Self-limiting — no-ops once the backlog is clear.
+      if (process.env.NODE_ENV === "production") {
+        setTimeout(() => {
+          runPeriodicAmlReScreening({ maxCompanies: 12 }).catch(err =>
+            console.error("[kyc-orch-boot] AML top-up failed:", err?.message)
+          );
+        }, 4 * 60 * 1000);
       }
 
       // Nightly brand-enrichment — tops up stale / never-enriched brand rows.
