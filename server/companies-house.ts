@@ -680,6 +680,11 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
       // unrelated UK companies. If we don't have a specific UK entity
       // name from one of the trusted sources above, park it.
       if (!haveSpecificEntityName) {
+        // Stamp the attempt even though we're parking — without this the
+        // nightly batch (ordered by kyc_checked_at, NULLS FIRST) re-picked
+        // the same parked brands every run and the rest of the queue
+        // starved. Parked brands now rotate to the back and retry monthly.
+        await db.update(crmCompanies).set({ kycStatus: "not_found", kycCheckedAt: new Date() } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
         diagnostics.push({
           step: "ch_search",
           outcome: "skipped_no_specific_entity",
@@ -702,6 +707,7 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
       const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(searchName)}&items_per_page=20`);
       const items = searchData.items || [];
       if (items.length === 0) {
+        await db.update(crmCompanies).set({ kycStatus: "not_found", kycCheckedAt: new Date() } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
         diagnostics.push({ step: "ch_search", outcome: "no_results", detail: `query: "${searchName}"` });
         return {
           success: false,
@@ -720,6 +726,7 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
       // dissolved namesake.
       const exactNameHit = exactMatches.find((i: any) => i.company_status === "active") || exactMatches[0];
       if (!exactNameHit) {
+        await db.update(crmCompanies).set({ kycStatus: "not_found", kycCheckedAt: new Date() } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
         const top = items.slice(0, 5).map((i: any) => `${i.title} (${i.company_number}, ${i.company_status})`).join(", ");
         diagnostics.push({
           step: "ch_search",

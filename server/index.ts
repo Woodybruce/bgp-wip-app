@@ -4399,12 +4399,15 @@ app.use("/api/branding/assets", express.static(
       }
 
       // Nightly KYC refresh — re-runs Companies House KYC for stale/dissolved companies.
-      // Runs at 1am every night (production only). Processes up to 40 companies per run.
+      // Runs at 1am every night (production only). 120/night (was 40) so the
+      // parked backlog clears in days now that parked brands rotate to the
+      // back of the queue instead of jamming its head — still well inside CH
+      // rate limits at ~3 requests per company, paced 700ms apart.
       if (process.env.NODE_ENV === "production") {
         setInterval(() => {
           const now = new Date();
           if (now.getHours() === 1 && now.getMinutes() < 60) {
-            runBatchReKyc({ limit: 40 }).catch(err =>
+            runBatchReKyc({ limit: 120 }).catch(err =>
               console.error("[kyc-refresh] nightly run failed:", err?.message)
             );
           }
