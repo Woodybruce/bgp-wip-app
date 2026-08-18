@@ -14433,7 +14433,16 @@ export function setupChatBGPRoutes(app: Express) {
       30 * 60 * 1000,
     );
     let clientDisconnected = false;
-    const isOverDeadline = () => clientDisconnected || Date.now() - requestStart > REQUEST_DEADLINE_MS;
+    // A dropped connection must NOT kill the work when the chat is a saved
+    // thread: phones tear down the SSE the moment the user backs out of the
+    // chat or the app is backgrounded, and the reply used to die with it
+    // (Woody, 2026-08-18 — "when I return out of the chat it halts"). With
+    // a verified thread the loop runs to completion and sendResult saves
+    // the reply to the thread; the mobile 8s thread poll shows it on
+    // return. Ephemeral chats (no saved thread) still stop early — there's
+    // nowhere to save, so finishing would waste the tokens.
+    const isOverDeadline = () =>
+      (clientDisconnected && !verifiedThreadId) || Date.now() - requestStart > REQUEST_DEADLINE_MS;
 
     req.on("close", () => {
       clientDisconnected = true;
@@ -14682,7 +14691,7 @@ export function setupChatBGPRoutes(app: Express) {
       while (loopCount < maxLoops) {
         if (isOverDeadline()) {
           console.log(`[ChatBGP] Deadline reached after ${loopCount} loops`);
-          const timeoutMsg = clientDisconnected
+          const timeoutMsg = clientDisconnected && !verifiedThreadId
             ? "Connection lost. Please refresh and try again."
             : "This is taking longer than expected — try breaking your request into smaller steps (e.g. ask me to check one category at a time).";
           await sendResult({ reply: timeoutMsg, partial: true });
