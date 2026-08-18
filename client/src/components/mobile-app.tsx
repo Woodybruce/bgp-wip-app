@@ -3398,21 +3398,16 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     setShowMobileMarketingFiles(false);
   };
 
-  // Pinned ChatBGP row — resumes the latest plain AI conversation, or
-  // starts a fresh one on first use.
+  // Pinned ChatBGP row — always opens a FRESH AI chat (Woody, 2026-08-18:
+  // resuming the latest conversation here surprised him — old threads are
+  // one tap away via the History button on the row).
   const openChatBgpPinned = () => {
     returnTabRef.current = "chats";
-    const latestAi = (threads || [])
-      .filter(t => t.isAiChat && !t.linkedType)
-      .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime())[0];
-    if (latestAi) {
-      setActiveThreadId(latestAi.id);
-      setActiveThreadAi(true);
-      setChatFromList(true);
-      setShowChat(true);
-    } else {
-      openNewAiChat();
-    }
+    setActiveThreadId(null);
+    setActiveThreadAi(true);
+    setChatFromList(true);
+    setShowChat(true);
+    setShowMobileMarketingFiles(false);
   };
 
   const handleCreateMobilePropertyChat = async (data: { linkedType: string; linkedId: string; linkedName: string }) => {

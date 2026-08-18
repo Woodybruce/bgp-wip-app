@@ -440,6 +440,24 @@ function AuthenticatedApp() {
   }, [currentUser, isPushSupported, isPushSubscribed, subscribePush]);
   // Team Chat is BGP-internal — clients never poll it (and the button is hidden).
   const isClientShell = (currentUser as any)?.role === "Client" || !!(currentUser as any)?.companyScopeId;
+
+  // Mobile cold-open lands on ChatBGP (Woody, 2026-08-18 — supersedes the
+  // 2026-08-09 Dashboard-home decision). Fires once per session so the
+  // Dashboard bottom-nav tab (which navigates back to "/") still works,
+  // and only for staff — clients keep their Portfolio home.
+  const chatHomeDoneRef = useRef(false);
+  useEffect(() => {
+    if (chatHomeDoneRef.current || currentUser === undefined) return;
+    chatHomeDoneRef.current = true;
+    if (!currentUser || isClientShell) return;
+    if (!(isMobile || isNativeMobile())) return;
+    if (location !== "/" && location !== "/home") return;
+    try {
+      if (sessionStorage.getItem("bgp-chat-home-done")) return;
+      sessionStorage.setItem("bgp-chat-home-done", "1");
+    } catch {}
+    navigate("/chatbgp", { replace: true });
+  }, [currentUser]);
   const { data: chatNotifications } = useQuery<{ unseenCount: number }>({
     queryKey: ["/api/chat/notifications"],
     enabled: !!currentUser && !isClientShell,
