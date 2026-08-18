@@ -14308,6 +14308,46 @@ export function setupChatBGPRoutes(app: Express) {
     return executeCrmToolRaw(tcName, tcArgs, req);
   }
 
+  // Live run registry — Claude-style re-attach. Phones tear the SSE down
+  // the moment the user backs out of the chat; the work now survives that
+  // (see isOverDeadline below), and this registry lets the returning client
+  // see the run still composing: the thread view polls the active-run
+  // endpoint and shows live progress until the saved reply lands. In-memory
+  // is fine — the app runs a single replica.
+  const activeChatRuns = new Map<string, { startedAt: number; userId: string; progress: string; partial: string }>();
+
+  app.get("/api/chatbgp/threads/:threadId/active-run", requireAuth, async (req: Request, res: Response) => {
+    const threadId = String(req.params.threadId);
+    const run = activeChatRuns.get(threadId);
+    if (!run) return res.json({ active: false });
+    // A run older than the 30-min hard deadline cap is a leaked entry.
+    if (Date.now() - run.startedAt > 35 * 60 * 1000) {
+      activeChatRuns.delete(threadId);
+      return res.json({ active: false });
+    }
+    try {
+      // Same visibility rule as the chat itself: thread creator or member.
+      const thread = await storage.getChatThread(threadId);
+      let allowed = !!thread && thread.createdBy === req.session.userId;
+      if (!allowed && thread) {
+        const m = await pool.query(
+          `SELECT 1 FROM chat_thread_members WHERE thread_id = $1 AND user_id = $2 LIMIT 1`,
+          [threadId, req.session.userId],
+        );
+        allowed = !!m.rows[0];
+      }
+      if (!allowed) return res.json({ active: false });
+    } catch {
+      return res.json({ active: false });
+    }
+    res.json({
+      active: true,
+      startedAt: run.startedAt,
+      progress: run.progress,
+      partial: run.partial.length > 2000 ? run.partial.slice(-2000) : run.partial,
+    });
+  });
+
   app.post("/api/chatbgp/chat", requireAuth, async (req: Request, res: Response) => {
     if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
       return res.status(503).json({ message: "AI API key not configured" });
@@ -14339,11 +14379,23 @@ export function setupChatBGPRoutes(app: Express) {
       try { res.write(data); return true; } catch { return false; }
     };
 
+    // Holder for the verified thread id (set below) so progress/deltas can
+    // mirror into the active-run registry for re-attaching clients.
+    const runRef: { id: string | null } = { id: null };
+
     const sendProgress = (status: string) => {
+      if (runRef.id) {
+        const run = activeChatRuns.get(runRef.id);
+        if (run) { run.progress = status; run.partial = ""; }
+      }
       safeSseWrite(`data: ${JSON.stringify({ progress: status })}\n\n`);
     };
 
     const sendDelta = (token: string) => {
+      if (runRef.id) {
+        const run = activeChatRuns.get(runRef.id);
+        if (run) run.partial += token;
+      }
       safeSseWrite(`data: ${JSON.stringify({ delta: token })}\n\n`);
     };
 
@@ -14374,8 +14426,19 @@ export function setupChatBGPRoutes(app: Express) {
       } catch {}
     }
 
+    if (verifiedThreadId) {
+      runRef.id = verifiedThreadId;
+      activeChatRuns.set(verifiedThreadId, {
+        startedAt: Date.now(),
+        userId: req.session.userId!,
+        progress: "Thinking...",
+        partial: "",
+      });
+    }
+
     const sendResult = async (data: any) => {
       clearInterval(heartbeat);
+      if (verifiedThreadId) activeChatRuns.delete(verifiedThreadId);
       let saved = false;
       if (verifiedThreadId && data.reply && !data.error) {
         try {
@@ -14864,6 +14927,14 @@ export function setupChatBGPRoutes(app: Express) {
       }
 
       clearInterval(heartbeat);
+      if (verifiedThreadId) activeChatRuns.delete(verifiedThreadId);
+      // Client already gone: the SSE write below lands nowhere, so persist
+      // the outcome to the thread — returning to silence looks like a hang.
+      if (verifiedThreadId && clientDisconnected) {
+        try {
+          await storage.createChatMessage({ threadId: verifiedThreadId, role: "assistant", content: errorMsg });
+        } catch {}
+      }
       safeSseWrite(`data: ${JSON.stringify({ reply: errorMsg, error: !lastAssistantContent, errorStatus: err?.status || 500 })}\n\n`);
       try { if (!res.writableEnded) res.end(); } catch {}
     }

@@ -1212,6 +1212,25 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     refetchInterval: 8000,
   });
 
+  // Claude-style re-attach: leaving the chat (or backgrounding the app)
+  // drops the SSE, but the server keeps composing and saves the reply to
+  // the thread. This poll notices a run still in flight when the user
+  // returns, so the typing indicator + progress show instead of a blank;
+  // the finished reply then arrives via the thread poll above.
+  const { data: activeRun } = useQuery<{ active: boolean; progress?: string }>({
+    queryKey: ["/api/chatbgp/threads", threadId, "active-run"],
+    queryFn: async () => {
+      const r = await fetch(`/api/chatbgp/threads/${threadId}/active-run`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) return { active: false };
+      return r.json();
+    },
+    enabled: !!threadId && (activeThread?.isAiChat ?? isAiChat),
+    refetchInterval: 3000,
+  });
+
   const { data: allUsers } = useQuery<Array<{ id: string; name: string; username: string; team?: string | null }>>({
     queryKey: ["/api/users"],
     queryFn: getQueryFn({ on401: "throw" }),
@@ -2338,7 +2357,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           );
         })}
 
-        {isSending && !staleAiSend && (
+        {((isSending && !staleAiSend) || (!isSending && isActiveThreadAi && activeRun?.active)) && (
           isActiveThreadAi ? (
             <div className="flex items-start gap-3">
               <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }}>
@@ -2350,7 +2369,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                   <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "150ms" }} />
                   <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "300ms" }} />
                 </div>
-                <span className="text-[14px] text-gray-400 italic">{streamingProgress || "Thinking..."}</span>
+                <span className="text-[14px] text-gray-400 italic">{streamingProgress || activeRun?.progress || "Thinking..."}</span>
               </div>
             </div>
           ) : (
