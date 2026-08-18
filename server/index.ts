@@ -4235,8 +4235,20 @@ app.use("/api/branding/assets", express.static(
         try {
           if (!process.env.RSSAPP_API_KEY || !process.env.RSSAPP_API_SECRET) return; // not configured yet — retry next boot
           const quota = Number(process.env.RSSAPP_FEED_QUOTA || 100);
-          const { ensureCuratedInstagramFeeds } = await import("./news-brand-linking");
+          const { ensureCuratedInstagramFeeds, ensurePinnedIgBrands } = await import("./news-brand-linking");
+          // Pinned must-watch operators first: flip tracking on for any
+          // pinned row that lost it, so they're in the plan we build next.
+          const pinnedBefore = await ensurePinnedIgBrands().catch((e: any) => {
+            console.error("[rssapp curated] pinned pre-check failed:", e?.message);
+            return null;
+          });
           const result = await ensureCuratedInstagramFeeds(quota);
+          const pinned = await ensurePinnedIgBrands().catch(() => pinnedBefore);
+          if (pinned) {
+            for (const p of pinned) {
+              console.log(`[rssapp curated] pinned: ${p.group} → ${p.status}${p.detail ? ` (${p.detail})` : ""}`);
+            }
+          }
           if (result.created || result.errors.length) {
             await pool.query(
               `INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2`,

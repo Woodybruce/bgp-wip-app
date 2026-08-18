@@ -581,6 +581,66 @@ function cleanIgHandle(raw: string | null): string | null {
 
 const normBrandName = (name: string) => (name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
+// Operators Woody wants watched no matter what the ranking says
+// (2026-08-18). Matched on normalised brand name — groups are listed
+// alongside their consumer brands since either may hold the tracked row,
+// and common name spellings are included so a rename doesn't unpin.
+const PINNED_IG_GROUPS: Record<string, string[]> = {
+  "Nando's": ["nandos"],
+  "Wagamama": ["wagamama"],
+  "Five Guys": ["fiveguys"],
+  "Wingstop": ["wingstop"],
+  "Pizza Express": ["pizzaexpress"],
+  "Boparan / Slim Chickens": ["boparan", "boparangroup", "boparanrestaurantgroup", "slimchickens"],
+  "Azzurri / Zizzi": ["azzurri", "azzurrigroup", "zizzi"],
+  "Troia / Ivy / Bills": ["troia", "troiagroup", "theivy", "ivy", "theivycollection", "ivycollection", "bills", "billsrestaurants"],
+  "Arcturus / Pho / Mowgli / Rosa's": ["arcturus", "arcturusgroup", "pho", "mowgli", "mowglistreetfood", "rosas", "rosasthai", "rosasthaicafe"],
+  "Big Table (Bella Italia, Banana Tree, F&Bs, Las Iguanas, Chiquito)": ["bigtable", "bigtablegroup", "bellaitalia", "bananatree", "frankiebennys", "frankieandbennys", "lasiguanas", "chiquito"],
+};
+const PINNED_IG_BRANDS = new Set(Object.values(PINNED_IG_GROUPS).flat());
+
+// Self-heal + report for the pinned list. Flips tracking ON for any pinned
+// brand row that isn't tracked (untracked rows never reach the curated
+// plan), then says where each requested group stands. Logged at boot so
+// gaps — a group with no CRM row at all, or a row with no usable handle —
+// are visible in the deploy logs instead of silently unfed.
+export async function ensurePinnedIgBrands(): Promise<{ group: string; status: string; detail?: string }[]> {
+  const pinnedArr = [...PINNED_IG_BRANDS];
+  await pool.query(
+    `UPDATE crm_companies
+        SET is_tracked_brand = true,
+            tracking_reason = COALESCE(NULLIF(tracking_reason, ''), 'Pinned must-watch operator (Woody, 2026-08-18)')
+      WHERE merged_into_id IS NULL AND is_tracked_brand IS NOT TRUE
+        AND regexp_replace(lower(name), '[^a-z0-9]', '', 'g') = ANY($1::text[])`,
+    [pinnedArr],
+  );
+  const rows = await pool.query(
+    `SELECT c.name, c.instagram_handle,
+            regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') AS norm,
+            EXISTS (SELECT 1 FROM news_sources ns
+                     WHERE ns.category = 'brand:' || c.id AND ns.type = 'rssapp_instagram') AS fed
+       FROM crm_companies c
+      WHERE c.merged_into_id IS NULL
+        AND regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') = ANY($1::text[])`,
+    [pinnedArr],
+  );
+  const byNorm = new Map<string, any[]>();
+  for (const r of rows.rows) {
+    const list = byNorm.get(r.norm) || [];
+    list.push(r);
+    byNorm.set(r.norm, list);
+  }
+  return Object.entries(PINNED_IG_GROUPS).map(([group, norms]) => {
+    const matches = norms.flatMap(n => byNorm.get(n) || []);
+    if (!matches.length) return { group, status: "NO CRM ROW" };
+    const fed = matches.filter(m => m.fed);
+    if (fed.length) return { group, status: "live", detail: fed.map(m => m.name).join(", ") };
+    const ready = matches.filter(m => cleanIgHandle(m.instagram_handle));
+    if (ready.length) return { group, status: "handle ready — feed on next run", detail: ready.map(m => `${m.name} (@${cleanIgHandle(m.instagram_handle)})`).join(", ") };
+    return { group, status: "NO USABLE HANDLE", detail: matches.map(m => m.name).join(", ") };
+  });
+}
+
 export interface CuratedIgPreview {
   plan: (BrandSocialFeedPlan & { score: number })[];
   totalCandidates: number;
@@ -637,8 +697,9 @@ export async function previewCuratedInstagramFeeds(limit = 100): Promise<Curated
     return true;
   });
 
-  // Rank: brands sitting on a deal outrank everything, then brands whose
-  // news feeds have produced signals recently (they're moving), then name.
+  // Rank: pinned operators first (never lose their slot), then brands
+  // sitting on a deal, then brands whose news feeds have produced signals
+  // recently (they're moving), then name.
   const dealRows = await pool.query(
     `SELECT DISTINCT tenant_id FROM crm_deals WHERE tenant_id IS NOT NULL`
   );
@@ -655,7 +716,8 @@ export async function previewCuratedInstagramFeeds(limit = 100): Promise<Curated
     brandName: b.name,
     platform: "instagram" as SocialPlatform,
     url: `https://www.instagram.com/${b.handle}/`,
-    score: (onDeal.has(b.id) ? 10 : 0) + Math.min(5, signalCount.get(b.id) || 0),
+    score: (PINNED_IG_BRANDS.has(normBrandName(b.name)) ? 1000 : 0)
+      + (onDeal.has(b.id) ? 10 : 0) + Math.min(5, signalCount.get(b.id) || 0),
   }));
   scored.sort((a, b) => b.score - a.score || a.brandName.localeCompare(b.brandName));
 
