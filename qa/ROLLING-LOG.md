@@ -63,6 +63,1564 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r325 · 2026-08-18 · FULL (rotation #1 staff desktop)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; SUPERUSER bgp role + restore + schema grant per r249/r321).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 325: exit 0,
+  192/192 ok first run (dev server warmed ~8min before start — no
+  ECONNRESET). 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503 — qa/logs/round-325.jsonl). 0 raw 500/502/504 in
+  the round's dev-server log (lone " 500 " hit is the "500 articles"
+  news-feed text; 148 5xx all keyless-AI 503s — ai-briefing / ai-take /
+  brand-gaps / chatbgp / os-sites / contact-verify / rocketreach-refresh /
+  competitors-research / bgp-commentary classes; the 2 400s the
+  rocketreach + image-studio harness probes).
+- Journey: Victoria desktop 1440px — "Bluewater rent review settled with
+  Starbucks: update the unit's passing rent on the full tenancy board,
+  check the KPIs recalc, and confirm the client sees the new figure"
+  (FIRST staff-desktop journey through the tenancy Full Board inline-cell
+  WRITE — r307/r321 covered the board read-only on mobile): UI login via
+  guest form → /properties → Bluewater card → property page (news feed,
+  risk register, linked contacts all render) → Full Board link →
+  /tenancy-schedule/:id (KPI strip, 200 units, stage chips, 0 h-overflow)
+  → search "Starbucks" → 2 rows → inline click on passing-rent cell →
+  input → Enter → PUT /api/tenancy-schedule/unit/:id 200 → cell shows
+  £11,111, Passing Rent KPI recalcs — → £11,111 → survives reload → AS
+  MARK: same board shows the new figure (decided parity: Import/Re-sync
+  hidden, Add + row-delete present per r321) → rent restored via the same
+  inline edit (200, cell back to —, DB row 0). Task completable; 0 page
+  errors, 0 non-noise sightings all legs.
+- NOT a bug (triaged): WAULT KPI read 128.4 yrs while the probe rent was
+  live — the fixture's U007 Starbucks row genuinely carries a 2154-12-30
+  lease expiry (Landsec-feed placeholder; 72 dated units, max 2154-12-31),
+  and with exactly one rented unit the rent-weighted WAULT = that unit's
+  term. Maths correct, data placeholder → UX #64 (exclude/badge >60yr
+  terms). Unfiltered board reads 9.9 yrs as always.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: UX #64. Harness growth: none needed — the PUT edit path +
+  scope guards are already locked (client-tenancy-edit /
+  client-tenancy-write-scoped ride the same handler); this round's
+  staff-desktop coverage was visual. New flakes: none.
+- Next journey: rotation #2 client desktop (r325 had the journey → r326
+  may be LIGHT; then #2).
+
+### r324 · 2026-08-17 · LIGHT (r323 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; SUPERUSER bgp role + restore + schema grant per r249/r321).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 324: exit 0, all
+  scenarios ok first run (dev server warmed ~90s before start — no
+  ECONNRESET). 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503 — details in qa/logs/round-324.jsonl). 0 raw
+  500/502/504 in the round's dev-server log (135 5xx all keyless-AI 503s —
+  ai-briefing / ai-take / brand-gaps / chatbgp / os-sites / contact-verify /
+  rocketreach-refresh / competitors-research classes; the 2 400s the
+  rocketreach + image-studio harness probes). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r324 was LIGHT → r325 FULL).
+
+### r323 · 2026-08-17 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore + SUPERUSER bgp role + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 323: exit 0,
+  192/192 ok first run (dev server warmed ~5min before start per the r319
+  note — no ECONNRESET). 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503). 0 raw 500/502/504 in the
+  round's dev-server log (148 5xx all keyless-AI 503s — ai-briefing /
+  ai-take / brand-gaps / chatbgp / os-sites / contact-verify /
+  rocketreach-refresh / competitors-research classes).
+- Journey: Victoria @ 390px iPhone UA — "on the move: check how my
+  Bluewater letting deals are progressing, open one, then jot a chase-up
+  task from my phone" (FIRST staff-mobile coverage of the /deals/list
+  board + deal detail + /tasks quick-add WRITE; r307 covered
+  properties/tenancy/calendar, r315 brands/contacts): UI login via guest
+  form → staff mobile home (tile grid + bottom nav render, ChatBGP bar,
+  billing KPIs; 0 h-overflow) → Deals via home tile → /deals/list card
+  layout (stage chips All/SOL/EXC, New Deal button, search) → search
+  "Bluewater" narrows 3→2 cards, header recounts → deal detail
+  ("U124 Bluewater — Gail's letting") renders full stacked (Parties/Fee
+  Allocation/Xero/Deal Activity/KYC sections, breadcrumb, Edit; 0
+  h-overflow) → /tasks → quick-add "Add a task..." input → Enter → POST
+  /api/tasks 200, "Task created" toast, row renders in All tab. Task
+  completable; 0 page errors, 0 non-noise sightings all legs. Probe rows
+  swept via SQL after (lowercase 'r323' titles dodge run-round's purge
+  AND two-bot's uppercase R323 rows — LIKE is case-sensitive).
+- Tester notes for future rounds: (1) staff mobile layout REQUIRES touch
+  emulation — useIsMobile is narrow-viewport AND isTouchDevice, so a
+  Playwright context without hasTouch:true gets the pinned desktop
+  sidebar squeezing content into ~166px at 390px (looks like a horrid
+  bug; it's the deliberate narrow-desktop-window behaviour — set
+  hasTouch:true + isMobile:true). (2) psql -tA prints the "DELETE n"
+  command tag as an output line — `RETURNING id | wc -l` overcounts by
+  1; a phantom "duplicate task" chased this round was exactly that
+  (clean repro: 1 Enter = 1 POST = 1 row; POST-count arithmetic across
+  the dev log matched).
+- Bugs fixed: 0 (nothing broken found — the one suspect above
+  adversarially verified as tester error). Deferred: none. Suggestions
+  added: UX #63 (deals-board stage chips keep unfiltered counts while
+  search narrows the list + header — numbers disagree, UX #61 class).
+  Harness growth: none needed — task create/PATCH/DELETE already covered
+  (two-bot ~794/~4023); this round's mobile coverage was visual.
+  New flakes: none.
+- Next journey: rotation #1 staff desktop (r323 had the journey → r324
+  may be LIGHT; then #1).
+
+### r322 · 2026-08-17 · LIGHT (r321 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore + SUPERUSER bgp role + schema grant per r249/r321).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 322: exit 0,
+  all scenarios ok first run (dev server warmed ~4min before start per
+  the r319 note — no ECONNRESET). 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503). 0 raw 500/502/504 in the
+  round's dev-server log (140 5xx all keyless-AI 503s — ai-briefing /
+  ai-take / brand-gaps / chatbgp / os-sites / contact-verify classes;
+  the 2 400s the rocketreach + image-studio harness probes). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r322 was LIGHT → r323
+  FULL).
+
+### r321 · 2026-08-17 · FULL (rotation #3 client mobile 390px)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore + schema grant per r249 — note reassign-owned errors on
+  system objects, a SUPERUSER bgp role + schema grant suffice). Regression:
+  run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh DB +
+  FRESH_BUILD=1; no cold-build flake). Two-bot round 321: exit 0, 192/192
+  ok first run (no ECONNRESET — started ~60s after DEV-UP per the r319
+  note). 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). Dev-server log 5xx tally: 143 keyless-AI 503s +
+  9 GET /api/auth/microsoft 500s — the latter are the explicit "Microsoft
+  SSO not configured" no-key guard, all fired by my own journey v1 whose
+  button:has-text("Sign in") selector matched "Sign in with Microsoft"
+  first (tester error, noted below); 0 other raw 500/502/504. 400s the
+  rocketreach + image-studio harness probes; 401/403/404s the listed
+  pre-auth/negative-probe/HR-photo+sharepoint-root classes.
+- Journey: Mark Warne @ 390px iPhone UA — "my asset manager wants to know
+  which Bluewater leases expire soonest and what lettings evidence we
+  have — from my phone" (FIRST client-mobile coverage of /properties list,
+  property page, tenancy Full Board, and /comps; r313/r305 covered
+  calendar/contacts/news/brands): UI login via client form → Portfolio
+  home (tiles render, 0 h-overflow) → /properties (2-property Landsec
+  portfolio, KPI strip, map, Bluewater card) → property page (ownership
+  card, week's-focus task widget; triple nav stack = UX #55 applies to
+  client too) → Full Board link → /tenancy-schedule/:id renders (KPI
+  cards incl. WAULT 9.9yrs / occupied 88 / vacant 76, status chips, 200
+  units, 0 h-overflow — table scrolls in its own container) → search
+  "Starbucks" narrows to its 2 units → /comps (Leasing board scoped to
+  1 comp = two-bot's live QA-COMP residue; Leasing/Investment tabs,
+  search, area filter; 0 staff toolbar leaks — no Add/Scan/Import/
+  Verify). 0 page errors, 0 non-noise sightings all legs. Task PARTLY
+  completable: reaching the board is easy, but answering "expires
+  soonest" means swiping the full 34-column desktop sheet with only
+  Unit pinned and no date sort → UX #62.
+- Triaged, NOT bugs: client tenancy board shows Add + per-row delete +
+  "+ Tracker" — decided parity, verified: server allow-list documents
+  client tenancy-row edits (import/bulk-delete stay staff-only, and the
+  UI hides exactly Import + Re-sync via isClientViewer), DELETE handler
+  scope-checks isPropertyInScope (server/tenancy-schedule.ts). Harness
+  already locks this (client-tenancy-write-scoped /
+  client-tenancy-staff-ops-guard / client-tenancy-edit) — no growth
+  needed. Brand-gaps international/commentary 503s on the client
+  property page = keyless-AI class (cache empty → generate → no key).
+- Tester notes for future rounds: 'button:has-text("Sign in")' matches
+  "Sign in with Microsoft" FIRST on the login page — use
+  [data-testid="button-guest-login"] (+ input-guest-email/-password);
+  each stray Microsoft click burns a loginLimiter slot AND logs a
+  noise 500. Client /comps mobile renders comps as cards, not tbody
+  rows.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: UX #62 (mobile tenancy board is the raw 34-column sheet — no
+  card view, no date sort; lease-event questions unanswerable on a
+  phone). New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r321 had the journey →
+  r322 may be LIGHT; then #4).
+
+### r320 · 2026-08-17 · LIGHT (r319 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 320: exit 0 ×2 —
+  first run 191/192 ok incl. the FIRST live runs of r319's
+  agent-seed-firm-pool-image + client-image-bytes-scoped (both green; the
+  image byte scope-jail holds live); re-run after the harness fix 192/192
+  ok. 2 remaining logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 across both runs' dev-server
+  log (status tally: only 2xx/3xx/expected 400/401/403/404 + no-key 503s;
+  403s the harness's negative probes; 404s the listed HR-photo +
+  sharepoint-root polling + client-image-bytes-scoped's own asserted
+  foreign thumb/full 404s + the requirements-leasing probe; 400s the
+  rocketreach + image-studio harness probes + my own 2 wrong-shape login
+  probes — /api/auth/login takes {username}, not {email}; 401s pre-auth
+  /api/auth/me + no-key M365 class; 503s all keyless-AI class).
+- HARNESS FLAKE fixed (not an app bug): staff-property-tenancy-mobile
+  failed run 1 with goto "is interrupted by another navigation to /" right
+  after the localStorage plant — the r204/r273 redirect-on-mount race
+  surfacing under Playwright's OTHER error wording, which mobGoto's
+  ERR_ABORTED-only retry didn't catch. App verified fine standalone: 3/3
+  exact-pattern repro attempts loaded /properties/:id (setup-folders
+  visible) + tenancy sticky sheet at 390px. Fix: mobGoto now also retries
+  on /interrupted by another navigation/ (qa/two-bot-round.mjs). node
+  --check clean; verified live — re-run 192/192 ok incl. the scenario.
+- Bugs fixed: 0 app bugs; 1 harness flake as above. Deferred: none.
+  Suggestions added: none. New flakes: none beyond the wording variant
+  above (now handled). (Round note: r320's heartbeat commit footer carries
+  a non-standard co-author name — r306 class, history kept, no force-push;
+  final commits use the repo-standard footer.)
+- Next journey: rotation #3 client mobile 390px (r320 was LIGHT → r321
+  FULL).
+
+### r319 · 2026-08-17 · FULL (rotation #2 client desktop)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1
+  before the fix, rebuilt bundle after). Two-bot round 319: first attempt
+  crashed with ECONNRESET on POST /api/auth/login during dev-server cold
+  start (news startup fetch in flight) — new flake, see below; clean
+  re-run exit 0, all scenarios ok. 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503). 0 raw 500/502/504 in the
+  round's dev-server log (58 5xx all keyless-AI 503s; the 2 400s the
+  rocketreach + image-studio harness probes).
+- Journey: Mark Warne desktop 1440px — "I need imagery for a Landsec
+  board pack: open Image Studio, see what BGP hold for me, upload my own
+  unit photo, and confirm it's usable" (FIRST client-desktop coverage of
+  the full /image-studio page + client upload WRITE — clients get the
+  full studio per the 2026-08-04 parity decision): UI login via client
+  form → Portfolio home → sidebar Image Studio → /image-studio renders
+  (Library/Brand Library/Collections tabs, category rail, 6 scoped rows —
+  5 Landsec brand images + two-bot's Bluewater residue; 0 h-overflow) →
+  staff maintenance controls correctly hidden (dedupe/near-dedupe/
+  ai-tag-uncategorised/rebuild-folders; hard-delete absent on cards) →
+  Upload dialog → PNG via file input → POST /upload 200, card renders
+  with thumbnail + Uncategorised chip, Library count bumps 1→2, search
+  narrows, survives reload → staff cross-check: upload lands in the firm
+  pool company-stamped to Landsec (companyId + uploadedBy correct). API
+  probes: own image PATCH 200 / foreign image PATCH 403 (write jail
+  holds). 0 page errors, 0 non-noise sightings.
+- Bug fixed (1): GET /api/image-studio/:id/thumb and /:id/full served
+  raw image bytes for ANY id to ANY authenticated caller — a scoped
+  client could read firm-pool/foreign imagery bytes by id, contradicting
+  the documented "every handler scope-jails" invariant (journey probe:
+  Mark fetched the Honi Poke brand image's /full → 200 pre-fix). Every
+  LIST surface was already scoped (incl. /orphans client-blocked), so
+  ids don't leak in-app — defence-in-depth class. Fix: both endpoints
+  now imageInScope-check and 404 (not 403, so existence isn't confirmed)
+  on out-of-scope ids (server/image-studio.ts). Verified via API on the
+  restarted dev server: Mark own thumb/full 200 + foreign thumb/full
+  404; Victoria all 200 (staff unaffected); in-browser post-fix Mark's
+  grid renders all 7 in-scope thumbs (7×200). tsc clean, rebuilt, smoke
+  re-green.
+- Harness growth: two-bot +2 — agent-seed-firm-pool-image (staff uploads
+  an unscoped qa-unit-photo.jpg, id stashed on cross) +
+  client-image-bytes-scoped (client own thumb/full must 200, firm-pool
+  foreign thumb/full must 404; added to the negative-probe set so its
+  404s aren't logged). node --check clean; round 319 ran the pre-edit
+  file, so first live run is r320; assertions verified this round via
+  the journey's API probes.
+- NOT bugs (triaged, for future rounds): client card hover shows
+  view/edit/AI-edit affordances — decided parity (PATCH + ai-edit are
+  client-allowed, handlers scope-jail; verified 403 on foreign). The
+  grey no-thumbnail Bluewater card is two-bot's own residue row (no
+  thumbnail stored), purged at next round start. "Library (1)" vs 6
+  grid cards is a count/grid mismatch → UX #61, not a data leak.
+- Bugs deferred: none. Suggestions added: UX #61 (Library tab/"All"
+  counts exclude Brands but the grid shows them — numbers disagree with
+  the cards). New flakes: two-bot can die with ECONNRESET on login if
+  started right after the dev server boots (news startup fetch); wait
+  ~30s after DEV-UP or just re-run.
+- Next journey: rotation #3 client mobile 390px (r319 had the journey →
+  r320 may be LIGHT; then #3).
+
+### r318 · 2026-08-17 · LIGHT (r317 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + per-object ALTER owners + schema grant
+  per r249). Regression: run-smoke.sh GREEN first pass (42 checks, 0
+  failures, fresh DB + FRESH_BUILD=1; no cold-build flake). Two-bot round
+  318: exit 0, all scenarios ok — incl. the FIRST live run of r317's
+  extended client-comps-readonly (green; staff toolbar controls stay
+  hidden for the client AND client comp POST + DELETE 403 — the write
+  guard holds). 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/403/404 +
+  no-key 503s; 403s the harness's negative probes; 404s the listed
+  HR-photo + sharepoint-root polling + the harness's requirements-leasing
+  probe; the 2 400s the rocketreach + image-studio harness probes; 401s
+  pre-auth /api/auth/me + no-key M365 class + the login-screen
+  brand-theme echo; 503s all keyless-AI/OS_API_KEY class). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #2 client desktop (r318 was LIGHT → r319 FULL).
+
+### r317 · 2026-08-17 · FULL (rotation #1 staff desktop)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 317: exit 0,
+  190 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/403/404 +
+  no-key 503s; 403s the harness's negative probes + my journey's own
+  client comp write probes; 404s the listed HR-photo + sharepoint-root
+  polling; the 2 400s the rocketreach + image-studio harness probes;
+  401s pre-auth /api/auth/me + no-key M365 class; 503s all keyless-AI
+  class).
+- Journey: Victoria desktop 1440px — "just agreed a letting at
+  Bluewater: log the comp as rent-review evidence, check it's usable,
+  then confirm what the client sees" (FIRST staff-desktop WRITE
+  coverage of the Add Comp dialog — r291 only geometry-probed it on
+  mobile; r245 saw the empty board): UI login via guest form → /comps
+  (Leasing board, KPI strip, area chips, 0 h-overflow) → Add Comp
+  dialog → property picker types "Bluewater" → BGP-property dropdown
+  hit → "Linked to BGP property" badge → tenant/rent/Zone A/date →
+  POST 201, "Comp created" toast → row lists with BGP chip + £92,500
+  headline + computed £92,500 NET EFFECTIVE → search narrows →
+  survives reload → row detail renders (NER/property sections) → Rent
+  Analysis calculator: 92,500 headline / 10yr / 12mo RF amortised →
+  £83,250 pa NER + £33.30 net psf, maths correct → AS MARK: /comps is
+  the scoped read-only board (sees the Bluewater-linked comp per the
+  scheme scope, toolbar is calculators+Export only — 0 Add/Scan/Import/
+  bulk-verify leaks; API GET own-scheme comp 200, POST 403, DELETE 403).
+  Probe comp deleted via staff API (200) after. Task completable; 0
+  page errors, 0 non-noise sightings all legs.
+- NOT bugs (triaged, for future rounds): a second "QA-COMP R317,
+  Bluewater Shopping Centre" all-dash row mid-journey is two-bot's OWN
+  round-317 probe (line ~1150 stamps the round number — r285 residue-
+  collision class, not a double-submit). Comp row delete lives in the
+  per-row "…" dropdown menu (no button-delete-comp testid) — my row
+  locator missed it, cleaned via API instead; not a missing affordance.
+  Area doesn't auto-fill from the fixture Bluewater property (its
+  address JSON lacks city) — data, not the dialog.
+- Bugs fixed: 0 (nothing broken found). Harness growth: two-bot
+  client-comps-readonly extended — staff toolbar controls
+  (Add/Scan/Import) must not render for the client AND client comp
+  POST + DELETE must 403 (locks the journey-verified write guard;
+  scenario added to the negative-probe set so its 403s aren't logged).
+  node --check clean; round 317 ran the pre-edit file, so first live
+  run is r318; assertions verified live this round via the journey's
+  API probes (403/403) + client screenshot (0 leaks).
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+  (Round note: r317's heartbeat commit footer carries a non-standard
+  co-author name — r306 class, history kept, no force-push; final
+  commits use the repo-standard footer.)
+- Next journey: rotation #2 client desktop (r317 had the journey →
+  r318 may be LIGHT; then #2).
+
+### r316 · 2026-08-17 · LIGHT (r315 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 316: exit 0,
+  190 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/403/404 +
+  no-key 503s; 403s the harness's negative probes; 404s the listed
+  HR-photo + sharepoint-root polling; the 2 400s the rocketreach +
+  image-studio harness probes; 401s pre-auth /api/auth/me + no-key M365
+  class; 503s all keyless-AI class). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r316 was LIGHT → r317 FULL).
+
+### r315 · 2026-08-17 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 315: exit 0,
+  190 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/403/404 +
+  no-key 503s; 403s the harness's negative probes; 404s the listed
+  HR-photo + sharepoint-root polling; the lone 400 the rocketreach probe;
+  401s pre-auth /api/auth/me + no-key M365 class; 503s keyless-AI class
+  incl. /api/ai-briefing echoes during the journey).
+- Journey: Victoria @ 390px iPhone UA — "Starbucks' contact has a new job
+  title: open the brand from my phone, check Key contacts, correct the
+  role, then open the person's card" (FIRST staff-mobile coverage of
+  /brands hub, the MobileBrandView company profile, the Key-contacts
+  inline role WRITE, and /contacts/:id contact detail): UI login via
+  guest form → /brands (Brand Intelligence tiles, category counts,
+  search, 0 h-overflow) → search-free tap through to Starbucks →
+  /companies/:id renders the stacked MobileBrandView (badges, mini chat,
+  Key contacts board with Tom Barista + role, Covenant; 0 h-overflow) →
+  inline role edit ("Click to edit role" button → input → Enter) → PUT
+  /api/crm/contacts/:id 200 → survives reload → tap name →
+  /contacts/:id ContactDetail renders full (role chip updated, Contact
+  Details card, activity tabs; 0 h-overflow). Task completable; 0 page
+  errors, 0 non-noise sightings. Probe role restored via API + verified
+  in DB after.
+- Journey v1 dead-end (triaged → UX #60, not a bug): planned the staff
+  New Contact WRITE but there is NO manual contact-entry path in the
+  live app — /contacts routes to people.tsx PeopleHub (CRM
+  landlords/agents/lenders, no create button); the full New Contact
+  dialog (button-create-contact + ContactFormDialog) lives in
+  client/src/pages/contacts.tsx ContactList which is UNROUTED dead code
+  (only its ContactDetail is imported, for /contacts/:id). Staff
+  contacts arrive via discovery/promote/bulk only; the client hub keeps
+  its own Add-contact dialogs.
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  contact create/PUT/DELETE already API-covered (two-bot ~461/~816);
+  the brand-board inline role edit rides the same PUT; this round's
+  mobile geometry coverage was visual.
+- Bugs deferred: none. Suggestions added: UX #60 (staff have no manual
+  New Contact path anywhere; working dialog stranded in dead code —
+  rewire or delete). New flakes: none.
+- Next journey: rotation #1 staff desktop (r315 had the journey → r316
+  may be LIGHT; then #1).
+
+### r314 · 2026-08-16 · LIGHT (r313 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 314: exit 0,
+  190 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/403/404 +
+  no-key 503s; 403s the harness's negative probes; 404s the listed
+  HR-photo + sharepoint-root polling; the 2 400s the rocketreach +
+  image-studio harness probes; 401s pre-auth /api/auth/me + no-key M365
+  class + the login-screen brand-theme echo; 503s all keyless-AI class
+  incl. the contact-verify scenario's own asserted no-key 503). 0 app
+  bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r314 was LIGHT → r315
+  FULL).
+
+### r313 · 2026-08-16 · FULL (rotation #3 client mobile 390px)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 313: exit 0,
+  190 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (lone " 500 " grep hit is the "500 articles" news-feed
+  text; status tally only 2xx/3xx/expected 400/401/403/404 + no-key
+  503s: 503s keyless-AI class, 404s HR-photo + sharepoint-root polling,
+  401s pre-auth /api/auth/me + M365 + login-screen brand-theme echo,
+  403s the harness's negative probes, the 400 the rocketreach probe).
+- Journey: Mark Warne @ 390px iPhone UA — "BGP are coming to Bluewater
+  Tuesday for a leasing review: put it in my calendar, find my BGP
+  contact to confirm, and jot a prep task" (FIRST journey coverage of
+  the client mobile CALENDAR WRITE + /contacts CRM tabs; r305/r297
+  covered news/brands/deals mobile): UI login via client form →
+  Portfolio home (0 h-overflow) → Calendar tile → day view renders
+  (concurrent two-bot QA-CAL rows visible, day-summary bar) → Add event
+  dialog (374px in 390 viewport, 0 clipped) → POST /api/team-events
+  200 → next-day ×2 to Tue 18 → event block renders 10:00 "Landsec"
+  attribution, survives reload → /contacts via CRM tile (Brand
+  Directory / Agents / Landsec Contacts tabs, 0 h-overflow) → Landsec
+  Contacts lists own people (incl. two-bot residue rows) → Tasks via
+  bottom nav → quick-add → POST /api/tasks 200, "Task created" toast,
+  row renders with Medium chip. 0 page errors, 0 non-noise sightings
+  all legs. Task PARTLY completable — the find-my-BGP-contact leg
+  dead-ends on mobile (UX #59): ClientTeamOrgChart is desktop
+  dashboard + company-profile only, Landsec Contacts tab has no BGP
+  staff and no search ("Search brands or people…" only exists on the
+  Brand Directory tab, and it doesn't match staff).
+- NOT bugs (triaged, for future rounds): mini month picker
+  (cal-day-N testids) is a hidden desktop rail on mobile — navigate the
+  day view via button-next-day/button-prev-day. Login form hides
+  behind button-show-guest-login ("Client / guest sign in") — 0 inputs
+  until clicked. My journey probe rows (QA-R313 team_event, QA-PROBE
+  task r313) aren't in run-round's purge patterns — swept via SQL this
+  round.
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  client-calendar-add-event already locks the calendar write API path;
+  this round's mobile dialog/day-view coverage was visual.
+- Bugs deferred: none. Suggestions added: UX #59 (client mobile has no
+  path to the BGP account team — no org-chart card on mobile home, no
+  staff in Landsec Contacts, no contact search). New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r313 had the journey →
+  r314 may be LIGHT; then #4).
+
+### r312 · 2026-08-16 · LIGHT (r311 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 312: exit 0,
+  190 scenarios ok — incl. the FIRST live run of r311's extended
+  client-viewings-offers scenario (green; the client WRITE round-trip —
+  POST viewing on own unit → in list → client DELETE → gone — holds).
+  2 logged issues both listed noise (rocketreach-400; commentary-regen
+  503). 0 raw 500/502/504 in the whole round's dev-server log (status
+  tally: only 2xx/3xx/expected 400/401/403/404 + no-key 503s; 403s the
+  harness's negative probes; 404s the listed HR-photo + sharepoint-root
+  polling + the harness's requirements-leasing probe; the 2 400s the
+  rocketreach + image-studio harness probes; 401s pre-auth /api/auth/me +
+  no-key M365 class + the login-screen brand-theme echo; 503s all
+  keyless-AI/OS_API_KEY class). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r312 was LIGHT → r313
+  FULL).
+
+### r311 · 2026-08-16 · FULL (rotation #2 client desktop)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 311: exit 0,
+  190 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (lone " 500 " grep hit is the "500 articles" news-feed
+  text; status tally only 2xx/3xx/expected 400/401/403/404 + no-key
+  503s; the 2 guest-login 404s were my own probe at the wrong endpoint —
+  the app's login POST is /api/auth/login).
+- Journey: Mark Warne desktop 1440px — "a prospect viewed my Bluewater
+  unit last week: log the viewing in the letting tracker, record their
+  interest, and check it all rolls up" (FIRST journey coverage of the
+  client tracker WRITE dialogs — r279/r297/r303 only opened them
+  read-only): UI login via client form → Portfolio home (0 h-overflow) →
+  /deals/letting (153 units, FY strip, search narrows to U124 rows, 0
+  h-overflow) → Viewings dialog → Add Viewing (date/time/attendees/
+  notes) → POST 201, "Viewing added" toast, row renders with edit pencil
+  + delete → Offers dialog → Add Offer → POST 201, "Offer added" toast,
+  Pending chip → both counts roll up on the unit row (1·1) AND the FY
+  KPI strip (Viewings/Offers bump), survive reload. Company/Contact
+  CrmPickers populate for clients from the SCOPED lists (probe: 10
+  companies / 5 contacts as Mark — not empty, not firm-wide). Client
+  viewing DELETE verified via API round-trip (200, gone from list).
+  Task completable; 0 page errors, 0 non-noise sightings; probe rows
+  cleaned up after (attendees/comments 'QA-R311%' aren't in run-round's
+  purge patterns — swept via SQL this round).
+- NOT bugs (triaged, for future rounds): tracker desktop TABLE uses
+  button-viewings-*/button-offers-* testids (unit-viewing-*/
+  unit-interest-* are the card layout); dialog quick entries left with
+  empty Company headline "No company" — pickers are optional by design
+  (see UX #58); 3 near-identical "U124/U125/U126 Bluewater" fixture rows
+  are data, not dupes (r309 note).
+- Bugs fixed: 0 (nothing broken found). Harness growth: two-bot
+  client-viewings-offers extended — client WRITE round-trip (POST a
+  viewing on an own unit → in list → client DELETE → gone) locking the
+  r311-journey-verified parity path. node --check clean; round 311 ran
+  the pre-edit file, so first live run is r312; assertions verified
+  standalone this round via API probes.
+- Bugs deferred: none. Suggestions added: UX #58 (viewing/offer cards
+  headline "No company" on quick entries — fall back to attendees).
+  New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r311 had the journey →
+  r312 may be LIGHT; then #3).
+
+### r310 · 2026-08-16 · LIGHT (r309 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 310: exit 0,
+  190 scenarios ok — incl. the FIRST live run of r309's extended
+  create-deal scenario (green; the created deal carries a non-empty team,
+  the r309 seeding holds). 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503). 0 raw 500/502/504 in the whole
+  round's dev-server log (status tally: only 2xx/3xx/expected
+  400/401/403/404 + no-key 503s; 403s the harness's negative probes; 404s
+  the listed HR-photo + sharepoint-root polling + the harness's
+  requirements-leasing probe; the 2 400s the rocketreach + image-studio
+  harness probes; 401s pre-auth /api/auth/me + no-key M365 class; the
+  GET /api/os/sites 503s verified in code as the explicit "OS_API_KEY not
+  configured" guard — same no-key class, not a crash). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #2 client desktop (r310 was LIGHT → r311 FULL).
+
+### r309 · 2026-08-16 · FULL (rotation #1 staff desktop)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1
+  before the fix, rebuilt bundle after; no cold-build flake either pass).
+  Two-bot round 309: exit 0, 190 scenarios ok; 2 logged issues both
+  listed noise (rocketreach-400; commentary-regen 503). 0 raw 500/502/504
+  in the whole round's dev-server log (lone " 500 " grep hit is the "500
+  articles" news-feed text; status tally only 2xx/3xx/expected
+  400/401/403/404 + no-key 503s).
+- Journey: Victoria desktop 1440px — "terms agreed with an espresso
+  operator on a Bluewater unit: create the deal, confirm it's on the
+  board, open it, and check what the client sees" (FIRST journey coverage
+  of the staff New Deal dialog WRITE path end-to-end — r293/r299 only
+  viewed/edited existing deals): UI login via guest form → /deals/list
+  (0 h-overflow) → New Deal dialog (22 controls, 0 clipped; property
+  combobox → Bluewater auto-fills Landsec as landlord + deal name; New
+  Letting; unit picker required-and-works; tenant → Starbucks; target
+  date) → POST 201 → row appears in the team-filtered table (post-fix),
+  survives reload, SOL KPI bumps → deal detail renders full (Parties/
+  Fee Allocation/KYC both parties/Files/Linked Property/Timeline/Audit,
+  "On tenancy spine" chip, 0 h-overflow) → as Mark: the Landsec-linked
+  deal is correctly VISIBLE in his 6-deal list + detail renders with 0
+  fee-section leaks (decided own-portfolio parity, r263/r297 gates).
+  Unit-less New Letting is correctly blocked with a clear toast. QA deal
+  deleted after; journey scripts under the round's scratchpad.
+- Bug fixed (1): a created deal with no team VANISHED from the creator's
+  deals list the moment the "Deal created" toast fired — the New Deal
+  dialog only auto-assigns teams for some deal types (New Letting,
+  Sub-Letting, Temp Lease, Consultancy get NONE), the list defaults its
+  team filter to the user's own team, and teamFilteredDeals hides
+  team-less deals whenever a team filter is active. Fix: the create form
+  now seeds the creator's active internal team (never the client
+  "Landsec" pseudo-team; clients keep [] — their list isn't
+  team-filtered), still editable in the team picker
+  (client/src/pages/deals.tsx DealFormDialog freshForm). Verified
+  in-browser pre/post: pre-fix the 201'd deal was absent from the list
+  even after reload; post-fix it lists immediately with the National
+  Leasing chip + team lands in the DB row. tsc clean, rebuilt, smoke
+  re-green.
+- Harness growth: two-bot create-deal scenario extended — after the
+  create it now asserts the deal carries a non-empty team via the API
+  (locks the r309 seeding; its old comment documenting "Consultant deals
+  carry no team so they won't appear in her filtered view" was the bug's
+  own footprint and is updated). node --check clean; round 309 ran the
+  pre-edit file, so first live run is r310; assertion verified live this
+  round via the journey (dialog-created deal → team ["National Leasing"]
+  in DB + API).
+- NOT bugs (triaged, for future rounds): the deals TABLE has no deal-name
+  column in the default 10/44 set — getByText(dealName) finds nothing
+  even when the row is present; assert via ref #/Property/Tenant cells
+  or the API. The simplified New Deal form's date input is
+  #deal-target-date (NO data-testid; input-deal-target-date is the
+  full/consultant form). "New Letting needs a unit" destructive toast on
+  unit-less create is intended validation, not a bug. Journey login must
+  retry on 429 while two-bot runs concurrently (login rate limiter).
+- Bugs deferred: none. Suggestions added: UX #57 (Deal-created toast has
+  no "View deal" link and the name-less table makes the new row hard to
+  find). New flakes: none.
+- Next journey: rotation #2 client desktop (r309 had the journey → r310
+  may be LIGHT; then #2).
+
+### r308 · 2026-08-16 · LIGHT (r307 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 308 final run:
+  exit 0, 190 scenarios ok; 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503). 0 raw 500/502/504 across the
+  whole day's dev-server log (status tally: only 2xx/3xx/expected
+  400/401/403/404 + no-key 503s; the extra 400s were my own repro
+  scripts' wrong-shape login probes).
+- HARNESS BUG fixed (not an app bug): r307's new
+  staff-property-no-client-sharepoint scenario failed its first live runs
+  (30s then 60s locator timeout) — it plants the legacy 'authToken'
+  localStorage key in a deliberately cookie-less fresh context, but the
+  app's UI reads its Bearer token from 'bgp_auth_token'
+  (queryClient.ts getAuthHeaders; login.tsx stores only that key). Every
+  other fresh-context scenario also copies session cookies, which mask
+  the wrong key — cookie-less runs land on the Sign-in screen
+  unauthenticated (r307's standalone verify, like my first repro, leaked
+  a session cookie via the request-context login, which is why it looked
+  green). Fix: the scenario now plants page.qaToken as 'bgp_auth_token'
+  (qa/two-bot-round.mjs); also kept a 60s selector wait to survive
+  builds hogging the box. Verified standalone cookie-less (selector 3s,
+  0 sharepoint fetches — the r307 app fix holds) AND live in-round
+  (green in the 190-ok run). App verified fine throughout: staff
+  property loads fire 0 /api/client/sharepoint/root fetches.
+- NOTE for future scenarios: 'authToken'/'user' localStorage plants are
+  no-ops for the app UI — auth in the harness contexts really rides on
+  the copied session cookies; cookie-less contexts must plant
+  'bgp_auth_token'.
+- Bugs fixed: 0 app bugs (nothing broken found); 1 harness auth-key bug
+  as above. Deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r308 was LIGHT → r309 FULL).
+
+### r307 · 2026-08-16 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + per-object ALTER owners + schema grant
+  per r249). Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
+  FRESH_BUILD=1 before the fixes, rebuilt bundle after; no cold-build
+  flake either pass). Two-bot round 307: exit 0, 189 scenarios ok; 2
+  logged issues both listed noise (rocketreach-400; commentary-regen
+  503). 0 raw 500/502/504 in the whole round's dev-server log.
+- Journey: Victoria @ 390px iPhone UA — "Landsec asked about upcoming
+  lease events at Bluewater: open the property, find which leases expire
+  soonest on the full tenancy board, then put a review call on the
+  calendar" (FIRST staff-mobile coverage of /properties → property page →
+  tenancy Full Board → /calendar): UI login via guest form → dashboard →
+  /properties (Bluewater found) → property page (sections hydrate,
+  Schedule card open) → Full Board link → /tenancy-schedule/:id (KPIs,
+  200 units, search Starbucks → 2 rows, expiry 2027 visible) →
+  /calendar day view. 0 h-overflow all legs, 0 page errors. Calendar
+  leg NOT completable in-app for staff — Add-event is client-only by
+  design (staff events come from Outlook sync); logged as UX #56, not
+  a bug.
+- Bugs fixed (2):
+  1. Calendar events starting before the grid's 06:00 first hour got a
+     negative top and rendered as unreadable clipped slivers (seen with
+     two-bot's 05:06 QA-CAL rows on the day view). Now pinned to the
+     grid top with the block bottom kept at the real end time
+     (client/src/pages/calendar.tsx event positioning). Verified
+     in-browser: both 05:06 events render as full readable blocks at
+     top 0px / 44px height.
+  2. Staff property-page loads fired a doomed GET
+     /api/client/sharepoint/root → 403 on every view —
+     property-detail.tsx isClientViewer defaults TRUE while
+     /api/auth/me loads (deliberate fail-closed), briefly mounting the
+     client files panel for staff. The client branch now waits for
+     pdViewer before mounting the panel (fail-closed UI unchanged).
+     Verified in-browser: staff property load fires 0 sharepoint
+     requests + staff Files panel renders; client (Mark) panel still
+     mounts and fetches. tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 staff-property-no-client-sharepoint (fresh
+  context, staff property load must fire zero /api/client/sharepoint/root
+  requests). node --check clean; round 307 loaded the pre-edit file, so
+  first live run is r308; assertion verified standalone this round via
+  the verify script. Calendar clamp NOT harness-assertable cheaply —
+  /api/team-events only serves future events, so a deterministic
+  pre-6am fixture isn't available at arbitrary run times.
+- NOT bugs (triaged, for future rounds): staff /calendar has no
+  Add-event button (isClientViewer-gated by design — clients write
+  team_events, staff sync Outlook; UX #56 covers the gap). The two
+  clipped-sliver events were two-bot's own QA-CAL residue (start 05:06
+  = round start time), but the clipping defect was real for any
+  pre-6am event. Property page at 390px stacks 3 nav rows (top bar +
+  breadcrumb + back-link) — works, logged as UX #55.
+- Bugs deferred: none. Suggestions added: UX #55 (mobile property page
+  triple nav stack), UX #56 (staff have no in-app calendar add-event —
+  phone users lose CRM-linked quick capture). New flakes: none.
+- Next journey: rotation #1 staff desktop (r307 had the journey → r308
+  may be LIGHT; then #1).
+
+### r306 · 2026-08-16 · LIGHT (r305 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 306: exit 0,
+  189 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/403/404 +
+  no-key 503s; 403s the harness's negative probes; 404s the listed
+  HR-photo + sharepoint-root polling + the harness's requirements-leasing
+  probe; the 2 400s the rocketreach + image-studio harness probes; 401s
+  pre-auth /api/auth/me + no-key M365 class). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none. (Round note: r306's heartbeat commit
+  footer carries a non-standard co-author name — history kept, no
+  force-push; final commits use the repo-standard footer.)
+- Next journey: rotation #4 staff mobile 390px (r306 was LIGHT → r307
+  FULL).
+
+### r305 · 2026-08-16 · FULL (rotation #3 client mobile 390px)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 305: exit 0,
+  189 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/403/404 +
+  no-key 503s; 403s the harness's negative probes; the 2 400s the
+  rocketreach + image-studio harness probes).
+- Journey: Mark Warne @ 390px iPhone UA — "over breakfast on my phone:
+  catch up on tenant news for the board, save an article for later, then
+  look up a tenant brand's contact" (FIRST client-mobile coverage of
+  /news and the bottom-nav round trip; r295 covered client news
+  DESKTOP): UI login via client form → Portfolio home (0 h-overflow) →
+  News via mobile-home-link-news tile → mobile feed renders (50 article
+  cards, external hrefs correct) → bottom-nav round trip Deals → Tasks
+  (quick-add strip + 1 open task render) → Messages (ChatBGP pinned,
+  clean empty state) → Portfolio → News, every tab lands right, 0
+  h-overflow on all legs → /brands hub (8-brand slice, category tiles,
+  search) → Starbucks profile (Key Contacts: Tom Barista; Compliance +
+  Covenant per 2026-08-01; 0 staff-leak buttons). All legs 0 page
+  errors, 0 non-noise sightings. Task NOT fully completable — the
+  save-for-later leg has no affordance on mobile (see UX #54): mobile
+  /news is the deliberately read-only MobileNewsFeed (no Save/Saved/
+  search/tags), works as designed but misses the desktop workflow.
+- NOT bugs (triaged, for future rounds): Tasks-page AI briefing card
+  shows "Preparing your briefing..." for a while before settling — just
+  react-query's retry window on the keyless ai-briefing 503, ends in the
+  "Generate Briefing" empty state (dashboard card shows the settled
+  state). Mobile news cards render a blank 16:9 image box while the
+  external image fetch hangs — no-external-network container artifact,
+  onError hides it once the fetch fails. Sidebar-trigger selectors find
+  nothing on client mobile — nav is mobile-home-link-* tiles +
+  bottom-nav-* testids, no hamburger.
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  client-mobile-brands-hub / client-mobile-no-overflow already lock the
+  geometry; /api/news-feed client reads locked by r295-6 scenarios;
+  this round's mobile-news + bottom-nav coverage was visual.
+- Bugs deferred: none. Suggestions added: UX #54 (mobile news feed is
+  read-only — no save/Saved path on the phone while desktop has the
+  full workflow). New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r305 had the journey →
+  r306 may be LIGHT; then #4).
+
+### r304 · 2026-08-15 · LIGHT (r303 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 304: exit 0,
+  189 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/403/404 +
+  no-key 503s; 403s the harness's negative probes; 404s the listed
+  HR-photo + sharepoint-root polling + the harness's requirements-leasing
+  probe; the 2 400s the rocketreach + image-studio harness probes; 401s
+  pre-auth /api/auth/me + no-key M365 class). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r304 was LIGHT → r305
+  FULL).
+
+### r303 · 2026-08-15 · FULL (rotation #2 client desktop)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 303: exit 0, all
+  scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  keyless-AI 503). 0 raw 500/502/504 in the whole round's dev-server log
+  (status tally: only 2xx/3xx/expected 400/401/403/404 + no-key 503s; the
+  2 400s the rocketreach + image-studio harness probes).
+- Journey: Mark Warne desktop 1440px — "a jeweller is circling Bluewater:
+  add it to Brand Intelligence from the wider directory, review its
+  profile, then take it back off my list" (FIRST visual coverage of the
+  client Add-brand dialog round-trip + the extra-ids brand-profile path;
+  r281 only skimmed the hub on mobile): UI login via client form →
+  Portfolio home → /brands (Overview KPIs; search lives in the Brand
+  Explorer TAB, not Overview) → explorer pre-state correct (Jewellers
+  absent, Fashion present — fixture ships Landsec with Testco Fashion
+  self-added, crm_extra_brand_ids={…0002}; NOT a slice leak) → Fashion
+  profile renders full (Tracked-brand badge, chat, ChatBGP chips, UK
+  Stores, Compliance + Covenant per 2026-08-01; 0 staff-leak buttons) →
+  Add-brand dialog (slice brands "In CRM", fixture self-add "Added +
+  Remove", out-of-slice "Add" — all three badge states correct) → Add
+  Jewellers → toast, explorer card appears, category tile bumps → Jewellers
+  profile renders full → dialog Remove → explorer 0 hits → direct
+  /companies/:id lands on "Company not found" gate (API 403s, no broken
+  page). All legs 0 h-overflow, 0 page errors, 0 non-noise sightings.
+  Task completable.
+- NOT bugs (tester errors, for future rounds): the dialog's per-row Add
+  buttons — locator('button:has-text("Add")').first() clicks the FIRST
+  result row's Add (alphabetical), not your target's; scope to the row.
+  getByText(name).click() on explorer cards misses the a[aria-label=name]
+  inset-0 overlay Link — click the anchor. "rendersName=true" after
+  removal was the sidebar Quick Access recent-history links (see UX #53),
+  not a data leak. My journey v1 mutated Landsec's fixture extras
+  (removed 0002 / added 0007) — restored to {…0002} via SQL same round.
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  client-add-brand-from-directory + client-add-brand-remove-ui already
+  lock the API + dialog Remove/In-CRM paths; this round verified the
+  three badge states + profile round-trip visually.
+- Bugs deferred: none. Suggestions added: UX #53 (sidebar Quick Access
+  keeps a removed self-added brand and dead-ends on "Company not found").
+  New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r303 had the journey →
+  r304 may be LIGHT; then #3).
+
+### r302 · 2026-08-15 · LIGHT (r301 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 302: exit 0,
+  189 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/403/404 +
+  no-key 503s; 403s the harness's negative probes; 404s the listed
+  HR-photo + sharepoint-root polling + the harness's requirements-leasing
+  probe; the 2 400s the rocketreach + image-studio harness probes; 401s
+  pre-auth /api/auth/me + no-key M365 class). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #2 client desktop (r302 was LIGHT → r303 FULL).
+
+### r301 · 2026-08-15 · FULL (rotation #1 staff desktop)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 301: exit 0,
+  189 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/404 +
+  no-key 503s; 404s the listed HR-photo + sharepoint-root polling; the
+  lone 400 the rocketreach probe; 401s pre-auth /api/auth/me + no-key
+  M365 class).
+- Journey: Victoria desktop 1440px — "a brand wants space: log the new
+  leasing requirement, see if any vacant units fit, then pull the brand's
+  key contact" (FIRST staff-desktop coverage of the /requirements WRITE
+  path — Add Requirement dialog, inline row, edit dialog, UI delete):
+  UI login via guest form → dashboard → /requirements (Leasing tab, 0
+  h-overflow; fixture ships ZERO leasing requirements so the board opens
+  as a bare empty table — data, not a bug) → Add Requirement dialog →
+  name + Restaurant use toggle + comments → "Requirement created" toast
+  → row lists with Active + Restaurant chips, fits/fresh KPI cards
+  appear → search narrows → survives reload → edit dialog pre-fills name
+  → UI delete confirm → row gone → fits-only KPI toggle works → /brands
+  search → Starbucks profile (Key Contacts: Tom Barista; Compliance &
+  KYC + Covenant render; signals feed populated). Task completable; 0
+  page errors, 0 non-noise console/net sightings.
+- Checked, NOT a bug: /api/crm/requirements-leasing CRUD handlers carry
+  no per-route requireAuth but the global auth gate 401s all unauth'd
+  /api probes (verified via curl: GET/POST both 401).
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  requirements-leasing create/PUT/DELETE already API-covered (two-bot
+  lines ~344/~842); this round verified the dialog UI paths visually.
+- Bugs deferred: none. Suggestions added: UX #52 (Add Requirement dialog
+  never sets requirementDate → new requirement shows Date "—", no Fresh
+  badge, and the "active in the last 90 days" KPI reads 0 seconds after
+  adding fresh demand). New flakes: none. Journey-script note: scratchpad
+  scripts can't `import 'playwright'` by name — import
+  /home/user/bgp-wip-app/node_modules/playwright/index.mjs directly.
+- Next journey: rotation #2 client desktop (r301 had the journey → r302
+  may be LIGHT; then #2).
+
+### r300 · 2026-08-15 · LIGHT (r299 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 300: exit 0,
+  189 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/403/404 +
+  no-key 503s; 403s the harness's negative probes; 404s the listed
+  HR-photo + sharepoint-root polling + the harness's requirements-leasing
+  probe; the 2 400s the rocketreach + image-studio harness probes; 401s
+  pre-auth /api/auth/me + no-key M365 class). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r300 was LIGHT → r301 FULL).
+
+### r299 · 2026-08-15 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 299: exit 0,
+  189 scenarios ok; 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's
+  dev-server log (status tally: only 2xx/3xx/expected 400/401/403/404 +
+  no-key 503s; 403s the harness's negative probes; the 2 400s the
+  rocketreach + image-studio harness probes).
+- Journey: Victoria @ 390px iPhone UA — "on the train before a Bluewater
+  call: how's the letting pipeline moving, open the live deal, then jot a
+  chase task and make sure it stuck" (FIRST staff-mobile coverage of
+  /deals/letting, /deals/list, deal DETAIL full page + Edit Deal dialog,
+  and the /tasks quick-add WRITE): UI login via guest form → dashboard
+  (0 h-overflow) → /deals/letting (156 units, status-chip counts, search
+  narrows 156→7 CARDS — mobile renders cards not tbody rows, count
+  '[data-testid^=tracker-row], .card' next time) → Viewings dialog
+  (374px @ x8, 0 clipped) → /deals/list (2 deals, SOL/EXC chips, View
+  buttons — NO numeric /deals/:id anchors, navigate via View) → deal
+  detail U124 Gail's letting (0 h-overflow at 4 scroll depths; action
+  row wraps per r267; Parties/Fee Allocation/KYC/Files/Timeline/Comments
+  all render) → Edit Deal dialog (48 controls, 0 clipped) → /tasks
+  (tab strip wraps per r275, quick-add → "Task created" toast → row
+  renders → survives reload; probe purged by run-round's QA-PROBE sweep).
+  Task completable; 0 page errors, 0 non-noise console/net sightings.
+- NOT bugs (triaged, for future rounds): "Tenant not set" + empty Parties
+  links + "Select unit" on deal #302 are fixture NULLs (r297 class); Edit
+  Deal Target Date shows mm/dd/yyyy — native date input in the
+  container's en-US Chromium, locale-dependent, not app copy; "Off
+  tenancy spine" chip on STAFF deal header is fine (staff have Resolve —
+  the client-side copy is already UX #50).
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  staff-deal-mobile-action-row + staff-tasks-mobile-tabs already lock
+  this journey's geometry; task write paths already scenario-covered.
+- Bugs deferred: none. Suggestions added: UX #51 (staff /deals/list
+  mobile cards show no target date / time-in-status — phone pipeline
+  triage must open each deal one-by-one). New flakes: none.
+- Next journey: rotation #1 staff desktop (r299 had the journey → r300
+  may be LIGHT; then #1).
+
+### r298 · 2026-08-15 · LIGHT (r297 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205 — method-column awk; restore-as-postgres + ALTER owners +
+  schema grant per r249). Regression: run-smoke.sh GREEN first pass (42
+  checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake).
+  Two-bot round 298: exit 0, 189 scenarios ok — incl. the FIRST live run
+  of r297's client-property-units-scoped (green; the scoped
+  /api/property-units client read + 403 gates hold). 2 logged issues both
+  listed noise (rocketreach-400; commentary-regen 503). 0 raw 500/502/504
+  in the whole round's dev-server log (status tally: only 2xx/3xx/expected
+  400/401/403/404 + no-key 503s; 403s the harness's negative probes; 404s
+  the listed HR-photo + sharepoint-root polling; the 2 400s the
+  rocketreach + image-studio harness probes; 401s pre-auth /api/auth/me +
+  no-key M365 class). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r298 was LIGHT → r299
+  FULL).
+
+### r297 · 2026-08-15 · FULL (rotation #3 client mobile 390px)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; restore-as-postgres + ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1
+  before the fix, rebuilt bundle after; no cold-build flake either pass).
+  Two-bot round 297: exit 0, 188 scenarios ok — incl. FIRST live run of
+  r296's extended client-news-save-unsave-roundtrip (green; tombstone fix
+  holds). 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the round's dev-server log.
+- Journey: Mark Warne @ 390px iPhone UA — "on my phone: how are my
+  Bluewater lettings progressing, and what's the state of the live deal?"
+  (FIRST client-mobile coverage of /deals/letting, /deals/list, deal
+  detail + its dialogs — r279 covered these client DESKTOP): UI login via
+  the client form → Portfolio home (0 h-overflow) → /deals/letting (153
+  units, status KPIs, Brochure/Viewing/Interest/Edit per row, search
+  narrows 153→7, 0 h-overflow) → Viewings dialog (374px @ x8, 10
+  controls, 0 clipped) → Offers dialog (14 controls, 0 clipped) →
+  /deals/list (2 deals, SOL/EXC chips) → deal detail (r263 gates hold:
+  Timeline hidden, jailed Files copy, Audit log present; Image Studio +
+  Edit + party links = decided parity, checked) → Edit Deal dialog (48
+  controls, 0 clipped, no fee inputs). Task completable; 0 page errors,
+  0 non-noise sightings except the bug below.
+- Bug fixed (1): the deal Edit dialog's unit picker GET
+  /api/property-units 403'd for clients (not on CLIENT_ALLOWED_API), so
+  in the decided-parity deal-edit flow the picker silently fell back to
+  [] — saved unit ids couldn't resolve to names, property_units-only
+  options were missing, and a 403 fired on every dialog open. Fix:
+  allowlisted the read (server/index.ts) + scope check in the GET handler
+  (server/routes.ts — scoped callers must pass an own-portfolio
+  propertyId; unfiltered firm-wide list, foreign property and all unit
+  writes stay 403). Verified via API probes on the rebuilt prod bundle
+  (:5100 — own 200/71 rows, unfiltered 403, foreign 403, write 403,
+  staff unchanged 200/200) AND in-browser as Mark on the restarted dev
+  server (Edit dialog fires 200, unit picker 195 options). tsc clean,
+  rebuilt, smoke re-green.
+- NOT bugs (triaged, for future rounds): my dialog "fee leak" grep hit
+  was /fee/i matching "Coffee" — tune the regex. Deals #302/#303 show
+  "Select unit" in the Edit trigger post-fix because the fixture deals
+  have NULL unit_id — data, not a resolution failure.
+- Harness growth: two-bot +1 client-property-units-scoped (own-property
+  list 200 + array, unfiltered 403, POST 403; in the negative-probe set
+  so its 403s aren't logged). node --check clean; the round-297 run
+  loaded the pre-edit file, so first live run is r298; assertions
+  verified standalone via the API probes this round.
+- Bugs deferred: none. Suggestions added: UX #50 (client deal page shows
+  the amber "Off tenancy spine" chip whose tooltip tells the client to
+  use a staff-side Resolve tool — internal jargon on a client surface).
+- Next journey: rotation #4 staff mobile 390px (r297 had the journey →
+  r298 may be LIGHT; then #4).
+
+### r296 · 2026-08-15 · LIGHT (r295 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205 — method-column awk; restore-as-postgres + per-object ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN ×2 (42
+  checks, 0 failures; FRESH_BUILD=1 before the fix, rebuilt bundle after;
+  no cold-build flake either pass). Two-bot round 296: exit 0, 188
+  scenarios ok — incl. r295's client-news-save-unsave-roundtrip (green
+  post-fix). 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server
+  log (lone " 500 " grep hit is the "500 articles" news-feed text; 244
+  503s all keyless-AI class).
+- Bug fixed (1, r295's deferred): /api/news-feed/saved treated ANY
+  historical unsave row as a permanent tombstone — save → unsave → save
+  again never reappeared in Saved. Now compares latest save vs latest
+  unsave per article (server/news-feeds.ts saved handler); an unsave only
+  hides saves that came before it. Verified via API probe as Mark on BOTH
+  the prod bundle (:5100) and the dev server (:5000): save 200 → in
+  /saved, unsave 200 → gone, re-save 200 → REAPPEARS (was: gone forever).
+  tsc clean, rebuilt, smoke re-green.
+- Harness growth: client-news-save-unsave-roundtrip extended — after the
+  unsave leg it now re-saves and asserts the article is back in /saved
+  (locks the tombstone fix). node --check clean; the round-296 run loaded
+  the pre-edit scenario, so first live run of the extended version is
+  r297; assertions verified standalone this round via the API probes.
+- Bugs deferred: none. Suggestions added: none. New flakes/setup notes:
+  run-round.sh takes >10 min wall-clock now (188 scenarios) — run it
+  backgrounded, a 10-min foreground cap kills it mid-run and ORPHANS the
+  node two-bot child (kill it before re-running); pkill/pgrep -f
+  'two-bot-round' self-matches the caller's own command line (exit 144) —
+  use a character class like 'two-[b]ot-round'.
+- Next journey: rotation #3 client mobile 390px (r296 was LIGHT → r297
+  FULL).
+
+### r295 · 2026-08-15 · FULL (rotation #2 client desktop)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205 — method-column awk; restore-as-postgres + per-object ALTER
+  owners + schema grant per r249; NOTE killing `npm run dev`'s pid does
+  NOT kill the tsx child — pkill the tsx processes or server fixes never
+  load). Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures;
+  FRESH_BUILD=1 before the fixes, rebuilt bundle after; no cold-build
+  flake either pass). Two-bot round 295: exit 0, 3 logged issues — 2
+  listed noise (rocketreach-400; commentary-regen 503), 1 flow-failure on
+  the NEW client-news-save-unsave-roundtrip = the deferred tombstone bug
+  below (my pre-run probes had already unsaved the same top article, so
+  the re-save never surfaced — deterministic, not flake). 0 raw
+  500/502/504 in the whole round's server log (lone " 500 " grep hit is
+  the "500 articles" news-feed text; status tally only 2xx/3xx/expected
+  400/401/403/404 + no-key 503s).
+- Journey: Mark Warne desktop 1440px — "board asked for a tenant-news
+  roundup: work the News feed, filter by topic, search, save for later,
+  then check news on a tenant brand" (FIRST client-desktop DEPTH pass on
+  /news — r223 only glanced at it): login → Portfolio home → /news via
+  nav (0 h-overflow) → feed renders (For You/Insights/Saved tabs, tag
+  chips, 100 articles) → tag chip filters (client feed zero-hits most
+  tags — UX #49) → search box narrows server-side → Save → Saved tab
+  shows card → Unsave → gone after hard reload (post-fix) → Read fires
+  engage + window.open with correct article URL → Stats/Insights render
+  → /brands search → Starbucks profile (Compliance + Covenant per
+  2026-08-01 decision, news content present). Task completable; 0 page
+  errors, 0 non-noise console/net errors.
+- Bugs fixed (2):
+  1. Client news UNSAVE 403'd — /api/news-feed/engage (save) is in
+     CLIENT_ALLOWED_WRITES but /api/news-feed/unsave never was, so a
+     client could save an article but NEVER remove it; the UI toasts
+     "Removed" optimistically with no onError, so the failure was
+     silent until reload. Allowlisted unsave beside engage
+     (server/index.ts). Verified in-browser as Mark: save → Saved tab →
+     Unsave → hard reload → gone, empty state back.
+  2. News zero-result state under active filters read "No articles yet —
+     Click Refresh to fetch…" + an ungated Fetch News button — for a
+     client every tag-chip zero-hit (common, see UX #49) dead-ended in a
+     button that 403s (fetch is deliberately staff-only). Empty state is
+     now filter-aware ("No matching articles / try clearing filters")
+     and the Fetch News button is hidden for role=Client in the truly-
+     empty case (client/src/pages/news.tsx, matches the header refresh
+     gate). Verified both personas; staff header Refresh + genuine-empty
+     Fetch News unchanged.
+- Bug deferred (1): /api/news-feed/saved treats ANY historical unsave
+  row as a permanent tombstone — it drops every articleId with an
+  unsave engagement regardless of ordering, so save → unsave → save
+  again NEVER reappears in Saved (server/news-feeds.ts ~1690, the
+  unsavedSet filter). Fix: keep an article if its latest save is newer
+  than its latest unsave. Found via the new harness scenario; hit the
+  2-bug cap this round.
+- Harness growth: two-bot +1 client-news-save-unsave-roundtrip (client
+  save must 2xx, appear in /saved, unsave must 2xx — the r295 allowlist
+  gap — and disappear after). node --check clean; ran live this round
+  (failed only on the deferred tombstone, see above — passes on a fresh
+  DB first run).
+- NOT bugs (triaged, for future rounds): Playwright popup events NEVER
+  fire in this container's Chromium even though window.open returns a
+  window (sanity-tested on a blank page) — verify Read buttons via a
+  window.open wrapper, not waitForEvent('popup'). Staff "New openings"
+  tag chip has matches (their team feed carries tagged articles), so
+  the filtered empty state is client-data-dependent, not a staff
+  regression. locator('button:has-text("Save")') substring-matches the
+  Saved TAB — use the button-save-/button-unsave- testids.
+- Suggestions added: UX #49 (global tag chips mostly zero-out the
+  client's For You slice — hide/grey zero-match chips or show counts).
+  New flakes: the popup-event note above + the npm-kill note in setup.
+- Next journey: rotation #3 client mobile 390px (r295 had the journey →
+  r296 may be LIGHT; then #3).
+
+### r294 · 2026-08-14 · LIGHT (r293 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205 — method-column awk; restore-as-postgres + per-object ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN first
+  pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build
+  flake). Two-bot round 294: exit 0, all scenarios ok, 2 logged issues
+  both listed noise (rocketreach-400; keyless-AI 503). 0 raw 500/502/504
+  in the whole round's server log (status tally: only 2xx/3xx/expected
+  400/401/403/404 + no-key 503s; 403s the harness's negative probes;
+  404s the listed HR-photo + sharepoint-root polling + the harness's own
+  requirements-leasing probe; the 2 400s the rocketreach + image-studio
+  harness probes; 401s pre-auth /api/auth/me + no-key M365 class).
+  0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #2 client desktop (r294 was LIGHT → r295 FULL).
+
+### r293 · 2026-08-14 · FULL (rotation #1 staff desktop)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205 — method-column awk; restore-as-postgres + per-object ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN first
+  pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build
+  flake). Two-bot round 293: exit 0, all scenarios ok, 2 logged issues
+  both listed noise (rocketreach-400; commentary-regen 503). 0 raw
+  500/502/504 in the whole round's server log (status tally: only
+  2xx/3xx/expected 400/401/403/404 + no-key 503s; 403s the harness's
+  negative probes; 404s the listed HR-photo + sharepoint-root polling;
+  the 2 400s the rocketreach + image-studio harness probes; 401s
+  pre-auth /api/auth/me + no-key M365 class).
+- Journey: Victoria desktop 1440px — "Monday pipeline review: check the
+  deals board, open the live letting deal, leave a note for the team,
+  scan calendar + news" (FIRST staff-desktop journey through /deals/list
+  → deal DETAIL page, the deal Comments write path, the Timeline/Audit
+  expanders, /calendar and /news): login → "/" dashboard → /deals hub →
+  /deals/list (2 deals, SOL/EXC chips, Table/Cards/Board toggle) → deal
+  #1003 Gail's letting (Parties, Fee Allocation, Xero house copy, KYC,
+  Files, Linked Property all render) → Comments card WRITE end-to-end
+  (posted note persists across reloads; probe cleaned via SQL after) →
+  Timeline expands inline (Deal Timeline 1 event), Audit log expands
+  (Change Log 7) → /calendar work-week (team filter chips, Today's
+  Schedule; QA-CAL-* rows = concurrent two-bot residue) → /news feed
+  (42 sources, tag chips, search). All legs 0 h-overflow, 0 page errors,
+  0 non-noise console/net errors. Task completable.
+- NOT bugs (tester errors, for future rounds): the deal page renders
+  md:hidden MOBILE DUPLICATES of the right-rail cards first in the DOM —
+  getByText('Click to add a comment'/'Timeline').first() grabs the
+  hidden copy and "element is not visible" forever; filter with
+  .locator('visible=true'). Post-comment, the placeholder is REPLACED by
+  the comment text (comments is one text column), so re-runs won't find
+  the affordance.
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  journey exercised the deal-comment write visually; no cheap assertion
+  beyond existing deal-detail gates.
+- Bugs deferred: none. Suggestions added: UX #48 (deal Comments card
+  reads like a team thread but is a single shared text blob — no author/
+  timestamp, next comment silently overwrites the last). New flakes:
+  none.
+- Next journey: rotation #2 client desktop (r293 had the journey → r294
+  may be LIGHT; then #2).
+
+### r292 · 2026-08-14 · LIGHT (r291 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205 — method-column awk; restore-as-postgres + per-object ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN first
+  pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build
+  flake). Two-bot round 292: exit 0, all scenarios ok — incl. the FIRST
+  live run of r291's staff-comps-mobile (green; the 390px /comps + Add
+  Comp dialog assertions hold). 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503). 0 raw 500/502/504 in the whole
+  round's server log (the lone " 500 " grep hit is the "500 articles"
+  news-feed text again; status tally: only 2xx/3xx/expected
+  400/401/403/404 + no-key 503s; 403s the harness's negative probes; 404s
+  the listed HR-photo + sharepoint-root polling; the 2 400s the
+  rocketreach + image-studio harness probes; 401s pre-auth /api/auth/me +
+  no-key class). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r292 was LIGHT → r293 FULL).
+
+### r291 · 2026-08-14 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205 — method-column awk; restore-as-postgres + per-object ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN first
+  pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build
+  flake). Two-bot round 291: exit 0, all scenarios ok, 2 logged issues
+  both listed noise (rocketreach-400; commentary-regen 503). Lone 500 in
+  the server log is GET /api/auth/microsoft — my own journey script's
+  first-pass mis-click on "Sign in with Microsoft" (r289 class; fixed the
+  script to use data-testid button-guest-login). Status tally otherwise
+  only 2xx/3xx/expected 400/401/403/404 + no-key 503s.
+- Journey: Victoria @ 390px iPhone UA — "on the train to a rent-review
+  call: pull up the comps board for lettings evidence, then find the
+  Landsec key contact in People" (FIRST staff-mobile coverage of /comps
+  and the /contacts People hub): UI login via the guest form → "/"
+  dashboard (0 h-overflow) → /comps (Leasing board renders, KPI strip,
+  search narrows, 0 h-overflow) → comp card opens inline detail (NER
+  Calculator + property/transaction sections) → Add Comp dialog probe:
+  all controls inside 390px, Create/Cancel visible → /contacts People hub
+  (Table/Cards toggle, Landlords/Agents/Lenders tabs, KPI cards, 0
+  h-overflow) → search "Landsec" → View People → Landsec company profile
+  → Key Contacts "Show all 4" expand works at 390px → contact reachable
+  (Maria Portfolio — the fixture's Landsec key contact; Mark Warne is a
+  login USER, not a crm_contact, so he's not in Key Contacts — that's
+  data, not a bug). Task completable; 0 page errors, 0 non-noise
+  console/net errors.
+- NOT bugs (triaged, for future rounds): CRM hub "BGP Clients" KPI shows
+  0 — the fixture's Landsec row is company_type='Landlord' with
+  is_portfolio_account=false, and the KPI keys off companyType/portfolio
+  flag (people.tsx clientLandlords); production data sets the flag, so
+  fixture artifact, not app logic. "Search landlords…" box on /contacts
+  searches COMPANIES on the active tab — a person-name search ("Mark
+  Warne") correctly 0-hits (UX #13's brand hint already covers the
+  zero-hit case). QA-COMP R291 / QA Contact rows in journey screenshots
+  are the concurrent two-bot round's residue (purged next round).
+- Bugs fixed: 0 (nothing broken found). Harness growth: two-bot +1
+  staff-comps-mobile (/comps at 390px: Add Comp button + page no
+  h-scroll; Add Comp dialog controls all inside the viewport —
+  r265/r275/r283 mobile-clipping class). Assertions verified live this
+  round via the journey's geometry probes (dialog 374px @ x8, 0 clipped
+  controls); node --check clean; first live run from r292.
+- Bugs deferred: none. Suggestions added: UX #47 (staff /comps shows
+  "N AI leads awaiting review" but the Leads tab is admin-parked — count
+  with no path to act). New flakes: none.
+- Next journey: rotation #1 staff desktop (r291 had the journey → r292
+  may be LIGHT; then #1).
+
+### r290 · 2026-08-14 · LIGHT (r289 had the journey)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205 — method-column awk; restore-as-postgres + per-object ALTER
+  owners + schema grant per r249). Regression: run-smoke.sh GREEN first
+  pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build
+  flake). Two-bot round 290: exit 0, 186 scenarios ok — incl. the FIRST
+  live runs of r289's staff-tenancy-bare-redirect +
+  client-tenancy-bare-redirect (both green; the bare /tenancy-schedule →
+  /properties redirect holds). 2 logged issues both listed noise
+  (rocketreach-400; commentary-regen 503). 0 raw 500/502/504 in the whole
+  round's server log (the lone " 500 " grep hit is the "500 articles"
+  news-feed text again; API status tally: only 2xx/3xx/expected
+  400/401/403/404 + no-key 503s; 404s the listed HR-photo +
+  sharepoint-root polling; the 2 400s the rocketreach + image-studio
+  harness probes; 401s pre-auth /api/auth/me + no-key class). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r290 was LIGHT → r291
+  FULL).
+
+### r289 · 2026-08-14 · FULL (rotation #3 client mobile 390px)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba
+  trust per r205 — method-column awk; restore-as-postgres + per-object
+  ALTER owners + schema grant per r249). Regression: run-smoke.sh GREEN
+  ×2 (42 checks, 0 failures; FRESH_BUILD=1 before the fix, rebuilt
+  bundle after; no cold-build flake either pass). Two-bot round 289:
+  exit 0, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). Lone 500 in the server log is GET
+  /api/auth/microsoft — the journey script's own mis-click on the
+  "Sign in with Microsoft" button (keyless local); status tally
+  otherwise only 2xx/3xx/expected 400/401/403/404 + no-key 503s.
+- Journey: Mark Warne @ 390px iPhone UA — "a lease event is coming:
+  open my Bluewater property, find which leases expire soonest, and get
+  to the tenant" (FIRST client-mobile coverage of the property page,
+  the embedded Schedule card, and the tenancy Full Board): UI login via
+  the client form → Portfolio home → /properties → Bluewater property
+  page (0 h-overflow) → Schedule card (defaults OPEN — 200 units,
+  Tenancy lens toggle works, sticky Unit cell 208px vs 326px window =
+  118px moving view, r283 cap holds for clients) → "Full Board" link →
+  /tenancy-schedule/:id renders (KPIs, search) → search "Starbucks"
+  narrows to 2 rows with expiry dates (24 Dec 2027) → tenant anchor →
+  Starbucks profile (Compliance + Covenant per the 2026-08-01 decision,
+  0 staff-leak buttons, 0 h-overflow). Task completable; 0 page errors,
+  0 non-noise console/net errors.
+- Bug fixed (1): bare /tenancy-schedule (no propertyId — bookmark or
+  hand-typed; it IS on CLIENT_ALLOWED_ROUTES) rendered "Page not found"
+  for every persona — the Router only had /tenancy-schedule/:propertyId
+  (r269 /messages dead-route class). Added TenancyScheduleRedirect →
+  /properties (client/src/App.tsx); verified in-browser: staff desktop,
+  client desktop AND client mobile all land on /properties, no
+  Page-not-found. tsc clean, rebuilt, smoke re-green. (First redirect
+  target tried was /leasing-schedule — rejected: that board is retired
+  and says so in a banner.)
+- Harness growth: two-bot +2 staff-tenancy-bare-redirect +
+  client-tenancy-bare-redirect (bare /tenancy-schedule must land on
+  /properties, never Page-not-found). Assertions verified standalone
+  green both personas; node --check clean; run from r290.
+- NOT bugs (triaged, for future rounds): property-page Schedule card
+  defaults OPEN — a journey script that clicks toggle-schedule CLOSES
+  it (my first probe's "no tenancy lens" was self-inflicted). Property
+  detail sections hydrate lazily — waitForSelector toggle-schedule
+  (~4s) before asserting, or count()==0 false-fails. Client mobile
+  property page THIS WEEK'S FOCUS task quick-add + tenancy Add/delete/
+  "+ Tracker" = decided client write-parity (r287/r279 class). Fixture
+  row U007 carries lease expiry 30 Dec 2154 — fixture oddity, not an
+  app date bug.
+- Bugs deferred: none. Suggestions added: none (search-below-KPI-stack
+  friction on the mobile full board is already UX #45; chat-first brand
+  profile burying Key Contacts is UX #32). New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r289 had the journey →
+  r290 may be LIGHT; then #4).
+
+### r288 · 2026-08-14 · LIGHT (r287 had the journey)
+- Fresh container (pg_hba trust per r205 — method-column awk;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 288: exit 0,
+  all scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server
+  log (status tally: only 2xx/3xx/expected 400/401/403/404 + no-key
+  503s; 403s the harness's negative probes; 404s the listed HR-photo +
+  sharepoint-root polling; the 2 400s the rocketreach + image-studio
+  harness probes; 401s all /api/microsoft/* no-key + pre-auth
+  /api/auth/me). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r288 was LIGHT → r289
+  FULL).
+
+### r287 · 2026-08-14 · FULL (rotation #2 client desktop)
+- Fresh container (pg_hba trust per r205 — method-column awk;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 287: exit 0,
+  all scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server
+  log (the lone " 500 " grep hit is the "500 articles" news-feed text
+  again; status tally: only 2xx/3xx/expected 400/401/403/404 + no-key
+  503s).
+- Journey: Mark Warne desktop 1440px — "a lease event is coming up: open
+  my Bluewater property, scan the tenancy schedule for expiries, look at
+  the tenant brand, add a calendar event to discuss with BGP" (FIRST
+  client-desktop journey through the tenancy schedule AND the client
+  calendar Add-event WRITE path): login → Portfolio home → /properties
+  (2 rows, ownership chips) → Bluewater property page (jailed Files
+  panel holds, news feed, risk register) → /tenancy-schedule (201 units,
+  expiry column, search "Starbucks" narrows to 2 rows with expiry dates)
+  → Starbucks profile via tenant link (Covenant + Compliance per the
+  2026-08-01 decision, 0 staff-leak buttons) → /calendar → Add event
+  dialog END-TO-END (title + location, Save) → event renders in the
+  work-week grid + Today's Schedule; API row confirmed, client DELETE
+  200 (probe cleaned). All legs 0 h-overflow, 0 page errors; only
+  sightings were listed noise (sharepoint-root 404s, brand-gaps 503s =
+  keyless-AI class).
+- NOT bugs (triaged, for future rounds): client tenancy schedule shows
+  Add / per-row delete / Status dropdowns / Set-tenant inline edits —
+  genuine parity by design (POST/PUT/DELETE /api/tenancy-schedule/unit*
+  all allow own-property client writes, "Landsec audit" comments in
+  server/tenancy-schedule.ts; same class as the r279 tracker triage).
+  QA-UNIT-R287 row on the schedule + QA-CAL-MINE-R287 event on the
+  calendar were the CONCURRENT two-bot round's residue (purged at next
+  round's start), not app rows.
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  calendar write path exercised visually; client-tenancy scenarios
+  already lock the write gates.
+- Bugs deferred: none. Suggestions added: UX #46 (client property KYC
+  panel exposes an EDITABLE "Set billing entity" control — PUT succeeds
+  for own-portfolio, letting a landlord steer BGP's fee-invoicing SPV;
+  wants read-only for client viewers). New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r287 had the journey →
+  r288 may be LIGHT; then #3).
+
+### r286 · 2026-08-14 · LIGHT (r285 had the journey)
+- Fresh container (pg_hba trust per r205 — method-column awk;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 286: exit 0,
+  all scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  the 400 pair in the log is rocketreach + the image-studio harness
+  probe; the lone 503 issue a keyless-AI route). 0 raw 500/502/504 in
+  the whole round's server log (the lone " 500 " grep hit is the "500
+  articles" news-feed text again; status tally: only 2xx/3xx/expected
+  400/401/403/404 + no-key 503s; 403s the harness's negative probes;
+  404s the listed HR-photo + sharepoint-root polling + the harness's
+  own requirements-leasing probe; 401s all /api/microsoft/* no-key +
+  pre-auth /api/auth/me). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #2 client desktop (r286 was LIGHT → r287 FULL).
+
+### r285 · 2026-08-13 · FULL (rotation #1 staff desktop)
+- Fresh container (pg_hba trust per r205 — method-column awk;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 285: exit 0,
+  all scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server
+  log (the lone " 500 " grep hit is the "500 articles" news-feed text
+  again; status tally: only 2xx/3xx/expected 400/401/403/404 + no-key
+  503s).
+- Journey: Victoria desktop 1440px — "a brand is circling a vacant
+  Bluewater unit: create/extend the targeting brief with a target
+  operator, log the viewing, then check the Landsec client sees the
+  activity" (FIRST staff-desktop journey through the tracker WRITE
+  dialogs — Brief dialog target add via the BrandSearchInput popover +
+  Viewings dialog): login → "/" dashboard → /available (search narrows
+  to the unit) → Brief dialog → operator popover → "Use … as typed" →
+  Add (row lists, adder auto-set as Agent) → Viewings dialog → Add
+  Viewing → save ("Viewing added" toast, row lists, tracker chip count
+  bumps) → AS MARK: /available renders, same unit found by search,
+  target-operator row visible, viewings count matches, viewing detail
+  readable in the dialog (decided client parity holds). Both trackers
+  0 h-overflow; 0 page errors, 0 non-noise console/net errors. Probe
+  viewing/target/brief cleaned via API (200s).
+- NOT bugs (triaged, for future rounds): journey probes on the resolved
+  fixture unit (Bluewater MSU9) COLLIDE with two-bot residue — two-bot's
+  own R285 QA-TGT-/QA-VIEWING- rows live on that same unit until the
+  next round's purge, so "2 rows deleted where I added 1" is residue,
+  not a double-submit. Client tracker screenshot right after Escape
+  catches the dialog's fade-out ghost frame (empty-state flash mid-
+  animation) — cosmetic, invisible at real speed.
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  agent-log-viewing + client-sees-agent-viewing already lock the
+  staff-viewing → client-sees cross-check, client-brief-target-scope
+  locks targets; this round verified the dialog UI paths visually.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #2 client desktop (r285 had the journey → r286
+  may be LIGHT; then #2).
+
+### r284 · 2026-08-13 · LIGHT (r283 had the journey)
+- Fresh container (pg_hba trust per r205 — method-column awk;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 284: exit 0,
+  all scenarios ok — incl. the FIRST live run of r283's
+  staff-property-tenancy-mobile (green; the property action-row wrap +
+  tenancy pinned-column cap fixes hold at 390px). 2 logged issues both
+  listed noise (rocketreach-400; commentary-regen 503). 0 raw
+  500/502/504 in the whole round's server log (the lone " 500 " grep hit
+  is the "500 articles" news-feed text again; status tally: only
+  2xx/3xx/expected 400/401/403/404 + no-key 503s; 403s the harness's
+  negative probes; 404s the listed HR-photo + sharepoint-root polling +
+  the harness's own requirements-leasing probe; the 2 400s the
+  rocketreach + image-studio harness probes; 401s all /api/microsoft/*
+  no-key + one pre-auth /api/auth/me). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r284 was LIGHT → r285 FULL).
+
+### r283 · 2026-08-13 · FULL (rotation #4 staff mobile 390px)
+- Fresh container (pg_hba trust per r205 — method-column awk;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1
+  before the fixes, rebuilt bundle after; no cold-build flake either
+  pass). Two-bot round 283: exit 0, all scenarios ok, 2 logged issues
+  both listed noise (rocketreach-400; commentary-regen 503). 0 raw
+  500/502/504 in both servers' logs (the lone " 500 " grep hit is the
+  "500 articles" news-feed text again). Setup note: the mobile login
+  form is behind the "Client / guest sign in" toggle — journey scripts
+  must click it before waiting for inputs.
+- Journey: Victoria @ 390px iPhone UA — "at Bluewater between meetings:
+  open the property, find a unit's tenant on the tenancy schedule, get
+  the brand's key contact" (FIRST staff-mobile coverage of /properties,
+  the property detail page, and /tenancy-schedule/:id): login → "/"
+  dashboard (0 h-overflow) → /properties (tab strip wraps, map + 4
+  property cards fit) → Bluewater property page → /tenancy-schedule
+  (toolbar wraps, KPIs stack, 200 units) → search "Starbucks" narrows to
+  2 rows → tenant link → Starbucks profile (KEY CONTACTS card: Tom
+  Barista, Head of Acquisitions). Task completable; 0 page errors, 0
+  non-noise console/net errors.
+- Bugs fixed (2, both r265/r267 mobile-layout classes):
+  1. Property page header action row (Ask ChatBGP / Image Studio /
+     Create document / Set Up Folders) was a nowrap flex row — 610px at
+     390px, Create document + Set Up Folders past the viewport with no
+     scroll path. flex-wrap gap-y-1.5 added
+     (client/src/components/property-detail.tsx); all four buttons
+     inside the viewport at 390px, desktop 1440px still one line (equal y).
+  2. Tenancy schedule's pinned Unit column grew to 434px — WIDER than
+     the whole 356px scroll window at 390px (long nowrap unit names), so
+     every moving column (tenant, dates, rent) slid underneath it:
+     sheet unreadable beyond column 1 on phones. Unit-cell InlineEdit
+     now capped max-w-[34vw] + truncate below sm
+     (client/src/components/PropertyTenancySchedule.tsx); sticky cell
+     208px → 148px visible window, tenant column readable + tappable,
+     desktop unchanged (0 clipped unit cells at 1440px, sticky 434px as
+     before). Both: tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 staff-property-tenancy-mobile (iPhone
+  context per r266 pattern — all four property action buttons inside
+  390px; tenancy sticky td must leave ≥80px of moving-column window).
+  Assertions verified standalone green via the fix-verify probes; node
+  --check clean; first live run THIS round (exit 0, no issue rows).
+- Bugs deferred: none. Suggestions added: UX #45 (tenancy-schedule
+  search feedback lands ~1.5 screens below the box at 390px — KPI stack
+  buries the filtered table). New flakes: none.
+- Next journey: rotation #1 staff desktop (r283 had the journey → r284
+  may be LIGHT; then #1).
+
+### r282 · 2026-08-13 · LIGHT (r281 had the journey)
+- Fresh container (pg_hba trust per r205 — method-column awk;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 282: exit 0,
+  all scenarios ok — incl. the FIRST live run of r281's
+  client-mobile-brands-hub (green; the 390px brands-hub assertions hold).
+  2 logged issues both listed noise (rocketreach-400; commentary-regen
+  503). 0 raw 500/502/504 in the whole round's server log (the lone
+  " 500 " grep hit is the "500 articles" news-feed text again; status
+  tally: only 2xx/3xx/expected 400/401/403/404 + no-key 503s; 403s the
+  harness's negative probes; 404s the listed HR-photo + sharepoint-root
+  polling + the harness's own requirements-leasing probe; the 2 400s the
+  rocketreach + image-studio harness probes). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r282 was LIGHT → r283
+  FULL).
+
+### r281 · 2026-08-13 · FULL (rotation #3 client mobile 390px)
+- Fresh container (pg_hba trust per r205 — method-column awk;
+  restore-as-postgres + per-object ALTER owners + schema grant per r249).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 281: exit 0,
+  all scenarios ok, 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503). 0 raw 500/502/504 in the whole round's server
+  log (the lone " 500 " grep hit is the "500 articles" news-feed text
+  again).
+- Journey: Mark Warne @ 390px iPhone UA — "before meeting a tenant brand:
+  look it up in Brand Intelligence, check its covenant/compliance, find
+  the key contact's details" (FIRST client-mobile coverage of the /brands
+  hub → brand profile → contact detail path): login → "/" Portfolio home
+  (0 h-overflow) → Brands tile → /brands hub (category cards, search
+  narrows to 1 result, 0 h-overflow) → Starbucks profile via the card
+  anchor (Compliance + Covenant present per the 2026-08-01 decision, Key
+  Contacts card, 0 staff-leak buttons, 0 h-overflow) → Tom Barista
+  contact detail (Edit only per r257/r258 gates, email + company
+  rendered, 0 h-overflow). Task completable in reasonable steps; 0 page
+  errors, 0 non-noise console/net errors. Only friction: chat-first
+  profile buries Key Contacts below the tall chat panel — already logged
+  as UX #32 (+r259 addendum), no new note.
+- Bugs fixed: 0 (nothing broken found). Harness growth: two-bot +1
+  client-mobile-brands-hub (iPhone context per r266 pattern — /brands
+  must render the hub with tappable brand cards and no h-overflow;
+  BRAND profile must keep its Key Contacts card at 390px). Assertions
+  verified standalone green against the fixture's Honi Poke; node
+  --check clean; runs from r282.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r281 had the journey →
+  r282 may be LIGHT; then #4).
+
 ### r280 · 2026-08-13 · LIGHT (r279 had the journey)
 - Fresh container (pg_hba trust per r205 — method-column awk;
   restore-as-postgres + per-object ALTER owners + schema grant per r249).

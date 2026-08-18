@@ -1704,7 +1704,7 @@ export function setupNewsFeedRoutes(app: Express) {
       const userId = (req.session as any)?.userId || null;
       if (!userId) return res.status(401).json({ message: "Not authenticated" });
 
-      const savedEngagements = await db.select({ articleId: newsEngagement.articleId })
+      const savedEngagements = await db.select({ articleId: newsEngagement.articleId, createdAt: newsEngagement.createdAt })
         .from(newsEngagement)
         .where(and(eq(newsEngagement.userId, userId), eq(newsEngagement.action, "save")))
         .orderBy(desc(newsEngagement.createdAt));
@@ -1713,12 +1713,24 @@ export function setupNewsFeedRoutes(app: Express) {
       const articleIds = Array.from(articleIdSet);
       if (articleIds.length === 0) return res.json([]);
 
-      const unsavedEngagements = await db.select({ articleId: newsEngagement.articleId })
+      const unsavedEngagements = await db.select({ articleId: newsEngagement.articleId, createdAt: newsEngagement.createdAt })
         .from(newsEngagement)
         .where(and(eq(newsEngagement.userId, userId), eq(newsEngagement.action, "unsave")));
-      const unsavedSet = new Set(unsavedEngagements.map(e => e.articleId));
 
-      const filteredIds = articleIds.filter(id => !unsavedSet.has(id));
+      // An unsave only wins over saves that came before it — a re-save after
+      // an unsave brings the article back.
+      const latestSave = new Map<string, number>();
+      for (const e of savedEngagements) {
+        const t = e.createdAt ? new Date(e.createdAt).getTime() : 0;
+        if (t > (latestSave.get(e.articleId) ?? -1)) latestSave.set(e.articleId, t);
+      }
+      const latestUnsave = new Map<string, number>();
+      for (const e of unsavedEngagements) {
+        const t = e.createdAt ? new Date(e.createdAt).getTime() : 0;
+        if (t > (latestUnsave.get(e.articleId) ?? -1)) latestUnsave.set(e.articleId, t);
+      }
+
+      const filteredIds = articleIds.filter(id => (latestSave.get(id) ?? 0) > (latestUnsave.get(id) ?? -1));
       if (filteredIds.length === 0) return res.json([]);
 
       const articles = await db.select()

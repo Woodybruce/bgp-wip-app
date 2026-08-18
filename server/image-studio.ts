@@ -1470,6 +1470,10 @@ export function registerImageStudioRoutes(app: Express) {
   // it for a day.
   app.get("/api/image-studio/:id/thumb", requireAuth, async (req: Request, res: Response) => {
     try {
+      // Scoped callers can only pull bytes for images in their own gallery —
+      // every listing surface is already scoped, so a foreign id here is a
+      // probe, not the UI. 404 (not 403) so existence isn't confirmed.
+      if (!(await imageInScope(req, String(req.params.id)))) return res.status(404).end();
       const [row] = await db
         .select({ thumbnailData: imageStudioImages.thumbnailData, mimeType: imageStudioImages.mimeType })
         .from(imageStudioImages)
@@ -1628,6 +1632,7 @@ export function registerImageStudioRoutes(app: Express) {
 
   app.get("/api/image-studio/:id/full", requireAuth, async (req: Request, res: Response) => {
     try {
+      if (!(await imageInScope(req, String(req.params.id)))) return res.status(404).json({ error: "Not found" });
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id as string));
       if (!image) return res.status(404).json({ error: "Not found" });
 

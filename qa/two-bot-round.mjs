@@ -65,7 +65,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-map-layer-scope', 'client-brief-target-scope', 'client-contact-detail-gates', 'staff-ai-failure-terminal']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -169,11 +169,13 @@ async function visit(page, persona, path, label) {
 // that aborts the NEXT navigation (the r204 class; flaked once under round
 // load as ERR_ABORTED at /requirements). Retry once so the page really lands
 // on the target instead of swallowing the abort and asserting elsewhere.
+// r320: the same race also surfaces as Playwright's "is interrupted by
+// another navigation" wording (seen at /properties/:id) — retry that too.
 async function mobGoto(pg, url, nav) {
   try {
     await pg.goto(url, nav);
   } catch (e) {
-    if (!/ERR_ABORTED/.test(String(e))) throw e;
+    if (!/ERR_ABORTED|interrupted by another navigation/.test(String(e))) throw e;
     await pg.waitForTimeout(1000);
     await pg.goto(url, nav);
   }
@@ -236,17 +238,22 @@ async function victoriaRound(page, cross) {
     await targetDate.fill((await targetDate.getAttribute('type')) === 'month' ? '2026-12' : '2026-12-31');
     await page.locator('[data-testid="button-save-deal"]').click();
     await page.waitForTimeout(1800);
-    // Verify via the API, not the deals table — the table is team-filtered
-    // (Victoria = National Leasing) and Consultant deals carry no team, so a
-    // freshly-created one legitimately won't appear in her filtered view.
+    // Verify via the API, not the deals table (the table is team-filtered).
+    // Since r309 the create dialog seeds the creator's own team when no
+    // auto-team rule fires (Consultant/New Letting class) — assert the
+    // created deal carries it, else it vanishes from the creator's default
+    // team-filtered view the moment it's created.
     const check = await page.evaluate(async (needle) => {
       const r = await fetch('/api/crm/deals', { headers: { Authorization: 'Bearer ' + localStorage.getItem('authToken') } });
       if (!r.ok) return { ok: false, status: r.status };
       const deals = await r.json();
-      return { ok: true, found: deals.some((d) => (d.name || '').includes(needle)) };
+      const deal = deals.find((d) => (d.name || '').includes(needle));
+      return { ok: true, found: !!deal, team: deal ? deal.team : null };
     }, `${stamp} Consultancy`);
     if (!check.ok) throw new Error(`deals API returned ${check.status} after create`);
     if (!check.found) throw new Error('deal saved (toast shown) but absent from /api/crm/deals');
+    const teams = Array.isArray(check.team) ? check.team : check.team ? [check.team] : [];
+    if (!teams.length) throw new Error('created deal has no team — it is invisible in the creator\'s team-filtered deals list (r309 seeding regressed)');
   });
 
   // 3. Letting tracker: open the first property, flip a status band
@@ -638,6 +645,131 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r283: staff mobile property + tenancy schedule. The property header
+  // action row was a nowrap flex row (610px at 390px — Create document +
+  // Set Up Folders unreachable, r265/r267 class, fixed with flex-wrap); the
+  // tenancy sheet's pinned Unit column grew to 434px — wider than the whole
+  // 356px scroll window, hiding every moving column (fixed with a mobile
+  // max-w cap on the unit cell). Both must stay inside a 390px phone.
+  await step(page, p, 'staff-property-tenancy-mobile', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobGoto(mob, `${BASE}/properties/${BLUEWATER}`, nav);
+      await mob.locator('[data-testid="button-setup-folders"]').waitFor({ timeout: 30000 });
+      for (const id of ['button-ask-ai-property', 'button-image-studio', 'button-create-document', 'button-setup-folders']) {
+        const box = await mob.locator(`[data-testid="${id}"]`).first().boundingBox();
+        if (!box) throw new Error(`property action ${id} missing at 390px`);
+        if (box.x < 0 || box.x + box.width > 390 + 2) {
+          throw new Error(`property action ${id} clipped at 390px (x ${Math.round(box.x)}, right ${Math.round(box.x + box.width)})`);
+        }
+      }
+      await mobGoto(mob, `${BASE}/tenancy-schedule/${BLUEWATER}`, nav);
+      await mob.locator('table tbody td.sticky').first().waitFor({ timeout: 30000 });
+      const m = await mob.evaluate(() => {
+        const sticky = document.querySelector('table tbody td.sticky');
+        const scroller = sticky ? sticky.closest('.overflow-x-auto') : null;
+        return {
+          stickyW: sticky ? Math.round(sticky.getBoundingClientRect().width) : null,
+          scrollerW: scroller ? scroller.clientWidth : null,
+        };
+      });
+      if (!m.stickyW || !m.scrollerW) throw new Error('tenancy sticky column / scroller not found at 390px');
+      if (m.scrollerW - m.stickyW < 80) {
+        throw new Error(`tenancy pinned Unit column covers the sheet at 390px (sticky ${m.stickyW}px of ${m.scrollerW}px window)`);
+      }
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
+  // r291: staff mobile comps board. /comps must render the Leasing board at
+  // 390px (search box + Add Comp inside the viewport, no page h-scroll) and
+  // the Add Comp dialog's controls must all sit inside the phone viewport
+  // (r265/r275/r283 mobile-clipping class — dialogs are where it recurs).
+  await step(page, p, 'staff-comps-mobile', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobGoto(mob, `${BASE}/comps`, nav);
+      await mob.locator('[data-testid="button-create-comp"]').waitFor({ timeout: 30000 });
+      const addBox = await mob.locator('[data-testid="button-create-comp"]').boundingBox();
+      if (!addBox || addBox.x < 0 || addBox.x + addBox.width > 390 + 2) {
+        throw new Error(`Add Comp button clipped/missing at 390px (${addBox ? `x ${Math.round(addBox.x)}, right ${Math.round(addBox.x + addBox.width)}` : 'no box'})`);
+      }
+      const pageOverflow = await mob.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      if (pageOverflow > 4) throw new Error(`/comps h-scrolls at 390px (${pageOverflow}px overflow)`);
+      await mob.locator('[data-testid="button-create-comp"]').click();
+      await mob.locator('[role="dialog"] [data-testid="create-comp-tenant"]').waitFor({ timeout: 15000 });
+      const clipped = await mob.evaluate(() => {
+        const d = document.querySelector('[role="dialog"]');
+        const bad = [];
+        d.querySelectorAll('input, button, select, textarea, [role="combobox"]').forEach((el) => {
+          const b = el.getBoundingClientRect();
+          if (b.width > 0 && (b.x < -2 || b.x + b.width > 392)) bad.push(el.tagName);
+        });
+        return bad;
+      });
+      if (clipped.length) throw new Error(`Add Comp dialog controls clipped at 390px: ${clipped.join(',')}`);
+      await mob.keyboard.press('Escape');
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
+  // r307: a STAFF property-page load must never fire the client-jailed
+  // sharepoint fetch. isClientViewer defaults true while /api/auth/me loads,
+  // which used to briefly mount ClientPropertyFoldersPanel for staff and 403
+  // GET /api/client/sharepoint/root on every staff property view. Fresh
+  // context so nothing is cached and the loading window really happens.
+  await step(page, p, 'staff-property-no-client-sharepoint', async () => {
+    const mobCtx = await page.context().browser().newContext();
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      const doomed = [];
+      mob.on('request', (r) => { if (r.url().includes('/api/client/sharepoint/root')) doomed.push(r.url()); });
+      await mob.goto(`${BASE}/`, nav);
+      // No cookies in this context, so the app's REAL token key must carry
+      // the auth — the UI reads bgp_auth_token (queryClient getAuthHeaders),
+      // not the legacy authToken key the cookie-backed scenarios plant.
+      await mob.evaluate((tok) => {
+        localStorage.setItem('bgp_auth_token', tok);
+      }, page.qaToken);
+      await mobGoto(mob, `${BASE}/properties/${BLUEWATER}`, nav);
+      // 60s to match nav: a fresh context's first property-page load can
+      // exceed 30s when another build is hogging the box (r308 flake).
+      await mob.locator('[data-testid="toggle-files-section"]').first().waitFor({ timeout: 60000 });
+      await mob.waitForTimeout(4000);
+      if (doomed.length) throw new Error(`staff property page fired client sharepoint fetch ×${doomed.length} (isClientViewer loading-window regression)`);
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // Task assignment (terminal, 2026-08-03): a task assigned to another staff
   // member lands on the ASSIGNEE's list. Victoria assigns to Woody; the
   // woody round verifies receipt. Swept by the QA-PROBE task purge.
@@ -725,6 +857,27 @@ async function victoriaRound(page, cross) {
     cross.briefUnitId = r.unitId;
     cross.briefStamp = title;
     cross.briefId = r.briefId;
+  });
+
+  // Seed a firm-pool-only image (no property/company link) for the client
+  // bytes-scope probe below — staff uploads carry no scope stamp, so this
+  // row must never be readable by a scoped caller. Reuses the
+  // qa-unit-photo.jpg name so run-round's purge sweeps it.
+  await step(page, p, 'agent-seed-firm-pool-image', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const b64 = '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAA//EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AfwD/2Q==';
+      const bin = atob(b64); const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const fd = new FormData();
+      fd.append('images', new Blob([arr], { type: 'image/jpeg' }), 'qa-unit-photo.jpg');
+      const up = await fetch('/api/image-studio/upload', { method: 'POST', headers: auth, body: fd });
+      if (!up.ok) return { ok: false, status: up.status };
+      const rows = await up.json();
+      return { ok: true, id: (Array.isArray(rows) ? rows : rows?.results || [])[0]?.id || null };
+    });
+    if (!r.ok || !r.id) throw new Error(`firm-pool image seed failed (${r.status || 'no id'})`);
+    cross.firmPoolImageId = r.id;
   });
 
   // 4h. Staff ChatBGP panel suggestion chips load into the composer.
@@ -1126,6 +1279,17 @@ async function victoriaRound(page, cross) {
     if (await page.getByText('Page not found').count()) throw new Error('desktop /messages landed on Page not found');
   });
 
+  // r289: the tenancy schedule is per-property; a bare /tenancy-schedule
+  // (bookmark / hand-typed — it's on the client allow-list) used to render
+  // "Page not found". It must land on /properties instead.
+  await step(page, p, 'staff-tenancy-bare-redirect', async () => {
+    await page.goto(`${BASE}/tenancy-schedule`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2500);
+    const path = new URL(page.url()).pathname;
+    if (path !== '/properties') throw new Error(`bare /tenancy-schedule landed on ${path}, expected /properties`);
+    if (await page.getByText('Page not found').count()) throw new Error('bare /tenancy-schedule landed on Page not found');
+  });
+
   // UX #43 (Woody 2026-08-13): the full /image-studio power page is open to
   // ALL staff now — non-admin staff must land on it directly (no /m/images
   // bounce) and see the studio toolbar. Supersedes the r277 redirect check.
@@ -1287,6 +1451,24 @@ async function markRound(page, cross) {
     await page.waitForTimeout(1500);
     const netEff = await page.getByText(/net effective/i).count();
     if (!netEff) throw new Error('Net Effective column missing on client comps');
+    // r317: comps are read-only for clients — the staff toolbar must not
+    // render and the write APIs must refuse (journey-verified this round).
+    for (const t of ['button-create-comp', 'button-scan-news-comps', 'button-import-dataset']) {
+      if (await page.getByTestId(t).count()) throw new Error(`staff comps control ${t} leaked to client`);
+    }
+    const writes = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const post = await fetch('/api/crm/comps', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ name: 'QA-COMP client-write-probe' }) });
+      const list = await (await fetch('/api/crm/comps', { credentials: 'include', headers: auth })).json().catch(() => []);
+      const first = Array.isArray(list) && list[0] ? list[0].id : null;
+      const del = first
+        ? (await fetch(`/api/crm/comps/${first}`, { method: 'DELETE', credentials: 'include', headers: auth })).status
+        : 403;
+      return { post: post.status, del };
+    });
+    if (writes.post !== 403) throw new Error(`client comp POST expected 403, got ${writes.post}`);
+    if (writes.del !== 403) throw new Error(`client comp DELETE expected 403, got ${writes.del}`);
   });
 
   // 5. Cross-visibility: the deal Victoria just created must NOT leak unless
@@ -1662,6 +1844,42 @@ async function markRound(page, cross) {
     if (!(r.engage >= 200 && r.engage < 300)) throw new Error(`client news engage blocked (${r.engage})`);
     const leaked = Object.entries(r.staffWrites).filter(([, v]) => v >= 200 && v < 300).map(([k]) => k);
     if (leaked.length) throw new Error(`client allowed a staff-only news-feed write: ${leaked.join(', ')}`);
+  });
+
+  // Save → Saved list → UNSAVE must round-trip for a client. Save goes via
+  // the allowed engage endpoint but unsave is its own route — r295 found it
+  // missing from the write allowlist, leaving saved articles stuck forever
+  // (the UI toasts "Removed" optimistically, so the failure was silent).
+  await step(page, p, 'client-news-save-unsave-roundtrip', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const arts = await (await fetch('/api/news-feed/articles?limit=1', { credentials: 'include', headers: auth })).json();
+      if (!Array.isArray(arts) || !arts.length) return { skip: true };
+      const id = arts[0].id;
+      const save = (await fetch('/api/news-feed/engage', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ articleId: id, action: 'save' }) })).status;
+      const savedList = await (await fetch('/api/news-feed/saved', { credentials: 'include', headers: auth })).json();
+      const inSaved = Array.isArray(savedList) && savedList.some((a) => a.id === id);
+      const unsave = (await fetch('/api/news-feed/unsave', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ articleId: id }) })).status;
+      const savedAfter = await (await fetch('/api/news-feed/saved', { credentials: 'include', headers: auth })).json();
+      const stillSaved = Array.isArray(savedAfter) && savedAfter.some((a) => a.id === id);
+      // Re-save after unsave must bring the article back (r295 tombstone bug:
+      // any historical unsave row hid the article from /saved forever).
+      await new Promise((res) => setTimeout(res, 1100));
+      const resave = (await fetch('/api/news-feed/engage', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ articleId: id, action: 'save' }) })).status;
+      const savedFinal = await (await fetch('/api/news-feed/saved', { credentials: 'include', headers: auth })).json();
+      const backSaved = Array.isArray(savedFinal) && savedFinal.some((a) => a.id === id);
+      return { save, inSaved, unsave, stillSaved, resave, backSaved };
+    });
+    if (r.skip) return;
+    if (!(r.save >= 200 && r.save < 300)) throw new Error(`client save blocked (${r.save})`);
+    if (!r.inSaved) throw new Error('saved article missing from /api/news-feed/saved');
+    if (!(r.unsave >= 200 && r.unsave < 300)) throw new Error(`client unsave blocked (${r.unsave}) — saved article is stuck`);
+    if (r.stillSaved) throw new Error('article still in saved list after unsave');
+    if (!(r.resave >= 200 && r.resave < 300)) throw new Error(`client re-save blocked (${r.resave})`);
+    if (!r.backSaved) throw new Error('re-saved article missing from /saved — unsave tombstone is back (r295)');
   });
 
   // Client requirements page renders without a dead route / blank / staff
@@ -2816,6 +3034,27 @@ async function markRound(page, cross) {
       return { ok: v.ok && o.ok, vStatus: v.status, oStatus: o.status };
     });
     if (!r.ok) throw new Error(r.why || `viewings ${r.vStatus} / offers ${r.oStatus} for an in-scope unit`);
+    // Client-parity WRITE round-trip (r311: journey-verified in the dialogs;
+    // this locks the API path): the client logs a viewing on their own unit,
+    // it must land in the unit's list, and the client can remove it again.
+    const w = await page.evaluate(async (marker) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = Array.isArray(units) ? units[0] : null;
+      if (!unit) return { ok: false, why: 'no available units in client scope' };
+      const post = await fetch(`/api/available-units/${unit.id}/viewings`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ viewingDate: new Date().toISOString().slice(0, 10), attendees: marker }) });
+      if (!post.ok) return { ok: false, why: `client viewing POST ${post.status}` };
+      const made = await post.json();
+      const list = await (await fetch(`/api/available-units/${unit.id}/viewings`, { headers: auth })).json();
+      if (!(Array.isArray(list) && list.some((x) => x.id === made.id))) return { ok: false, why: 'client-logged viewing missing from unit list' };
+      const del = await fetch(`/api/available-units/viewings/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      if (!del.ok) return { ok: false, why: `client viewing DELETE ${del.status}` };
+      const after = await (await fetch(`/api/available-units/${unit.id}/viewings`, { headers: auth })).json();
+      if (Array.isArray(after) && after.some((x) => x.id === made.id)) return { ok: false, why: 'deleted viewing still listed' };
+      return { ok: true };
+    }, `QA-VIEWING-R${ROUND}-CLIENT`);
+    if (!w.ok) throw new Error(w.why);
     // And the Letting Tracker UI must render the controls that open them.
     // NB the client's tracker is the Deals-hub tab at /deals/letting —
     // /leasing-schedule is the leasing STRATEGY board (zones/positioning) and
@@ -3673,6 +3912,28 @@ async function markRound(page, cross) {
       throw new Error(`client bulk-assigned an out-of-scope image id (→ ${r.foreignImg})`);
   });
 
+  // Raw image bytes are scope-jailed (r319): /thumb + /full must serve the
+  // client's own gallery and 404 on a firm-pool image outside their scope —
+  // the list endpoints were already scoped, this locks the byte endpoints.
+  await step(page, p, 'client-image-bytes-scoped', async () => {
+    const r = await page.evaluate(async (foreignId) => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const get = async (url) => (await fetch(url, { headers: auth }).catch(() => ({ status: 0 }))).status;
+      const gallery = await (await fetch('/api/image-studio', { headers: auth })).json().catch(() => []);
+      const own = (Array.isArray(gallery) ? gallery : []).find((i) => i.hasThumbnail)?.id || null;
+      return {
+        ownThumb: own ? await get(`/api/image-studio/${own}/thumb`) : null,
+        ownFull: own ? await get(`/api/image-studio/${own}/full`) : null,
+        foreignThumb: foreignId ? await get(`/api/image-studio/${foreignId}/thumb`) : null,
+        foreignFull: foreignId ? await get(`/api/image-studio/${foreignId}/full`) : null,
+      };
+    }, cross.firmPoolImageId || null);
+    if (r.ownThumb !== null && r.ownThumb !== 200) throw new Error(`client blocked from their OWN thumb (${r.ownThumb})`);
+    if (r.ownFull !== null && r.ownFull !== 200) throw new Error(`client blocked from their OWN full image (${r.ownFull})`);
+    if (r.foreignThumb !== null && r.foreignThumb !== 404) throw new Error(`client read a firm-pool thumb outside scope (${r.foreignThumb})`);
+    if (r.foreignFull !== null && r.foreignFull !== 404) throw new Error(`client read a firm-pool full image outside scope (${r.foreignFull})`);
+  });
+
   // Client creates a ChatBGP thread (no AI key needed for the thread itself)
   // and it lands in their thread list — the panel's first step before any
   // AI reply, previously untested.
@@ -3892,6 +4153,16 @@ async function markRound(page, cross) {
     const path = new URL(page.url()).pathname;
     if (path !== '/chatbgp') throw new Error(`client desktop /messages landed on ${path}, expected /chatbgp`);
     if (await page.getByText('Page not found').count()) throw new Error('client desktop /messages landed on Page not found');
+  });
+
+  // r289: same bare /tenancy-schedule redirect for clients (the route is on
+  // CLIENT_ALLOWED_ROUTES, so a pasted link must land somewhere real).
+  await step(page, p, 'client-tenancy-bare-redirect', async () => {
+    await page.goto(`${BASE}/tenancy-schedule`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2500);
+    const path = new URL(page.url()).pathname;
+    if (path !== '/properties') throw new Error(`client bare /tenancy-schedule landed on ${path}, expected /properties`);
+    if (await page.getByText('Page not found').count()) throw new Error('client bare /tenancy-schedule landed on Page not found');
   });
 
   await step(page, p, 'client-deal-detail-name-and-doc-gate', async () => {
@@ -4151,6 +4422,49 @@ async function markRound(page, cross) {
     }
   });
 
+  // r281: client-mobile Brand Intelligence path — the "look up a tenant brand
+  // on my phone before a meeting" journey. The hub, a brand profile and its
+  // Key Contacts drill-in must all render inside a real 390px phone context
+  // (r266 pattern — touch + mobile UA, session cookie copied over).
+  await step(page, p, 'client-mobile-brands-hub', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      const noOverflow = async (label) => {
+        const { scrollW, clientW } = await mob.evaluate(() => ({
+          scrollW: document.documentElement.scrollWidth,
+          clientW: document.documentElement.clientWidth,
+        }));
+        if (scrollW > clientW + 4) throw new Error(`${label} overflows at 390px: scrollWidth ${scrollW} > viewport ${clientW}`);
+      };
+      await mobGoto(mob, `${BASE}/brands`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(3000);
+      if (await mob.getByText('Page not found').count()) throw new Error('/brands is Page not found at client mobile');
+      if (!await mob.getByText(/brand intelligence/i).count()) throw new Error('brands hub heading missing at 390px');
+      if (!await mob.locator('a[href*="/companies/"]').count()) throw new Error('brands hub has no tappable brand cards at 390px');
+      await noOverflow('client brands hub');
+      await mobGoto(mob, `${BASE}/companies/${BRAND}`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(3000);
+      if (!await mob.getByText(/key contacts/i).count()) throw new Error('brand profile Key Contacts card missing at client mobile');
+      await noOverflow('client brand profile');
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // Targeting Brief scope (r253): the staff-created brief on the client's own
   // property is client-readable WITH its targets, the client may add a target
   // there (client-instruction parity — same decision family as tenancy row
@@ -4174,6 +4488,25 @@ async function markRound(page, cross) {
     if (!r.targets.includes(`QA-TGT-R${ROUND}`)) throw new Error('staff-added target not visible to client');
     if (r.ownAdd !== 200) throw new Error(`client target add on own brief refused (${r.ownAdd})`);
     if (![403, 404].includes(r.foreignAdd)) throw new Error(`foreign brief target write not refused (${r.foreignAdd})`);
+  });
+
+  // Deal Edit dialog's unit picker (decided deal parity): a client may list
+  // property_units for their OWN property (was a blanket 403 → the picker
+  // couldn't resolve saved unit names, r297), but never the firm-wide
+  // unfiltered list, and unit writes stay staff-only.
+  await step(page, p, 'client-property-units-scoped', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const own = await fetch(`/api/property-units?propertyId=${window.QA_FIX.bluewater}`, { headers: auth });
+      const ownBody = own.ok ? await own.json() : null;
+      const unfiltered = (await fetch('/api/property-units', { headers: auth })).status;
+      const write = (await fetch('/api/property-units', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ propertyId: window.QA_FIX.bluewater, unitName: 'QA-PU-GUARD' }) })).status;
+      return { own: own.status, ownIsArray: Array.isArray(ownBody), unfiltered, write };
+    });
+    if (r.own !== 200) throw new Error(`client own-property unit list refused (${r.own})`);
+    if (!r.ownIsArray) throw new Error('client own-property unit list is not an array');
+    if (r.unfiltered !== 403) throw new Error(`unfiltered firm-wide unit list not refused (${r.unfiltered})`);
+    if (r.write !== 403) throw new Error(`client property-units write not refused (${r.write})`);
   });
 }
 

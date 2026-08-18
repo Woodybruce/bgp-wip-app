@@ -521,8 +521,12 @@ function DayColumn({ date, events, hours, today, nowTop, onSelectEvent, selected
         const startDate = new Date(event.start.dateTime);
         const startMinutes = startDate.getHours() * 60 + startDate.getMinutes();
         const duration = getEventDurationMinutes(event.start.dateTime, event.end.dateTime);
-        const top = ((startMinutes - START_HOUR * 60) / 60) * HOUR_HEIGHT;
-        const height = Math.max(22, (duration / 60) * HOUR_HEIGHT - 1);
+        // Events starting before the grid's first hour used to get a negative
+        // top and render as an unreadable clipped sliver — pin them to the top
+        // of the grid and keep the block's bottom at the real end time.
+        const top = Math.max(0, ((startMinutes - START_HOUR * 60) / 60) * HOUR_HEIGHT);
+        const visibleStart = Math.max(startMinutes, START_HOUR * 60);
+        const height = Math.max(22, ((startMinutes + duration - visibleStart) / 60) * HOUR_HEIGHT - 1);
         const isSelected = selectedEventId === event.id;
         const colWidth = totalCols > 1 ? (100 / totalCols) : 100;
         const colLeft = col * colWidth;

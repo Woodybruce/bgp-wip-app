@@ -3964,6 +3964,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.get("/api/property-units", requireAuth, async (req, res) => {
     try {
       const propertyId = (req.query.propertyId as string | undefined) || undefined;
+      // Clients: own-portfolio only, never the unfiltered firm-wide list
+      // (the deal Edit dialog's unit picker reads this — decided deal parity).
+      {
+        const puScope = await resolveCompanyScope(req);
+        if (puScope) {
+          if (!propertyId || !(await isPropertyInScope(puScope, propertyId))) {
+            return res.status(403).json({ message: "Units are outside your portfolio" });
+          }
+        }
+      }
       const where = propertyId ? `WHERE property_id = $1` : "";
       const params = propertyId ? [propertyId] : [];
       const result = await pool.query(

@@ -810,21 +810,34 @@ function FeedTab() {
       ) : (
         <div className="text-center py-16 text-muted-foreground">
           <Newspaper className="w-12 h-12 mx-auto mb-3 opacity-20" />
-          <p className="text-sm font-medium">No articles yet</p>
-          <p className="text-xs mt-1">
-            Click Refresh to fetch the latest news from {activeSources} sources
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-4"
-            onClick={() => fetchMutation.mutate()}
-            disabled={fetchMutation.isPending}
-            data-testid="button-refresh-empty"
-          >
-            <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
-            Fetch News
-          </Button>
+          {totalArticles > 0 || search || categoryFilter !== "All" || tagFilter.size > 0 ? (
+            <>
+              <p className="text-sm font-medium">No matching articles</p>
+              <p className="text-xs mt-1">
+                Try clearing the search or tag filters
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-sm font-medium">No articles yet</p>
+              <p className="text-xs mt-1">
+                Click Refresh to fetch the latest news from {activeSources} sources
+              </p>
+              {currentUser?.role !== "Client" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-4"
+                  onClick={() => fetchMutation.mutate()}
+                  disabled={fetchMutation.isPending}
+                  data-testid="button-refresh-empty"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                  Fetch News
+                </Button>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>
