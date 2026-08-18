@@ -872,7 +872,11 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
     companiesHouseOfficers: officers,
     kycStatus,
     kycCheckedAt: new Date(),
-  }).where(eq(crmCompanies.id, company.id));
+    // Backfill the registered name when the row has none — a CH number
+    // resolved via Perplexity/Claude/exact-match left uk_entity_name NULL,
+    // so the panel said "Not found" beside a linked CH profile.
+    ...((company as any).ukEntityName ? {} : { ukEntityName: profile.companyName }),
+  } as any).where(eq(crmCompanies.id, company.id));
 
   // Persist to kyc_investigations so this run shows up in the Clouseau
   // history tab alongside investigator-launched checks. Risk is computed off

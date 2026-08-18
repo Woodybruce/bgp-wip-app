@@ -1648,6 +1648,11 @@ router.get("/api/brand/gallery-image/:imageId", requireAuth, async (req: Request
       res.setHeader("Cache-Control", "public, max-age=86400");
       return res.send(buf);
     }
+    // No disk file, no DB copy, no thumbnail — the row is a phantom (its
+    // file pre-dates DB persistence and died with a redeploy). Delete it so
+    // the gallery stops advertising an image it can never show; the
+    // auto-refresh re-imports a real one on its next pass.
+    await pool.query(`DELETE FROM image_studio_images WHERE id = $1`, [req.params.imageId]).catch(() => {});
     res.status(404).end();
   } catch (err: any) {
     res.status(500).end();

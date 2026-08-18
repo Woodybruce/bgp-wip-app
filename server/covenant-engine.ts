@@ -281,15 +281,32 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
   // Filed-accounts figures + ticker if the company is in the CRM.
   let accounts: any = null;
   let ticker: string | null = null;
+  let crmCompanyId: string | null = null;
   try {
     const { rows } = await pool.query(
-      `SELECT companies_house_data->'latestAccountsExtracted' AS acc, stock_ticker FROM crm_companies
+      `SELECT id, companies_house_data->'latestAccountsExtracted' AS acc, stock_ticker FROM crm_companies
         WHERE regexp_replace(upper(companies_house_number), '\\s', '', 'g') = $1 LIMIT 1`,
       [num]
     );
     accounts = rows[0]?.acc || null;
     ticker = rows[0]?.stock_ticker || null;
+    crmCompanyId = rows[0]?.id || null;
   } catch { /* no DB / no row — score still works */ }
+
+  // Self-serve missing accounts: download the latest filed accounts from CH
+  // and extract the figures inline, instead of grading blind and telling the
+  // user to go click a different button first (Woody, 2026-08-18 — Bill's
+  // covenant sat at "run the accounts extraction" forever). Cached in
+  // companies_house_data, so this runs once per filing, not per refresh.
+  if (!accounts && crmCompanyId) {
+    try {
+      const { fetchLatestAccountsForCompany, extractAccountsFigures } = await import("./ch-accounts");
+      await fetchLatestAccountsForCompany(crmCompanyId);
+      accounts = await extractAccountsFigures(crmCompanyId);
+    } catch (e: any) {
+      console.warn(`[covenant] inline accounts extraction failed for ${num}:`, e?.message);
+    }
+  }
 
   // Free Experian-replacement layers, gathered in parallel: director track
   // record (CH appointments + disqualified register), auditor departures in
