@@ -67,7 +67,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r328 · 2026-08-18 · LIGHT (r327 had the journey)
+### r329 · 2026-08-18 · FULL (rotation #3 client mobile 390px) — IN PROGRESS
+- Staging merged with origin/JOGQK head d6e83a3 first (standing branch rule;
+  brings activity-curation, AML-screening-on-open, Instagram direct-wire
+  commits onto staging). Fresh container (repo pre-cloned; pg_hba trust per
+  r205 — careful: naive sed can mangle scram-sha-256 into trust-sha-256,
+  fix by replacing the whole method token; SUPERUSER bgp role + restore +
+  schema grant per r249). Regression: run-smoke.sh GREEN first pass (42
+  checks, 0 failures, FRESH_BUILD=1, fresh DB). Two-bot round 329 running;
+  journey next: Mark Warne @ 390px exercising the unverified UX 50-64
+  batch (#59 BGP-team row, #62 tap-to-sort, #64 WAULT exclusion, #55
+  back-link, #54 news Latest/Saved).
 - FIRST round on staging merged with origin/JOGQK head b3d9690 (standing
   branch rule; brings covenant self-fetch, entity-name backfill heal,
   Bill's IG handle fix, KYC never-screened sweep, brand-profile
