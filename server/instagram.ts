@@ -332,11 +332,17 @@ router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, 
     const handle = extractUsername(handleRow.rows[0]?.instagram_handle);
     if (!handle) return res.json({ status: "no_handle", handle: null, posts: [] });
 
+    // brand_social_stats is created lazily by the weekly scraper — on a
+    // fresh DB it doesn't exist yet, which 500'd the whole card. Treat a
+    // missing table as "no stats yet".
     const stats = await pool.query<{ followers: number | null; posts: number | null }>(
       `SELECT followers, posts FROM brand_social_stats
         WHERE brand_company_id = $1 AND platform = 'instagram'
         ORDER BY fetched_at DESC LIMIT 1`, [companyId]
-    );
+    ).catch((e: any) => {
+      if (e?.code === "42P01") return { rows: [] } as any;
+      throw e;
+    });
     const followers = stats.rows[0]?.followers ?? null;
     const postCount = stats.rows[0]?.posts ?? null;
 
