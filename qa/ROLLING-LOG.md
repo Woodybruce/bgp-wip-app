@@ -67,6 +67,31 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r328 · 2026-08-18 · LIGHT (r327 had the journey)
+- FIRST round on staging merged with origin/JOGQK head b3d9690 (standing
+  branch rule; brings covenant self-fetch, entity-name backfill heal,
+  Bill's IG handle fix, KYC never-screened sweep, brand-profile
+  self-refresh/button removal onto staging; merge pushed as 4e45827).
+  Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba
+  trust per r205 — first smoke attempt died on pg auth before the trust
+  edit, not a flake; SUPERUSER bgp role + restore + schema grant per
+  r249). Regression: run-smoke.sh GREEN first pass after pg fix (42
+  checks, 0 failures, FRESH_BUILD=1, fresh DB). Two-bot round 328: exit
+  0, all scenarios ok first run (dev server warmed ~6min — no
+  ECONNRESET). 3 logged issues all listed noise (rocketreach-400;
+  brand-gaps/live-intel 503; commentary-regen 503 —
+  qa/logs/round-328.jsonl). 0 raw 500/502/504 in the round's dev-server
+  log (142 5xx all keyless-AI 503s; 2 400s the rocketreach +
+  image-studio harness probes; 403/404/401s the listed
+  negative-probe/HR-photo+sharepoint/pre-auth classes).
+- Merged startup heals verified locally: [uk-entity backfill] filled 1
+  fixture row cleanly; bills-ig heal silent (no matching fixture row);
+  goad-datum failure is the listed r326 noise.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r328 was LIGHT → r329
+  FULL).
+
 ### r327 · 2026-08-18 · FULL (rotation #2 client desktop)
 - Staging merged with origin/JOGQK head 600b618 first (standing branch
   rule; brings UX 50-64 build, Instagram 3-strike ledger, entity fixes,
