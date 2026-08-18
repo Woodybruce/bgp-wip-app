@@ -3,7 +3,7 @@
 import { db, pool } from "./db";
 import { crmCompanies, newsSources, newsArticles, brandSignals } from "@shared/schema";
 import { eq, and, sql, desc, isNotNull } from "drizzle-orm";
-import { googleNewsRssUrl, createRssAppFeed } from "./rssapp";
+import { googleNewsRssUrl, createRssAppFeed, rssappHealth } from "./rssapp";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 
 type SignalType = "opening" | "closure" | "funding" | "exec_change" | "sector_move" | "news" | "rumour";
@@ -553,6 +553,153 @@ export async function ensureBrandSocialFeeds(opts?: {
   }
 
   return { created, skipped, errors };
+}
+
+// ─── Curated Instagram feed selection ─────────────────────────────────────
+// The raw preview above is 1,700+ brand×platform candidates; the RSS.app
+// plan carries ~100 feeds. This layer picks the 100 that matter: junk
+// handles out, scraper-poisoned duplicates out, then ranked so brands on
+// live deals and brands generating news signals get the paid slots.
+
+// Instagram URL path words the old website scraper mistook for profile
+// handles (instagram.com/v/…, /s/…, /reel/…), plus spam stamped onto brand
+// rows by hacked or parked websites. None of these may ever become a feed.
+const IG_JUNK_HANDLES = new Set([
+  "v", "s", "p", "explore", "reel", "reels", "tv", "stories", "accounts",
+  "share", "about", "developer", "directory", "legal", "web", "api",
+  "oauth", "invites", "graphql", "static",
+]);
+
+function cleanIgHandle(raw: string | null): string | null {
+  const h = (raw || "").replace(/^@/, "").trim().toLowerCase().replace(/\/+$/, "");
+  if (h.length < 2 || h.length > 30) return null;
+  if (!/^[a-z0-9._]+$/.test(h)) return null;
+  if (IG_JUNK_HANDLES.has(h)) return null;
+  if (h.includes("togel")) return null; // gambling spam from compromised sites
+  return h;
+}
+
+const normBrandName = (name: string) => (name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+export interface CuratedIgPreview {
+  plan: (BrandSocialFeedPlan & { score: number })[];
+  totalCandidates: number;
+  excluded: { junkHandle: number; duplicateHandle: number; alreadyFed: number; overLimit: number };
+}
+
+// Read-only: which Instagram feeds WOULD be created, best-first. Dedupe
+// rule: the same handle on 3+ brands is scraper poisoning (t2tea,
+// workwithatom) — only a brand whose own name matches the handle keeps it.
+export async function previewCuratedInstagramFeeds(limit = 100): Promise<CuratedIgPreview> {
+  const tracked = await db
+    .select({
+      id: crmCompanies.id,
+      name: crmCompanies.name,
+      instagramHandle: crmCompanies.instagramHandle,
+    })
+    .from(crmCompanies)
+    .where(and(eq(crmCompanies.isTrackedBrand, true), sql`${crmCompanies.mergedIntoId} IS NULL`));
+
+  const excluded = { junkHandle: 0, duplicateHandle: 0, alreadyFed: 0, overLimit: 0 };
+
+  const withHandle = tracked.filter(b => (b.instagramHandle || "").trim() !== "");
+  const cleaned = withHandle
+    .map(b => ({ ...b, handle: cleanIgHandle(b.instagramHandle) }))
+    .filter(b => {
+      if (!b.handle) { excluded.junkHandle++; return false; }
+      return true;
+    }) as ({ id: string; name: string; instagramHandle: string | null; handle: string })[];
+
+  const byHandle = new Map<string, typeof cleaned>();
+  for (const b of cleaned) {
+    const list = byHandle.get(b.handle) || [];
+    list.push(b);
+    byHandle.set(b.handle, list);
+  }
+  const deduped = cleaned.filter(b => {
+    const shared = byHandle.get(b.handle)!;
+    if (shared.length < 3) return true;
+    const nn = normBrandName(b.name);
+    const ok = nn.length >= 2 && (b.handle.includes(nn) || nn.includes(b.handle));
+    if (!ok) excluded.duplicateHandle++;
+    return ok;
+  });
+
+  const existingRows = await db
+    .select({ category: newsSources.category, type: newsSources.type })
+    .from(newsSources)
+    .where(sql`${newsSources.category} LIKE 'brand:%'`);
+  const alreadyFed = new Set(
+    existingRows.filter(r => r.type === SOCIAL_TYPE.instagram).map(r => r.category)
+  );
+  const fresh = deduped.filter(b => {
+    if (alreadyFed.has(`${BRAND_CATEGORY_PREFIX}${b.id}`)) { excluded.alreadyFed++; return false; }
+    return true;
+  });
+
+  // Rank: brands sitting on a deal outrank everything, then brands whose
+  // news feeds have produced signals recently (they're moving), then name.
+  const dealRows = await pool.query(
+    `SELECT DISTINCT tenant_id FROM crm_deals WHERE tenant_id IS NOT NULL`
+  );
+  const onDeal = new Set(dealRows.rows.map((r: any) => String(r.tenant_id)));
+  const signalRows = await pool.query(
+    `SELECT brand_company_id, COUNT(*)::int AS n FROM brand_signals
+      WHERE created_at > now() - interval '180 days'
+      GROUP BY brand_company_id`
+  );
+  const signalCount = new Map<string, number>(signalRows.rows.map((r: any) => [String(r.brand_company_id), r.n]));
+
+  const scored = fresh.map(b => ({
+    brandId: b.id,
+    brandName: b.name,
+    platform: "instagram" as SocialPlatform,
+    url: `https://www.instagram.com/${b.handle}/`,
+    score: (onDeal.has(b.id) ? 10 : 0) + Math.min(5, signalCount.get(b.id) || 0),
+  }));
+  scored.sort((a, b) => b.score - a.score || a.brandName.localeCompare(b.brandName));
+
+  const plan = scored.slice(0, Math.max(0, limit));
+  excluded.overLimit = scored.length - plan.length;
+  return { plan, totalCandidates: withHandle.length, excluded };
+}
+
+// Create the curated feeds, respecting the RSS.app plan quota (100 feeds
+// unless RSSAPP_FEED_QUOTA says otherwise) — existing feeds on the account
+// count against it, so this never buys past the plan.
+export async function ensureCuratedInstagramFeeds(limit = 100): Promise<{
+  created: number; skipped: number; quotaRemaining: number;
+  excluded: CuratedIgPreview["excluded"];
+  errors: { brandName: string; platform: SocialPlatform; error: string }[];
+}> {
+  const health = await rssappHealth();
+  if (!health.ok) throw new Error(`RSS.app not ready: ${health.error}`);
+  const quota = Number(process.env.RSSAPP_FEED_QUOTA || 100);
+  const room = Math.max(0, quota - (health.feedCount ?? 0));
+  const { plan, excluded } = await previewCuratedInstagramFeeds(Math.min(limit, room));
+
+  let created = 0;
+  let skipped = 0;
+  const errors: { brandName: string; platform: SocialPlatform; error: string }[] = [];
+  for (const item of plan) {
+    try {
+      const feed = await createRssAppFeed(item.url);
+      await db.insert(newsSources).values({
+        name: `${item.brandName} (instagram)`,
+        url: item.url,
+        feedUrl: feed.rss_feed_url,
+        type: SOCIAL_TYPE.instagram,
+        category: `${BRAND_CATEGORY_PREFIX}${item.brandId}`,
+        active: true,
+      });
+      created++;
+    } catch (err: any) {
+      errors.push({ brandName: item.brandName, platform: "instagram", error: (err?.message || "unknown").slice(0, 200) });
+      skipped++;
+    }
+    await new Promise(r => setTimeout(r, 300)); // soft pace the RSS.app API
+  }
+  return { created, skipped, quotaRemaining: Math.max(0, room - created), excluded, errors };
 }
 
 // For a single article, decides which tracked brands it mentions and writes

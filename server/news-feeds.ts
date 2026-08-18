@@ -6,7 +6,7 @@ import { DEFAULT_NEWS_TAGS } from "@shared/news-tags";
 import { authHeadersForUrl, authCookieStatus, loadPaywallCookies, setPaywallCookie, clearPaywallCookie } from "./auth-cookies";
 import { eq, desc, sql, and, inArray, gte, isNull } from "drizzle-orm";
 import { rssappHealth, createRssAppFeed, deleteRssAppFeed } from "./rssapp";
-import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands, backfillSignalClassifications, previewBrandSocialFeeds, ensureBrandSocialFeeds, type SocialPlatform } from "./news-brand-linking";
+import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands, backfillSignalClassifications, previewBrandSocialFeeds, ensureBrandSocialFeeds, previewCuratedInstagramFeeds, ensureCuratedInstagramFeeds, type SocialPlatform } from "./news-brand-linking";
 import { users } from "@shared/schema";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { getAppToken, graphRequest } from "./shared-mailbox";
@@ -1424,8 +1424,15 @@ export function setupNewsFeedRoutes(app: Express) {
 
   app.get("/api/news-feed/brand-social/preview", requireAuth, async (req: Request, res: Response) => {
     try {
-      const platforms = parsePlatforms(req.query.platforms);
       const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      // ?curated=1 → the ranked Instagram-only shortlist that fits the paid
+      // RSS.app plan (junk + duplicate handles excluded, deals-first order).
+      if (req.query.curated) {
+        const result = await previewCuratedInstagramFeeds(limit ?? 100);
+        res.json({ count: result.plan.length, totalCandidates: result.totalCandidates, excluded: result.excluded, plan: result.plan });
+        return;
+      }
+      const platforms = parsePlatforms(req.query.platforms);
       const result = await previewBrandSocialFeeds({ platforms, limit });
       res.json({ count: result.plan.length, existing: result.existing, plan: result.plan });
     } catch (err: any) {
@@ -1435,8 +1442,13 @@ export function setupNewsFeedRoutes(app: Express) {
 
   app.post("/api/news-feed/brand-social/refresh", requireAuth, async (req: Request, res: Response) => {
     try {
-      const platforms = parsePlatforms(req.query.platforms);
       const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      if (req.query.curated) {
+        const result = await ensureCuratedInstagramFeeds(limit ?? 100);
+        res.json(result);
+        return;
+      }
+      const platforms = parsePlatforms(req.query.platforms);
       const result = await ensureBrandSocialFeeds({ platforms, limit });
       res.json(result);
     } catch (err: any) {
