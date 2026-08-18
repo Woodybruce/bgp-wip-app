@@ -28,7 +28,7 @@ import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import {
   Sparkles, Store, TrendingUp, TrendingDown, Users, User, Handshake,
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
-  Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper, Heart, MessageCircle,
+  Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
   MapPin, Activity, Target, Briefcase, PoundSterling, Search, Flame,
   Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail, ShieldCheck, ChevronRight, Loader2,
 } from "lucide-react";
@@ -5536,186 +5536,104 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   );
 }
 
-// ─── Instagram card — Business Discovery via Meta Graph API ────────────────
-// Returns null silently when:
-//   - the IG integration isn't configured in env (no warning shown to users)
-//   - the brand has no instagram_handle OR isn't a Business/Creator account
+// ─── Instagram card — latest posts via the brand's RSS.app feed ────────────
+// Three states from the server:
+//   feed        → grid of recent posts (news_articles from the paid feed)
+//   handle_only → slim card: handle link + follower count, no feed slot yet
+//   no_handle   → card hides itself entirely
 function BrandInstagramCard({ companyId }: { companyId: string }) {
-  const { toast } = useToast();
-  // Clients get house copy, not server-config detail (UX #41).
-  const { data: igViewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
-  const igClientViewer = !igViewer || igViewer.role === "Client" || !!igViewer.companyScopeId;
-  const { data: profile, isLoading } = useQuery<any>({
+  const { data, isLoading } = useQuery<any>({
     queryKey: ["/api/brand", companyId, "instagram"],
     queryFn: async () => {
       const r = await fetch(`/api/brand/${companyId}/instagram`, { headers: getAuthHeaders() });
-      if (r.status === 204) return null;
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     },
-    staleTime: 1000 * 60 * 60, // 1h
+    staleTime: 1000 * 60 * 15,
   });
 
-  if (isLoading) return null;
-
-  // Server returns { status, handle, profile: null } when the lookup failed —
-  // surface that in an empty-state card so the user can see WHY there's no
-  // data, instead of the card silently hiding itself.
-  if (!profile || profile.status) {
-    const status: string | undefined = profile?.status;
-    const handle: string | null = profile?.handle ?? null;
-    // While Meta's "Instagram Public Content Access" approval is pending,
-    // lookups fail by design. Show the populated layout with clearly
-    // labelled sample numbers instead of a bare error — users (and Meta's
-    // reviewers, via the App Review screencast) see exactly where the live
-    // data will appear (Woody, 2026-08-04).
-    if (status === "lookup_failed" || (status && status !== "not_configured" && status !== "no_handle")) {
-      return (
-        <Card>
-          <CardHeader className="p-3 pb-2">
-            <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-              <Instagram className="w-3.5 h-3.5" /> Instagram
-              <Badge variant="outline" className="text-[9px] text-violet-700 border-violet-200 normal-case tracking-normal">sample preview</Badge>
-              {handle && (
-                <a href={`https://instagram.com/${handle}`} target="_blank" rel="noreferrer" className="ml-auto text-[10px] text-muted-foreground hover:text-foreground normal-case font-normal">
-                  @{handle}
-                </a>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-3 pt-0 space-y-2">
-            <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-              <span><strong className="text-foreground">128.4k</strong> followers</span>
-              <span><strong className="text-foreground">1.2k</strong> posts</span>
-              <span><strong className="text-foreground">312</strong> following</span>
-            </div>
-            <div className="grid grid-cols-3 gap-1">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="aspect-square rounded border border-border/60 bg-muted/60 flex items-center justify-center text-[10px] text-muted-foreground">
-                  post
-                </div>
-              ))}
-            </div>
-            <p className="text-[10px] text-muted-foreground italic">
-              Sample layout — live follower counts and recent posts appear here automatically once Meta approves the app's Instagram Public Content Access.
-            </p>
-          </CardContent>
-        </Card>
-      );
-    }
-    const message = igClientViewer
-      ? "Instagram feed unavailable for this brand."
-      : status === "not_configured" ? "Meta Graph API credentials not set on server."
-      : status === "no_handle" ? "No Instagram handle on this brand. Add via Edit, or run the homepage backfill."
-      : "Instagram lookup failed — likely the handle is a Personal account (Business Discovery only works on Business/Creator accounts), or the access token / business account ID is wrong.";
-    return (
-      <Card>
-        <CardHeader className="p-3 pb-2">
-          <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-            <Instagram className="w-3.5 h-3.5" /> Instagram
-            {handle && (
-              <a
-                href={`https://instagram.com/${handle}`}
-                target="_blank"
-                rel="noreferrer"
-                className="ml-auto text-[10px] text-muted-foreground hover:text-foreground normal-case font-normal"
-              >
-                @{handle}
-              </a>
-            )}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-3 pt-0">
-          <p className="text-[11px] text-muted-foreground italic">{message}</p>
-        </CardContent>
-      </Card>
-    );
-  }
+  if (isLoading || !data || data.status === "no_handle" || !data.handle) return null;
 
   const fmt = (n: number | null | undefined) => {
-    if (n == null) return "—";
+    if (n == null) return null;
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
     return String(n);
   };
 
+  const header = (
+    <CardHeader className="p-3 pb-2">
+      <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+        <Instagram className="w-3.5 h-3.5" /> Instagram
+        <a
+          href={`https://instagram.com/${data.handle}`}
+          target="_blank"
+          rel="noreferrer"
+          className="ml-auto text-[10px] text-muted-foreground hover:text-foreground normal-case font-normal"
+        >
+          @{data.handle}
+        </a>
+      </CardTitle>
+    </CardHeader>
+  );
+
+  const statsLine = fmt(data.followers) && (
+    <div className="text-[11px] text-muted-foreground">
+      <strong className="text-foreground">{fmt(data.followers)}</strong> followers
+      {fmt(data.postCount) && <> · <strong className="text-foreground">{fmt(data.postCount)}</strong> posts</>}
+    </div>
+  );
+
+  if (data.status !== "feed" || !data.posts?.length) {
+    return (
+      <Card>
+        {header}
+        <CardContent className="p-3 pt-0 space-y-1">
+          {statsLine}
+          <p className="text-[11px] text-muted-foreground italic">
+            {data.status === "feed"
+              ? "Feed connected — recent posts appear after the next refresh."
+              : "No live feed slot for this brand yet."}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card>
-      <CardHeader className="p-3 pb-2">
-        <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <Instagram className="w-3.5 h-3.5" /> Instagram
-          <span className="ml-auto flex items-center gap-2 normal-case text-[10px] text-muted-foreground font-normal">
-            <a href={`https://instagram.com/${profile.username}`} target="_blank" rel="noreferrer" className="hover:text-foreground">
-              @{profile.username}
-            </a>
-            <button
-              type="button"
-              className="hover:text-foreground underline"
-              onClick={async () => {
-                try {
-                  const r = await fetch(`/api/brand/${companyId}/instagram?force=1`, { headers: getAuthHeaders() });
-                  if (r.ok || r.status === 204) {
-                    queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "instagram"] });
-                    toast({ title: "Instagram refreshed" });
-                  } else {
-                    toast({ title: "Refresh failed", variant: "destructive" });
-                  }
-                } catch (e: any) {
-                  toast({ title: "Refresh failed", description: e?.message, variant: "destructive" });
-                }
-              }}
-            >
-              Refresh
-            </button>
-          </span>
-        </CardTitle>
-      </CardHeader>
+      {header}
       <CardContent className="p-3 pt-0 space-y-2">
-        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-          <span><strong className="text-foreground">{fmt(profile.followersCount)}</strong> followers</span>
-          <span><strong className="text-foreground">{fmt(profile.mediaCount)}</strong> posts</span>
-          <span><strong className="text-foreground">{fmt(profile.followsCount)}</strong> following</span>
+        {statsLine}
+        <div className="grid grid-cols-3 gap-1">
+          {data.posts.slice(0, 9).map((p: any, i: number) => (
+            <a
+              key={p.url || i}
+              href={p.url}
+              target="_blank"
+              rel="noreferrer"
+              className="aspect-square rounded border border-border/60 overflow-hidden bg-muted relative group block"
+              title={p.title || ""}
+            >
+              {p.imageUrl ? (
+                <img
+                  src={p.imageUrl}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                />
+              ) : (
+                <div className="w-full h-full p-1.5 text-[9px] leading-tight text-muted-foreground overflow-hidden">
+                  {(p.title || "").slice(0, 90)}
+                </div>
+              )}
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-colors flex items-end p-1.5 opacity-0 group-hover:opacity-100">
+                <span className="text-white text-[9px] leading-tight line-clamp-3">{p.title}</span>
+              </div>
+            </a>
+          ))}
         </div>
-        {profile.biography && (
-          <p className="text-[11px] text-muted-foreground line-clamp-2">{profile.biography}</p>
-        )}
-        {profile.posts && profile.posts.length > 0 && (
-          <div className="grid grid-cols-3 gap-1">
-            {profile.posts.slice(0, 9).map((p: any) => {
-              const img = p.thumbnailUrl || p.mediaUrl;
-              return (
-                <a
-                  key={p.id}
-                  href={p.permalink}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="aspect-square rounded border border-border/60 overflow-hidden bg-muted relative group block"
-                  title={p.caption || ""}
-                >
-                  {img && (p.mediaType === "IMAGE" || p.mediaType === "CAROUSEL_ALBUM") ? (
-                    <img
-                      src={img}
-                      alt=""
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-[10px] text-muted-foreground">
-                      {p.mediaType === "VIDEO" ? "▶" : "?"}
-                    </div>
-                  )}
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-end p-1.5 opacity-0 group-hover:opacity-100">
-                    <div className="flex items-center gap-2 text-white text-[10px] font-medium">
-                      <span className="flex items-center gap-0.5"><Heart className="w-3 h-3" />{fmt(p.likeCount)}</span>
-                      <span className="flex items-center gap-0.5"><MessageCircle className="w-3 h-3" />{fmt(p.commentsCount)}</span>
-                    </div>
-                  </div>
-                </a>
-              );
-            })}
-          </div>
-        )}
       </CardContent>
     </Card>
   );
