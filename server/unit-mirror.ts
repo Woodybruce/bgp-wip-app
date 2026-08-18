@@ -214,6 +214,38 @@ function mapMarketingToTenancyStatus(s: string | null | undefined): string {
   }
 }
 
+// Nightly spine re-link: stamp tenancy_unit_id on deals that lost (or never
+// got) their link but whose (property, unit name) now matches a spine row —
+// e.g. the tenancy schedule was imported after the deal was created. Same
+// confident match the create/update stamps use; anything ambiguous stays
+// unlinked for staff to Resolve manually.
+export async function relinkOffSpineDeals(pool: Pool): Promise<number> {
+  try {
+    const r = await pool.query(
+      `UPDATE crm_deals d
+          SET tenancy_unit_id = m.ts_id
+         FROM (
+           SELECT d2.id AS deal_id,
+                  (SELECT ts.id FROM tenancy_schedule_units ts
+                    WHERE ts.property_id = d2.property_id
+                      AND lower(trim(coalesce(ts.unit_number, ts.premises, ''))) =
+                          lower(trim(coalesce((SELECT unit_name FROM property_units pu WHERE pu.id = d2.unit_id), '')))
+                      AND trim(coalesce(ts.unit_number, ts.premises, '')) <> ''
+                    LIMIT 1) AS ts_id
+             FROM crm_deals d2
+            WHERE d2.tenancy_unit_id IS NULL
+              AND d2.unit_id IS NOT NULL
+              AND d2.property_id IS NOT NULL
+         ) m
+        WHERE d.id = m.deal_id AND m.ts_id IS NOT NULL`
+    );
+    return r.rowCount || 0;
+  } catch (e: any) {
+    console.warn("[unit-mirror] relinkOffSpineDeals failed:", e?.message);
+    return 0;
+  }
+}
+
 export async function ensureTenancyRowForAvailableUnit(pool: Pool, availableUnitId: string): Promise<void> {
   try {
     const r = await pool.query(

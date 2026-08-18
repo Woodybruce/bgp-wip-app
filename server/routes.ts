@@ -1380,6 +1380,10 @@ export async function registerRoutes(
         company_name = c.rows[0].name;
         created_by = req.session?.userId || (req as any).tokenUserId;
       }
+      // Stamp the creator for staff too — the delete gate only lets
+      // non-admins remove events they created, so a NULL created_by made
+      // staff events undeletable by their author.
+      if (!created_by) created_by = req.session?.userId || (req as any).tokenUserId;
       const result = await pool.query(
         `INSERT INTO team_events (title, event_type, start_time, end_time, property_id, property_name, deal_id, company_name, location, attendees, notes, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
         [title, event_type, start_time, end_time, property_id, property_name, deal_id, company_name, location, attendees || [], notes, created_by]

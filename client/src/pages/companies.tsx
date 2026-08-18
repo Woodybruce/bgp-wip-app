@@ -48,7 +48,7 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { useState, useMemo, useRef, useEffect } from "react";
-import { trackRecentItem } from "@/hooks/use-recent-items";
+import { trackRecentItem, removeRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { useRoute, useLocation, Link } from "wouter";
@@ -1087,6 +1087,13 @@ function CompanyDetail({ id }: { id: string }) {
     queryKey: ["/api/crm/companies", id],
   });
 
+  // A dead company link usually means the viewer removed the brand from
+  // their watchlist (clients) or it was merged away — drop it from Quick
+  // Access so the sidebar stops offering a dead end.
+  useEffect(() => {
+    if (!isLoading && !company) removeRecentItem("company", id);
+  }, [isLoading, company, id]);
+
   // Defensive array defaults — these endpoints occasionally return
   // non-arrays under error / partial-failure paths. Without the
   // default, downstream .map / .filter / forEach crash the whole page.
@@ -1244,12 +1251,24 @@ function CompanyDetail({ id }: { id: string }) {
         <Card>
           <CardContent className="py-12 text-center">
             <AlertCircle className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
-            <h3 className="font-medium mb-1">Company not found</h3>
-            <p className="text-xs text-muted-foreground mb-4">It may have been merged or removed.</p>
-            <Button variant="outline" size="sm" onClick={() => navigate("/companies")} data-testid="button-back-to-companies">
-              <ArrowLeft className="w-3.5 h-3.5 mr-1.5" />
-              Back to Companies
-            </Button>
+            <h3 className="font-medium mb-1">{isClientViewer ? "Brand not in your list" : "Company not found"}</h3>
+            <p className="text-xs text-muted-foreground mb-4">
+              {isClientViewer
+                ? "You may have removed this brand from your CRM list. You can re-add it from the Brand Directory at any time."
+                : "It may have been merged or removed."}
+            </p>
+            <div className="flex items-center justify-center gap-2">
+              {isClientViewer && (
+                <Button variant="outline" size="sm" onClick={() => navigate("/contacts")} data-testid="button-brand-directory">
+                  <Search className="w-3.5 h-3.5 mr-1.5" />
+                  Brand Directory
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={() => navigate("/companies")} data-testid="button-back-to-companies">
+                <ArrowLeft className="w-3.5 h-3.5 mr-1.5" />
+                Back to Companies
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>

@@ -1,14 +1,14 @@
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutDashboard, MessageCircle, Mail, BarChart3, Newspaper, CheckSquare } from "lucide-react";
+import { LayoutDashboard, MessageCircle, Sparkles, BarChart3, Newspaper, CheckSquare } from "lucide-react";
 
-// Dashboard/Portfolio is the home tab (Woody, 2026-08-09, UX-NOTES #6+#8 —
-// supersedes the 2026-08-05 Messages-home): the tile dashboard lives at "/",
-// the unified chat list at /messages.
+// ChatBGP replaced Mail in the tab bar (Woody, 2026-08-18) — the sparkle
+// always starts a FRESH AI chat; Mail lives on via the Dashboard tile at
+// /mail. The tile dashboard stays at "/", the unified chat list at /messages.
 const NAV_ITEMS = [
   { label: "Dashboard", icon: LayoutDashboard, path: "/" },
   { label: "Messages", icon: MessageCircle, path: "/messages" },
-  { label: "Mail", icon: Mail, path: "/mail" },
+  { label: "ChatBGP", icon: Sparkles, path: "/chatbgp" },
   { label: "Deals", icon: BarChart3, path: "/deals" },
   { label: "News", icon: Newspaper, path: "/news" },
 ] as const;
@@ -53,7 +53,19 @@ export function MobileBottomNav() {
           return (
             <button
               key={item.label}
-              onClick={() => navigate(item.path)}
+              onClick={() => {
+                if (item.path === "/chatbgp") {
+                  // The sparkle always means "new chat": clear the restored-
+                  // thread marker (fresh mount) and tell an already-mounted
+                  // chat screen to reset to the greeting.
+                  try {
+                    sessionStorage.removeItem("mobile-chat-thread");
+                    sessionStorage.removeItem("mobile-chat-thread-ai");
+                  } catch {}
+                  window.dispatchEvent(new Event("chatbgp-new-chat"));
+                }
+                navigate(item.path);
+              }}
               className={`flex flex-col items-center justify-center gap-0.5 min-w-[56px] min-h-[44px] px-2 py-1.5 rounded-lg transition-colors ${
                 active ? "text-foreground" : "text-muted-foreground"
               }`}

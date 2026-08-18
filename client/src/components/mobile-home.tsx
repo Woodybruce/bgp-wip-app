@@ -1,15 +1,64 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { mobileOverlayItems } from "@/components/app-sidebar";
+import { MemberAvatar } from "@/components/ClientTeamOrgChart";
 import {
   Sparkles, BarChart3, FileText, Handshake, Calendar as CalendarIcon,
   AlertTriangle, Info, CheckCircle2, Circle, ChevronRight, Sun, Wallet, RefreshCw,
-  Receipt, Image as ImageIcon, Building2, Store, ClipboardList, Newspaper,
+  Receipt, Image as ImageIcon, Building2, Store, ClipboardList, Newspaper, Users, Mail,
 } from "lucide-react";
 import { legacyToCode } from "@shared/deal-status";
 
 type BriefingData = { briefing: string; generatedAt: string };
+
+// Compact "Your BGP team" row for the client Portfolio home (UX #59) — the
+// phone shell replaces the desktop dashboard where ClientTeamOrgChart lives,
+// so without this a client on a phone has no way to look up who to chase at
+// BGP. Tap a person to email them.
+function MobileBgpTeam({ clientCompanyId }: { clientCompanyId: string }) {
+  const { data: membersRaw } = useQuery<any[]>({
+    queryKey: ["/api/client-teams", clientCompanyId],
+    queryFn: async () => {
+      const r = await fetch(`/api/client-teams/${clientCompanyId}`, { headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    enabled: !!clientCompanyId,
+    staleTime: 10 * 60 * 1000,
+  });
+  const members = (Array.isArray(membersRaw) ? membersRaw : [])
+    .slice()
+    .sort((a, b) => (Number(b.is_lead) - Number(a.is_lead)) || (a.sort_order - b.sort_order) || (a.full_name || "").localeCompare(b.full_name || ""));
+  if (members.length === 0) return null;
+  return (
+    <section className="rounded-2xl border border-[#E7E5E4] dark:border-border bg-white dark:bg-card shadow-sm px-4 py-3" data-testid="mobile-home-bgp-team">
+      <div className="flex items-center gap-2 mb-2.5">
+        <Users className="w-4 h-4 text-muted-foreground" />
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Your BGP team</span>
+      </div>
+      <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1">
+        {members.map((m: any) => (
+          <a
+            key={m.id}
+            href={m.email ? `mailto:${m.email}` : undefined}
+            className="flex flex-col items-center gap-1 w-[72px] shrink-0 active:opacity-70"
+            data-testid={`mobile-bgp-team-${m.user_id}`}
+          >
+            <MemberAvatar member={m} className="w-12 h-12 text-sm" />
+            <span className="text-[11px] font-medium leading-tight text-center line-clamp-1 w-full">
+              {(m.full_name || m.username || "").split(/\s+/)[0]}
+            </span>
+            <span className="text-[9px] text-muted-foreground leading-tight text-center line-clamp-2 w-full">
+              {m.role || m.bgp_title || (m.is_lead ? "Lead" : "")}
+            </span>
+            {m.email && <Mail className="w-3 h-3 text-muted-foreground" />}
+          </a>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 // Minimal markdown for the AI briefing — headings, bullets, bold, rules.
 function renderBriefingInline(text: string) {
@@ -300,6 +349,9 @@ export default function MobileHome() {
             </div>
           </Link>
 
+          {!!(user as any)?.companyScopeId && (
+            <MobileBgpTeam clientCompanyId={(user as any).companyScopeId} />
+          )}
         </>
       )}
 

@@ -4161,6 +4161,105 @@ app.use("/api/branding/assets", express.static(
           console.error("[uk-entity heal] failed:", e?.message);
         }
       }, 45000);
+      // One-off: clear poisoned instagram_handle rows before the paid
+      // RSS.app feeds go live (Woody, 2026-08-18). Two failure modes from
+      // the old website scraper: URL path words captured as handles
+      // (instagram.com/v/… → "v", /s/… → "s") plus spam from hacked sites,
+      // and one page's handle stamped across many brands (t2tea on every
+      // "T2" row, workwithatom on 8+). Cleared rows refill via the weekly
+      // backfill, which now rejects these patterns. Audit in flag.
+      setTimeout(async () => {
+        const FLAG = "migration:ig_handle_poison_v1";
+        try {
+          const { rows: done } = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [FLAG]);
+          if (done[0]) return;
+          const JUNK = [
+            "v", "s", "p", "explore", "reel", "reels", "tv", "stories", "accounts",
+            "share", "about", "developer", "directory", "legal", "web", "api",
+            "oauth", "invites", "graphql", "static",
+          ];
+          const junkCond = `instagram_handle IS NOT NULL AND (
+            length(regexp_replace(instagram_handle, '^@', '')) < 2
+            OR lower(regexp_replace(instagram_handle, '^@', '')) = ANY($1::text[])
+            OR instagram_handle ILIKE '%togel%'
+            OR regexp_replace(instagram_handle, '^@', '') !~ '^[A-Za-z0-9._]+$'
+          )`;
+          const { rows: junkRows } = await pool.query(
+            `SELECT id, name, instagram_handle FROM crm_companies WHERE ${junkCond}`, [JUNK]);
+          if (junkRows.length) {
+            await pool.query(`UPDATE crm_companies SET instagram_handle = NULL WHERE ${junkCond}`, [JUNK]);
+          }
+          // Same handle on 3+ live brands = stamping bug. Keep it only on a
+          // brand whose own name matches the handle (T2 keeps t2tea, Atom
+          // keeps workwithatom); clear the rest.
+          const { rows: dupeRows } = await pool.query(`
+            SELECT c.id, c.name, c.instagram_handle
+              FROM crm_companies c
+              JOIN (
+                SELECT lower(regexp_replace(instagram_handle, '^@', '')) AS h
+                  FROM crm_companies
+                 WHERE instagram_handle IS NOT NULL AND merged_into_id IS NULL
+                 GROUP BY 1 HAVING COUNT(*) >= 3
+              ) d ON lower(regexp_replace(c.instagram_handle, '^@', '')) = d.h
+             WHERE c.instagram_handle IS NOT NULL
+               AND NOT (
+                 length(regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g')) >= 2
+                 AND (
+                   position(regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') IN d.h) > 0
+                   OR position(d.h IN regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g')) > 0
+                 )
+               )`);
+          if (dupeRows.length) {
+            await pool.query(
+              `UPDATE crm_companies SET instagram_handle = NULL WHERE id = ANY($1::varchar[])`,
+              [dupeRows.map((r: any) => r.id)]);
+          }
+          const audit = [...junkRows, ...dupeRows].map((r: any) => ({ id: r.id, name: r.name, was: r.instagram_handle }));
+          await pool.query(
+            `INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2`,
+            [FLAG, JSON.stringify({ at: new Date().toISOString(), junk: junkRows.length, duplicates: dupeRows.length, rows: audit.slice(0, 300) })],
+          );
+          console.log(`[ig-handle heal] cleared ${junkRows.length} junk + ${dupeRows.length} duplicate-stamped handle(s): ${audit.slice(0, 10).map((a: any) => `${a.name} (@${a.was})`).join("; ")}${audit.length > 10 ? "…" : ""}`);
+        } catch (e: any) {
+          console.error("[ig-handle heal] failed:", e?.message);
+        }
+      }, 50000);
+      // Keep the curated brand Instagram feed set on RSS.app filled to the
+      // plan quota (RSSAPP_FEED_QUOTA — Woody's Pro plan carries 500 feeds,
+      // 2026-08-18). Re-runs on every deploy but is naturally idempotent:
+      // brands that already have a feed are skipped and the account-level
+      // quota check stops at the cap, so a quiet boot creates nothing. Runs
+      // after the handle heal above so poisoned rows can't win paid slots.
+      setTimeout(async () => {
+        const KEY = "rssapp_curated_ig_feeds_last_run";
+        try {
+          if (!process.env.RSSAPP_API_KEY || !process.env.RSSAPP_API_SECRET) return; // not configured yet — retry next boot
+          const quota = Number(process.env.RSSAPP_FEED_QUOTA || 100);
+          const { ensureCuratedInstagramFeeds, ensurePinnedIgBrands } = await import("./news-brand-linking");
+          // Pinned must-watch operators first: flip tracking on for any
+          // pinned row that lost it, so they're in the plan we build next.
+          const pinnedBefore = await ensurePinnedIgBrands().catch((e: any) => {
+            console.error("[rssapp curated] pinned pre-check failed:", e?.message);
+            return null;
+          });
+          const result = await ensureCuratedInstagramFeeds(quota);
+          const pinned = await ensurePinnedIgBrands().catch(() => pinnedBefore);
+          if (pinned) {
+            for (const p of pinned) {
+              console.log(`[rssapp curated] pinned: ${p.group} → ${p.status}${p.detail ? ` (${p.detail})` : ""}`);
+            }
+          }
+          if (result.created || result.errors.length) {
+            await pool.query(
+              `INSERT INTO system_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2`,
+              [KEY, JSON.stringify({ at: new Date().toISOString(), created: result.created, skipped: result.skipped, quotaRemaining: result.quotaRemaining, excluded: result.excluded, errors: result.errors.slice(0, 30) })],
+            );
+            console.log(`[rssapp curated] created ${result.created} brand Instagram feed(s), ${result.skipped} failed, quota left ${result.quotaRemaining}`);
+          }
+        } catch (e: any) {
+          console.error("[rssapp curated] failed:", e?.message);
+        }
+      }, 120000);
       // Background crawls only run in production — too slow/fragile over local internet
       const isProduction = process.env.NODE_ENV === "production";
       if (isProduction) {
@@ -4300,12 +4399,15 @@ app.use("/api/branding/assets", express.static(
       }
 
       // Nightly KYC refresh — re-runs Companies House KYC for stale/dissolved companies.
-      // Runs at 1am every night (production only). Processes up to 40 companies per run.
+      // Runs at 1am every night (production only). 120/night (was 40) so the
+      // parked backlog clears in days now that parked brands rotate to the
+      // back of the queue instead of jamming its head — still well inside CH
+      // rate limits at ~3 requests per company, paced 700ms apart.
       if (process.env.NODE_ENV === "production") {
         setInterval(() => {
           const now = new Date();
           if (now.getHours() === 1 && now.getMinutes() < 60) {
-            runBatchReKyc({ limit: 40 }).catch(err =>
+            runBatchReKyc({ limit: 120 }).catch(err =>
               console.error("[kyc-refresh] nightly run failed:", err?.message)
             );
           }
@@ -4321,6 +4423,39 @@ app.use("/api/branding/assets", express.static(
             runNightlyBrandEnrichment().catch(err =>
               console.error("[brand-enrich] nightly run failed:", err?.message)
             );
+          }
+        }, 60 * 60 * 1000);
+      }
+
+      // Nightly Brand Gap live-intel pre-warm — 05:00 (production only, live
+      // Perplexity spend). Keeps the expansion sweep fresh on every in-use
+      // gap board so the panel populates without anyone clicking refresh or
+      // waiting on the first-load research call.
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 5 && now.getMinutes() < 60) {
+            import("./property-gap-analysis")
+              .then(m => m.runNightlyGapLiveIntelSweep())
+              .then(r => console.log(`[gap-live-intel-cron] swept ${r.swept} propert${r.swept === 1 ? "y" : "ies"}, ${r.errors} error(s)`))
+              .catch(err => console.error("[gap-live-intel-cron] failed:", err?.message));
+          }
+        }, 60 * 60 * 1000);
+      }
+
+      // Nightly tenancy-spine re-link — 04:00. Deals created before their
+      // property's tenancy schedule was imported (or whose unit name was
+      // fixed later) sit "off spine" until someone clicks Resolve; this
+      // stamps the link automatically wherever the confident name match
+      // now succeeds. Cheap SQL, runs in prod only to match the other crons.
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 4 && now.getMinutes() < 60) {
+            import("./unit-mirror")
+              .then(m => m.relinkOffSpineDeals(pool))
+              .then(n => { if (n > 0) console.log(`[spine-relink-cron] re-linked ${n} deal(s) to tenancy spine`); })
+              .catch(err => console.error("[spine-relink-cron] failed:", err?.message));
           }
         }, 60 * 60 * 1000);
       }

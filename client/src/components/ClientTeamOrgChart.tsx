@@ -35,7 +35,7 @@ interface TeamMember {
 // Headshot with two fallbacks: users.profile_pic_url (what HR shows) →
 // the uploaded-photo stream → initials. The old <img>-only version went
 // invisible whenever neither source had a photo.
-function MemberAvatar({ member, className }: { member: TeamMember; className: string }) {
+export function MemberAvatar({ member, className }: { member: Pick<TeamMember, "full_name" | "username" | "user_id" | "profile_pic_url">; className: string }) {
   const displayName = member.full_name || member.username || "?";
   const initials = displayName.split(/\s+/).map(w => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
   const [src, setSrc] = useState<string | null>(member.profile_pic_url || `/api/hr/photo/${member.user_id}`);

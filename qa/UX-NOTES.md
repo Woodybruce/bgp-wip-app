@@ -13,184 +13,8 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
-64. 2026-08-18 · BGP staff / desktop (client Full Board shows the same
-    figure) · "after a rent review, check the Bluewater board's WAULT" ·
-    the WAULT KPI trusts placeholder lease expiries from the Landsec feed
-    — the fixture (and the live feed it snapshots) carries 2154-12-30/31
-    expiry dates on some units, and once such a unit has passing rent the
-    rent-weighted WAULT reads as 100+ yrs (seen: 128.4 yrs). The code
-    already rent-weights to blunt peppercorn ground leases, but a
-    placeholder date on a RENTED unit still poisons the figure. Suggested:
-    exclude (or cap) terms beyond ~60 yrs from WAULT and badge the stat
-    "n units excluded — placeholder expiry" so asset managers don't quote
-    a nonsense figure to the client.
-
-63. 2026-08-17 · BGP staff / mobile 390px (desktop chips behave the same
-    on search) · "find my Bluewater deals on the phone" · typing in the
-    deals-board search narrows the card list and the header count
-    ("2 deals — National Leasing") but the stage filter chips keep their
-    unfiltered totals ("All 3 · SOL 2 · EXC 1"), so the header says 2
-    while the chip row says 3 — same numbers-vs-cards disagreement class
-    as UX #61. Suggested: recount the stage chips against the searched
-    set (or visually mute them while a search is active).
-
-62. 2026-08-17 · Landsec client / mobile 390px (staff mobile has the same
-    board) · "which of my Bluewater leases expire soonest?" · the tenancy
-    Full Board on a phone is the full 34-column desktop sheet in a
-    horizontal-scroll container: only Unit is pinned, so reaching the
-    Expiry / Unexp columns means swiping through Tenant, Lease, GIA, NIA,
-    Rental, MLA, Occupational-cost bands one screen at a time — and the
-    column headers offer filters but no sort, so "soonest expiry" can't
-    be surfaced at all without reading every row. The KPI cards (WAULT,
-    occupied/vacant) render mobile-friendly, so the page LOOKS adapted
-    until you hit the table. Suggested: a mobile card view (unit / tenant
-    / expiry / rent per card, like the tracker's card layout) or at least
-    tap-to-sort on date columns so lease-event questions are answerable
-    from a phone.
-
-61. 2026-08-17 · Landsec client / desktop 1440px (staff see it too) ·
-    "browse my imagery in Image Studio" · the section tabs count
-    non-Brands images ("Library (1)") and the Categories rail's "All"
-    badge matches, but the grid under Library → All renders EVERY
-    image including the 5 Brand Library ones — 6 cards under a header
-    saying 1. The numbers and the pictures disagree at first glance;
-    the user can't tell which count is "right". Suggested: exclude
-    category='Brands' from the Library grid's "All" view (they have
-    their own tab), or include them in the count — either way make
-    the number match the cards.
-
-60. 2026-08-17 · BGP staff / mobile 390px (applies to desktop too) · "a
-    new person joined a tenant brand — add them to the CRM by hand" ·
-    there is no manual New Contact path anywhere in the live app: staff
-    contacts arrive only via discovery (Rescan / promote-from-inbox /
-    RocketReach "Add") on the company profile board, and the old
-    contacts page that carried the full New Contact dialog
-    (client/src/pages/contacts.tsx ContactList — button-create-contact,
-    name/email/role/company form, plus the "Interaction Archive" view)
-    is unrouted dead code — /contacts now renders the PeopleHub CRM
-    (people.tsx) which has no create button; only CLIENT logins get an
-    "Add contact" affordance in their hub. If BGP staff meet someone at
-    a viewing whose email isn't in any BGP inbox, they can't record
-    them. Suggested: either add a New Contact button to the PeopleHub
-    header reusing the existing (working) ContactFormDialog from
-    contacts.tsx, or delete the dead code if discovery-only is the
-    intent. Needs Woody's numbered confirmation — not built.
-
-59. 2026-08-16 · Landsec client / mobile 390px · "BGP are coming to
-    Bluewater — put it in my calendar, then find my BGP contact to
-    confirm" · the calendar + task legs work, but the find-my-BGP-
-    contact leg dead-ends on the phone: the ClientTeamOrgChart (the
-    "your BGP team" card) renders only on the desktop client dashboard
-    and company profiles — the mobile Portfolio home replaces the
-    dashboard and has no team card, /contacts' "Landsec Contacts" tab
-    lists only the client's OWN people with no BGP staff and no search
-    (the "Search brands or people…" box exists only on the Brand
-    Directory tab). A client on a phone has no way to look up who to
-    chase at BGP. Suggested: surface the BGP account team on mobile —
-    e.g. a compact "Your BGP team" row on the Portfolio home or a
-    third group in Landsec Contacts. Needs Woody's numbered
-    confirmation — not built.
-
-58. 2026-08-16 · Landsec client / desktop 1440px · "a prospect viewed my
-    unit — log it quickly" · the Viewings/Offers dialog cards headline
-    the COMPANY name with a "No company" fallback, but the quick way to
-    log a viewing is date + attendees (Company/Contact pickers are
-    optional and easy to skip), so most hand-logged rows read "No
-    company" in bold with the actually-useful attendees line beneath.
-    Suggested: extend the headline fallback chain to attendees
-    (companyName || contactName || attendees || "No company") in the
-    viewings + offers cards (available-units.tsx ~2636/~2757). Needs
-    Woody's numbered confirmation — not built.
-
-57. 2026-08-16 · BGP staff / desktop 1440px · "terms agreed — create the
-    new letting deal, then carry on working it" · after Create Deal the
-    dialog closes with a "Deal created" toast, but nothing points at the
-    deal just made: the toast has no link, the table's default 10/44
-    columns don't include the deal NAME, and the new row is only
-    findable by knowing its ref # or scanning Property/Unit cells (three
-    near-identical "Bluewater Shopping Centre" rows in the fixture).
-    Suggested: add a "View deal →" action on the Deal-created toast
-    (and/or highlight the new row briefly). Needs Woody's numbered
-    confirmation — not built.
-
-56. 2026-08-16 · BGP staff / mobile 390px · "on the phone: put a Bluewater
-    lease-review call on the calendar" · staff /calendar has NO in-app
-    Add-event — the button is isClientViewer-gated (clients write a
-    team_events row; staff events come from Outlook sync). Locally/on
-    the move that means a staff user on the phone can't jot a CRM
-    meeting at all: the page is view-only and the only write path is
-    switching to the Outlook app, losing the CRM linkage (company/
-    property tags) that client-created events get. Suggested: offer
-    staff the same lightweight Add-event dialog writing a team_events
-    row (kept separate from Outlook sync), or at least a deep link into
-    Outlook new-event. Needs Woody's numbered confirmation — not built.
-
-55. 2026-08-16 · BGP staff / mobile 390px · "open the Bluewater property
-    page" · the property page stacks THREE navigation rows before any
-    content at 390px: the mobile top bar ("← Property"), a breadcrumb
-    row ("Properties › Bluewater Shopping Centre"), and a second
-    back-link row ("← Properties /") — ~200px of a phone screen spent
-    on three ways to say the same thing before the property name
-    appears. Suggested: collapse to the top bar + one breadcrumb (drop
-    the duplicate back-link row on mobile). Needs Woody's numbered
-    confirmation — not built.
-
-54. 2026-08-16 · Landsec client / mobile 390px · "over breakfast: catch up
-    on tenant news for the board and save an article for later" · the
-    mobile /news feed (MobileNewsFeed in client/src/pages/news.tsx) is a
-    read-only card list — no Save button, no Saved tab, no search, no tag
-    filters — while client desktop has the full save/Saved workflow
-    (r295/r296 even fixed bugs in it). An article spotted on the phone
-    can't be saved for later, and articles saved on desktop can't be
-    found on the phone; the user's only option is an external open in the
-    browser tab. Renders fine (0 overflow), so it works as designed —
-    just missing what this user wanted · Suggested: add a save/bookmark
-    affordance to the mobile news card and a way to reach the Saved list
-    (chip row or tab), reusing the existing /api/news-feed/engage +
-    /saved endpoints. Needs Woody's numbered confirmation — not built.
-
-53. 2026-08-15 · Landsec client / desktop 1440px · "took a brand back off my
-    CRM watchlist after checking it out" · after removing a self-added brand
-    via the Add-brand dialog (working as designed), the sidebar's Quick
-    Access section still lists the removed brand from recent history —
-    clicking it dead-ends on "Company not found — it may have been merged
-    or removed", which reads like data loss rather than "you removed this
-    from your list" · Suggested: filter Quick Access to brands the viewer
-    can still access, or give the not-found state client-aware copy with a
-    "re-add from the directory" pointer. Needs Woody's numbered
-    confirmation — not built.
-
-52. 2026-08-15 · BGP staff / desktop · "a brand wants space — log the new
-    leasing requirement" · the Add Requirement dialog has no date field and
-    the server stores requirementDate NULL, so a requirement created seconds
-    ago shows Date "—", gets no Fresh badge, and the "active in the last 90
-    days" KPI reads 0 right after creating one — the board looks stale the
-    moment you add fresh demand; the user must know to inline-edit the Date
-    column afterwards · Suggested: default requirementDate to the creation
-    day for hand-added requirements (imports keep their own dates), or add
-    a pre-filled date field to the dialog. Needs Woody's numbered
-    confirmation — not built.
-
-51. 2026-08-15 · BGP staff / mobile 390px · "on the train: how's the letting
-    pipeline moving and who do I chase?" · the /deals/list mobile cards
-    show name, property, status chip and deal type — but no target date and
-    no time-in-status, even though Target Date is required on every deal
-    ("drives the WIP report bucket") and is exactly what a phone triage
-    needs to pick which deal to chase; the user must open each deal
-    one-by-one to see dates · Suggested: surface the target date (or a
-    "n days in Solicitors" age) on the mobile deal card. Needs Woody's
-    numbered confirmation — not built.
-
-50. 2026-08-15 · Landsec client / mobile 390px · "check how my Bluewater
-    lettings are progressing: open the live deal" · the deal header shows
-    an amber "Off tenancy spine" chip to the client, whose tooltip reads
-    "This deal isn't yet linked to a tenancy schedule row. Use Resolve on
-    the property page to fix." — BGP-internal jargon plus an instruction
-    to use a staff-side tool Mark doesn't have. To a landlord it reads
-    like something is wrong with their deal that they're expected to fix ·
-    Suggested: hide the chip for client viewers (it's an internal
-    data-hygiene flag), or swap in client-facing copy without the staff
-    instruction.
+(Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
+below stay parked, not built. Rounds shouldn't re-log them.)
 
 46. 2026-08-14 · Landsec client / desktop 1440px (logged by QA r294 on the
     staging branch) · "check my property before a lease-expiry chat with
@@ -216,6 +40,47 @@ what happened · concrete suggested improvement.
     so the fix should cover /companies/:id for both personas.)
 
 ## Confirmed / done
+
+Confirmed by Woody 2026-08-18 ("do 64 63 62 61 60 59 58 57 56 55 54 53 52 51
+50 … ignore 46 and 32"); built same day. None browser-verified yet unless
+noted:
+64. WAULT excludes terms over 60 yrs (placeholder 2154 expiries); the KPI
+   tile shows an amber "n excluded — placeholder expiry" sub-line.
+63. Deals-board stage chips recount against the active search (mobile chips
+   and desktop status cards both use the searched set).
+62. Tenancy Full Board headers are tap-to-sort (asc → desc → off, ▲/▼
+   indicator; date/number/text aware, empty values sink) — "soonest expiry"
+   answerable on a phone.
+61. Image Studio Library "All" grid excludes Brands images, so the grid
+   matches the "Library (n)" tab and rail counts.
+60. Already existed (built with #39 in batch B): PeopleHub header has an
+   "Add contact" button reusing ContactFormDialog.
+59. Client Portfolio home (mobile) gets a compact "Your BGP team" row —
+   avatars/name/role from the client-teams board, tap to email.
+58. Viewings dialog headline falls back companyName → contactName →
+   attendees → "No company" (offers have no attendees field).
+57. "Deal created" toast carries a "View deal →" action navigating to the
+   new deal (create returns the id through the mutation).
+56. Staff get the same lightweight Add-event dialog as clients (team_events
+   row, separate from Outlook sync); server now stamps created_by for staff
+   creates so authors can delete their own events.
+55. Mobile property page drops the duplicate "← Properties /" back-link row
+   (top bar + breadcrumb remain).
+54. Mobile news feed: Latest/Saved chip tabs + bookmark toggle per card,
+   reusing /api/news-feed/engage + /saved (desktop saves show on phone).
+53. Quick Access self-heals: opening a dead company link drops it from the
+   recents list, and the not-found card gives clients "Brand not in your
+   list" copy with a Brand Directory pointer.
+52. Hand-added leasing requirements default requirementDate to today
+   server-side (imports keep their own dates) — Fresh badge + 90-day KPI
+   work immediately.
+51. Mobile deal cards show Target (month/year) and "n d in <status>"
+   (time-in-status from the deal audit log, overlaid server-side as
+   statusChangedAt; falls back to created_at). Card field cap raised 4→5.
+50. "Off tenancy spine" chip hidden from client viewers, and a nightly
+   04:00 sweep (relinkOffSpineDeals) auto-stamps tenancy_unit_id where the
+   confident (property, unit name) match now succeeds; staff tooltip
+   mentions the auto-link.
 
 Confirmed by Woody 2026-08-15 ("45 48 49"); built same day (suggestions 45,
 48, 49 were logged by QA rounds r292-r295 on the staging branch — recorded

@@ -1632,11 +1632,15 @@ router.get("/api/brand/gallery-image/:imageId", requireAuth, async (req: Request
     const img = rows[0];
     if (!img) return res.status(404).end();
 
-    const fs = await import("fs");
-    if (img.local_path && fs.existsSync(img.local_path)) {
+    // readPersistedImage falls back to the DB-persisted copy (and restores
+    // the file to disk) when a redeploy wiped the ephemeral filesystem —
+    // checking existsSync alone made every gallery tile 404 after deploys.
+    const { readPersistedImage } = await import("./image-studio");
+    const buf = await readPersistedImage(img.local_path);
+    if (buf) {
       res.setHeader("Content-Type", img.mime_type || "image/jpeg");
       res.setHeader("Cache-Control", "public, max-age=86400");
-      return res.sendFile(img.local_path);
+      return res.send(buf);
     }
     if (img.thumbnail_data) {
       const buf = Buffer.from(img.thumbnail_data, "base64");

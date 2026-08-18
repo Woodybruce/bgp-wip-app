@@ -437,11 +437,13 @@ export function PropertyDetail({ id }: { id: string }) {
         <div className="p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-4 lg:gap-6 items-start">
           <div className="min-w-0 space-y-3">
             <div className="flex items-center gap-3 flex-wrap">
-              <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground hover:text-foreground -ml-2" data-testid="button-back-properties" onClick={() => window.history.length > 1 ? window.history.back() : navigate("/properties")}>
+              {/* Hidden on phones — the mobile top bar + breadcrumb already
+                  give two ways back; a third row just eats screen. */}
+              <Button variant="ghost" size="sm" className="hidden sm:inline-flex gap-1.5 text-muted-foreground hover:text-foreground -ml-2" data-testid="button-back-properties" onClick={() => window.history.length > 1 ? window.history.back() : navigate("/properties")}>
                 <ArrowLeft className="w-3.5 h-3.5" />
                 Properties
               </Button>
-              <span className="text-muted-foreground/40">/</span>
+              <span className="hidden sm:inline text-muted-foreground/40">/</span>
               {editingAddress ? (
                 <div className="flex items-center gap-2 flex-1 max-w-lg">
                   <div className="flex-1">
