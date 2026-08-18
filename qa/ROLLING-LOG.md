@@ -63,12 +63,47 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r325 · 2026-08-18 · ROUND IN PROGRESS (FULL — rotation #1 staff desktop)
-- Provisional heartbeat. Regression: run-smoke.sh GREEN first pass (42
-  checks, 0 failures, fresh DB + FRESH_BUILD=1; no cold-build flake).
-  Two-bot round 325 + staff-desktop journey (Bluewater tenancy-board rent
-  edit + client cross-check) up next. Triage so far: nothing beyond listed
-  noise in the smoke pass.
+### r325 · 2026-08-18 · FULL (rotation #1 staff desktop)
+- Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
+  per r205; SUPERUSER bgp role + restore + schema grant per r249/r321).
+  Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
+  DB + FRESH_BUILD=1; no cold-build flake). Two-bot round 325: exit 0,
+  192/192 ok first run (dev server warmed ~8min before start — no
+  ECONNRESET). 2 logged issues both listed noise (rocketreach-400;
+  commentary-regen 503 — qa/logs/round-325.jsonl). 0 raw 500/502/504 in
+  the round's dev-server log (lone " 500 " hit is the "500 articles"
+  news-feed text; 148 5xx all keyless-AI 503s — ai-briefing / ai-take /
+  brand-gaps / chatbgp / os-sites / contact-verify / rocketreach-refresh /
+  competitors-research / bgp-commentary classes; the 2 400s the
+  rocketreach + image-studio harness probes).
+- Journey: Victoria desktop 1440px — "Bluewater rent review settled with
+  Starbucks: update the unit's passing rent on the full tenancy board,
+  check the KPIs recalc, and confirm the client sees the new figure"
+  (FIRST staff-desktop journey through the tenancy Full Board inline-cell
+  WRITE — r307/r321 covered the board read-only on mobile): UI login via
+  guest form → /properties → Bluewater card → property page (news feed,
+  risk register, linked contacts all render) → Full Board link →
+  /tenancy-schedule/:id (KPI strip, 200 units, stage chips, 0 h-overflow)
+  → search "Starbucks" → 2 rows → inline click on passing-rent cell →
+  input → Enter → PUT /api/tenancy-schedule/unit/:id 200 → cell shows
+  £11,111, Passing Rent KPI recalcs — → £11,111 → survives reload → AS
+  MARK: same board shows the new figure (decided parity: Import/Re-sync
+  hidden, Add + row-delete present per r321) → rent restored via the same
+  inline edit (200, cell back to —, DB row 0). Task completable; 0 page
+  errors, 0 non-noise sightings all legs.
+- NOT a bug (triaged): WAULT KPI read 128.4 yrs while the probe rent was
+  live — the fixture's U007 Starbucks row genuinely carries a 2154-12-30
+  lease expiry (Landsec-feed placeholder; 72 dated units, max 2154-12-31),
+  and with exactly one rented unit the rent-weighted WAULT = that unit's
+  term. Maths correct, data placeholder → UX #64 (exclude/badge >60yr
+  terms). Unfiltered board reads 9.9 yrs as always.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: UX #64. Harness growth: none needed — the PUT edit path +
+  scope guards are already locked (client-tenancy-edit /
+  client-tenancy-write-scoped ride the same handler); this round's
+  staff-desktop coverage was visual. New flakes: none.
+- Next journey: rotation #2 client desktop (r325 had the journey → r326
+  may be LIGHT; then #2).
 
 ### r324 · 2026-08-17 · LIGHT (r323 had the journey)
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust

@@ -13,6 +13,18 @@ what happened · concrete suggested improvement.
 
 ## Open suggestions
 
+64. 2026-08-18 · BGP staff / desktop (client Full Board shows the same
+    figure) · "after a rent review, check the Bluewater board's WAULT" ·
+    the WAULT KPI trusts placeholder lease expiries from the Landsec feed
+    — the fixture (and the live feed it snapshots) carries 2154-12-30/31
+    expiry dates on some units, and once such a unit has passing rent the
+    rent-weighted WAULT reads as 100+ yrs (seen: 128.4 yrs). The code
+    already rent-weights to blunt peppercorn ground leases, but a
+    placeholder date on a RENTED unit still poisons the figure. Suggested:
+    exclude (or cap) terms beyond ~60 yrs from WAULT and badge the stat
+    "n units excluded — placeholder expiry" so asset managers don't quote
+    a nonsense figure to the client.
+
 63. 2026-08-17 · BGP staff / mobile 390px (desktop chips behave the same
     on search) · "find my Bluewater deals on the phone" · typing in the
     deals-board search narrows the card list and the header count
