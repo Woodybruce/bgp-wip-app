@@ -67,17 +67,57 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r329 · 2026-08-18 · FULL (rotation #3 client mobile 390px) — IN PROGRESS
+### r329 · 2026-08-18 · FULL (rotation #3 client mobile 390px)
 - Staging merged with origin/JOGQK head d6e83a3 first (standing branch rule;
   brings activity-curation, AML-screening-on-open, Instagram direct-wire
   commits onto staging). Fresh container (repo pre-cloned; pg_hba trust per
-  r205 — careful: naive sed can mangle scram-sha-256 into trust-sha-256,
-  fix by replacing the whole method token; SUPERUSER bgp role + restore +
-  schema grant per r249). Regression: run-smoke.sh GREEN first pass (42
-  checks, 0 failures, FRESH_BUILD=1, fresh DB). Two-bot round 329 running;
-  journey next: Mark Warne @ 390px exercising the unverified UX 50-64
-  batch (#59 BGP-team row, #62 tap-to-sort, #64 WAULT exclusion, #55
-  back-link, #54 news Latest/Saved).
+  r205 — careful: a naive sed mangles scram-sha-256 into trust-sha-256,
+  replace the whole method token; SUPERUSER bgp role + restore + schema
+  grant per r249). Regression: run-smoke.sh GREEN ×2 (42 checks, 0
+  failures; FRESH_BUILD=1 before the fix, rebuilt bundle after). Two-bot
+  round 329: exit 0, all scenarios ok first run; 3 logged issues all
+  listed noise (rocketreach-400; brand-gaps/live-intel 503;
+  commentary-regen 503 — qa/logs/round-329.jsonl). Dev-server log: 177
+  5xx all keyless-AI 503s; lone " 500 " hit is the "500 articles"
+  news-feed text.
+- Journey: Mark Warne @ 390px iPhone UA — "which Bluewater leases expire
+  soonest, and save a news story for the board pack" — aimed at the
+  browser-unverified UX 50-64 batch. VERIFIED GREEN in-browser: #59 ("Your
+  BGP team" row on Portfolio home, 2 mailto links — closes the r313 UX#59
+  dead-end), #55 (0 duplicate "← Properties" back-link rows on the mobile
+  property page), #64 (WAULT tile reads 4.6 yrs with amber "3 excluded —
+  placeholder expiry" sub-line), #62 (Expiry header tap-sorts ▲→▼, soonest
+  dates first — 23 Jun 2026 ×2, 06 Sept 2026 … — empties sink; the r321
+  "expires soonest unanswerable on a phone" task now completable), #54
+  verified as VICTORIA staff mobile (client /news is the Brand News
+  signals page per UX #35, no Latest/Saved there by design): save →
+  engage 200 → card on Saved tab → unsave 200. 0 page errors, 0 non-noise
+  sightings all legs.
+- Bug fixed (1): UX #63 was half-built — the deals-board status chips
+  recount against the active search but the "All" chip (mobile) and "All
+  Deals" card (desktop) still rendered the unfiltered
+  teamFilteredDeals count + fee total, so the numbers disagreed the
+  moment a search was typed (client mobile screenshot: "All 2" over "No
+  deals found"). Fix: new searchedDeals memo feeds both "All" surfaces
+  (client/src/pages/deals.tsx). Verified in-browser pre/post: zero-match
+  search now reads All 0 (was All 2). tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 — staff-deals-all-chip-recounts (mobile
+  /deals/list, zero-match search must recount the All chip to 0). node
+  --check clean; round 329 ran the pre-edit file, first live run r330.
+- Tester notes: Playwright taps on the tenancy board headers keep landing
+  under the STICKY columns — locator.tap auto-scrolls minimally so the
+  target parks beneath the sticky Unit th (225px) or the sticky right th
+  (~90px); tap via touchscreen.tap at a point centred INSIDE the visible
+  strip between the two sticky edges (see probe-62f pattern). Band-row
+  colspan ths offset document-wide th indexes — compute column index
+  within the header row itself. Client /deals/list chip textContent is
+  "All2" (no space — \b regexes miss it).
+- Bugs deferred: none. Suggestions added: UX #66 (sticky Unit + actions
+  columns leave a ~74px live strip on the 390px tenancy sheet — sort
+  works but targets are fiddly; narrow/cap the sticky columns on phones).
+  New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r329 had the journey →
+  r330 may be LIGHT; then #4).
 - FIRST round on staging merged with origin/JOGQK head b3d9690 (standing
   branch rule; brings covenant self-fetch, entity-name backfill heal,
   Bill's IG handle fix, KYC never-screened sweep, brand-profile

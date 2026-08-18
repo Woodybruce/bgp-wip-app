@@ -606,6 +606,38 @@ async function victoriaRound(page, cross) {
     }
   });
 
+  // r329: UX #63 — every stage chip on the deals board, INCLUDING the "All"
+  // chip, must recount against the active search (the All chip kept the
+  // unfiltered count while the status chips recounted, so the numbers
+  // disagreed the moment a search was typed).
+  await step(page, p, 'staff-deals-all-chip-recounts', async () => {
+    const mobCtx = await page.context().browser().newContext({
+      viewport: { width: 390, height: 780 },
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+      isMobile: true, hasTouch: true,
+    });
+    await mobCtx.addCookies(await page.context().cookies());
+    const mob = await mobCtx.newPage();
+    try {
+      const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
+      await mob.goto(`${BASE}/`, nav);
+      await mob.evaluate(([tok, u]) => {
+        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
+      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobGoto(mob, `${BASE}/deals/list`, nav);
+      const allChip = mob.locator('[data-testid="chip-group-all"]');
+      await allChip.waitFor({ timeout: 20000 });
+      await mob.locator('input[placeholder*="earch"]').first().fill('zzz-no-match-probe');
+      await mob.waitForTimeout(1200);
+      const txt = (await allChip.textContent()) || '';
+      const count = parseInt(txt.replace(/\D/g, ''), 10);
+      if (count !== 0) throw new Error(`All chip did not recount under a zero-match search (shows "${txt}")`);
+    } finally {
+      await mob.close();
+      await mobCtx.close();
+    }
+  });
+
   // r275: the /tasks filter tab strip (Assigned by me / All / To Do /
   // In Progress / Done) was a nowrap flex row — Done sat at x 425-494 at
   // 390px, reachable only by panning the whole page pane sideways (r265

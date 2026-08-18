@@ -5924,6 +5924,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     });
   }, [baseDeals, columnFilters]);
 
+  // The "All" chip/card must agree with the status chips while a search is
+  // active (UX #63) — count the searched set, not the raw team-filtered one.
+  const searchedDeals = useMemo(
+    () => (search ? teamFilteredDeals.filter(matchesSearch) : teamFilteredDeals),
+    [teamFilteredDeals, search, matchesSearch],
+  );
+
   const statusCounts = useMemo(() => {
     return statusValues
       .filter(s => isCompsMode ? COMPLETED_STATUS_CODES.includes(s as DealStatusCode) : true)
@@ -6101,7 +6108,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             data-testid="chip-group-all"
           >
             {isCompsMode ? "All Comps" : "All"}
-            <span className="font-bold tabular-nums">{teamFilteredDeals.length}</span>
+            <span className="font-bold tabular-nums">{searchedDeals.length}</span>
           </button>
           {statusCounts.map((s) => (
             <button
@@ -6130,9 +6137,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
               <div className="flex items-center gap-2">
                 <Handshake className="w-4 h-4 text-muted-foreground" />
                 <div>
-                  <p className="text-lg font-bold">{teamFilteredDeals.length}</p>
+                  <p className="text-lg font-bold">{searchedDeals.length}</p>
                   <p className="text-xs text-muted-foreground">{isCompsMode ? "All Comps" : "All Deals"}</p>
-                  <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(teamFilteredDeals.reduce((sum, d) => sum + (Number((d as any).fee) || 0), 0))}</p>
+                  <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(searchedDeals.reduce((sum, d) => sum + (Number((d as any).fee) || 0), 0))}</p>
                 </div>
               </div>
             </CardContent>

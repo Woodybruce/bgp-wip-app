@@ -16,6 +16,17 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+66. 2026-08-18 · Landsec client / mobile 390px (QA r329) · "which Bluewater
+    leases expire soonest — from my phone" · Tap-to-sort (UX #62) WORKS, but
+    on a 390px phone the tenancy Full Board's sticky Unit column (~225px)
+    plus the sticky select/delete column (~90px) leave only a ~74px strip of
+    the scrolling sheet actually visible/tappable — column headers spend
+    most of a swipe hidden underneath the sticky edges, so the sort/filter
+    targets are fiddly to hit and only ~one column shows at a time. ·
+    Suggested: on phones, narrow the sticky Unit column (truncate label,
+    ~120px cap) and/or drop the sticky right column behind a row-tap menu so
+    the sheet gets most of the viewport back.
+
 65. 2026-08-18 · Landsec client / desktop 1440px (QA r327) · "my Bluewater
     letting is stuck at Solicitors — chase whoever's handling it" · Deal
     detail shows "BGP contact: Test Staff" as inert text — no email, phone,
