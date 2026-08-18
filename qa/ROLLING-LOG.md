@@ -67,6 +67,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r331 · 2026-08-18 · FULL (rotation #4 staff mobile 390px) — IN PROGRESS
+- Provisional heartbeat. Staging merged with origin/JOGQK (already up to
+  date). Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures,
+  FRESH_BUILD=1, fresh DB). Two-bot round 331 still running. Journey done
+  GREEN: Victoria @390px logs a viewing on Bluewater L112 from the tracker
+  mobile card (POST 200, survives reload) → Mark client mobile sees the
+  same viewing (UI dialog + scoped API 200). 0 page errors, 0 non-noise
+  sightings. Staff mobile login now lands on /chatbgp — deliberate
+  (JOGQK bf9e6e5 "Mobile opens on ChatBGP"), not a bug. Triage of two-bot
+  + final entry to follow.
+
 ### r330 · 2026-08-18 · LIGHT (r329 had the journey)
 - Staging merged with origin/JOGQK (already up to date at checkout). Fresh
   container (repo pre-cloned; pg_hba trust per r205; SUPERUSER bgp role +
