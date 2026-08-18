@@ -3095,8 +3095,9 @@ async function markRound(page, cross) {
     if (!w.ok) throw new Error(w.why);
     // And the Letting Tracker UI must render the controls that open them.
     // NB the client's tracker is the Deals-hub tab at /deals/letting —
-    // /leasing-schedule is the leasing STRATEGY board (zones/positioning) and
-    // /available is staff-only (clients get redirected to the dashboard).
+    // /leasing-schedule is the leasing STRATEGY board (zones/positioning).
+    // /available also renders for clients now (scoped isClientTracker branch,
+    // verified r331) — no redirect; this scenario checks the Deals-hub tab.
     await page.goto(`${BASE}/deals/letting`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(3500);
