@@ -548,16 +548,19 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, currentUser]);
 
-  // Auto-enrich on open (staff only) when AI-fillable fields are blank, so
-  // every brand AI fires without button presses (Woody, 2026-08-03). The
-  // endpoint never overwrites human-edited values, and the ref plus the
-  // missing-fields check stop repeat opens from burning AI calls.
+  // Auto-enrich on open (staff only) when AI-fillable fields are blank OR
+  // the enrichment is stale (>14 days) — the manual enrich buttons are gone
+  // (Woody, 2026-08-18: "it should update when it's opened"). The endpoint
+  // never overwrites human-edited values, and the ref plus these gates stop
+  // repeat opens from burning AI calls.
   const autoEnrichRan = useRef(false);
   useEffect(() => {
     if (!data || isClientViewer || autoEnrichRan.current) return;
     const co: any = data.company || {};
-    const missingAiFields = !co.description || !co.concept_pitch || co.store_count == null;
-    if (!missingAiFields) return;
+    const missingAiFields = !co.description || !co.concept_pitch || co.store_count == null || !co.brand_analysis;
+    const stale = !co.last_enriched_at
+      || Date.now() - new Date(co.last_enriched_at).getTime() > 14 * 24 * 60 * 60 * 1000;
+    if (!missingAiFields && !stale) return;
     autoEnrichRan.current = true;
     enrichMutation.mutate();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1136,21 +1139,13 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
           >
             <Download className="w-3.5 h-3.5" />
           </Button>
-          {!isClientViewer && (<>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => enrichMutation.mutate()}
-            disabled={enrichMutation.isPending || editing}
-            title="Ask AI to fill in gaps"
-            data-testid="button-brand-enrich"
-          >
-            <Sparkles className={`w-3.5 h-3.5 text-purple-500 ${enrichMutation.isPending ? "animate-pulse" : ""}`} />
-          </Button>
+          {/* Manual enrich button removed (Woody, 2026-08-18) — enrichment
+              auto-fires on open when fields are blank or the data is stale. */}
+          {!isClientViewer && (
           <Button variant="ghost" size="sm" onClick={editing ? () => setEditing(false) : startEdit} data-testid="button-brand-edit">
             {editing ? <X className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
           </Button>
-          </>)}
+          )}
         </div>
       </CardHeader>
 
@@ -2442,19 +2437,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   </div>
                 ) : (
                   <div className="rounded-md border border-dashed border-muted-foreground/30 p-3 text-center">
-                    <p className="text-xs text-muted-foreground mb-2">No brand expansion narrative yet</p>
-                    {!isClientViewer && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 text-xs"
-                      onClick={() => enrichMutation.mutate()}
-                      disabled={enrichMutation.isPending}
-                    >
-                      <Sparkles className={`w-3 h-3 mr-1 text-purple-500 ${enrichMutation.isPending ? "animate-pulse" : ""}`} />
-                      {enrichMutation.isPending ? "Generating…" : "Auto-generate summary"}
-                    </Button>
-                    )}
+                    <p className="text-xs text-muted-foreground">
+                      {enrichMutation.isPending ? "Generating brand narrative…" : "No brand expansion narrative yet — generates automatically."}
+                    </p>
                   </div>
                 )}
             {/* Active internal requirements — what this brand has on our books */}
@@ -4997,19 +4982,8 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
     onError: (e: any) => toast({ title: "Couldn't update", description: e?.message, variant: "destructive" }),
   });
 
-  const runCreditCheck = async () => {
-    try {
-      // apiRequest carries the bearer token — this was the one raw fetch in
-      // the file without it, so the desktop shell (token auth, no session
-      // cookie) always got a 401 (Woody, 2026-08-04).
-      const r = await apiRequest("POST", `/api/brand/${companyId}/credit-check`, {});
-      await r.json().catch(() => ({}));
-      toast({ title: "Covenant check complete" });
-      queryClient.invalidateQueries({ queryKey: ["covenant"] });
-    } catch (e: any) {
-      toast({ title: "Couldn't run covenant check", description: e?.message, variant: "destructive" });
-    }
-  };
+  // runCreditCheck removed (Woody, 2026-08-18) — the covenant endpoint
+  // stale-while-revalidates on read, so opening the profile IS the refresh.
   const ragColor = cov?.trafficLight === "green"
     ? "bg-emerald-500"
     : cov?.trafficLight === "amber"
@@ -5083,19 +5057,12 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           {(c as any)?.companies_house_number ? (
             <>
               {/* Scroll cap keeps this card the same height as the
-                  Compliance & KYC board beside it (Woody, 2026-08-03). */}
+                  Compliance & KYC board beside it (Woody, 2026-08-03).
+                  Refresh button removed (Woody, 2026-08-18) — the server
+                  revalidates stale reports in the background on open. */}
               <div className="max-h-[300px] overflow-y-auto pr-1">
                 <CovenantCommentary companyNumber={(c as any).companies_house_number} />
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="w-full h-7 text-xs"
-                onClick={runCreditCheck}
-                title="Re-run the house covenant check (Companies House + The Gazette + filed accounts + director track record + market signals) and add this brand to the nightly watch"
-              >
-                Refresh covenant check
-              </Button>
             </>
           ) : (
             <p className="text-xs text-muted-foreground">
