@@ -5126,8 +5126,10 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
           Team membership is now edited in Zone 4's Coverage row (BgpTeamMenu). */}
 
       {/* News + Instagram side by side (Woody, 2026-08-04: "reverse and
-          add news back in alongside instagram"). */}
-      <div className={pairCls}>
+          add news back in alongside instagram"). When there's no news yet
+          the News card doesn't render, so Instagram takes the full row —
+          half-width beside an empty slot read as broken (Woody, 2026-08-18). */}
+      <div className={data.news && data.news.length > 0 ? pairCls : "space-y-3"}>
       {/* News & Media */}
       {data.news && data.news.length > 0 && (() => {
         const newsSourceColor = (name: string | null): string => {
