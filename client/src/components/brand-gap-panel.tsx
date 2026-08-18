@@ -179,13 +179,16 @@ function GapCommentary({ propertyId }: { propertyId: string }) {
 }
 
 // Perplexity sweep over the top gap candidates: who is actively taking
-// sites right now, with citations. Web-researched — labelled as such.
+// sites right now, with citations. Fully automatic (Woody, 2026-08-18:
+// "no button") — the GET generates when the cache is stale, the nightly
+// cron pre-warms it, and once fresh data lands the gap board is re-pulled
+// so the "expanding" badges appear.
 function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
   const qc = useQueryClient();
   const key = ["/api/property", propertyId, "gap-live-intel"];
   const { data, isLoading, error } = useQuery<{
     brands: LiveIntelBrand[]; market_notes?: string;
-    citations?: Array<{ url: string; title?: string }>; generatedAt: string;
+    citations?: Array<{ url: string; title?: string }>; generatedAt: string; cached?: boolean;
   }>({
     queryKey: key,
     queryFn: async () => {
@@ -194,57 +197,35 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
         const body = await r.json().catch(() => ({}));
         throw new Error(body.error || `HTTP ${r.status}`);
       }
-      return r.json();
+      const fresh = await r.json();
+      if (fresh?.cached === false) {
+        qc.invalidateQueries({ queryKey: ["/api/property", propertyId, "brand-gaps"] });
+      }
+      return fresh;
     },
     staleTime: 10 * 60 * 1000,
     retry: false,
   });
-  const refresh = useMutation({
-    mutationFn: async () => {
-      const r = await fetch(`/api/property/${propertyId}/brand-gaps/live-intel?refresh=1`, { credentials: "include", headers: getAuthHeaders() });
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({}));
-        throw new Error(body.error || `HTTP ${r.status}`);
-      }
-      return r.json();
-    },
-    onSuccess: (fresh) => {
-      qc.setQueryData(key, fresh);
-      // Re-pull the gap board so the "expanding" badges pick up the sweep.
-      qc.invalidateQueries({ queryKey: ["/api/property", propertyId, "brand-gaps"] });
-    },
-  });
   const expanding = (data?.brands || []).filter(b => b.expanding);
   return (
     <div className="rounded-lg border border-sky-200 bg-sky-50/50 dark:bg-sky-950/20 dark:border-sky-900 p-3" data-testid="gap-live-intel">
-      <div className="flex items-center justify-between mb-1">
-        <div className="text-[11px] font-semibold text-sky-700 dark:text-sky-300 flex items-center gap-1.5">
-          <Radar className="w-3.5 h-3.5" /> Live expansion intel
-          <span className="text-[10px] font-normal text-muted-foreground">web-researched, cited · verify before pitching</span>
-          {data?.generatedAt && (
-            <span className="font-normal text-sky-500/70">
-              — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-            </span>
-          )}
-        </div>
-        <button
-          onClick={() => refresh.mutate()}
-          disabled={refresh.isPending}
-          className="p-1 rounded hover:bg-sky-100 dark:hover:bg-sky-900/40"
-          title="Re-sweep the web for expansion signals on the top gap candidates"
-          data-testid="gap-live-intel-refresh"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 text-sky-500 ${refresh.isPending ? "animate-spin" : ""}`} />
-        </button>
+      <div className="flex items-center gap-1.5 mb-1 text-[11px] font-semibold text-sky-700 dark:text-sky-300">
+        <Radar className="w-3.5 h-3.5" /> Live expansion intel
+        <span className="text-[10px] font-normal text-muted-foreground">web-researched, cited · verify before pitching</span>
+        {data?.generatedAt && (
+          <span className="font-normal text-sky-500/70">
+            — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+          </span>
+        )}
       </div>
-      {isLoading || refresh.isPending ? (
+      {isLoading ? (
         <p className="text-xs text-muted-foreground italic flex items-center gap-1.5">
           <Loader2 className="w-3 h-3 animate-spin" /> Sweeping the web — openings, requirements, rollout funding…
         </p>
       ) : error ? (
         <p className="text-xs text-muted-foreground italic">{(error as Error).message}</p>
       ) : !data?.brands?.length ? (
-        <p className="text-xs text-muted-foreground italic">No sweep yet — hit refresh to research the top gap candidates.</p>
+        <p className="text-xs text-muted-foreground italic">No expansion evidence gathered yet — the sweep runs automatically and refreshes weekly.</p>
       ) : (
         <div className="space-y-1.5">
           {data.market_notes && <p className="text-xs leading-relaxed">{data.market_notes}</p>}
