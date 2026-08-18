@@ -749,6 +749,9 @@ export default function ImageStudio() {
 
   const filteredImages = images.filter((img) => {
     if (selectedCategory !== "All" && img.category !== selectedCategory) return false;
+    // Brand Library images have their own tab — leaving them in the Library
+    // "All" grid made the grid show more cards than the tab count claims.
+    if (selectedCategory === "All" && img.category === "Brands") return false;
     if (propertyTypeFilter !== "All" && (img as any).propertyType !== propertyTypeFilter) return false;
     if (areaFilter) {
       const af = areaFilter.toLowerCase();

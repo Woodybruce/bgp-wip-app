@@ -101,6 +101,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { useRoute, Link, useLocation } from "wouter";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact, DealFeeAllocation, AvailableUnit, PropertyUnit } from "@shared/schema";
@@ -2163,6 +2164,7 @@ export function DealFormDialog({
   const { toast } = useToast();
   const isEdit = !!deal;
   const { activeTeam } = useTeam();
+  const [, navigateTo] = useLocation();
   // Seed a created deal with the creator's own team. Deal types without an
   // auto-team rule (New Letting, Sub-Letting, Temp Lease, Consultancy) would
   // otherwise save team-less, and the deals list's default own-team filter
@@ -2257,6 +2259,7 @@ export function DealFormDialog({
       const payload = formToPayloadWithLearning(finalForm, changeReason || undefined, isCompletingNow ? learning : undefined);
       if (isEdit) {
         await apiRequest("PUT", `/api/crm/deals/${deal.id}`, payload);
+        return { id: deal.id };
       } else {
         const res = await apiRequest("POST", "/api/crm/deals", payload);
         const created = await res.json();
@@ -2290,10 +2293,18 @@ export function DealFormDialog({
             }
           }
         }
+        return created;
       }
     },
-    onSuccess: async () => {
-      toast({ title: isEdit ? "Deal updated" : "Deal created" });
+    onSuccess: async (data: any) => {
+      toast({
+        title: isEdit ? "Deal updated" : "Deal created",
+        action: !isEdit && data?.id ? (
+          <ToastAction altText="View deal" onClick={() => navigateTo(`/deals/${data.id}`)} data-testid="toast-view-deal">
+            View deal →
+          </ToastAction>
+        ) : undefined,
+      });
       invalidateDealCaches();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/stats"] });
       // Saving a deal can create a property_units shadow row server-side (when
@@ -5816,6 +5827,40 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     });
   }, [deals, isCompsMode, isNegotiationsMode, migratedDealIds]);
 
+  // Shared search predicate — used by the row filter AND the stage-chip
+  // counts, so the chips agree with the cards while a search is active
+  // (UX #63: header said 2 deals while the chip row still said 3).
+  const matchesSearch = useCallback((deal: any) => {
+    const s = search.toLowerCase();
+    const propName = deal.propertyId ? (properties.find(p => p.id === deal.propertyId)?.name || "") : "";
+    const unitName = deal.unitId ? (propertyUnits.find(u => u.id === deal.unitId)?.unitName || "") : "";
+    // Counterparty name lookups — search "Burberry" should find the
+    // tenant on a New Letting, the vendor on a Sale, etc. Falls back
+    // to the empty string when the FK is unset.
+    const counterpartyName = (id: string | null | undefined) =>
+      id ? (companies.find(c => c.id === id)?.name || "").toLowerCase() : "";
+    const tenantName    = counterpartyName(deal.tenantId);
+    const landlordName  = counterpartyName(deal.landlordId);
+    const vendorName    = counterpartyName((deal as any).vendorId);
+    const purchaserName = counterpartyName((deal as any).purchaserId);
+    return (
+      deal.name.toLowerCase().includes(s) ||
+      propName.toLowerCase().includes(s) ||
+      unitName.toLowerCase().includes(s) ||
+      tenantName.includes(s) ||
+      landlordName.includes(s) ||
+      vendorName.includes(s) ||
+      purchaserName.includes(s) ||
+      (Array.isArray(deal.internalAgent) ? deal.internalAgent.some((a: string) => a.toLowerCase().includes(s)) : (deal.internalAgent as any)?.toLowerCase?.()?.includes(s)) ||
+      deal.status?.toLowerCase().includes(s) ||
+      (Array.isArray(deal.team) ? deal.team.some((t: string) => t.toLowerCase().includes(s)) : (deal.team as any)?.toLowerCase?.()?.includes(s)) ||
+      deal.comments?.toLowerCase().includes(s) ||
+      deal.dealType?.toLowerCase().includes(s) ||
+      deal.assetClass?.toLowerCase().includes(s) ||
+      deal.tenureText?.toLowerCase().includes(s)
+    );
+  }, [search, properties, companies, propertyUnits]);
+
   const filteredDeals = useMemo(() => {
     return baseDeals.filter((deal) => {
       if (propertyIdFilter && deal.propertyId !== propertyIdFilter) return false;
@@ -5855,39 +5900,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         }
       }
       if (columnFilters["assetClass"]?.length && (!deal.assetClass || !columnFilters["assetClass"].includes(deal.assetClass))) return false;
-      if (search) {
-        const s = search.toLowerCase();
-        const propName = deal.propertyId ? (properties.find(p => p.id === deal.propertyId)?.name || "") : "";
-        const unitName = deal.unitId ? (propertyUnits.find(u => u.id === deal.unitId)?.unitName || "") : "";
-        // Counterparty name lookups — search "Burberry" should find the
-        // tenant on a New Letting, the vendor on a Sale, etc. Falls back
-        // to the empty string when the FK is unset.
-        const counterpartyName = (id: string | null | undefined) =>
-          id ? (companies.find(c => c.id === id)?.name || "").toLowerCase() : "";
-        const tenantName    = counterpartyName(deal.tenantId);
-        const landlordName  = counterpartyName(deal.landlordId);
-        const vendorName    = counterpartyName((deal as any).vendorId);
-        const purchaserName = counterpartyName((deal as any).purchaserId);
-        const match =
-          deal.name.toLowerCase().includes(s) ||
-          propName.toLowerCase().includes(s) ||
-          unitName.toLowerCase().includes(s) ||
-          tenantName.includes(s) ||
-          landlordName.includes(s) ||
-          vendorName.includes(s) ||
-          purchaserName.includes(s) ||
-          (Array.isArray(deal.internalAgent) ? deal.internalAgent.some((a: string) => a.toLowerCase().includes(s)) : (deal.internalAgent as any)?.toLowerCase?.()?.includes(s)) ||
-          deal.status?.toLowerCase().includes(s) ||
-          (Array.isArray(deal.team) ? deal.team.some((t: string) => t.toLowerCase().includes(s)) : (deal.team as any)?.toLowerCase?.()?.includes(s)) ||
-          deal.comments?.toLowerCase().includes(s) ||
-          deal.dealType?.toLowerCase().includes(s) ||
-          deal.assetClass?.toLowerCase().includes(s) ||
-          deal.tenureText?.toLowerCase().includes(s);
-        if (!match) return false;
-      }
+      if (search && !matchesSearch(deal)) return false;
       return true;
     });
-  }, [baseDeals, activeGroup, columnFilters, search, properties, companies, propertyUnits, myName, propertyIdFilter]);
+  }, [baseDeals, activeGroup, columnFilters, search, matchesSearch, myName, propertyIdFilter]);
 
   const teamFilteredDeals = useMemo(() => {
     if (!columnFilters["team"]?.length) return baseDeals;
@@ -5912,7 +5928,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     return statusValues
       .filter(s => isCompsMode ? COMPLETED_STATUS_CODES.includes(s as DealStatusCode) : true)
       .map((s) => {
-        const inStatus = teamFilteredDeals.filter((d) => legacyToCode(d.status) === s);
+        const inStatus = teamFilteredDeals.filter((d) => legacyToCode(d.status) === s && (!search || matchesSearch(d)));
         // statusValues are canonical codes across all modes — match via
         // legacyToCode so older free-text rows still bucket into the right chip.
         return {
@@ -5922,7 +5938,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         };
       })
       .filter(s => s.count > 0);
-  }, [teamFilteredDeals, statusValues, isCompsMode, mode]);
+  }, [teamFilteredDeals, statusValues, isCompsMode, mode, search, matchesSearch]);
 
   // If the last deal matching the active filter chip moves out of the
   // view, the chip itself is hidden (count==0 filter above). Without
@@ -6319,6 +6335,16 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   // name) wins as the title — Layla's typed name should show.
                   // Otherwise fall back to the canonical property → deal name.
                   const customDealName = deal.name && deal.name !== propName ? deal.name : null;
+                  // Phone triage needs dates without opening each deal:
+                  // Target Date drives the WIP bucket, and time-in-status
+                  // shows which deals have stalled.
+                  const statusChangedAt = (deal as any).statusChangedAt as string | null;
+                  const statusDays = statusChangedAt
+                    ? Math.max(0, Math.floor((Date.now() - new Date(statusChangedAt).getTime()) / 86400000))
+                    : null;
+                  const statusAge = statusDays == null ? null
+                    : statusDays === 0 ? "today"
+                    : `${statusDays}d in ${deal.status || "status"}`;
                   return {
                     id: deal.id,
                     title: customDealName || propName || deal.name,
@@ -6330,6 +6356,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     fields: [
                       { label: "Fee", value: deal.fee ? `\u00A3${Number(deal.fee).toLocaleString()}` : null },
                       { label: "Rent p.a.", value: deal.rentPa ? `\u00A3${Number(deal.rentPa).toLocaleString()}` : null },
+                      { label: "Target", value: deal.targetDate ? formatMonthYear(deal.targetDate) : null },
+                      { label: "In status", value: statusAge },
                       { label: "Type", value: deal.dealType, badge: true },
                       { label: "Agent", value: agents },
                     ],

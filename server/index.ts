@@ -4440,6 +4440,23 @@ app.use("/api/branding/assets", express.static(
         }, 60 * 60 * 1000);
       }
 
+      // Nightly tenancy-spine re-link — 04:00. Deals created before their
+      // property's tenancy schedule was imported (or whose unit name was
+      // fixed later) sit "off spine" until someone clicks Resolve; this
+      // stamps the link automatically wherever the confident name match
+      // now succeeds. Cheap SQL, runs in prod only to match the other crons.
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 4 && now.getMinutes() < 60) {
+            import("./unit-mirror")
+              .then(m => m.relinkOffSpineDeals(pool))
+              .then(n => { if (n > 0) console.log(`[spine-relink-cron] re-linked ${n} deal(s) to tenancy spine`); })
+              .catch(err => console.error("[spine-relink-cron] failed:", err?.message));
+          }
+        }, 60 * 60 * 1000);
+      }
+
       // Daily Brucey Bonuses scan — 06:00 every day. Idempotent via the
       // (event_kind, event_ref) partial unique index, so the rolling 7-day
       // window catches new events without re-awarding old ones. Production

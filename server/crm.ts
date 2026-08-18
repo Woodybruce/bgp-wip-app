@@ -3035,6 +3035,24 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         const arr0 = Array.isArray(result) ? result : result.data;
         arr0.forEach(overlay);
       } catch {}
+      // Time-in-status for the mobile deal cards: latest status change per
+      // deal from the audit log; a deal never re-staged has sat in its
+      // current status since creation.
+      try {
+        const statusRows = await pool.query(
+          `SELECT deal_id, MAX(created_at) AS latest FROM deal_audit_log
+           WHERE field = 'status' AND (reason IS NULL OR reason NOT LIKE 'Approval rejected%')
+           GROUP BY deal_id`
+        );
+        const latestStatus = new Map<string, string>(
+          statusRows.rows.map((r: any) => [r.deal_id, r.latest?.toISOString?.() || String(r.latest)])
+        );
+        const arr1 = Array.isArray(result) ? result : result.data;
+        arr1.forEach((d: any) => {
+          d.statusChangedAt = latestStatus.get(d.id)
+            || (d.createdAt ? new Date(d.createdAt).toISOString() : null);
+        });
+      } catch {}
       if (scopeCompanyId) {
         const linkedResult = await pool.query(
           `SELECT deal_id FROM crm_company_deals WHERE company_id = $1`,
@@ -4901,6 +4919,12 @@ Return a JSON object with these fields (use null for any field you cannot find):
   app.post("/api/crm/requirements-leasing", async (req, res) => {
     try {
       const parsed = insertCrmReqLeasingSchema.parse(req.body);
+      // Hand-added requirements default to today — the dialog has no date
+      // field, and a NULL date means no Fresh badge and a 90-day KPI of 0
+      // the moment fresh demand is logged. Imports send their own dates.
+      if (!parsed.requirementDate) {
+        parsed.requirementDate = new Date().toISOString().slice(0, 10);
+      }
       const created = await storage.createCrmRequirementLeasing(parsed);
       if (created.dealId && created.companyId) {
         await storage.linkCompanyDeal(created.companyId, created.dealId);

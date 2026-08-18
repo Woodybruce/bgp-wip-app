@@ -550,6 +550,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   const queryClient = useQueryClient();
   const [location] = useLocation();
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<{ field: string; dir: 1 | -1 } | null>(null);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set(["__all__"]));
   const [showAddUnit, setShowAddUnit] = useState(false);
@@ -857,6 +858,26 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     return true;
   });
 
+  // Tap-to-sort (UX #62): any column header toggles asc → desc → off, so
+  // "which lease expires soonest" is answerable without reading every row —
+  // especially on phones where the wide sheet scrolls horizontally. Empty
+  // values always sink to the bottom regardless of direction.
+  const sortedRows = sortBy
+    ? [...filtered].sort((a, b) => {
+        const col = COLUMNS.find(c => (c.field as string) === sortBy.field);
+        const va = (a as any)[sortBy.field];
+        const vb = (b as any)[sortBy.field];
+        const emptyA = va == null || va === "";
+        const emptyB = vb == null || vb === "";
+        if (emptyA && emptyB) return 0;
+        if (emptyA) return 1;
+        if (emptyB) return -1;
+        if (col?.type === "date") return (new Date(va).getTime() - new Date(vb).getTime()) * sortBy.dir;
+        if (col?.type === "num") return (Number(va) - Number(vb)) * sortBy.dir;
+        return String(va).localeCompare(String(vb)) * sortBy.dir;
+      })
+    : filtered;
+
   const zones = [...new Set(filtered.map(u => u.premises || "Unassigned"))];
   // Occupied + Trading both count as "in possession" for the headline
   // KPI. Vacant + In Negotiation + Under Offer + Lease Event all count
@@ -885,7 +906,13 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
     }
     return 0;
   };
-  const waultUnits = units.filter(u => yearsToExpiry(u) > 0);
+  // Terms beyond 60 years are placeholder expiries from the Landsec feed
+  // (2154-12-30/31 rows) — one RENTED unit like that poisons the whole
+  // rent-weighted figure (seen: 128.4 yrs), so they're excluded and the
+  // KPI badges how many were dropped (UX #64).
+  const WAULT_MAX_TERM_YEARS = 60;
+  const waultUnits = units.filter(u => yearsToExpiry(u) > 0 && yearsToExpiry(u) <= WAULT_MAX_TERM_YEARS);
+  const waultExcluded = units.filter(u => yearsToExpiry(u) > WAULT_MAX_TERM_YEARS).length;
   const waultRentedUnits = waultUnits.filter(u => Number(u.passing_rent_pa) > 0);
   const waultRentTotal = waultRentedUnits.reduce((s, u) => s + Number(u.passing_rent_pa), 0);
   const avgWAULT = waultRentTotal > 0
@@ -1115,7 +1142,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           { label: "Total NIA", value: fmtNum(totalNIA) + " sq ft", filter: null },
           { label: "Passing Rent", value: fmtCurrency(totalRent), filter: null },
           { label: "Avg ERV £psf", value: fmtNum(avgERV, 0), filter: null },
-          { label: "WAULT", value: fmtNum(avgWAULT, 1) + " yrs", filter: null },
+          { label: "WAULT", value: fmtNum(avgWAULT, 1) + " yrs", filter: null, sub: waultExcluded > 0 ? `${waultExcluded} excluded — placeholder expiry` : undefined },
           { label: "Occupied", value: String(occupied), filter: "Occupied" },
           { label: "Vacant", value: String(vacant), filter: "Vacant" },
           // Click-filterable buckets only show when there's actually rows
@@ -1141,6 +1168,11 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
             {/* break-words so long single tokens (£11,370,076) wrap inside
                 the tile instead of clipping at its edge. */}
             <div className="text-sm font-semibold tabular-nums leading-tight break-words">{s.value}</div>
+            {(s as any).sub && (
+              <div className="text-[9px] text-amber-600 dark:text-amber-400 leading-tight" title="Leases with terms beyond 60 years are treated as placeholder expiry dates and excluded from WAULT">
+                {(s as any).sub}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -1227,7 +1259,20 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                 return (
                   <th key={c.field} className={`p-2 font-medium whitespace-nowrap text-${c.align || "left"}${stickyCls}`} style={{ minWidth: c.width }}>
                     <span className="inline-flex items-center">
-                      {c.label}
+                      <button
+                        type="button"
+                        className="hover:underline cursor-pointer"
+                        title={`Sort by ${c.label}`}
+                        onClick={() => setSortBy(prev =>
+                          prev?.field !== (c.field as string) ? { field: c.field as string, dir: 1 }
+                          : prev.dir === 1 ? { field: prev.field, dir: -1 }
+                          : null
+                        )}
+                        data-testid={`tenancy-sort-${c.field}`}
+                      >
+                        {c.label}
+                        {sortBy?.field === (c.field as string) && (sortBy.dir === 1 ? " ▲" : " ▼")}
+                      </button>
                       {filterable && (
                         <HeaderFilter
                           field={c.field as string}
@@ -1266,7 +1311,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                 ("Bluewater Welcome Hall · £1.2m total rent") were doubling up
                 the visual line count without adding info. Floor is now its
                 own column so groups remain visible at a glance. */}
-            {filtered.filter(unit => !(readOnly && unit.is_vacant)).map(unit => {
+            {sortedRows.filter(unit => !(readOnly && unit.is_vacant)).map(unit => {
               const isExpanded = true;
               return (
                 <UnitRow
