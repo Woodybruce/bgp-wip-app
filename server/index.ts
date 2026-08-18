@@ -4325,6 +4325,22 @@ app.use("/api/branding/assets", express.static(
         }, 60 * 60 * 1000);
       }
 
+      // Nightly Brand Gap live-intel pre-warm — 05:00 (production only, live
+      // Perplexity spend). Keeps the expansion sweep fresh on every in-use
+      // gap board so the panel populates without anyone clicking refresh or
+      // waiting on the first-load research call.
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 5 && now.getMinutes() < 60) {
+            import("./property-gap-analysis")
+              .then(m => m.runNightlyGapLiveIntelSweep())
+              .then(r => console.log(`[gap-live-intel-cron] swept ${r.swept} propert${r.swept === 1 ? "y" : "ies"}, ${r.errors} error(s)`))
+              .catch(err => console.error("[gap-live-intel-cron] failed:", err?.message));
+          }
+        }, 60 * 60 * 1000);
+      }
+
       // Daily Brucey Bonuses scan — 06:00 every day. Idempotent via the
       // (event_kind, event_ref) partial unique index, so the rolling 7-day
       // window catches new events without re-awarding old ones. Production

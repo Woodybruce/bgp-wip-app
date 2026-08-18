@@ -863,4 +863,59 @@ router.get("/api/property/:propertyId/brand-gaps/live-intel", requireAuth, async
   }
 });
 
+// ── Nightly live-intel pre-warm (Woody, 2026-08-18: "we need it automated,
+//    no button"). Sweeps the Perplexity expansion intel for every property
+//    whose gap board is actually in use (has a tenancy schedule or a cached
+//    gap read) once the cache is >6 days old, so the panel is always
+//    populated and nobody waits on the ~30s first-load research call.
+//    Self-fetches the route with a short-lived internal auth token so auth,
+//    slicing and caching behave exactly like a staff visit.
+export async function runNightlyGapLiveIntelSweep(): Promise<{ swept: number; errors: number }> {
+  const out = { swept: 0, errors: 0 };
+  const { isPerplexityConfigured } = await import("./perplexity");
+  if (!isPerplexityConfigured()) return out;
+  await ensureGapColumns();
+  const props = await pool.query(
+    `SELECT p.id FROM crm_properties p
+      WHERE (EXISTS (SELECT 1 FROM leasing_schedule_units l WHERE l.property_id = p.id)
+             OR p.gap_commentary IS NOT NULL)
+        AND (p.gap_live_intel_at IS NULL OR p.gap_live_intel_at < NOW() - INTERVAL '6 days')
+      ORDER BY p.gap_live_intel_at ASC NULLS FIRST
+      LIMIT 10`
+  );
+  if (!props.rows.length) return out;
+  const staff = await pool.query(
+    `SELECT id FROM users
+      WHERE is_active IS NOT FALSE AND COALESCE(role, '') <> 'Client'
+      ORDER BY is_admin DESC NULLS LAST LIMIT 1`
+  );
+  const userId = staff.rows[0]?.id;
+  if (!userId) return out;
+  const { randomBytes } = await import("crypto");
+  const token = randomBytes(32).toString("hex");
+  await pool.query(
+    `INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, NOW() + INTERVAL '30 minutes')`,
+    [token, userId]
+  );
+  const baseUrl = `http://127.0.0.1:${process.env.PORT || "5000"}`;
+  try {
+    for (const r of props.rows) {
+      try {
+        const res = await fetch(`${baseUrl}/api/property/${r.id}/brand-gaps/live-intel?refresh=1`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) out.swept++; else out.errors++;
+      } catch {
+        out.errors++;
+      }
+      // Soft pacing between Perplexity sweeps, same spirit as the monthly
+      // brand refresh.
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  } finally {
+    await pool.query(`DELETE FROM auth_tokens WHERE token = $1`, [token]).catch(() => {});
+  }
+  return out;
+}
+
 export default router;
