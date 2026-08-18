@@ -581,6 +581,24 @@ function cleanIgHandle(raw: string | null): string | null {
 
 const normBrandName = (name: string) => (name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
+// Ledger of feed-creation failures. RSS.app can't generate a feed for a
+// dead / renamed / private Instagram account — without this, those handles
+// were retried on every deploy forever (148 of 248 attempts on the first
+// full run), starving working brands below them of quota slots. Three
+// strikes and a handle stops being tried; pinned operators are exempt.
+let failTableEnsured = false;
+async function ensureFailureTable() {
+  if (failTableEnsured) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS rssapp_feed_failures (
+      url TEXT PRIMARY KEY,
+      attempts INT NOT NULL DEFAULT 0,
+      last_error TEXT,
+      last_attempt TIMESTAMP DEFAULT now()
+    )`);
+  failTableEnsured = true;
+}
+
 // Operators Woody wants watched no matter what the ranking says
 // (2026-08-18). Matched on normalised brand name — groups are listed
 // alongside their consumer brands since either may hold the tracked row,
@@ -644,7 +662,7 @@ export async function ensurePinnedIgBrands(): Promise<{ group: string; status: s
 export interface CuratedIgPreview {
   plan: (BrandSocialFeedPlan & { score: number })[];
   totalCandidates: number;
-  excluded: { junkHandle: number; duplicateHandle: number; alreadyFed: number; overLimit: number };
+  excluded: { junkHandle: number; duplicateHandle: number; alreadyFed: number; failedRepeatedly: number; overLimit: number };
 }
 
 // Read-only: which Instagram feeds WOULD be created, best-first. Dedupe
@@ -660,7 +678,7 @@ export async function previewCuratedInstagramFeeds(limit = 100): Promise<Curated
     .from(crmCompanies)
     .where(and(eq(crmCompanies.isTrackedBrand, true), sql`${crmCompanies.mergedIntoId} IS NULL`));
 
-  const excluded = { junkHandle: 0, duplicateHandle: 0, alreadyFed: 0, overLimit: 0 };
+  const excluded = { junkHandle: 0, duplicateHandle: 0, alreadyFed: 0, failedRepeatedly: 0, overLimit: 0 };
 
   const withHandle = tracked.filter(b => (b.instagramHandle || "").trim() !== "");
   const cleaned = withHandle
@@ -697,6 +715,17 @@ export async function previewCuratedInstagramFeeds(limit = 100): Promise<Curated
     return true;
   });
 
+  // Skip handles that already failed creation 3+ times — their slots go
+  // to brands that work. Pinned operators keep retrying regardless.
+  await ensureFailureTable();
+  const failedRows = await pool.query(`SELECT url FROM rssapp_feed_failures WHERE attempts >= 3`);
+  const failedUrls = new Set(failedRows.rows.map((r: any) => String(r.url)));
+  const retryable = fresh.filter(b => {
+    if (PINNED_IG_BRANDS.has(normBrandName(b.name))) return true;
+    if (failedUrls.has(`https://www.instagram.com/${b.handle}/`)) { excluded.failedRepeatedly++; return false; }
+    return true;
+  });
+
   // Rank: pinned operators first (never lose their slot), then brands
   // sitting on a deal, then brands whose news feeds have produced signals
   // recently (they're moving), then name.
@@ -711,7 +740,7 @@ export async function previewCuratedInstagramFeeds(limit = 100): Promise<Curated
   );
   const signalCount = new Map<string, number>(signalRows.rows.map((r: any) => [String(r.brand_company_id), r.n]));
 
-  const scored = fresh.map(b => ({
+  const scored = retryable.map(b => ({
     brandId: b.id,
     brandName: b.name,
     platform: "instagram" as SocialPlatform,
@@ -755,9 +784,17 @@ export async function ensureCuratedInstagramFeeds(limit = 100): Promise<{
         active: true,
       });
       created++;
+      await pool.query(`DELETE FROM rssapp_feed_failures WHERE url = $1`, [item.url]).catch(() => {});
     } catch (err: any) {
-      errors.push({ brandName: item.brandName, platform: "instagram", error: (err?.message || "unknown").slice(0, 200) });
+      const msg = (err?.message || "unknown").slice(0, 200);
+      errors.push({ brandName: item.brandName, platform: "instagram", error: msg });
       skipped++;
+      await pool.query(
+        `INSERT INTO rssapp_feed_failures (url, attempts, last_error, last_attempt)
+         VALUES ($1, 1, $2, now())
+         ON CONFLICT (url) DO UPDATE SET attempts = rssapp_feed_failures.attempts + 1, last_error = $2, last_attempt = now()`,
+        [item.url, msg],
+      ).catch(() => {});
     }
     await new Promise(r => setTimeout(r, 300)); // soft pace the RSS.app API
   }
