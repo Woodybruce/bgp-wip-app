@@ -33,6 +33,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 - 503 GET /api/brand/:id/ai-take/* — keyless AI-take panels on company
   profiles fire these on load; UI shows "AI take unavailable" (r269)
 - ERR_CONNECTION_RESET on google.com/s2/favicons — no external network
+- "[goad datum fix] failed … relation goad_units does not exist" ~30s
+  after dev-server boot — fixture has no goad_units (prod-only harvested
+  table, not in the auto-migrate list); rolls back + retries next boot,
+  no user-facing effect (r326)
 
 ## Known flakes
 - postgres dies on container restart — `service postgresql start`, rm stale
@@ -63,16 +67,51 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r326 · 2026-08-18 · ROUND IN PROGRESS (provisional)
-- LIGHT round (r325 had the journey). Fresh container (repo pre-cloned at
-  /home/user/bgp-wip-app; pg_hba trust per r205; SUPERUSER bgp role +
-  restore + schema grant per r249/r321). Regression: run-smoke.sh GREEN
-  first pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no
-  cold-build flake). Triage so far: dev-server boot logs a new
-  "[goad datum fix] failed … relation goad_units does not exist" line —
-  fixture has no goad_units (prod-only harvested table, not in the
-  auto-migrate list); job rolls back and retries next boot, no user-facing
-  effect → noise candidate. Two-bot round 326 next.
+### r326 · 2026-08-18 · LIGHT (r325 had the journey)
+- FIRST round on the post-merge staging head (f382235 pulled the JOGQK UX
+  batches + client-view fixes into staging). Fresh container (repo
+  pre-cloned at /home/user/bgp-wip-app; pg_hba trust per r205; SUPERUSER
+  bgp role + restore + schema grant per r249/r321). Regression:
+  run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1 before the
+  fixes, rebuilt bundle after; no cold-build flake either pass). Two-bot
+  round 326: exit 0, all scenarios ok first run (dev server warmed
+  ~10min — no ECONNRESET). 4 logged issues: 2 listed noise
+  (rocketreach-400; commentary-regen 503), 1 more keyless-AI 503
+  (brand-gaps/live-intel), and 1 NEW http-400 → fixed below. 0 raw
+  500/502/504 in the round's dev-server log (lone " 500 " hit is the
+  "500 articles" news-feed text; 139 5xx all keyless-AI 503s).
+- Bugs fixed (2), both introduced by JOGQK commit 07a0a33 ("Free staff
+  phones stuck in client view", 2026-08-14) newly merged onto staging:
+  1. Exit-client-view fired a doomed POST /api/auth/client-view-mode
+     {enabled:false} for EVERY staff exit — server 400s "Not on a client
+     team" for staff who entered via the team picker (the common case;
+     fixture Victoria included), UI swallowed it (r307
+     doomed-request class; surfaced as the round's new http-400). Both
+     call sites (app-sidebar Exit button, mobile-home exitClientView) now
+     gate on user.canViewAsClient — set by /api/auth/me under exactly the
+     condition the server accepts the call. Verified in-browser: switch
+     to Landsec scopes, Exit clears scope, 0 client-view-mode requests
+     fired (pre-fix: 1 → 400); staff on a client team still fire it.
+  2. The desktop "Viewing as <client>" banner was INVISIBLE in client
+     view — bg-primary/10 text-primary, and the Landsec theme's primary
+     is the same navy as the sidebar, so it rendered as a blank strip
+     (element shot: solid navy; text unreadable, Exit undiscoverable —
+     staff would think there's no way back). Now
+     bg-sidebar-accent text-sidebar-accent-foreground (the paired sidebar
+     tokens; correct contrast in the default theme too). Verified
+     in-browser: "👁 Viewing as Landsec — Exit" reads clearly, computed
+     colours dark-brown-on-beige. Mobile exit banner already explicit
+     indigo/white — untouched. tsc clean, rebuilt, smoke re-green.
+- Harness growth: none needed — two-bot's http-4xx issue logging IS the
+  lock for fix 1 (a regression re-surfaces as a logged http-400); banner
+  contrast isn't cheaply assertable.
+- New environment noise: dev-server boot logs "[goad datum fix] failed …
+  relation goad_units does not exist" ~30s after start — fixture has no
+  goad_units (prod-only harvested table, not in the auto-migrate list);
+  job rolls back and retries next boot, no user-facing effect. Added to
+  the noise list.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #2 client desktop (r326 was LIGHT → r327 FULL).
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; SUPERUSER bgp role + restore + schema grant per r249/r321).
   Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
