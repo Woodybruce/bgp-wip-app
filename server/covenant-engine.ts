@@ -293,6 +293,13 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
     crmCompanyId = rows[0]?.id || null;
   } catch { /* no DB / no row — score still works */ }
 
+  // An extraction where every figure is null (early runs stored "not
+  // found" strings or read the wrong pages) is no data, not data — treat
+  // it as absent so the re-extraction below gets its chance.
+  const hasAccountsFigures = (a: any) => !!(a && (a.turnover || a.grossProfit || a.operatingProfit
+    || a.profitBeforeTax || a.netAssets || a.cash || a.employees));
+  if (accounts && !hasAccountsFigures(accounts)) accounts = null;
+
   // Self-serve missing accounts: download the latest filed accounts from CH
   // and extract the figures inline, instead of grading blind and telling the
   // user to go click a different button first (Woody, 2026-08-18 — Bill's
@@ -303,6 +310,7 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
       const { fetchLatestAccountsForCompany, extractAccountsFigures } = await import("./ch-accounts");
       await fetchLatestAccountsForCompany(crmCompanyId);
       accounts = await extractAccountsFigures(crmCompanyId);
+      if (accounts && !hasAccountsFigures(accounts)) accounts = null;
     } catch (e: any) {
       console.warn(`[covenant] inline accounts extraction failed for ${num}:`, e?.message);
     }

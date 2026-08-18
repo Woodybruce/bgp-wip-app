@@ -747,6 +747,11 @@ export async function runPeriodicAmlReScreening(options: { maxCompanies?: number
           c.kyc_checked_at IS NULL
           OR c.kyc_checked_at < NOW() - ($1 || ' days')::interval
           OR (r.due_date IS NOT NULL AND r.due_date <= NOW())
+          -- Never screened at all: a freshly-resolved CH entity has a fresh
+          -- kyc_checked_at, so the staleness test above skipped it and its
+          -- PEP / adverse-media pass never ran (Bill's, 2026-08-18). An
+          -- empty aml_pep_status means ComplyAdvantage has never seen it.
+          OR COALESCE(c.aml_pep_status, '') = ''
         )
       ORDER BY c.kyc_checked_at NULLS FIRST
       LIMIT $2`,
