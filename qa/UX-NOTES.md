@@ -16,6 +16,15 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+65. 2026-08-18 · Landsec client / desktop 1440px (QA r327) · "my Bluewater
+    letting is stuck at Solicitors — chase whoever's handling it" · Deal
+    detail shows "BGP contact: Test Staff" as inert text — no email, phone,
+    or message link, so the client has to leave the deal and hunt the
+    property page's Linked Contacts (which DO show roles + a contact card)
+    or Messages. · Make the deal-header BGP contact clickable — open the
+    contact card or a mailto/Messages thread, same affordance the property
+    page contacts already have.
+
 46. 2026-08-14 · Landsec client / desktop 1440px (logged by QA r294 on the
     staging branch) · "check my property before a lease-expiry chat with
     BGP" · the property page's Compliance & KYC sidebar (deliberately
