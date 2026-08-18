@@ -4102,7 +4102,10 @@ app.use("/api/branding/assets", express.static(
         const FLAG = "migration:tracker_junk_sweep_v1";
         try {
           const { rows: done } = await pool.query(`SELECT 1 FROM system_settings WHERE key = $1`, [FLAG]);
-          if (done[0]) return;
+          // Guard skips only THIS sweep. It used to `return`, which killed
+          // every piggy-backed heal below on every boot once the flag
+          // existed — they all silently never ran (found 2026-08-18).
+          if (!done[0]) {
           const { isJunkUnitName } = await import("./unit-junk");
           const { rows: units } = await pool.query(
             `SELECT au.id, au.unit_name, au.property_id, au.deal_id, d.status AS deal_status
@@ -4125,6 +4128,7 @@ app.use("/api/branding/assets", express.static(
             [FLAG, JSON.stringify({ at: new Date().toISOString(), deleted: audit.length, rows: audit.slice(0, 200) })],
           );
           console.log(`[junk-unit sweep] removed ${audit.length} non-lettable tracker unit(s): ${audit.slice(0, 12).map(a => a.name).join("; ")}${audit.length > 12 ? "…" : ""}`);
+          }
         } catch (e: any) {
           console.error("[junk-unit sweep] failed:", e?.message);
         }
@@ -4446,6 +4450,19 @@ app.use("/api/branding/assets", express.static(
             );
           }
         }, 60 * 60 * 1000);
+      }
+
+      // AML orchestrator top-up on boot (production): screens up to 12
+      // never-screened / overdue companies ~4 min after deploy, so a brand
+      // whose CH entity resolved during the day gets its PEP / adverse-media
+      // pass the same hour instead of waiting for the 02:00 sweep.
+      // Self-limiting — no-ops once the backlog is clear.
+      if (process.env.NODE_ENV === "production") {
+        setTimeout(() => {
+          runPeriodicAmlReScreening({ maxCompanies: 12 }).catch(err =>
+            console.error("[kyc-orch-boot] AML top-up failed:", err?.message)
+          );
+        }, 4 * 60 * 1000);
       }
 
       // Nightly brand-enrichment — tops up stale / never-enriched brand rows.
