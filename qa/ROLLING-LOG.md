@@ -63,7 +63,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r325 · 2026-08-18 · FULL (rotation #1 staff desktop)
+### r326 · 2026-08-18 · ROUND IN PROGRESS (provisional)
+- LIGHT round (r325 had the journey). Fresh container (repo pre-cloned at
+  /home/user/bgp-wip-app; pg_hba trust per r205; SUPERUSER bgp role +
+  restore + schema grant per r249/r321). Regression: run-smoke.sh GREEN
+  first pass (42 checks, 0 failures, fresh DB + FRESH_BUILD=1; no
+  cold-build flake). Triage so far: dev-server boot logs a new
+  "[goad datum fix] failed … relation goad_units does not exist" line —
+  fixture has no goad_units (prod-only harvested table, not in the
+  auto-migrate list); job rolls back and retries next boot, no user-facing
+  effect → noise candidate. Two-bot round 326 next.
 - Fresh container (repo pre-cloned at /home/user/bgp-wip-app; pg_hba trust
   per r205; SUPERUSER bgp role + restore + schema grant per r249/r321).
   Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures, fresh
