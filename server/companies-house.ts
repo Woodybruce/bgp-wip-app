@@ -631,8 +631,13 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
             }
           } else if (perp?.entityName) {
             searchName = perp.entityName;
+            // A specific registered-name suggestion is trusted the same way
+            // a manually typed name is: it only resolves on an exact
+            // (normalised) CH title match below — never by similarity. It
+            // used to park unused because this flag stayed false.
+            haveSpecificEntityName = true;
             websiteContext += `\nPerplexity-suggested entity name: ${perp.entityName}`;
-            diagnostics.push({ step: "perplexity", outcome: "entity_only", detail: `name: ${perp.entityName}` });
+            diagnostics.push({ step: "perplexity", outcome: "entity_only", detail: `name: ${perp.entityName} — accepted only on exact CH title match` });
           } else {
             diagnostics.push({ step: "perplexity", outcome: "nothing", detail: "Perplexity returned null" });
           }
@@ -640,6 +645,25 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
           console.warn(`[auto-kyc] Perplexity fallback failed for "${company.name}":`, err?.message);
           diagnostics.push({ step: "perplexity", outcome: "error", detail: err?.message || "request failed" });
         }
+      }
+    }
+
+    // Last knowledge source before parking: Claude often simply knows the
+    // registered entity of household-name brands. Same trust gate as a
+    // manual entry — resolves only on an exact (normalised) CH title match.
+    if (!chNumber && !haveSpecificEntityName) {
+      try {
+        const guess = await askClaudeForUkEntity(company.name, domain, { parentGroup, formerParent });
+        if (guess) {
+          searchName = guess;
+          haveSpecificEntityName = true;
+          websiteContext += `\nClaude-suggested registered name: ${guess}`;
+          diagnostics.push({ step: "ai_knowledge", outcome: "entity_only", detail: `Claude suggests "${guess}" — accepted only on exact CH title match` });
+        } else {
+          diagnostics.push({ step: "ai_knowledge", outcome: "nothing", detail: "Claude not confident of the registered name" });
+        }
+      } catch (err: any) {
+        diagnostics.push({ step: "ai_knowledge", outcome: "error", detail: err?.message || "request failed" });
       }
     }
 
@@ -687,8 +711,14 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
           needsHelp: true,
         } as any;
       }
-      const nameLower = searchName.toLowerCase().trim();
-      const exactNameHit = items.find((i: any) => i.title?.toLowerCase().trim() === nameLower);
+      // Normalised-exact: apostrophes/dots/&/Ltd-vs-Limited style ignored,
+      // everything else must match — "Bill's Restaurants Limited" finds
+      // "BILLS RESTAURANTS LTD." without opening the door to similarity.
+      const nameNorm = normalizeChTitle(searchName);
+      const exactMatches = items.filter((i: any) => normalizeChTitle(i.title || "") === nameNorm);
+      // Old names get recycled — prefer the live registration over a
+      // dissolved namesake.
+      const exactNameHit = exactMatches.find((i: any) => i.company_status === "active") || exactMatches[0];
       if (!exactNameHit) {
         const top = items.slice(0, 5).map((i: any) => `${i.title} (${i.company_number}, ${i.company_status})`).join(", ");
         diagnostics.push({
@@ -932,6 +962,24 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
 //
 // Returns the picked company_number as a string, or null if Claude refuses
 // to pick (e.g. none look like a real match) or the call fails.
+// "Exact" CH title matching that ignores registration-style noise: CH stores
+// "BILLS RESTAURANTS LTD." where everyone writes "Bill's Restaurants
+// Limited" — apostrophes, dots, "&" vs "and" and the Ltd/Limited suffix
+// style are formatting, not identity. Everything else still has to match
+// exactly; this is NOT similarity matching (the May 2026 no-fuzzy policy
+// stands).
+function normalizeChTitle(s: string): string {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[.'’]/g, "")
+    .replace(/&/g, " and ")
+    .replace(/\bpublic limited company\b/g, "plc")
+    .replace(/\blimited liability partnership\b/g, "llp")
+    .replace(/\blimited\b/g, "ltd")
+    .replace(/\bcompany\b/g, "co")
+    .replace(/[^a-z0-9]/g, "");
+}
+
 async function pickChCandidateWithAi(input: {
   brandName: string;
   domain: string | null;
@@ -998,6 +1046,43 @@ Reply with ONLY a JSON object on a single line, no prose, no code fence:
     return pick;
   } catch (err: any) {
     console.warn(`[auto-kyc] Claude CH picker failed:`, err?.message);
+    return null;
+  }
+}
+
+// Claude flat-out knows the registered entity of household-name UK brands
+// ("Bill's" → BILLS RESTAURANTS LTD.) even when the website hides it and
+// Perplexity whiffs. Suggestions get NO special trust: they go through the
+// same normalised-exact CH title match as a manually typed name, so a wrong
+// guess simply fails to match and the brand parks exactly as before.
+async function askClaudeForUkEntity(
+  brandName: string,
+  domain: string | null,
+  context?: { parentGroup?: string | null; formerParent?: string | null },
+): Promise<string | null> {
+  const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const client = new Anthropic({ apiKey });
+  const ctx: string[] = [];
+  if (context?.parentGroup) ctx.push(`Currently owned by: ${context.parentGroup}`);
+  if (context?.formerParent) ctx.push(`Previously owned by: ${context.formerParent}`);
+  const prompt = `What is the UK Companies House registered name of the company that operates the brand "${brandName}"${domain ? ` (website ${domain})` : ""}?
+${ctx.length ? ctx.join("\n") + "\n" : ""}
+Respond with ONLY the registered company name as it appears on Companies House (e.g. "BILLS RESTAURANTS LTD."), nothing else. Prefer the UK operating entity (the one that signs UK leases), not a holding company or overseas parent. If you are not highly confident, respond with the single word "unknown" — do not guess.`;
+  try {
+    const msg = await client.messages.create({
+      // Sonnet, not Haiku — this is a pure knowledge-recall question and
+      // the exact-match gate downstream makes a wrong answer harmless.
+      model: "claude-sonnet-5",
+      max_tokens: 60,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const txt = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("").trim();
+    if (!txt || txt.length > 90 || /unknown/i.test(txt) || /\n/.test(txt)) return null;
+    return txt;
+  } catch (err: any) {
+    console.warn(`[auto-kyc] Claude entity recall failed:`, err?.message);
     return null;
   }
 }
