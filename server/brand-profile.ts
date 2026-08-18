@@ -225,6 +225,19 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         await refreshMenuIntelForCompany(sweepId);
         console.log(`[brand-profile] auto-refreshed menu intel for ${m.name}`);
       })().catch(e => console.warn(`[brand-profile] menu auto-kick skipped: ${e?.message}`));
+      // AML pass self-serves on open, same rationale: the nightly sweep runs
+      // oldest-first, so a freshly-resolved brand sat unscreened at the back
+      // of its queue (Bill's, 2026-08-18). Runs sanctions + ComplyAdvantage
+      // PEP + adverse media once — aml_pep_status flips non-empty on
+      // completion, which stops repeats; the 6h cooldown guards retries.
+      (async () => {
+        const a = (await pool.query(
+          `SELECT name, companies_house_number, aml_pep_status FROM crm_companies WHERE id = $1`, [sweepId])).rows[0];
+        if (!a || !a.companies_house_number || (a.aml_pep_status || "").trim()) return;
+        const { runAllAmlChecks } = await import("./kyc-orchestrator");
+        await runAllAmlChecks(sweepId, null, null);
+        console.log(`[brand-profile] auto-ran AML orchestrator for ${a.name}`);
+      })().catch(e => console.warn(`[brand-profile] AML auto-kick skipped: ${e?.message}`));
     }
 
     // Clients may only read their OWN company's profile here. (Landsec audit.)

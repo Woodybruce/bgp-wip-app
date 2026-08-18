@@ -3974,6 +3974,20 @@ export function BrandComplianceCard({
     ? `https://find-and-update.company-information.service.gov.uk/company/${company.companies_house_number}`
     : null;
 
+  // Covenant tick = a covenant report actually exists. Same query key as
+  // CovenantBadge/CovenantCommentary on this page, so react-query serves it
+  // from cache — no extra request. (The old condition checked
+  // kyc_status === "verified", a value nothing in the codebase ever sets,
+  // so the row could never tick — found 2026-08-18.)
+  const covNum = (company.companies_house_number || "").trim();
+  const { data: covReport } = useQuery<any>({
+    queryKey: ["covenant", covNum],
+    queryFn: async () => (await apiRequest("GET", `/api/covenant/${encodeURIComponent(covNum)}`)).json(),
+    enabled: !!covNum,
+    staleTime: 60 * 60 * 1000,
+    retry: 1,
+  });
+
   // One list drives both the checklist rows and the "missing for AML pass"
   // footer so they can never drift apart.
   const downstreamChecks = [
@@ -3981,7 +3995,7 @@ export function BrandComplianceCard({
     { key: "psc", label: "Officers + PSCs", done: !!(company.companies_house_data as any)?.pscs?.length },
     { key: "accounts", label: "Latest accounts", done: !!company.last_accounts_storage_key },
     { key: "annual_report", label: "Annual report (PLC)", done: !!company.annual_report_storage_key },
-    { key: "covenant", label: "Covenant grade (CH + Gazette)", done: company.kyc_status === "verified" },
+    { key: "covenant", label: "Covenant grade (CH + Gazette)", done: !!covReport?.grade },
     { key: "aml", label: "AML PEP / adverse media", done: !!company.aml_pep_status },
   ];
   // Annual report only applies to PLCs — don't hold an AML pass on it.
