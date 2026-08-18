@@ -14790,9 +14790,12 @@ export function setupChatBGPRoutes(app: Express) {
           loopOpts.tool_choice = "auto";
         }
 
-        // Use streaming for the final text response (when tools are not passed, or last loop)
-        // For tool-calling rounds, use non-streaming to avoid partial delta noise
-        const useStreaming = isLastLoop || loopCount > 1;
+        // Stream every round (Woody, 2026-08-18: quick no-tool answers are
+        // the most common case and never streamed — the first loop was
+        // non-streaming, so simple questions got no live text at all).
+        // Text emitted before a tool round is harmless: the next progress
+        // event resets both the client bubble and the active-run partial.
+        const useStreaming = true;
         let completion: any;
         let streamedFinal = false;
 

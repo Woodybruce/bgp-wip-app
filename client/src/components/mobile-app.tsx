@@ -1653,6 +1653,15 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, aiSendMutation.isPending]);
 
+  // Keep the streaming reply in view as it writes itself — but only when the
+  // user is already near the bottom, so scrolling up to re-read isn't hijacked.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distFromBottom < 200) el.scrollTop = el.scrollHeight;
+  }, [streamingText, activeRun?.partial]);
+
   useEffect(() => {
     // Drain one queued message when the current send finishes. Array-based
     // so the user can stack multiple messages while a long ChatBGP response
@@ -2053,6 +2062,17 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     initialMsgCountRef.current = null;
     if (onNewChat) onNewChat(); else onBack();
   };
+
+  // Bottom-nav sparkle tapped while this chat is already open — the parent's
+  // handler can't clear localThreadId or the on-screen messages, so the view
+  // resets itself through the same path as the + button.
+  const startNewChatRef = useRef(startNewChat);
+  startNewChatRef.current = startNewChat;
+  useEffect(() => {
+    const h = () => startNewChatRef.current();
+    window.addEventListener("chatbgp-new-chat", h);
+    return () => window.removeEventListener("chatbgp-new-chat", h);
+  }, []);
 
   const [selectedCheckboxes, setSelectedCheckboxes] = useState<string[]>([]);
   const selectedCheckboxesRef = useRef<string[]>([]);
