@@ -67,6 +67,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r330 · 2026-08-18 · ROUND IN PROGRESS (LIGHT — r329 had the journey)
+- Staging merged with origin/JOGQK (already up to date at checkout). Fresh
+  container (repo pre-cloned; pg_hba trust per r205; SUPERUSER bgp role +
+  restore + schema grant per r249). Regression: run-smoke.sh GREEN first
+  pass (42 checks, 0 failures, FRESH_BUILD=1, fresh DB). Two-bot round 330
+  running. UX #52 verified via API (POST requirement without date →
+  requirementDate = today, probe row swept). Plan: browser-verify UX
+  50/51/53/56/57/58/61 (the 50-64 batch legs r329 didn't cover).
+- (provisional — final entry replaces this)
+
 ### r329 · 2026-08-18 · FULL (rotation #3 client mobile 390px)
 - Staging merged with origin/JOGQK head d6e83a3 first (standing branch rule;
   brings activity-curation, AML-screening-on-open, Instagram direct-wire
