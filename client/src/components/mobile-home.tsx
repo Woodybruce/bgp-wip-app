@@ -164,7 +164,9 @@ export default function MobileHome() {
   const isViewingAsClient = user?.role !== "Client" && !!(user as any)?.companyScopeId;
   const exitClientView = async () => {
     try {
-      await apiRequest("POST", "/api/auth/client-view-mode", { enabled: false }).catch(() => {});
+      if ((user as any)?.canViewAsClient) {
+        await apiRequest("POST", "/api/auth/client-view-mode", { enabled: false }).catch(() => {});
+      }
       await apiRequest("POST", "/api/auth/active-team", { team: "all" });
       localStorage.setItem("bgp_active_team", "all");
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
