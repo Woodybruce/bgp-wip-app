@@ -281,15 +281,40 @@ export async function computeCovenant(companyNumber: string): Promise<CovenantRe
   // Filed-accounts figures + ticker if the company is in the CRM.
   let accounts: any = null;
   let ticker: string | null = null;
+  let crmCompanyId: string | null = null;
   try {
     const { rows } = await pool.query(
-      `SELECT companies_house_data->'latestAccountsExtracted' AS acc, stock_ticker FROM crm_companies
+      `SELECT id, companies_house_data->'latestAccountsExtracted' AS acc, stock_ticker FROM crm_companies
         WHERE regexp_replace(upper(companies_house_number), '\\s', '', 'g') = $1 LIMIT 1`,
       [num]
     );
     accounts = rows[0]?.acc || null;
     ticker = rows[0]?.stock_ticker || null;
+    crmCompanyId = rows[0]?.id || null;
   } catch { /* no DB / no row — score still works */ }
+
+  // An extraction where every figure is null (early runs stored "not
+  // found" strings or read the wrong pages) is no data, not data — treat
+  // it as absent so the re-extraction below gets its chance.
+  const hasAccountsFigures = (a: any) => !!(a && (a.turnover || a.grossProfit || a.operatingProfit
+    || a.profitBeforeTax || a.netAssets || a.cash || a.employees));
+  if (accounts && !hasAccountsFigures(accounts)) accounts = null;
+
+  // Self-serve missing accounts: download the latest filed accounts from CH
+  // and extract the figures inline, instead of grading blind and telling the
+  // user to go click a different button first (Woody, 2026-08-18 — Bill's
+  // covenant sat at "run the accounts extraction" forever). Cached in
+  // companies_house_data, so this runs once per filing, not per refresh.
+  if (!accounts && crmCompanyId) {
+    try {
+      const { fetchLatestAccountsForCompany, extractAccountsFigures } = await import("./ch-accounts");
+      await fetchLatestAccountsForCompany(crmCompanyId);
+      accounts = await extractAccountsFigures(crmCompanyId);
+      if (accounts && !hasAccountsFigures(accounts)) accounts = null;
+    } catch (e: any) {
+      console.warn(`[covenant] inline accounts extraction failed for ${num}:`, e?.message);
+    }
+  }
 
   // Free Experian-replacement layers, gathered in parallel: director track
   // record (CH appointments + disqualified register), auditor departures in
@@ -464,22 +489,47 @@ async function ensureTables() {
 
 const CACHE_DAYS = 7;
 
+// Background recompute de-dupe — opening the same profile in three tabs
+// shouldn't fire three full covenant runs.
+const covenantRevalidating = new Set<string>();
+
+async function persistCovenantReport(num: string, report: CovenantReport) {
+  await pool.query(
+    `INSERT INTO covenant_reports (company_number, company_name, score, grade, report, computed_at)
+     VALUES ($1,$2,$3,$4,$5,now())
+     ON CONFLICT (company_number) DO UPDATE SET company_name=$2, score=$3, grade=$4, report=$5, computed_at=now()`,
+    [num, report.companyName, report.score, report.grade, report]);
+}
+
 export async function getCovenantReport(companyNumber: string, opts: { refresh?: boolean } = {}): Promise<CovenantReport> {
   const num = companyNumber.trim().toUpperCase().padStart(8, "0");
   if (!opts.refresh) {
     try {
       const { rows } = await pool.query(
-        `SELECT report FROM covenant_reports WHERE company_number=$1 AND computed_at > now() - interval '${CACHE_DAYS} days'`, [num]);
-      if (rows[0]?.report) return rows[0].report as CovenantReport;
+        `SELECT report, computed_at FROM covenant_reports WHERE company_number=$1 AND computed_at > now() - interval '${CACHE_DAYS} days'`, [num]);
+      if (rows[0]?.report) {
+        const report = rows[0].report as CovenantReport;
+        // Stale-while-revalidate (Woody, 2026-08-18: profiles refresh on
+        // open, no buttons): serve the cached grade instantly, but kick a
+        // background recompute when it's aging (>2 days) or was graded
+        // without accounts figures that may since have become readable.
+        const ageDays = (Date.now() - new Date(rows[0].computed_at).getTime()) / 86400000;
+        const missesAccounts = Array.isArray((report as any).missing)
+          && (report as any).missing.some((m: any) => /accounts/i.test(String(m)));
+        if ((ageDays > 2 || (missesAccounts && ageDays > 1 / 24)) && !covenantRevalidating.has(num)) {
+          covenantRevalidating.add(num);
+          computeCovenant(num)
+            .then(fresh => persistCovenantReport(num, fresh))
+            .catch((e: any) => console.warn(`[covenant] background revalidate failed for ${num}:`, e?.message))
+            .finally(() => covenantRevalidating.delete(num));
+        }
+        return report;
+      }
     } catch { /* cache miss */ }
   }
   const report = await computeCovenant(num);
   try {
-    await pool.query(
-      `INSERT INTO covenant_reports (company_number, company_name, score, grade, report, computed_at)
-       VALUES ($1,$2,$3,$4,$5,now())
-       ON CONFLICT (company_number) DO UPDATE SET company_name=$2, score=$3, grade=$4, report=$5, computed_at=now()`,
-      [num, report.companyName, report.score, report.grade, report]);
+    await persistCovenantReport(num, report);
   } catch (e: any) { console.warn("[covenant] cache write failed:", e?.message); }
   return report;
 }

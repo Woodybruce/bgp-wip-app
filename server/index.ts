@@ -4135,6 +4135,40 @@ app.use("/api/branding/assets", express.static(
           const r = await pool.query(`UPDATE unit_target_operators SET category = 'Cafe' WHERE category = 'Care'`);
           if (r.rowCount) console.log(`[care→cafe] healed ${r.rowCount} target-operator rows`);
         } catch { /* table may not exist on fresh DBs */ }
+        // Piggy-back heal: brands with a resolved Companies House profile
+        // but an empty uk_entity_name (resolved before the 2026-08-18
+        // backfill fix) — copy the registered name across so the KYC panel
+        // stops saying "Not found" beside a linked company and the parked
+        // downstream checks unlock. Idempotent: fills NULLs only.
+        try {
+          const r = await pool.query(`
+            UPDATE crm_companies
+               SET uk_entity_name = companies_house_data->'profile'->>'companyName'
+             WHERE (uk_entity_name IS NULL OR uk_entity_name = '')
+               AND companies_house_data->'profile'->>'companyName' IS NOT NULL`);
+          if (r.rowCount) console.log(`[uk-entity backfill] filled ${r.rowCount} registered names from CH profile data`);
+        } catch (e: any) {
+          console.error("[uk-entity backfill] failed:", e?.message);
+        }
+        // Piggy-back heal: Bill's Instagram handle pointed at a US namesake
+        // (@bills_restaurant — a Gulf-seafood spot, not the UK chain). The
+        // right account is @billsrestaurant (verified 113k followers,
+        // 2026-08-18). Fix the handle and drop the poisoned feed sources —
+        // the feed top-up recreates them against the right account. The
+        // wrong RSS.app feeds were already deleted account-side.
+        try {
+          const h = await pool.query(`
+            UPDATE crm_companies SET instagram_handle = 'billsrestaurant'
+             WHERE lower(regexp_replace(instagram_handle, '^@', '')) = 'bills_restaurant'`);
+          const s = await pool.query(`
+            DELETE FROM news_sources
+             WHERE type = 'rssapp_instagram' AND url ILIKE '%instagram.com/bills\\_restaurant%'`);
+          if ((h.rowCount || 0) + (s.rowCount || 0) > 0) {
+            console.log(`[bills-ig heal] fixed ${h.rowCount} handle(s), removed ${s.rowCount} poisoned source(s)`);
+          }
+        } catch (e: any) {
+          console.error("[bills-ig heal] failed:", e?.message);
+        }
       }, 40000);
       // One-off: clear mangled UK trading entities like "UK) Limited" — the
       // entity scraper's broad fallback couldn't cross "("-prefixed tokens

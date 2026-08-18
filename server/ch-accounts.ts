@@ -241,18 +241,25 @@ export async function extractAccountsFigures(companyId: string): Promise<Account
     : null;
 
   // 2. Cache hit — don't re-run vision for a period we've already read.
+  // An all-null cache gets ONE retry (page cap / parse failures used to get
+  // frozen in forever); after a second empty read it's accepted as genuinely
+  // figure-less (e.g. abridged accounts) and served from cache again.
+  const hasFigures = (a: any) => !!(a && (a.turnover || a.grossProfit || a.operatingProfit
+    || a.profitBeforeTax || a.netAssets || a.cash || a.employees));
   const cached = row.companies_house_data?.latestAccountsExtracted as AccountsExtracted | undefined;
-  if (cached && cached.period === period) return cached;
+  if (cached && cached.period === period && (hasFigures(cached) || (cached as any).retriedEmpty)) return cached;
 
   // 3. Load the PDF bytes from file_storage.
   const file = await getFile(row.last_accounts_storage_key);
   if (!file) return null;
 
-  // 4. Rasterise pages 1..12 (cover + P&L + balance sheet for most CH filings).
+  // 4. Rasterise pages 1..24 — 12 missed the P&L entirely for larger
+  //    companies whose accounts open with strategic/directors' reports
+  //    (Bill's FY2025 read as "no figures" for exactly this reason).
   //    rasterisePdfPage returns null past the last page, so we stop at the
-  //    first null.
+  //    first null; cost is one-off per filing thanks to the cache.
   const pageImages: { media_type: "image/jpeg"; data: string }[] = [];
-  for (let p = 1; p <= 12; p++) {
+  for (let p = 1; p <= 24; p++) {
     const jpeg = await rasterisePdfPage({ pdfBuffer: file.data, page: p });
     if (!jpeg) break;
     pageImages.push({ media_type: "image/jpeg", data: jpeg.toString("base64") });
@@ -285,7 +292,7 @@ Use human-readable strings like "£84.2m" or "£1,234,567". No markdown fences.`
   ];
 
   const resp = await anthropic.messages.create({
-    model: "claude-sonnet-4-6",
+    model: "claude-sonnet-5",
     max_tokens: 512,
     messages: [{ role: "user", content }],
   });
@@ -299,17 +306,29 @@ Use human-readable strings like "£84.2m" or "£1,234,567". No markdown fences.`
     // best-effort — leave figures null, keep rawText for debugging
   }
 
+  // "not found" (and friends) are the model following instructions, not
+  // figures — storing them made downstream consumers treat junk as data.
+  const clean = (v: any): string | null => {
+    const s = typeof v === "string" ? v.trim() : "";
+    if (!s || /^(not found|n\/?a|none|null|unknown|-+)$/i.test(s)) return null;
+    return s;
+  };
   const result: AccountsExtracted = {
-    period: parsed.period || period,
-    turnover: parsed.turnover || null,
-    grossProfit: parsed.grossProfit || null,
-    operatingProfit: parsed.operatingProfit || null,
-    profitBeforeTax: parsed.profitBeforeTax || null,
-    netAssets: parsed.netAssets || null,
-    cash: parsed.cash || null,
-    employees: parsed.employees || null,
+    period: clean(parsed.period) || period,
+    turnover: clean(parsed.turnover),
+    grossProfit: clean(parsed.grossProfit),
+    operatingProfit: clean(parsed.operatingProfit),
+    profitBeforeTax: clean(parsed.profitBeforeTax),
+    netAssets: clean(parsed.netAssets),
+    cash: clean(parsed.cash),
+    employees: clean(parsed.employees),
     rawText,
   };
+  // Second consecutive empty read → accept as genuinely figure-less so the
+  // cache stops re-running vision on every covenant refresh.
+  if (!hasFigures(result) && cached && cached.period === period) {
+    (result as any).retriedEmpty = true;
+  }
 
   // 6. Cache on the CRM company record.
   const existingData = row.companies_house_data || {};

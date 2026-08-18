@@ -137,7 +137,14 @@ async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
     },
   });
 
-  const sources = await db.select().from(newsSources).where(eq(newsSources.active, true));
+  // Never-fetched sources first, then oldest-fetched: a fetch pass takes
+  // ~40 min across ~1,200 feeds and every deploy kills it mid-run — with
+  // arbitrary ordering, feeds late in the list (the new brand Instagram
+  // ones) could starve for days. This order makes interrupted passes
+  // resume where they left off.
+  const sources = await db.select().from(newsSources)
+    .where(eq(newsSources.active, true))
+    .orderBy(sql`${newsSources.lastFetchedAt} ASC NULLS FIRST`);
   let fetched = 0;
   let errors = 0;
 
