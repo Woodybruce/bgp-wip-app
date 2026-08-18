@@ -2175,7 +2175,14 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   }
 
   return (
-    <div className={`flex flex-col w-screen overflow-x-hidden fixed inset-0 bg-gray-50`}>
+    // The AI chat keeps the bottom tab bar visible (Woody, 2026-08-18: no
+    // menu on the greeting felt like a dead end) — padding clears the fixed
+    // nav so the composer sits above it. Team chats stay full-screen.
+    <div
+      className={`flex flex-col w-screen overflow-x-hidden fixed inset-0 bg-gray-50`}
+      style={isActiveThreadAi ? { paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom))" } : undefined}
+    >
+      {isActiveThreadAi && <MobileBottomNav />}
       {isActiveThreadAi ? (
         <div className="bg-white text-gray-900 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-2.5 px-4 shrink-0 border-b border-gray-100">
           <div className="flex items-center justify-between">
@@ -2941,6 +2948,21 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
   // message; this makes sure THIS device is actually subscribed. iOS only
   // grants permission from a user gesture, hence the Enable banner.
   const { subscribe: subscribePush, isSubscribed: pushSubscribed, isSupported: pushSupported, permission: pushPermission } = usePushNotifications();
+
+  // Bottom-nav sparkle tapped while the chat screen is already mounted —
+  // reset to a fresh greeting (the nav clears the session marker itself
+  // for the fresh-mount case).
+  useEffect(() => {
+    const onNewChat = () => {
+      returnTabRef.current = "chats";
+      setActiveThreadId(null);
+      setActiveThreadAi(true);
+      setChatFromList(false);
+      setShowChat(true);
+    };
+    window.addEventListener("chatbgp-new-chat", onNewChat);
+    return () => window.removeEventListener("chatbgp-new-chat", onNewChat);
+  }, []);
 
   // Push-notification deep link (/chatbgp?thread=<id>) — open that thread
   // once the list has loaded, then clean the URL.
