@@ -1212,6 +1212,25 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     refetchInterval: 8000,
   });
 
+  // Claude-style re-attach: leaving the chat (or backgrounding the app)
+  // drops the SSE, but the server keeps composing and saves the reply to
+  // the thread. This poll notices a run still in flight when the user
+  // returns, so the typing indicator + progress show instead of a blank;
+  // the finished reply then arrives via the thread poll above.
+  const { data: activeRun } = useQuery<{ active: boolean; progress?: string; partial?: string }>({
+    queryKey: ["/api/chatbgp/threads", threadId, "active-run"],
+    queryFn: async () => {
+      const r = await fetch(`/api/chatbgp/threads/${threadId}/active-run`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) return { active: false };
+      return r.json();
+    },
+    enabled: !!threadId && (activeThread?.isAiChat ?? isAiChat),
+    refetchInterval: 3000,
+  });
+
   const { data: allUsers } = useQuery<Array<{ id: string; name: string; username: string; team?: string | null }>>({
     queryKey: ["/api/users"],
     queryFn: getQueryFn({ on401: "throw" }),
@@ -1259,6 +1278,9 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   });
 
   const [streamingProgress, setStreamingProgress] = useState<string | null>(null);
+  // Live text as it's composed — SSE deltas append here so the reply writes
+  // itself into the bubble Claude-style instead of appearing all at once.
+  const [streamingText, setStreamingText] = useState("");
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [searchInChat, setSearchInChat] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState("");
@@ -1399,7 +1421,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
             if (line.startsWith("data: ")) {
               try {
                 const parsed = JSON.parse(line.slice(6));
-                if (parsed.progress) setStreamingProgress(parsed.progress);
+                if (parsed.progress) { setStreamingProgress(parsed.progress); setStreamingText(""); }
+                if (parsed.delta) setStreamingText(prev => prev + parsed.delta);
                 if (parsed.reply !== undefined || parsed.error !== undefined) lastData = line.slice(6);
               } catch {}
             }
@@ -1411,7 +1434,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
             if (parsed.reply !== undefined || parsed.error !== undefined) lastData = buffer.slice(6);
           } catch {}
         }
-        setStreamingProgress(null);
+        setStreamingProgress(null); setStreamingText("");
         if (!lastData) throw new Error("Server closed the stream before sending a reply.");
         const data = JSON.parse(lastData);
         if (data.error !== undefined) throw new Error(String(data.error));
@@ -1469,7 +1492,10 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                   try {
                     const parsed = JSON.parse(line.slice(6));
                     if (parsed.reply) lastData = line.slice(6);
-                    if (parsed.progress) { setStreamingProgress(parsed.progress); sawProgress = true; }
+                    // A new progress phase = a new composition pass — reset
+                    // the live text (mirrors the server's active-run partial).
+                    if (parsed.progress) { setStreamingProgress(parsed.progress); sawProgress = true; setStreamingText(""); }
+                    if (parsed.delta) setStreamingText(prev => prev + parsed.delta);
                   } catch {}
                 }
               }
@@ -1480,7 +1506,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 if (parsed.reply) lastData = buffer.slice(6);
               } catch {}
             }
-            setStreamingProgress(null);
+            setStreamingProgress(null); setStreamingText("");
             if (!lastData) {
               if (currentThreadId) {
                 const checkRes = await fetch(`/api/chat/threads/${currentThreadId}`, { credentials: "include", headers: getAuthHeaders() });
@@ -1509,7 +1535,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
             return { ...JSON.parse(lastData), threadId: currentThreadId };
           } catch (err: any) {
             clearTimeout(timeoutId);
-            setStreamingProgress(null);
+            setStreamingProgress(null); setStreamingText("");
             if (err.name === "AbortError") throw err;
             const isNetworkError = err.message === "Failed to fetch" || err.message === "Load failed" || err.message?.includes("network");
             if (isNetworkError && attempt < 2) {
@@ -1626,6 +1652,15 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages, aiSendMutation.isPending]);
+
+  // Keep the streaming reply in view as it writes itself — but only when the
+  // user is already near the bottom, so scrolling up to re-read isn't hijacked.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distFromBottom < 200) el.scrollTop = el.scrollHeight;
+  }, [streamingText, activeRun?.partial]);
 
   useEffect(() => {
     // Drain one queued message when the current send finishes. Array-based
@@ -2021,12 +2056,23 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     setInput("");
     setAttachedFiles([]);
     setQueuedMessages([]);
-    setStreamingProgress(null);
+    setStreamingProgress(null); setStreamingText("");
     setSearchInChat(false);
     setChatSearchQuery("");
     initialMsgCountRef.current = null;
     if (onNewChat) onNewChat(); else onBack();
   };
+
+  // Bottom-nav sparkle tapped while this chat is already open — the parent's
+  // handler can't clear localThreadId or the on-screen messages, so the view
+  // resets itself through the same path as the + button.
+  const startNewChatRef = useRef(startNewChat);
+  startNewChatRef.current = startNewChat;
+  useEffect(() => {
+    const h = () => startNewChatRef.current();
+    window.addEventListener("chatbgp-new-chat", h);
+    return () => window.removeEventListener("chatbgp-new-chat", h);
+  }, []);
 
   const [selectedCheckboxes, setSelectedCheckboxes] = useState<string[]>([]);
   const selectedCheckboxesRef = useRef<string[]>([]);
@@ -2149,7 +2195,14 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   }
 
   return (
-    <div className={`flex flex-col w-screen overflow-x-hidden fixed inset-0 bg-gray-50`}>
+    // The AI chat keeps the bottom tab bar visible (Woody, 2026-08-18: no
+    // menu on the greeting felt like a dead end) — padding clears the fixed
+    // nav so the composer sits above it. Team chats stay full-screen.
+    <div
+      className={`flex flex-col w-screen overflow-x-hidden fixed inset-0 bg-gray-50`}
+      style={isActiveThreadAi ? { paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom))" } : undefined}
+    >
+      {isActiveThreadAi && <MobileBottomNav />}
       {isActiveThreadAi ? (
         <div className="bg-white text-gray-900 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-2.5 px-4 shrink-0 border-b border-gray-100">
           <div className="flex items-center justify-between">
@@ -2338,19 +2391,29 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           );
         })}
 
-        {isSending && !staleAiSend && (
+        {((isSending && !staleAiSend) || (!isSending && isActiveThreadAi && activeRun?.active)) && (
           isActiveThreadAi ? (
             <div className="flex items-start gap-3">
               <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }}>
                 <Sparkles className="w-4 h-4 text-white" />
               </div>
-              <div className="flex items-center gap-2.5 pt-2">
-                <div className="flex gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "0ms" }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "150ms" }} />
-                  <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+              <div className="flex-1 min-w-0 pt-2 space-y-1.5">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+                  </div>
+                  <span className="text-[14px] text-gray-400 italic">{streamingProgress || activeRun?.progress || "Thinking..."}</span>
                 </div>
-                <span className="text-[14px] text-gray-400 italic">{streamingProgress || "Thinking..."}</span>
+                {/* Reply writes itself in live — deltas while connected, the
+                    server's partial when re-attaching mid-composition. The
+                    saved message re-renders it with full markdown at the end. */}
+                {(isSending ? streamingText : activeRun?.partial) && (
+                  <p className="text-[15px] text-gray-800 dark:text-gray-200 whitespace-pre-wrap leading-relaxed">
+                    {isSending ? streamingText : activeRun?.partial}
+                  </p>
+                )}
               </div>
             </div>
           ) : (
@@ -2906,6 +2969,21 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
   // grants permission from a user gesture, hence the Enable banner.
   const { subscribe: subscribePush, isSubscribed: pushSubscribed, isSupported: pushSupported, permission: pushPermission } = usePushNotifications();
 
+  // Bottom-nav sparkle tapped while the chat screen is already mounted —
+  // reset to a fresh greeting (the nav clears the session marker itself
+  // for the fresh-mount case).
+  useEffect(() => {
+    const onNewChat = () => {
+      returnTabRef.current = "chats";
+      setActiveThreadId(null);
+      setActiveThreadAi(true);
+      setChatFromList(false);
+      setShowChat(true);
+    };
+    window.addEventListener("chatbgp-new-chat", onNewChat);
+    return () => window.removeEventListener("chatbgp-new-chat", onNewChat);
+  }, []);
+
   // Push-notification deep link (/chatbgp?thread=<id>) — open that thread
   // once the list has loaded, then clean the URL.
   const deepLinkedRef = useRef(false);
@@ -3379,21 +3457,16 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     setShowMobileMarketingFiles(false);
   };
 
-  // Pinned ChatBGP row — resumes the latest plain AI conversation, or
-  // starts a fresh one on first use.
+  // Pinned ChatBGP row — always opens a FRESH AI chat (Woody, 2026-08-18:
+  // resuming the latest conversation here surprised him — old threads are
+  // one tap away via the History button on the row).
   const openChatBgpPinned = () => {
     returnTabRef.current = "chats";
-    const latestAi = (threads || [])
-      .filter(t => t.isAiChat && !t.linkedType)
-      .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime())[0];
-    if (latestAi) {
-      setActiveThreadId(latestAi.id);
-      setActiveThreadAi(true);
-      setChatFromList(true);
-      setShowChat(true);
-    } else {
-      openNewAiChat();
-    }
+    setActiveThreadId(null);
+    setActiveThreadAi(true);
+    setChatFromList(true);
+    setShowChat(true);
+    setShowMobileMarketingFiles(false);
   };
 
   const handleCreateMobilePropertyChat = async (data: { linkedType: string; linkedId: string; linkedName: string }) => {
