@@ -199,6 +199,23 @@ async function writeLastInteraction(type: SubjectType, id: string, latest: strin
   }
 }
 
+// Curation must run under a STAFF session: ChatBGP strips email/calendar
+// tools for client-scoped viewers, so a client-triggered run produces a
+// degraded "no mailbox access is available to me" narrative — which was
+// getting cached and served to staff (Woody, 2026-08-18, Bill's panel).
+// Clients still read existing caches; only staff sessions generate them.
+async function isClientScopedViewer(req: Request): Promise<boolean> {
+  try {
+    const { resolveCompanyScope } = await import("./company-scope");
+    return !!(await resolveCompanyScope(req as any));
+  } catch {
+    return true; // fail closed — don't generate under unknown identity
+  }
+}
+// Fingerprint of a client-voice curation. Belt-and-braces: even if one is
+// generated, it must never be cached.
+const DEGRADED_CURATION_RE = /accessible to me|BGP-team action|ask your BGP contact/i;
+
 export function registerActivityRoutes(app: Express) {
   // Cached read — fast, used by <AIActivityCard> on first render and
   // by the poll loop after the client kicks off a background curation.
@@ -223,10 +240,13 @@ export function registerActivityRoutes(app: Express) {
       // read, since only staff can POST /curate.
       const STALE_MS = 7 * 24 * 60 * 60 * 1000;
       const cacheAge = cache?.generatedAt ? Date.now() - new Date(cache.generatedAt).getTime() : null;
-      const needsCuration = !cache || (cacheAge !== null && cacheAge > STALE_MS);
+      // A cached curation carrying the client-voice fingerprint is one of
+      // the poisoned runs — treat as missing so the next staff open heals it.
+      const degradedCache = !!cache && DEGRADED_CURATION_RE.test(cache.markdown || "");
+      const needsCuration = !cache || degradedCache || (cacheAge !== null && cacheAge > STALE_MS);
       const failedAt = recentCurationFailures.get(key);
       const coolingDown = failedAt !== undefined && Date.now() - failedAt < CURATION_FAILURE_COOLDOWN_MS;
-      if (needsCuration && !inFlight && !coolingDown) {
+      if (needsCuration && !inFlight && !coolingDown && !(await isClientScopedViewer(req))) {
         const subject = await buildSubject(subjectType, subjectId);
         if (subject) {
           const job = (async () => {
@@ -235,7 +255,10 @@ export function registerActivityRoutes(app: Express) {
               // sweep (Landsec) outran the earlier 12-min budget and the
               // finished result was binned (2026-08-04).
               const curated = await curateActivity(subject, req, { timeoutMs: 25 * 60 * 1000 });
-              if (curated) {
+              if (curated && DEGRADED_CURATION_RE.test(curated.markdown || "")) {
+                console.warn(`[activity auto-refresh ${subjectType}/${subjectId}] refused to cache client-voice curation`);
+                recentCurationFailures.set(key, Date.now());
+              } else if (curated) {
                 await writeCache(subjectType, subjectId, curated);
                 await writeLastInteraction(subjectType, subjectId, curated.latestActivityDate);
                 recentCurationFailures.delete(key);
@@ -321,6 +344,11 @@ export function registerActivityRoutes(app: Express) {
   app.post("/api/activity/:subjectType/:subjectId/curate", requireAuth, async (req: Request, res: Response) => {
     const { subjectType, subjectId } = req.params as { subjectType: SubjectType; subjectId: string };
     if (!VALID_TYPES.includes(subjectType)) return res.status(400).json({ error: "invalid subject type" });
+    // Staff only — a client session generates the degraded no-mailbox
+    // narrative (see isClientScopedViewer above).
+    if (await isClientScopedViewer(req)) {
+      return res.status(403).json({ error: "Not available for client accounts" });
+    }
 
     const key = curationKey(subjectType, subjectId);
     if (pendingCurations.has(key)) {
@@ -341,6 +369,11 @@ export function registerActivityRoutes(app: Express) {
         const curated = await curateActivity(subject, req, { timeoutMs: 25 * 60 * 1000 });
         if (!curated) {
           console.warn(`[activity curate ${subjectType}/${subjectId}] ChatBGP returned nothing`);
+          recentCurationFailures.set(key, Date.now());
+          return;
+        }
+        if (DEGRADED_CURATION_RE.test(curated.markdown || "")) {
+          console.warn(`[activity curate ${subjectType}/${subjectId}] refused to cache client-voice curation`);
           recentCurationFailures.set(key, Date.now());
           return;
         }
