@@ -733,16 +733,19 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                           On tenancy spine
                         </a>
                       </Link>
-                    ) : (
+                    ) : !isClientDeal ? (
+                      // Internal data-hygiene flag — hidden from client
+                      // viewers (the nightly sweep re-links automatically;
+                      // staff can still Resolve from the property page).
                       <span
                         className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-700"
-                        title="This deal isn't yet linked to a tenancy schedule row. Use Resolve on the property page to fix."
+                        title="This deal isn't yet linked to a tenancy schedule row. It will auto-link on the nightly sweep, or use Resolve on the property page."
                         data-testid="chip-off-tenancy-spine"
                       >
                         <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
                         Off tenancy spine
                       </span>
-                    )
+                    ) : null
                   )}
                 </div>
               </>

@@ -1552,11 +1552,13 @@ export default function Calendar() {
             <ChevronRight className="w-4 h-4" />
           </Button>
           <Button variant="outline" size="sm" className="text-xs h-7 px-3" onClick={() => setSelectedDate(new Date())} data-testid="button-today">Today</Button>
-          {isClientViewer && (
-            <Button size="sm" className="text-xs h-7 px-3" onClick={() => setShowAddEvent(true)} data-testid="button-add-event">
-              <Plus className="w-3.5 h-3.5 mr-1" />Add event
-            </Button>
-          )}
+          {/* Staff get the same lightweight team_events write as clients —
+              without it a staff phone had no in-app way to jot a CRM
+              meeting (the only write path was the Outlook app, losing CRM
+              linkage). Outlook sync is untouched; these rows stay separate. */}
+          <Button size="sm" className="text-xs h-7 px-3" onClick={() => setShowAddEvent(true)} data-testid="button-add-event">
+            <Plus className="w-3.5 h-3.5 mr-1" />Add event
+          </Button>
           <span className="text-sm font-semibold ml-2 hidden sm:inline">{headerLabel}</span>
         </div>
 

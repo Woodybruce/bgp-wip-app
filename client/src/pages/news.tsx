@@ -1235,15 +1235,59 @@ function WhatsAppTab() {
 // Mobile: just the feed. No team tabs, search, category filters, or the
 // Leads/Inbox/WhatsApp/Sources chrome — those stay desktop-only.
 function MobileNewsFeed() {
-  const { data: articles, isLoading } = useQuery<NewsArticle[]>({
+  const [mobileTab, setMobileTab] = useState<"latest" | "saved">("latest");
+  const { data: latestArticles, isLoading: latestLoading } = useQuery<NewsArticle[]>({
     queryKey: ["/api/news-feed/articles"],
   });
+  // Saved list is fetched on both tabs — on Latest it drives the bookmark
+  // state so an article saved on desktop shows as saved on the phone too.
+  const { data: savedList, isLoading: savedLoading } = useQuery<NewsArticle[]>({
+    queryKey: ["/api/news-feed/saved"],
+  });
+  const savedIds = useMemo(() => new Set((savedList || []).map(a => a.id)), [savedList]);
+
+  const saveMutation = useMutation({
+    mutationFn: (articleId: string) =>
+      apiRequest("POST", "/api/news-feed/engage", { articleId, action: "save" }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/news-feed/saved"] }),
+  });
+  const unsaveMutation = useMutation({
+    mutationFn: (articleId: string) =>
+      apiRequest("POST", "/api/news-feed/unsave", { articleId }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/news-feed/saved"] }),
+  });
+  const toggleSave = (article: NewsArticle) => {
+    if (savedIds.has(article.id)) unsaveMutation.mutate(article.id);
+    else saveMutation.mutate(article.id);
+  };
+
+  const articles = mobileTab === "saved" ? savedList : latestArticles;
+  const isLoading = mobileTab === "saved" ? savedLoading : latestLoading;
 
   return (
     <div
       className="bg-[#FAF9F7] dark:bg-background min-h-full px-4 pt-3 pb-4 space-y-3"
       data-testid="news-page"
     >
+      <div className="flex gap-1.5">
+        <button
+          onClick={() => setMobileTab("latest")}
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] ${mobileTab === "latest" ? "border-gray-900 bg-gray-900 text-white dark:border-primary dark:bg-primary font-semibold" : "border-gray-200 text-gray-500 bg-white dark:bg-card dark:border-border"}`}
+          data-testid="mobile-news-tab-latest"
+        >
+          Latest
+        </button>
+        <button
+          onClick={() => setMobileTab("saved")}
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] ${mobileTab === "saved" ? "border-gray-900 bg-gray-900 text-white dark:border-primary dark:bg-primary font-semibold" : "border-gray-200 text-gray-500 bg-white dark:bg-card dark:border-border"}`}
+          data-testid="mobile-news-tab-saved"
+        >
+          <Bookmark className="w-3.5 h-3.5" />
+          Saved
+          {(savedList?.length || 0) > 0 && <span className="tabular-nums font-semibold">{savedList!.length}</span>}
+        </button>
+      </div>
+
       {isLoading && (
         <div className="flex items-center justify-center py-16">
           <div className="w-8 h-8 border-2 border-gray-300 border-t-black rounded-full animate-spin" />
@@ -1253,9 +1297,9 @@ function MobileNewsFeed() {
       {!isLoading && (!articles || articles.length === 0) && (
         <div className="flex flex-col items-center justify-center py-16 gap-3">
           <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
-            <Newspaper className="w-8 h-8 text-gray-300" />
+            {mobileTab === "saved" ? <Bookmark className="w-8 h-8 text-gray-300" /> : <Newspaper className="w-8 h-8 text-gray-300" />}
           </div>
-          <p className="text-[15px] text-gray-400">No news articles yet</p>
+          <p className="text-[15px] text-gray-400">{mobileTab === "saved" ? "No saved articles yet — tap the bookmark on any card" : "No news articles yet"}</p>
         </div>
       )}
 
@@ -1291,6 +1335,17 @@ function MobileNewsFeed() {
               {article.category && article.category !== "general" && (
                 <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">{article.category}</span>
               )}
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSave(article); }}
+                className="ml-auto -my-1.5 -mr-1.5 p-2 rounded-full text-gray-400 active:bg-gray-100"
+                aria-label={savedIds.has(article.id) ? "Remove from saved" : "Save article"}
+                data-testid={`mobile-news-save-${article.id}`}
+              >
+                {savedIds.has(article.id)
+                  ? <BookmarkCheck className="w-[18px] h-[18px] text-emerald-600" />
+                  : <Bookmark className="w-[18px] h-[18px]" />}
+              </button>
             </div>
             <div className="text-[16px] font-semibold text-gray-900 dark:text-white leading-snug mb-1.5 tracking-tight">{article.title}</div>
             {(article.aiSummary || article.summary) && (

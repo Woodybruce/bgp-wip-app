@@ -89,7 +89,7 @@ export function MobileCardView({ items, emptyMessage, emptyIcon, emptyDescriptio
           <div className="space-y-1.5">
             {item.fields
               .filter((f) => f.value != null && f.value !== "")
-              .slice(0, 4)
+              .slice(0, 5)
               .map((field, idx) => (
                 <div
                   key={idx}
