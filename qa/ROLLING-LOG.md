@@ -67,17 +67,46 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r327 · 2026-08-18 · ROUND IN PROGRESS (heartbeat)
-- FULL round (r326 was LIGHT), rotation #2 client desktop. Staging merged
-  with origin/JOGQK head 600b618 first (per standing branch rule).
-- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures,
-  FRESH_BUILD=1, fresh DB).
-- Journey in progress: Mark Warne desktop 1440px — "how are my Bluewater
-  lettings progressing, who do I chase". Triage list so far: client deals
-  table shows inline "+ Link landlord/+ Link tenant/+ Add terms"
-  affordances; client tracker rows show edit pencil + red delete; checking
-  intended-vs-doomed. /api/client/sharepoint/root 404 (likely keyless
-  noise, verifying).
+### r327 · 2026-08-18 · FULL (rotation #2 client desktop)
+- Staging merged with origin/JOGQK head 600b618 first (standing branch
+  rule; brings UX 50-64 build, Instagram 3-strike ledger, entity fixes,
+  KYC queue rotation onto staging). Fresh container (repo pre-cloned;
+  pg_hba trust per r205; superuser bgp role + restore + schema grant per
+  r249). Regression: run-smoke.sh GREEN first pass (42 checks,
+  0 failures, FRESH_BUILD=1, fresh DB). Two-bot round 327: exit 0, all
+  scenarios ok first run. 3 logged issues all listed noise
+  (rocketreach-400; brand-gaps/live-intel 503; commentary-regen 503 —
+  qa/logs/round-327.jsonl). 0 raw 500/502/504 in the round's dev-server
+  log (lone " 500 " hit is the "500 articles" news-feed text; 174 5xx
+  all keyless-AI 503s).
+- Journey: Mark Warne desktop 1440px — "how are my Bluewater lettings
+  progressing, and who do I chase about the stuck one": guest-form login
+  → Portfolio dashboard (KPIs, tracker tile) → Letting Tracker →
+  Negotiating chip (filters to the 1 MSU9 row, correct) → MSU9 deal page
+  → /deals (2 CRM deals + "+2 letting deals" subtitle) → #1003 U124
+  Gail's deal detail (stage Solicitors, BGP contact shown, comments +
+  audit render) → Bluewater property page (news feed, risk register,
+  Linked Contacts with deal-role rows — the real "who to chase" answer)
+  → client /news (Brand News renders) → tenancy Full Board via direct
+  route (200 units, chips, 0 h-overflow). Task completable; 0 page
+  errors, 0 non-noise sightings all legs.
+- Triaged, NOT bugs: client tracker rows show edit pencil + delete and
+  client deals table shows "+ Link landlord/tenant / + Add terms" —
+  decided client write-parity (r263/r279/r287 class; r263 already
+  de-fanged the AML side-effect). "Off tenancy spine" chip absent on
+  client deal detail = UX #50 gate holding (chip is deal-detail-only,
+  staff-only; Gail's deal is genuinely off-spine, unit_id NULL per
+  r207). /api/client/sharepoint/root 404 + hr/photo 404 = listed noise.
+  Client property page goto('networkidle') times out (long-polling) —
+  tester note, use domcontentloaded.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: UX #65 (deal-detail "BGP contact: <name>" is inert text — no
+  mailto/message/contact-card link for the chase-this-deal client).
+  Harness growth: none needed (no new bug class; parity + gates already
+  locked).
+- New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r327 had the journey →
+  r328 may be LIGHT; then #3).
 
 ### r326 · 2026-08-18 · LIGHT (r325 had the journey)
 - FIRST round on the post-merge staging head (f382235 pulled the JOGQK UX
