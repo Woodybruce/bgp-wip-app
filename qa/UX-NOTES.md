@@ -16,6 +16,17 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+71. 2026-08-19 · BGP staff / Letting Tracker desktop (QA r341) · "a brand
+    rang me about unit L015 — log the interest" · The new Interest signal
+    is read-only for staff: rows only appear via the M365 inbox sweep
+    (viewing-sync syncInterestEmails), and the dialog only lists + deletes
+    — there is no "log interest" button and no POST endpoint, even though
+    the schema comment anticipates manual rows (source null). A phone-call
+    or in-person expression of interest can't be recorded; on this
+    keyless/local setup the whole feature is permanently empty. ·
+    Suggested: small add-interest form in the unit's Interest dialog
+    (company picker + date + note), mirroring the add-viewing pattern.
+
 69. 2026-08-19 · Landsec client / Property Intelligence desktop (QA r335) ·
     "pull title and rates info for my Bluewater asset" · Every tool on the
     hub starts empty for a client — Map opens on a default London view,

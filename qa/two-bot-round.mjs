@@ -3157,15 +3157,17 @@ async function markRound(page, cross) {
       const units = await j('/api/available-units');
       const offers = await j('/api/available-units/all-offers-counts');
       const views = await j('/api/available-units/all-viewings-counts');
-      if (!units.ok || !offers.ok || !views.ok) return { ok: false, why: `units ${units.status} / offers ${offers.status} / views ${views.status}` };
+      const interest = await j('/api/available-units/all-interest-counts');
+      if (!units.ok || !offers.ok || !views.ok || !interest.ok) return { ok: false, why: `units ${units.status} / offers ${offers.status} / views ${views.status} / interest ${interest.status}` };
       const visible = new Set((Array.isArray(units.body) ? units.body : []).map((u) => u.id));
       const stray = (map) => Object.keys(map || {}).filter((id) => !visible.has(id));
-      return { ok: true, visibleCount: visible.size, strayOffers: stray(offers.body), strayViews: stray(views.body) };
+      return { ok: true, visibleCount: visible.size, strayOffers: stray(offers.body), strayViews: stray(views.body), strayInterest: stray(interest.body) };
     });
     if (!r.ok) throw new Error(`tracker count endpoints failed (${r.why})`);
     if (!r.visibleCount) return; // no units in scope this run — nothing to assert
     if (r.strayOffers.length) throw new Error(`offer-count badge keyed a unit outside client scope: ${r.strayOffers[0]}`);
     if (r.strayViews.length) throw new Error(`viewing-count badge keyed a unit outside client scope: ${r.strayViews[0]}`);
+    if (r.strayInterest.length) throw new Error(`interest-count badge keyed a unit outside client scope: ${r.strayInterest[0]}`);
   });
 
   // Beyond the count badges, the full viewing/offer RECORD lists
@@ -3180,16 +3182,18 @@ async function markRound(page, cross) {
       const units = await j('/api/available-units');
       const views = await j('/api/available-units/all-viewings');
       const offers = await j('/api/available-units/all-offers');
-      if (!units.ok || !views.ok || !offers.ok) return { ok: false, why: `units ${units.status} / views ${views.status} / offers ${offers.status}` };
+      const interest = await j('/api/available-units/all-interest');
+      if (!units.ok || !views.ok || !offers.ok || !interest.ok) return { ok: false, why: `units ${units.status} / views ${views.status} / offers ${offers.status} / interest ${interest.status}` };
       const visible = new Set((Array.isArray(units.body) ? units.body : []).map((u) => u.id));
       const rows = (b) => Array.isArray(b) ? b : (b && Array.isArray(b.data) ? b.data : []);
       const stray = (b) => rows(b).map((x) => x.unit_id || x.unitId).filter((id) => id && !visible.has(id));
-      return { ok: true, visibleCount: visible.size, strayViews: stray(views.body), strayOffers: stray(offers.body) };
+      return { ok: true, visibleCount: visible.size, strayViews: stray(views.body), strayOffers: stray(offers.body), strayInterest: stray(interest.body) };
     });
     if (!r.ok) throw new Error(`tracker record endpoints failed (${r.why})`);
     if (!r.visibleCount) return; // no units in scope this run
     if (r.strayViews.length) throw new Error(`a viewing record for a unit outside client scope leaked: ${r.strayViews[0]}`);
     if (r.strayOffers.length) throw new Error(`an offer record for a unit outside client scope leaked: ${r.strayOffers[0]}`);
+    if (r.strayInterest.length) throw new Error(`an interest record for a unit outside client scope leaked: ${r.strayInterest[0]}`);
   });
 
   // Client must NOT see the requirement the agent just created for another
