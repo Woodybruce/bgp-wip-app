@@ -4194,6 +4194,35 @@ app.use("/api/branding/assets", express.static(
           if ((h.rowCount || 0) + (s.rowCount || 0) + (ins.rowCount || 0) > 0) {
             console.log(`[bills-ig heal] handles fixed=${h.rowCount}, dead sources removed=${s.rowCount}, feed wired to ${ins.rowCount} brand row(s)`);
           }
+          // Representation repair (Woody, 2026-08-19): the reps live on the
+          // duplicate "Bills" row while the profile in use is the CH-linked
+          // "Bill's" — so "Represented by" looked empty and a corrupt row
+          // (agent = the brand's own duplicate, via Matt Porter being a
+          // Bill's-side contact) surfaced instead. Re-point reps at the
+          // CH-linked row, then delete self/duplicate representations.
+          const repMove = await pool.query(`
+            WITH target AS (
+              SELECT id FROM crm_companies
+               WHERE regexp_replace(lower(name), '[^a-z0-9]', '', 'g') = 'bills'
+                 AND merged_into_id IS NULL AND companies_house_number IS NOT NULL
+               ORDER BY (uk_entity_name IS NOT NULL) DESC LIMIT 1
+            )
+            UPDATE brand_agent_representations r
+               SET brand_company_id = (SELECT id FROM target)
+              FROM crm_companies b
+             WHERE b.id = r.brand_company_id
+               AND regexp_replace(lower(b.name), '[^a-z0-9]', '', 'g') = 'bills'
+               AND (SELECT id FROM target) IS NOT NULL
+               AND r.brand_company_id <> (SELECT id FROM target)`);
+          const repKill = await pool.query(`
+            DELETE FROM brand_agent_representations r
+             USING crm_companies b, crm_companies a
+             WHERE b.id = r.brand_company_id AND a.id = r.agent_company_id
+               AND regexp_replace(lower(b.name), '[^a-z0-9]', '', 'g') = 'bills'
+               AND regexp_replace(lower(a.name), '[^a-z0-9]', '', 'g') = 'bills'`);
+          if ((repMove.rowCount || 0) + (repKill.rowCount || 0) > 0) {
+            console.log(`[bills-rep heal] re-pointed=${repMove.rowCount}, self-reps deleted=${repKill.rowCount}`);
+          }
           // Diagnostic — one line per Bill's row so the deploy log reads
           // like a SELECT (no direct prod DB access from dev machines).
           const diag = await pool.query(`
