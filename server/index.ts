@@ -4161,15 +4161,23 @@ app.use("/api/branding/assets", express.static(
         // was created by hand (QzQXbDchpuJcVjBz) and is wired straight to
         // every Bill's brand row here. Idempotent throughout.
         try {
+          // Converge to the verified state regardless of what scribbled on
+          // it since (an enrich run replaced the healed handle with a
+          // guessed "billsrestaurants" within hours): handle exactly
+          // 'billsrestaurant', sources pointing only at the verified feed.
           const h = await pool.query(`
             UPDATE crm_companies SET instagram_handle = 'billsrestaurant'
-             WHERE lower(instagram_handle) LIKE '%bills\\_restaurant%'`);
+             WHERE regexp_replace(lower(name), '[^a-z0-9]', '', 'g') = 'bills'
+               AND merged_into_id IS NULL
+               AND COALESCE(instagram_handle, '') <> 'billsrestaurant'`);
           const s = await pool.query(`
-            DELETE FROM news_sources
-             WHERE type = 'rssapp_instagram'
-               AND (url ILIKE '%instagram.com/bills\\_restaurant%'
-                    OR feed_url LIKE '%eI7KNBwmCZGfkb5O%'
-                    OR feed_url LIKE '%8OltQ1HKUNON5iKQ%')`);
+            DELETE FROM news_sources ns
+             USING crm_companies c
+             WHERE ns.type = 'rssapp_instagram'
+               AND ns.category = 'brand:' || c.id
+               AND regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') = 'bills'
+               AND c.merged_into_id IS NULL
+               AND ns.url NOT ILIKE '%instagram.com/billsrestaurant/%'`);
           const ins = await pool.query(`
             INSERT INTO news_sources (name, url, feed_url, type, category, active)
             SELECT c.name || ' (instagram)',
@@ -4185,6 +4193,18 @@ app.use("/api/branding/assets", express.static(
                                 WHERE ns.category = 'brand:' || c.id AND ns.type = 'rssapp_instagram')`);
           if ((h.rowCount || 0) + (s.rowCount || 0) + (ins.rowCount || 0) > 0) {
             console.log(`[bills-ig heal] handles fixed=${h.rowCount}, dead sources removed=${s.rowCount}, feed wired to ${ins.rowCount} brand row(s)`);
+          }
+          // Diagnostic — one line per Bill's row so the deploy log reads
+          // like a SELECT (no direct prod DB access from dev machines).
+          const diag = await pool.query(`
+            SELECT c.name, c.instagram_handle, ns.id AS sid, ns.url, ns.last_fetched_at,
+                   (SELECT count(*)::int FROM news_articles a WHERE a.source_id = ns.id) AS articles
+              FROM crm_companies c
+              LEFT JOIN news_sources ns ON ns.category = 'brand:' || c.id AND ns.type = 'rssapp_instagram'
+             WHERE regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') = 'bills'
+               AND c.merged_into_id IS NULL`);
+          for (const r of diag.rows) {
+            console.log(`[bills-diag] ${r.name}: handle=${r.instagram_handle} source=${r.sid || "NONE"} url=${r.url || "-"} fetched=${r.last_fetched_at || "never"} articles=${r.articles ?? 0}`);
           }
         } catch (e: any) {
           console.error("[bills-ig heal] failed:", e?.message);

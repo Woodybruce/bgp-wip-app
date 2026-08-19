@@ -163,6 +163,14 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
       skipped.push(`${field} (human-edited)`);
       continue;
     }
+    // instagram_handle is FILL-ONLY: heals and the verified feed pipeline
+    // own existing values. An enrich guess overwrote Bill's verified
+    // handle (billsrestaurant → billsrestaurants, 2026-08-19) because a
+    // previously-AI-stamped field stays "AI-owned" and re-writable.
+    if (field === "instagram_handle" && existingVal) {
+      skipped.push("instagram_handle (already set)");
+      continue;
+    }
     if (aiVal === null || aiVal === undefined) continue;
 
     // Validate rollout_status
