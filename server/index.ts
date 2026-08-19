@@ -4309,6 +4309,14 @@ app.use("/api/branding/assets", express.static(
         } catch (e: any) {
           console.error("[ig-source repair] failed:", e?.message);
         }
+        // Fill in images for Instagram posts ingested before the parser
+        // could read media:content tags.
+        try {
+          const { backfillInstagramImages } = await import("./news-feeds");
+          await backfillInstagramImages(40);
+        } catch (e: any) {
+          console.error("[ig-image backfill] failed:", e?.message);
+        }
       }, 40000);
       // One-off: clear mangled UK trading entities like "UK) Limited" — the
       // entity scraper's broad fallback couldn't cross "("-prefixed tokens

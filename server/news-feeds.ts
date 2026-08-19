@@ -135,6 +135,17 @@ async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
     headers: {
       "User-Agent": "BGP-Dashboard/1.0",
     },
+    // rss-parser only exposes namespaced tags it's told about — without
+    // this, RSS.app Instagram feeds parsed with NO media:content, so every
+    // post ingested imageless (Woody, 2026-08-19: "instagram feeds no
+    // images?"). Attributes land under item["media:content"].$ below.
+    customFields: {
+      item: [
+        ["media:content", "media:content"],
+        ["media:thumbnail", "media:thumbnail"],
+        ["media:group", "media:group"],
+      ],
+    },
   });
 
   // Never-fetched sources first, then oldest-fetched: a fetch pass takes
@@ -219,6 +230,51 @@ async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
   return { fetched, errors };
 }
 
+// Backfill images for Instagram posts ingested before the parser knew
+// about media:content (2026-08-19 — posts landed imageless or with the
+// generic favicon). Re-reads each affected feed and fills image_url by
+// article url. Idempotent; capped per run; safe to call every boot.
+export async function backfillInstagramImages(limitSources = 40): Promise<{ sources: number; filled: number }> {
+  const Parser = (await import("rss-parser")).default;
+  const parser = new Parser({
+    timeout: 10000,
+    customFields: {
+      item: [
+        ["media:content", "media:content"],
+        ["media:thumbnail", "media:thumbnail"],
+        ["media:group", "media:group"],
+      ],
+    },
+  });
+  const res: any = await db.execute(sql`
+    SELECT DISTINCT ns.id, ns.feed_url
+      FROM news_sources ns
+      JOIN news_articles a ON a.source_id = ns.id
+     WHERE ns.type = 'rssapp_instagram' AND ns.feed_url IS NOT NULL
+       AND (a.image_url IS NULL OR a.image_url ILIKE '%/s2/favicons%')
+     LIMIT ${limitSources}`);
+  const rows: any[] = res.rows ?? res;
+  let filled = 0;
+  for (const s of rows) {
+    try {
+      const feed = await parser.parseURL(s.feed_url);
+      for (const item of feed.items || []) {
+        if (!item.link) continue;
+        const img = extractImageUrl(item);
+        if (!img) continue;
+        const upd: any = await db.execute(sql`
+          UPDATE news_articles SET image_url = ${img}
+           WHERE source_id = ${s.id} AND url = ${item.link}
+             AND (image_url IS NULL OR image_url ILIKE '%/s2/favicons%')`);
+        filled += Number(upd?.rowCount || 0);
+      }
+    } catch { /* bad feed — next source */ }
+    await new Promise(r => setTimeout(r, 250));
+  }
+  if (rows.length) console.log(`[ig-image backfill] filled ${filled} image(s) across ${rows.length} source(s)`);
+  return { sources: rows.length, filled };
+}
+
 // Google News RSS image redirects resolve to a Google-hosted logo, not the
 // article image. Reject those so we fall back to a publisher favicon.
 function isJunkImage(url: string | null | undefined): boolean {
@@ -228,12 +284,19 @@ function isJunkImage(url: string | null | undefined): boolean {
 
 function extractImageUrl(item: any): string | null {
   const pick = (u?: string | null) => (u && !isJunkImage(u) ? u : null);
+  // rss-parser puts XML attributes under `$` — media:content's url lives at
+  // item["media:content"].$.url (and arrays when a post has several images).
+  const mediaUrl = (node: any): string | undefined => {
+    if (!node) return undefined;
+    const n = Array.isArray(node) ? node[0] : node;
+    return n?.url || n?.$?.url;
+  };
   const candidates: (string | undefined)[] = [
     item.enclosure?.url,
-    item["media:content"]?.url,
-    item["media:thumbnail"]?.url,
-    item["media:group"]?.["media:content"]?.url,
-    item["media:group"]?.["media:thumbnail"]?.url,
+    mediaUrl(item["media:content"]),
+    mediaUrl(item["media:thumbnail"]),
+    mediaUrl(item["media:group"]?.["media:content"]),
+    mediaUrl(item["media:group"]?.["media:thumbnail"]),
   ];
   for (const c of candidates) {
     const v = pick(c);

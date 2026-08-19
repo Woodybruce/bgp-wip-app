@@ -5588,14 +5588,16 @@ function BrandInstagramCard({ companyId }: { companyId: string }) {
       {header}
       <CardContent className="p-3 pt-0 space-y-2">
         {statsLine}
-        <div className="grid grid-cols-3 gap-1">
+        {/* One row deep, scroll for the rest (Woody, 2026-08-19) — fixed
+            tiles instead of a grid so the card stays shallow at any width. */}
+        <div className="flex gap-1 overflow-x-auto pb-1">
           {data.posts.slice(0, 9).map((p: any, i: number) => (
             <a
               key={p.url || i}
               href={p.url}
               target="_blank"
               rel="noreferrer"
-              className="aspect-square rounded border border-border/60 overflow-hidden bg-muted relative group block"
+              className="w-36 h-36 shrink-0 rounded border border-border/60 overflow-hidden bg-muted relative group block"
               title={p.title || ""}
             >
               {p.imageUrl ? (

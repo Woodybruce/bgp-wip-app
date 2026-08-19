@@ -24,6 +24,8 @@ pool.query(`
 const dedupeSweepFired = new Set<string>();
 // Per-brand cooldown for the server-side UK-entity auto-kick below.
 const entityKickFired = new Map<string, number>();
+// Separate, shorter cooldown for the AML auto-kick — see its comment below.
+const amlKickFired = new Map<string, number>();
 // Per-brand cooldown for the fire-and-forget AI signal-relevance judge.
 const signalJudgeFired = new Map<string, number>();
 
@@ -225,11 +227,16 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         await refreshMenuIntelForCompany(sweepId);
         console.log(`[brand-profile] auto-refreshed menu intel for ${m.name}`);
       })().catch(e => console.warn(`[brand-profile] menu auto-kick skipped: ${e?.message}`));
-      // AML pass self-serves on open, same rationale: the nightly sweep runs
-      // oldest-first, so a freshly-resolved brand sat unscreened at the back
-      // of its queue (Bill's, 2026-08-18). Runs sanctions + ComplyAdvantage
-      // PEP + adverse media once — aml_pep_status flips non-empty on
-      // completion, which stops repeats; the 6h cooldown guards retries.
+    }
+
+    // AML pass self-serves on open: the nightly sweep runs oldest-first, so
+    // a freshly-resolved brand sat unscreened at the back of its queue
+    // (Bill's, 2026-08-18). Own 30-min guard, NOT the 6h entity-kick window
+    // above — a run that recorded no outcome (pre-fix code, transient
+    // ComplyAdvantage error) must retry on the next open, not tomorrow.
+    // aml_pep_status flips non-empty on a completed screen, ending retries.
+    if (!amlKickFired.has(sweepId) || Date.now() - amlKickFired.get(sweepId)! > 30 * 60_000) {
+      amlKickFired.set(sweepId, Date.now());
       (async () => {
         const a = (await pool.query(
           `SELECT name, companies_house_number, aml_pep_status FROM crm_companies WHERE id = $1`, [sweepId])).rows[0];
