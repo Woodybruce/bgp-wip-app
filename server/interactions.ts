@@ -222,6 +222,16 @@ async function syncEmailsForUser(
       console.error(`[offer-check] ${userEmail}:`, e?.message);
     }
 
+    // Email → interest check: the pre-offer signal ("keen on", "send
+    // particulars") becomes a unit_interest row — the tracker's third
+    // activity chip alongside viewings and offers.
+    try {
+      const { syncInterestEmails } = await import("./viewing-sync");
+      await syncInterestEmails(messages, userEmail);
+    } catch (e: any) {
+      console.error(`[interest-check] ${userEmail}:`, e?.message);
+    }
+
     for (const msg of messages) {
       const msId = `email_${msg.id}`;
       if (existingMsIds.has(msId)) continue;

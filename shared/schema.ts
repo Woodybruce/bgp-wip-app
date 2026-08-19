@@ -1877,6 +1877,28 @@ export const insertUnitOfferSchema = createInsertSchema(unitOffers).omit({ id: t
 export type InsertUnitOffer = z.infer<typeof insertUnitOfferSchema>;
 export type UnitOffer = typeof unitOffers.$inferSelect;
 
+// Interest — a brand/agent expressing interest in a tracker unit that isn't
+// yet a viewing or an offer. Mostly auto-detected from the inbox sweep
+// (source 'email'); manual rows have source null. Sits alongside
+// unit_viewings/unit_offers as the third activity signal on the tracker.
+export const unitInterest = pgTable("unit_interest", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  unitId: varchar("unit_id").notNull(),
+  companyName: text("company_name"),
+  contactName: text("contact_name"),
+  contactId: varchar("contact_id"),
+  companyId: varchar("company_id"),
+  interestDate: text("interest_date").notNull(),
+  notes: text("notes"),
+  source: text("source"), // 'email' when auto-detected; null = manual
+  emailConversationId: text("email_conversation_id"), // dedupe key — one thread, one row
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertUnitInterestSchema = createInsertSchema(unitInterest).omit({ id: true, createdAt: true });
+export type InsertUnitInterest = z.infer<typeof insertUnitInterestSchema>;
+export type UnitInterest = typeof unitInterest.$inferSelect;
+
 export const unitMarketingFiles = pgTable("unit_marketing_files", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   unitId: varchar("unit_id").notNull(),
