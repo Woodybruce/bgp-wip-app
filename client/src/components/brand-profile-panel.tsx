@@ -2146,32 +2146,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               </div>
             )}
 
-            {/* Competitor cluster */}
-            {competitors.length > 0 && (
-              <div className="border-t pt-2">
-                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <Users className="w-3 h-3" /> Similar tenants (same use class)
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {competitors.slice(0, 8).map((comp) => (
-                    <Link key={comp.id} href={`/companies/${comp.id}`}>
-                      <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer">
-                        {comp.name}
-                        {comp.store_count && <span className="ml-1 text-muted-foreground">· {comp.store_count}</span>}
-                      </Badge>
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* AI competitors — Claude-researched competitor set. Fills the
-                gap where rent-comps haven't tagged enough similar tenants. */}
+            {/* Similar tenants + AI competitor set merged into ONE section
+                (Woody, 2026-08-19: "are they not the same thing?") — CRM
+                same-use-class chips first, AI-researched set after, deduped. */}
             <AiCompetitorsPanel
               companyId={companyId}
               competitors={c.ai_competitors || []}
               generatedAt={c.ai_competitors_at}
               allCompaniesForPicker={allCompaniesForPicker}
+              similarTenants={competitors.slice(0, 8)}
             />
 
             {/* Deal ledger + active pipeline */}
@@ -2882,11 +2865,12 @@ function PipnetRequirementsRow({ companyId, brandName, isClient }: { companyId: 
   );
 }
 
-function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesForPicker }: {
+function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesForPicker, similarTenants = [] }: {
   companyId: string;
   competitors: Array<{ name: string; reason: string | null; segment: string | null }>;
   generatedAt: string | null;
   allCompaniesForPicker: Array<{ id: string; name: string; domain: string | null; domainUrl: string | null }>;
+  similarTenants?: Array<{ id: string; name: string; store_count?: number | null }>;
 }) {
   const { toast } = useToast();
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -2941,10 +2925,15 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
     }
   };
 
+  // CRM same-use-class tenants render first; AI names that duplicate a CRM
+  // chip are dropped so the merged section never shows a brand twice.
+  const similarNames = new Set(similarTenants.map((t) => t.name.toLowerCase().trim()));
+  const aiCompetitors = competitors.filter((comp) => !similarNames.has(comp.name.toLowerCase().trim()));
+
   return (
     <div className="border-t pt-2">
       <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
-        <Sparkles className="w-3 h-3 text-purple-500" /> Competitor set
+        <Sparkles className="w-3 h-3 text-purple-500" /> Similar tenants &amp; competitor set
         {generatedAt && (
           <span className="text-[10px] ml-1">· {new Date(generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
         )}
@@ -2958,13 +2947,22 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
         </button>
         )}
       </div>
-      {competitors.length === 0 ? (
+      {similarTenants.length === 0 && aiCompetitors.length === 0 ? (
         <p className="text-[11px] text-muted-foreground italic">{cpIsClient ? "No competitor set yet." : "No AI competitors yet — click Research."}</p>
       ) : (
         <div>
-          {/* Button row — bigger, colour-coded by segment */}
-          <div className="flex flex-wrap gap-1.5">
-            {competitors.map((comp, i) => {
+          {/* One row: CRM same-use-class tenants (linked, with store counts)
+              then the AI-researched set, colour-coded by segment */}
+          <div className="flex flex-wrap gap-1.5 items-center">
+            {similarTenants.map((t) => (
+              <Link key={t.id} href={`/companies/${t.id}`}>
+                <span className="text-xs font-medium px-3 py-1.5 rounded-md border bg-background hover:bg-muted cursor-pointer inline-block transition-colors" title="Similar tenant (same use class) — in CRM">
+                  {t.name}
+                  {t.store_count ? <span className="ml-1 text-muted-foreground">· {t.store_count}</span> : null}
+                </span>
+              </Link>
+            ))}
+            {aiCompetitors.map((comp, i) => {
               const isOpen = expanded === i;
               return (
                 <button
@@ -2981,8 +2979,8 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
           </div>
 
           {/* Expanded detail for the selected competitor */}
-          {expanded !== null && competitors[expanded] && (() => {
-            const comp = competitors[expanded];
+          {expanded !== null && aiCompetitors[expanded] && (() => {
+            const comp = aiCompetitors[expanded];
             const crmRow = nameToRow.get(comp.name.toLowerCase());
             // Derive a website URL: CRM domain_url > CRM domain > Google search fallback
             const websiteHref = crmRow?.domainUrl
@@ -4909,7 +4907,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
   const isBrand = !!c.is_tracked_brand;
   const [newsShowAll, setNewsShowAll] = useState(false);
   const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);
-  const [newsTab, setNewsTab] = useState<"press" | "industry" | "linkedin">("industry");
+  const [newsTab, setNewsTab] = useState<"press" | "industry">("industry");
   const [newsTagFilter, setNewsTagFilter] = useState<Set<string>>(new Set());
 
   // Gallery lightbox + auto-refresh state. Image refresh used to be
@@ -5142,11 +5140,12 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
             .map((a: any) => a.source_name)
             .filter((s: any): s is string => !!s && !/^google( news)?$/i.test(s))
         )];
+        // Press = the brand's OWN newsroom only (url on their domain). The
+        // old source-name clause matched "<Brand> (Google News)" on every
+        // article, making Press identical to Industry (Woody, 2026-08-19).
         const tabFiltered = newsTab === "press"
-          ? data.news.filter((a: any) => brandDomain && (a.url?.includes(brandDomain) || a.source_name?.toLowerCase().includes(c.name.toLowerCase().split(" ")[0])))
-          : newsTab === "linkedin"
-            ? data.news.filter((a: any) => a.url?.includes("linkedin.com") || a.source_name?.toLowerCase().includes("linkedin"))
-            : (newsSourceFilter ? data.news.filter((a: any) => a.source_name === newsSourceFilter) : data.news);
+          ? data.news.filter((a: any) => brandDomain && a.url?.includes(brandDomain))
+          : (newsSourceFilter ? data.news.filter((a: any) => a.source_name === newsSourceFilter) : data.news);
         const filtered = newsTagFilter.size === 0
           ? tabFiltered
           : tabFiltered.filter((a: any) => {
@@ -5164,13 +5163,15 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
             </CardHeader>
             <CardContent className="p-3 pt-0 space-y-2">
               <div className="flex flex-wrap items-center gap-1">
-                {(["industry", "press", "linkedin"] as const).map(t => (
+                {/* LinkedIn tab removed — nothing ingests LinkedIn posts, so
+                    it was a permanently-empty tab (Woody, 2026-08-19). */}
+                {(["industry", "press"] as const).map(t => (
                   <button
                     key={t}
                     onClick={() => { setNewsTab(t); setNewsShowAll(false); setNewsSourceFilter(null); }}
                     className={`text-[10px] font-medium px-2 py-0.5 rounded transition-colors ${newsTab === t ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
                   >
-                    {t === "industry" ? `Industry (${data.news.length})` : t === "press" ? "Press" : "LinkedIn"}
+                    {t === "industry" ? `Industry (${data.news.length})` : "Press"}
                   </button>
                 ))}
               </div>
@@ -5193,12 +5194,6 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
               )}
               {newsTab === "press" && filtered.length === 0 && (
                 <p className="text-xs text-muted-foreground italic">No press releases scraped yet.</p>
-              )}
-              {newsTab === "linkedin" && filtered.length === 0 && (
-                <div className="text-xs text-muted-foreground italic flex items-center gap-1.5 py-1">
-                  <Linkedin className="w-3 h-3" />
-                  No LinkedIn posts captured.{c.linkedin_url && <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="text-primary hover:underline not-italic">Visit →</a>}
-                </div>
               )}
               {(() => { return null; })()}
               <div className="space-y-1.5">
@@ -5588,16 +5583,17 @@ function BrandInstagramCard({ companyId }: { companyId: string }) {
       {header}
       <CardContent className="p-3 pt-0 space-y-2">
         {statsLine}
-        {/* One row deep, scroll for the rest (Woody, 2026-08-19) — fixed
-            tiles instead of a grid so the card stays shallow at any width. */}
-        <div className="flex gap-1 overflow-x-auto pb-1">
-          {data.posts.slice(0, 9).map((p: any, i: number) => (
+        {/* Grid that fills the card and scrolls DOWN for the rest (Woody,
+            2026-08-19: "Instagram should scroll down and fill the board") —
+            capped height keeps it in step with the news column beside it. */}
+        <div className="grid grid-cols-3 gap-1 max-h-[600px] overflow-y-auto pb-1">
+          {data.posts.map((p: any, i: number) => (
             <a
               key={p.url || i}
               href={p.url}
               target="_blank"
               rel="noreferrer"
-              className="w-36 h-36 shrink-0 rounded border border-border/60 overflow-hidden bg-muted relative group block"
+              className="aspect-square w-full rounded border border-border/60 overflow-hidden bg-muted relative group block"
               title={p.title || ""}
             >
               {/* Caption sits BEHIND the image so a failed image load

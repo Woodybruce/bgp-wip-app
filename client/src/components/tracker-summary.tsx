@@ -62,10 +62,13 @@ function trackerHref(propertyId?: string, status?: DealStatusCode) {
   return `/deals/letting${qs ? `?${qs}` : ""}`;
 }
 
-export function TrackerSummary({ propertyId, propertyIds, variant }: {
+export function TrackerSummary({ propertyId, propertyIds, variant, tall }: {
   propertyId?: string;
   propertyIds?: string[];
   variant: "strip" | "card";
+  // Dashboard widget sits beside the (tall) Tasks & Briefing card — let it
+  // stretch so the two columns match (Woody, 2026-08-19).
+  tall?: boolean;
 }) {
   const { live, counts, isLoading } = useTrackerUnits(propertyId, propertyIds);
 
@@ -119,7 +122,7 @@ export function TrackerSummary({ propertyId, propertyIds, variant }: {
           <Link href={trackerHref(propertyId)} className="text-[11px] text-primary hover:underline">Add a unit →</Link>
         </div>
       ) : (
-        <div className="space-y-1 max-h-[300px] overflow-y-auto pr-1">
+        <div className={`space-y-1 ${tall ? "max-h-[640px]" : "max-h-[300px]"} overflow-y-auto pr-1`}>
           {live.map(u => (
             <Link key={u.id} href={trackerHref(u.propertyId)} className="flex items-center justify-between gap-2 p-1.5 rounded border bg-card hover:bg-muted/40 min-w-0">
               <span className="text-xs font-medium truncate">{u.unitName || "—"}</span>

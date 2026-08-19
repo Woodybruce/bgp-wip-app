@@ -42,14 +42,29 @@ async function loadBrandPackData(companyId: string) {
   const companyQ = pool.query(
     `SELECT id, name, domain, domain_url, website, description, concept_pitch, store_count,
             rollout_status, backers, instagram_handle, industry, founded_year,
-            employee_count, annual_revenue, logo_url, uk_entity_name, companies_house_number
+            employee_count, annual_revenue, logo_url, uk_entity_name, companies_house_number,
+            brand_analysis
        FROM crm_companies WHERE id = $1`,
     [companyId]
   );
+  // Over-fetch then filter/dedupe in JS — raw brand_signals carry the same
+  // short-name noise the news panel screens out ("£250 off bills" ended up
+  // on the Bill's pack, 2026-08-19).
   const signalsQ = pool.query(
     `SELECT signal_type, headline, detail, signal_date, source
        FROM brand_signals WHERE brand_company_id = $1
-       ORDER BY COALESCE(signal_date, created_at) DESC LIMIT 5`,
+       AND COALESCE(ai_relevant, true) = true
+       ORDER BY COALESCE(signal_date, created_at) DESC LIMIT 14`,
+    [companyId]
+  );
+  const imagesQ = pool.query(
+    `SELECT i.id, i.local_path, i.thumbnail_data
+       FROM image_studio_images i
+      WHERE i.company_id = $1
+         OR (i.brand_name IS NOT NULL
+             AND lower(i.brand_name) = (SELECT lower(name) FROM crm_companies WHERE id = $1))
+      ORDER BY ('brand-hero' = ANY(i.tags))::int DESC, i.created_at DESC
+      LIMIT 3`,
     [companyId]
   );
   const repsQ = pool.query(
@@ -74,10 +89,29 @@ async function loadBrandPackData(companyId: string) {
       ORDER BY updated_at DESC NULLS LAST LIMIT 3`,
     [companyId]
   );
-  const [company, signals, reps, contacts, requirements] = await Promise.all([
-    companyQ, signalsQ, repsQ, contactsQ, requirementsQ,
+  const [company, signals, reps, contacts, requirements, images] = await Promise.all([
+    companyQ, signalsQ, repsQ, contactsQ, requirementsQ, imagesQ,
   ]);
   if (!company.rows[0]) return null;
+
+  // Same relevance screen as the news panel, then dedupe stories that
+  // arrive from several publishers ("Bill's opens at Heathrow" x3).
+  let cleanSignals: any[] = [];
+  try {
+    const { articleLooksRelevantForBrand } = await import("./news-brand-linking");
+    const seen = new Set<string>();
+    for (const s of signals.rows) {
+      const headline = String(s.headline || "");
+      if (!articleLooksRelevantForBrand(company.rows[0].name, company.rows[0].industry, headline, s.detail || null)) continue;
+      const norm = headline.replace(/\s+-\s+[^-]+$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (seen.has(norm)) continue;
+      seen.add(norm);
+      cleanSignals.push(s);
+      if (cleanSignals.length >= 4) break;
+    }
+  } catch {
+    cleanSignals = signals.rows.slice(0, 4);
+  }
 
   // Covenant snapshot rides the CH number when we have one.
   let covenant: { grade: string; score: number | null; verdict: string | null } | null = null;
@@ -92,7 +126,30 @@ async function loadBrandPackData(companyId: string) {
     } catch {}
   }
 
-  return { company: company.rows[0], signals: signals.rows, reps: reps.rows, contacts: contacts.rows, requirements: requirements.rows, covenant };
+  return { company: company.rows[0], signals: cleanSignals, reps: reps.rows, contacts: contacts.rows, requirements: requirements.rows, covenant, images: images.rows };
+}
+
+// Read up to 3 gallery images as embeddable JPEG buffers, cropped to the
+// hero-strip tile shape. readPersistedImage restores DB-persisted copies
+// when a redeploy wiped the local file (same path the gallery endpoint uses).
+async function loadHeroImages(rows: any[], w: number, h: number): Promise<Buffer[]> {
+  const out: Buffer[] = [];
+  if (!rows?.length) return out;
+  let sharp: any;
+  try {
+    sharp = (await import("sharp")).default;
+    const { readPersistedImage } = await import("./image-studio");
+    for (const r of rows) {
+      if (out.length >= 3) break;
+      try {
+        let raw: Buffer | null = r.local_path ? await readPersistedImage(r.local_path) : null;
+        if (!raw && r.thumbnail_data) raw = Buffer.from(r.thumbnail_data, "base64");
+        if (!raw || !raw.length) continue;
+        out.push(await sharp(raw).resize(Math.round(w * 2), Math.round(h * 2), { fit: "cover" }).jpeg({ quality: 78 }).toBuffer());
+      } catch {}
+    }
+  } catch {}
+  return out;
 }
 
 // Fetch any web image and normalise to PNG (pdfkit only takes PNG/JPEG;
@@ -148,15 +205,30 @@ const trim = (s: string | null | undefined, max: number) => {
   return t.length > max ? t.slice(0, max - 1).trimEnd() + "…" : t;
 };
 
+// Trim at the last full sentence inside the budget — a covenant verdict cut
+// mid-word ("deteriora…") read as broken on the first pack (2026-08-19).
+const trimAtSentence = (s: string | null | undefined, max: number) => {
+  const t = String(s || "").replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const lastStop = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf(".”"), cut.endsWith(".") ? cut.length - 1 : -1);
+  if (lastStop > max * 0.5) return cut.slice(0, lastStop + 1);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
+};
+
 router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, res: Response) => {
   try {
     const data = await loadBrandPackData(String(req.params.companyId));
     if (!data) return res.status(404).json({ error: "Company not found" });
-    const { company, signals, reps, contacts, requirements, covenant } = data;
+    const { company, signals, reps, contacts, requirements, covenant, images } = data;
 
-    const [viewerLogo, brandLogo] = await Promise.all([
+    const HERO_W = Math.floor((PAGE_W - 16) / 3);
+    const HERO_H = 96;
+    const [viewerLogo, brandLogo, heroImages] = await Promise.all([
       resolveViewerLogo(req),
       fetchLogoPng(brandLogoUrl(company)),
+      loadHeroImages(images, HERO_W, HERO_H),
     ]);
 
     // @ts-ignore — pdfkit ships without d.ts
@@ -197,16 +269,24 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
     // ── PAGE 1 — the brand ──────────────────────────────────────────────
     let y = pageHeader();
 
-    // Identity row: brand logo box + name + meta
+    // Identity row: brand logo box + name + meta. The logo slot NEVER goes
+    // blank — a missing/unfetchable logo renders a monogram tile instead
+    // (Bill's junk domain left v1 logo-less, 2026-08-19).
     const logoBox = 58;
-    let nameX = LEFT;
+    const nameX = LEFT + logoBox + 16;
     if (brandLogo) {
       doc.roundedRect(LEFT, y, logoBox, logoBox, 8).lineWidth(0.8).strokeColor(RULE).stroke();
       try { doc.image(brandLogo, LEFT + 7, y + 7, { fit: [logoBox - 14, logoBox - 14], align: "center", valign: "center" }); } catch {}
-      nameX = LEFT + logoBox + 16;
+    } else {
+      const initials = String(company.name || "?")
+        .split(/\s+/).map((w: string) => w.replace(/[^A-Za-z0-9]/g, "")[0] || "")
+        .join("").slice(0, 2).toUpperCase() || "?";
+      doc.roundedRect(LEFT, y, logoBox, logoBox, 8).fill(BGP_GREEN);
+      doc.font("Helvetica-Bold").fontSize(initials.length > 1 ? 22 : 26).fillColor("#FFFFFF")
+        .text(initials, LEFT, y + (initials.length > 1 ? 18 : 16), { width: logoBox, align: "center" });
     }
     doc.font("Helvetica-Bold").fontSize(24).fillColor(BGP_DARK_GREEN)
-      .text(company.name || "Unnamed brand", nameX, y + (brandLogo ? 4 : 0), { width: LEFT + PAGE_W - nameX });
+      .text(company.name || "Unnamed brand", nameX, y + 4, { width: LEFT + PAGE_W - nameX });
     let metaY = doc.y + 3;
     const meta: string[] = [];
     if (company.industry) meta.push(company.industry);
@@ -218,7 +298,7 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
       doc.font("Helvetica").fontSize(9).fillColor(MUTED).text(meta.join("   ·   "), nameX, metaY, { width: LEFT + PAGE_W - nameX });
       metaY = doc.y;
     }
-    y = Math.max(y + (brandLogo ? logoBox : 0), metaY) + 14;
+    y = Math.max(y + logoBox, metaY) + 14;
 
     // Concept pitch
     const pitch = trim(company.concept_pitch || company.description, 420);
@@ -251,7 +331,7 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
     // Covenant snapshot panel
     if (covenant?.grade) {
       const gradeColor = GRADE_COLORS[covenant.grade] || BGP_GREEN;
-      const verdict = trim(covenant.verdict, 520);
+      const verdict = trimAtSentence(covenant.verdict, 520);
       const entityBits: string[] = [];
       if (company.uk_entity_name) entityBits.push(company.uk_entity_name);
       if (company.companies_house_number) entityBits.push(`CH ${company.companies_house_number}`);
@@ -274,6 +354,14 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
         doc.font("Helvetica").fontSize(7.5).fillColor(MUTED).text(`UK trading entity: ${entityBits.join("  ·  ")}`, textX, cy);
       }
       y += panelH + 16;
+    }
+
+    // BGP take — the AI brand analysis fills what was dead space on v1
+    const analysis = trimAtSentence(company.brand_analysis, 650);
+    if (analysis && y < BOTTOM - 90) {
+      y = sectionTitle("BGP take", y);
+      doc.font("Helvetica").fontSize(9.5).fillColor(INK).text(analysis, LEFT, y, { width: PAGE_W, lineGap: 2.5 });
+      y = doc.y + 14;
     }
 
     // Backers
@@ -303,6 +391,18 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
     doc.font("Helvetica").fontSize(8).fillColor(FAINT).text("Market activity", LEFT, doc.y + 1);
     y = doc.y + 14;
 
+    // Hero strip — the brand's own gallery imagery gives the pack a face.
+    if (heroImages.length) {
+      heroImages.forEach((img, i) => {
+        const x = LEFT + i * (HERO_W + 8);
+        doc.save();
+        doc.roundedRect(x, y, HERO_W, HERO_H, 6).clip();
+        try { doc.image(img, x, y, { width: HERO_W, height: HERO_H }); } catch {}
+        doc.restore();
+      });
+      y += HERO_H + 16;
+    }
+
     // Live requirements — the thing a landlord actually wants to know
     if (requirements.length) {
       y = sectionTitle("Live requirements", y);
@@ -321,22 +421,30 @@ router.get("/api/brand/:companyId/pack.pdf", requireAuth, async (req: Request, r
       y += 8;
     }
 
-    // Recent signals
+    // Recent signals — headline without the " - Publisher" suffix, publisher
+    // shown in the meta line instead of a raw Google URL, and details that
+    // just echo the headline dropped (all v1 complaints, 2026-08-19).
     if (signals.length && y < BOTTOM - 60) {
       y = sectionTitle("Recent signals", y);
       for (const s of signals) {
         if (y > BOTTOM - 36) break;
+        const rawHeadline = String(s.headline || "");
+        const pubMatch = rawHeadline.match(/\s+-\s+([^-]{2,40})$/);
+        const publisher = pubMatch ? pubMatch[1].trim() : (s.source && !/^https?:\/\//i.test(s.source) ? s.source : "");
+        const headline = pubMatch ? rawHeadline.slice(0, pubMatch.index).trim() : rawHeadline;
         const dateSig = s.signal_date ? new Date(s.signal_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
         doc.rect(LEFT, y + 2, 2.5, 12).fill(BGP_GREEN);
-        doc.font("Helvetica-Bold").fontSize(9).fillColor(INK).text(trim(s.headline, 110), LEFT + 10, y, { width: PAGE_W - 10 });
+        doc.font("Helvetica-Bold").fontSize(9).fillColor(INK).text(trim(headline, 110), LEFT + 10, y, { width: PAGE_W - 10 });
         y = doc.y + 1;
-        const metaLine = [String(s.signal_type || "").replace(/_/g, " "), dateSig, s.source].filter(Boolean).join("  ·  ");
+        const metaLine = [String(s.signal_type || "").replace(/_/g, " "), dateSig, publisher].filter(Boolean).join("  ·  ");
         if (metaLine) {
           doc.font("Helvetica").fontSize(7).fillColor(FAINT).text(trim(metaLine, 110), LEFT + 10, y);
           y = doc.y + 1;
         }
-        if (s.detail) {
-          doc.font("Helvetica").fontSize(8.5).fillColor(MUTED).text(trim(s.detail, 200), LEFT + 10, y, { width: PAGE_W - 10, lineGap: 1.5 });
+        const detail = String(s.detail || "").trim();
+        const norm = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (detail && !norm(detail).startsWith(norm(headline).slice(0, 40))) {
+          doc.font("Helvetica").fontSize(8.5).fillColor(MUTED).text(trimAtSentence(detail, 200), LEFT + 10, y, { width: PAGE_W - 10, lineGap: 1.5 });
           y = doc.y;
         }
         y += 8;

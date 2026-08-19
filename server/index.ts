@@ -4470,6 +4470,14 @@ app.use("/api/branding/assets", express.static(
         } catch (e: any) {
           console.error("[ig-image backfill] failed:", e?.message);
         }
+        // Real images for Google News articles (og:image via the publisher
+        // page) — brand news rows rendered text-only without them.
+        try {
+          const { backfillNewsOgImages } = await import("./news-feeds");
+          await backfillNewsOgImages(25);
+        } catch (e: any) {
+          console.error("[news-og-image] boot pass failed:", e?.message);
+        }
       }, 40000);
       // One-off: clear mangled UK trading entities like "UK) Limited" — the
       // entity scraper's broad fallback couldn't cross "("-prefixed tokens
