@@ -534,6 +534,25 @@ async function victoriaRound(page, cross) {
     if (!r.hasSuggestion) throw new Error('mlr-scope 200 but no suggestion payload');
   });
 
+  // Map goad layers under concurrency (r336): retail-units + occupier-plan
+  // fire together from the map page; on a fresh DB both used to race
+  // ensureGoadTables' CREATE TABLE and one 500'd (duplicate pg_type). The
+  // fixture ships no goad_units, so the first pair here exercises the race.
+  await step(page, p, 'staff-map-goad-concurrent', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const bbox = 'bbox=51.512,-0.145,51.516,-0.138';
+      const hit = (path) => fetch(`${path}?${bbox}`, { headers: auth }).then((x) => x.status).catch(() => 0);
+      const statuses = await Promise.all([
+        hit('/api/map/retail-units'), hit('/api/map/occupier-plan'),
+        hit('/api/map/retail-units'), hit('/api/map/occupier-plan'),
+      ]);
+      return { statuses };
+    });
+    const bad = r.statuses.filter((s) => s !== 200);
+    if (bad.length) throw new Error(`concurrent goad layers returned ${r.statuses.join(',')} (all must be 200, never 500)`);
+  });
+
   // AI failures must reach a terminal state the user can see (r261):
   // 1. Contact "Verify with AI" must never surface a raw 500/SDK error —
   //    no-key environments get a 503 with the house "not configured" copy.

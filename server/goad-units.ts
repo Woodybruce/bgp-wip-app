@@ -306,8 +306,20 @@ export function normaliseCategory(opts: {
 // Table + indexes (runtime-created; idempotent)
 // ---------------------------------------------------------------------------
 let ensured = false;
+// Concurrent callers share one in-flight promise: CREATE TABLE IF NOT EXISTS
+// is not concurrency-safe in pg (duplicate pg_type race on a fresh DB).
+let ensuring: Promise<void> | null = null;
 export async function ensureGoadTables(): Promise<void> {
   if (ensured) return;
+  if (!ensuring) {
+    ensuring = doEnsureGoadTables().finally(() => {
+      ensuring = null;
+    });
+  }
+  return ensuring;
+}
+
+async function doEnsureGoadTables(): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS goad_units (
       id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
