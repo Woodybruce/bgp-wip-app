@@ -397,29 +397,41 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
            SELECT DISTINCT ON (n.url) n.id, n.title, n.summary, n.ai_summary, n.url, n.image_url, n.source_name, n.published_at, n.category
              FROM news_articles n,
                   (SELECT name, domain_url, domain, industry FROM crm_companies WHERE id = $1) AS co
-            -- Apostrophe-stripped comparison: the brand row says "Bills" but
-            -- real coverage writes "Bill's" — the plain substring match never
-            -- saw genuine articles, only NFL junk.
-            WHERE (replace(n.title, '''', '') ILIKE '%' || replace(co.name, '''', '') || '%'
+            -- Two routes in: (1) the brand's OWN Google News source — that
+            -- feed's query was already built for this specific brand, so its
+            -- articles are in without name gymnastics (Bill's had 141 such
+            -- articles and showed none, 2026-08-19); (2) name-matched
+            -- articles from everywhere else, with the short-name guards.
+            WHERE (
+              n.source_id IN (SELECT ns.id FROM news_sources ns WHERE ns.category = 'brand:' || $1 AND ns.type = 'google_news')
+              OR (
+                -- Apostrophe-stripped comparison: the brand row says "Bills" but
+                -- real coverage writes "Bill's" — the plain substring match never
+                -- saw genuine articles, only NFL junk.
+                (replace(n.title, '''', '') ILIKE '%' || replace(co.name, '''', '') || '%'
                    OR replace(coalesce(n.summary, ''), '''', '') ILIKE '%' || replace(co.name, '''', '') || '%'
                    OR replace(coalesce(n.ai_summary, ''), '''', '') ILIKE '%' || replace(co.name, '''', '') || '%')
-              AND (
-                -- Long distinctive names match on their own. Short/ambiguous
-                -- names ("Bills", "Next", "Oliver") need the brand's own
-                -- domain in the URL or the brand's industry word in the
-                -- headline. The old name-at-start-of-headline allowance let
-                -- every "Bills …" NFL fixture headline through — removed.
-                length(trim(co.name)) > 8
-                OR (co.domain_url IS NOT NULL AND n.url ILIKE '%' || regexp_replace(co.domain_url, '^https?://(www\.)?', '', 'i') || '%')
-                OR (co.industry IS NOT NULL AND n.title ILIKE '%' || split_part(co.industry, ' ', 1) || '%')
-                -- Possessive form is a strong signal for short names: real
-                -- coverage writes "Bill's" (apostrophe), NFL noise writes
-                -- "Bills" — accept the exact apostrophized variant. Only
-                -- applies to names ending in s, so "Next" etc. stay strict.
-                OR (regexp_replace(co.name, 's$', '''s') <> co.name
-                    AND (n.title ILIKE '%' || regexp_replace(co.name, 's$', '''s') || '%'
-                         OR coalesce(n.summary, '') ILIKE '%' || regexp_replace(co.name, 's$', '''s') || '%'))
+                AND (
+                  -- Long distinctive names match on their own. Short/ambiguous
+                  -- names ("Bills", "Next", "Oliver") need the brand's own
+                  -- domain in the URL or the brand's industry word in the
+                  -- headline. The old name-at-start-of-headline allowance let
+                  -- every "Bills …" NFL fixture headline through — removed.
+                  length(trim(co.name)) > 8
+                  OR (co.domain_url IS NOT NULL AND n.url ILIKE '%' || regexp_replace(co.domain_url, '^https?://(www\.)?', '', 'i') || '%')
+                  OR (co.industry IS NOT NULL AND n.title ILIKE '%' || split_part(co.industry, ' ', 1) || '%')
+                  -- Possessive form is a strong signal for short names: real
+                  -- coverage writes "Bill's" (apostrophe), NFL noise writes
+                  -- "Bills" — accept the exact apostrophized variant. Only for
+                  -- names ending in a bare s (a name already possessive like
+                  -- "Bill's" would double the apostrophe and match nothing).
+                  OR (position('''' in co.name) = 0
+                      AND regexp_replace(co.name, 's$', '''s') <> co.name
+                      AND (n.title ILIKE '%' || regexp_replace(co.name, 's$', '''s') || '%'
+                           OR coalesce(n.summary, '') ILIKE '%' || regexp_replace(co.name, 's$', '''s') || '%'))
+                )
               )
+            )
             ORDER BY n.url, n.published_at DESC NULLS LAST
          ) deduped
         ORDER BY published_at DESC NULLS LAST
