@@ -67,11 +67,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r342 · 2026-08-19 ~18:40 UTC · ROUND IN PROGRESS (LIGHT — r341 had the journey)
-- Staging = origin/JOGQK merge already in r341; "Already up to date" this
-  round. pg_hba trust fix needed again (fresh container).
+### r342 · 2026-08-19 · LIGHT (r341 had the journey)
+- Fresh container (pg_hba trust fix per r205; superuser bgp role + restore +
+  schema grant per r249). origin/JOGQK merge: "Already up to date" — no new
+  production commits since r341's merge; r341 unit_interest boot-heal intact.
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh fixture DB,
-  FRESH_BUILD=1). Two-bot sweep + triage pending.
+  FRESH_BUILD=1). Two-bot round 342: exit 0, all scenarios ok, 3 issues all
+  listed noise (rocketreach-400; brand-gaps/live-intel 503; commentary-regen
+  503 — qa/logs/round-342.jsonl). Dev-server log: 0 raw 500/502/504 (tally:
+  2xx/3xx + expected 400/401/403/404/503); error sweep only keyless/
+  no-network config noise (Azure/Revolut/RSS-403). 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #2 client desktop (r342 was LIGHT → r343 FULL).
 
 ### r341 · 2026-08-19 · FULL (rotation #1 staff desktop)
 - Staging merged with origin/JOGQK (dbb5c6d — Letting Tracker interest
