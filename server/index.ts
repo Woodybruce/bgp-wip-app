@@ -4369,6 +4369,22 @@ app.use("/api/branding/assets", express.static(
         } catch (e: any) {
           console.error("[ig-requeue] failed:", e?.message);
         }
+        // is_tracked_brand is self-maintaining (Woody, 2026-08-19: "all
+        // brands are tracked brands"): every Tenant-type company gets the
+        // flag automatically, so news feeds / enrichment / AI takes never
+        // silently skip a brand again (Bill's lost its flag to the old
+        // duplicate row and had no news for weeks). The flag itself stays —
+        // it's what keeps the AI machinery off landlords/agents/clients.
+        try {
+          const flagged = await pool.query(`
+            UPDATE crm_companies SET is_tracked_brand = true
+             WHERE company_type ILIKE 'tenant%'
+               AND merged_into_id IS NULL
+               AND COALESCE(is_tracked_brand, false) = false`);
+          if (flagged.rowCount) console.log(`[tracked-brand heal] flagged ${flagged.rowCount} Tenant-type company(ies) as tracked brands`);
+        } catch (e: any) {
+          console.error("[tracked-brand heal] failed:", e?.message);
+        }
         // Fill in images for Instagram posts ingested before the parser
         // could read media:content tags.
         try {
