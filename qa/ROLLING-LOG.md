@@ -67,6 +67,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r333 · 2026-08-19 · ROUND IN PROGRESS (provisional)
+- FULL round (r332 was LIGHT), rotation #1 staff desktop. Staging merged
+  with origin/JOGQK (already up to date — no new production commits since
+  r332). Fresh container; pg_hba trust per r205; SUPERUSER bgp role +
+  restore + schema grant per r249.
+- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures,
+  FRESH_BUILD=1, fresh DB). Two-bot round 333 next; journey (staff desktop
+  Letting Tracker target-operator write) after.
+
 ### r332 · 2026-08-18 · LIGHT (r331 had the journey)
 - Staging merged with origin/JOGQK (already up to date — no new production
   commits since r331). Fresh container (repo pre-cloned; pg_hba trust per
