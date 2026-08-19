@@ -67,18 +67,23 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r334 · 2026-08-19 · ROUND IN PROGRESS (heartbeat)
-- LIGHT round (r333 had the journey). Staging merged with origin/JOGQK
-  (already up to date — no new production commits since r333). Fresh
-  container (repo pre-cloned; pg_hba trust per r205; SUPERUSER bgp role +
-  restore + schema grant per r249). Regression: run-smoke.sh GREEN first
-  pass (42 checks, 0 failures, FRESH_BUILD=1, fresh DB). Two-bot round
-  334: exit 0, all scenarios ok first run. 3 logged issues all listed
-  noise (rocketreach-400; brand-gaps/live-intel 503; commentary-regen
-  503 — qa/logs/round-334.jsonl). Dev-server log: 146 5xx all
-  keyless-AI 503s, 0 raw 500/502/504.
-- Triage list: nothing non-noise. No deferred bugs from r333. Light-round
-  work next: deeper log/console sweep + harness hygiene.
+### r334 · 2026-08-19 · LIGHT (r333 had the journey)
+- Staging merged with origin/JOGQK (already up to date — no new production
+  commits since r333). Fresh container (repo pre-cloned; pg_hba trust per
+  r205; SUPERUSER bgp role + restore + schema grant per r249). Regression:
+  run-smoke.sh GREEN first pass (42 checks, 0 failures, FRESH_BUILD=1,
+  fresh DB). Two-bot round 334: exit 0, all scenarios ok first run. 3
+  logged issues all listed noise (rocketreach-400; brand-gaps/live-intel
+  503; commentary-regen 503 — qa/logs/round-334.jsonl). Dev-server log:
+  146 5xx all keyless-AI 503s, 0 raw 500/502/504; smoke prod log: 0 raw
+  5xx, 403s are the suite's own scope-denial checks, sharepoint 404s =
+  no-M365 noise. Stack-trace sweep of both logs: only keyless Azure/
+  Anthropic noise, all degrade gracefully (202/503).
+- Light-round work: no deferred bugs from r331-333, no new UX batches to
+  verify (JOGQK unchanged since r333's merge). tsc --noEmit clean.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #2 client desktop (r334 was LIGHT → r335 FULL).
 
 ### r333 · 2026-08-19 · FULL (rotation #1 staff desktop)
 - Staging merged with origin/JOGQK (already up to date — no new production
