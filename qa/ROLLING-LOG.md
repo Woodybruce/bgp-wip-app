@@ -67,14 +67,34 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r336 · 2026-08-19 · ROUND IN PROGRESS (LIGHT — r335 had the journey)
+### r336 · 2026-08-19 · LIGHT (r335 had the journey)
 - Staging merged with origin/JOGQK (4 new production commits — AML
   screening/enrich/IG diag, a99b777). Fresh container (pg_hba trust per
-  r205). Regression: run-smoke.sh GREEN first pass (42 checks, 0
-  failures, fresh build, fresh DB). Smoke app log: 0 raw 5xx, 22 keyless
-  503s (noise), RSS 403s = external-network noise. Triage list: nothing
-  non-noise. Next: fix r335 deferred bug (ensureGoadTables in-flight
-  dedup, server/goad-units.ts).
+  r205; superuser bgp role + restore + schema grant per r249).
+  Regression: run-smoke.sh GREEN ×2 first pass (42 checks, 0 failures;
+  fresh build before the fix, rebuilt bundle after). Two-bot round 336:
+  exit 0, all scenarios ok first run, 0 flow-failures; 3 logged issues
+  all listed noise (rocketreach-400; brand-gaps/live-intel 503;
+  commentary-regen 503 — qa/logs/round-336.jsonl). Dev-server log: 0 raw
+  HTTP 5xx (one " 500 " grep hit is "500 articles" in a News Feed line,
+  not a status), 150 keyless 503s; smoke logs 0 raw 5xx, RSS 403s =
+  external-network noise.
+- Bug fixed (1, the r335 deferral): GET /api/map/retail-units 500 —
+  duplicate pg_type race when two map-layer requests hit ensureGoadTables
+  concurrently on a fresh DB. Fix: concurrent callers now share one
+  in-flight promise (ensuring, reset in finally so a failed attempt can
+  retry) in server/goad-units.ts. Verified pre-fix-class repro post-fix:
+  fresh DB with no goad_units, 6 concurrent retail-units + occupier-plan
+  requests as Victoria → all 200, table created once, 0 duplicate-key
+  errors in the log. tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 staff-map-goad-concurrent (4 parallel
+  retail-units/occupier-plan hits, all must be 200 — fixture ships no
+  goad_units so the first pair exercises the race each round). Ran live
+  this round and passed; r335's client-pi-investigator-hidden also had
+  its first live run — passed.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #3 client mobile 390px (this round was LIGHT →
+  r337 is FULL).
 
 ### r335 · 2026-08-19 · FULL (rotation #2 client desktop)
 - Staging merged with origin/JOGQK (already up to date — no new production
