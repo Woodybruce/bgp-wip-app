@@ -4170,6 +4170,16 @@ app.use("/api/branding/assets", express.static(
              WHERE regexp_replace(lower(name), '[^a-z0-9]', '', 'g') = 'bills'
                AND merged_into_id IS NULL
                AND COALESCE(instagram_handle, '') <> 'billsrestaurant'`);
+          // Bill's had no news because Google News feeds are only created
+          // for is_tracked_brand rows and the CH-linked Bill's row lost the
+          // flag (it lived on the old duplicate). Restore it so the next
+          // ensureBrandGoogleNewsFeeds cycle creates its news feed.
+          const tb = await pool.query(`
+            UPDATE crm_companies SET is_tracked_brand = true
+             WHERE regexp_replace(lower(name), '[^a-z0-9]', '', 'g') = 'bills'
+               AND merged_into_id IS NULL
+               AND COALESCE(is_tracked_brand, false) = false`);
+          if (tb.rowCount) console.log(`[bills-ig heal] restored is_tracked_brand on ${tb.rowCount} bills row(s)`);
           const s = await pool.query(`
             DELETE FROM news_sources ns
              USING crm_companies c
@@ -4283,6 +4293,19 @@ app.use("/api/branding/assets", express.static(
           for (const r of diag.rows) {
             console.log(`[bills-diag] ${r.name}: handle=${r.instagram_handle} source=${r.sid || "NONE"} url=${r.url || "-"} fetched=${r.last_fetched_at || "never"} articles=${r.articles ?? 0} withImages=${r.with_images ?? 0} sampleImage=${String(r.sample_image || "-").slice(0, 120)}`);
           }
+          // News-source breakdown per bills row — Woody reports Bill's has
+          // no news while almost every brand does (2026-08-19). Shows
+          // whether a google_news source exists and is producing articles.
+          const newsDiag = await pool.query(`
+            SELECT c.name, c.is_tracked_brand, ns.type, ns.url,
+                   (SELECT count(*)::int FROM news_articles a WHERE a.source_id = ns.id) AS articles
+              FROM crm_companies c
+              LEFT JOIN news_sources ns ON ns.category = 'brand:' || c.id AND ns.type = 'google_news'
+             WHERE regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') = 'bills'
+               AND c.merged_into_id IS NULL`);
+          for (const r of newsDiag.rows) {
+            console.log(`[bills-news-diag] ${r.name}: tracked=${r.is_tracked_brand} newsSource=${r.type || "NONE"} url=${String(r.url || "-").slice(0, 90)} articles=${r.articles ?? 0}`);
+          }
           // Representation rows touching Bill's or Matt Porter — Woody
           // reports the retained agent vanished and a self-referential
           // "representing: Bills" row appeared (2026-08-19).
@@ -4329,6 +4352,115 @@ app.use("/api/branding/assets", express.static(
           }
         } catch (e: any) {
           console.error("[ig-article purge] failed:", e?.message);
+        }
+        // Instagram sources whose stored posts are ALL imageless (ingested
+        // before the parser could read media tags, and too old to backfill
+        // because the feed window has moved on) render caption-only strips
+        // (Gail's, spotted by Woody 2026-08-19). Push them to the front of
+        // the fetch queue so they ingest the current, imaged posts.
+        try {
+          const requeued = await pool.query(`
+            UPDATE news_sources ns SET last_fetched_at = NULL
+             WHERE ns.type = 'rssapp_instagram'
+               AND ns.last_fetched_at IS NOT NULL
+               AND EXISTS (SELECT 1 FROM news_articles a WHERE a.source_id = ns.id)
+               AND NOT EXISTS (SELECT 1 FROM news_articles a WHERE a.source_id = ns.id AND a.image_url IS NOT NULL AND a.image_url NOT ILIKE '%/s2/favicons%')`);
+          if (requeued.rowCount) console.log(`[ig-requeue] ${requeued.rowCount} zero-image Instagram source(s) queued for immediate refetch`);
+        } catch (e: any) {
+          console.error("[ig-requeue] failed:", e?.message);
+        }
+        // is_tracked_brand is self-maintaining (Woody, 2026-08-19: "all
+        // brands are tracked brands"): every Tenant-type company gets the
+        // flag automatically, so news feeds / enrichment / AI takes never
+        // silently skip a brand again (Bill's lost its flag to the old
+        // duplicate row and had no news for weeks). The flag itself stays —
+        // it's what keeps the AI machinery off landlords/agents/clients.
+        try {
+          const flagged = await pool.query(`
+            UPDATE crm_companies SET is_tracked_brand = true
+             WHERE company_type ILIKE 'tenant%'
+               AND merged_into_id IS NULL
+               AND COALESCE(is_tracked_brand, false) = false`);
+          if (flagged.rowCount) console.log(`[tracked-brand heal] flagged ${flagged.rowCount} Tenant-type company(ies) as tracked brands`);
+        } catch (e: any) {
+          console.error("[tracked-brand heal] failed:", e?.message);
+        }
+        // Read-only census of brand rows with zero substance — no deals,
+        // requirements, contacts, reps or signals (Woody, 2026-08-19: "we
+        // don't want any brands on here that are not worth tracking").
+        // Prints counts + a sample so the cull list can be reviewed BEFORE
+        // anything is deleted. Nothing is modified here.
+        try {
+          const cull = await pool.query(`
+            SELECT count(*)::int AS total,
+                   array_to_string((array_agg(name ORDER BY created_at DESC))[1:25], ' | ') AS sample
+              FROM crm_companies c
+             WHERE c.company_type ILIKE 'tenant%'
+               AND c.merged_into_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM crm_deals d WHERE d.tenant_id = c.id OR d.purchaser_id = c.id)
+               AND NOT EXISTS (SELECT 1 FROM crm_requirements_leasing r WHERE r.company_id = c.id)
+               AND NOT EXISTS (SELECT 1 FROM crm_contacts ct WHERE ct.company_id = c.id)
+               AND NOT EXISTS (SELECT 1 FROM brand_agent_representations br WHERE br.brand_company_id = c.id)
+               AND NOT EXISTS (SELECT 1 FROM brand_signals bs WHERE bs.brand_company_id = c.id)`);
+          const totalBrands = await pool.query(`SELECT count(*)::int AS n FROM crm_companies WHERE company_type ILIKE 'tenant%' AND merged_into_id IS NULL`);
+          console.log(`[brand-cull census] ${cull.rows[0]?.total ?? 0} of ${totalBrands.rows[0]?.n ?? 0} brand rows have zero substance (no deals/reqs/contacts/reps/signals). Sample: ${cull.rows[0]?.sample || "-"}`);
+        } catch (e: any) {
+          console.error("[brand-cull census] failed:", e?.message);
+        }
+        // Safe cull (approved by Woody, 2026-08-19 "Did the safe cull"):
+        // ONLY zero-substance rows are touched. (1) case/punctuation
+        // duplicates of a brand that HAS substance fold into it via
+        // merged_into_id — reversible, same mechanism as the Brand
+        // Intelligence merge; (2) garbage names ("Company 04828814") are
+        // deleted outright; (3) news sources/articles left orphaned by
+        // either go too. Real-but-empty brands (Kate Spade etc.) are NOT
+        // touched — they stay for manual review.
+        try {
+          const zeroCond = `
+               c.merged_into_id IS NULL
+           AND c.company_type ILIKE 'tenant%'
+           AND NOT EXISTS (SELECT 1 FROM crm_deals d WHERE d.tenant_id = c.id OR d.purchaser_id = c.id)
+           AND NOT EXISTS (SELECT 1 FROM crm_requirements_leasing r WHERE r.company_id = c.id)
+           AND NOT EXISTS (SELECT 1 FROM crm_contacts ct WHERE ct.company_id = c.id)
+           AND NOT EXISTS (SELECT 1 FROM brand_agent_representations br WHERE br.brand_company_id = c.id)
+           AND NOT EXISTS (SELECT 1 FROM brand_signals bs WHERE bs.brand_company_id = c.id)`;
+          const folded = await pool.query(`
+            WITH zero AS (
+              SELECT c.id, regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') AS norm
+                FROM crm_companies c
+               WHERE ${zeroCond}
+            ),
+            survivor AS (
+              SELECT DISTINCT ON (norm) id, norm FROM (
+                SELECT s.id, s.created_at, regexp_replace(lower(s.name), '[^a-z0-9]', '', 'g') AS norm
+                  FROM crm_companies s
+                 WHERE s.company_type ILIKE 'tenant%' AND s.merged_into_id IS NULL
+                   AND s.id NOT IN (SELECT id FROM zero)
+              ) t ORDER BY norm, created_at ASC
+            )
+            UPDATE crm_companies c
+               SET merged_into_id = survivor.id
+              FROM zero, survivor
+             WHERE c.id = zero.id AND survivor.norm = zero.norm AND survivor.id <> c.id
+            RETURNING c.name`);
+          if (folded.rowCount) console.log(`[brand-cull] folded ${folded.rowCount} zero-substance duplicate(s): ${folded.rows.map((r: any) => r.name).slice(0, 25).join(" | ")}`);
+          const junk = await pool.query(`
+            DELETE FROM crm_companies c
+             WHERE ${zeroCond}
+               AND c.name ~* '^company[ _-]?[0-9]{5,10}$'
+            RETURNING c.name`);
+          if (junk.rowCount) console.log(`[brand-cull] deleted ${junk.rowCount} garbage-name row(s): ${junk.rows.map((r: any) => r.name).slice(0, 25).join(" | ")}`);
+          const orphanArts = await pool.query(`
+            DELETE FROM news_articles a USING news_sources ns
+             WHERE a.source_id = ns.id AND ns.category LIKE 'brand:%'
+               AND NOT EXISTS (SELECT 1 FROM crm_companies c WHERE 'brand:' || c.id = ns.category AND c.merged_into_id IS NULL)`);
+          const orphanSrcs = await pool.query(`
+            DELETE FROM news_sources ns
+             WHERE ns.category LIKE 'brand:%'
+               AND NOT EXISTS (SELECT 1 FROM crm_companies c WHERE 'brand:' || c.id = ns.category AND c.merged_into_id IS NULL)`);
+          if (orphanArts.rowCount || orphanSrcs.rowCount) console.log(`[brand-cull] removed ${orphanSrcs.rowCount} orphaned news source(s) + ${orphanArts.rowCount} stale article(s)`);
+        } catch (e: any) {
+          console.error("[brand-cull] failed:", e?.message);
         }
         // Fill in images for Instagram posts ingested before the parser
         // could read media:content tags.
