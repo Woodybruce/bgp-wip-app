@@ -1365,6 +1365,31 @@ router.get("/api/brand/:companyId/ticker-suggest", requireAuth, async (req: Requ
 });
 
 // ─── Tracked brands list ─────────────────────────────────────────────────
+// Zero-substance brand rows for the manual cull review (Woody, 2026-08-19
+// "give me the spread sheet"). Server-internal token gate (same secret as
+// chatbgp-internal) — used by tooling to export the list; no session needed.
+router.get("/api/brand-cull/export", async (req: Request, res: Response) => {
+  try {
+    const { internalStaffToken } = await import("./chatbgp-internal");
+    if (req.headers["x-bgp-internal"] !== internalStaffToken()) return res.status(403).json({ error: "forbidden" });
+    const { rows } = await pool.query(`
+      SELECT c.id, c.name, c.industry, c.company_type, c.store_count, c.domain,
+             c.instagram_handle, c.created_at, c.last_enriched_at, c.enrichment_source
+        FROM crm_companies c
+       WHERE c.company_type ILIKE 'tenant%'
+         AND c.merged_into_id IS NULL
+         AND NOT EXISTS (SELECT 1 FROM crm_deals d WHERE d.tenant_id = c.id OR d.purchaser_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM crm_requirements_leasing r WHERE r.company_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM crm_contacts ct WHERE ct.company_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM brand_agent_representations br WHERE br.brand_company_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM brand_signals bs WHERE bs.brand_company_id = c.id)
+       ORDER BY lower(c.name)`);
+    res.json({ count: rows.length, rows });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || "failed" });
+  }
+});
+
 router.get("/api/brand/tracked", requireAuth, async (_req: Request, res: Response) => {
   try {
     const { rows } = await pool.query(
