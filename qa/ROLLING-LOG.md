@@ -67,16 +67,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r338 · 2026-08-19 ~10:50 UTC · ROUND IN PROGRESS (LIGHT — r337 had the journey)
+### r338 · 2026-08-19 · LIGHT (r337 had the journey)
 - Staging merged with origin/JOGQK (new production commits: Instagram
   feed/image parsing, AML retry, RSS typing). Fresh container (pg_hba trust
   per r205; superuser bgp role + restore + schema grant per r249).
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh fixture DB,
-  reused dist). Two-bot round 338 still running; triage so far: 3 logged
-  issues, all listed noise (rocketreach-400; brand-gaps/live-intel 503;
-  commentary-regen 503). Dev-server log so far: 0 raw 500/502/504, 128
-  keyless 503s, RSS 403/ENOTFOUND = external-network noise.
-- No deferred bugs outstanding from prior rounds. Final entry to follow.
+  Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh fixture DB,
+  reused dist). Two-bot round 338: exit 0, all scenarios ok first run, 0
+  flow-failures; 3 logged issues all listed noise (rocketreach-400;
+  brand-gaps/live-intel 503; commentary-regen 503 — qa/logs/round-338.jsonl).
+  Dev-server log for the whole round: 0 raw 500/502/504, 145 keyless 503s;
+  RSS 403/ENOTFOUND = external-network noise. goad map endpoints all
+  200/304 (r336 concurrency fix holds on the merged code).
+- Light-round work: no deferred bugs outstanding from r335-r337; nothing
+  broken found in triage. 0 app bugs.
+- Bugs fixed: 0. Deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r338 was LIGHT → r339 FULL).
 
 ### r337 · 2026-08-19 · FULL (rotation #3 client mobile 390px)
 - Staging merged with origin/JOGQK (new production commits: Instagram feed
