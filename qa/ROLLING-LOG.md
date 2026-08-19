@@ -67,6 +67,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r341 · 2026-08-19 · ROUND IN PROGRESS (FULL, rotation #1 staff desktop)
+- Staging merged with origin/JOGQK (dbb5c6d — Letting Tracker interest
+  signal, brand cull export endpoint, news-feeds work). tsc clean.
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh fixture DB,
+  FRESH_BUILD=1 on merged code + fix below).
+- Bug fixed 1 (parent-session 15:35 regression): GET
+  /api/available-units/all-interest + /all-interest-counts 500'd with
+  `relation "unit_interest" does not exist` — commit 1cb9fb30 added the
+  drizzle def + reads/writes but no migration/boot heal. Added CREATE TABLE
+  IF NOT EXISTS unit_interest + partial unique index on
+  email_conversation_id (matches the ON CONFLICT clause in viewing-sync)
+  to the boot DDL in server/index.ts, beside the unit_offers heals.
+  Verified: both endpoints 200 as staff on fresh fixture boot.
+- Remaining: two-bot round, staff-desktop journey, harness growth.
+
 ### r340 · 2026-08-19 · LIGHT (r339 had the journey)
 - Staging merged with origin/JOGQK (new production commits: safe brand
   cull + zero-substance census, brand-news own-Google-News-source +
