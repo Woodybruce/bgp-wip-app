@@ -398,6 +398,15 @@ function AuthenticatedApp() {
   // An unpinned peek must NOT tuck away while a draft sits in the composer —
   // a mouse slip was closing the panel mid-message.
   const [chatHasDraft, setChatHasDraft] = useState(false);
+
+  // The /chatbgp Messages list shows team chats too; clicking one there
+  // fires this event so the Team Chat panel opens pinned on that thread
+  // (the panel owns team messaging — sockets, typing, members).
+  useEffect(() => {
+    const onOpenTeamThread = () => { setChatPinned(true); setChatOpen(true); };
+    window.addEventListener("bgp:open-team-thread", onOpenTeamThread);
+    return () => window.removeEventListener("bgp:open-team-thread", onOpenTeamThread);
+  }, [setChatOpen]);
   const [location, navigate] = useLocation();
   const isChatBGP = location === "/chatbgp";
 

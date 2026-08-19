@@ -929,7 +929,10 @@ function NewGroupView({ allUsers, currentUserId, onCreate }: {
 }
 
 function ThreadCard({ thread, onClick, onDelete, currentUserId, userPics }: { thread: ThreadData; onClick: () => void; onDelete?: (id: string) => void; currentUserId?: string; userPics?: Record<string, string> }) {
-  const hasUnseen = thread.members.some(m => !m.seen);
+  // Unread means *I* haven't seen it — not "some member hasn't". The old
+  // any-member check kept threads bold until every colleague read them.
+  const myMember = thread.members.find(m => m.id === currentUserId);
+  const hasUnseen = myMember ? !myMember.seen : false;
   const isAi = thread.isAiChat;
   const otherMembers = thread.members.filter(m => m.id !== currentUserId);
   const isDm = !isAi && otherMembers.length === 1;
@@ -1044,17 +1047,29 @@ function ThreadList({ threads, onSelect, onNewGroupChat, unseenCount, onOpenAiFu
   userPics?: Record<string, string>;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
+  // WhatsApp-style filter chips. "All" is the one inbox: team chats AND
+  // saved ChatBGP threads together, newest first (Woody, 2026-08-21 —
+  // "one screen, like WhatsApp").
+  const [chip, setChip] = useState<"all" | "unread" | "groups" | "ai">("all");
 
   const filteredThreads = useMemo(() => {
     // Every non-AI thread the API returned is one this user belongs to —
     // show them all (the old "2+ other members" rule hid 1:1 conversations
     // from the person who was added to them). Only your own empty,
-    // member-less drafts stay hidden.
+    // member-less drafts stay hidden, and empty untitled AI drafts.
     let filtered = threads.filter(t => {
-      if (t.isAiChat) return false;
+      if (t.isAiChat) {
+        return !!(t.title || t.lastMessage);
+      }
       const otherMembers = t.members.filter(m => m.id !== currentUserId);
       if (otherMembers.length === 0 && t.createdBy === currentUserId && !t.lastMessage) return false;
       return true;
+    });
+    if (chip === "ai") filtered = filtered.filter(t => t.isAiChat);
+    if (chip === "groups") filtered = filtered.filter(t => !t.isAiChat && t.members.filter(m => m.id !== currentUserId).length > 1);
+    if (chip === "unread") filtered = filtered.filter(t => {
+      const me = t.members.find(m => m.id === currentUserId);
+      return me ? !me.seen : false;
     });
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -1067,8 +1082,8 @@ function ThreadList({ threads, onSelect, onNewGroupChat, unseenCount, onOpenAiFu
         t.members.some(m => m.name.toLowerCase().includes(q))
       );
     }
-    return filtered;
-  }, [threads, searchQuery, currentUserId]);
+    return [...filtered].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  }, [threads, searchQuery, currentUserId, chip]);
 
   const latestAiThread = useMemo(
     () => threads.filter(t => t.isAiChat).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0],
@@ -1131,11 +1146,36 @@ function ThreadList({ threads, onSelect, onNewGroupChat, unseenCount, onOpenAiFu
         </div>
       </div>
 
-      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-3 pt-1 pb-1 shrink-0">
-        Conversations
-      </p>
+      <div className="flex items-center gap-1.5 px-3 pt-1 pb-2 shrink-0">
+        {([
+          { key: "all", label: "All" },
+          { key: "unread", label: "Unread" },
+          { key: "groups", label: "Groups" },
+          { key: "ai", label: "AI" },
+        ] as const).map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setChip(key)}
+            className={`px-3 py-1 rounded-full text-[11px] font-medium transition-colors border ${
+              chip === key
+                ? "bg-foreground text-background border-transparent"
+                : "bg-background text-muted-foreground border-border hover:text-foreground"
+            }`}
+            data-testid={`chip-threads-${key}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
-      {filteredThreads.length === 0 && !searchQuery ? (
+      {filteredThreads.length === 0 && !searchQuery && chip !== "all" ? (
+        <div className="text-center py-10 flex-1 flex flex-col items-center justify-center px-6">
+          <MessageCircle className="w-10 h-10 text-muted-foreground/40 mb-3" />
+          <p className="text-sm text-muted-foreground font-medium">
+            {chip === "unread" ? "You're all caught up" : chip === "ai" ? "No saved ChatBGP threads yet" : "No group chats yet"}
+          </p>
+        </div>
+      ) : filteredThreads.length === 0 && !searchQuery ? (
         <div className="text-center py-10 flex-1 flex flex-col items-center justify-center px-6">
           <MessageCircle className="w-10 h-10 text-muted-foreground/40 mb-3" />
           <p className="text-sm text-muted-foreground font-medium">No conversations yet</p>
@@ -2540,6 +2580,18 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     setView("chat");
     queryClient.invalidateQueries({ queryKey: ["/api/chat/notifications"] });
   };
+
+  // The /chatbgp Messages list can hand a team thread to this panel (App
+  // opens the panel; this selects the conversation).
+  useEffect(() => {
+    const onOpenTeamThread = (e: Event) => {
+      const threadId = (e as CustomEvent).detail?.threadId;
+      if (threadId) handleSelectThread(threadId);
+    };
+    window.addEventListener("bgp:open-team-thread", onOpenTeamThread);
+    return () => window.removeEventListener("bgp:open-team-thread", onOpenTeamThread);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleDeleteThread = async (threadId: string) => {
     if (!confirm("Delete this conversation? This cannot be undone.")) return;
