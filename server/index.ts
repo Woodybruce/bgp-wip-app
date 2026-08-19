@@ -76,6 +76,23 @@ import { pool } from "./db";
     `ALTER TABLE unit_offers ADD COLUMN IF NOT EXISTS source TEXT`,
     `ALTER TABLE unit_offers ADD COLUMN IF NOT EXISTS email_conversation_id TEXT`,
     `CREATE UNIQUE INDEX IF NOT EXISTS unit_offers_email_conversation_idx ON unit_offers (email_conversation_id) WHERE email_conversation_id IS NOT NULL`,
+    // Interest signal: third tracker activity table alongside viewings/offers
+    // (see unitInterest in shared/schema.ts; read in routes.ts, written by
+    // viewing-sync.ts + interactions.ts). No migration exists — heal at boot.
+    `CREATE TABLE IF NOT EXISTS unit_interest (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      unit_id VARCHAR NOT NULL,
+      company_name TEXT,
+      contact_name TEXT,
+      contact_id VARCHAR,
+      company_id VARCHAR,
+      interest_date TEXT NOT NULL,
+      notes TEXT,
+      source TEXT,
+      email_conversation_id TEXT,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS unit_interest_email_conversation_idx ON unit_interest (email_conversation_id) WHERE email_conversation_id IS NOT NULL`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS leasing_privacy_enabled BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT`,
     `ALTER TABLE lease_events ADD COLUMN IF NOT EXISTS landlord TEXT`,
