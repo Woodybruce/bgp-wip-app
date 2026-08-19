@@ -67,7 +67,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r339 · 2026-08-19 · FULL (rotation #4 staff mobile 390px) — IN PROGRESS
+### r339 · 2026-08-19 · FULL (rotation #4 staff mobile 390px)
 - Staging merged with origin/JOGQK (new production commits: client-scoped
   activity curations, inline date editor commit-on-blur fix, IG image
   proxy, Google News purge — 8a644e6, pushed). tsc clean on the merge.
@@ -77,8 +77,28 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   brand-gaps/live-intel 503; commentary-regen 503 —
   qa/logs/round-339.jsonl). Dev-server log: 0 raw 500/502/504, 150
   keyless 503s. staff-map-goad-concurrent green again.
-- Journey (staff mobile 390px, Victoria) in progress — final entry to
-  replace this one.
+- Journey: Victoria @ 390px iPhone UA — "between viewings: check tasks +
+  calendar, find an available Bluewater unit, log a viewing, glance at
+  Deals" (first staff-mobile pass over /tasks, /calendar, /available and
+  the viewing dialog; r227 covered dashboard/Messages/BI/tenancy): "/"
+  dashboard → /tasks (quick-add bar, degraded briefing fine) → /calendar
+  (Day view default, QA-CAL events render, DaySummaryBar correctly
+  skipped) → /available Letting Tracker (search + status chips at 390) →
+  unit card Viewing button → dialog (date defaults today) → save →
+  "Viewing added", card flips to "Viewing (1)" → /deals board. Cross-check
+  via API: Mark (client) sees the staff-logged viewing in
+  all-viewings (unit is Landsec's). 0 h-overflow on every surface, 0
+  pageerrors, task ≤3 taps per leg. /tracker 404s but nothing links
+  there (guessed URL; graceful catch-all page) — not a bug.
+- Triaged, NOT bugs: 401 GET /api/microsoft/calendar/summary for staff —
+  intended "not connected to M365" signal, client handles with
+  on401:returnNull (noise class, same family as brand-theme 401).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Harness growth:
+  none needed (agent-log-viewing already covers the staff→client viewing
+  cross-check). Suggestions added: UX #70 (mobile tracker card headline
+  is the property name 150× over; unit name buried in subtitle).
+- New flakes: none. Next journey: rotation #1 staff desktop (r339 had
+  the journey → r340 may be LIGHT; then #1).
 
 ### r338 · 2026-08-19 · LIGHT (r337 had the journey)
 - Staging merged with origin/JOGQK (new production commits: Instagram

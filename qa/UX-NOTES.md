@@ -26,6 +26,16 @@ below stay parked, not built. Rounds shouldn't re-log them.)
     properties" quick-pick like the tracker has), so one click lands
     Bluewater in Map/Land Registry/Business Rates.
 
+70. 2026-08-19 · BGP staff / Letting Tracker mobile 390px (QA r339) ·
+    "find unit L112 to log a viewing" · Every mobile unit card's headline
+    is the PROPERTY name (`prop?.name || u.unitName`, available-units.tsx
+    ~1687), so a Bluewater-filtered list shows 150 identical "Bluewater
+    Shopping Centre" headlines with the actual unit ("L112 Bluewater")
+    relegated to the small grey subtitle — scanning for a unit means
+    reading subtitles. Same class as the r229 search-labelling fix. ·
+    Suggested: lead with the unit name, property as the subtitle (or
+    property once as a group header when filtered to one centre).
+
 68. 2026-08-19 · both personas / Letting Tracker desktop (QA r333) ·
     "work my Bluewater units" · Typing in the tracker search recounts the
     status chips (156→151) and the table, but the page header keeps the
