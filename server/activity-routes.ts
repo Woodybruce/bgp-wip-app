@@ -199,21 +199,10 @@ async function writeLastInteraction(type: SubjectType, id: string, latest: strin
   }
 }
 
-// Curation must run under a STAFF session: ChatBGP strips email/calendar
-// tools for client-scoped viewers, so a client-triggered run produces a
-// degraded "no mailbox access is available to me" narrative — which was
-// getting cached and served to staff (Woody, 2026-08-18, Bill's panel).
-// Clients still read existing caches; only staff sessions generate them.
-async function isClientScopedViewer(req: Request): Promise<boolean> {
-  try {
-    const { resolveCompanyScope } = await import("./company-scope");
-    return !!(await resolveCompanyScope(req as any));
-  } catch {
-    return true; // fail closed — don't generate under unknown identity
-  }
-}
-// Fingerprint of a client-voice curation. Belt-and-braces: even if one is
-// generated, it must never be cached.
+// Fingerprint of a degraded "no mailbox access" curation (produced when a
+// run somehow lacks the email/calendar tools). Never cached, never
+// displayed — curations now always run staff-grade via the internal token
+// in chatbgp-internal, so this is a tripwire, not an expected state.
 const DEGRADED_CURATION_RE = /accessible to me|BGP-team action|ask your BGP contact/i;
 
 export function registerActivityRoutes(app: Express) {
@@ -246,7 +235,10 @@ export function registerActivityRoutes(app: Express) {
       const needsCuration = !cache || degradedCache || (cacheAge !== null && cacheAge > STALE_MS);
       const failedAt = recentCurationFailures.get(key);
       const coolingDown = failedAt !== undefined && Date.now() - failedAt < CURATION_FAILURE_COOLDOWN_MS;
-      if (needsCuration && !inFlight && !coolingDown && !(await isClientScopedViewer(req))) {
+      // Any viewer's open may trigger generation — the curation itself now
+      // always runs staff-grade via the internal token (chatbgp-internal),
+      // so a client-triggered run produces the same full mailbox sweep.
+      if (needsCuration && !inFlight && !coolingDown) {
         const subject = await buildSubject(subjectType, subjectId);
         if (subject) {
           const job = (async () => {
@@ -349,12 +341,6 @@ export function registerActivityRoutes(app: Express) {
   app.post("/api/activity/:subjectType/:subjectId/curate", requireAuth, async (req: Request, res: Response) => {
     const { subjectType, subjectId } = req.params as { subjectType: SubjectType; subjectId: string };
     if (!VALID_TYPES.includes(subjectType)) return res.status(400).json({ error: "invalid subject type" });
-    // Staff only — a client session generates the degraded no-mailbox
-    // narrative (see isClientScopedViewer above).
-    if (await isClientScopedViewer(req)) {
-      return res.status(403).json({ error: "Not available for client accounts" });
-    }
-
     const key = curationKey(subjectType, subjectId);
     if (pendingCurations.has(key)) {
       return res.status(202).json({ accepted: true, inFlight: true, alreadyRunning: true });
