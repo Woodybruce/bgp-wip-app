@@ -67,6 +67,17 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r338 · 2026-08-19 ~10:50 UTC · ROUND IN PROGRESS (LIGHT — r337 had the journey)
+- Staging merged with origin/JOGQK (new production commits: Instagram
+  feed/image parsing, AML retry, RSS typing). Fresh container (pg_hba trust
+  per r205; superuser bgp role + restore + schema grant per r249).
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh fixture DB,
+  reused dist). Two-bot round 338 still running; triage so far: 3 logged
+  issues, all listed noise (rocketreach-400; brand-gaps/live-intel 503;
+  commentary-regen 503). Dev-server log so far: 0 raw 500/502/504, 128
+  keyless 503s, RSS 403/ENOTFOUND = external-network noise.
+- No deferred bugs outstanding from prior rounds. Final entry to follow.
+
 ### r337 · 2026-08-19 · FULL (rotation #3 client mobile 390px)
 - Staging merged with origin/JOGQK (new production commits: Instagram feed
   ingest + Google News maintainer fixes, d0a1838). Fresh container (pg_hba
