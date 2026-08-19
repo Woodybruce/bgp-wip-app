@@ -26,7 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { Sparkles, RefreshCw, Mail, CalendarDays, AlertCircle, Loader2, ExternalLink, Copy, Download, Paperclip } from "lucide-react";
+import { Sparkles, Mail, CalendarDays, AlertCircle, Loader2, ExternalLink, Copy, Download, Paperclip } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { getAuthHeaders } from "@/lib/queryClient";
 
@@ -67,7 +67,7 @@ interface Props {
   autoCurate?: boolean;
 }
 
-export function AIActivityCard({ subjectType, subjectId, title, compact, autoCurate }: Props) {
+export function AIActivityCard({ subjectType, subjectId, title, compact }: Props) {
   // Client logins get the commentary read-only: the curate POST is staff-
   // only server-side, so don't offer an Analyse button that would 403.
   const { data: viewer } = useQuery<any>({ queryKey: ["/api/auth/me"] });
@@ -98,9 +98,14 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const d = await r.json();
         if (!cancelled) setData(d);
-        // Auto-curate if asked and there's nothing cached.
-        if (!cancelled && autoCurate && !d?.markdown) {
-          curate();
+        // The server stale-while-revalidates on read: a missing, stale
+        // (>24h) or degraded cache kicks a background re-curation
+        // automatically. When one is in flight, show the analysing state
+        // and poll it home — the manual Re-analyse button is gone
+        // (Woody, 2026-08-19: "automate when the brand is opened").
+        if (!cancelled && (d as any)?.inFlight) {
+          setCurating(true);
+          pollUntilFresh(d?.generatedAt || null);
         }
       } catch (err: any) {
         if (!cancelled) setError(err?.message || "Failed to load activity");
@@ -112,27 +117,10 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subjectType, subjectId]);
 
-  // Curation runs as a background job on the server (~30–200s). We POST
-  // to kick it off, get 202 immediately, then poll the GET endpoint until
-  // generated_at changes. Avoids Railway's edge-proxy timeout.
-  const curate = async () => {
-    setCurating(true);
-    setError(null);
-    const before = data?.generatedAt || null;
-    try {
-      const r = await fetch(`/api/activity/${subjectType}/${encodeURIComponent(subjectId)}/curate`, {
-        method: "POST",
-        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-        credentials: "include",
-      });
-      if (!r.ok && r.status !== 202) throw new Error(await r.text() || `HTTP ${r.status}`);
-    } catch (err: any) {
-      setError(err?.message || "Couldn't start analysis");
-      toast({ title: "Re-analyse failed", description: err?.message || "Unknown error", variant: "destructive" });
-      setCurating(false);
-      return;
-    }
-
+  // Curation runs as a background job on the server (~30–200s), kicked
+  // automatically by the GET's stale-while-revalidate. We just poll the
+  // GET endpoint until generated_at changes.
+  const pollUntilFresh = (before: string | null) => {
     const startedAt = Date.now();
     const MAX_WAIT_MS = 5 * 60_000;
     const POLL_INTERVAL_MS = 4_000;
@@ -193,17 +181,12 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
                 </span>
               )}
             </CardTitle>
-            {!isClientViewer && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-[11px] gap-1"
-                disabled={curating}
-                onClick={curate}
-              >
-                {curating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                {curating ? "Analysing…" : (hasContent ? "Re-analyse" : "Analyse")}
-              </Button>
+            {/* Re-analyse button removed (Woody, 2026-08-19) — the analysis
+                refreshes itself on open via server stale-while-revalidate. */}
+            {curating && (
+              <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" /> Analysing…
+              </span>
             )}
           </div>
         </CardHeader>

@@ -5588,28 +5588,34 @@ function BrandInstagramCard({ companyId }: { companyId: string }) {
       {header}
       <CardContent className="p-3 pt-0 space-y-2">
         {statsLine}
-        <div className="grid grid-cols-3 gap-1">
+        {/* One row deep, scroll for the rest (Woody, 2026-08-19) — fixed
+            tiles instead of a grid so the card stays shallow at any width. */}
+        <div className="flex gap-1 overflow-x-auto pb-1">
           {data.posts.slice(0, 9).map((p: any, i: number) => (
             <a
               key={p.url || i}
               href={p.url}
               target="_blank"
               rel="noreferrer"
-              className="aspect-square rounded border border-border/60 overflow-hidden bg-muted relative group block"
+              className="w-36 h-36 shrink-0 rounded border border-border/60 overflow-hidden bg-muted relative group block"
               title={p.title || ""}
             >
-              {p.imageUrl ? (
+              {/* Caption sits BEHIND the image so a failed image load
+                  degrades to text instead of a blank tile. Instagram's CDN
+                  rejects hotlinks that carry a referrer — no-referrer makes
+                  the images actually render. */}
+              <div className="absolute inset-0 p-1.5 text-[9px] leading-tight text-muted-foreground overflow-hidden">
+                {(p.title || "").slice(0, 90)}
+              </div>
+              {p.imageUrl && (
                 <img
                   src={p.imageUrl}
                   alt=""
-                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                  className="absolute inset-0 w-full h-full object-cover"
                   loading="lazy"
                   onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                 />
-              ) : (
-                <div className="w-full h-full p-1.5 text-[9px] leading-tight text-muted-foreground overflow-hidden">
-                  {(p.title || "").slice(0, 90)}
-                </div>
               )}
               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/50 transition-colors flex items-end p-1.5 opacity-0 group-hover:opacity-100">
                 <span className="text-white text-[9px] leading-tight line-clamp-3">{p.title}</span>

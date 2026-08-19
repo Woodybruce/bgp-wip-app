@@ -227,7 +227,11 @@ export function registerActivityRoutes(app: Express) {
       // on "analysis taking longer than expected" forever): a never-analysed
       // subject opened by a client-scoped viewer had no path to a first
       // read, since only staff can POST /curate.
-      const STALE_MS = 7 * 24 * 60 * 60 * 1000;
+      // 24h freshness (was 7 days) — the Re-analyse button is gone (Woody,
+      // 2026-08-19: "automate when the brand is opened"), so opening a
+      // subject IS the refresh. The pending-job map + failure cooldown keep
+      // a busy day from re-running the same subject more than once.
+      const STALE_MS = 24 * 60 * 60 * 1000;
       const cacheAge = cache?.generatedAt ? Date.now() - new Date(cache.generatedAt).getTime() : null;
       // A cached curation carrying the client-voice fingerprint is one of
       // the poisoned runs — treat as missing so the next staff open heals it.

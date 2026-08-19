@@ -704,6 +704,23 @@ export async function runAllAmlChecks(
     ).catch(() => {});
   }
 
+  // Outcome stamp (2026-08-19): the compliance panel's "AML PEP / adverse
+  // media" row keys off aml_pep_status, which previously ONLY the
+  // ComplyAdvantage leg wrote — and that leg warns/fails on some runs. A
+  // completed UK OFSI + OFAC sanctions/PEP screen is a real screening
+  // outcome and must record one too, or the row never ticks.
+  try {
+    const ofsiScreen: any[] = (investigationResult as any)?.sanctionsScreening || [];
+    const ofsiRan = Array.isArray(ofsiScreen) && ofsiScreen.length > 0;
+    const ofsiHit = ofsiRan && ofsiScreen.some((s: any) => s.status === "strong_match" || s.status === "potential_match");
+    if (ofsiRan || sanctionsMatch) {
+      await pool.query(
+        `UPDATE crm_companies SET aml_pep_status = $1 WHERE id = $2 AND (aml_pep_status IS NULL OR aml_pep_status = '')`,
+        [ofsiHit || sanctionsMatch ? "review_required" : "clear", companyId],
+      );
+    }
+  } catch { /* best-effort stamp — never fails the sweep */ }
+
   return {
     companyId,
     companyName: company.name,
@@ -796,7 +813,10 @@ export async function runPeriodicAmlReScreening(options: { maxCompanies?: number
 
       console.log(
         `[kyc-orch] Periodic re-screen ${row.name}: risk=${summary.risk?.level || "n/a"} ` +
-        `ticked=[${summary.checklistTicked.join(",")}] warnings=${summary.warnings.length}`,
+        `ticked=[${summary.checklistTicked.join(",")}] warnings=${summary.warnings.length}` +
+        // Every run has carried warnings=1 for days with no visibility into
+        // what it is — print it so failures are diagnosable from the log.
+        (summary.warnings.length ? ` | ${summary.warnings.slice(0, 2).map((w: string) => w.slice(0, 120)).join(" · ")}` : ""),
       );
 
       // Short pause so we don't hammer Companies House / Perplexity back-to-back
