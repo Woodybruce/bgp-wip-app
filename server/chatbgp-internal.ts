@@ -11,6 +11,14 @@ export function internalStaffToken(): string {
   return crypto.createHash("sha256").update("bgp-internal:" + seed).digest("hex");
 }
 
+// True when this request is a server-originated internal call carrying the
+// staff token. Every client-scoping gate (tool allowlists, client persona)
+// must consult this — the token means "run staff-grade regardless of whose
+// session is forwarded".
+export function isInternalStaffRequest(req: Request): boolean {
+  return (req.headers?.["x-bgp-internal"] as string) === internalStaffToken();
+}
+
 /**
  * Ask ChatBGP a question programmatically and get back the final markdown
  * answer. Internally POSTs to the same `/api/chatbgp/chat` endpoint that

@@ -1151,6 +1151,41 @@ function FeeCombinedCell({
 // editors so a single click captures both. Empty rosters surface a
 // "+ Add team / agent" affordance.
 
+// Inline date editor that commits on blur / Enter instead of on every
+// change. A native date input fires change per segment while typing, so
+// saving on change wrote half-formed dates and the resulting refetch
+// re-sorted the table, yanking the row (and the caret) away mid-edit.
+function InlineDateInput({
+  value, onSave, className, testId,
+}: {
+  value: string | Date | null | undefined;
+  onSave: (v: string | null) => void;
+  className?: string;
+  testId?: string;
+}) {
+  const committed = toDateInputValue(value);
+  const [draft, setDraft] = useState(committed);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    if (!editing) setDraft(committed);
+  }, [committed, editing]);
+  return (
+    <input
+      type="date"
+      className={className}
+      value={editing ? draft : committed}
+      onFocus={() => { setEditing(true); setDraft(committed); }}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        setEditing(false);
+        if (draft !== committed) onSave(draft || null);
+      }}
+      onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+      data-testid={testId}
+    />
+  );
+}
+
 // Consolidated Dates cell — Date Added (read-only) sits above the
 // editable Target Date. Target Date is what feeds the WIP report's
 // month / fiscal-year buckets when a deal hasn't yet exchanged, so a
@@ -1193,12 +1228,11 @@ function DatesCell({
         </div>
         <div className="grid grid-cols-[110px_1fr] items-center gap-2">
           <Label className="text-xs text-muted-foreground">Target Date</Label>
-          <input
-            type="date"
+          <InlineDateInput
             className="text-xs border rounded px-2 py-1 cursor-pointer"
-            value={toDateInputValue(deal.targetDate)}
-            onChange={(e) => onSave("targetDate", e.target.value || null)}
-            data-testid={`dates-target-input-${deal.id}`}
+            value={deal.targetDate}
+            onSave={(v) => onSave("targetDate", v)}
+            testId={`dates-target-input-${deal.id}`}
           />
         </div>
         <p className="text-[10px] text-muted-foreground leading-tight pt-1 border-t">
@@ -6975,11 +7009,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {effectiveColumns.targetDate && (
                         <TableCell className="px-1.5 py-1">
-                          <input
-                            type="date"
+                          <InlineDateInput
                             className="text-xs bg-transparent border-0 outline-none cursor-pointer hover:bg-muted rounded px-1 w-[110px]"
-                            value={toDateInputValue(deal.targetDate)}
-                            onChange={(e) => handleInlineSave(deal.id, "targetDate", e.target.value || null)}
+                            value={deal.targetDate}
+                            onSave={(v) => handleInlineSave(deal.id, "targetDate", v)}
                           />
                         </TableCell>
                       )}

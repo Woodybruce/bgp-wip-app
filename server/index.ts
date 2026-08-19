@@ -4274,13 +4274,14 @@ app.use("/api/branding/assets", express.static(
           const diag = await pool.query(`
             SELECT c.name, c.instagram_handle, ns.id AS sid, ns.url, ns.last_fetched_at,
                    (SELECT count(*)::int FROM news_articles a WHERE a.source_id = ns.id) AS articles,
-                   (SELECT count(*)::int FROM news_articles a WHERE a.source_id = ns.id AND a.image_url IS NOT NULL) AS with_images
+                   (SELECT count(*)::int FROM news_articles a WHERE a.source_id = ns.id AND a.image_url IS NOT NULL) AS with_images,
+                   (SELECT a.image_url FROM news_articles a WHERE a.source_id = ns.id AND a.image_url IS NOT NULL LIMIT 1) AS sample_image
               FROM crm_companies c
               LEFT JOIN news_sources ns ON ns.category = 'brand:' || c.id AND ns.type = 'rssapp_instagram'
              WHERE regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') = 'bills'
                AND c.merged_into_id IS NULL`);
           for (const r of diag.rows) {
-            console.log(`[bills-diag] ${r.name}: handle=${r.instagram_handle} source=${r.sid || "NONE"} url=${r.url || "-"} fetched=${r.last_fetched_at || "never"} articles=${r.articles ?? 0} withImages=${r.with_images ?? 0}`);
+            console.log(`[bills-diag] ${r.name}: handle=${r.instagram_handle} source=${r.sid || "NONE"} url=${r.url || "-"} fetched=${r.last_fetched_at || "never"} articles=${r.articles ?? 0} withImages=${r.with_images ?? 0} sampleImage=${String(r.sample_image || "-").slice(0, 120)}`);
           }
           // Representation rows touching Bill's or Matt Porter — Woody
           // reports the retained agent vanished and a self-referential
@@ -4309,6 +4310,25 @@ app.use("/api/branding/assets", express.static(
           await repairClobberedInstagramSources();
         } catch (e: any) {
           console.error("[ig-source repair] failed:", e?.message);
+        }
+        // Purge articles ingested while an Instagram source was clobbered
+        // into a Google News feed — they still sit under the repaired source,
+        // surface as news items inside brand Instagram cards, and block the
+        // image backfill's url match. Anything not on instagram.com doesn't
+        // belong here; cleared sources refetch first and refill with posts.
+        try {
+          const purged = await pool.query(`
+            DELETE FROM news_articles a USING news_sources ns
+             WHERE a.source_id = ns.id AND ns.type = 'rssapp_instagram'
+               AND a.url NOT ILIKE '%instagram.com%'
+             RETURNING a.source_id`);
+          if (purged.rowCount) {
+            const ids = Array.from(new Set(purged.rows.map((r: any) => r.source_id)));
+            await pool.query(`UPDATE news_sources SET last_fetched_at = NULL WHERE id = ANY($1)`, [ids]);
+            console.log(`[ig-article purge] removed ${purged.rowCount} non-Instagram article(s) from ${ids.length} Instagram source(s)`);
+          }
+        } catch (e: any) {
+          console.error("[ig-article purge] failed:", e?.message);
         }
         // Fill in images for Instagram posts ingested before the parser
         // could read media:content tags.

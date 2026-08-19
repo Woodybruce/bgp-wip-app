@@ -11732,8 +11732,12 @@ export async function handleCrmToolCall(
     // team (Woody as MD "Viewing as Landsec") kept losing mailbox/calendar
     // tools because the team switch sets a scope (2026-08-04). Real client
     // logins stay on the allowlist; staff keep full tools in any view.
+    // Server-originated curation calls (X-BGP-Internal) run staff-grade
+    // even when the forwarded session is a client's — this gate was
+    // blocking every mailbox sweep in client-triggered curations.
     const { isClientRequestUser } = await import("./company-scope");
-    if (await isClientRequestUser(req) && !CLIENT_SAFE_TOOLS.has(fnName)) {
+    const { isInternalStaffRequest } = await import("./chatbgp-internal");
+    if (!isInternalStaffRequest(req) && await isClientRequestUser(req) && !CLIENT_SAFE_TOOLS.has(fnName)) {
       return { handled: true, response: { reply: "That capability isn't available on client accounts — your account covers your own portfolio only. Contact your BGP team for anything further." } };
     }
   } catch {}
@@ -13596,9 +13600,12 @@ export function setupChatBGPRoutes(app: Express) {
     // client-safe allowlist, regardless of what the model asked for.
     // Keyed on the ACTUAL account role — staff previewing a client team
     // ("Viewing as Landsec") keep their full toolset (2026-08-04).
+    // Internal-token calls (server-originated curations) bypass — they
+    // run staff-grade regardless of the forwarded session.
     try {
       const { isClientRequestUser } = await import("./company-scope");
-      if (await isClientRequestUser(req) && !CLIENT_SAFE_TOOLS.has(tcName)) {
+      const { isInternalStaffRequest } = await import("./chatbgp-internal");
+      if (!isInternalStaffRequest(req) && await isClientRequestUser(req) && !CLIENT_SAFE_TOOLS.has(tcName)) {
         return { data: { success: false, error: "This capability is not available on client accounts. Your account covers your own portfolio only — contact your BGP team for anything further." } };
       }
     } catch {}
@@ -14554,16 +14561,23 @@ export function setupChatBGPRoutes(app: Express) {
       // and the cheap "current user" line (below) remain.
       let threadContext = "";
       let currentUserContext = "";
-      try {
-        const currentUser = await storage.getUser(userId);
-        if (currentUser) {
-          currentUserContext = `\n\n## Current User\nYou are speaking with **${currentUser.name}**${currentUser.department ? " (" + currentUser.department + " team)" : ""}${currentUser.role ? " — " + currentUser.role : ""}. Personalise your responses accordingly — use their name occasionally, and prioritise information relevant to their team.\n`;
+      if (isInternalStaffCall) {
+        // Server-originated analysis job (activity curation etc.) — the
+        // forwarded session is just transport. No greeting, no client
+        // persona: neutral analyst voice for the BGP team.
+        currentUserContext = `\n\n## Server-originated analysis job\nThis is an automated BGP-internal analysis run, not a live chat. Write in neutral analyst voice — do not greet or address any individual by name, and never suggest the reader "contact BGP" (this analysis is produced BY BGP).\n`;
+      } else {
+        try {
+          const currentUser = await storage.getUser(userId);
+          if (currentUser) {
+            currentUserContext = `\n\n## Current User\nYou are speaking with **${currentUser.name}**${currentUser.department ? " (" + currentUser.department + " team)" : ""}${currentUser.role ? " — " + currentUser.role : ""}. Personalise your responses accordingly — use their name occasionally, and prioritise information relevant to their team.\n`;
+          }
+        } catch {}
+        if (chatGuard.isClient) {
+          currentUserContext += sseScopeCompanyId
+            ? await withTimeout(getClientCrmContext(sseScopeCompanyId), 5000, "")
+            : chatGuard.constraint;
         }
-      } catch {}
-      if (chatGuard.isClient) {
-        currentUserContext += sseScopeCompanyId
-          ? await withTimeout(getClientCrmContext(sseScopeCompanyId), 5000, "")
-          : chatGuard.constraint;
       }
 
       if (verifiedThreadId && !sseScopeCompanyId) {
@@ -14637,7 +14651,7 @@ export function setupChatBGPRoutes(app: Express) {
       }
 
       let systemPrompt2: string;
-      if (chatGuard.isClient) {
+      if (chatGuard.isClient && !isInternalStaffCall) {
         systemPrompt2 = CLIENT_SYSTEM_PROMPT;
       } else {
         try {

@@ -267,6 +267,27 @@ export async function importInstagramImagesIntoGallery(
 
 // ─── Routes ──────────────────────────────────────────────────────────────
 
+// Same-origin image proxy for Instagram CDN photos. The CDN serves these
+// fine server-side, but browser-side loads proved flaky enough (referrer
+// policies, signed-URL quirks) that the profile card now loads post images
+// through us: verified fetch, cached, no third-party games (2026-08-19).
+router.get("/api/ig-image", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const raw = String(req.query.u || "");
+    const u = new URL(raw);
+    if (!/(^|\.)cdninstagram\.com$|(^|\.)fbcdn\.net$/i.test(u.hostname)) {
+      return res.status(400).end();
+    }
+    const r = await fetch(u.toString(), { signal: AbortSignal.timeout(15_000) });
+    if (!r.ok) return res.status(502).end();
+    res.setHeader("Content-Type", r.headers.get("content-type") || "image/jpeg");
+    res.setHeader("Cache-Control", "public, max-age=21600");
+    res.send(Buffer.from(await r.arrayBuffer()));
+  } catch {
+    res.status(502).end();
+  }
+});
+
 router.get("/api/instagram/health", requireAuth, async (_req: Request, res: Response) => {
   res.json({
     configured: isConfigured(),

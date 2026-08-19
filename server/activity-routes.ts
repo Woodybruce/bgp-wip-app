@@ -203,7 +203,54 @@ async function writeLastInteraction(type: SubjectType, id: string, latest: strin
 // run somehow lacks the email/calendar tools). Never cached, never
 // displayed — curations now always run staff-grade via the internal token
 // in chatbgp-internal, so this is a tripwire, not an expected state.
-const DEGRADED_CURATION_RE = /accessible to me|BGP-team action|ask your BGP contact/i;
+// Targets INABILITY statements only — a legit client-facing summary may
+// reasonably advise "speak to your BGP team", so advice phrases would
+// false-positive (the Gail's slip-through said "is a BGP-staff action" and
+// "I'm not able to run that search", which the old regex missed).
+const DEGRADED_CURATION_RE = /accessible to me|not able to run (that|this) search|don'?t have access to (BGP|the team|internal)|a BGP.?(team|staff) action|only BGP staff|client session/i;
+
+// Resolve whether the request comes from a real external client login
+// (Landsec etc.) and which company it's scoped to. Client viewers get a
+// SEPARATE, client-scoped curation (cache key `<id>@client:<companyId>`)
+// covering only their own schemes' intersection with the subject — never
+// the staff read, which carries other landlords' matters, fees and
+// internal strategy. Staff (including "Viewing as <client>" previews)
+// keep the staff cache.
+async function resolveClientViewer(req: Request): Promise<{ companyId: string; companyName: string } | null> {
+  try {
+    const { isClientRequestUser, resolveCompanyScope } = await import("./company-scope");
+    if (!(await isClientRequestUser(req))) return null;
+    const companyId = await resolveCompanyScope(req);
+    if (!companyId) return null;
+    const r = await pool.query(`SELECT name FROM crm_companies WHERE id = $1`, [companyId]);
+    return { companyId, companyName: r.rows[0]?.name || "the client" };
+  } catch {
+    return null;
+  }
+}
+
+// May this client company open a raw email / meeting by id? Only if the
+// ref appears in one of ITS OWN client-scoped curation caches — the raw
+// Graph endpoints are otherwise staff-wide and would let a client session
+// open any BGP mailbox item it had an id for.
+export async function clientRefAllowed(companyId: string, kind: "email" | "meeting", refId: string): Promise<boolean> {
+  if (!refId) return false;
+  try {
+    const r = await pool.query(
+      `SELECT email_refs, meeting_refs FROM crm_activity_cache WHERE subject_id LIKE '%@client:' || $1`,
+      [companyId]
+    );
+    for (const row of r.rows) {
+      const refs = kind === "email" ? row.email_refs : row.meeting_refs;
+      if (Array.isArray(refs) && refs.some((x: any) => String(kind === "email" ? x?.msgId : x?.eventId) === refId)) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
 
 export function registerActivityRoutes(app: Express) {
   // Cached read — fast, used by <AIActivityCard> on first render and
@@ -212,8 +259,13 @@ export function registerActivityRoutes(app: Express) {
     const { subjectType, subjectId } = req.params as { subjectType: SubjectType; subjectId: string };
     if (!VALID_TYPES.includes(subjectType)) return res.status(400).json({ error: "invalid subject type" });
     try {
-      const cache = await readCache(subjectType, subjectId);
-      const key = curationKey(subjectType, subjectId);
+      // Client logins read (and generate) a client-scoped variant — see
+      // resolveClientViewer. Woody, 2026-08-19: "show Landsec all our
+      // Landsec related exposure to Gail's / tenants".
+      const clientViewer = await resolveClientViewer(req);
+      const cacheId = clientViewer ? `${subjectId}@client:${clientViewer.companyId}` : subjectId;
+      const cache = await readCache(subjectType, cacheId);
+      const key = curationKey(subjectType, cacheId);
       let inFlight = pendingCurations.has(key);
 
       // Stale-while-revalidate (Woody, 2026-08-03 — the Landsec board was
@@ -250,19 +302,24 @@ export function registerActivityRoutes(app: Express) {
               // 25-min budget: matches the POST /curate path — a big landlord
               // sweep (Landsec) outran the earlier 12-min budget and the
               // finished result was binned (2026-08-04).
-              const curated = await curateActivity(subject, req, { timeoutMs: 25 * 60 * 1000 });
+              const curated = await curateActivity(subject, req, {
+                timeoutMs: 25 * 60 * 1000,
+                clientScope: clientViewer ? { companyName: clientViewer.companyName } : undefined,
+              });
               if (curated && DEGRADED_CURATION_RE.test(curated.markdown || "")) {
-                console.warn(`[activity auto-refresh ${subjectType}/${subjectId}] refused to cache client-voice curation`);
+                console.warn(`[activity auto-refresh ${subjectType}/${cacheId}] refused to cache degraded curation`);
                 recentCurationFailures.set(key, Date.now());
               } else if (curated) {
-                await writeCache(subjectType, subjectId, curated);
-                await writeLastInteraction(subjectType, subjectId, curated.latestActivityDate);
+                await writeCache(subjectType, cacheId, curated);
+                // Client-scoped reads are a subset — don't stamp the
+                // record-level last_interaction off them.
+                if (!clientViewer) await writeLastInteraction(subjectType, subjectId, curated.latestActivityDate);
                 recentCurationFailures.delete(key);
               } else {
                 recentCurationFailures.set(key, Date.now());
               }
             } catch (err: any) {
-              console.error(`[activity auto-refresh ${subjectType}/${subjectId}]`, err?.message || err);
+              console.error(`[activity auto-refresh ${subjectType}/${cacheId}]`, err?.message || err);
               recentCurationFailures.set(key, Date.now());
             } finally {
               pendingCurations.delete(key);
@@ -297,6 +354,14 @@ export function registerActivityRoutes(app: Express) {
       const { graphRequest } = await import("./shared-mailbox");
       const mailboxEmail = String(req.params.mailboxEmail);
       const eventId = String(req.params.eventId);
+
+      // Client logins may only open meetings cited in their OWN
+      // client-scoped curations — this is otherwise a staff-wide window
+      // into any BGP calendar.
+      const clientViewer = await resolveClientViewer(req);
+      if (clientViewer && !(await clientRefAllowed(clientViewer.companyId, "meeting", eventId))) {
+        return res.status(403).json({ error: "This item isn't available on client accounts" });
+      }
 
       const ev: any = await graphRequest(
         `/users/${encodeURIComponent(mailboxEmail)}/events/${encodeURIComponent(eventId)}?$select=id,subject,bodyPreview,body,start,end,location,organizer,attendees,isOnlineMeeting,onlineMeeting,webLink,isAllDay,isCancelled,showAs,categories`,
@@ -345,7 +410,10 @@ export function registerActivityRoutes(app: Express) {
   app.post("/api/activity/:subjectType/:subjectId/curate", requireAuth, async (req: Request, res: Response) => {
     const { subjectType, subjectId } = req.params as { subjectType: SubjectType; subjectId: string };
     if (!VALID_TYPES.includes(subjectType)) return res.status(400).json({ error: "invalid subject type" });
-    const key = curationKey(subjectType, subjectId);
+    // Client logins refresh their client-scoped variant, never the staff read.
+    const clientViewer = await resolveClientViewer(req);
+    const cacheId = clientViewer ? `${subjectId}@client:${clientViewer.companyId}` : subjectId;
+    const key = curationKey(subjectType, cacheId);
     if (pendingCurations.has(key)) {
       return res.status(202).json({ accepted: true, inFlight: true, alreadyRunning: true });
     }
@@ -361,22 +429,25 @@ export function registerActivityRoutes(app: Express) {
         // big landlord (Landsec: 12 mailboxes + calendars) outran 12 too —
         // both times the finished sweep was binned and the stale cache
         // survived (2026-08-04).
-        const curated = await curateActivity(subject, req, { timeoutMs: 25 * 60 * 1000 });
+        const curated = await curateActivity(subject, req, {
+          timeoutMs: 25 * 60 * 1000,
+          clientScope: clientViewer ? { companyName: clientViewer.companyName } : undefined,
+        });
         if (!curated) {
-          console.warn(`[activity curate ${subjectType}/${subjectId}] ChatBGP returned nothing`);
+          console.warn(`[activity curate ${subjectType}/${cacheId}] ChatBGP returned nothing`);
           recentCurationFailures.set(key, Date.now());
           return;
         }
         if (DEGRADED_CURATION_RE.test(curated.markdown || "")) {
-          console.warn(`[activity curate ${subjectType}/${subjectId}] refused to cache client-voice curation`);
+          console.warn(`[activity curate ${subjectType}/${cacheId}] refused to cache degraded curation`);
           recentCurationFailures.set(key, Date.now());
           return;
         }
-        await writeCache(subjectType, subjectId, curated);
-        await writeLastInteraction(subjectType, subjectId, curated.latestActivityDate);
+        await writeCache(subjectType, cacheId, curated);
+        if (!clientViewer) await writeLastInteraction(subjectType, subjectId, curated.latestActivityDate);
         recentCurationFailures.delete(key);
       } catch (err: any) {
-        console.error(`[activity curate ${subjectType}/${subjectId}]`, err?.message || err);
+        console.error(`[activity curate ${subjectType}/${cacheId}]`, err?.message || err);
         recentCurationFailures.set(key, Date.now());
       } finally {
         pendingCurations.delete(key);
