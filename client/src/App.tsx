@@ -21,6 +21,7 @@ import { ChatPanel } from "@/components/chat-panel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { ConnectionStatus } from "@/components/connection-status";
+import DealVerdictAlarm from "@/components/deal-verdict-alarm";
 import { UpdatePrompt } from "@/components/update-prompt";
 import { GlobalSearch } from "@/components/global-search";
 import { NotificationCenter } from "@/components/notification-center";
@@ -831,6 +832,10 @@ function AppContent() {
   return (
     <ChatBGPProvider>
       <ConnectionStatus />
+      {/* Invoice-verdict alarm: un-dismissable nag for agents with deals due
+          to exchange/complete this month and no verdict — renders on every
+          authenticated page, desktop and mobile (Woody, 2026-08-19). */}
+      <DealVerdictAlarm />
       {/* Update banner disabled — was misfiring. Service worker still
           refreshes the bundle on its own on next reload. */}
       {/* <UpdatePrompt /> */}
