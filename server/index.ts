@@ -4299,6 +4299,16 @@ app.use("/api/branding/assets", express.static(
         } catch (e: any) {
           console.error("[bills-ig heal] failed:", e?.message);
         }
+        // Estate-wide: un-clobber Instagram sources that the Google News
+        // feed maintainer overwrote (category-only match — fixed in
+        // news-brand-linking, this repairs the damage). Repaired sources
+        // get last_fetched_at = NULL so the next fetch pass takes them first.
+        try {
+          const { repairClobberedInstagramSources } = await import("./news-brand-linking");
+          await repairClobberedInstagramSources();
+        } catch (e: any) {
+          console.error("[ig-source repair] failed:", e?.message);
+        }
       }, 40000);
       // One-off: clear mangled UK trading entities like "UK) Limited" — the
       // entity scraper's broad fallback couldn't cross "("-prefixed tokens

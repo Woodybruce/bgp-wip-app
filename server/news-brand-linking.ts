@@ -402,10 +402,14 @@ export async function ensureBrandGoogleNewsFeeds(): Promise<{ created: number; t
     const query = googleNewsQueryForBrand(brand.name, brand.industry);
     const feedUrl = googleNewsRssUrl(query);
     const url = `https://news.google.com/search?q=${encodeURIComponent(query)}`;
+    // Type filter is load-bearing: a brand's category is shared by its
+    // Instagram feed rows, and matching on category alone made the
+    // "refresh" below overwrite RSS.app feed urls with Google News queries
+    // on every cycle — estate-wide (found via Bill's, 2026-08-19).
     const existing = await db
       .select({ id: newsSources.id, feedUrl: newsSources.feedUrl })
       .from(newsSources)
-      .where(eq(newsSources.category, categoryTag))
+      .where(and(eq(newsSources.category, categoryTag), eq(newsSources.type, "google_news")))
       .limit(1);
     if (existing.length > 0) {
       // Refresh URL when the query has changed (industry / collision-list
@@ -430,6 +434,58 @@ export async function ensureBrandGoogleNewsFeeds(): Promise<{ created: number; t
     created++;
   }
   return { created, total: tracked.length, refreshed };
+}
+
+// Repair Instagram sources clobbered by ensureBrandGoogleNewsFeeds (it
+// matched brand sources by category alone and overwrote the RSS.app
+// url/feed_url with Google News queries on every cycle — estate-wide,
+// found via Bill's, 2026-08-19). Re-derive the right RSS.app feed from
+// the account by matching the brand's Instagram handle; rows we can't
+// match are deleted so the curated top-up recreates them cleanly.
+// Idempotent and cheap when nothing is broken.
+export async function repairClobberedInstagramSources(): Promise<{ repaired: number; deleted: number } | null> {
+  const broken = await pool.query(`
+    SELECT ns.id, c.instagram_handle
+      FROM news_sources ns
+      JOIN crm_companies c ON ns.category = 'brand:' || c.id
+     WHERE ns.type = 'rssapp_instagram'
+       AND (ns.url ILIKE '%news.google.com%' OR ns.feed_url ILIKE '%news.google.com%')`);
+  if (!broken.rows.length) return { repaired: 0, deleted: 0 };
+  const key = process.env.RSSAPP_API_KEY;
+  const secret = process.env.RSSAPP_API_SECRET;
+  if (!key || !secret) return null;
+  const byUrl = new Map<string, string>();
+  for (let offset = 0; offset < 1000; offset += 100) {
+    const res = await fetch(`https://api.rss.app/v1/feeds?limit=100&offset=${offset}`, {
+      headers: { Authorization: `Bearer ${key}:${secret}` },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) break;
+    const data: any = await res.json();
+    for (const f of data.data || []) {
+      if (f.source_url && f.rss_feed_url) {
+        byUrl.set(String(f.source_url).toLowerCase().replace(/\/+$/, ""), f.rss_feed_url);
+      }
+    }
+    if (!data.data || data.data.length < 100) break;
+  }
+  let repaired = 0;
+  let deleted = 0;
+  for (const row of broken.rows) {
+    const h = cleanIgHandle(row.instagram_handle);
+    const srcUrl = h ? `https://www.instagram.com/${h}` : null;
+    const feedUrl = srcUrl ? byUrl.get(srcUrl.toLowerCase()) : null;
+    if (srcUrl && feedUrl) {
+      await pool.query(`UPDATE news_sources SET url = $1, feed_url = $2, last_fetched_at = NULL WHERE id = $3`,
+        [`${srcUrl}/`, feedUrl, row.id]);
+      repaired++;
+    } else {
+      await pool.query(`DELETE FROM news_sources WHERE id = $1`, [row.id]);
+      deleted++;
+    }
+  }
+  console.log(`[ig-source repair] repaired ${repaired}, deleted ${deleted} clobbered Instagram source(s)`);
+  return { repaired, deleted };
 }
 
 // ─── Per-brand social feeds via RSS.app ──────────────────────────────────
