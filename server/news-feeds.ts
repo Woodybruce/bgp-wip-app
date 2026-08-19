@@ -201,7 +201,7 @@ async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
           summary: item.contentSnippet?.slice(0, 500) || item.content?.slice(0, 500) || null,
           content: item.content || null,
           url: articleUrl,
-          author: item.creator || item.author || null,
+          author: item.creator || (item as any).author || null,
           imageUrl: imgUrl,
           publishedAt: item.pubDate ? new Date(item.pubDate) : new Date(),
           category: source.category || "general",
