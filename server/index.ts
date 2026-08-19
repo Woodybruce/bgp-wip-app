@@ -4311,6 +4311,25 @@ app.use("/api/branding/assets", express.static(
         } catch (e: any) {
           console.error("[ig-source repair] failed:", e?.message);
         }
+        // Purge articles ingested while an Instagram source was clobbered
+        // into a Google News feed — they still sit under the repaired source,
+        // surface as news items inside brand Instagram cards, and block the
+        // image backfill's url match. Anything not on instagram.com doesn't
+        // belong here; cleared sources refetch first and refill with posts.
+        try {
+          const purged = await pool.query(`
+            DELETE FROM news_articles a USING news_sources ns
+             WHERE a.source_id = ns.id AND ns.type = 'rssapp_instagram'
+               AND a.url NOT ILIKE '%instagram.com%'
+             RETURNING a.source_id`);
+          if (purged.rowCount) {
+            const ids = Array.from(new Set(purged.rows.map((r: any) => r.source_id)));
+            await pool.query(`UPDATE news_sources SET last_fetched_at = NULL WHERE id = ANY($1)`, [ids]);
+            console.log(`[ig-article purge] removed ${purged.rowCount} non-Instagram article(s) from ${ids.length} Instagram source(s)`);
+          }
+        } catch (e: any) {
+          console.error("[ig-article purge] failed:", e?.message);
+        }
         // Fill in images for Instagram posts ingested before the parser
         // could read media:content tags.
         try {
