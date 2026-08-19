@@ -67,11 +67,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r341 · 2026-08-19 · ROUND IN PROGRESS (FULL, rotation #1 staff desktop)
+### r341 · 2026-08-19 · FULL (rotation #1 staff desktop)
 - Staging merged with origin/JOGQK (dbb5c6d — Letting Tracker interest
   signal, brand cull export endpoint, news-feeds work). tsc clean.
+  Fresh container (pg_hba trust per r205; superuser bgp role + restore +
+  schema grant per r249).
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh fixture DB,
-  FRESH_BUILD=1 on merged code + fix below).
+  FRESH_BUILD=1 on merged code + fix below). Two-bot round 341: exit 0,
+  195 scenarios ok, 3 issues all listed noise (rocketreach-400;
+  brand-gaps/live-intel 503; commentary-regen 503 —
+  qa/logs/round-341.jsonl). Dev-server log: 0 raw 5xx, only keyless 503s
+  + expected 2xx/3xx/401/403/404; error-trace sweep only keyless/no-network
+  config noise.
 - Bug fixed 1 (parent-session 15:35 regression): GET
   /api/available-units/all-interest + /all-interest-counts 500'd with
   `relation "unit_interest" does not exist` — commit 1cb9fb30 added the
@@ -79,8 +86,23 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   IF NOT EXISTS unit_interest + partial unique index on
   email_conversation_id (matches the ON CONFLICT clause in viewing-sync)
   to the boot DDL in server/index.ts, beside the unit_offers heals.
-  Verified: both endpoints 200 as staff on fresh fixture boot.
-- Remaining: two-bot round, staff-desktop journey, harness growth.
+  Verified: both endpoints 200 as staff on fresh fixture boot; smoke green.
+- Journey: Victoria @ desktop 1440px — "before a Landsec call: review the
+  new Interest signal on a Bluewater unit, tidy a stale row, grab pitch
+  material": login form → tracker /available (FY strip Interest chip +
+  156 badge buttons) → seeded inbox-style interest row → dialog (company,
+  date, "from inbox" badge render) → delete via X → badge refreshes 1→0
+  → /news (feed, chips, curated cards clean) → Image Studio (albums,
+  categories). 12/12 steps, 0 error boundaries, only noise-list 503/401.
+- Harness growth: client-tracker-counts-scoped + records-scoped now also
+  cover all-interest{,-counts} (500-guard + client scoping on the new
+  table).
+- Bugs fixed: 1 (above). Deferred: none. Suggestions added: UX-NOTES #71
+  (Interest signal is inbox-sweep-only — no manual "log interest" UI or
+  POST endpoint; phone-call interest can't be recorded).
+- New flakes: none.
+- Next journey: rotation #2 client desktop (r341 had the journey → r342
+  may be LIGHT; then #2).
 
 ### r340 · 2026-08-19 · LIGHT (r339 had the journey)
 - Staging merged with origin/JOGQK (new production commits: safe brand
