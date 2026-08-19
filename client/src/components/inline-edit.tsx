@@ -525,6 +525,7 @@ interface InlineDateProps {
 
 export function InlineDate({ value, onSave, placeholder = "—", className = "" }: InlineDateProps) {
   const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -533,24 +534,31 @@ export function InlineDate({ value, onSave, placeholder = "—", className = "" 
     }
   }, [editing]);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newVal = e.target.value || null;
-    if (newVal !== (value || null)) {
+  const dateStr = value ? value.split("T")[0] : "";
+
+  // Commit on blur / Enter, not on change — a native date input fires
+  // change per segment while typing, so saving there wrote half-formed
+  // dates and closed the editor out from under the user.
+  const commit = () => {
+    setEditing(false);
+    const newVal = draft || null;
+    if (newVal !== (dateStr || null)) {
       onSave(newVal);
     }
-    setEditing(false);
   };
-
-  const dateStr = value ? value.split("T")[0] : "";
 
   if (editing) {
     return (
       <input
         ref={inputRef}
         type="date"
-        value={dateStr}
-        onChange={handleChange}
-        onBlur={() => setEditing(false)}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") { setDraft(dateStr); setEditing(false); }
+        }}
         className={"px-1 py-0.5 text-xs border border-primary/40 rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary/30 " + className}
         data-testid="inline-edit-date"
       />
@@ -561,7 +569,7 @@ export function InlineDate({ value, onSave, placeholder = "—", className = "" 
 
   return (
     <span
-      onClick={() => setEditing(true)}
+      onClick={() => { setDraft(dateStr); setEditing(true); }}
       className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
       data-testid="inline-edit-display"
     >
