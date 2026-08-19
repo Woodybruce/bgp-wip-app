@@ -1353,31 +1353,23 @@ function CompanyDetail({ id }: { id: string }) {
         </div>
         <div className="flex items-center gap-2">
           {!isClientViewer && (<>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => enrichCompanyMutation.mutate()}
-            disabled={enrichCompanyMutation.isPending}
-            data-testid="button-enrich-company"
-          >
-            {enrichCompanyMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Zap className="w-4 h-4 mr-1" />}
-            Enrich
-          </Button>
+          {/* Enrich button removed (Woody, 2026-08-19) — enrichment runs
+              automatically on open and overnight. AI On/Off is an opt-out
+              privacy control, not a workflow button: only surfaced when AI
+              is disabled so it can be switched back on. */}
+          {company.aiDisabled && (
           <Button
             variant="outline"
             size="sm"
             onClick={() => {
-              const newState = !company.aiDisabled;
-              const msg = newState
-                ? "Disable AI for this company? ChatBGP will no longer access or return this company's data."
-                : "Re-enable AI access for this company?";
-              if (confirm(msg)) aiToggleMutation.mutate(newState);
+              if (confirm("Re-enable AI access for this company?")) aiToggleMutation.mutate(false);
             }}
-            className={company.aiDisabled ? "border-red-300 text-red-700" : ""}
+            className="border-red-300 text-red-700"
             data-testid="button-toggle-ai"
           >
-            {company.aiDisabled ? <><BotOff className="w-4 h-4 mr-1" />AI Off</> : <><Bot className="w-4 h-4 mr-1" />AI On</>}
+            <BotOff className="w-4 h-4 mr-1" />AI Off
           </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => setEditOpen(true)} data-testid="button-edit-company">
             <Pencil className="w-4 h-4 mr-1" />
             Edit

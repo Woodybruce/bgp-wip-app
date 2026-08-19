@@ -356,13 +356,28 @@ router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, 
     }
 
     const posts = await pool.query(
-      `SELECT title, url, image_url AS "imageUrl", published_at AS "publishedAt"
+      `SELECT title, url, image_url AS "imageUrl", published_at AS "publishedAt", content
          FROM news_articles
         WHERE source_id = $1
         ORDER BY published_at DESC NULLS LAST
         LIMIT 9`, [src.rows[0].id]
     );
-    res.json({ status: "feed", handle, followers, postCount, posts: posts.rows });
+    // Videos: RSS.app embeds a playable file in the item body when it has
+    // one — surface it for inline playback. Reels detected by URL get a
+    // play badge linking out even when only a thumbnail is available.
+    const shaped = posts.rows.map((p: any) => {
+      const videoMatch = (p.content || "").match(/<(?:video|source)[^>]+src="([^"]+)"/i);
+      const videoUrl = videoMatch ? videoMatch[1] : null;
+      return {
+        title: p.title,
+        url: p.url,
+        imageUrl: p.imageUrl,
+        publishedAt: p.publishedAt,
+        videoUrl,
+        isVideo: !!videoUrl || /\/reel\//i.test(p.url || ""),
+      };
+    });
+    res.json({ status: "feed", handle, followers, postCount, posts: shaped });
   } catch (e: any) {
     console.error("[/api/brand/:companyId/instagram]", e?.message);
     res.status(500).json({ error: e?.message || "failed" });
