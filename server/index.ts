@@ -4407,6 +4407,61 @@ app.use("/api/branding/assets", express.static(
         } catch (e: any) {
           console.error("[brand-cull census] failed:", e?.message);
         }
+        // Safe cull (approved by Woody, 2026-08-19 "Did the safe cull"):
+        // ONLY zero-substance rows are touched. (1) case/punctuation
+        // duplicates of a brand that HAS substance fold into it via
+        // merged_into_id — reversible, same mechanism as the Brand
+        // Intelligence merge; (2) garbage names ("Company 04828814") are
+        // deleted outright; (3) news sources/articles left orphaned by
+        // either go too. Real-but-empty brands (Kate Spade etc.) are NOT
+        // touched — they stay for manual review.
+        try {
+          const zeroCond = `
+               c.merged_into_id IS NULL
+           AND c.company_type ILIKE 'tenant%'
+           AND NOT EXISTS (SELECT 1 FROM crm_deals d WHERE d.tenant_id = c.id OR d.purchaser_id = c.id)
+           AND NOT EXISTS (SELECT 1 FROM crm_requirements_leasing r WHERE r.company_id = c.id)
+           AND NOT EXISTS (SELECT 1 FROM crm_contacts ct WHERE ct.company_id = c.id)
+           AND NOT EXISTS (SELECT 1 FROM brand_agent_representations br WHERE br.brand_company_id = c.id)
+           AND NOT EXISTS (SELECT 1 FROM brand_signals bs WHERE bs.brand_company_id = c.id)`;
+          const folded = await pool.query(`
+            WITH zero AS (
+              SELECT c.id, regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') AS norm
+                FROM crm_companies c
+               WHERE ${zeroCond}
+            ),
+            survivor AS (
+              SELECT DISTINCT ON (norm) id, norm FROM (
+                SELECT s.id, s.created_at, regexp_replace(lower(s.name), '[^a-z0-9]', '', 'g') AS norm
+                  FROM crm_companies s
+                 WHERE s.company_type ILIKE 'tenant%' AND s.merged_into_id IS NULL
+                   AND s.id NOT IN (SELECT id FROM zero)
+              ) t ORDER BY norm, created_at ASC
+            )
+            UPDATE crm_companies c
+               SET merged_into_id = survivor.id
+              FROM zero, survivor
+             WHERE c.id = zero.id AND survivor.norm = zero.norm AND survivor.id <> c.id
+            RETURNING c.name`);
+          if (folded.rowCount) console.log(`[brand-cull] folded ${folded.rowCount} zero-substance duplicate(s): ${folded.rows.map((r: any) => r.name).slice(0, 25).join(" | ")}`);
+          const junk = await pool.query(`
+            DELETE FROM crm_companies c
+             WHERE ${zeroCond}
+               AND c.name ~* '^company[ _-]?[0-9]{5,10}$'
+            RETURNING c.name`);
+          if (junk.rowCount) console.log(`[brand-cull] deleted ${junk.rowCount} garbage-name row(s): ${junk.rows.map((r: any) => r.name).slice(0, 25).join(" | ")}`);
+          const orphanArts = await pool.query(`
+            DELETE FROM news_articles a USING news_sources ns
+             WHERE a.source_id = ns.id AND ns.category LIKE 'brand:%'
+               AND NOT EXISTS (SELECT 1 FROM crm_companies c WHERE 'brand:' || c.id = ns.category AND c.merged_into_id IS NULL)`);
+          const orphanSrcs = await pool.query(`
+            DELETE FROM news_sources ns
+             WHERE ns.category LIKE 'brand:%'
+               AND NOT EXISTS (SELECT 1 FROM crm_companies c WHERE 'brand:' || c.id = ns.category AND c.merged_into_id IS NULL)`);
+          if (orphanArts.rowCount || orphanSrcs.rowCount) console.log(`[brand-cull] removed ${orphanSrcs.rowCount} orphaned news source(s) + ${orphanArts.rowCount} stale article(s)`);
+        } catch (e: any) {
+          console.error("[brand-cull] failed:", e?.message);
+        }
         // Fill in images for Instagram posts ingested before the parser
         // could read media:content tags.
         try {
