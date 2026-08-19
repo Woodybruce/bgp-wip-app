@@ -67,17 +67,29 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r340 · 2026-08-19 · LIGHT — ROUND IN PROGRESS (provisional)
+### r340 · 2026-08-19 · LIGHT (r339 had the journey)
 - Staging merged with origin/JOGQK (new production commits: safe brand
   cull + zero-substance census, brand-news own-Google-News-source +
   apostrophized possessive fix, is_tracked_brand self-maintain — 644f083).
-  tsc clean on the merge. Regression: run-smoke.sh GREEN (42 checks, 0
-  failures, fresh fixture DB, FRESH_BUILD=1 on the merged code). Two-bot
-  round 340 running; triage of its issue list pending. New boot heals
-  verified on the fixture: cull census 7/10 zero-substance Testco rows
-  correctly NOT touched (no substantive dupes), 3 genuinely orphaned
-  brand news sources removed, all 10 tenant rows already tracked.
-- Provisional — final entry replaces this one.
+  tsc clean on the merge. Fresh container (pg_hba trust per r205;
+  superuser bgp role + restore + schema grant per r249). Regression:
+  run-smoke.sh GREEN (42 checks, 0 failures, fresh fixture DB,
+  FRESH_BUILD=1 on the merged code). Two-bot round 340: exit 0, all
+  scenarios ok first run, 0 flow-failures; 3 logged issues all listed
+  noise (rocketreach-400; brand-gaps/live-intel 503; commentary-regen
+  503 — qa/logs/round-340.jsonl). Dev-server log: 0 raw 500/502/504,
+  150 keyless 503s; error-trace sweep only keyless config noise
+  (Revolut/Anthropic).
+- Light-round work: no deferred bugs from r336-r339. New boot heals from
+  the merge verified against the fixture DB: cull census reports 7/10
+  zero-substance Testco rows and correctly folds/deletes NOTHING (no
+  substantive dupes, no garbage names); 3 genuinely orphaned brand news
+  sources removed; tracked-brand heal a no-op (all 10 tenant rows
+  already flagged). staff-map-goad-concurrent green again on the merged
+  code.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r340 was LIGHT → r341 FULL).
 
 ### r339 · 2026-08-19 · FULL (rotation #4 staff mobile 390px)
 - Staging merged with origin/JOGQK (new production commits: client-scoped
