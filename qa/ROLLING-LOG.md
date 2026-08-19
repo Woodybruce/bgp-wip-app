@@ -67,6 +67,12 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r342 · 2026-08-19 ~18:40 UTC · ROUND IN PROGRESS (LIGHT — r341 had the journey)
+- Staging = origin/JOGQK merge already in r341; "Already up to date" this
+  round. pg_hba trust fix needed again (fresh container).
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh fixture DB,
+  FRESH_BUILD=1). Two-bot sweep + triage pending.
+
 ### r341 · 2026-08-19 · FULL (rotation #1 staff desktop)
 - Staging merged with origin/JOGQK (dbb5c6d — Letting Tracker interest
   signal, brand cull export endpoint, news-feeds work). tsc clean.
