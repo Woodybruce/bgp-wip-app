@@ -381,7 +381,7 @@ router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, 
          FROM news_articles
         WHERE source_id = $1
         ORDER BY published_at DESC NULLS LAST
-        LIMIT 24`, [src.rows[0].id]
+        LIMIT 40`, [src.rows[0].id]
     );
     // Videos: RSS.app embeds a playable file in the item body when it has
     // one — surface it for inline playback. Reels detected by URL get a
@@ -400,9 +400,12 @@ router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, 
     });
     // Caption-only tiles read as broken — prefer posts with actual media
     // (posts ingested before the feed window moved on have no image left
-    // to fetch). Fall back to captions only when NOTHING has media.
+    // to fetch). Fall back to captions only when NOTHING has media. Return
+    // everything with media so the strip fills edge to edge (Woody,
+    // 2026-08-19: "fill the instagram board with all the insta inputs") —
+    // the card is one row deep and scrolls sideways.
     const withMedia = shaped.filter((p) => p.imageUrl || p.videoUrl);
-    const visible = (withMedia.length ? withMedia : shaped).slice(0, 9);
+    const visible = withMedia.length ? withMedia : shaped.slice(0, 9);
     res.json({ status: "feed", handle, followers, postCount, posts: visible });
   } catch (e: any) {
     console.error("[/api/brand/:companyId/instagram]", e?.message);

@@ -4170,6 +4170,16 @@ app.use("/api/branding/assets", express.static(
              WHERE regexp_replace(lower(name), '[^a-z0-9]', '', 'g') = 'bills'
                AND merged_into_id IS NULL
                AND COALESCE(instagram_handle, '') <> 'billsrestaurant'`);
+          // Bill's had no news because Google News feeds are only created
+          // for is_tracked_brand rows and the CH-linked Bill's row lost the
+          // flag (it lived on the old duplicate). Restore it so the next
+          // ensureBrandGoogleNewsFeeds cycle creates its news feed.
+          const tb = await pool.query(`
+            UPDATE crm_companies SET is_tracked_brand = true
+             WHERE regexp_replace(lower(name), '[^a-z0-9]', '', 'g') = 'bills'
+               AND merged_into_id IS NULL
+               AND COALESCE(is_tracked_brand, false) = false`);
+          if (tb.rowCount) console.log(`[bills-ig heal] restored is_tracked_brand on ${tb.rowCount} bills row(s)`);
           const s = await pool.query(`
             DELETE FROM news_sources ns
              USING crm_companies c
@@ -4282,6 +4292,19 @@ app.use("/api/branding/assets", express.static(
                AND c.merged_into_id IS NULL`);
           for (const r of diag.rows) {
             console.log(`[bills-diag] ${r.name}: handle=${r.instagram_handle} source=${r.sid || "NONE"} url=${r.url || "-"} fetched=${r.last_fetched_at || "never"} articles=${r.articles ?? 0} withImages=${r.with_images ?? 0} sampleImage=${String(r.sample_image || "-").slice(0, 120)}`);
+          }
+          // News-source breakdown per bills row — Woody reports Bill's has
+          // no news while almost every brand does (2026-08-19). Shows
+          // whether a google_news source exists and is producing articles.
+          const newsDiag = await pool.query(`
+            SELECT c.name, c.is_tracked_brand, ns.type, ns.url,
+                   (SELECT count(*)::int FROM news_articles a WHERE a.source_id = ns.id) AS articles
+              FROM crm_companies c
+              LEFT JOIN news_sources ns ON ns.category = 'brand:' || c.id AND ns.type = 'google_news'
+             WHERE regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') = 'bills'
+               AND c.merged_into_id IS NULL`);
+          for (const r of newsDiag.rows) {
+            console.log(`[bills-news-diag] ${r.name}: tracked=${r.is_tracked_brand} newsSource=${r.type || "NONE"} url=${String(r.url || "-").slice(0, 90)} articles=${r.articles ?? 0}`);
           }
           // Representation rows touching Bill's or Matt Porter — Woody
           // reports the retained agent vanished and a self-referential
