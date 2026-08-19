@@ -192,6 +192,11 @@ export default function ImageStudio() {
   const [searchQuery, setSearchQuery] = useState(linkedBrand);
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
+  // Apple-Photos-style property albums (Woody, 2026-08-19: "images for
+  // properties should be grouped... like a sub-folder approach"). "albums"
+  // shows one cover tile per property; clicking one drills into that
+  // property's photos via the existing propertyFilter.
+  const [libraryView, setLibraryView] = useState<"albums" | "all">("albums");
   const [selectedImage, setSelectedImage] = useState<ImageStudioImage | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -757,7 +762,10 @@ export default function ImageStudio() {
       const af = areaFilter.toLowerCase();
       if (!img.area?.toLowerCase().includes(af) && !(img as any).address?.toLowerCase().includes(af)) return false;
     }
-    if (propertyFilter) {
+    if (propertyFilter === "__uncategorised__") {
+      // The albums view's "Uncategorised" folder — images with no address.
+      if ((img as any).address) return false;
+    } else if (propertyFilter) {
       const pf = propertyFilter.toLowerCase();
       if (!((img as any).address?.toLowerCase().includes(pf))) return false;
     }
@@ -785,6 +793,28 @@ export default function ImageStudio() {
     }
     return [...m.entries()].sort((x, y) => y[1] - x[1]);
   })();
+
+  // Property albums for the Library's default view — one folder per
+  // property (most photos first) plus an Uncategorised folder at the end.
+  const propertyAlbums = (() => {
+    const m = new Map<string, { cover: ImageStudioImage; count: number }>();
+    let unCover: ImageStudioImage | null = null;
+    let unCount = 0;
+    for (const img of images) {
+      if (img.category === "Brands") continue;
+      const a = String((img as any).address || "").trim();
+      if (!a) { unCount++; if (!unCover) unCover = img; continue; }
+      const e = m.get(a);
+      if (e) e.count++;
+      else m.set(a, { cover: img, count: 1 });
+    }
+    const list = [...m.entries()].map(([name, v]) => ({ name, label: name, ...v }))
+      .sort((x, y) => y.count - x.count);
+    if (unCount && unCover) list.push({ name: "__uncategorised__", label: "Uncategorised", cover: unCover, count: unCount });
+    return list;
+  })();
+  const albumsActive = libraryView === "albums" && !searchQuery && !propertyFilter
+    && selectedCategory === "All" && propertyTypeFilter === "All" && !areaFilter;
 
   const brandImages = images.filter((img) => {
     if (img.category !== "Brands") return false;
@@ -1354,19 +1384,29 @@ export default function ImageStudio() {
             </Button>
             <div className="flex border rounded-md">
               <Button
-                variant={viewMode === "grid" ? "default" : "ghost"}
+                variant={libraryView === "albums" ? "default" : "ghost"}
                 size="sm"
-                className="h-9 px-2 rounded-r-none"
-                onClick={() => setViewMode("grid")}
+                className="h-9 px-2.5 rounded-r-none text-xs"
+                onClick={() => { setLibraryView("albums"); setPropertyFilter(""); }}
+                title="Group photos into one folder per property"
+                data-testid="button-view-albums"
+              >
+                Albums
+              </Button>
+              <Button
+                variant={libraryView === "all" && viewMode === "grid" ? "default" : "ghost"}
+                size="sm"
+                className="h-9 px-2 rounded-none"
+                onClick={() => { setLibraryView("all"); setViewMode("grid"); }}
                 data-testid="button-view-grid"
               >
                 <Grid3X3 className="h-4 w-4" />
               </Button>
               <Button
-                variant={viewMode === "list" ? "default" : "ghost"}
+                variant={libraryView === "all" && viewMode === "list" ? "default" : "ghost"}
                 size="sm"
                 className="h-9 px-2 rounded-l-none"
-                onClick={() => setViewMode("list")}
+                onClick={() => { setLibraryView("all"); setViewMode("list"); }}
                 data-testid="button-view-list"
               >
                 <List className="h-4 w-4" />
@@ -1929,8 +1969,43 @@ export default function ImageStudio() {
                   </Button>
                 </div>
               </div>
+            ) : albumsActive ? (
+              // Albums view — one folder per property, Apple-Photos style.
+              // Clicking a folder drills in via the existing propertyFilter.
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                {propertyAlbums.map((album) => (
+                  <button
+                    key={album.name}
+                    type="button"
+                    onClick={() => setPropertyFilter(album.name)}
+                    className="group relative aspect-square rounded-lg overflow-hidden border bg-muted text-left"
+                    data-testid={`album-${album.label.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 30)}`}
+                  >
+                    <img
+                      src={(album.cover as any).thumbnailData || ((album.cover as any).hasThumbnail ? `/api/image-studio/${album.cover.id}/thumb` : `/api/image-studio/${album.cover.id}/full`)}
+                      alt={album.label}
+                      className="absolute inset-0 w-full h-full object-cover transition-transform group-hover:scale-105"
+                      loading="lazy"
+                    />
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent p-2 pt-8">
+                      <p className="text-white text-xs font-semibold leading-tight line-clamp-2">{album.label}</p>
+                      <p className="text-white/70 text-[10px]">{album.count} photo{album.count === 1 ? "" : "s"}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
             ) : viewMode === "grid" ? (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                {libraryView === "albums" && propertyFilter && (
+                  <button
+                    type="button"
+                    onClick={() => setPropertyFilter("")}
+                    className="col-span-full self-start inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline w-fit"
+                    data-testid="button-back-to-albums"
+                  >
+                    ← All albums
+                  </button>
+                )}
                 {filteredImages.slice(0, visibleCount).map((img) => (
                   <ImageCard
                     key={img.id}
