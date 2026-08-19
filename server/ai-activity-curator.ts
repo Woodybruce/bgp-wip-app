@@ -104,7 +104,7 @@ export interface CuratedActivity {
  * inline, demand a structured appendix) are identical across subjects so
  * downstream parsing is uniform.
  */
-export function buildActivityQuestion(subject: ActivitySubject): string {
+export function buildActivityQuestion(subject: ActivitySubject, clientScope?: { companyName: string }): string {
   const seedLines: string[] = [];
   let label = "";
 
@@ -144,10 +144,22 @@ export function buildActivityQuestion(subject: ActivitySubject): string {
     }
   }
 
+  // Client-facing runs: full mailbox sweep, but the WRITTEN summary is
+  // scoped to what the client is entitled to see — their own schemes'
+  // intersection with the subject (Woody, 2026-08-19: "show Landsec all
+  // our Landsec related exposure to Gail's / tenants").
+  const clientScopeLines = clientScope
+    ? [
+        ``,
+        `IMPORTANT — CLIENT-FACING ANALYSIS. This summary will be displayed to **${clientScope.companyName}** (a BGP landlord client) in their portal. Search everything, but write up ONLY BGP's activity on this subject as it relates to ${clientScope.companyName}'s schemes, properties, deals and requirements. STRICTLY EXCLUDE from the write-up and citations: other landlords' or clients' confidential matters, BGP fee / commission figures, and BGP-internal strategy, resourcing or staffing discussions. If nothing relates to ${clientScope.companyName}, say so plainly.`,
+      ]
+    : [];
+
   return [
     `What recent emails AND calendar meetings do we have in the BGP mailboxes about this subject?`,
     ``,
     seedLines.join("\n"),
+    ...clientScopeLines,
     ``,
     `Use BOTH tools, with mailbox="all" so you fan out across every BGP inbox/calendar:`,
     `  • search_emails — for emails and email threads`,
@@ -304,8 +316,8 @@ export function pickLatestActivity(emailHits: EmailRef[], meetingHits: MeetingRe
  * returns curated activity. Returns null if ChatBGP fails completely.
  * Caller is responsible for caching.
  */
-export async function curateActivity(subject: ActivitySubject, req: Request, opts?: { timeoutMs?: number }): Promise<CuratedActivity | null> {
-  const question = buildActivityQuestion(subject);
+export async function curateActivity(subject: ActivitySubject, req: Request, opts?: { timeoutMs?: number; clientScope?: { companyName: string } }): Promise<CuratedActivity | null> {
+  const question = buildActivityQuestion(subject, opts?.clientScope);
   const raw = await askChatBgp(question, req, opts);
   if (!raw) return null;
   const { markdown, emailHits, meetingHits } = parseActivityResponse(raw);

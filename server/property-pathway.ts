@@ -5409,6 +5409,18 @@ export function registerPropertyPathwayRoutes(app: Express) {
       const mailboxEmail = String(req.params.mailboxEmail);
       const msgId = String(req.params.msgId);
 
+      // Client logins may only open emails cited in their OWN client-scoped
+      // activity curations — this is otherwise a staff-wide window into any
+      // BGP mailbox.
+      const { isClientRequestUser, resolveCompanyScope } = await import("./company-scope");
+      if (await isClientRequestUser(req)) {
+        const companyId = await resolveCompanyScope(req);
+        const { clientRefAllowed } = await import("./activity-routes");
+        if (!companyId || !(await clientRefAllowed(companyId, "email", msgId))) {
+          return res.status(403).json({ error: "This item isn't available on client accounts" });
+        }
+      }
+
       const [msg, atts]: [any, any] = await Promise.all([
         graphRequest(
           `/users/${encodeURIComponent(mailboxEmail)}/messages/${encodeURIComponent(msgId)}?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,bodyPreview,hasAttachments,webLink`,
@@ -5452,6 +5464,16 @@ export function registerPropertyPathwayRoutes(app: Express) {
       const mailboxEmail = String(req.params.mailboxEmail);
       const msgId = String(req.params.msgId);
       const attachmentId = String(req.params.attachmentId);
+
+      // Same client gate as the email viewer above.
+      const { isClientRequestUser, resolveCompanyScope } = await import("./company-scope");
+      if (await isClientRequestUser(req)) {
+        const companyId = await resolveCompanyScope(req);
+        const { clientRefAllowed } = await import("./activity-routes");
+        if (!companyId || !(await clientRefAllowed(companyId, "email", msgId))) {
+          return res.status(403).json({ error: "This item isn't available on client accounts" });
+        }
+      }
 
       const att: any = await graphRequest(
         `/users/${encodeURIComponent(mailboxEmail)}/messages/${encodeURIComponent(msgId)}/attachments/${encodeURIComponent(attachmentId)}`,
