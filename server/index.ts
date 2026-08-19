@@ -4206,6 +4206,21 @@ app.use("/api/branding/assets", express.static(
           for (const r of diag.rows) {
             console.log(`[bills-diag] ${r.name}: handle=${r.instagram_handle} source=${r.sid || "NONE"} url=${r.url || "-"} fetched=${r.last_fetched_at || "never"} articles=${r.articles ?? 0}`);
           }
+          // Representation rows touching Bill's or Matt Porter — Woody
+          // reports the retained agent vanished and a self-referential
+          // "representing: Bills" row appeared (2026-08-19).
+          const repDiag = await pool.query(`
+            SELECT r.id, r.end_date, b.name AS brand_name, a.name AS agent_name, ct.name AS contact_name, r.start_date
+              FROM brand_agent_representations r
+              LEFT JOIN crm_companies b ON b.id = r.brand_company_id
+              LEFT JOIN crm_companies a ON a.id = r.agent_company_id
+              LEFT JOIN crm_contacts ct ON ct.id = r.primary_contact_id
+             WHERE regexp_replace(lower(COALESCE(b.name, '')), '[^a-z0-9]', '', 'g') = 'bills'
+                OR regexp_replace(lower(COALESCE(a.name, '')), '[^a-z0-9]', '', 'g') = 'bills'
+                OR ct.name ILIKE '%matt%porter%'`);
+          for (const r of repDiag.rows) {
+            console.log(`[bills-rep-diag] rep#${r.id}: brand="${r.brand_name}" agent="${r.agent_name}" contact="${r.contact_name || "-"}" start=${r.start_date || "-"} end=${r.end_date || "live"}`);
+          }
         } catch (e: any) {
           console.error("[bills-ig heal] failed:", e?.message);
         }
