@@ -4385,6 +4385,28 @@ app.use("/api/branding/assets", express.static(
         } catch (e: any) {
           console.error("[tracked-brand heal] failed:", e?.message);
         }
+        // Read-only census of brand rows with zero substance — no deals,
+        // requirements, contacts, reps or signals (Woody, 2026-08-19: "we
+        // don't want any brands on here that are not worth tracking").
+        // Prints counts + a sample so the cull list can be reviewed BEFORE
+        // anything is deleted. Nothing is modified here.
+        try {
+          const cull = await pool.query(`
+            SELECT count(*)::int AS total,
+                   array_to_string((array_agg(name ORDER BY created_at DESC))[1:25], ' | ') AS sample
+              FROM crm_companies c
+             WHERE c.company_type ILIKE 'tenant%'
+               AND c.merged_into_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM crm_deals d WHERE d.tenant_id = c.id OR d.purchaser_id = c.id)
+               AND NOT EXISTS (SELECT 1 FROM crm_requirements_leasing r WHERE r.company_id = c.id)
+               AND NOT EXISTS (SELECT 1 FROM crm_contacts ct WHERE ct.company_id = c.id)
+               AND NOT EXISTS (SELECT 1 FROM brand_agent_representations br WHERE br.brand_company_id = c.id)
+               AND NOT EXISTS (SELECT 1 FROM brand_signals bs WHERE bs.brand_company_id = c.id)`);
+          const totalBrands = await pool.query(`SELECT count(*)::int AS n FROM crm_companies WHERE company_type ILIKE 'tenant%' AND merged_into_id IS NULL`);
+          console.log(`[brand-cull census] ${cull.rows[0]?.total ?? 0} of ${totalBrands.rows[0]?.n ?? 0} brand rows have zero substance (no deals/reqs/contacts/reps/signals). Sample: ${cull.rows[0]?.sample || "-"}`);
+        } catch (e: any) {
+          console.error("[brand-cull census] failed:", e?.message);
+        }
         // Fill in images for Instagram posts ingested before the parser
         // could read media:content tags.
         try {
