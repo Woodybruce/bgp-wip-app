@@ -67,6 +67,22 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r335 · 2026-08-19 · ROUND IN PROGRESS (provisional heartbeat)
+- Staging merged with origin/JOGQK (already up to date). Fresh container;
+  pg_hba trust per r205; superuser bgp role + restore + schema grant per
+  r249. Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures,
+  FRESH_BUILD=1, fresh DB). Two-bot round 335 running (so far only listed
+  rocketreach-400 noise).
+- Journey (rotation #2 client desktop) DONE: Mark @1440px —
+  /property-intelligence hub (first coverage ever). Triage: (1) BUG —
+  Investigator tab is client-visible but ALL /api/kyc-clouseau/* 403 for
+  clients (search/investigate/recent/expiring all 403 via API probe) =
+  dead-end tool + doomed 403s on load; fix planned: hide tab for clients
+  like Pathway/Imagery. (2) Leaflet pageerror `_leaflet_pos` on Map tab
+  during tab switches — investigating, may defer. (3) /api/os/sites 503 =
+  keyless OS-maps noise; map tiles blank locally (no network) = noise.
+- Final entry to follow this round.
+
 ### r334 · 2026-08-19 · LIGHT (r333 had the journey)
 - Staging merged with origin/JOGQK (already up to date — no new production
   commits since r333). Fresh container (repo pre-cloned; pg_hba trust per
