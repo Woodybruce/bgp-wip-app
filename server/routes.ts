@@ -3920,6 +3920,67 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  app.get("/api/available-units/all-interest-counts", requireAuth, async (req, res) => {
+    try {
+      const scope = await clientUnitScopeSql(req);
+      const rows = scope
+        ? await db.execute(sql`SELECT i.unit_id, COUNT(*)::int as count FROM unit_interest i
+             JOIN available_units u ON u.id = i.unit_id
+             LEFT JOIN crm_properties p ON p.id = u.property_id
+             LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
+            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            GROUP BY i.unit_id`)
+        : await db.execute(sql`SELECT unit_id, COUNT(*)::int as count FROM unit_interest GROUP BY unit_id`);
+      const counts: Record<string, number> = {};
+      for (const r of rows.rows as any[]) counts[r.unit_id] = r.count;
+      res.json(counts);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed" });
+    }
+  });
+
+  app.get("/api/available-units/all-interest", requireAuth, async (req, res) => {
+    try {
+      const scope = await clientUnitScopeSql(req);
+      if (scope) {
+        const rows = await db.execute(sql`SELECT i.* FROM unit_interest i
+             JOIN available_units u ON u.id = i.unit_id
+             LEFT JOIN crm_properties p ON p.id = u.property_id
+             LEFT JOIN crm_company_properties cp ON cp.property_id = p.id AND cp.company_id = ${scope}
+            WHERE p.landlord_id = ${scope} OR cp.company_id IS NOT NULL
+            ORDER BY i.interest_date`);
+        return res.json(rows.rows.map(camelRow));
+      }
+      const { unitInterest } = await import("@shared/schema");
+      const rows = await db.select().from(unitInterest).orderBy(unitInterest.interestDate);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed" });
+    }
+  });
+
+  app.get("/api/available-units/:id/interest", requireAuth, async (req, res) => {
+    try {
+      const { unitInterest } = await import("@shared/schema");
+      const rows = await db.select().from(unitInterest)
+        .where(eq(unitInterest.unitId, req.params.id as string))
+        .orderBy(desc(unitInterest.interestDate));
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed" });
+    }
+  });
+
+  app.delete("/api/available-units/interest/:interestId", requireAuth, async (req, res) => {
+    try {
+      const { unitInterest } = await import("@shared/schema");
+      await db.delete(unitInterest).where(eq(unitInterest.id, req.params.interestId as string));
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed" });
+    }
+  });
+
   app.get("/api/available-units/:id", requireAuth, async (req, res) => {
     try {
       // Master overrides cache for unitName/floor/sqft/useClass/condition/epcRating

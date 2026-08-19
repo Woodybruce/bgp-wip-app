@@ -288,6 +288,103 @@ export async function backfillInstagramImages(limitSources = 40): Promise<{ sour
   return { sources: rows.length, filled };
 }
 
+// ── Real article images for Google News items ──────────────────────────────
+// Google News RSS never carries the publisher's image (its redirects serve
+// Google logos, which isJunkImage rejects), so brand news rows rendered as
+// text-only ("why is that such a problem?" — Woody, 2026-08-19). Resolve the
+// publisher URL, read its og:image / twitter:image, store it.
+function decodeGoogleNewsUrl(url: string): string | null {
+  try {
+    const m = url.match(/news\.google\.com\/(?:rss\/)?articles\/([^?/]+)/i);
+    if (!m) return null;
+    const raw = Buffer.from(m[1].replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("latin1");
+    const um = raw.match(/https?:\/\/[\x21-\x7e]{8,500}/);
+    if (!um) return null;
+    // Trim trailing protobuf bytes that ride along after the URL
+    return um[0].replace(/[^\x21-\x7e]+.*$/, "").replace(/[ -].*$/, "");
+  } catch {
+    return null;
+  }
+}
+
+async function fetchWithCap(url: string, capBytes = 500_000, timeoutMs = 8000): Promise<string | null> {
+  try {
+    const r = await fetch(url, {
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36" },
+      redirect: "follow",
+    });
+    if (!r.ok || !r.body) return null;
+    const reader = r.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    while (total < capBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      total += value.length;
+    }
+    reader.cancel().catch(() => {});
+    return Buffer.concat(chunks).toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+export async function backfillNewsOgImages(limit = 25): Promise<{ scanned: number; filled: number }> {
+  // Raw ensure (no drizzle migration): tried-marker so dead links aren't
+  // re-fetched every cycle.
+  await db.execute(sql`ALTER TABLE news_articles ADD COLUMN IF NOT EXISTS og_image_tried BOOLEAN DEFAULT false`).catch(() => {});
+  const res: any = await db.execute(sql`
+    SELECT a.id, a.url
+      FROM news_articles a
+      JOIN news_sources ns ON ns.id = a.source_id
+     WHERE ns.category LIKE 'brand:%' AND ns.type = 'google_news'
+       AND a.published_at > now() - interval '60 days'
+       AND (a.image_url IS NULL
+            OR a.image_url ILIKE '%/s2/favicons%'
+            OR a.image_url ~* 'google\\.com|gstatic\\.com|googleusercontent\\.com')
+       AND COALESCE(a.og_image_tried, false) = false
+     ORDER BY a.published_at DESC
+     LIMIT ${limit}`);
+  const rows: any[] = res.rows ?? res;
+  let filled = 0;
+  for (const a of rows) {
+    try {
+      // Resolve the publisher URL behind the Google redirect
+      let target: string | null = /news\.google\.com/i.test(a.url) ? decodeGoogleNewsUrl(a.url) : a.url;
+      if (!target) {
+        // Fallback: the Google splash page carries the publisher link as a
+        // plain anchor for non-JS clients.
+        const splash = await fetchWithCap(a.url, 200_000, 6000);
+        const hrefs = splash ? [...splash.matchAll(/href="(https?:\/\/[^"]+)"/g)].map((h) => h[1]) : [];
+        target = hrefs.find((h) => !/google\.com|gstatic\.com|googleusercontent\.com|w3\.org/i.test(h)) || null;
+      }
+      let img: string | null = null;
+      if (target) {
+        const html = await fetchWithCap(target);
+        if (html) {
+          const og = html.match(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)(?::src)?["'][^>]+content=["']([^"']+)["']/i)
+            || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["'](?:og:image|twitter:image)(?::src)?["']/i);
+          if (og?.[1] && /^https?:\/\//i.test(og[1])) img = og[1];
+        }
+      }
+      if (img) {
+        await db.execute(sql`UPDATE news_articles SET image_url = ${img}, og_image_tried = true WHERE id = ${a.id}`);
+        filled++;
+      } else {
+        // Mark tried so a dead link isn't re-fetched every cycle
+        await db.execute(sql`UPDATE news_articles SET og_image_tried = true WHERE id = ${a.id}`);
+      }
+    } catch {
+      try { await db.execute(sql`UPDATE news_articles SET og_image_tried = true WHERE id = ${a.id}`); } catch {}
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  if (rows.length) console.log(`[news-og-image] filled ${filled}/${rows.length} article image(s)`);
+  return { scanned: rows.length, filled };
+}
+
 // Google News RSS image redirects resolve to a Google-hosted logo, not the
 // article image. Reject those so we fall back to a publisher favicon.
 function isJunkImage(url: string | null | undefined): boolean {
@@ -2062,6 +2159,7 @@ export function setupNewsFeedRoutes(app: Express) {
       } catch (e: any) {
         console.warn("[News Feed] brand linking failed:", e?.message);
       }
+      try { await backfillNewsOgImages(25); } catch (e: any) { console.warn("[news-og-image] startup pass failed:", e?.message); }
       const compResult = await extractCompsFromArticles();
       if (compResult.created > 0) {
         console.log(`[Comp Extract] Startup news: ${compResult.extracted} found, ${compResult.created} new comps`);
@@ -2101,6 +2199,7 @@ export function setupNewsFeedRoutes(app: Express) {
         console.warn("[News Feed] brand linking failed:", e?.message);
       }
       await backfillMissingImages();
+      try { await backfillNewsOgImages(25); } catch (e: any) { console.warn("[news-og-image] auto pass failed:", e?.message); }
       await updateTeamPreferencesFromEngagement();
       const compResult = await extractCompsFromArticles();
       if (compResult.created > 0) {

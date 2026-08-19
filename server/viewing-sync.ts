@@ -116,7 +116,10 @@ async function resolveUnit(hay: string, units: TrackerUnit[], companyId?: string
       prop = { id: pid, ...p }; bestLen = firstWord.length;
     }
   }
-  if (!prop) return null;
+  // No property named — fall back to a distinctive unit name alone
+  // ("Little Bao Boy viewing - Arch 11" carries no property but the arch
+  // number is unique across the tracker).
+  if (!prop) return resolveUnitByNameOnly(hay, units);
 
   // Unit name within the property — unit names are stored with the scheme
   // appended ("MSU9, Bluewater, Bluewater"), so match on the first comma
@@ -146,9 +149,49 @@ async function resolveUnit(hay: string, units: TrackerUnit[], companyId?: string
       if (r.rows.length === 1) {
         return prop.units.find(u => u.id === r.rows[0].id) || null;
       }
+      // History tiebreak — the company already has activity (a viewing,
+      // offer or interest row) on exactly one unit at this property; a new
+      // mention is near-certainly about the same unit.
+      const h = await pool.query(
+        `SELECT DISTINCT a.unit_id FROM (
+           SELECT v.unit_id, v.company_id FROM unit_viewings v
+           UNION ALL SELECT o.unit_id, o.company_id FROM unit_offers o
+           UNION ALL SELECT i.unit_id, i.company_id FROM unit_interest i
+         ) a JOIN available_units au ON au.id = a.unit_id
+         WHERE au.property_id = $1 AND a.company_id = $2 LIMIT 2`,
+        [prop.id, companyId]
+      );
+      if (h.rows.length === 1) {
+        return prop.units.find(u => u.id === h.rows[0].unit_id) || null;
+      }
     } catch { /* tiebreak is best-effort */ }
   }
   return null;
+}
+
+// Fallback when NO property name appears in the text: a distinctive tracker
+// unit name alone can anchor ("Arch 12a", "MSU9", "Unit 3.12"). Only fires
+// when the (word-bounded) unit token matches exactly one unit across the
+// whole tracker, and the token is specific enough to trust: it must carry a
+// digit (bare "Unit"/"Kiosk" never anchors) and be ≥4 chars, or be an
+// unusual ≥8-char name.
+function resolveUnitByNameOnly(hay: string, units: TrackerUnit[]): TrackerUnit | null {
+  let match: TrackerUnit | null = null;
+  let matchCount = 0;
+  let bestLen = 0;
+  for (const u of units) {
+    const needle = norm((u.unitName.split(",")[0] || "").trim());
+    // "Unit 2" / "Kiosk 3" style names repeat across schemes — never let
+    // them anchor without a property. "Arch 12a" / "MSU9" / "U052B" can.
+    const generic = /^(unit|kiosk|shop|suite|store|room)\s*\d{1,3}[a-z]?$/.test(needle);
+    const distinctive = !generic && ((needle.length >= 4 && /\d/.test(needle)) || needle.length >= 8);
+    if (!distinctive) continue;
+    if (new RegExp(`\\b${escapeRe(needle)}\\b`).test(hay)) {
+      if (needle.length > bestLen) { match = u; bestLen = needle.length; matchCount = 1; }
+      else if (needle.length === bestLen && match?.id !== u.id) matchCount++;
+    }
+  }
+  return matchCount === 1 ? match : null;
 }
 
 export async function syncDiaryViewings(events: DiaryEvent[], mailboxEmail: string): Promise<number> {
@@ -340,4 +383,194 @@ export async function syncOfferEmails(messages: InboxMessage[], mailboxEmail: st
 
   if (created > 0) console.log(`[offer-check] ${mailboxEmail}: ${created} unconfirmed offer(s) from inbox`);
   return created;
+}
+
+// ─── Email → interest check ──────────────────────────────────────────────
+// The third signal: a brand/agent expressing interest that isn't yet a
+// viewing or an offer ("we'd be interested in", "keen on the unit at…",
+// "could you send particulars"). Same anchors as offers — known external
+// contact + tracker unit — and offer-language mails are left to the offer
+// check so one email never lands in both buckets. One row per thread, and
+// nothing new when that company already has interest/viewing/offer activity
+// on the unit in the last 90 days.
+
+export function looksLikeInterest(subject: string | null | undefined, bodyPreview?: string | null): boolean {
+  const text = `${subject || ""} ${bodyPreview || ""}`;
+  return /\b(interested in|interest in|expression of interest|register(ing)? (our |their )?interest|keen on|keen to (view|see|take)|would (love|like) to (view|see)|arrange a viewing|book a viewing|send (over |through )?(the )?(particulars|details|floor ?plans?)|more (details|information) on the (unit|space|site))\b/i.test(text);
+}
+
+export async function syncInterestEmails(messages: InboxMessage[], mailboxEmail: string): Promise<number> {
+  const candidates = messages.filter(m =>
+    looksLikeInterest(m.subject, m.bodyPreview) && !looksLikeOffer(m.subject, m.bodyPreview)
+  );
+  if (candidates.length === 0) return 0;
+
+  const units = await loadTrackerUnits();
+  if (units.length === 0) return 0;
+  let created = 0;
+
+  for (const msg of candidates) {
+    try {
+      const hay = norm(`${msg.subject || ""} ${msg.bodyPreview || ""}`);
+      const external = [
+        msg.from?.emailAddress,
+        ...(msg.toRecipients || []).map(r => r?.emailAddress),
+        ...(msg.ccRecipients || []).map(r => r?.emailAddress),
+      ].filter((a): a is { name?: string; address?: string } =>
+        !!a?.address && !a.address.toLowerCase().endsWith(BGP_DOMAIN)
+      );
+      if (external.length === 0) continue;
+      const emails = [...new Set(external.map(a => a.address!.toLowerCase()))];
+      const contactRes = await pool.query(
+        `SELECT ct.id, ct.name, ct.company_id, co.name AS company_name
+           FROM crm_contacts ct
+           LEFT JOIN crm_companies co ON co.id = ct.company_id
+          WHERE LOWER(ct.email) = ANY($1) LIMIT 1`,
+        [emails]
+      );
+      if (!contactRes.rows.length) continue;
+      const contact = contactRes.rows[0];
+
+      const unit = await resolveUnit(hay, units, contact.company_id);
+      if (!unit) continue;
+
+      // Already engaged? Any interest/viewing/offer for this company on this
+      // unit in the last 90 days means the tracker already knows — skip.
+      if (contact.company_id) {
+        const existing = await pool.query(
+          `SELECT 1 FROM (
+             SELECT unit_id, company_id, created_at FROM unit_interest
+             UNION ALL SELECT unit_id, company_id, created_at FROM unit_viewings
+             UNION ALL SELECT unit_id, company_id, created_at FROM unit_offers
+           ) a WHERE a.unit_id = $1 AND a.company_id = $2
+             AND a.created_at >= NOW() - INTERVAL '90 days' LIMIT 1`,
+          [unit.id, contact.company_id]
+        );
+        if (existing.rows.length) continue;
+      }
+
+      const received = msg.receivedDateTime ? new Date(msg.receivedDateTime) : new Date();
+      const fmt = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" });
+      const parts = Object.fromEntries(fmt.formatToParts(received).map(p => [p.type, p.value]));
+      const interestDate = `${parts.year}-${parts.month}-${parts.day}`;
+      const convKey = msg.conversationId ? `conv_${msg.conversationId}` : `msg_${msg.id}`;
+
+      const res = await pool.query(
+        `INSERT INTO unit_interest
+           (unit_id, company_name, contact_name, contact_id, company_id,
+            interest_date, notes, source, email_conversation_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'email', $8)
+         ON CONFLICT (email_conversation_id) WHERE email_conversation_id IS NOT NULL
+         DO NOTHING
+         RETURNING id`,
+        [
+          unit.id, contact.company_name || null, contact.name || null,
+          contact.id, contact.company_id || null, interestDate,
+          `Detected in ${mailboxEmail}'s inbox: "${msg.subject || ""}"`,
+          convKey,
+        ]
+      );
+      if (res.rows.length) created++;
+    } catch (e: any) {
+      console.error("[interest-check] upsert failed:", e?.message);
+    }
+  }
+
+  if (created > 0) console.log(`[interest-check] ${mailboxEmail}: ${created} interest signal(s) from inbox`);
+  return created;
+}
+
+// ─── Backfill from stored interactions ───────────────────────────────────
+// The hourly sweep only sees NEW mail, so history from before this module
+// (or before a matcher improvement) never gets a second look. This replays
+// crm_interactions — which already stores subject/preview + resolved
+// contact/company for every synced email — through the same offer/interest
+// matchers. Dedupe: interactions carry no Graph conversationId, so the key
+// is int_<interaction id>; the 60/90-day already-logged guards do the rest.
+export async function backfillActivityFromInteractions(days = 90): Promise<{ offers: number; interest: number }> {
+  // Pre-filter candidates in SQL — the offer/interest language regexes cut
+  // tens of thousands of emails down to the few thousand worth scoring, so
+  // the row-by-row matcher isn't dominated by round-trips on no-hopers.
+  const r = await pool.query(
+    `SELECT id, subject, preview, contact_id, company_id, interaction_date
+       FROM crm_interactions
+      WHERE type = 'email' AND interaction_date >= NOW() - ($1 || ' days')::interval
+        AND (company_id IS NOT NULL OR contact_id IS NOT NULL)
+        AND (subject ~* '\\yoffers?\\y'
+          OR preview ~* '\\y(our offer|offer of|revised offer|improved offer|offer for|make an offer|submit(ted)? an offer|offer submitted|best and final|heads of terms)\\y'
+          OR (subject || ' ' || COALESCE(preview,'')) ~* '\\y(interested in|interest in|expression of interest|register(ing)? (our |their )?interest|keen on|keen to (view|see|take)|would (love|like) to (view|see)|arrange a viewing|book a viewing|send (over |through )?(the )?(particulars|details|floor ?plans?)|more (details|information) on the (unit|space|site))\\y')
+      ORDER BY interaction_date`,
+    [String(days)]
+  );
+  const units = await loadTrackerUnits();
+  if (units.length === 0) return { offers: 0, interest: 0 };
+  let offers = 0, interest = 0;
+
+  for (const row of r.rows) {
+    try {
+      const isOffer = looksLikeOffer(row.subject, row.preview);
+      const isInterest = !isOffer && looksLikeInterest(row.subject, row.preview);
+      if (!isOffer && !isInterest) continue;
+      if (!row.company_id && !row.contact_id) continue;
+
+      const hay = norm(`${row.subject || ""} ${row.preview || ""}`);
+      const unit = await resolveUnit(hay, units, row.company_id);
+      if (!unit) continue;
+
+      const contactRes = row.contact_id
+        ? await pool.query(`SELECT ct.name, co.name AS company_name FROM crm_contacts ct LEFT JOIN crm_companies co ON co.id = ct.company_id WHERE ct.id = $1`, [row.contact_id])
+        : { rows: [] as any[] };
+      const contactName = contactRes.rows[0]?.name || null;
+      const companyName = contactRes.rows[0]?.company_name || null;
+      const d = new Date(row.interaction_date);
+      const fmt = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" });
+      const parts = Object.fromEntries(fmt.formatToParts(d).map(p => [p.type, p.value]));
+      const dateStr = `${parts.year}-${parts.month}-${parts.day}`;
+
+      if (isOffer) {
+        if (row.company_id) {
+          const existing = await pool.query(
+            `SELECT 1 FROM unit_offers WHERE unit_id = $1 AND company_id = $2
+               AND offer_date ~ '^\\d{4}-\\d{2}-\\d{2}' AND offer_date::date >= ($3::date - 60) LIMIT 1`,
+            [unit.id, row.company_id, dateStr]
+          );
+          if (existing.rows.length) continue;
+        }
+        const res = await pool.query(
+          `INSERT INTO unit_offers (unit_id, company_name, contact_name, contact_id, company_id,
+             offer_date, status, comments, source, email_conversation_id)
+           VALUES ($1,$2,$3,$4,$5,$6,'Pending',$7,'email',$8)
+           ON CONFLICT (email_conversation_id) WHERE email_conversation_id IS NOT NULL DO NOTHING RETURNING id`,
+          [unit.id, companyName, contactName, row.contact_id, row.company_id, dateStr,
+           `Backfilled from synced email: "${row.subject || ""}" — figures need confirming.`, `int_${row.id}`]
+        );
+        if (res.rows.length) offers++;
+      } else {
+        if (row.company_id) {
+          const existing = await pool.query(
+            `SELECT 1 FROM (
+               SELECT unit_id, company_id, created_at FROM unit_interest
+               UNION ALL SELECT unit_id, company_id, created_at FROM unit_viewings
+               UNION ALL SELECT unit_id, company_id, created_at FROM unit_offers
+             ) a WHERE a.unit_id = $1 AND a.company_id = $2 LIMIT 1`,
+            [unit.id, row.company_id]
+          );
+          if (existing.rows.length) continue;
+        }
+        const res = await pool.query(
+          `INSERT INTO unit_interest (unit_id, company_name, contact_name, contact_id, company_id,
+             interest_date, notes, source, email_conversation_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,'email',$8)
+           ON CONFLICT (email_conversation_id) WHERE email_conversation_id IS NOT NULL DO NOTHING RETURNING id`,
+          [unit.id, companyName, contactName, row.contact_id, row.company_id, dateStr,
+           `Backfilled from synced email: "${row.subject || ""}"`, `int_${row.id}`]
+        );
+        if (res.rows.length) interest++;
+      }
+    } catch (e: any) {
+      console.error("[activity-backfill] row failed:", e?.message);
+    }
+  }
+  console.log(`[activity-backfill] ${offers} offer(s), ${interest} interest row(s) from ${r.rows.length} interactions`);
+  return { offers, interest };
 }

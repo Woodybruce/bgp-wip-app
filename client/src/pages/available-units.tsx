@@ -19,7 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
-  FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
+  FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins, Flame,
   ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, Layers } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
@@ -319,7 +319,7 @@ export default function AvailableUnitsPage() {
     } else { setSortBy(key); setSortDir(1); }
   };
   const [targetStatusFilter, setTargetStatusFilter] = useState("all");
-  const [activityFilter, setActivityFilter] = useState<null | "viewings" | "offers">(null);
+  const [activityFilter, setActivityFilter] = useState<null | "viewings" | "offers" | "interest">(null);
   // "Pitch property" from a brand profile carries the brand through
   // (?pitchBrand=<id>&pitchBrandName=<name>) so units get a one-tap
   // "add as target" instead of re-finding the brand by hand (UX #15).
@@ -390,6 +390,7 @@ export default function AvailableUnitsPage() {
   // the targeting brief instead of dropping straight into an edit input.
   const [renameUnitId, setRenameUnitId] = useState<string | null>(null);
   const [viewingsUnit, setViewingsUnit] = useState<AvailableUnit | null>(null);
+  const [interestUnit, setInterestUnit] = useState<AvailableUnit | null>(null);
   const [offersUnit, setOffersUnit] = useState<AvailableUnit | null>(null);
   const [addViewingOpen, setAddViewingOpen] = useState(false);
   const [addOfferOpen, setAddOfferOpen] = useState(false);
@@ -500,6 +501,12 @@ export default function AvailableUnitsPage() {
     queryKey: ["/api/available-units/all-viewings"],
   });
 
+  const { data: allInterest = [] } = useQuery<any[]>({
+    queryKey: ["/api/available-units/all-interest"],
+  });
+  const { data: interestCounts = {} } = useQuery<Record<string, number>>({
+    queryKey: ["/api/available-units/all-interest-counts"],
+  });
   const { data: allOffers = [] } = useQuery<UnitOffer[]>({
     queryKey: ["/api/available-units/all-offers"],
   });
@@ -530,6 +537,22 @@ export default function AvailableUnitsPage() {
     queryKey: ["/api/available-units", offersUnit?.id, "offers"],
     queryFn: () => offersUnit ? fetch(`/api/available-units/${offersUnit.id}/offers`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()) : Promise.resolve([]),
     enabled: !!offersUnit,
+  });
+
+  const { data: interestForUnit = [] } = useQuery<any[]>({
+    queryKey: ["/api/available-units", interestUnit?.id, "interest"],
+    queryFn: () => interestUnit ? fetch(`/api/available-units/${interestUnit.id}/interest`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()) : Promise.resolve([]),
+    enabled: !!interestUnit,
+  });
+
+  const deleteInterestMutation = useMutation({
+    mutationFn: (interestId: string) => apiRequest("DELETE", `/api/available-units/interest/${interestId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units", interestUnit?.id, "interest"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-interest-counts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-interest"] });
+      toast({ title: "Interest removed" });
+    },
   });
 
   const addViewingMutation = useMutation({
@@ -1138,6 +1161,7 @@ export default function AvailableUnitsPage() {
     // FY strip chips filter to units with live interest (UX #31).
     if (activityFilter === "viewings") result = result.filter(u => (viewingsCounts[u.id] || 0) > 0);
     if (activityFilter === "offers") result = result.filter(u => (offersCounts[u.id] || 0) > 0);
+    if (activityFilter === "interest") result = result.filter(u => (interestCounts[u.id] || 0) > 0);
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(u => {
@@ -1156,7 +1180,7 @@ export default function AvailableUnitsPage() {
       });
     }
     return result;
-  }, [teamUnits, targetStatusFilter, briefByUnit, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies, activityFilter, viewingsCounts, offersCounts]);
+  }, [teamUnits, targetStatusFilter, briefByUnit, propertyFilter, assetClassFilter, locationFilter, bgpTeamFilter, agentFilter, bgpUsers, search, propertyMap, dealMap, crmCompanies, activityFilter, viewingsCounts, offersCounts, interestCounts]);
 
   const filtered = useMemo(() => {
     // The Letting Tracker is the marketing pipeline (REP / AVA / NEG). Once a
@@ -1270,6 +1294,21 @@ export default function AvailableUnitsPage() {
     return buckets;
   }, [allOffers, currentFYStart]);
 
+  const interestMonthly = useMemo(() => {
+    const buckets: number[] = new Array(12).fill(0);
+    for (const i of allInterest) {
+      if (!i.interestDate) continue;
+      const d = new Date(i.interestDate);
+      const m = d.getMonth() + 1;
+      const y = d.getFullYear();
+      const fyIdx = FY_MONTH_NUMS.indexOf(m);
+      if (fyIdx === -1) continue;
+      const expectedYear = m >= 4 ? currentFYStart : currentFYStart + 1;
+      if (y === expectedYear) buckets[fyIdx]++;
+    }
+    return buckets;
+  }, [allInterest, currentFYStart]);
+
   if (isLoading) {
     return (
       <div className="p-6 space-y-4">
@@ -1361,13 +1400,14 @@ export default function AvailableUnitsPage() {
         <CardContent className="px-4 py-2.5 flex items-center gap-6 flex-wrap">
           <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
           {([
+            { label: "Interest", icon: Flame,        data: interestMonthly, colour: "bg-violet-500", dim: "bg-violet-200 dark:bg-violet-800" },
             { label: "Viewings", icon: CalendarDays, data: viewingsMonthly, colour: "bg-blue-500", dim: "bg-blue-200 dark:bg-blue-800" },
             { label: "Offers",   icon: HandCoins,    data: offersMonthly,   colour: "bg-amber-500", dim: "bg-amber-200 dark:bg-amber-800" },
           ] as const).map(({ label, icon: Icon, data, colour, dim }) => {
             const total = data.reduce((a, b) => a + b, 0);
             const max = Math.max(...data, 1);
             const currentMonthIdx = FY_MONTH_NUMS.indexOf(new Date().getMonth() + 1);
-            const filterKey = label === "Viewings" ? "viewings" as const : "offers" as const;
+            const filterKey = label === "Viewings" ? "viewings" as const : label === "Offers" ? "offers" as const : "interest" as const;
             return (
               <button
                 type="button"
@@ -1377,7 +1417,7 @@ export default function AvailableUnitsPage() {
                 title={`Show only units with ${label.toLowerCase()}`}
                 data-testid={`fy-chip-${filterKey}`}
               >
-                <Icon className={`h-3.5 w-3.5 ${label === "Viewings" ? "text-blue-500" : "text-amber-500"}`} />
+                <Icon className={`h-3.5 w-3.5 ${label === "Viewings" ? "text-blue-500" : label === "Offers" ? "text-amber-500" : "text-violet-500"}`} />
                 <span className="text-xs font-semibold">{label}</span>
                 <span className="text-sm font-bold tabular-nums">{total}</span>
                 <div className="flex items-end gap-[2px] h-5" title={data.map((c, i) => `${FY_MONTHS[i]}: ${c}`).join(" · ")}>
@@ -1713,8 +1753,8 @@ export default function AvailableUnitsPage() {
                     <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setViewingsUnit(u); setAddViewingOpen(true); }} data-testid={`unit-viewing-${u.id}`}>
                       <CalendarDays className="w-3.5 h-3.5" /> Viewing{vCount ? ` (${vCount})` : ""}
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setOffersUnit(u); setAddOfferOpen(true); }} data-testid={`unit-interest-${u.id}`}>
-                      <HandCoins className="w-3.5 h-3.5" /> Interest{oCount ? ` (${oCount})` : ""}
+                    <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setOffersUnit(u); setAddOfferOpen(true); }} data-testid={`unit-offer-${u.id}`}>
+                      <HandCoins className="w-3.5 h-3.5" /> Offer{oCount ? ` (${oCount})` : ""}
                     </Button>
                     <Button variant="ghost" size="sm" className="h-9 px-2.5 text-xs gap-1.5" onClick={() => { setForm(unitToForm(u, u.dealId ? dealMap[u.dealId]?.dealType : null, landlordPrefillFor(u))); setEditItem(u); }} data-testid={`unit-edit-${u.id}`}>
                       <Pencil className="w-3.5 h-3.5" /> Edit
@@ -2233,6 +2273,18 @@ export default function AvailableUnitsPage() {
                           >
                             <HandCoins className="h-3.5 w-3.5" />
                             {offersCounts[u.id] || 0}
+                          </Button>
+                          <span className="text-[9px] text-muted-foreground/60">·</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs gap-1"
+                            onClick={() => setInterestUnit(u)}
+                            title="Interest — brands who've expressed interest by email"
+                            data-testid={`button-interest-${u.id}`}
+                          >
+                            <Flame className="h-3.5 w-3.5" />
+                            {interestCounts[u.id] || 0}
                           </Button>
                         </div>
                       </TableCell>
@@ -2867,6 +2919,42 @@ export default function AvailableUnitsPage() {
               </>
             );
           })()}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!interestUnit} onOpenChange={v => { if (!v) setInterestUnit(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Flame className="w-4 h-4 text-violet-500" />
+              Interest — {interestUnit?.unitName?.split(",")[0] || "Unit"}
+            </DialogTitle>
+            <DialogDescription>
+              Brands and agents who've expressed interest — mostly auto-detected from the team's inbox. Log a viewing or an offer when it firms up.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 max-h-[50vh] overflow-y-auto">
+            {interestForUnit.length === 0 && (
+              <p className="text-sm text-muted-foreground italic py-4 text-center">No interest logged for this unit yet.</p>
+            )}
+            {interestForUnit.map((i: any) => (
+              <div key={i.id} className="flex items-start justify-between gap-2 border rounded-lg p-2.5" data-testid={`interest-row-${i.id}`}>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{i.companyName || i.contactName || "Unknown"}</p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {[i.contactName && i.companyName ? i.contactName : null, i.interestDate].filter(Boolean).join(" · ")}
+                  </p>
+                  {i.notes && <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2">{i.notes}</p>}
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {i.source === "email" && <Badge variant="outline" className="text-[9px]">from inbox</Badge>}
+                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={() => deleteInterestMutation.mutate(i.id)} data-testid={`interest-delete-${i.id}`}>
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
 

@@ -17,7 +17,7 @@ export function AvailableUnitsWidget() {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <TrackerSummary variant="card" propertyIds={favoriteIds.length ? favoriteIds : undefined} />
+        <TrackerSummary variant="card" tall propertyIds={favoriteIds.length ? favoriteIds : undefined} />
       </CardContent>
     </Card>
   );
