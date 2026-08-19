@@ -4177,7 +4177,11 @@ app.use("/api/branding/assets", express.static(
                AND ns.category = 'brand:' || c.id
                AND regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') = 'bills'
                AND c.merged_into_id IS NULL
-               AND ns.url NOT ILIKE '%instagram.com/billsrestaurant/%'`);
+               AND ns.url NOT ILIKE '%instagram.com/billsrestaurant/%'
+             RETURNING ns.url`);
+          if (s.rowCount) {
+            console.log(`[bills-ig heal] removed urls: ${s.rows.map((r: any) => r.url).join(" | ")}`);
+          }
           const ins = await pool.query(`
             INSERT INTO news_sources (name, url, feed_url, type, category, active)
             SELECT c.name || ' (instagram)',
@@ -4193,6 +4197,48 @@ app.use("/api/branding/assets", express.static(
                                 WHERE ns.category = 'brand:' || c.id AND ns.type = 'rssapp_instagram')`);
           if ((h.rowCount || 0) + (s.rowCount || 0) + (ins.rowCount || 0) > 0) {
             console.log(`[bills-ig heal] handles fixed=${h.rowCount}, dead sources removed=${s.rowCount}, feed wired to ${ins.rowCount} brand row(s)`);
+          }
+          // Inline ingest — the boot fetch pass SELECTs its source list
+          // BEFORE this heal runs (+20s vs +40s), and source churn orphans
+          // previously ingested posts behind the global article-url dedupe.
+          // Pull the feed here and upsert by url, re-homing articles onto
+          // the CH-linked Bill's source so the profile card has posts NOW.
+          try {
+            const src = await pool.query(`
+              SELECT ns.id, ns.name, ns.category FROM news_sources ns
+                JOIN crm_companies c ON ns.category = 'brand:' || c.id
+               WHERE ns.type = 'rssapp_instagram'
+                 AND regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') = 'bills'
+                 AND c.merged_into_id IS NULL
+               ORDER BY (c.companies_house_number IS NOT NULL) DESC
+               LIMIT 1`);
+            const target = src.rows[0];
+            if (target) {
+              const Parser = (await import("rss-parser")).default;
+              const parser = new Parser({ timeout: 15000 });
+              const feed = await parser.parseURL("https://rss.app/feeds/QzQXbDchpuJcVjBz.xml");
+              let ingested = 0, rehomed = 0;
+              for (const item of (feed.items || []).slice(0, 20)) {
+                if (!item.title || !item.link) continue;
+                const upd = await pool.query(
+                  `UPDATE news_articles SET source_id = $1 WHERE url = $2`,
+                  [target.id, item.link]);
+                if (upd.rowCount) { rehomed++; continue; }
+                await pool.query(`
+                  INSERT INTO news_articles (source_id, source_name, title, summary, url, image_url, published_at, category, processed)
+                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false)`,
+                  [target.id, target.name, item.title,
+                   (item.contentSnippet || "").slice(0, 500) || null, item.link,
+                   (item as any).enclosure?.url || null,
+                   item.pubDate ? new Date(item.pubDate) : new Date(),
+                   target.category]);
+                ingested++;
+              }
+              await pool.query(`UPDATE news_sources SET last_fetched_at = now() WHERE id = $1`, [target.id]);
+              console.log(`[bills-ig ingest] ${ingested} new post(s), ${rehomed} re-homed onto source ${target.id}`);
+            }
+          } catch (e: any) {
+            console.warn("[bills-ig ingest] failed:", e?.message);
           }
           // Representation repair (Woody, 2026-08-19): the reps live on the
           // duplicate "Bills" row while the profile in use is the CH-linked
