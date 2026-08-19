@@ -277,8 +277,13 @@ export function registerActivityRoutes(app: Express) {
         }
       }
 
+      // Never DISPLAY a degraded client-voice curation either — serve the
+      // empty state so the card shows "analysing" instead of telling staff
+      // their own mailboxes are inaccessible while the re-run cooks.
       res.json({
-        ...(cache || { fromCache: false, markdown: "", emailHits: [], meetingHits: [], generatedAt: null, latestActivityDate: null }),
+        ...(cache && !degradedCache
+          ? cache
+          : { fromCache: false, markdown: "", emailHits: [], meetingHits: [], generatedAt: null, latestActivityDate: null }),
         inFlight,
       });
     } catch (err: any) {

@@ -449,11 +449,19 @@ export async function runAllAmlChecks(
             `UPDATE crm_companies SET aml_pep_status = $1 WHERE id = $2`,
             ["pep_domestic", companyId],
           );
-        } else if (complyAdvantageResult.length > 0 && complyAdvantageResult.every(r => r.status === "clear")) {
-          // All clear — auto-set PEP status to clear
+        } else if (complyAdvantageResult.length > 0) {
+          // A screening that RAN must always record an outcome. Previously
+          // only an all-clear wrote a status, so one potential_match (a
+          // false positive on a common director name) left aml_pep_status
+          // empty forever — indistinguishable from "never screened", the
+          // checklist never completed, and the auto-kicks refired for
+          // nothing (Bill's, 2026-08-19).
+          const anyHits = complyAdvantageResult.some(
+            r => r.status === "strong_match" || r.status === "potential_match",
+          );
           await pool.query(
             `UPDATE crm_companies SET aml_pep_status = $1 WHERE id = $2 AND (aml_pep_status IS NULL OR aml_pep_status = '')`,
-            ["clear", companyId],
+            [anyHits ? "review_required" : "clear", companyId],
           );
         }
 
