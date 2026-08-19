@@ -67,6 +67,12 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r343 · 2026-08-19 · ROUND IN PROGRESS (FULL, rotation #2 client desktop)
+- Fresh container (pg_hba trust per r205; superuser bgp role + restore +
+  schema grant per r249). origin/JOGQK merge: "Already up to date".
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
+  Two-bot round 343 running; triage + client-desktop journey to follow.
+
 ### r342 · 2026-08-19 · LIGHT (r341 had the journey)
 - Fresh container (pg_hba trust fix per r205; superuser bgp role + restore +
   schema grant per r249). origin/JOGQK merge: "Already up to date" — no new
