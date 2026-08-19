@@ -4409,3 +4409,10 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
   already landing-agnostic per r222).
 - Next journey: rotation #4 staff mobile 390px (r225 had the journey →
   r226 may be LIGHT; then #4).
+
+### r344 · 2026-08-19 · LIGHT — ROUND IN PROGRESS (provisional)
+- Merged origin/JOGQK into staging (brings deal-verdict alarm: server/deal-verdicts.ts,
+  client deal-verdict-alarm.tsx). unit_interest boot-heal kept.
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1 on merged code).
+- Triage: 0 raw 5xx beyond keyless-AI 503 noise (ai-briefing, brand-gaps, ai-take).
+- Next: two-bot round, dev-server sweep incl. new deal-verdict surfaces, deferred bugs (none from r343).
