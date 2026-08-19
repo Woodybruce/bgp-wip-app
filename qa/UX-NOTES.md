@@ -16,6 +16,14 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+68. 2026-08-19 · both personas / Letting Tracker desktop (QA r333) ·
+    "work my Bluewater units" · Typing in the tracker search recounts the
+    status chips (156→151) and the table, but the page header keeps the
+    unfiltered total ("156 units" staff / "153 units" client) — the same
+    numbers-disagree class Woody had fixed on the deals board "All" chip
+    (UX #63, r329). · Suggested: recount the header with the active
+    search/filters, or label it "151 of 156 units".
+
 67. 2026-08-18 · both personas / mobile 390px (QA r331) · "log this
     morning's viewing from my phone" · When a viewing is saved with no
     Company (common quick-log path — the dialog's required field is only
