@@ -258,20 +258,33 @@ export async function backfillInstagramImages(limitSources = 40): Promise<{ sour
   for (const s of rows) {
     try {
       const feed = await parser.parseURL(s.feed_url);
+      let filledForSrc = 0;
+      let sawImage = false;
       for (const item of feed.items || []) {
         if (!item.link) continue;
         const img = extractImageUrl(item);
         if (!img) continue;
+        sawImage = true;
         const upd: any = await db.execute(sql`
           UPDATE news_articles SET image_url = ${img}
            WHERE source_id = ${s.id} AND url = ${item.link}
              AND (image_url IS NULL OR image_url ILIKE '%/s2/favicons%')`);
-        filled += Number(upd?.rowCount || 0);
+        filledForSrc += Number(upd?.rowCount || 0);
       }
-    } catch { /* bad feed — next source */ }
+      filled += filledForSrc;
+      // Forensics: a source that fills nothing despite feed items tells us
+      // WHERE the match breaks — no media parsed, or url mismatch.
+      if (!filledForSrc && (feed.items || []).length) {
+        const sample: any = await db.execute(sql`SELECT url FROM news_articles WHERE source_id = ${s.id} LIMIT 1`);
+        const srow = (sample.rows ?? sample)[0];
+        console.log(`[ig-image backfill] 0 filled for source ${s.id}: sawImage=${sawImage} feedLink="${String(feed.items?.[0]?.link || "").slice(0, 80)}" storedUrl="${String(srow?.url || "none").slice(0, 80)}"`);
+      }
+    } catch (e: any) {
+      console.warn(`[ig-image backfill] source ${s.id} failed: ${e?.message}`);
+    }
     await new Promise(r => setTimeout(r, 250));
   }
-  if (rows.length) console.log(`[ig-image backfill] filled ${filled} image(s) across ${rows.length} source(s)`);
+  console.log(`[ig-image backfill] filled ${filled} image(s) across ${rows.length} imageless source(s)`);
   return { sources: rows.length, filled };
 }
 
