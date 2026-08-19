@@ -67,6 +67,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r340 · 2026-08-19 · LIGHT — ROUND IN PROGRESS (provisional)
+- Staging merged with origin/JOGQK (new production commits: safe brand
+  cull + zero-substance census, brand-news own-Google-News-source +
+  apostrophized possessive fix, is_tracked_brand self-maintain — 644f083).
+  tsc clean on the merge. Regression: run-smoke.sh GREEN (42 checks, 0
+  failures, fresh fixture DB, FRESH_BUILD=1 on the merged code). Two-bot
+  round 340 running; triage of its issue list pending. New boot heals
+  verified on the fixture: cull census 7/10 zero-substance Testco rows
+  correctly NOT touched (no substantive dupes), 3 genuinely orphaned
+  brand news sources removed, all 10 tenant rows already tracked.
+- Provisional — final entry replaces this one.
+
 ### r339 · 2026-08-19 · FULL (rotation #4 staff mobile 390px)
 - Staging merged with origin/JOGQK (new production commits: client-scoped
   activity curations, inline date editor commit-on-blur fix, IG image
