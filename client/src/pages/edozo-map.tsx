@@ -3746,6 +3746,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
+    let disposed = false;
     const map = L.map(mapContainerRef.current, {
       center: [51.5014, -0.1419],
       zoom: 17,
@@ -3847,6 +3848,10 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     };
 
     const loadBuildings = async () => {
+      // The moveend debounce (and in-flight fetches) can fire after this
+      // map instance is removed on tab unmount — getBounds() then throws
+      // "_leaflet_pos" on the dead container.
+      if (disposed) return;
       const bounds = map.getBounds();
       const boundsKey = `${bounds.getSouth().toFixed(3)},${bounds.getWest().toFixed(3)},${bounds.getNorth().toFixed(3)},${bounds.getEast().toFixed(3)}`;
       if (boundsKey === lastBoundsRef.current) return;
@@ -4093,6 +4098,8 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
     resizeObserver.observe(mapContainerRef.current);
 
     return () => {
+      disposed = true;
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       resizeObserver.disconnect();
       map.remove();
       mapRef.current = null;

@@ -16,6 +16,16 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+69. 2026-08-19 · Landsec client / Property Intelligence desktop (QA r335) ·
+    "pull title and rates info for my Bluewater asset" · Every tool on the
+    hub starts empty for a client — Map opens on a default London view,
+    Land Registry shows "No searches yet", Business Rates "0 properties" —
+    so the client must re-type their own property's address into each tab
+    even though the app knows their portfolio. · Suggested: seed the
+    resolver/search with the client's scoped properties (e.g. a "My
+    properties" quick-pick like the tracker has), so one click lands
+    Bluewater in Map/Land Registry/Business Rates.
+
 68. 2026-08-19 · both personas / Letting Tracker desktop (QA r333) ·
     "work my Bluewater units" · Typing in the tracker search recounts the
     status chips (156→151) and the table, but the page header keeps the

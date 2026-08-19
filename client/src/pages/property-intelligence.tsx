@@ -56,17 +56,20 @@ const TabLoader = () => (
 export default function PropertyIntelligence() {
   const [, navigate] = useLocation();
   // Client logins (e.g. Landsec) don't get Pathway (BGP's internal pitch
-  // pipeline) or Imagery (firm-wide image studio picker). (Landsec audit.)
+  // pipeline), Imagery (firm-wide image studio picker), or Investigator
+  // (every /api/kyc-clouseau route is client-blocked by the API gateway,
+  // so the tool can only dead-end for them). (Landsec audit.)
   const { data: piUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const piIsClient = piUser?.role === "Client" || !!(piUser as any)?.companyScopeId;
-  const visibleTabs = piIsClient ? TABS.filter(t => t.id !== "pathway" && t.id !== "imagery") : TABS;
+  const CLIENT_HIDDEN_TABS: TabId[] = ["pathway", "imagery", "investigator"];
+  const visibleTabs = piIsClient ? TABS.filter(t => !CLIENT_HIDDEN_TABS.includes(t.id)) : TABS;
   // wouter's search string updates on every query-string change (including the
   // 'Open in Map' links from the Pathway tab, which only change ?tab/?address).
   const search = useSearch();
   const [tab, setTab] = useState<TabId>(readTabFromUrl());
   // Clients land on Map — the default (Pathway) is a hidden staff tab for them.
   useEffect(() => {
-    if (piIsClient && (tab === "pathway" || tab === "imagery")) setTab("map");
+    if (piIsClient && CLIENT_HIDDEN_TABS.includes(tab)) setTab("map");
   }, [piIsClient, tab]);
 
   const handleTabChange = (next: string) => {
@@ -95,7 +98,7 @@ export default function PropertyIntelligence() {
   }, [search]);
 
   useEffect(() => {
-    if (piIsClient && (tab === "pathway" || tab === "imagery")) setTab("map");
+    if (piIsClient && CLIENT_HIDDEN_TABS.includes(tab)) setTab("map");
   }, [piIsClient, tab]);
   // Canonical property identity for the whole page — once resolved, every tab
   // can read this and stop doing its own ad-hoc lookups. v1: state only;
@@ -176,9 +179,14 @@ export default function PropertyIntelligence() {
                 }}
               />
             </TabsContent>
+            {/* Not mounted for clients — a ?tab=investigator deep link would
+                otherwise mount KYC Clouseau for one render before the
+                redirect effect runs, firing its (client-blocked) queries. */}
+            {!piIsClient && (
             <TabsContent value="investigator" className="m-0 h-full">
               <KycClouseau />
             </TabsContent>
+            )}
             <TabsContent value="land-registry" className="m-0">
               <LandRegistry />
             </TabsContent>

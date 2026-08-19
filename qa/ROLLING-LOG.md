@@ -67,21 +67,63 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r335 · 2026-08-19 · ROUND IN PROGRESS (provisional heartbeat)
-- Staging merged with origin/JOGQK (already up to date). Fresh container;
-  pg_hba trust per r205; superuser bgp role + restore + schema grant per
-  r249. Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures,
-  FRESH_BUILD=1, fresh DB). Two-bot round 335 running (so far only listed
-  rocketreach-400 noise).
-- Journey (rotation #2 client desktop) DONE: Mark @1440px —
-  /property-intelligence hub (first coverage ever). Triage: (1) BUG —
-  Investigator tab is client-visible but ALL /api/kyc-clouseau/* 403 for
-  clients (search/investigate/recent/expiring all 403 via API probe) =
-  dead-end tool + doomed 403s on load; fix planned: hide tab for clients
-  like Pathway/Imagery. (2) Leaflet pageerror `_leaflet_pos` on Map tab
-  during tab switches — investigating, may defer. (3) /api/os/sites 503 =
-  keyless OS-maps noise; map tiles blank locally (no network) = noise.
-- Final entry to follow this round.
+### r335 · 2026-08-19 · FULL (rotation #2 client desktop)
+- Staging merged with origin/JOGQK (already up to date — no new production
+  commits since r334). Fresh container (pg_hba trust per r205; superuser
+  bgp role + restore + schema grant per r249). Regression: run-smoke.sh
+  GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1 before the fixes and
+  again on the rebuilt bundle after). Two-bot round 335: exit 0, all
+  scenarios ok first run; 3 logged issues all listed noise
+  (rocketreach-400; brand-gaps/live-intel 503; commentary-regen 503 —
+  qa/logs/round-335.jsonl). Dev-server log: 180 5xx all keyless-AI 503s
+  plus ONE raw 500 → deferred bug below; smoke prod logs 0 raw 5xx.
+- Journey: Mark Warne desktop 1440px — "due diligence on my Bluewater
+  asset: title, rates, map" via /property-intelligence (FIRST coverage
+  ever of the PI hub — no round had touched Map/Investigator/Land
+  Registry/Business Rates or the client tab-gating): UI login via guest
+  form → PI hub → Land Registry renders search + "No searches yet";
+  Business Rates renders clean empty state (fixture ships no VOA rows);
+  Map renders layer rail + annotate tools (blank tiles = no external
+  network, noise; /api/os/sites 503 = keyless OS noise); staff
+  cross-check: Victoria sees Pathway/Imagery/Investigator and KYC
+  Clouseau loads. 0 h-overflow; 0 non-noise sightings beyond the bugs.
+- Bugs fixed (2):
+  1. Investigator tab was client-visible but EVERY /api/kyc-clouseau
+     route is gateway-blocked for clients (search/investigate/recent/
+     expiring all 403 via API probe as Mark) — a dead-end tool (search
+     box that can never return) + doomed 403s on load (r307 class).
+     Fix: investigator joined pathway/imagery in the client-hidden tab
+     set (client/src/pages/property-intelligence.tsx), both redirect
+     effects cover it, and its TabsContent no longer mounts for clients.
+     Verified pre/post in-browser: tab absent, ?tab=investigator deep
+     link lands on Map with 0 kyc-clouseau requests fired; Victoria
+     still gets the tab and the tool loads.
+  2. Leaflet pageerror "Cannot read _leaflet_pos" on PI tab switches
+     (deterministic repro: churn map ↔ other tabs) — edozo-map's moveend
+     debounce (300ms setTimeout → loadBuildings → map.getBounds()) and
+     in-flight loads survive unmount and fire on the removed map. Fix:
+     disposed flag + clearTimeout(debounceTimerRef) in the map effect
+     cleanup (client/src/pages/edozo-map.tsx). Verified: same churn now
+     0 pageerrors, both personas. tsc clean, rebuilt, smoke re-green.
+- Harness growth: two-bot +1 client-pi-investigator-hidden (deep link
+  must land on Map, tab absent, kyc-clouseau read 403; added to the
+  negative-probe set). node --check clean; round 335 ran the pre-edit
+  file, first live run r336.
+- Bug deferred (1): GET /api/map/retail-units 500'd once — "duplicate
+  key value violates unique constraint pg_type_typname_nsp_index".
+  ensureGoadTables (server/goad-units.ts:309) has an `ensured` flag but
+  no in-flight dedup, so two concurrent map-layer requests on a fresh DB
+  (occupier-plan + retail-units fire together) both run CREATE TABLE IF
+  NOT EXISTS goad_units and one 500s (not concurrency-safe in pg).
+  Self-heals on retry; fix = share one in-flight promise. Left for r336
+  (2-bug cap).
+- Suggestions added: UX #69 (client PI hub starts empty everywhere —
+  seed Map/LR/Rates search with the client's own scoped properties).
+- New flakes: none. Tester note: repeated guest-form UI logins tripped
+  the login form this round (rate-limiter class) — use token login
+  (harness pattern) for re-verification legs.
+- Next journey: rotation #3 client mobile 390px (r335 had the journey →
+  r336 may be LIGHT; then #3).
 
 ### r334 · 2026-08-19 · LIGHT (r333 had the journey)
 - Staging merged with origin/JOGQK (already up to date — no new production
