@@ -5609,9 +5609,10 @@ function BrandInstagramCard({ companyId }: { companyId: string }) {
               </div>
               {p.imageUrl && (
                 <img
-                  src={p.imageUrl}
+                  // Served through our own proxy — direct CDN loads proved
+                  // flaky in-browser despite working server-side.
+                  src={`/api/ig-image?u=${encodeURIComponent(p.imageUrl)}`}
                   alt=""
-                  referrerPolicy="no-referrer"
                   className="absolute inset-0 w-full h-full object-cover"
                   loading="lazy"
                   onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}

@@ -4274,13 +4274,14 @@ app.use("/api/branding/assets", express.static(
           const diag = await pool.query(`
             SELECT c.name, c.instagram_handle, ns.id AS sid, ns.url, ns.last_fetched_at,
                    (SELECT count(*)::int FROM news_articles a WHERE a.source_id = ns.id) AS articles,
-                   (SELECT count(*)::int FROM news_articles a WHERE a.source_id = ns.id AND a.image_url IS NOT NULL) AS with_images
+                   (SELECT count(*)::int FROM news_articles a WHERE a.source_id = ns.id AND a.image_url IS NOT NULL) AS with_images,
+                   (SELECT a.image_url FROM news_articles a WHERE a.source_id = ns.id AND a.image_url IS NOT NULL LIMIT 1) AS sample_image
               FROM crm_companies c
               LEFT JOIN news_sources ns ON ns.category = 'brand:' || c.id AND ns.type = 'rssapp_instagram'
              WHERE regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') = 'bills'
                AND c.merged_into_id IS NULL`);
           for (const r of diag.rows) {
-            console.log(`[bills-diag] ${r.name}: handle=${r.instagram_handle} source=${r.sid || "NONE"} url=${r.url || "-"} fetched=${r.last_fetched_at || "never"} articles=${r.articles ?? 0} withImages=${r.with_images ?? 0}`);
+            console.log(`[bills-diag] ${r.name}: handle=${r.instagram_handle} source=${r.sid || "NONE"} url=${r.url || "-"} fetched=${r.last_fetched_at || "never"} articles=${r.articles ?? 0} withImages=${r.with_images ?? 0} sampleImage=${String(r.sample_image || "-").slice(0, 120)}`);
           }
           // Representation rows touching Bill's or Matt Porter — Woody
           // reports the retained agent vanished and a self-referential
