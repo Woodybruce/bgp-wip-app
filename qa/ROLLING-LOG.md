@@ -67,6 +67,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r339 · 2026-08-19 · FULL (rotation #4 staff mobile 390px) — IN PROGRESS
+- Staging merged with origin/JOGQK (new production commits: client-scoped
+  activity curations, inline date editor commit-on-blur fix, IG image
+  proxy, Google News purge — 8a644e6, pushed). tsc clean on the merge.
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, fresh fixture
+  DB, fresh build). Two-bot round 339: exit 0, all scenarios ok first
+  run; 3 logged issues all listed noise (rocketreach-400;
+  brand-gaps/live-intel 503; commentary-regen 503 —
+  qa/logs/round-339.jsonl). Dev-server log: 0 raw 500/502/504, 150
+  keyless 503s. staff-map-goad-concurrent green again.
+- Journey (staff mobile 390px, Victoria) in progress — final entry to
+  replace this one.
+
 ### r338 · 2026-08-19 · LIGHT (r337 had the journey)
 - Staging merged with origin/JOGQK (new production commits: Instagram
   feed/image parsing, AML retry, RSS typing). Fresh container (pg_hba trust
