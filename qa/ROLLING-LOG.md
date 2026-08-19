@@ -67,6 +67,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r336 · 2026-08-19 · ROUND IN PROGRESS (LIGHT — r335 had the journey)
+- Staging merged with origin/JOGQK (4 new production commits — AML
+  screening/enrich/IG diag, a99b777). Fresh container (pg_hba trust per
+  r205). Regression: run-smoke.sh GREEN first pass (42 checks, 0
+  failures, fresh build, fresh DB). Smoke app log: 0 raw 5xx, 22 keyless
+  503s (noise), RSS 403s = external-network noise. Triage list: nothing
+  non-noise. Next: fix r335 deferred bug (ensureGoadTables in-flight
+  dedup, server/goad-units.ts).
+
 ### r335 · 2026-08-19 · FULL (rotation #2 client desktop)
 - Staging merged with origin/JOGQK (already up to date — no new production
   commits since r334). Fresh container (pg_hba trust per r205; superuser
