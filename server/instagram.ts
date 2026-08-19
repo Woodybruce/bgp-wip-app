@@ -381,7 +381,7 @@ router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, 
          FROM news_articles
         WHERE source_id = $1
         ORDER BY published_at DESC NULLS LAST
-        LIMIT 9`, [src.rows[0].id]
+        LIMIT 24`, [src.rows[0].id]
     );
     // Videos: RSS.app embeds a playable file in the item body when it has
     // one — surface it for inline playback. Reels detected by URL get a
@@ -398,7 +398,12 @@ router.get("/api/brand/:companyId/instagram", requireAuth, async (req: Request, 
         isVideo: !!videoUrl || /\/reel\//i.test(p.url || ""),
       };
     });
-    res.json({ status: "feed", handle, followers, postCount, posts: shaped });
+    // Caption-only tiles read as broken — prefer posts with actual media
+    // (posts ingested before the feed window moved on have no image left
+    // to fetch). Fall back to captions only when NOTHING has media.
+    const withMedia = shaped.filter((p) => p.imageUrl || p.videoUrl);
+    const visible = (withMedia.length ? withMedia : shaped).slice(0, 9);
+    res.json({ status: "feed", handle, followers, postCount, posts: visible });
   } catch (e: any) {
     console.error("[/api/brand/:companyId/instagram]", e?.message);
     res.status(500).json({ error: e?.message || "failed" });

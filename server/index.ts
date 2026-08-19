@@ -4330,6 +4330,22 @@ app.use("/api/branding/assets", express.static(
         } catch (e: any) {
           console.error("[ig-article purge] failed:", e?.message);
         }
+        // Instagram sources whose stored posts are ALL imageless (ingested
+        // before the parser could read media tags, and too old to backfill
+        // because the feed window has moved on) render caption-only strips
+        // (Gail's, spotted by Woody 2026-08-19). Push them to the front of
+        // the fetch queue so they ingest the current, imaged posts.
+        try {
+          const requeued = await pool.query(`
+            UPDATE news_sources ns SET last_fetched_at = NULL
+             WHERE ns.type = 'rssapp_instagram'
+               AND ns.last_fetched_at IS NOT NULL
+               AND EXISTS (SELECT 1 FROM news_articles a WHERE a.source_id = ns.id)
+               AND NOT EXISTS (SELECT 1 FROM news_articles a WHERE a.source_id = ns.id AND a.image_url IS NOT NULL AND a.image_url NOT ILIKE '%/s2/favicons%')`);
+          if (requeued.rowCount) console.log(`[ig-requeue] ${requeued.rowCount} zero-image Instagram source(s) queued for immediate refetch`);
+        } catch (e: any) {
+          console.error("[ig-requeue] failed:", e?.message);
+        }
         // Fill in images for Instagram posts ingested before the parser
         // could read media:content tags.
         try {
