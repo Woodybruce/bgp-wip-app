@@ -4177,7 +4177,11 @@ app.use("/api/branding/assets", express.static(
                AND ns.category = 'brand:' || c.id
                AND regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') = 'bills'
                AND c.merged_into_id IS NULL
-               AND ns.url NOT ILIKE '%instagram.com/billsrestaurant/%'`);
+               AND ns.url NOT ILIKE '%instagram.com/billsrestaurant/%'
+             RETURNING ns.url`);
+          if (s.rowCount) {
+            console.log(`[bills-ig heal] removed urls: ${s.rows.map((r: any) => r.url).join(" | ")}`);
+          }
           const ins = await pool.query(`
             INSERT INTO news_sources (name, url, feed_url, type, category, active)
             SELECT c.name || ' (instagram)',
@@ -4194,6 +4198,77 @@ app.use("/api/branding/assets", express.static(
           if ((h.rowCount || 0) + (s.rowCount || 0) + (ins.rowCount || 0) > 0) {
             console.log(`[bills-ig heal] handles fixed=${h.rowCount}, dead sources removed=${s.rowCount}, feed wired to ${ins.rowCount} brand row(s)`);
           }
+          // Inline ingest — the boot fetch pass SELECTs its source list
+          // BEFORE this heal runs (+20s vs +40s), and source churn orphans
+          // previously ingested posts behind the global article-url dedupe.
+          // Pull the feed here and upsert by url, re-homing articles onto
+          // the CH-linked Bill's source so the profile card has posts NOW.
+          try {
+            const src = await pool.query(`
+              SELECT ns.id, ns.name, ns.category FROM news_sources ns
+                JOIN crm_companies c ON ns.category = 'brand:' || c.id
+               WHERE ns.type = 'rssapp_instagram'
+                 AND regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') = 'bills'
+                 AND c.merged_into_id IS NULL
+               ORDER BY (c.companies_house_number IS NOT NULL) DESC
+               LIMIT 1`);
+            const target = src.rows[0];
+            if (target) {
+              const Parser = (await import("rss-parser")).default;
+              const parser = new Parser({ timeout: 15000 });
+              const feed = await parser.parseURL("https://rss.app/feeds/QzQXbDchpuJcVjBz.xml");
+              let ingested = 0, rehomed = 0;
+              for (const item of (feed.items || []).slice(0, 20)) {
+                if (!item.title || !item.link) continue;
+                const upd = await pool.query(
+                  `UPDATE news_articles SET source_id = $1 WHERE url = $2`,
+                  [target.id, item.link]);
+                if (upd.rowCount) { rehomed++; continue; }
+                await pool.query(`
+                  INSERT INTO news_articles (source_id, source_name, title, summary, url, image_url, published_at, category, processed)
+                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false)`,
+                  [target.id, target.name, item.title,
+                   (item.contentSnippet || "").slice(0, 500) || null, item.link,
+                   (item as any).enclosure?.url || null,
+                   item.pubDate ? new Date(item.pubDate) : new Date(),
+                   target.category]);
+                ingested++;
+              }
+              await pool.query(`UPDATE news_sources SET last_fetched_at = now() WHERE id = $1`, [target.id]);
+              console.log(`[bills-ig ingest] ${ingested} new post(s), ${rehomed} re-homed onto source ${target.id}`);
+            }
+          } catch (e: any) {
+            console.warn("[bills-ig ingest] failed:", e?.message);
+          }
+          // Representation repair (Woody, 2026-08-19): the reps live on the
+          // duplicate "Bills" row while the profile in use is the CH-linked
+          // "Bill's" — so "Represented by" looked empty and a corrupt row
+          // (agent = the brand's own duplicate, via Matt Porter being a
+          // Bill's-side contact) surfaced instead. Re-point reps at the
+          // CH-linked row, then delete self/duplicate representations.
+          const repMove = await pool.query(`
+            WITH target AS (
+              SELECT id FROM crm_companies
+               WHERE regexp_replace(lower(name), '[^a-z0-9]', '', 'g') = 'bills'
+                 AND merged_into_id IS NULL AND companies_house_number IS NOT NULL
+               ORDER BY (uk_entity_name IS NOT NULL) DESC LIMIT 1
+            )
+            UPDATE brand_agent_representations r
+               SET brand_company_id = (SELECT id FROM target)
+              FROM crm_companies b
+             WHERE b.id = r.brand_company_id
+               AND regexp_replace(lower(b.name), '[^a-z0-9]', '', 'g') = 'bills'
+               AND (SELECT id FROM target) IS NOT NULL
+               AND r.brand_company_id <> (SELECT id FROM target)`);
+          const repKill = await pool.query(`
+            DELETE FROM brand_agent_representations r
+             USING crm_companies b, crm_companies a
+             WHERE b.id = r.brand_company_id AND a.id = r.agent_company_id
+               AND regexp_replace(lower(b.name), '[^a-z0-9]', '', 'g') = 'bills'
+               AND regexp_replace(lower(a.name), '[^a-z0-9]', '', 'g') = 'bills'`);
+          if ((repMove.rowCount || 0) + (repKill.rowCount || 0) > 0) {
+            console.log(`[bills-rep heal] re-pointed=${repMove.rowCount}, self-reps deleted=${repKill.rowCount}`);
+          }
           // Diagnostic — one line per Bill's row so the deploy log reads
           // like a SELECT (no direct prod DB access from dev machines).
           const diag = await pool.query(`
@@ -4206,8 +4281,33 @@ app.use("/api/branding/assets", express.static(
           for (const r of diag.rows) {
             console.log(`[bills-diag] ${r.name}: handle=${r.instagram_handle} source=${r.sid || "NONE"} url=${r.url || "-"} fetched=${r.last_fetched_at || "never"} articles=${r.articles ?? 0}`);
           }
+          // Representation rows touching Bill's or Matt Porter — Woody
+          // reports the retained agent vanished and a self-referential
+          // "representing: Bills" row appeared (2026-08-19).
+          const repDiag = await pool.query(`
+            SELECT r.id, r.end_date, b.name AS brand_name, a.name AS agent_name, ct.name AS contact_name, r.start_date
+              FROM brand_agent_representations r
+              LEFT JOIN crm_companies b ON b.id = r.brand_company_id
+              LEFT JOIN crm_companies a ON a.id = r.agent_company_id
+              LEFT JOIN crm_contacts ct ON ct.id = r.primary_contact_id
+             WHERE regexp_replace(lower(COALESCE(b.name, '')), '[^a-z0-9]', '', 'g') = 'bills'
+                OR regexp_replace(lower(COALESCE(a.name, '')), '[^a-z0-9]', '', 'g') = 'bills'
+                OR ct.name ILIKE '%matt%porter%'`);
+          for (const r of repDiag.rows) {
+            console.log(`[bills-rep-diag] rep#${r.id}: brand="${r.brand_name}" agent="${r.agent_name}" contact="${r.contact_name || "-"}" start=${r.start_date || "-"} end=${r.end_date || "live"}`);
+          }
         } catch (e: any) {
           console.error("[bills-ig heal] failed:", e?.message);
+        }
+        // Estate-wide: un-clobber Instagram sources that the Google News
+        // feed maintainer overwrote (category-only match — fixed in
+        // news-brand-linking, this repairs the damage). Repaired sources
+        // get last_fetched_at = NULL so the next fetch pass takes them first.
+        try {
+          const { repairClobberedInstagramSources } = await import("./news-brand-linking");
+          await repairClobberedInstagramSources();
+        } catch (e: any) {
+          console.error("[ig-source repair] failed:", e?.message);
         }
       }, 40000);
       // One-off: clear mangled UK trading entities like "UK) Limited" — the

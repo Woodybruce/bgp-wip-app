@@ -1,4 +1,15 @@
 import type { Request } from "express";
+import crypto from "crypto";
+
+// Shared-secret header marking a server-originated ChatBGP call as
+// staff-grade: activity curations must sweep mailboxes/diaries at full
+// power regardless of whose session triggered them (Woody, 2026-08-19 —
+// "remove the gating entirely"). Both sides live in the same process;
+// derived from server secrets and never sent to browsers.
+export function internalStaffToken(): string {
+  const seed = process.env.SESSION_SECRET || process.env.DATABASE_URL || "bgp";
+  return crypto.createHash("sha256").update("bgp-internal:" + seed).digest("hex");
+}
 
 /**
  * Ask ChatBGP a question programmatically and get back the final markdown
@@ -51,6 +62,9 @@ export async function askChatBgp(question: string, req: Request, opts?: { timeou
       headers: {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
+        // Full tool surface for server-originated work even when the
+        // forwarded session belongs to a client viewer — see internalStaffToken.
+        "X-BGP-Internal": internalStaffToken(),
         ...(cookie ? { Cookie: cookie } : {}),
         ...(auth ? { Authorization: auth } : {}),
       },

@@ -14531,8 +14531,15 @@ export function setupChatBGPRoutes(app: Express) {
     try {
       let { tools } = await getAvailableTools();
       const chatGuard = await clientChatGuard(req);
+      // Server-originated curation calls carry the internal staff token —
+      // they run at FULL tool power (mailbox + diary sweeps included) even
+      // when the triggering viewer was a client login. What clients get to
+      // READ is governed at the cache layer, not by degrading the analysis
+      // (Woody, 2026-08-19: "remove the gating entirely").
+      const { internalStaffToken } = await import("./chatbgp-internal");
+      const isInternalStaffCall = req.headers["x-bgp-internal"] === internalStaffToken();
       let sseScopeCompanyId: string | null = null;
-      if (chatGuard.isClient) {
+      if (chatGuard.isClient && !isInternalStaffCall) {
         // Client login: scoped tool allowlist when we can resolve their
         // company, no tools at all when we can't (fail closed).
         sseScopeCompanyId = await resolveCompanyScope(req).catch(() => null);
