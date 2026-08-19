@@ -67,6 +67,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r337 · 2026-08-19 · ROUND IN PROGRESS (provisional)
+- Staging merged with origin/JOGQK (new production commits: Instagram feed
+  ingest + Google News maintainer fixes, d0a1838). Fresh container (pg_hba
+  trust per r205; superuser bgp role + restore + schema grant per r249).
+  Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures; reused dist,
+  then FRESH_BUILD=1 on the merged code). Two-bot round 337: exit 0, all
+  scenarios ok first run; 3 logged issues all listed noise (rocketreach-400;
+  brand-gaps/live-intel 503; commentary-regen 503 — qa/logs/round-337.jsonl).
+  Dev-server log: 149 keyless 503s, 0 raw 500/502/504 (lone " 500 " grep hit
+  is the "500 articles" news-feed line).
+- Journey (FULL, rotation #3 client mobile 390px) in progress: brands hub /
+  self-add-brand flow as Mark.
+
 ### r336 · 2026-08-19 · LIGHT (r335 had the journey)
 - Staging merged with origin/JOGQK (4 new production commits — AML
   screening/enrich/IG diag, a99b777). Fresh container (pg_hba trust per
