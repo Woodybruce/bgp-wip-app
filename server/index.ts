@@ -2955,6 +2955,7 @@ import purgeApolloContactsRouter from "./purge-apollo-contacts";
 import { experianHealth, fetchCommercialCredit, isExperianConfigured, debugExperianRaw, sandboxAudit } from "./experian";
 import propertyGapAnalysisRouter from "./property-gap-analysis";
 import brandPackRouter from "./brand-pack";
+import dealVerdictsRouter from "./deal-verdicts";
 import dealDocsRouter from "./deal-docs";
 import weeklyReportRouter, { runWeeklyClientReports } from "./weekly-report";
 import dealReportRouter from "./deal-report";
@@ -3958,6 +3959,7 @@ app.use("/api/branding/assets", express.static(
   });
   app.use(propertyGapAnalysisRouter);
   app.use(brandPackRouter);
+  app.use(dealVerdictsRouter);
   app.use(dealDocsRouter);
   app.use(weeklyReportRouter);
   app.use(dealReportRouter);
@@ -4753,6 +4755,25 @@ app.use("/api/branding/assets", express.static(
             runBatchReKyc({ limit: 120 }).catch(err =>
               console.error("[kyc-refresh] nightly run failed:", err?.message)
             );
+          }
+        }, 60 * 60 * 1000);
+      }
+
+      // Invoice-verdict alarm (Woody, 2026-08-19): 08:00 push + 09:00 email
+      // per agent with deals awaiting a verdict; 09:00 escalation digest to
+      // Woody + managers for anything ignored 3+ days past its target date.
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 8) {
+            import("./deal-verdicts").then(m => m.runMorningVerdictPushes()).catch(err =>
+              console.error("[deal-verdicts] morning pushes failed:", err?.message));
+          }
+          if (now.getHours() === 9) {
+            import("./deal-verdicts").then(async m => {
+              await m.runMorningVerdictEmails();
+              await m.runVerdictEscalation();
+            }).catch(err => console.error("[deal-verdicts] morning emails failed:", err?.message));
           }
         }, 60 * 60 * 1000);
       }
