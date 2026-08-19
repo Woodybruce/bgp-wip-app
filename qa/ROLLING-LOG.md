@@ -67,7 +67,7 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r337 · 2026-08-19 · ROUND IN PROGRESS (provisional)
+### r337 · 2026-08-19 · FULL (rotation #3 client mobile 390px)
 - Staging merged with origin/JOGQK (new production commits: Instagram feed
   ingest + Google News maintainer fixes, d0a1838). Fresh container (pg_hba
   trust per r205; superuser bgp role + restore + schema grant per r249).
@@ -76,9 +76,33 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   scenarios ok first run; 3 logged issues all listed noise (rocketreach-400;
   brand-gaps/live-intel 503; commentary-regen 503 — qa/logs/round-337.jsonl).
   Dev-server log: 149 keyless 503s, 0 raw 500/502/504 (lone " 500 " grep hit
-  is the "500 articles" news-feed line).
-- Journey (FULL, rotation #3 client mobile 390px) in progress: brands hub /
-  self-add-brand flow as Mark.
+  is the "500 articles" news-feed line). r336's staff-map-goad-concurrent
+  ran green again.
+- Journey: Mark Warne @ 390px iPhone UA — "a colleague says a brand is
+  expanding: look it up, check who to talk to, then add a brand outside my
+  category slice to my CRM" (FIRST visual coverage of the client add-brand
+  DIALOG end-to-end at mobile width; API paths were already two-bot-covered):
+  token login → "/" Portfolio (bottom nav + Brands tile render, 0 h-overflow)
+  → /brands hub at 390px (category tiles + counts, search "Starbucks" → 1
+  result) → Starbucks profile (Key Contacts/Covenant/Compliance/Portfolio
+  Activity all render; staff-only KYC/enrich/discover buttons hidden for the
+  client) → Add brand dialog → search "Jewel" → Testco Jewellers (out of
+  slice) → Add → row flips to Remove, hub recounts All Brands 9→10 and a new
+  "Luxury" category tile appears, search finds it, its profile opens for the
+  client → removed via API (200, added:false confirmed). Task completable in
+  ~3 taps per leg; 0 page errors, 0 non-noise sightings, 0 h-overflow on any
+  surface.
+- Triaged, NOT bugs: "Gail"/"Zara" hub + directory searches return empty —
+  neither brand exists in the fixture's crm_companies (17 rows); API verified
+  healthy with fixture names. Honi Poke's brand image is a wrestler photo —
+  fixture data, not app code.
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  client-add-brand-from-directory/remove-ui + client-mobile-brands-hub
+  already cover the API paths; this round's coverage was visual. Bugs
+  deferred: none. Suggestions added: none new (mobile brand-profile
+  chat-first layout already filed, r259-class note). New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r337 had the journey → r338
+  may be LIGHT; then #4).
 
 ### r336 · 2026-08-19 · LIGHT (r335 had the journey)
 - Staging merged with origin/JOGQK (4 new production commits — AML
