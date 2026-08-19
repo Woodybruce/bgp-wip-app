@@ -67,14 +67,45 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r333 · 2026-08-19 · ROUND IN PROGRESS (provisional)
-- FULL round (r332 was LIGHT), rotation #1 staff desktop. Staging merged
-  with origin/JOGQK (already up to date — no new production commits since
-  r332). Fresh container; pg_hba trust per r205; SUPERUSER bgp role +
-  restore + schema grant per r249.
-- Regression: run-smoke.sh GREEN first pass (42 checks, 0 failures,
-  FRESH_BUILD=1, fresh DB). Two-bot round 333 next; journey (staff desktop
-  Letting Tracker target-operator write) after.
+### r333 · 2026-08-19 · FULL (rotation #1 staff desktop)
+- Staging merged with origin/JOGQK (already up to date — no new production
+  commits since r332). Fresh container (repo pre-cloned; pg_hba trust per
+  r205; SUPERUSER bgp role + restore + schema grant per r249). Regression:
+  run-smoke.sh GREEN first pass (42 checks, 0 failures, FRESH_BUILD=1,
+  fresh DB). Two-bot round 333: exit 0, all scenarios ok first run. 3
+  logged issues all listed noise (rocketreach-400; brand-gaps/live-intel
+  503; commentary-regen 503 — qa/logs/round-333.jsonl). Dev-server log:
+  154 5xx all keyless-AI 503s, 0 raw 500/502/504.
+- Journey: Victoria desktop 1440px — "Landsec want movement on a vacant
+  Bluewater unit: add a target operator on the Letting Tracker, progress
+  it, open the brief, and confirm the client sees it" (FIRST staff-desktop
+  visual coverage of the tracker's inline add-target BrandSearchInput
+  popover, TargetRowCells status select, and the UnitBriefDialog — the
+  brief/target API paths were already two-bot-covered): UI login via
+  guest form → /available (156 units, chips, 0 h-overflow) → search
+  "Bluewater" → L112 empty-state "+ Target operator" popover → type →
+  pick Starbucks → POST targets 200, row renders with Identified badge →
+  status select → Approached (PATCH 200, chip recolours) → survives
+  reload → Brief button → Targeting Brief dialog renders (title/client
+  prefilled "Operator Targeting — L112 / Landsec", 1/5 Targets KPI,
+  target listed) → AS MARK desktop: his scoped tracker shows the same
+  unit with Starbucks + Approached (targeting progress flows to the
+  client, per the tracker parity decisions). Task completable in ~4
+  clicks + a search; 0 page errors, 0 non-noise sightings both legs.
+  Probe target + brief swept by exact id (safe while two-bot ran — no
+  pattern sweeps per the r331 trap).
+- Tester notes: the guest login form is behind
+  button-show-guest-login — click it before input-guest-email.
+  BrandSearchInput's testid is on a popover BUTTON, not an input — click,
+  then fill the [cmdk-input] inside.
+- Bugs fixed: 0 (nothing broken found). Harness growth: none needed —
+  brief-target create/PATCH + client-brief-target-scope already covered;
+  this round's coverage was visual. Bugs deferred: none. Suggestions
+  added: UX #68 (tracker page-header unit count ignores the active
+  search while the chips + table recount — UX #63 class). New flakes:
+  none.
+- Next journey: rotation #2 client desktop (r333 had the journey → r334
+  may be LIGHT; then #2).
 
 ### r332 · 2026-08-18 · LIGHT (r331 had the journey)
 - Staging merged with origin/JOGQK (already up to date — no new production
