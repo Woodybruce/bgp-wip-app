@@ -2146,6 +2146,24 @@ async function markRound(page, cross) {
     if (r.leaks.length) throw new Error(`brand outside the client's directory leaked into hub/hunter: ${r.leaks.map((b) => `${b.name} (${b.type})`).join(', ')}`);
   });
 
+  // The hub's "With Turnover Data" stat and its Turnover Leaders board must
+  // agree: the stat once counted brands with any turnover_data row (even
+  // all-NULL figures) while the leaderboard required a real turnover value,
+  // so the overview said "9 with turnover data" above an empty "no turnover
+  // data yet" board (r343).
+  await step(page, p, 'client-brands-hub-turnover-consistent', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const res = await fetch('/api/brands/hub', { headers: auth }).catch(() => ({ ok: false, status: 0 }));
+      if (!res.ok) return { ok: false, status: res.status };
+      const body = await res.json().catch(() => null);
+      return { ok: true, withTurnover: parseInt(body?.stats?.brands_with_turnover || '0'), leaders: (body?.topTurnover || []).length };
+    });
+    if (!r.ok) throw new Error(`brands hub unhealthy (${r.status})`);
+    if (r.withTurnover > 0 && r.leaders === 0) throw new Error(`stat says ${r.withTurnover} brands with turnover data but the leaderboard is empty`);
+    if (r.withTurnover === 0 && r.leaders > 0) throw new Error(`leaderboard has ${r.leaders} rows but the stat says 0 brands with turnover data`);
+  });
+
   // Firm-wide reporting (the board report + reporting summary — whole-book
   // revenue, pipeline, agent performance) is BGP-internal; a client login
   // must be refused.

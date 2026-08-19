@@ -67,11 +67,40 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r343 · 2026-08-19 · ROUND IN PROGRESS (FULL, rotation #2 client desktop)
+### r343 · 2026-08-19 · FULL (rotation #2 client desktop)
 - Fresh container (pg_hba trust per r205; superuser bgp role + restore +
   schema grant per r249). origin/JOGQK merge: "Already up to date".
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
-  Two-bot round 343 running; triage + client-desktop journey to follow.
+- Regression: run-smoke.sh GREEN twice (42 checks, 0 failures, FRESH_BUILD=1
+  — before and after the fix below). Two-bot round 343: exit 0, all
+  scenarios ok, 3 issues all listed noise (rocketreach-400;
+  brand-gaps/live-intel 503; commentary-regen 503 — qa/logs/round-343.jsonl).
+  Dev-server sweep: 0 raw 5xx, error traces only keyless/no-network noise.
+- Journey: Mark Warne @ desktop 1440px — "prep for a Bluewater leasing
+  review": login form → portfolio dashboard → Letting Tracker (Bluewater
+  filter, client write affordances are intended — clients may add/delete
+  units on own properties) → Deals board → /available → Brand Intelligence
+  hub → Honi Poke profile (KYC panel visible per 2026-08-01 decision) →
+  news → ChatBGP (graceful keyless "Not Connected") → /properties →
+  Bluewater property page → Schedule card + Tenancy Schedule full-board
+  pop-out → CRM directory + Add-contact dialog. 16/16 surfaces, 0 error
+  boundaries, 0 non-noise console/5xx.
+- Bug fixed 1: Brand Intelligence hub said "9 With Turnover Data" directly
+  above an empty "No turnover data yet" Turnover Leaders board — the stat
+  counted brands with ANY turnover_data row (fixture has 12, all NULL
+  figures) while the leaderboard requires turnover IS NOT NULL. Stat
+  subquery in server/crm.ts now requires turnover IS NOT NULL too.
+  Verified: hub API + /brands page as client now show 0/0 consistent;
+  tsc clean; smoke green on rebuilt dist.
+- Harness growth: client-brands-hub-turnover-consistent (stat > 0 with
+  empty leaderboard, or vice versa, fails the round).
+- Bugs deferred: none. Suggestions added: UX-NOTES #72 (hide All Teams /
+  All Agents tracker filters for clients), #73 (property-page card titled
+  "Schedule" vs pop-out "Tenancy Schedule" naming mismatch).
+- New flakes: none. Note: dashboard "AI Briefing: Preparing your
+  briefing..." spins keyless — same family as the AI 503 noise, not
+  re-triaged.
+- Next journey: rotation #3 client mobile 390px (r343 had the journey →
+  r344 LIGHT first if alternation holds).
 
 ### r342 · 2026-08-19 · LIGHT (r341 had the journey)
 - Fresh container (pg_hba trust fix per r205; superuser bgp role + restore +

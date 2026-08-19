@@ -8119,7 +8119,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const stats = await pool.query(`
         SELECT
           COUNT(*) FILTER (WHERE ${statsFilter}) AS total_brands,
-          COUNT(*) FILTER (WHERE ${statsFilter} AND id IN (SELECT DISTINCT company_id FROM turnover_data WHERE company_id IS NOT NULL)) AS brands_with_turnover,
+          COUNT(*) FILTER (WHERE ${statsFilter} AND id IN (SELECT DISTINCT company_id FROM turnover_data WHERE company_id IS NOT NULL AND turnover IS NOT NULL)) AS brands_with_turnover,
           COUNT(*) FILTER (WHERE ${statsFilter} AND id IN (SELECT DISTINCT company_id FROM crm_requirements_leasing WHERE status = 'Active' AND company_id IS NOT NULL)) AS brands_active_req
         FROM crm_companies
       `).then(r => r.rows[0]);

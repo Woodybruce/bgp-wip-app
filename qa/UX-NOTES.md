@@ -16,6 +16,23 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+72. 2026-08-19 · Landsec client / Letting Tracker desktop (QA r343) ·
+    "narrow the tracker to my Bluewater units" · The filter row shows
+    "All Teams" and "All Agents" dropdowns to a client login — BGP-internal
+    concepts (client work is one team; agents mean nothing to Mark), so two
+    of five filters are dead weight on his screen. · Suggested: hide the
+    Teams + Agents filters for client logins (keep property / location /
+    status), like the staff-only panels elsewhere.
+
+73. 2026-08-19 · Landsec client / property page desktop (QA r343) · "open
+    Bluewater's tenancy schedule" · On the property page the tenancy rent
+    roll lives behind a collapsed card titled just "Schedule", while the
+    pop-out it opens is titled "Tenancy Schedule" and the client nav says
+    "Tenancy" — a user scanning the page for "tenancy" finds nothing and
+    the word only appears after they guess the right card. · Suggested:
+    retitle the card "Tenancy Schedule" (or "Schedule — tenancy rent
+    roll") so page and pop-out use the same name.
+
 71. 2026-08-19 · BGP staff / Letting Tracker desktop (QA r341) · "a brand
     rang me about unit L015 — log the interest" · The new Interest signal
     is read-only for staff: rows only appear via the M365 inbox sweep
