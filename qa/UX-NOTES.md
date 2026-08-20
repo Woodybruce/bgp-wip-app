@@ -16,6 +16,15 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+78. 2026-08-20 · BGP staff / desktop (QA r349) · "a new brand just rang about
+    a unit — log the interest" · The Letting Tracker's Interest dialog only
+    lets you pick a company that already exists in CRM (the combobox has no
+    inline-create, unlike the investment tracker's picker which has an
+    onCreate row). For a brand-new caller the user has to abandon the dialog,
+    create the company in CRM, come back and reopen it. Suggest adding the
+    same inline "create brand" row to the Interest (and Viewing/Offer)
+    company pickers.
+
 77. 2026-08-20 · BGP staff / mobile 390px (QA r347) · "check who's in Unit
     BX10 on the Bluewater tenancy board from my phone" · The full tenancy
     board's sticky Unit column is so narrow at 390px that unit names truncate

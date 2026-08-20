@@ -30,6 +30,12 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   locally; the brand profile auto-fires it and swallows the failure
 - 401 GET /api/client/brand-theme console echo on the login screen (fires
   before auth hydrates; harmless)
+- 401 GET /api/microsoft/* ("Not connected to Microsoft 365") — fixture
+  users hold no M365 tokens; dashboard/diary/files panels degrade to their
+  connect prompts (r349)
+- GET /api/ai-briefing 503 bursts (4-request React Query retry backoff per
+  mount) — keyless env; tasks-page briefing card falls back to a Generate
+  button, not stuck (r349)
 - 503 GET /api/brand/:id/ai-take/* — keyless AI-take panels on company
   profiles fire these on load; UI shows "AI take unavailable" (r269)
 - ERR_CONNECTION_RESET on google.com/s2/favicons — no external network
@@ -67,17 +73,32 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r349 · 2026-08-20 · FULL (rotation #1 staff desktop) — IN PROGRESS
+### r349 · 2026-08-20 · FULL (rotation #1 staff desktop)
 - Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
-  JOGQK merge: already up to date. run-smoke.sh GREEN (42 checks, 0 failures,
-  FRESH_BUILD=1). Two-bot round 349 still running (noise-only so far:
-  live-intel 503, commentary 503).
-- Journey done: Victoria desktop 1440px — dashboard, deals hub (WIP report),
-  letting tracker, requirements, companies, contacts, tasks, diary, comps,
-  chatbgp (keyless Not Connected — expected), news, 12 surfaces. 0 dead
-  routes (my /kyc-hub guess isn't a route — real path /kyc-clouseau), 0
-  h-overflow, 0 error boundaries. Triage in progress: /api/microsoft 401s
-  (likely keyless noise), tasks AI-briefing spinner behaviour on 503.
+  JOGQK merge: already up to date. Regression: run-smoke.sh GREEN (42 checks,
+  0 failures, FRESH_BUILD=1). Two-bot round 349: exit 0, all scenarios ok,
+  3 issues all listed noise (rocketreach-400, live-intel 503,
+  commentary-regen 503 — qa/logs/round-349.jsonl). Dev-server sweep: 0 raw
+  500/502/504; all 5xx are keyless 503s.
+- Journey: Victoria @ 1440px — "Monday morning at my desk": dashboard →
+  deals hub (WIP report) → letting tracker (full Interest lifecycle via UI:
+  dialog → pick Honi Poke from combobox → Log interest → KPI ticked to 1 +
+  toast + row rendered → delete, all clean) → quick-add task on /tasks
+  (created + purged) → Bluewater property page → brands hub → requirements,
+  companies, contacts, diary, comps, chatbgp (keyless Not Connected —
+  expected), news. 12+ surfaces, 0 dead routes, 0 h-overflow, 0 error
+  boundaries. (/kyc-hub 404 was my bad URL guess — the KYC hub is
+  /kyc-clouseau.)
+- Triage: /api/microsoft/* 401s = fixture users not M365-connected, panels
+  degrade to connect prompts; 78× /api/ai-briefing 503 = React Query retry
+  backoff per mount in keyless env, briefing card falls back to a Generate
+  button. Both added to the noise list.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  UX #78 (Interest/Viewing/Offer company pickers have no inline-create — a
+  brand-new caller forces a detour through CRM; investment tracker's picker
+  already has onCreate). New flakes: none.
+- Next journey: rotation #2 Landsec client desktop — r349 was FULL, so r350
+  LIGHT first.
 
 ### r348 · 2026-08-20 · LIGHT (r347 was FULL)
 - JOGQK merged into staging (verdict-job restart-proof 5-min tick +
