@@ -73,10 +73,19 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r352 · 2026-08-20 · LIGHT (r351 was FULL) — IN PROGRESS
+### r352 · 2026-08-20 · LIGHT (r351 was FULL)
 - Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
   JOGQK merge: already up to date. Regression: run-smoke.sh GREEN (42 checks,
-  0 failures, FRESH_BUILD=1). Two-bot round 353 in progress; triage to follow.
+  0 failures, FRESH_BUILD=1). Two-bot round 353: exit 0, all scenarios ok
+  (incl. r351's mobSeedAuth de-raced mobile scenarios — no recurrence), 3
+  issues all listed noise (rocketreach-400, live-intel 503, commentary-regen
+  503 — qa/logs/round-353.jsonl). Dev-server sweep: 0 raw 500/502/504;
+  186×403 spread guard probes (no single-endpoint storm); 400s = scenario's
+  own bogus-verdict + bad-input probes; 404s = hr-photo/sharepoint-root
+  listed noise.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r352 was LIGHT → r353 FULL).
 
 ### r351 · 2026-08-20 · FULL (rotation #2 Landsec client desktop)
 - Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
