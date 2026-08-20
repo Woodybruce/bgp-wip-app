@@ -67,6 +67,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r345 · 2026-08-20 · FULL (rotation #3 client mobile 390px) — IN PROGRESS
+- Provisional heartbeat entry. Fresh container (pg_hba trust re-applied per
+  r205). JOGQK merge: already up to date (staging ahead with r344 fixes).
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
+  Triage: nothing to triage — no failures logged.
+- Next: two-bot round + client mobile 390px journey (Mark Warne).
+- (Note: r344's entry sits at the bottom of this file — appended by its
+  replacement session; see line ~4413.)
+
 ### r343 · 2026-08-19 · FULL (rotation #2 client desktop)
 - Fresh container (pg_hba trust per r205; superuser bgp role + restore +
   schema grant per r249). origin/JOGQK merge: "Already up to date".
