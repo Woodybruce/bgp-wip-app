@@ -306,4 +306,44 @@ ${ancient.length ? `<hr style="border:none;border-top:1px solid #E5E7EB;margin:1
   }
 }
 
+// ── Restart-proof scheduler tick ─────────────────────────────────────────
+// Every push redeploys the app and resets in-process timers, so hourly
+// setInterval ticks were silently skipping fixed-hour jobs (the first 08:00
+// blast never fired, 2026-08-20). Called every 5 minutes instead; each slot
+// runs at most once per day, guarded by a marker persisted in
+// system_settings so restarts can't lose or double a slot.
+const BLAST_HOURS = [8, 10, 12, 14, 16, 18];
+const PUSH_HOUR = 8;
+const SUMMARY_HOUR = 9;
+
+async function claimSlot(kind: string, hour: number): Promise<boolean> {
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `deal-verdicts:${kind}`;
+  const val = `${day}-${hour}`;
+  const r = await pool.query(
+    `INSERT INTO system_settings (key, value) VALUES ($1, $2)
+     ON CONFLICT (key) DO UPDATE SET value = $2 WHERE system_settings.value IS DISTINCT FROM $2
+     RETURNING key`,
+    [key, val]
+  );
+  return (r.rowCount || 0) > 0;
+}
+
+export async function tickVerdictJobs(): Promise<void> {
+  const h = new Date().getHours();
+  try {
+    if (h === PUSH_HOUR && (await claimSlot("push", h))) {
+      await runMorningVerdictPushes();
+    }
+    if (BLAST_HOURS.includes(h) && (await claimSlot("blast", h))) {
+      await runVerdictEmailBlast();
+    }
+    if (h === SUMMARY_HOUR && (await claimSlot("summary", h))) {
+      await runEquityVerdictSummary();
+    }
+  } catch (e: any) {
+    console.error("[deal-verdicts] tick failed:", e?.message);
+  }
+}
+
 export default router;

@@ -4779,23 +4779,15 @@ app.use("/api/branding/assets", express.static(
       // Invoice-verdict alarm (Woody, 2026-08-19): 08:00 push; DEAL EMERGENCY
       // email blast — one red email PER DEAL, six times a day (8/10/12/14/16/18)
       // until the verdict lands; 09:00 clean summary of everything outstanding
-      // to the equity partners.
+      // to the equity partners. 5-minute tick with a persisted once-per-slot
+      // guard — an hourly in-process timer was reset by every deploy and
+      // silently skipped fixed-hour slots (first 08:00 blast never fired).
       if (process.env.NODE_ENV === "production") {
-        setInterval(() => {
-          const h = new Date().getHours();
-          if (h === 8) {
-            import("./deal-verdicts").then(m => m.runMorningVerdictPushes()).catch(err =>
-              console.error("[deal-verdicts] morning pushes failed:", err?.message));
-          }
-          if ([8, 10, 12, 14, 16, 18].includes(h)) {
-            import("./deal-verdicts").then(m => m.runVerdictEmailBlast()).catch(err =>
-              console.error("[deal-verdicts] email blast failed:", err?.message));
-          }
-          if (h === 9) {
-            import("./deal-verdicts").then(m => m.runEquityVerdictSummary()).catch(err =>
-              console.error("[deal-verdicts] equity summary failed:", err?.message));
-          }
-        }, 60 * 60 * 1000);
+        const verdictTick = () =>
+          import("./deal-verdicts").then(m => m.tickVerdictJobs()).catch(err =>
+            console.error("[deal-verdicts] tick failed:", err?.message));
+        setInterval(verdictTick, 5 * 60 * 1000);
+        setTimeout(verdictTick, 90 * 1000); // catch-up shortly after boot
       }
 
       // AML orchestrator top-up on boot (production): screens up to 12
