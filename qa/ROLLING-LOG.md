@@ -67,6 +67,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r347 · 2026-08-20 · ROUND IN PROGRESS (provisional)
+- JOGQK merge INTO staging done first (brings WhatsApp-style mobile
+  Messages, brand pack v2, interest signals — staging now tests prod code).
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1
+  post-merge). Two-bot round 347 running; 3 issues so far all listed noise
+  (rocketreach-400, brand-gaps/live-intel 503, commentary-regen 503).
+- Planned journey: rotation #4 staff mobile 390px (r346 was LIGHT) —
+  targets unverified UX 65-73 + new mobile Messages.
+
 ### r346 · 2026-08-20 · LIGHT (r345 had the journey)
 - Fresh container (pg_hba trust per r205; superuser bgp role + restore +
   schema grant per r249). JOGQK merge: already up to date (staging ahead
