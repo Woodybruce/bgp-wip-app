@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Sparkles, Send, Bot, User, X, Trash2,
-  ArrowLeft, Users, Check, Building2,
+  ArrowLeft, Users, Check, Building2, Archive,
   Link as LinkIcon, Search, Pencil, MoreVertical,
   MessageCircle, CheckCheck, Plus, BarChart3,
   Copy, ChevronDown, ChevronUp,
@@ -718,7 +718,7 @@ function ProjectItemRow({ project, isExpanded, singleThread, onToggle, openThrea
   );
 }
 
-function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }: { thread: ThreadData; onClick: () => void; currentUserId?: string; onDelete?: (id: string) => void; userPics?: Record<string, string> }) {
+function MobileThreadCard({ thread, onClick, currentUserId, onDelete, onArchive, archived, userPics }: { thread: ThreadData; onClick: () => void; currentUserId?: string; onDelete?: (id: string) => void; onArchive?: (id: string) => void; archived?: boolean; userPics?: Record<string, string> }) {
   const [swipeX, setSwipeX] = useState(0);
   const [showDelete, setShowDelete] = useState(false);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -730,6 +730,16 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
   const dmInitials = dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
   const displayTitle = thread.title || dmName || "New conversation";
   const dmPic = isDm && otherMembers[0] ? userPics?.[otherMembers[0].id] : null;
+  // WhatsApp anatomy: ✓✓ on your own last message (coloured once everyone
+  // has seen it) and a green "Draft:" preview for unsent input.
+  const myName = thread.members.find(m => m.id === currentUserId)?.name;
+  const lastFromMe = !isAi && !!thread.lastMessage && !!myName && thread.lastMessage.senderName === myName;
+  const allOthersSeen = otherMembers.length > 0 && otherMembers.every(m => m.seen);
+  const draft = (() => {
+    if (isAi) return null;
+    try { return localStorage.getItem(`chat-draft-${thread.id}`); } catch { return null; }
+  })();
+  const swipeWidth = onArchive ? 176 : 96;
 
   const timeStr = (() => {
     const d = new Date(thread.updatedAt);
@@ -752,7 +762,7 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
     if (dx < 0) setSwipeX(Math.max(dx, -100));
   };
   const handleTouchEnd = () => {
-    if (swipeX < -60) { setSwipeX(-96); setShowDelete(true); }
+    if (swipeX < -60) { setSwipeX(-swipeWidth); setShowDelete(true); }
     else { setSwipeX(0); setShowDelete(false); }
     touchStartRef.current = null;
   };
@@ -802,13 +812,25 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
 
   return (
     <div className="relative overflow-hidden">
-      <button
-        className="absolute right-0 top-0 bottom-0 w-24 bg-red-500 flex items-center justify-center"
-        onClick={() => { if (onDelete) onDelete(thread.id); setSwipeX(0); setShowDelete(false); }}
-        data-testid={`button-swipe-delete-${thread.id}`}
-      >
-        <Trash2 className="w-5 h-5 text-white" />
-      </button>
+      <div className="absolute right-0 top-0 bottom-0 flex">
+        {onArchive && (
+          <button
+            className="w-20 bg-stone-500 flex flex-col items-center justify-center gap-0.5"
+            onClick={() => { onArchive(thread.id); setSwipeX(0); setShowDelete(false); }}
+            data-testid={`button-swipe-archive-${thread.id}`}
+          >
+            <Archive className="w-5 h-5 text-white" />
+            <span className="text-[10px] text-white font-medium">{archived ? "Unarchive" : "Archive"}</span>
+          </button>
+        )}
+        <button
+          className="w-24 bg-red-500 flex items-center justify-center"
+          onClick={() => { if (onDelete) onDelete(thread.id); setSwipeX(0); setShowDelete(false); }}
+          data-testid={`button-swipe-delete-${thread.id}`}
+        >
+          <Trash2 className="w-5 h-5 text-white" />
+        </button>
+      </div>
       <button
         onClick={() => { if (showDelete) { setSwipeX(0); setShowDelete(false); } else onClick(); }}
         onTouchStart={handleTouchStart}
@@ -835,17 +857,29 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
             </span>
           </div>
           <div className="flex items-center justify-between mt-0.5 gap-2">
-            <p className={`text-[13px] truncate leading-snug ${hasUnseen ? "text-[#44403C]" : "text-[#78716C]"}`}>
-              {thread.lastMessage ? (
+            <p className={`text-[13px] truncate leading-snug flex items-center gap-1 ${hasUnseen ? "text-[#44403C]" : "text-[#78716C]"}`}>
+              {draft ? (
+                <><span className="font-medium text-emerald-600 shrink-0">Draft: </span><span className="truncate">{draft}</span></>
+              ) : thread.lastMessage ? (
                 isAi
-                  ? thread.lastMessage.content
-                  : <><span className="font-medium">{thread.lastMessage.senderName.split(" ")[0]}: </span>{thread.lastMessage.content}</>
+                  ? <span className="truncate">{thread.lastMessage.content}</span>
+                  : <>
+                      {lastFromMe && (
+                        <CheckCheck className="w-3.5 h-3.5 shrink-0" style={{ color: allOthersSeen ? "hsl(var(--primary))" : "#A8A29E" }} />
+                      )}
+                      <span className="truncate">
+                        {!lastFromMe && <span className="font-medium">{thread.lastMessage.senderName.split(" ")[0]}: </span>}
+                        {thread.lastMessage.content}
+                      </span>
+                    </>
               ) : (
                 <span className="italic text-[#A8A29E]">No messages yet</span>
               )}
             </p>
             {hasUnseen && (
-              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }} />
+              <span className="min-w-[18px] h-[18px] px-1 rounded-full shrink-0 flex items-center justify-center" style={{ backgroundColor: "hsl(var(--primary))" }}>
+                <span className="text-[10px] font-bold text-white leading-none">●</span>
+              </span>
             )}
           </div>
           {!isAi && (thread.propertyName || thread.linkedName) && (
@@ -1180,6 +1214,22 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  // Persist unsent input per team thread so the chat list can show a
+  // WhatsApp-style green "Draft:" preview. Cleared automatically on send
+  // (send resets input, which removes the stored draft).
+  const draftKey = threadIdProp && !isAiChat ? `chat-draft-${threadIdProp}` : null;
+  useEffect(() => {
+    if (!draftKey) return;
+    try { setInput(localStorage.getItem(draftKey) || ""); } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
+  useEffect(() => {
+    if (!draftKey) return;
+    try {
+      if (input.trim()) localStorage.setItem(draftKey, input);
+      else localStorage.removeItem(draftKey);
+    } catch {}
+  }, [input, draftKey]);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -3376,6 +3426,19 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
   // WhatsApp-style chips over the Messages list — All is the one inbox
   // (team chats + saved ChatBGP threads by recency); Unread/Groups/AI slice it.
   const [chatChip, setChatChip] = useState<"all" | "unread" | "groups" | "ai">("all");
+  // WhatsApp-style archive: ids live locally per device — archiving tidies
+  // your list without deleting anything for anyone else.
+  const [archivedIds, setArchivedIds] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("mobile-archived-threads") || "[]"); } catch { return []; }
+  });
+  const [showArchived, setShowArchived] = useState(false);
+  const toggleArchived = useCallback((id: string) => {
+    setArchivedIds(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
+      try { localStorage.setItem("mobile-archived-threads", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
 
   const filteredTeamThreads = useMemo(() => {
     let base: ThreadData[];
@@ -3385,7 +3448,10 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
       const me = t.members.find(m => m.id === currentUser?.id);
       return me ? !me.seen : false;
     });
-    else base = [...teamThreads, ...aiThreads.filter(t => !!(t.title || t.lastMessage))];
+    // "All" = PEOPLE (Woody, 2026-08-20: "the AI chats are overtaking the
+    // main ones") — ChatBGP keeps its single pinned row; the full AI
+    // history lives under the AI chip.
+    else base = teamThreads;
     base = [...base].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
     if (!chatSearch.trim()) return base;
     const q = chatSearch.toLowerCase();
@@ -3760,30 +3826,64 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               </div>
             )}
 
-            {[...filteredTeamThreads, ...filteredOtherThreads].length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 gap-4">
-                <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
-                  <MessageCircle className="w-10 h-10 text-gray-300" />
-                </div>
-                <p className="text-lg text-gray-400">
-                  {chatSearch ? "No chats found"
-                    : chatChip === "unread" ? "You're all caught up"
-                    : chatChip === "ai" ? "No saved ChatBGP threads yet"
-                    : chatChip === "groups" ? "No group chats yet"
-                    : "No conversations yet"}
-                </p>
-                {!chatSearch && chatChip === "all" && (
-                  <Button variant="outline" size="lg" className="h-12 text-base rounded-xl border-gray-200" onClick={() => setShowNewGroup(true)} data-testid="button-mobile-empty-new-group">
-                    <Users className="w-5 h-5 mr-2" /> New Chat
-                  </Button>
-                )}
-              </div>
-            ) : (
-              <div>
-                {filteredTeamThreads.map(t => <MobileThreadCard key={t.id} thread={t} onClick={() => openThread(t)} currentUserId={currentUser?.id} onDelete={handleDeleteThread} userPics={userPics} />)}
-                {filteredOtherThreads.map(t => <MobileThreadCard key={t.id} thread={t} onClick={() => openThread(t)} currentUserId={currentUser?.id} onDelete={handleDeleteThread} userPics={userPics} />)}
-              </div>
-            )}
+            {(() => {
+              // WhatsApp-style archive split: archived chats collapse behind
+              // an "Archived" row; search looks across everything.
+              const combined = [...filteredTeamThreads, ...filteredOtherThreads];
+              const active = chatSearch ? combined : combined.filter(t => !archivedIds.includes(t.id));
+              const archivedList = combined.filter(t => archivedIds.includes(t.id));
+              const shown = showArchived && !chatSearch ? archivedList : active;
+              return (
+                <>
+                  {archivedList.length > 0 && !chatSearch && (
+                    <button
+                      onClick={() => setShowArchived(v => !v)}
+                      className={`w-full flex items-center gap-3 px-5 py-2.5 border-b border-gray-100 active:bg-gray-50 ${showArchived ? "bg-gray-50" : ""}`}
+                      data-testid="button-mobile-archived-row"
+                    >
+                      <Archive className="w-4 h-4 text-gray-400 ml-1" />
+                      <span className="text-[14px] font-medium text-gray-600 flex-1 text-left">Archived</span>
+                      <span className="text-[12px] text-gray-400">{showArchived ? "Back to chats" : archivedList.length}</span>
+                    </button>
+                  )}
+                  {shown.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-20 gap-4">
+                      <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
+                        <MessageCircle className="w-10 h-10 text-gray-300" />
+                      </div>
+                      <p className="text-lg text-gray-400">
+                        {chatSearch ? "No chats found"
+                          : showArchived ? "Nothing archived"
+                          : chatChip === "unread" ? "You're all caught up"
+                          : chatChip === "ai" ? "No saved ChatBGP threads yet"
+                          : chatChip === "groups" ? "No group chats yet"
+                          : "No conversations yet"}
+                      </p>
+                      {!chatSearch && !showArchived && chatChip === "all" && (
+                        <Button variant="outline" size="lg" className="h-12 text-base rounded-xl border-gray-200" onClick={() => setShowNewGroup(true)} data-testid="button-mobile-empty-new-group">
+                          <Users className="w-5 h-5 mr-2" /> New Chat
+                        </Button>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      {shown.map(t => (
+                        <MobileThreadCard
+                          key={t.id}
+                          thread={t}
+                          onClick={() => openThread(t)}
+                          currentUserId={currentUser?.id}
+                          onDelete={handleDeleteThread}
+                          onArchive={t.isAiChat ? undefined : toggleArchived}
+                          archived={archivedIds.includes(t.id)}
+                          userPics={userPics}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
             {/* Clear the fixed bottom nav so the last conversation is reachable. */}
             <div className="h-20" />
           </div>
