@@ -67,6 +67,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r348 · 2026-08-20 · LIGHT (r347 was FULL) — ROUND IN PROGRESS
+- JOGQK merged into staging (verdict-job restart-proof 5-min tick +
+  jsonb marker fix — the only delta since r347). tsc clean post-merge.
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1
+  post-merge). Two-bot round 348 running; triage pending.
+- Merge-delta review: tickVerdictJobs claim is atomic (ON CONFLICT ...
+  WHERE IS DISTINCT), once per hour-slot, system_settings table + pkey
+  present in fixture. No issues found by reading.
+
 ### r347 · 2026-08-20 · FULL (rotation #4 staff mobile 390px)
 - JOGQK merged INTO staging first (WhatsApp mobile Messages, brand pack v2,
   interest signals) — round tested current production code.
