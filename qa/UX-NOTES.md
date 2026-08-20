@@ -16,6 +16,15 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+74. 2026-08-20 · BGP staff / desktop 1440px (QA r344) · "carry on working
+    with a pending invoice verdict" · The new red verdict banner (fixed,
+    top-0) overlays the app header instead of pushing it down, so the
+    global search box and header controls sit hidden behind it for as long
+    as a verdict is pending — annoying is the brief, but hiding search
+    costs real workflows. · Suggested: give the authenticated shell a
+    top offset when the banner is mounted (like iOS in-call bars) so the
+    header stays usable; keep the banner un-dismissable.
+
 72. 2026-08-19 · Landsec client / Letting Tracker desktop (QA r343) ·
     "narrow the tracker to my Bluewater units" · The filter row shows
     "All Teams" and "All Agents" dropdowns to a client login — BGP-internal

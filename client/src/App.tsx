@@ -834,8 +834,10 @@ function AppContent() {
       <ConnectionStatus />
       {/* Invoice-verdict alarm: un-dismissable nag for agents with deals due
           to exchange/complete this month and no verdict — renders on every
-          authenticated page, desktop and mobile (Woody, 2026-08-19). */}
-      <DealVerdictAlarm />
+          authenticated page, desktop and mobile (Woody, 2026-08-19).
+          Staff only: the client API gateway blocks /api/deal-verdicts, so
+          mounting it for clients just 403s on every page load. */}
+      {!((user as any)?.role === "Client" || (user as any)?.companyScopeId) && <DealVerdictAlarm />}
       {/* Update banner disabled — was misfiring. Service worker still
           refreshes the bundle on its own on next reload. */}
       {/* <UpdatePrompt /> */}

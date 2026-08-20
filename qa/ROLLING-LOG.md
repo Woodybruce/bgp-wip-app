@@ -4410,13 +4410,36 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
 - Next journey: rotation #4 staff mobile 390px (r225 had the journey →
   r226 may be LIGHT; then #4).
 
-### r344 · 2026-08-19 · LIGHT — ROUND IN PROGRESS (provisional)
-- Merged origin/JOGQK into staging (brings deal-verdict alarm: server/deal-verdicts.ts,
-  client deal-verdict-alarm.tsx). unit_interest boot-heal kept.
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1 on merged code).
-- Triage: 0 raw 5xx beyond keyless-AI 503 noise (ai-briefing, brand-gaps, ai-take).
-- Next: two-bot round, dev-server sweep incl. new deal-verdict surfaces, deferred bugs (none from r343).
-- 2026-08-20: original r344 container reclaimed before finishing; replacement
-  session resumed the round. Re-verified: JOGQK merge already in staging
-  (66e102e, "Already up to date"), smoke GREEN again (42 checks, 0 failures,
-  FRESH_BUILD=1). Continuing with two-bot round + deal-verdict sweep.
+### r344 · 2026-08-19/20 · LIGHT (r343 had the journey) — finished by replacement session
+- Original container reclaimed after its heartbeat; replacement session
+  finished the round 2026-08-20. JOGQK merge already in staging (66e102e);
+  smoke GREEN ×3 (42 checks, 0 failures; FRESH_BUILD=1 before and after fix).
+- Two-bot round 344: tally 36×403 + 1×400 + 2×503. The 400/503s are listed
+  noise (rocketreach-400, keyless-AI 503). The 36×403 were ONE real bug from
+  the merge: DealVerdictAlarm mounted for ALL users, but the client API
+  gateway (CLIENT_ALLOWED_API) blocks /api/deal-verdicts/* → every client
+  page load logged a 403 (mark + sam scenarios). No visual breakage (alarm
+  renders null on error), but per-page 403 console/monitor noise.
+- Bug fixed (1): App.tsx now mounts DealVerdictAlarm staff-only (same
+  role==='Client' || companyScopeId test as isClientShell). Verified
+  visually: Mark's pages fetch nothing, 0×403; Victoria unaffected.
+- Deal-verdict feature sweep (new surface, dev server + browser): /pending
+  correct (fixture has no due deals → dormant by default; probe deal listed
+  with daysOverdue); slipping w/o date 400; bogus verdict 400; slipping
+  re-dates deal + clears pending; on_track via UI clears the full-screen
+  block; banner (0-2d) and full-screen block (3d+) both render clean at
+  1440px; invoice_now push path guarded (no woody push sub in fixture, no-op).
+- Harness growth: staff-deal-verdict-flow scenario in two-bot-round.mjs
+  (create overdue probe deal → pending → 400 → slipping → cleared → deal
+  deleted in-scenario); run-round.sh purge now sweeps orphan deal_verdicts
+  rows. Scenario's API sequence dry-run green.
+- CAUTION for future rounds: a pending verdict deal for victoria@ full-screen
+  BLOCKS her browser at 3d+ overdue — never leave one seeded while the
+  two-bot round or a journey runs (this round briefly self-inflicted ~90s of
+  extra pending-fetch exposure mid-round; re-checked, no false failures
+  logged from it).
+- Bugs deferred: none. Suggestions added: UX-NOTES #74 (verdict banner
+  overlays the app header, hiding global search while pending).
+- New flakes: none. tsc clean.
+- Next journey: rotation — r343 covered client desktop; r345 FULL should take
+  rotation #3 client mobile 390px (staff mobile #4 after).

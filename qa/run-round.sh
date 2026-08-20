@@ -22,6 +22,9 @@ psql -U bgp -h localhost bgp -f qa/seed-personas.sql >/dev/null 2>&1 || echo "[q
 # 2. Purge test rows from the previous round so data doesn't pile up.
 psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM crm_deals    WHERE name LIKE 'QA-R%' OR name LIKE '%PROBE%';
+  -- verdict rows for deals that no longer exist (the verdict-flow scenario
+  -- deletes its probe deal; the verdict row has no FK and would pile up)
+  DELETE FROM deal_verdicts WHERE deal_id NOT IN (SELECT id FROM crm_deals);
   DELETE FROM crm_contacts WHERE name LIKE 'QA Contact%';
   DELETE FROM user_tasks   WHERE title LIKE 'QA-PROBE task%';
   DELETE FROM crm_requirements_leasing WHERE name LIKE 'QA-REQ%' OR name LIKE 'QA-PROBE req%';

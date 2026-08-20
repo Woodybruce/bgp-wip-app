@@ -1465,6 +1465,45 @@ async function victoriaRound(page, cross) {
     if (!r.targets.includes(`QA-TGT-R${ROUND}`)) throw new Error('added target missing from brief read-back');
     cross.briefId = r.briefId;
   });
+
+  // Invoice-verdict alarm (2026-08-19 feature): a deal past its target date
+  // with no verdict must show in /pending for its agent; "slipping" demands a
+  // date (400 bare), re-dates the deal, and clears the pending list. The deal
+  // is API-created LAST in victoriaRound and deleted in the same scenario so
+  // the un-dismissable alarm banner never overlays other browser scenarios;
+  // run-round.sh's 'QA-R%' purge sweeps any mid-death survivors.
+  await step(page, p, 'staff-deal-verdict-flow', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const past = new Date(Date.now() - 5 * 86400000).toISOString();
+      const cRes = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ name: `QA-R${round} verdict probe`, dealType: 'Consultant', status: 'SOL', fee: 1000, targetDate: past, internalAgent: ['Victoria Broadhead'] }) });
+      const deal = cRes.ok ? await cRes.json() : null;
+      if (!deal?.id) return { fail: `deal create ${cRes.status}` };
+      const out = { dealId: deal.id };
+      const pending1 = await (await fetch('/api/deal-verdicts/pending', { credentials: 'include', headers: auth })).json();
+      out.listed = (pending1.deals || []).some(d => d.id === deal.id);
+      out.overdue = (pending1.deals || []).find(d => d.id === deal.id)?.daysOverdue;
+      const bare = await fetch(`/api/deal-verdicts/${deal.id}`, { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ verdict: 'slipping' }) });
+      out.bareStatus = bare.status;
+      const nextMonth = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+      const slip = await fetch(`/api/deal-verdicts/${deal.id}`, { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ verdict: 'slipping', newTargetDate: nextMonth }) });
+      out.slipStatus = slip.status;
+      const pending2 = await (await fetch('/api/deal-verdicts/pending', { credentials: 'include', headers: auth })).json();
+      out.stillListed = (pending2.deals || []).some(d => d.id === deal.id);
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json().catch(() => []);
+      out.newTarget = (Array.isArray(deals) ? deals : []).find(d => d.id === deal.id)?.targetDate || null;
+      out.deleteStatus = (await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth })).status;
+      return out;
+    }, ROUND);
+    if (r.fail) throw new Error(r.fail);
+    if (!r.listed) throw new Error('overdue deal missing from /api/deal-verdicts/pending');
+    if (!(r.overdue >= 4)) throw new Error(`daysOverdue wrong (${r.overdue}, expected ~5)`);
+    if (r.bareStatus !== 400) throw new Error(`slipping without a date should 400 (got ${r.bareStatus})`);
+    if (r.slipStatus !== 200) throw new Error(`slipping verdict failed (${r.slipStatus})`);
+    if (r.stillListed) throw new Error('deal still pending after a verdict this month');
+    if (!r.newTarget || new Date(r.newTarget) < new Date()) throw new Error(`slipping did not re-date the deal (targetDate ${r.newTarget})`);
+    if (r.deleteStatus !== 200 && r.deleteStatus !== 204) throw new Error(`probe deal cleanup failed (${r.deleteStatus})`);
+  });
 }
 
 async function markRound(page, cross) {
