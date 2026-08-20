@@ -73,6 +73,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r351 · 2026-08-20 · FULL (rotation #2 Landsec client desktop) — IN PROGRESS
+- Heartbeat: JOGQK merge already up to date. run-smoke.sh GREEN (42 checks,
+  0 failures, FRESH_BUILD=1). Two-bot + client-desktop journey to follow.
+
 ### r350 · 2026-08-20 · LIGHT (r349 was FULL)
 - Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
   JOGQK merge: already up to date (no delta since r349). Regression:
