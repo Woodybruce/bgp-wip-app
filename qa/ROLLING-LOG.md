@@ -73,12 +73,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r350 · 2026-08-20 · LIGHT (r349 was FULL) — ROUND IN PROGRESS
+### r350 · 2026-08-20 · LIGHT (r349 was FULL)
 - Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
-  JOGQK merge: already up to date. Regression: run-smoke.sh GREEN (42 checks,
-  0 failures, FRESH_BUILD=1). Two-bot round 350 running; 3 issues logged so
-  far, all listed noise (rocketreach-400, live-intel 503, commentary-regen
-  503). Final entry to follow.
+  JOGQK merge: already up to date (no delta since r349). Regression:
+  run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1). Two-bot round
+  350: exit 0, all scenarios ok (incl. staff-unit-interest-lifecycle,
+  staff-deal-verdict-flow, client-no-deal-verdict-poll), 3 issues all listed
+  noise (rocketreach-400, live-intel 503, commentary-regen 503 —
+  qa/logs/round-350.jsonl). Dev-server sweep: 0 raw 500/502/504; 170×403 all
+  low-count deliberate guard probes across ~100 distinct endpoints (no
+  r344/r345-style single-endpoint storm); error traces only keyless/
+  no-network noise (Anthropic auth, Azure/MSAL, RSS 403/ENOTFOUND).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #2 Landsec client desktop (r350 was LIGHT → r351
+  FULL).
 
 ### r349 · 2026-08-20 · FULL (rotation #1 staff desktop)
 - Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
