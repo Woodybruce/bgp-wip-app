@@ -60,6 +60,9 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 
 type ChatAction = {
   type: "model_run";
@@ -925,6 +928,108 @@ function NewGroupView({ allUsers, currentUserId, onCreate }: {
         </Button>
       </div>
     </div>
+  );
+}
+
+// WhatsApp-style "Media · Links · Docs" for one conversation. Shared by the
+// Team Chat panel, the /chatbgp page and the mobile chat screen — mount it
+// anywhere with a threadId and a trigger.
+export function ThreadMediaDialog({ threadId, open, onOpenChange }: {
+  threadId: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  const [tab, setTab] = useState<"media" | "links" | "docs">("media");
+  const { data, isLoading } = useQuery<{ media: any[]; links: any[]; docs: any[] }>({
+    queryKey: ["/api/chat/threads", threadId, "media"],
+    queryFn: async () => {
+      const res = await fetch(`/api/chat/threads/${threadId}/media`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("Failed to load shared files");
+      return res.json();
+    },
+    enabled: open,
+    staleTime: 30_000,
+  });
+  const counts = {
+    media: data?.media?.length ?? 0,
+    links: data?.links?.length ?? 0,
+    docs: data?.docs?.length ?? 0,
+  };
+  const fmtDate = (d: string) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-sm">Shared in this chat</DialogTitle>
+        </DialogHeader>
+        <div className="flex items-center gap-1.5">
+          {(["media", "links", "docs"] as const).map((k) => (
+            <button
+              key={k}
+              onClick={() => setTab(k)}
+              className={`px-3 py-1 rounded-full text-[11.5px] font-medium capitalize transition-colors border ${
+                tab === k ? "bg-foreground text-background border-transparent" : "bg-background text-muted-foreground border-border hover:text-foreground"
+              }`}
+              data-testid={`chip-thread-media-${k}`}
+            >
+              {k} {counts[k] > 0 ? counts[k] : ""}
+            </button>
+          ))}
+        </div>
+        <div className="min-h-[180px] max-h-[55vh] overflow-y-auto">
+          {isLoading ? (
+            <p className="text-xs text-muted-foreground py-8 text-center">Loading…</p>
+          ) : tab === "media" ? (
+            counts.media === 0 ? (
+              <p className="text-xs text-muted-foreground py-8 text-center">No photos or media shared yet.</p>
+            ) : (
+              <div className="grid grid-cols-3 gap-1.5">
+                {data!.media.map((m, i) => m.audio ? (
+                  <div key={i} className="aspect-square rounded-lg bg-muted flex flex-col items-center justify-center gap-1 p-2">
+                    <Mic className="w-5 h-5 text-muted-foreground" />
+                    <audio src={m.url} controls preload="none" className="w-full h-7" />
+                  </div>
+                ) : (
+                  <a key={i} href={m.url} target="_blank" rel="noopener noreferrer" className="aspect-square rounded-lg overflow-hidden bg-muted block" title={`${m.name} · ${m.sender} · ${fmtDate(m.at)}`}>
+                    <img src={m.url} alt={m.name} className="w-full h-full object-cover" loading="lazy" />
+                  </a>
+                ))}
+              </div>
+            )
+          ) : tab === "links" ? (
+            counts.links === 0 ? (
+              <p className="text-xs text-muted-foreground py-8 text-center">No links shared yet.</p>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {data!.links.map((l, i) => (
+                  <a key={i} href={l.url} target="_blank" rel="noopener noreferrer" className="flex items-start gap-2.5 rounded-lg border p-2.5 hover:bg-muted/50 transition-colors">
+                    <LinkIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                    <span className="min-w-0">
+                      <span className="text-xs font-medium block truncate">{l.url.replace(/^https?:\/\/(www\.)?/, "")}</span>
+                      <span className="text-[10.5px] text-muted-foreground">{l.sender} · {fmtDate(l.at)}</span>
+                    </span>
+                  </a>
+                ))}
+              </div>
+            )
+          ) : counts.docs === 0 ? (
+            <p className="text-xs text-muted-foreground py-8 text-center">No documents shared yet.</p>
+          ) : (
+            <div className="flex flex-col gap-1">
+              {data!.docs.map((d, i) => (
+                <a key={i} href={d.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2.5 rounded-lg border p-2.5 hover:bg-muted/50 transition-colors">
+                  <FileIcon className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <span className="min-w-0">
+                    <span className="text-xs font-medium block truncate">{d.name}</span>
+                    <span className="text-[10.5px] text-muted-foreground">{d.sender} · {fmtDate(d.at)}</span>
+                  </span>
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -2581,6 +2686,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
     queryClient.invalidateQueries({ queryKey: ["/api/chat/notifications"] });
   };
 
+  // Media/Links/Docs dialog for the open conversation.
+  const [mediaDialogOpen, setMediaDialogOpen] = useState(false);
+
   // The /chatbgp Messages list can hand a team thread to this panel (App
   // opens the panel; this selects the conversation).
   useEffect(() => {
@@ -2739,6 +2847,16 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
           )}
           {view === "chat" && activeThreadId && (
             <>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setMediaDialogOpen(true)}
+                title="Shared media, links & docs"
+                data-testid="button-thread-media"
+              >
+                <ImageIcon className="w-3.5 h-3.5" />
+              </Button>
               <AddMemberPopover
                 threadId={activeThreadId}
                 existingMemberIds={threadMembers.map(m => m.id)}
@@ -3179,6 +3297,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled, onDraftC
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {activeThreadId && (
+        <ThreadMediaDialog threadId={activeThreadId} open={mediaDialogOpen} onOpenChange={setMediaDialogOpen} />
+      )}
     </div>
   );
 }
