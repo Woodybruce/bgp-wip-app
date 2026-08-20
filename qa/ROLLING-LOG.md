@@ -67,14 +67,29 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r348 · 2026-08-20 · LIGHT (r347 was FULL) — ROUND IN PROGRESS
+### r348 · 2026-08-20 · LIGHT (r347 was FULL)
 - JOGQK merged into staging (verdict-job restart-proof 5-min tick +
-  jsonb marker fix — the only delta since r347). tsc clean post-merge.
+  jsonb marker fix — the only delta since r347). tsc clean post-merge;
+  r347's Interest-button + DM-naming fixes kept through the merge.
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1
-  post-merge). Two-bot round 348 running; triage pending.
+  post-merge). Two-bot round 348: exit 0, all scenarios ok (incl.
+  staff-unit-interest-lifecycle from r347), 3 issues all listed noise
+  (rocketreach-400, live-intel 503, commentary-regen 503 —
+  qa/logs/round-348.jsonl). Dev-server log: 0 raw 500/502/504 (tally
+  2xx/3xx + expected 400/401/404/503, no 403 storms); error traces only
+  keyless/no-network noise (RSS 403s, Revolut config, MSAL, goad_units).
 - Merge-delta review: tickVerdictJobs claim is atomic (ON CONFLICT ...
-  WHERE IS DISTINCT), once per hour-slot, system_settings table + pkey
-  present in fixture. No issues found by reading.
+  WHERE IS DISTINCT FROM), once per hour-slot per kind, restart-safe;
+  system_settings table + pkey present in fixture. Note: smoke's prod
+  build runs the tick (90s catch-up) — keyless + dormant fixture, no
+  effect on the suite. No issues found.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions
+  added: none. New flakes: none.
+- Housekeeping: r348 heartbeat commit's Co-Authored-By accidentally
+  carried a model name (can't amend, no force-push); final commit uses
+  the standard plain footer.
+- Next journey: rotation #1 staff desktop is due (last was r347 #4 →
+  cycle restarts) — r348 was LIGHT, so r349 FULL.
 
 ### r347 · 2026-08-20 · FULL (rotation #4 staff mobile 390px)
 - JOGQK merged INTO staging first (WhatsApp mobile Messages, brand pack v2,
