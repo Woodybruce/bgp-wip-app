@@ -1628,7 +1628,11 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       // Send belonged to a conversation the user has already left via
       // "new chat" — don't recover into or apologise in the fresh one.
       if (inFlightEpochRef.current !== chatEpochRef.current) return;
-      if (threadId) {
+      // err.status set = the server answered with an HTTP error (503 no
+      // key, 400 validation, …) before composing anything — there is no
+      // late reply to recover, so fall through to the message right away
+      // instead of leaving the user on "Thinking..." for the whole poll.
+      if (threadId && !err?.status) {
         // Late-response recovery: ChatBGP turns that touch search +
         // KB + doc-gen routinely take 4-5 minutes. The fetch may have
         // aborted client-side but the server keeps going and writes

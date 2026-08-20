@@ -16,6 +16,15 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+80. 2026-08-20 · Landsec client / mobile 390px (QA r353) · "ask ChatBGP a
+    question from my phone" · The empty-chat suggestion chips are one static
+    list shared by every persona (AI_SUGGESTIONS in mobile-app.tsx), so a
+    Landsec client is offered "Draft HOTs for a property" and "Search CRM
+    contacts" — staff jobs they'd never phrase that way. Suggest a
+    client-flavoured set when user.role is client, e.g. "What's happening
+    across my portfolio?", "Which of my units are available?", "What's my
+    passing rent at Bluewater?".
+
 79. 2026-08-20 · Landsec client / desktop 1440px (QA r351) · "check what
     leasing requirements BGP is tracking for us" · The desktop Requirements
     table's empty state says the generic "No active requirements found" —
