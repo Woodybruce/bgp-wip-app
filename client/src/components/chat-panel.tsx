@@ -1170,13 +1170,9 @@ function ThreadList({ threads, onSelect, onNewGroupChat, unseenCount, onOpenAiFu
       if (otherMembers.length === 0 && t.createdBy === currentUserId && !t.lastMessage) return false;
       return true;
     });
-    if (chip === "ai") filtered = filtered.filter(t => t.isAiChat);
-    if (chip === "groups") filtered = filtered.filter(t => !t.isAiChat && t.members.filter(m => m.id !== currentUserId).length > 1);
-    if (chip === "unread") filtered = filtered.filter(t => {
-      const me = t.members.find(m => m.id === currentUserId);
-      return me ? !me.seen : false;
-    });
     if (searchQuery.trim()) {
+      // Search spans EVERYTHING (human + AI) regardless of chip, so a
+      // remembered AI thread is always findable from the main box.
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter(t =>
         (t.title || "").toLowerCase().includes(q) ||
@@ -1186,6 +1182,22 @@ function ThreadList({ threads, onSelect, onNewGroupChat, unseenCount, onOpenAiFu
         (t.lastMessage?.content || "").toLowerCase().includes(q) ||
         t.members.some(m => m.name.toLowerCase().includes(q))
       );
+    } else if (chip === "ai") {
+      filtered = filtered.filter(t => t.isAiChat);
+    } else if (chip === "groups") {
+      filtered = filtered.filter(t => !t.isAiChat && t.members.filter(m => m.id !== currentUserId).length > 1);
+    } else if (chip === "unread") {
+      filtered = filtered.filter(t => {
+        if (t.isAiChat) return false;
+        const me = t.members.find(m => m.id === currentUserId);
+        return me ? !me.seen : false;
+      });
+    } else {
+      // "All" = PEOPLE. The AI's many working threads were drowning human
+      // conversations (Woody, 2026-08-20: "the AI chats are overtaking the
+      // main ones") — ChatBGP gets exactly one row: the pinned one above.
+      // Full AI history lives under the AI chip.
+      filtered = filtered.filter(t => !t.isAiChat);
     }
     return [...filtered].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
   }, [threads, searchQuery, currentUserId, chip]);
