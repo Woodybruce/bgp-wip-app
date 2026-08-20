@@ -4416,3 +4416,7 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1 on merged code).
 - Triage: 0 raw 5xx beyond keyless-AI 503 noise (ai-briefing, brand-gaps, ai-take).
 - Next: two-bot round, dev-server sweep incl. new deal-verdict surfaces, deferred bugs (none from r343).
+- 2026-08-20: original r344 container reclaimed before finishing; replacement
+  session resumed the round. Re-verified: JOGQK merge already in staging
+  (66e102e, "Already up to date"), smoke GREEN again (42 checks, 0 failures,
+  FRESH_BUILD=1). Continuing with two-bot round + deal-verdict sweep.
