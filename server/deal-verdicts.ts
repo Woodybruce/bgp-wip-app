@@ -22,8 +22,8 @@ import { legacyToCode } from "../shared/deal-status";
 const router = Router();
 
 // Dials
-const ESCALATE_AFTER_DAYS = 3;
-const ESCALATION_EMAIL = "woody@brucegillinghampollard.com";
+const ESCALATION_EMAIL = "woody@brucegillinghampollard.com"; // "ready to invoice" push
+const SUMMARY_EMAIL = "equity@brucegillinghampollard.com";   // daily outstanding-verdicts summary
 const APP_URL = "https://chatbgp.app";
 
 pool.query(`
@@ -202,74 +202,73 @@ export async function runMorningVerdictPushes(): Promise<void> {
   console.log(`[deal-verdicts] morning pushes: ${perUser.length} agent(s) nagged`);
 }
 
-// 09:00 — email per agent.
-export async function runMorningVerdictEmails(): Promise<void> {
+// Email blast — ONE red-alert email PER DEAL per agent, fired 6× a day
+// (Woody, 2026-08-19: "send an email for each deal to the agents... 6 emails
+// a day until they are fixed, make all the text bright red and say deal
+// emergency at the top with lots of emojis"). Answered deals drop out of
+// pendingVerdictDeals, so the emails stop the moment a verdict lands.
+export async function runVerdictEmailBlast(): Promise<void> {
   const perUser = await collectPendingByUser();
   const { sendSharedMailboxEmail } = await import("./shared-mailbox");
+  let sent = 0;
   for (const u of perUser) {
     if (!u.email) continue;
-    const items = u.deals.map(d => `<li>${fmtDeal(d)}</li>`).join("");
-    try {
-      await sendSharedMailboxEmail({
-        to: u.email,
-        subject: `${u.deals.length} deal${u.deals.length === 1 ? "" : "s"} awaiting your invoice verdict`,
-        body: `<p>Hi ${u.name.split(" ")[0]},</p>
-<p>These deals are due to exchange or complete this month and need your verdict — on track, slipping (with a new date), or ready to invoice:</p>
-<ul>${items}</ul>
-<p><a href="${APP_URL}/deals?verdicts=1">Answer them in the dashboard</a> — the banner clears the moment you do.</p>
-<p>BGP Dashboard</p>`,
-      });
-    } catch (e: any) {
-      console.warn(`[deal-verdicts] email to ${u.email} failed: ${e?.message}`);
+    for (const d of u.deals) {
+      const overdueLine = d.daysOverdue > 0
+        ? `⏰❗ <b>${d.daysOverdue} DAY${d.daysOverdue === 1 ? "" : "S"} PAST ITS TARGET DATE</b> ❗⏰`
+        : `⏰ Target date: <b>${new Date(d.targetDate).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</b> — this month!`;
+      try {
+        await sendSharedMailboxEmail({
+          to: u.email,
+          subject: `🚨 DEAL EMERGENCY — ${d.name} needs your invoice verdict`,
+          body: `<div style="color:#e60000;font-family:Arial,sans-serif;">
+<h1 style="color:#e60000;font-size:26px;margin:0 0 12px;">🚨🔥🚨 DEAL EMERGENCY 🚨🔥🚨</h1>
+<p style="color:#e60000;font-size:15px;"><b>${u.name.split(" ")[0]} — this deal needs your verdict NOW:</b></p>
+<p style="color:#e60000;font-size:17px;"><b>💼 ${d.name}</b>${d.propertyName ? ` — ${d.propertyName}` : ""}</p>
+${d.fee ? `<p style="color:#e60000;font-size:15px;">💸💸 <b>£${d.fee.toLocaleString()} fee unconfirmed</b> 💸💸</p>` : ""}
+<p style="color:#e60000;font-size:15px;">${overdueLine}</p>
+<p style="color:#e60000;font-size:15px;">Is it 🟢 on track, 🟠 slipping, or 💰 <b>ready to invoice</b>? Nobody knows — because you haven't said! 😱</p>
+<p style="color:#e60000;font-size:15px;">👉 <a href="${APP_URL}/deals?verdicts=1" style="color:#e60000;font-weight:bold;">GIVE YOUR VERDICT — the emails stop the moment you do</a> 👈</p>
+<p style="color:#e60000;font-size:12px;">🚨 You will receive this email 6 times a day until this deal has a verdict. The equity partners receive a daily summary of every unanswered deal. 🚨</p>
+</div>`,
+        });
+        sent++;
+      } catch (e: any) {
+        console.warn(`[deal-verdicts] blast email to ${u.email} failed: ${e?.message}`);
+      }
     }
   }
-  console.log(`[deal-verdicts] morning emails: ${perUser.length} agent(s)`);
+  console.log(`[deal-verdicts] blast: ${sent} email(s) across ${perUser.length} agent(s)`);
 }
 
-// 09:00 — escalation digest to Woody + each offender's manager when a deal
-// has sat ≥ESCALATE_AFTER_DAYS past its target date with no verdict.
-export async function runVerdictEscalation(): Promise<void> {
+// 09:00 — one clean daily summary of everything outstanding, to the equity
+// partners' list "just so we know" (Woody, 2026-08-19).
+export async function runEquityVerdictSummary(): Promise<void> {
   const perUser = await collectPendingByUser();
-  const offenders = perUser
-    .map(u => ({ ...u, deals: u.deals.filter(d => d.daysOverdue >= ESCALATE_AFTER_DAYS) }))
-    .filter(u => u.deals.length > 0);
-  if (!offenders.length) return;
-
-  const lines = offenders.map(u =>
-    `<p><b>${u.name}</b> — ${u.deals.length} ignored deal${u.deals.length === 1 ? "" : "s"}:</p><ul>${u.deals.map(d => `<li>${fmtDeal(d)}</li>`).join("")}</ul>`
+  if (!perUser.length) return;
+  const totalDeals = perUser.reduce((n, u) => n + u.deals.length, 0);
+  const totalFees = perUser.reduce((n, u) => n + u.deals.reduce((m, d) => m + (d.fee || 0), 0), 0);
+  const sections = perUser.map(u =>
+    `<p style="margin:10px 0 2px;"><b>${u.name}</b> — ${u.deals.length} deal${u.deals.length === 1 ? "" : "s"} awaiting verdict:</p>
+<ul style="margin:2px 0 8px;">${u.deals.map(d => `<li>${fmtDeal(d)}</li>`).join("")}</ul>`
   ).join("");
-  const html = `<p>These deals passed their target date ${ESCALATE_AFTER_DAYS}+ days ago and the assigned agent still hasn't given an invoice verdict:</p>${lines}<p><a href="${APP_URL}/deals">Deal tracker</a></p>`;
-
   const { sendSharedMailboxEmail } = await import("./shared-mailbox");
-  const { sendPushNotification } = await import("./push-notifications");
-
-  const recipients = new Set<string>([ESCALATION_EMAIL.toLowerCase()]);
-  for (const u of offenders) {
-    if (u.managerId) {
-      const mgr = await pool.query(`SELECT email FROM users WHERE id = $1`, [u.managerId]);
-      if (mgr.rows[0]?.email) recipients.add(String(mgr.rows[0].email).toLowerCase());
-    }
-  }
-  for (const email of recipients) {
-    try {
-      await sendSharedMailboxEmail({ to: email, subject: "Unanswered invoice verdicts — escalation", body: html });
-    } catch (e: any) {
-      console.warn(`[deal-verdicts] escalation email to ${email} failed: ${e?.message}`);
-    }
-  }
   try {
-    const woody = await pool.query(`SELECT id FROM users WHERE lower(email) = lower($1) LIMIT 1`, [ESCALATION_EMAIL]);
-    if (woody.rows[0]) {
-      const total = offenders.reduce((n, u) => n + u.deals.length, 0);
-      await sendPushNotification(woody.rows[0].id, {
-        title: "Invoice verdicts being ignored",
-        body: offenders.map(u => `${u.name}: ${u.deals.length}`).join(" · ") + ` — ${total} deal(s) unconfirmed`,
-        tag: "verdict-escalation",
-        url: "/deals",
-      });
-    }
-  } catch {}
-  console.log(`[deal-verdicts] escalation: ${offenders.length} agent(s) named to ${recipients.size} recipient(s)`);
+    await sendSharedMailboxEmail({
+      to: SUMMARY_EMAIL,
+      subject: `Invoice verdicts outstanding: ${totalDeals} deal${totalDeals === 1 ? "" : "s"}${totalFees ? ` · £${totalFees.toLocaleString()} in fees` : ""}`,
+      body: `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1F2937;">
+<p>Daily summary of deals due to exchange or complete this month where the assigned agent has not yet given an invoice verdict.</p>
+<p><b>${totalDeals} deal${totalDeals === 1 ? "" : "s"} outstanding${totalFees ? ` · £${totalFees.toLocaleString()} in unconfirmed fees` : ""}</b></p>
+${sections}
+<p><a href="${APP_URL}/deals">Open the deal tracker</a></p>
+<p style="color:#6B7280;font-size:12px;">Agents receive six reminder emails a day per deal until each verdict is given. This summary stops when nothing is outstanding.</p>
+</div>`,
+    });
+    console.log(`[deal-verdicts] equity summary sent: ${totalDeals} deal(s), ${perUser.length} agent(s)`);
+  } catch (e: any) {
+    console.warn(`[deal-verdicts] equity summary failed: ${e?.message}`);
+  }
 }
 
 export default router;
