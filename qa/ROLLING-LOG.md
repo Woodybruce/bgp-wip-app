@@ -67,14 +67,41 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r345 · 2026-08-20 · FULL (rotation #3 client mobile 390px) — IN PROGRESS
-- Provisional heartbeat entry. Fresh container (pg_hba trust re-applied per
-  r205). JOGQK merge: already up to date (staging ahead with r344 fixes).
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
-  Triage: nothing to triage — no failures logged.
-- Next: two-bot round + client mobile 390px journey (Mark Warne).
+### r345 · 2026-08-20 · FULL (rotation #3 client mobile 390px)
+- Fresh container (pg_hba trust per r205; bgp role + restore + schema grant
+  per r249). JOGQK merge: already up to date (staging ahead w/ r344 fixes).
+- Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
+  before and after the fix). Two-bot round 345: exit 0, all scenarios ok,
+  4 logged issues all noise (rocketreach-400; verdict-scenario's own
+  deliberate 400 — now suppressed, scenario added to
+  NEGATIVE_PROBE_SCENARIOS; brand-gaps/live-intel + commentary-regen 503s).
+- Journey: Mark Warne @ 390px iPhone UA — "prep for a Landsec asset review
+  on my phone": dashboard → leasing board /leasing-schedule/:bluewater
+  (ARCHIVED banner correct) → property page → tenancy-schedule full board
+  (KPIs + unit table clean at 390) → /brands hub → Honi Poke profile (KYC
+  visible per 2026-08-01 decision) → /contacts CRM directory → /requirements
+  (clean empty state) → /deals → /news. 10 surfaces, 0 h-overflow, 0 error
+  boundaries, 0 dead routes.
+- Bug fixed (1): client load of /leasing-schedule/:id fired staff-only
+  GET /api/leasing-schedule/property/:id/privacy → gateway 403 on every
+  client visit (same family as r344's deal-verdict alarm). privacy useQuery
+  in leasing-schedule.tsx now enabled only for staff. Verified: Mark fires
+  no privacy request, Victoria still gets 200. tsc clean.
+- NOT a bug: "Last updated by mark.warne@landsec.com" on the leasing board
+  — two-bot's client write scenarios legitimately touch own-property units
+  (r343: client unit writes intended); timestamp matched the two-bot run.
+- Harness growth: mark's crawl now visits /leasing-schedule/:bluewater
+  (response hook catches a privacy-403 relapse); staff-deal-verdict-flow
+  added to NEGATIVE_PROBE_SCENARIOS (its deliberate 400s no longer logged).
+- Bugs deferred: none. Suggestions added: UX-NOTES #75 (mobile brand
+  profile: Chat card fills first screen, facts below fold), #76 (archived
+  leasing board shows Set band / Set positioning / Enable to clients —
+  render read-only).
+- New flakes: none.
 - (Note: r344's entry sits at the bottom of this file — appended by its
   replacement session; see line ~4413.)
+- Next journey: rotation #4 staff mobile 390px (r345 had the journey →
+  r346 LIGHT first if alternation holds).
 
 ### r343 · 2026-08-19 · FULL (rotation #2 client desktop)
 - Fresh container (pg_hba trust per r205; superuser bgp role + restore +

@@ -1509,8 +1509,10 @@ async function victoriaRound(page, cross) {
 async function markRound(page, cross) {
   const p = 'mark';
 
-  // 1. Crawl the client surface
-  for (const path of ['/', '/contacts', '/brands', '/comps', '/deals', '/leasing-schedule', '/m/images', '/news', '/tasks']) {
+  // 1. Crawl the client surface. The per-property leasing board is included
+  //    because it used to fire a staff-only /privacy fetch that 403'd for
+  //    clients on every load (r345) — the response hook catches a relapse.
+  for (const path of ['/', '/contacts', '/brands', '/comps', '/deals', '/leasing-schedule', `/leasing-schedule/${BLUEWATER}`, '/m/images', '/news', '/tasks']) {
     await visit(page, p, path);
   }
 

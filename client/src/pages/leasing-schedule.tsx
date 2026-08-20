@@ -1367,6 +1367,9 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   const { data: privacyInfo } = useQuery<{ privacy_enabled: boolean; assigned_agents: { user_id: string; username: string }[] }>({
     queryKey: ["/api/leasing-schedule/property", propertyId, "privacy"],
     queryFn: () => fetch(`/api/leasing-schedule/property/${propertyId}/privacy`, { headers: getAuthHeaders() }).then(r => r.json()),
+    // Privacy controls are staff-only — the client API gateway 403s this
+    // endpoint, so don't fire it for client logins.
+    enabled: !!currentUser && (currentUser as any)?.role !== "Client" && !(currentUser as any)?.companyScopeId,
   });
 
   const { data: allTargets = [], refetch: refetchTargets } = useQuery<TargetTenant[]>({

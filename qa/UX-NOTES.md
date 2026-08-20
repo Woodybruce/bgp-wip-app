@@ -16,6 +16,23 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+75. 2026-08-20 · Landsec client / mobile 390px (QA r345) · "look up Honi
+    Poke on my phone before a meeting" · The brand profile's Chat card
+    fills the entire first screen after the hero photo — Key Contacts,
+    compliance and the actual brand facts all sit below the fold, so on a
+    phone the profile reads as a chat app before it reads as a profile. ·
+    Suggested: on mobile, render Chat collapsed (a "Chat" bar that expands
+    on tap) or move it below Key Contacts, so facts come first.
+
+76. 2026-08-20 · Landsec client / mobile 390px (QA r345) · "check the old
+    leasing strategy board" · The retired /leasing-schedule/:id board
+    (banner says "This board is retired") still shows editing affordances
+    to a client login — "Set band" / "Set positioning" buttons on every
+    unit and an "Enable" button for Strategic Principles — BGP strategy
+    controls that mean little to Mark and invite edits on a board nobody
+    maintains. · Suggested: for client logins render the archived board
+    read-only (keep the banner + reference data, drop the edit buttons).
+
 74. 2026-08-20 · BGP staff / desktop 1440px (QA r344) · "carry on working
     with a pending invoice verdict" · The new red verdict banner (fixed,
     top-0) overlays the app header instead of pushing it down, so the
