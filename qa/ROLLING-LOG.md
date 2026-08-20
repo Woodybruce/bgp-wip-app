@@ -73,10 +73,37 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r353 · 2026-08-20 · FULL (rotation #3 client mobile 390px) — IN PROGRESS
+### r353 · 2026-08-20 · FULL (rotation #3 client mobile 390px)
 - JOGQK merge: already up to date. Regression: run-smoke.sh GREEN (42 checks,
-  0 failures, FRESH_BUILD=1). Triage: nothing to triage. Two-bot + client
-  mobile journey to follow.
+  0 failures, FRESH_BUILD=1). Two-bot round 354: exit 0, all scenarios ok,
+  3 issues all listed noise (rocketreach-400, live-intel 503, commentary-
+  regen 503). Dev-server sweep: 0 raw 500/502/504, errors all keyless noise.
+- Journey: Mark Warne @ 390px iPhone UA — "chase the lettings pipeline from
+  my phone": real guest-form login → dashboard → ChatBGP (send a message) →
+  comps (leftover QA-COMP R354 visible = inter-round probe row, purged next
+  round, not a bug) → brands hub + Add-brand dialog (search/global-brands
+  round-trip; Testco Fashion pre-"Added" is baked into the fixture's
+  crm_extra_brand_ids, not a leak) → tasks quick-add (works, toast + row).
+  0 h-overflow, 0 pageerrors, 0 dead routes. Login-screen 401 GET
+  /api/auth/me pre-auth echo = same family as the brand-theme 401 noise.
+- Bug fixed 1: mobile ChatBGP send that the server REJECTS outright (503
+  keyless here; outages/validation 400s in prod) left the user on
+  "Thinking..." with no feedback for ~6 min — onError in mobile-app.tsx ran
+  its late-response recovery poll even when an HTTP error response had
+  definitively arrived (React Query holds isPending through the async
+  onError, so the indicator never cleared). Now skips the poll when
+  err.status is set (poll kept for abort/network/mid-stream, where a late
+  reply genuinely can land). Desktop chat-panel already errored promptly.
+  tsc clean, prod build clean; verified visually: error bubble in ~4s.
+- Harness growth: client-mobile-chat-error-prompt scenario (390px send →
+  Sorry-bubble within 25s; in NEGATIVE_PROBE_SCENARIOS so its deliberate
+  503 isn't logged). Verified live: two-bot round 355 exit 0, 200 steps ok
+  incl. the new scenario, 3 issues all listed noise.
+- Bugs deferred: none. Suggestions added: UX #80 (client sees staff-
+  flavoured chat suggestion chips — "Draft HOTs for a property"). New
+  flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r353 was FULL → r354 LIGHT
+  first if alternation holds).
 
 ### r352 · 2026-08-20 · LIGHT (r351 was FULL)
 - Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
