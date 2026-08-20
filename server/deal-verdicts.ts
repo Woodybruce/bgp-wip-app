@@ -25,6 +25,10 @@ const router = Router();
 const ESCALATION_EMAIL = "woody@brucegillinghampollard.com"; // "ready to invoice" push
 const SUMMARY_EMAIL = "equity@brucegillinghampollard.com";   // daily outstanding-verdicts summary
 const APP_URL = "https://chatbgp.app";
+// Deals whose target date is older than this are ancient zombies, not live
+// emergencies — they skip the agent alarms and surface on the equity
+// summary's tidy-up list instead (Woody, 2026-08-20).
+const LOOKBACK_MONTHS = 6;
 
 pool.query(`
   CREATE TABLE IF NOT EXISTS deal_verdicts (
@@ -57,6 +61,7 @@ export async function pendingVerdictDeals(userId: string, userName: string): Pro
       WHERE d.invoiced_at IS NULL
         AND d.target_date IS NOT NULL
         AND d.target_date < date_trunc('month', now()) + interval '1 month'
+        AND d.target_date >= now() - interval '${LOOKBACK_MONTHS} months'
         AND (d.internal_agent_ids @> ARRAY[$1]::varchar[] OR $2 = ANY(d.internal_agent))
         AND NOT EXISTS (
           SELECT 1 FROM deal_verdicts v
@@ -243,9 +248,34 @@ ${d.fee ? `<p style="color:#e60000;font-size:15px;">💸💸 <b>£${d.fee.toLoca
 
 // 09:00 — one clean daily summary of everything outstanding, to the equity
 // partners' list "just so we know" (Woody, 2026-08-19).
+// Ancient zombies for the tidy-up list: target date older than the
+// look-back, still uninvoiced/unwithdrawn. Excluded from agent alarms.
+async function ancientBacklogDeals(): Promise<Array<{ name: string; propertyName: string | null; agents: string[]; targetDate: string; fee: number | null }>> {
+  const { rows } = await pool.query(
+    `SELECT d.name, d.status, d.fee, d.target_date, d.internal_agent, p.name AS property_name
+       FROM crm_deals d
+       LEFT JOIN crm_properties p ON p.id = d.property_id
+      WHERE d.invoiced_at IS NULL
+        AND d.target_date IS NOT NULL
+        AND d.target_date < now() - interval '${LOOKBACK_MONTHS} months'
+      ORDER BY d.target_date ASC
+      LIMIT 60`
+  );
+  return rows
+    .filter((r: any) => { const c = legacyToCode(r.status); return c !== "WIT" && c !== "INV"; })
+    .map((r: any) => ({
+      name: r.name,
+      propertyName: r.property_name || null,
+      agents: Array.isArray(r.internal_agent) ? r.internal_agent : [],
+      targetDate: new Date(r.target_date).toISOString(),
+      fee: r.fee != null ? Number(r.fee) : null,
+    }));
+}
+
 export async function runEquityVerdictSummary(): Promise<void> {
   const perUser = await collectPendingByUser();
-  if (!perUser.length) return;
+  const ancient = await ancientBacklogDeals().catch(() => []);
+  if (!perUser.length && !ancient.length) return;
   const totalDeals = perUser.reduce((n, u) => n + u.deals.length, 0);
   const totalFees = perUser.reduce((n, u) => n + u.deals.reduce((m, d) => m + (d.fee || 0), 0), 0);
   const sections = perUser.map(u =>
@@ -256,11 +286,16 @@ export async function runEquityVerdictSummary(): Promise<void> {
   try {
     await sendSharedMailboxEmail({
       to: SUMMARY_EMAIL,
-      subject: `Invoice verdicts outstanding: ${totalDeals} deal${totalDeals === 1 ? "" : "s"}${totalFees ? ` · £${totalFees.toLocaleString()} in fees` : ""}`,
+      subject: totalDeals
+        ? `Invoice verdicts outstanding: ${totalDeals} deal${totalDeals === 1 ? "" : "s"}${totalFees ? ` · £${totalFees.toLocaleString()} in fees` : ""}`
+        : `Deal tidy-up list: ${ancient.length} zombie deal${ancient.length === 1 ? "" : "s"} need re-dating or withdrawing`,
       body: `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1F2937;">
 <p>Daily summary of deals due to exchange or complete this month where the assigned agent has not yet given an invoice verdict.</p>
 <p><b>${totalDeals} deal${totalDeals === 1 ? "" : "s"} outstanding${totalFees ? ` · £${totalFees.toLocaleString()} in unconfirmed fees` : ""}</b></p>
 ${sections}
+${ancient.length ? `<hr style="border:none;border-top:1px solid #E5E7EB;margin:14px 0;">
+<p><b>Tidy-up list — ${ancient.length} zombie deal${ancient.length === 1 ? "" : "s"}</b> (target date over ${LOOKBACK_MONTHS} months old, still not invoiced or withdrawn — excluded from the agent alarms; these need re-dating, invoicing or withdrawing):</p>
+<ul style="margin:2px 0 8px;">${ancient.map(d => `<li>${d.name}${d.propertyName ? ` (${d.propertyName})` : ""}${d.fee ? ` — £${d.fee.toLocaleString()}` : ""} — target ${new Date(d.targetDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}${d.agents.length ? ` — ${d.agents.join(", ")}` : ""}</li>`).join("")}</ul>` : ""}
 <p><a href="${APP_URL}/deals">Open the deal tracker</a></p>
 <p style="color:#6B7280;font-size:12px;">Agents receive six reminder emails a day per deal until each verdict is given. This summary stops when nothing is outstanding.</p>
 </div>`,
