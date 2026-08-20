@@ -2254,6 +2254,57 @@ export async function registerRoutes(
     }
   });
 
+  // WhatsApp-style "Media · Links · Docs" for a conversation — everything
+  // ever shared in the thread, classified, newest first. Attachments are
+  // JSON strings {url,name,size,type} (legacy rows are bare filenames with
+  // no URL — nothing to open, so they're skipped); links are lifted from
+  // message text.
+  app.get("/api/chat/threads/:id/media", requireAuth, async (req, res) => {
+    try {
+      const id = req.params.id as string;
+      const thread = await storage.getChatThread(id);
+      if (!thread) return res.status(404).json({ message: "Thread not found" });
+      const userId = req.session.userId!;
+      const members = await storage.getChatThreadMembers(thread.id);
+      const isMember = thread.createdBy === userId || members.some(m => m.userId === userId);
+      if (!isMember) return res.status(403).json({ message: "You are not a member of this thread" });
+
+      const rows = await pool.query(
+        `SELECT cm.content, cm.attachments, cm.created_at, cm.role, u.name AS sender_name
+           FROM chat_messages cm LEFT JOIN users u ON u.id = cm.user_id
+          WHERE cm.thread_id = $1
+          ORDER BY cm.created_at DESC LIMIT 500`,
+        [id]
+      );
+      const media: any[] = [], docs: any[] = [], links: any[] = [];
+      const seenLinks = new Set<string>();
+      const IMG_RE = /\.(png|jpe?g|gif|webp|avif|heic)$/i;
+      const AUDIO_RE = /\.(m4a|mp3|ogg|webm|wav)$/i;
+      for (const row of rows.rows) {
+        const sender = row.sender_name || (row.role === "assistant" ? "ChatBGP" : "Unknown");
+        for (const att of (row.attachments || [])) {
+          let parsed: any = null;
+          try { parsed = JSON.parse(att); } catch { /* legacy bare filename */ }
+          if (!parsed?.url) continue;
+          const label = `${parsed.name || ""} ${parsed.type || ""}`;
+          const entry = { url: parsed.url, name: parsed.name || "file", sender, at: row.created_at };
+          if (IMG_RE.test(label) || (parsed.type || "").startsWith("image/")) media.push(entry);
+          else if (AUDIO_RE.test(label) || (parsed.type || "").startsWith("audio/")) media.push({ ...entry, audio: true });
+          else docs.push(entry);
+        }
+        for (const m of String(row.content || "").matchAll(/https?:\/\/[^\s)\]}"'<>]+/g)) {
+          const url = m[0].replace(/[.,;!?]+$/, "");
+          if (seenLinks.has(url)) continue;
+          seenLinks.add(url);
+          links.push({ url, sender, at: row.created_at });
+        }
+      }
+      res.json({ media, docs, links });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch thread media" });
+    }
+  });
+
   app.delete("/api/chat/threads/:id", requireAuth, async (req, res) => {
     try {
       const id = req.params.id as string;

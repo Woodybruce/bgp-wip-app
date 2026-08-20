@@ -34,6 +34,7 @@ import {
   Palette, ChevronRight, Sun, CalendarDays, Bell,
 } from "lucide-react";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
+import { ThreadMediaDialog } from "@/components/chat-panel";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { legacyToCode } from "@shared/deal-status";
 import TodayPage from "@/pages/today";
@@ -1191,6 +1192,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     && typeof window.MediaRecorder !== "undefined";
   const unmountedRef = useRef(false);
   const [showGroupEdit, setShowGroupEdit] = useState(false);
+  // WhatsApp-style Media/Links/Docs sheet for the open conversation.
+  const [showThreadMedia, setShowThreadMedia] = useState(false);
   const [showLinkMenu, setShowLinkMenu] = useState(false);
   const [showLinkSearch, setShowLinkSearch] = useState<"property" | "deal" | null>(null);
   const [linkSearchQuery, setLinkSearchQuery] = useState("");
@@ -2250,6 +2253,16 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         <div className="bg-[#1C1917] text-white pt-[calc(0.5rem+env(safe-area-inset-top))] pb-3 px-4 shrink-0">
           <div className="flex items-center gap-3">
             <button onClick={onBack} className="p-1" data-testid="button-mobile-chat-back"><ArrowLeft className="w-6 h-6" /></button>
+            {threadId && (
+              <button
+                onClick={() => setShowThreadMedia(true)}
+                className="order-last p-1.5 rounded-full active:bg-white/10"
+                title="Shared media, links & docs"
+                data-testid="button-mobile-thread-media"
+              >
+                <Image className="w-5 h-5 text-white/80" />
+              </button>
+            )}
             <div className="flex-1 min-w-0">
               {isGroup ? (
                 <button onClick={() => setShowGroupEdit(true)} className="flex items-center gap-3 w-full min-w-0 text-left" data-testid="button-mobile-group-settings">
@@ -2781,6 +2794,9 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {threadId && (
+        <ThreadMediaDialog threadId={threadId} open={showThreadMedia} onOpenChange={setShowThreadMedia} />
+      )}
     </div>
   );
 }
@@ -3357,16 +3373,29 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     return { teamThreads: team, aiThreads: ai, otherThreads: other };
   }, [threads, currentUser?.id]);
 
+  // WhatsApp-style chips over the Messages list — All is the one inbox
+  // (team chats + saved ChatBGP threads by recency); Unread/Groups/AI slice it.
+  const [chatChip, setChatChip] = useState<"all" | "unread" | "groups" | "ai">("all");
+
   const filteredTeamThreads = useMemo(() => {
-    if (!chatSearch.trim()) return teamThreads;
+    let base: ThreadData[];
+    if (chatChip === "ai") base = aiThreads.filter(t => !!(t.title || t.lastMessage));
+    else if (chatChip === "groups") base = teamThreads.filter(t => t.members.filter(m => m.id !== currentUser?.id).length > 1);
+    else if (chatChip === "unread") base = teamThreads.filter(t => {
+      const me = t.members.find(m => m.id === currentUser?.id);
+      return me ? !me.seen : false;
+    });
+    else base = [...teamThreads, ...aiThreads.filter(t => !!(t.title || t.lastMessage))];
+    base = [...base].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    if (!chatSearch.trim()) return base;
     const q = chatSearch.toLowerCase();
-    return teamThreads.filter(t =>
+    return base.filter(t =>
       t.title?.toLowerCase().includes(q) ||
       t.linkedName?.toLowerCase().includes(q) ||
       t.lastMessage?.content?.toLowerCase().includes(q) ||
       t.members.some(m => m.name?.toLowerCase().includes(q))
     );
-  }, [teamThreads, chatSearch]);
+  }, [teamThreads, aiThreads, chatSearch, chatChip, currentUser?.id]);
 
   const filteredOtherThreads = useMemo(() => {
     if (!chatSearch.trim()) return otherThreads;
@@ -3681,8 +3710,31 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               </div>
             )}
 
+            {/* Filter chips — All / Unread / Groups / AI, WhatsApp-style. */}
+            <div className="flex items-center gap-1.5 px-4 pb-2">
+              {([
+                { key: "all", label: "All" },
+                { key: "unread", label: "Unread" },
+                { key: "groups", label: "Groups" },
+                { key: "ai", label: "AI" },
+              ] as const).map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setChatChip(key)}
+                  className={`px-3.5 py-1.5 rounded-full text-[12.5px] font-medium transition-colors border ${
+                    chatChip === key
+                      ? "bg-[#1C1917] text-white border-transparent"
+                      : "bg-white text-gray-500 border-gray-200"
+                  }`}
+                  data-testid={`chip-mobile-threads-${key}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
             {/* ChatBGP — the pinned top conversation of the unified list. */}
-            {!chatSearch && (
+            {!chatSearch && chatChip === "all" && (
               <div
                 onClick={openChatBgpPinned}
                 className="flex items-center gap-3 px-4 py-3 active:bg-gray-100 border-b border-gray-100 cursor-pointer"
@@ -3713,8 +3765,14 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
                   <MessageCircle className="w-10 h-10 text-gray-300" />
                 </div>
-                <p className="text-lg text-gray-400">{chatSearch ? "No chats found" : "No conversations yet"}</p>
-                {!chatSearch && (
+                <p className="text-lg text-gray-400">
+                  {chatSearch ? "No chats found"
+                    : chatChip === "unread" ? "You're all caught up"
+                    : chatChip === "ai" ? "No saved ChatBGP threads yet"
+                    : chatChip === "groups" ? "No group chats yet"
+                    : "No conversations yet"}
+                </p>
+                {!chatSearch && chatChip === "all" && (
                   <Button variant="outline" size="lg" className="h-12 text-base rounded-xl border-gray-200" onClick={() => setShowNewGroup(true)} data-testid="button-mobile-empty-new-group">
                     <Users className="w-5 h-5 mr-2" /> New Chat
                   </Button>
