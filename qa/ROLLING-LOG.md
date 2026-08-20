@@ -67,6 +67,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r349 · 2026-08-20 · FULL (rotation #1 staff desktop) — IN PROGRESS
+- Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
+  JOGQK merge: already up to date. run-smoke.sh GREEN (42 checks, 0 failures,
+  FRESH_BUILD=1). Two-bot round 349 still running (noise-only so far:
+  live-intel 503, commentary 503).
+- Journey done: Victoria desktop 1440px — dashboard, deals hub (WIP report),
+  letting tracker, requirements, companies, contacts, tasks, diary, comps,
+  chatbgp (keyless Not Connected — expected), news, 12 surfaces. 0 dead
+  routes (my /kyc-hub guess isn't a route — real path /kyc-clouseau), 0
+  h-overflow, 0 error boundaries. Triage in progress: /api/microsoft 401s
+  (likely keyless noise), tasks AI-briefing spinner behaviour on 503.
+
 ### r348 · 2026-08-20 · LIGHT (r347 was FULL)
 - JOGQK merged into staging (verdict-job restart-proof 5-min tick +
   jsonb marker fix — the only delta since r347). tsc clean post-merge;
