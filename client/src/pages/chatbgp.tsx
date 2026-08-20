@@ -2080,6 +2080,27 @@ export default function ChatBGP() {
     return threads.filter((t) => t.isAiChat);
   }, [threads]);
 
+  // Team chats join the same Messages list (one screen, WhatsApp-style —
+  // Woody, 2026-08-21). Clicking one opens the Team Chat panel on that
+  // thread; the panel owns team messaging (sockets, typing, members).
+  const teamThreads = useMemo(() => {
+    if (!threads) return [];
+    const mine = threads.filter((t: any) => {
+      if (t.isAiChat) return false;
+      const others = (t.members || []).filter((m: any) => m.id !== currentUser?.id);
+      if (others.length === 0 && t.createdBy === currentUser?.id && !t.lastMessage) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        return (t.title || "").toLowerCase().includes(q)
+          || (t.lastMessage?.content || "").toLowerCase().includes(q)
+          || (t.members || []).some((m: any) => (m.name || "").toLowerCase().includes(q));
+      }
+      return true;
+    });
+    return mine.sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  }, [threads, currentUser?.id, searchQuery]);
+  const [showAllTeamThreads, setShowAllTeamThreads] = useState(false);
+
   const filteredThreads = useMemo(() => {
     if (!searchQuery.trim()) return aiThreads;
     const q = searchQuery.toLowerCase();
@@ -3226,6 +3247,74 @@ export default function ChatBGP() {
         <div className="h-px bg-border mx-4 my-1 shrink-0" />
 
         <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
+          {/* Team chats — same Messages list as the panel, one screen.
+              Staff only: clients have no Team Chat panel to open into. */}
+          {teamThreads.length > 0 && (currentUser as any)?.role !== "Client" && (
+            <div className="px-2 py-1">
+              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-3 pt-2 pb-1">
+                Team chats
+              </p>
+              {(showAllTeamThreads ? teamThreads : teamThreads.slice(0, 5)).map((t: any) => {
+                const others = (t.members || []).filter((m: any) => m.id !== currentUser?.id);
+                const isDm = others.length === 1;
+                const title = t.title || (isDm ? others[0]?.name : null) || "Conversation";
+                const initials = (isDm ? (others[0]?.name || "") : title)
+                  .split(/\s+/).map((w: string) => w[0]).join("").slice(0, 2).toUpperCase() || "T";
+                const me = (t.members || []).find((m: any) => m.id === currentUser?.id);
+                const unread = me ? !me.seen : false;
+                return (
+                  <button
+                    key={t.id}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-muted/60 transition-colors text-left"
+                    onClick={() => {
+                      setSidebarOpen(false);
+                      window.dispatchEvent(new CustomEvent("bgp:open-team-thread", { detail: { threadId: t.id } }));
+                    }}
+                    data-testid={`button-team-thread-${t.id}`}
+                  >
+                    <div className="relative shrink-0">
+                      <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center text-[12px] font-bold text-muted-foreground">
+                        {initials}
+                      </div>
+                      {t.hasAiMember && (
+                        <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-foreground text-background flex items-center justify-center border-2 border-background">
+                          <Sparkles className="w-2 h-2" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-[13.5px] truncate ${unread ? "font-bold" : "font-medium"}`}>{title}</span>
+                        {t.lastMessage?.createdAt && (
+                          <span className="text-[10.5px] text-muted-foreground shrink-0">
+                            {new Date(t.lastMessage.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) === new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+                              ? new Date(t.lastMessage.createdAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })
+                              : new Date(t.lastMessage.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-[12px] truncate ${unread ? "text-foreground" : "text-muted-foreground"}`}>
+                          {t.lastMessage ? `${t.lastMessage.senderName}: ${t.lastMessage.content}` : "No messages yet"}
+                        </span>
+                        {unread && <span className="w-2 h-2 rounded-full bg-foreground shrink-0" />}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+              {teamThreads.length > 5 && (
+                <button
+                  className="w-full text-left px-3 py-1.5 text-[11.5px] font-medium text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={() => setShowAllTeamThreads(v => !v)}
+                  data-testid="button-toggle-all-team-threads"
+                >
+                  {showAllTeamThreads ? "Show fewer" : `Show all ${teamThreads.length}`}
+                </button>
+              )}
+              <div className="h-px bg-border mx-3 my-2" />
+            </div>
+          )}
           <div className="px-2 py-1">
             {threadsLoading ? (
               <div className="space-y-2 px-3 py-2">

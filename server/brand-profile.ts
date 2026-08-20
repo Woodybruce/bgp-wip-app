@@ -1390,6 +1390,75 @@ router.get("/api/brand-cull/export", async (req: Request, res: Response) => {
   }
 });
 
+// Apply the brand cull (Woody, 2026-08-20: "cull them all apart from riding
+// house cafe"). Internal-token gated, tooling-only. Re-checks zero-substance
+// SERVER-SIDE at delete time, spares excludeNames and any brand a client
+// self-added (crm_extra_brand_ids), archives full row snapshots to
+// brand_cull_archive before deleting, and removes orphaned news feeds.
+router.post("/api/brand-cull/apply", async (req: Request, res: Response) => {
+  const client = await pool.connect();
+  try {
+    const { internalStaffToken } = await import("./chatbgp-internal");
+    if (req.headers["x-bgp-internal"] !== internalStaffToken()) return res.status(403).json({ error: "forbidden" });
+    const excludeNorms: string[] = (Array.isArray(req.body?.excludeNames) ? req.body.excludeNames : [])
+      .map((s: any) => String(s).toLowerCase().replace(/[^a-z0-9]/g, ""))
+      .filter(Boolean);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS brand_cull_archive (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        company_id VARCHAR NOT NULL,
+        company_name TEXT,
+        snapshot JSONB NOT NULL,
+        deleted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )`);
+
+    await client.query("BEGIN");
+    const sel = await client.query(
+      `SELECT c.id, c.name FROM crm_companies c
+        WHERE c.company_type ILIKE 'tenant%'
+          AND c.merged_into_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM crm_deals d WHERE d.tenant_id = c.id OR d.purchaser_id = c.id)
+          AND NOT EXISTS (SELECT 1 FROM crm_requirements_leasing r WHERE r.company_id = c.id)
+          AND NOT EXISTS (SELECT 1 FROM crm_contacts ct WHERE ct.company_id = c.id)
+          AND NOT EXISTS (SELECT 1 FROM brand_agent_representations br WHERE br.brand_company_id = c.id)
+          AND NOT EXISTS (SELECT 1 FROM brand_signals bs WHERE bs.brand_company_id = c.id)
+          AND NOT EXISTS (SELECT 1 FROM crm_companies cl WHERE cl.crm_extra_brand_ids @> ARRAY[c.id::text])
+          AND NOT (regexp_replace(lower(c.name), '[^a-z0-9]', '', 'g') = ANY($1::text[]))`,
+      [excludeNorms]
+    );
+    const ids = sel.rows.map((r: any) => r.id);
+    if (!ids.length) {
+      await client.query("ROLLBACK");
+      return res.json({ deleted: 0, spared: excludeNorms.length, names: [] });
+    }
+    await client.query(
+      `INSERT INTO brand_cull_archive (company_id, company_name, snapshot)
+       SELECT id, name, to_jsonb(c.*) FROM crm_companies c WHERE c.id = ANY($1)`,
+      [ids]
+    );
+    await client.query(
+      `DELETE FROM news_articles a USING news_sources ns
+        WHERE a.source_id = ns.id AND ns.category = ANY(SELECT 'brand:' || unnest($1::varchar[]))`,
+      [ids]
+    );
+    await client.query(
+      `DELETE FROM news_sources ns WHERE ns.category = ANY(SELECT 'brand:' || unnest($1::varchar[]))`,
+      [ids]
+    );
+    const del = await client.query(`DELETE FROM crm_companies WHERE id = ANY($1)`, [ids]);
+    await client.query("COMMIT");
+    console.log(`[brand-cull apply] deleted ${del.rowCount} brand row(s), archived to brand_cull_archive`);
+    res.json({ deleted: del.rowCount, names: sel.rows.map((r: any) => r.name) });
+  } catch (e: any) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("[brand-cull apply] failed:", e?.message);
+    res.status(500).json({ error: e?.message || "failed" });
+  } finally {
+    client.release();
+  }
+});
+
 router.get("/api/brand/tracked", requireAuth, async (_req: Request, res: Response) => {
   try {
     const { rows } = await pool.query(

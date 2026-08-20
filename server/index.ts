@@ -4776,21 +4776,24 @@ app.use("/api/branding/assets", express.static(
         }, 60 * 60 * 1000);
       }
 
-      // Invoice-verdict alarm (Woody, 2026-08-19): 08:00 push + 09:00 email
-      // per agent with deals awaiting a verdict; 09:00 escalation digest to
-      // Woody + managers for anything ignored 3+ days past its target date.
+      // Invoice-verdict alarm (Woody, 2026-08-19): 08:00 push; DEAL EMERGENCY
+      // email blast — one red email PER DEAL, six times a day (8/10/12/14/16/18)
+      // until the verdict lands; 09:00 clean summary of everything outstanding
+      // to the equity partners.
       if (process.env.NODE_ENV === "production") {
         setInterval(() => {
-          const now = new Date();
-          if (now.getHours() === 8) {
+          const h = new Date().getHours();
+          if (h === 8) {
             import("./deal-verdicts").then(m => m.runMorningVerdictPushes()).catch(err =>
               console.error("[deal-verdicts] morning pushes failed:", err?.message));
           }
-          if (now.getHours() === 9) {
-            import("./deal-verdicts").then(async m => {
-              await m.runMorningVerdictEmails();
-              await m.runVerdictEscalation();
-            }).catch(err => console.error("[deal-verdicts] morning emails failed:", err?.message));
+          if ([8, 10, 12, 14, 16, 18].includes(h)) {
+            import("./deal-verdicts").then(m => m.runVerdictEmailBlast()).catch(err =>
+              console.error("[deal-verdicts] email blast failed:", err?.message));
+          }
+          if (h === 9) {
+            import("./deal-verdicts").then(m => m.runEquityVerdictSummary()).catch(err =>
+              console.error("[deal-verdicts] equity summary failed:", err?.message));
           }
         }, 60 * 60 * 1000);
       }
