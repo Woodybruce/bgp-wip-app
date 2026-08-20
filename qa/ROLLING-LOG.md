@@ -73,9 +73,46 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r351 · 2026-08-20 · FULL (rotation #2 Landsec client desktop) — IN PROGRESS
-- Heartbeat: JOGQK merge already up to date. run-smoke.sh GREEN (42 checks,
-  0 failures, FRESH_BUILD=1). Two-bot + client-desktop journey to follow.
+### r351 · 2026-08-20 · FULL (rotation #2 Landsec client desktop)
+- Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
+  JOGQK merge: already up to date. Regression: run-smoke.sh GREEN (42 checks,
+  0 failures, FRESH_BUILD=1). Two-bot round 351: exit 0, 4 issues = 3 listed
+  noise (rocketreach-400, live-intel 503, commentary-regen 503) + 1 NEW
+  flow-failure: staff-tasks-mobile-tabs "Execution context was destroyed" —
+  triaged as a HARNESS race, not an app bug: the mob.evaluate localStorage
+  seed right after goto('/') races the app's auth-hydration redirect (same
+  family as the known root-goto ERR_ABORTED flake). Fixed in
+  qa/two-bot-round.mjs: new mobSeedAuth() helper (retries the evaluate on
+  destroyed-context, waits for domcontentloaded) replacing the inline
+  pattern at all 10 mobile call sites; also drops the old double-
+  JSON.stringify of the user blob. Verified: full two-bot round 352 exit 0,
+  all scenarios ok incl. every staff+client mobile scenario, 3 issues all
+  listed noise. Dev-server sweep: 0 raw 500/502/504 (two 500s on
+  GET /api/auth/microsoft were this round's own errant SSO-button clicks,
+  keyless noise; lone " 500 " text = "500 articles" news echo).
+- Journey: Mark Warne @ desktop 1440px — "what is BGP doing for me this
+  week": guest-form login → portfolio dashboard → My Tasks (quick-add via
+  inline input works, task appears; AI briefing degrades to Generate button
+  = keyless noise) → Requirements (renders, "No active requirements found"
+  empty row present below the fold — fixture has none in client scope) →
+  Comps (client sees 1 in-scope probe comp; eye-icon View Details dialog
+  opens with full property/transaction/RICS sections; name link for
+  unmatched comps opens Google Maps in new tab = intended propertyLinkFor
+  fallback; no staff dropdown for clients, correct) → Calendar (work-week
+  grid, today's schedule rail, Add event dialog renders; intelligence strip
+  scrolls) . 5 surfaces + 3 dialogs, 0 pageerrors, 0 non-noise sightings.
+- Bug fixed 1: calendar intelligence strip said "1 viewings this week" /
+  "1 viewings booked" / "N viewings in 30 days" at N=1 — pluralized all
+  three detail strings in server/microsoft.ts (the neighbouring
+  "propert(y|ies)" string already pluralized, so this was an omission).
+  tsc clean; verified visually as Mark: "1 viewing this week (→ 0% vs last
+  week)", "1 viewing booked", "3 viewings in 30 days".
+- Bugs deferred: none. Suggestions added: UX #79 (desktop client
+  Requirements empty state says generic "No active requirements found";
+  the client-aware UX #38 copy only got wired into the mobile card view).
+- New flakes: none (the mobile-tabs race is fixed, not listed).
+- Next journey: rotation #3 client mobile 390px (r351 was FULL → r352
+  LIGHT first if alternation holds).
 
 ### r350 · 2026-08-20 · LIGHT (r349 was FULL)
 - Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
