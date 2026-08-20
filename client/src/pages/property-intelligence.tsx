@@ -5,7 +5,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Loader2, Map, ShieldCheck, Landmark, Receipt, Sparkles, ImageIcon, Globe } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
-import { PropertyProvider } from "@/lib/property-context";
+import { PropertyProvider, usePropertySetter } from "@/lib/property-context";
 
 const EdozoMap = lazy(() => import("@/pages/edozo-map"));
 const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
@@ -52,6 +52,40 @@ const TabLoader = () => (
     <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
   </div>
 );
+
+// Client quick-pick (UX #69): every tool on the hub started empty for a
+// client — Map on default London, Land Registry "No searches yet", Business
+// Rates blank — so they re-typed their own property's address into each
+// tab. One tap here resolves the property page-wide: the context setter
+// prefills Land Registry + Business Rates, and onPick seeds the Map.
+// /api/crm/properties is client-scoped server-side, so this lists only
+// their own portfolio.
+function MyPropertiesBar({ onPick }: { onPick: (p: { id: string; name: string; postcode: string | null }) => void }) {
+  const setCtxProperty = usePropertySetter();
+  const { data: mineRaw } = useQuery<any[]>({ queryKey: ["/api/crm/properties"] });
+  const mine = Array.isArray(mineRaw) ? mineRaw : [];
+  if (mine.length === 0) return null;
+  return (
+    <div className="px-4 lg:px-6 pb-2 flex items-center gap-1.5 flex-wrap" data-testid="pi-my-properties">
+      <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-medium mr-1">My properties</span>
+      {mine.slice(0, 8).map((p: any) => (
+        <button
+          key={p.id}
+          type="button"
+          onClick={() => {
+            const rp = { id: p.id, name: p.name, postcode: p.postcode || null };
+            setCtxProperty(rp);
+            onPick(rp);
+          }}
+          className="inline-flex items-center rounded-full border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-indigo-400 transition-colors"
+          data-testid={`pi-my-property-${p.id}`}
+        >
+          {p.name}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export default function PropertyIntelligence() {
   const [, navigate] = useLocation();
@@ -151,6 +185,14 @@ export default function PropertyIntelligence() {
               })}
             </TabsList>
           </div>
+          {piIsClient && (
+            <MyPropertiesBar
+              onPick={(p) => {
+                setResolvedProperty(p);
+                setPendingSearch({ address: p.name, postcode: p.postcode });
+              }}
+            />
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto">

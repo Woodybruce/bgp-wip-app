@@ -275,6 +275,92 @@ export async function syncDiaryViewings(events: DiaryEvent[], mailboxEmail: stri
   return upserted;
 }
 
+// ─── Diary → interest (UX #71, Woody: "automated too from diaries") ──────
+// A diary call/meeting that names a tracker unit and involves a known
+// external tenant contact is an interest signal even when it isn't a
+// viewing — "Call with Honi Poke re L015" should land on the Interest
+// strip without anyone typing it in. Same anchors as the email leg
+// (contact + unit), viewings are excluded (they already sync as viewings),
+// and the 90-day already-engaged check stops duplicates.
+export async function syncDiaryInterest(events: DiaryEvent[], mailboxEmail: string): Promise<number> {
+  const candidates = events.filter(e =>
+    !e.isCancelled && e.start?.dateTime &&
+    !looksLikeViewing(e.subject, e.categories) &&
+    /\b(call|catch[- ]?up|meeting|intro|enquir|interest|discuss|chat|follow[- ]?up)\b/i.test(
+      `${e.subject || ""} ${e.bodyPreview || ""}`
+    )
+  );
+  if (candidates.length === 0) return 0;
+
+  const units = await loadTrackerUnits();
+  if (units.length === 0) return 0;
+  let created = 0;
+
+  for (const event of candidates) {
+    try {
+      const hay = norm(`${event.subject || ""} ${event.location?.displayName || ""} ${event.bodyPreview || ""}`);
+      const external = [
+        event.organizer?.emailAddress,
+        ...(event.attendees || []).map(a => a?.emailAddress),
+      ].filter((a): a is { name?: string; address?: string } =>
+        !!a?.address && !a.address.toLowerCase().endsWith(BGP_DOMAIN)
+      );
+      if (external.length === 0) continue;
+      const emails = [...new Set(external.map(a => a.address!.toLowerCase()))];
+      const contactRes = await pool.query(
+        `SELECT ct.id, ct.name, ct.company_id, co.name AS company_name
+           FROM crm_contacts ct
+           LEFT JOIN crm_companies co ON co.id = ct.company_id
+          WHERE LOWER(ct.email) = ANY($1) LIMIT 1`,
+        [emails]
+      );
+      if (!contactRes.rows.length) continue;
+      const contact = contactRes.rows[0];
+
+      const unit = await resolveUnit(hay, units, contact.company_id);
+      if (!unit) continue;
+
+      if (contact.company_id) {
+        const existing = await pool.query(
+          `SELECT 1 FROM (
+             SELECT unit_id, company_id, created_at FROM unit_interest
+             UNION ALL SELECT unit_id, company_id, created_at FROM unit_viewings
+             UNION ALL SELECT unit_id, company_id, created_at FROM unit_offers
+           ) a WHERE a.unit_id = $1 AND a.company_id = $2
+             AND a.created_at >= NOW() - INTERVAL '90 days' LIMIT 1`,
+          [unit.id, contact.company_id]
+        );
+        if (existing.rows.length) continue;
+      }
+
+      const { date } = londonDateTime(event.start!);
+      const calKey = `cal_${event.iCalUId || event.id}`;
+
+      const res = await pool.query(
+        `INSERT INTO unit_interest
+           (unit_id, company_name, contact_name, contact_id, company_id,
+            interest_date, notes, source, email_conversation_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'diary', $8)
+         ON CONFLICT (email_conversation_id) WHERE email_conversation_id IS NOT NULL
+         DO NOTHING
+         RETURNING id`,
+        [
+          unit.id, contact.company_name || null, contact.name || null,
+          contact.id, contact.company_id || null, date,
+          `Synced from ${mailboxEmail}'s Outlook diary: "${event.subject || ""}"`,
+          calKey,
+        ]
+      );
+      if (res.rows.length) created++;
+    } catch (e: any) {
+      console.error("[interest-sync] diary upsert failed:", e?.message);
+    }
+  }
+
+  if (created > 0) console.log(`[interest-sync] ${mailboxEmail}: ${created} interest row(s) from diary`);
+  return created;
+}
+
 // ─── Email → offers check ────────────────────────────────────────────────
 // Offers arrive by email, not diary. The hourly inbox sweep runs each
 // message through this: offer language + a tracker-unit anchor + a known

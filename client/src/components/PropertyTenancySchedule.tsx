@@ -1255,7 +1255,10 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                 // First column (Unit) pins left so you always know which
                 // row you're on while scrolling the wide sheet — mirrors
                 // the sticky delete column on the right.
-                const stickyCls = ci === 0 ? " sticky left-0 bg-gray-100 dark:bg-gray-800 border-r z-10" : "";
+                // On phones the sticky rails ate most of a 390px viewport
+                // (~225px Unit + ~90px actions left a ~74px scroll strip),
+                // so the Unit pin is capped/truncated below md.
+                const stickyCls = ci === 0 ? " sticky left-0 bg-gray-100 dark:bg-gray-800 border-r z-10 max-md:max-w-[120px] max-md:overflow-hidden max-md:text-ellipsis" : "";
                 return (
                   <th key={c.field} className={`p-2 font-medium whitespace-nowrap text-${c.align || "left"}${stickyCls}`} style={{ minWidth: c.width }}>
                     <span className="inline-flex items-center">
@@ -1289,7 +1292,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
               <th className="text-center p-2 font-medium" style={{ minWidth: 80 }}>Links</th>
               {/* Sticky right so the delete button is always visible
                   without horizontal scrolling to the end of the table. */}
-              <th className="text-center p-2 font-medium w-10 sticky right-0 bg-gray-100 dark:bg-gray-800 border-l z-10">
+              <th className="text-center p-2 font-medium w-10 sticky max-md:static right-0 bg-gray-100 dark:bg-gray-800 border-l z-10">
                 {!readOnly && (
                   <input
                     type="checkbox"
@@ -1506,7 +1509,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
       {columns.map((c, ci) => {
         // First column (Unit) stays pinned left while the sheet scrolls —
         // solid background so the moving columns slide underneath it.
-        const stickyCls = ci === 0 ? " sticky left-0 bg-background border-r z-[5]" : "";
+        const stickyCls = ci === 0 ? " sticky left-0 bg-background border-r z-[5] max-md:max-w-[120px] max-md:overflow-hidden max-md:text-ellipsis" : "";
         const raw = (unit as any)[c.field];
         // Date fields arrive as ISO strings from the API (or as timestamptz
         // strings with the T00:00 suffix). Format for display, hand the
@@ -1777,7 +1780,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
           </button>
         </div>
       </td>
-      <td className="p-1 text-center sticky right-0 bg-background border-l shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.1)] z-[5]">
+      <td className="p-1 text-center sticky max-md:static right-0 bg-background border-l shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.1)] z-[5]">
         {readOnly ? <span className="text-muted-foreground">—</span> : (
         <span className="inline-flex items-center gap-1">
         {onToggleSelect && (

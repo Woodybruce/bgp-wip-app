@@ -333,8 +333,11 @@ async function syncCalendarForUser(
     // sweep (its own iCalUId dedupe, independent of the interaction dedupe
     // below, so date changes to an existing booking still update).
     try {
-      const { syncDiaryViewings } = await import("./viewing-sync");
+      const { syncDiaryViewings, syncDiaryInterest } = await import("./viewing-sync");
       await syncDiaryViewings(events, userEmail);
+      // Non-viewing calls/meetings that anchor to a tracker unit register
+      // as Interest (UX #71 — automated from diaries as well as inboxes).
+      await syncDiaryInterest(events, userEmail);
     } catch (e: any) {
       console.error(`[viewing-sync] ${userEmail}:`, e?.message);
     }

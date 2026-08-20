@@ -881,7 +881,7 @@ export function PropertyDetail({ id }: { id: string }) {
                 sync — so the lens toggle is purely a column-visibility
                 preset, not a data switch. */}
             <ErrorBoundary compact name="Schedule">
-              <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Schedule" testId="toggle-schedule">
+              <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Tenancy Schedule" testId="toggle-schedule">
                 <div className="max-h-[640px] overflow-y-auto pr-1">
                   <PropertyUnifiedSchedule propertyId={property.id} />
                 </div>

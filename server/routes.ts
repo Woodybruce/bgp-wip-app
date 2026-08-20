@@ -3971,6 +3971,33 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Manual interest (UX #71) — a phone call or in-person expression of
+  // interest couldn't be recorded before; rows only arrived via the inbox
+  // sweep. source stays null so manual rows are distinguishable.
+  app.post("/api/available-units/:id/interest", requireAuth, async (req, res) => {
+    try {
+      const { unitInterest, insertUnitInterestSchema } = await import("@shared/schema");
+      const parsed = insertUnitInterestSchema.parse({
+        unitId: req.params.id,
+        companyName: req.body.companyName || null,
+        contactName: req.body.contactName || null,
+        contactId: req.body.contactId || null,
+        companyId: req.body.companyId || null,
+        interestDate: req.body.interestDate || new Date().toISOString().slice(0, 10),
+        notes: req.body.notes || null,
+        source: null,
+        emailConversationId: null,
+      });
+      if (!parsed.companyName && !parsed.contactName) {
+        return res.status(400).json({ message: "Company or contact is required" });
+      }
+      const [row] = await db.insert(unitInterest).values(parsed).returning();
+      res.status(201).json(row);
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message || "Failed" });
+    }
+  });
+
   app.delete("/api/available-units/interest/:interestId", requireAuth, async (req, res) => {
     try {
       const { unitInterest } = await import("@shared/schema");

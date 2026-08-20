@@ -42,44 +42,6 @@ below stay parked, not built. Rounds shouldn't re-log them.)
     top offset when the banner is mounted (like iOS in-call bars) so the
     header stays usable; keep the banner un-dismissable.
 
-72. 2026-08-19 · Landsec client / Letting Tracker desktop (QA r343) ·
-    "narrow the tracker to my Bluewater units" · The filter row shows
-    "All Teams" and "All Agents" dropdowns to a client login — BGP-internal
-    concepts (client work is one team; agents mean nothing to Mark), so two
-    of five filters are dead weight on his screen. · Suggested: hide the
-    Teams + Agents filters for client logins (keep property / location /
-    status), like the staff-only panels elsewhere.
-
-73. 2026-08-19 · Landsec client / property page desktop (QA r343) · "open
-    Bluewater's tenancy schedule" · On the property page the tenancy rent
-    roll lives behind a collapsed card titled just "Schedule", while the
-    pop-out it opens is titled "Tenancy Schedule" and the client nav says
-    "Tenancy" — a user scanning the page for "tenancy" finds nothing and
-    the word only appears after they guess the right card. · Suggested:
-    retitle the card "Tenancy Schedule" (or "Schedule — tenancy rent
-    roll") so page and pop-out use the same name.
-
-71. 2026-08-19 · BGP staff / Letting Tracker desktop (QA r341) · "a brand
-    rang me about unit L015 — log the interest" · The new Interest signal
-    is read-only for staff: rows only appear via the M365 inbox sweep
-    (viewing-sync syncInterestEmails), and the dialog only lists + deletes
-    — there is no "log interest" button and no POST endpoint, even though
-    the schema comment anticipates manual rows (source null). A phone-call
-    or in-person expression of interest can't be recorded; on this
-    keyless/local setup the whole feature is permanently empty. ·
-    Suggested: small add-interest form in the unit's Interest dialog
-    (company picker + date + note), mirroring the add-viewing pattern.
-
-69. 2026-08-19 · Landsec client / Property Intelligence desktop (QA r335) ·
-    "pull title and rates info for my Bluewater asset" · Every tool on the
-    hub starts empty for a client — Map opens on a default London view,
-    Land Registry shows "No searches yet", Business Rates "0 properties" —
-    so the client must re-type their own property's address into each tab
-    even though the app knows their portfolio. · Suggested: seed the
-    resolver/search with the client's scoped properties (e.g. a "My
-    properties" quick-pick like the tracker has), so one click lands
-    Bluewater in Map/Land Registry/Business Rates.
-
 70. 2026-08-19 · BGP staff / Letting Tracker mobile 390px (QA r339) ·
     "find unit L112 to log a viewing" · Every mobile unit card's headline
     is the PROPERTY name (`prop?.name || u.unitName`, available-units.tsx
@@ -89,43 +51,6 @@ below stay parked, not built. Rounds shouldn't re-log them.)
     reading subtitles. Same class as the r229 search-labelling fix. ·
     Suggested: lead with the unit name, property as the subtitle (or
     property once as a group header when filtered to one centre).
-
-68. 2026-08-19 · both personas / Letting Tracker desktop (QA r333) ·
-    "work my Bluewater units" · Typing in the tracker search recounts the
-    status chips (156→151) and the table, but the page header keeps the
-    unfiltered total ("156 units" staff / "153 units" client) — the same
-    numbers-disagree class Woody had fixed on the deals board "All" chip
-    (UX #63, r329). · Suggested: recount the header with the active
-    search/filters, or label it "151 of 156 units".
-
-67. 2026-08-18 · both personas / mobile 390px (QA r331) · "log this
-    morning's viewing from my phone" · When a viewing is saved with no
-    Company (common quick-log path — the dialog's required field is only
-    the date), the viewing card's HEADLINE is the attendees string (per
-    UX #58) and the "Attendees:" line directly beneath repeats the exact
-    same text — every company-less viewing reads twice. · Suggested: hide
-    the "Attendees:" sub-line when it already headlines the card (or
-    headline "Viewing — 18 Aug" and keep the attendees line).
-
-66. 2026-08-18 · Landsec client / mobile 390px (QA r329) · "which Bluewater
-    leases expire soonest — from my phone" · Tap-to-sort (UX #62) WORKS, but
-    on a 390px phone the tenancy Full Board's sticky Unit column (~225px)
-    plus the sticky select/delete column (~90px) leave only a ~74px strip of
-    the scrolling sheet actually visible/tappable — column headers spend
-    most of a swipe hidden underneath the sticky edges, so the sort/filter
-    targets are fiddly to hit and only ~one column shows at a time. ·
-    Suggested: on phones, narrow the sticky Unit column (truncate label,
-    ~120px cap) and/or drop the sticky right column behind a row-tap menu so
-    the sheet gets most of the viewport back.
-
-65. 2026-08-18 · Landsec client / desktop 1440px (QA r327) · "my Bluewater
-    letting is stuck at Solicitors — chase whoever's handling it" · Deal
-    detail shows "BGP contact: Test Staff" as inert text — no email, phone,
-    or message link, so the client has to leave the deal and hunt the
-    property page's Linked Contacts (which DO show roles + a contact card)
-    or Messages. · Make the deal-header BGP contact clickable — open the
-    contact card or a mailto/Messages thread, same affordance the property
-    page contacts already have.
 
 46. 2026-08-14 · Landsec client / desktop 1440px (logged by QA r294 on the
     staging branch) · "check my property before a lease-expiry chat with
@@ -151,6 +76,32 @@ below stay parked, not built. Rounds shouldn't re-log them.)
     so the fix should cover /companies/:id for both personas.)
 
 ## Confirmed / done
+
+Confirmed by Woody 2026-08-20 ("71 should be automated too fro diaries?
+72 65 68 73 67 66 69"); built same day by the parent session. Not yet
+browser-verified unless a round has since covered them:
+71. Interest is now writable: POST /api/available-units/:id/interest + a
+   "Log interest" form in the unit's Interest dialog (company picker,
+   date, note — mirrors add-viewing), AND a diary leg (syncDiaryInterest
+   in viewing-sync.ts): non-viewing calls/meetings that name a tracker
+   unit and involve a known external contact land as interest rows
+   (source 'diary', cal_<iCalUId> dedupe, 90-day already-engaged check).
+72. Teams + Agents tracker filters are hidden for client logins.
+65. Deal-header BGP contact is always contactable for clients: agents on
+   the account-team board keep their mailto; when none resolve to an
+   email the account lead is appended so there's never an inert name.
+68. Tracker header recounts under active search/filters ("n of m units").
+73. Property page card retitled "Tenancy Schedule" to match the pop-out
+   and the client nav.
+67. Viewing cards no longer repeat the attendees line when it already
+   headlines the card.
+66. 390px tenancy Full Board: sticky Unit column capped at 120px
+   (truncated) and the sticky actions column un-pins below md, freeing
+   most of the viewport for the scrolling sheet.
+69. Client PI hub gets a "My properties" quick-pick bar (client-scoped
+   /api/crm/properties): one tap resolves the property page-wide —
+   seeds the Map and prefills Land Registry + Business Rates via
+   PropertyContext.
 
 Confirmed by Woody 2026-08-18 ("do 64 63 62 61 60 59 58 57 56 55 54 53 52 51
 50 … ignore 46 and 32"); built same day. None browser-verified yet unless

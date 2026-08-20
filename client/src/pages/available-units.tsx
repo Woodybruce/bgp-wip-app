@@ -555,6 +555,22 @@ export default function AvailableUnitsPage() {
     },
   });
 
+  // Manual interest log (UX #71) — a phone call couldn't be recorded before;
+  // rows only arrived via the inbox sweep.
+  const emptyInterestForm = () => ({ companyName: "", companyId: "", contactName: "", contactId: "", interestDate: new Date().toISOString().slice(0, 10), notes: "" });
+  const [interestForm, setInterestForm] = useState(emptyInterestForm());
+  const addInterestMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", `/api/available-units/${interestUnit?.id}/interest`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units", interestUnit?.id, "interest"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-interest-counts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units/all-interest"] });
+      setInterestForm(emptyInterestForm());
+      toast({ title: "Interest logged" });
+    },
+    onError: (e: any) => toast({ title: "Couldn't log interest", description: e?.message, variant: "destructive" }),
+  });
+
   const addViewingMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", `/api/available-units/${viewingsUnit?.id}/viewings`, data),
     onSuccess: () => {
@@ -1324,7 +1340,12 @@ export default function AvailableUnitsPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Letting Tracker</h1>
           <p className="text-sm text-muted-foreground">
-            {teamUnits.length} unit{teamUnits.length !== 1 ? "s" : ""}
+            {/* Recount under active search/filters — the header disagreeing
+                with the chips/table was the same class as the deals-board
+                "All" chip fix (UX #63). */}
+            {filtered.length !== teamUnits.length
+              ? `${filtered.length} of ${teamUnits.length} units`
+              : `${teamUnits.length} unit${teamUnits.length !== 1 ? "s" : ""}`}
             {isClientTracker && (
               <span> — live deals in progress: units being marketed, under offer and completing. Updates flow to the Leasing Schedule and back to the Tenancy Schedule.</span>
             )}
@@ -1498,6 +1519,10 @@ export default function AvailableUnitsPage() {
             already act as filter buttons (same setStatusFilter call)
             and carry counts too, so this row was duplicated UI. The
             cards now own status filtering on this page. */}
+        {/* Teams + Agents are BGP-internal concepts — dead weight on a
+            client's filter row (their work is one team; agents mean
+            nothing to them). Property/location/status filters stay. */}
+        {!isClientTracker && (<>
         <Select value={bgpTeamFilter} onValueChange={setBgpTeamFilter}>
           <SelectTrigger className="w-[170px]" data-testid="select-team-filter">
             <SelectValue placeholder="All Teams" />
@@ -1520,6 +1545,7 @@ export default function AvailableUnitsPage() {
             ))}
           </SelectContent>
         </Select>
+        </>)}
         <Select value={targetStatusFilter} onValueChange={setTargetStatusFilter}>
           <SelectTrigger className="w-[170px]" data-testid="select-target-status-filter">
             <SelectValue placeholder="Deal status" />
@@ -2955,6 +2981,32 @@ export default function AvailableUnitsPage() {
               </div>
             ))}
           </div>
+          {/* Manual log (UX #71) — mirrors the add-viewing pattern so a
+              phone-call expression of interest can be recorded. */}
+          <div className="border-t pt-3 space-y-2">
+            <p className="text-xs font-medium">Log interest</p>
+            <div className="grid grid-cols-2 gap-2">
+              <CrmPicker
+                items={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                value={interestForm.companyId}
+                valueName={interestForm.companyName}
+                onSelect={(id, name) => setInterestForm(f => ({ ...f, companyId: id, companyName: name }))}
+                placeholder="Company / brand"
+                testId="interest-company"
+              />
+              <Input type="date" value={interestForm.interestDate} onChange={e => setInterestForm(f => ({ ...f, interestDate: e.target.value }))} data-testid="interest-date" />
+            </div>
+            <Input value={interestForm.notes} onChange={e => setInterestForm(f => ({ ...f, notes: e.target.value }))} placeholder="Note (e.g. rang about this unit — wants floorplans)" data-testid="interest-notes" />
+            <Button
+              size="sm"
+              disabled={!interestForm.companyName || addInterestMutation.isPending}
+              onClick={() => addInterestMutation.mutate(interestForm)}
+              data-testid="interest-add"
+            >
+              {addInterestMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1.5" />}
+              Log interest
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -3000,7 +3052,10 @@ export default function AvailableUnitsPage() {
                     </div>
                   </div>
                   {v.contactName && <div className="text-xs text-muted-foreground">Contact: {v.contactId ? <a href={`/contacts?contact=${v.contactId}`} className="text-blue-600 hover:underline dark:text-blue-400">{v.contactName}</a> : v.contactName}</div>}
-                  {v.attendees && <div className="text-xs text-muted-foreground">Attendees: {v.attendees}</div>}
+                  {/* When the attendees string already headlines the card
+                      (no company/contact), repeating it here read every
+                      quick-logged viewing twice. */}
+                  {v.attendees && (v.companyName || v.contactName) && <div className="text-xs text-muted-foreground">Attendees: {v.attendees}</div>}
                   {v.outcome && <div className="text-xs"><Badge variant="outline">{v.outcome}</Badge></div>}
                   {v.notes && <div className="text-xs text-muted-foreground">{v.notes}</div>}
                 </div>

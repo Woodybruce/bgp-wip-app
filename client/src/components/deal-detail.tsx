@@ -246,7 +246,19 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     const memberByName = (n: string) =>
       ddBgpTeam.find(m => (m.full_name || m.username || "").toLowerCase() === n.toLowerCase());
     if (agentNames.length > 0) {
-      return agentNames.map((n: string) => ({ name: n, email: memberByName(n)?.email || null }));
+      const mapped = agentNames.map((n: string) => ({ name: n, email: memberByName(n)?.email || null }));
+      // UX #65: an agent who isn't on the account-team board renders with
+      // no email, leaving the client an inert name and nobody to chase.
+      // Guarantee at least one clickable contact by appending the account
+      // lead when none of the named agents resolved to an email.
+      if (!mapped.some((m: { email: string | null }) => m.email)) {
+        const lead = ddBgpTeam.find(m => m.is_lead && m.email) || ddBgpTeam.find(m => m.email);
+        const leadName = lead ? (lead.full_name || lead.username || "") : "";
+        if (lead && !mapped.some((m: { name: string }) => m.name.toLowerCase() === leadName.toLowerCase())) {
+          mapped.push({ name: leadName, email: lead.email });
+        }
+      }
+      return mapped;
     }
     // No agent on the deal — fall back to the account team's flagged lead,
     // or failing that the first team member, so the client is never left
