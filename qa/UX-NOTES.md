@@ -16,6 +16,13 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+77. 2026-08-20 · BGP staff / mobile 390px (QA r347) · "check who's in Unit
+    BX10 on the Bluewater tenancy board from my phone" · The full tenancy
+    board's sticky Unit column is so narrow at 390px that unit names truncate
+    to ~3 characters ("QA-…", "GLO…") — once you scroll the columns you can't
+    tell which row is which. Suggest widening the sticky column a touch on
+    mobile, or wrapping the unit name to two lines inside it.
+
 75. 2026-08-20 · Landsec client / mobile 390px (QA r345) · "look up Honi
     Poke on my phone before a meeting" · The brand profile's Chat card
     fills the entire first screen after the hero photo — Key Contacts,

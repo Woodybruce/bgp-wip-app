@@ -33,6 +33,7 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM image_studio_images WHERE file_name = 'qa-unit-photo.jpg';
   DELETE FROM team_events WHERE title LIKE 'QA-VIS %' OR title LIKE 'QA-CAL-%' OR title LIKE 'QA Landsec brainstorm' OR title LIKE 'QA Other Client review';
   DELETE FROM unit_viewings WHERE attendees LIKE 'QA-VIEWING-%' OR attendees LIKE 'QA-VDEL-%';
+  DELETE FROM unit_interest WHERE company_name LIKE 'QA-PROBE%';
   DELETE FROM crm_comps    WHERE name LIKE 'QA-COMP%';
   -- reimport-no-dup scenario cleans up after itself; sweep survivors of a
   -- mid-scenario death (tenancy + tracker rows, then the QA property).

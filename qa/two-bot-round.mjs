@@ -478,6 +478,36 @@ async function victoriaRound(page, cross) {
     if (r.stillThere) throw new Error('deleted contact still present in the CRM list');
   });
 
+  // Tracker interest lifecycle (UX #71 / r347 mobile-card fix): a manual
+  // "rang about this unit" interest logs against a unit, shows in the
+  // per-unit list and the all-interest-counts badge map, then deletes clean.
+  await step(page, p, 'staff-unit-interest-lifecycle', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken'), 'Content-Type': 'application/json' };
+      const units = await (await fetch('/api/available-units', { headers: auth })).json();
+      const unit = (Array.isArray(units) ? units : [])[0];
+      if (!unit) return { ok: true, skipped: true };
+      const create = await fetch(`/api/available-units/${unit.id}/interest`, { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ companyName: 'QA-PROBE Interest Co', notes: 'QA probe — rang about this unit' }) });
+      if (!create.ok) return { ok: false, why: `create ${create.status}` };
+      const made = await create.json();
+      const list = await (await fetch(`/api/available-units/${unit.id}/interest`, { headers: auth })).json();
+      const inList = (Array.isArray(list) ? list : []).some((i) => i.id === made.id);
+      const counts = await (await fetch('/api/available-units/all-interest-counts', { headers: auth })).json();
+      const counted = (counts?.[unit.id] || 0) > 0;
+      const del = await fetch(`/api/available-units/interest/${made.id}`, { method: 'DELETE', credentials: 'include', headers: auth });
+      if (!del.ok) return { ok: false, why: `delete ${del.status}` };
+      const after = await (await fetch(`/api/available-units/${unit.id}/interest`, { headers: auth })).json();
+      const residue = (Array.isArray(after) ? after : []).some((i) => i.id === made.id);
+      return { ok: true, inList, counted, residue };
+    });
+    if (!r.ok) throw new Error(`interest lifecycle failed (${r.why})`);
+    if (r.skipped) return;
+    if (!r.inList) throw new Error('logged interest missing from the per-unit interest list');
+    if (!r.counted) throw new Error('logged interest not reflected in all-interest-counts');
+    if (r.residue) throw new Error('deleted interest row still present');
+  });
+
   // Staff task board: create → complete (PATCH) → delete round-trips, and the
   // task is user-scoped (a completed then deleted task leaves no residue).
   // Staff deal-board stage move: drag-between-stages persists (the client

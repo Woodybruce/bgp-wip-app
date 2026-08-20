@@ -992,7 +992,7 @@ function MobileNewGroup({ allUsers, currentUser, onBack, onCreate }: {
       </div>
 
       <div className="p-4 border-t pb-[calc(1rem+env(safe-area-inset-bottom))] shrink-0">
-        <Button className="w-full h-12 text-base font-semibold bg-[#1C1917] text-white hover:bg-gray-800 rounded-xl" disabled={selectedIds.size === 0} onClick={() => onCreate(groupName || "Group Chat", Array.from(selectedIds))} data-testid="button-mobile-create-group">
+        <Button className="w-full h-12 text-base font-semibold bg-[#1C1917] text-white hover:bg-gray-800 rounded-xl" disabled={selectedIds.size === 0} onClick={() => onCreate(groupName || (selectedIds.size === 1 ? "" : "Group Chat"), Array.from(selectedIds))} data-testid="button-mobile-create-group">
           Create Group ({selectedIds.size})
         </Button>
       </div>

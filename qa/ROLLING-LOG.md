@@ -67,14 +67,38 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r347 · 2026-08-20 · ROUND IN PROGRESS (provisional)
-- JOGQK merge INTO staging done first (brings WhatsApp-style mobile
-  Messages, brand pack v2, interest signals — staging now tests prod code).
+### r347 · 2026-08-20 · FULL (rotation #4 staff mobile 390px)
+- JOGQK merged INTO staging first (WhatsApp mobile Messages, brand pack v2,
+  interest signals) — round tested current production code.
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1
-  post-merge). Two-bot round 347 running; 3 issues so far all listed noise
-  (rocketreach-400, brand-gaps/live-intel 503, commentary-regen 503).
-- Planned journey: rotation #4 staff mobile 390px (r346 was LIGHT) —
-  targets unverified UX 65-73 + new mobile Messages.
+  post-merge). Two-bot round 347: exit 0, all scenarios ok, 3 issues all
+  listed noise (rocketreach-400, live-intel 503, commentary-regen 503).
+- Journey: Victoria @ 390px iPhone UA — "between viewings on my phone":
+  login (cold-open lands on ChatBGP — intended per Woody 2026-08-18) →
+  /messages (pinned ChatBGP row + chips + empty state OK) → new chat, send,
+  draft preview, thread list → Bluewater property page →
+  /tenancy-schedule/:id full board (overflow 0, sticky Unit col works) →
+  /available Letting Tracker cards.
+- Bugs fixed (2, both verified visually at 390 + tsc + prod build green):
+  1. Tracker mobile card had NO Interest action (desktop table has it; the
+     card's own comment promised it — UX #71 shipped desktop-only). Added
+     unit-interest-{id} button mirroring desktop; log → row → delete cycle
+     verified in browser.
+  2. New 1-person chat from mobile Messages was titled "Group Chat" in the
+     thread list (create flow always stamped the default title, defeating
+     the DM name fallback). Now a single-member chat passes no title →
+     lists under the person's name (server + desktop already handle null).
+     Verified: new DM lists as "Cara Milligan".
+- Harness: added staff-unit-interest-lifecycle to two-bot (POST/list/counts/
+  DELETE round-trip, probe verified green); run-round.sh purge now sweeps
+  unit_interest QA-PROBE rows.
+- Deferred: none. Suggestions: UX 77 (tenancy sticky Unit col truncates to
+  ~3 chars at 390 — can't identify rows once scrolled). New flakes: none.
+- Fixture note: victoria has no seeded people-threads — Messages list tests
+  must create their own chat (button-mobile-empty-new-group → select user →
+  create). Journey's test threads ("Group Chat" w/ Alex Todd pre-fix, Cara
+  Milligan DM post-fix) persist in the shared bgp dev DB, harmless.
+- Next journey: r347 was FULL → r348 LIGHT (triage + deferred only).
 
 ### r346 · 2026-08-20 · LIGHT (r345 had the journey)
 - Fresh container (pg_hba trust per r205; superuser bgp role + restore +
