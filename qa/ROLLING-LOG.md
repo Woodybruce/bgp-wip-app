@@ -67,6 +67,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r346 · 2026-08-20 · ROUND IN PROGRESS (provisional heartbeat)
+- LIGHT round (r345 had the client-mobile journey). Fresh container (pg_hba
+  trust per r205; superuser bgp role + restore + schema grant per r249).
+  JOGQK merge: already up to date (staging ahead with r344/r345 fixes).
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
+  Two-bot round 346 still running at heartbeat; triage to follow.
+- Staging fixes verified present in tree: unit_interest boot heal
+  (server/index.ts), deal-verdict staff-only mount (App.tsx:840),
+  leasing-privacy staff-only fetch (leasing-schedule.tsx).
+
 ### r345 · 2026-08-20 · FULL (rotation #3 client mobile 390px)
 - Fresh container (pg_hba trust per r205; bgp role + restore + schema grant
   per r249). JOGQK merge: already up to date (staging ahead w/ r344 fixes).
