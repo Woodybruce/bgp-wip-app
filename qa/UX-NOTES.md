@@ -16,6 +16,15 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+79. 2026-08-20 · Landsec client / desktop 1440px (QA r351) · "check what
+    leasing requirements BGP is tracking for us" · The desktop Requirements
+    table's empty state says the generic "No active requirements found" —
+    the client-aware line from UX #38 ("No live requirements for your
+    portfolio yet — BGP logs these on your behalf") was only wired into the
+    mobile card view. A client at a desk gets no hint that this list is
+    BGP-maintained rather than self-serve. Suggest reusing the same
+    isClientView copy in the desktop table's empty row.
+
 78. 2026-08-20 · BGP staff / desktop (QA r349) · "a new brand just rang about
     a unit — log the interest" · The Letting Tracker's Interest dialog only
     lets you pick a company that already exists in CRM (the combobox has no

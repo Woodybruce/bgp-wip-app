@@ -1080,7 +1080,7 @@ export function setupMicrosoftRoutes(app: Express) {
         insights.push({
           type: "hotProperty",
           title: "Hottest Property",
-          detail: `${top[0]} — ${top[1]} viewings in 30 days${sorted.length > 1 ? `, followed by ${sorted[1][0]} (${sorted[1][1]})` : ""}`,
+          detail: `${top[0]} — ${top[1]} viewing${top[1] === 1 ? "" : "s"} in 30 days${sorted.length > 1 ? `, followed by ${sorted[1][0]} (${sorted[1][1]})` : ""}`,
           priority: 10,
         });
       }
@@ -1092,7 +1092,7 @@ export function setupMicrosoftRoutes(app: Express) {
         insights.push({
           type: "viewingTrend",
           title: "Viewing Momentum",
-          detail: `${thisW} viewings this week${lastW > 0 ? ` (${trend > 0 ? "↑" : trend < 0 ? "↓" : "→"} ${Math.abs(trend)}% vs last week)` : ""}`,
+          detail: `${thisW} viewing${thisW === 1 ? "" : "s"} this week${lastW > 0 ? ` (${trend > 0 ? "↑" : trend < 0 ? "↓" : "→"} ${Math.abs(trend)}% vs last week)` : ""}`,
           priority: 9,
         });
       }
@@ -1103,7 +1103,7 @@ export function setupMicrosoftRoutes(app: Express) {
         insights.push({
           type: "activeTenant",
           title: "Most Active Tenant",
-          detail: `${top[0]} — ${top[1]} viewings booked`,
+          detail: `${top[0]} — ${top[1]} viewing${top[1] === 1 ? "" : "s"} booked`,
           priority: 8,
         });
       }

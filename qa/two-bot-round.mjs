@@ -171,6 +171,26 @@ async function visit(page, persona, path, label) {
 // on the target instead of swallowing the abort and asserting elsewhere.
 // r320: the same race also surfaces as Playwright's "is interrupted by
 // another navigation" wording (seen at /properties/:id) — retry that too.
+// Seed the desktop session's token into a fresh mobile context. The app can
+// navigate on mount (auth hydration redirect), destroying the evaluate's
+// execution context mid-flight — retry on that instead of failing the step.
+async function mobSeedAuth(mob, page) {
+  const tok = await page.evaluate(() => localStorage.getItem('authToken'));
+  const u = await page.evaluate(() => localStorage.getItem('user'));
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await mob.evaluate(([t, usr]) => {
+        localStorage.setItem('authToken', t); localStorage.setItem('user', usr);
+      }, [tok, u]);
+      return;
+    } catch (e) {
+      if (attempt >= 2 || !/Execution context was destroyed|Cannot find context/.test(String(e))) throw e;
+      await mob.waitForLoadState('domcontentloaded').catch(() => {});
+      await mob.waitForTimeout(500);
+    }
+  }
+}
+
 async function mobGoto(pg, url, nav) {
   try {
     await pg.goto(url, nav);
@@ -427,9 +447,7 @@ async function victoriaRound(page, cross) {
       await mob.setViewportSize({ width: 390, height: 780 });
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mob.goto(`${BASE}/`, nav);
       await mob.waitForTimeout(3500);
       const { scrollW, clientW } = await mob.evaluate(() => ({
@@ -637,9 +655,7 @@ async function victoriaRound(page, cross) {
     try {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/deals/${deal.id}`, nav);
       await mob.locator('[data-testid="button-edit-deal"]').waitFor({ timeout: 20000 });
       for (const id of ['button-deal-image-studio', 'button-deal-create-document', 'button-edit-deal']) {
@@ -670,9 +686,7 @@ async function victoriaRound(page, cross) {
     try {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/deals/list`, nav);
       const allChip = mob.locator('[data-testid="chip-group-all"]');
       await allChip.waitFor({ timeout: 20000 });
@@ -703,9 +717,7 @@ async function victoriaRound(page, cross) {
     try {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/tasks`, nav);
       await mob.locator('[data-testid="filter-done"]').waitFor({ timeout: 20000 });
       for (const id of ['filter-assigned-by-me', 'filter-all', 'filter-todo', 'filter-in_progress', 'filter-done']) {
@@ -743,9 +755,7 @@ async function victoriaRound(page, cross) {
     try {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/properties/${BLUEWATER}`, nav);
       await mob.locator('[data-testid="button-setup-folders"]').waitFor({ timeout: 30000 });
       for (const id of ['button-ask-ai-property', 'button-image-studio', 'button-create-document', 'button-setup-folders']) {
@@ -790,9 +800,7 @@ async function victoriaRound(page, cross) {
     try {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/comps`, nav);
       await mob.locator('[data-testid="button-create-comp"]').waitFor({ timeout: 30000 });
       const addBox = await mob.locator('[data-testid="button-create-comp"]').boundingBox();
@@ -4496,9 +4504,7 @@ async function markRound(page, cross) {
       await mob.setViewportSize({ width: 390, height: 780 });
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/deals/${deal.id}`, nav);
       await mob.waitForTimeout(3000);
       if (!(await mob.locator('[data-testid="deal-sidebar-mobile"]').isVisible().catch(() => false))) {
@@ -4534,9 +4540,7 @@ async function markRound(page, cross) {
     try {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/requirements`, nav);
       await mob.waitForTimeout(3000);
       if (await mob.locator('[data-testid="button-new-brand"]').count()) {
@@ -4576,9 +4580,7 @@ async function markRound(page, cross) {
       // so goto's default "load" wait can burn 30s and log a false failure.
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/`, nav);
       // Dashboard widgets poll (news/map), so networkidle can't settle here.
       await mob.waitForLoadState('networkidle').catch(() => {});
@@ -4619,9 +4621,7 @@ async function markRound(page, cross) {
     try {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
-      await mob.evaluate(([tok, u]) => {
-        localStorage.setItem('authToken', tok); localStorage.setItem('user', JSON.stringify(u));
-      }, [await page.evaluate(() => localStorage.getItem('authToken')), await page.evaluate(() => localStorage.getItem('user'))]);
+      await mobSeedAuth(mob, page);
       const noOverflow = async (label) => {
         const { scrollW, clientW } = await mob.evaluate(() => ({
           scrollW: document.documentElement.scrollWidth,
