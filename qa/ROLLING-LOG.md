@@ -4410,9 +4410,23 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
 - Next journey: rotation #4 staff mobile 390px (r225 had the journey →
   r226 may be LIGHT; then #4).
 
-### r344 · 2026-08-19 · LIGHT — ROUND IN PROGRESS (provisional)
-- Merged origin/JOGQK into staging (brings deal-verdict alarm: server/deal-verdicts.ts,
-  client deal-verdict-alarm.tsx). unit_interest boot-heal kept.
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1 on merged code).
-- Triage: 0 raw 5xx beyond keyless-AI 503 noise (ai-briefing, brand-gaps, ai-take).
-- Next: two-bot round, dev-server sweep incl. new deal-verdict surfaces, deferred bugs (none from r343).
+### r344 · 2026-08-19 · LIGHT (no journey — r343 was FULL)
+- Merged origin/JOGQK into staging (brings the new invoice-verdict alarm:
+  server/deal-verdicts.ts + client deal-verdict-alarm.tsx). unit_interest
+  boot-heal kept through the merge.
+- Regression: run-smoke.sh GREEN twice (42 checks, 0 failures, FRESH_BUILD=1
+  — on the merged code and again after the fix). Two-bot round 344: exit 0,
+  all scenarios ok; 3 non-verdict issues all listed noise (rocketreach-400,
+  brand-gaps/live-intel 503, commentary-regen 503 — qa/logs/round-344.jsonl).
+- Bug fixed 1: the new DealVerdictAlarm polled /api/deal-verdicts/pending for
+  EVERY logged-in user, but /api/deal-verdicts isn't in CLIENT_ALLOWED_API,
+  so every client session 403-stormed (36 http-403s in one two-bot round,
+  console errors on every client page, refetch every 5 min). Alarm now skips
+  the query for user.role === "Client" (staff-agent feature). Verified in
+  browser: Mark fires NO verdict calls; Victoria polls 200 and an overdue
+  probe deal renders the full-screen block, "On track" answers and clears it
+  (new-feature happy path confirmed working). tsc clean.
+- Harness growth: client-no-deal-verdict-poll (any client-shell request to
+  /api/deal-verdicts fails the round).
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #3 client mobile 390px (r343 did #2 client desktop).

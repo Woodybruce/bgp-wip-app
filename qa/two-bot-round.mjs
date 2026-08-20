@@ -2164,6 +2164,19 @@ async function markRound(page, cross) {
     if (r.withTurnover === 0 && r.leaders > 0) throw new Error(`leaderboard has ${r.leaders} rows but the stat says 0 brands with turnover data`);
   });
 
+  // The invoice-verdict alarm is a staff-agent feature; /api/deal-verdicts is
+  // outside the client API allowlist, so the client shell must not poll it at
+  // all — it used to fire on every page for clients and 403-storm (r344).
+  await step(page, p, 'client-no-deal-verdict-poll', async () => {
+    const hits = [];
+    const listen = (resp) => { if (resp.url().includes('/api/deal-verdicts/')) hits.push(resp.status()); };
+    page.on('response', listen);
+    await visit(page, p, '/');
+    await page.waitForTimeout(6000);
+    page.off('response', listen);
+    if (hits.length) throw new Error(`client shell polled /api/deal-verdicts (${hits.length} call(s), status ${hits[0]})`);
+  });
+
   // Firm-wide reporting (the board report + reporting summary — whole-book
   // revenue, pipeline, agent performance) is BGP-internal; a client login
   // must be refused.
