@@ -319,10 +319,11 @@ const SUMMARY_HOUR = 9;
 async function claimSlot(kind: string, hour: number): Promise<boolean> {
   const day = new Date().toISOString().slice(0, 10);
   const key = `deal-verdicts:${kind}`;
-  const val = `${day}-${hour}`;
+  // system_settings.value is jsonb — a bare string is invalid JSON input.
+  const val = JSON.stringify(`${day}-${hour}`);
   const r = await pool.query(
-    `INSERT INTO system_settings (key, value) VALUES ($1, $2)
-     ON CONFLICT (key) DO UPDATE SET value = $2 WHERE system_settings.value IS DISTINCT FROM $2
+    `INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = $2::jsonb WHERE system_settings.value IS DISTINCT FROM $2::jsonb
      RETURNING key`,
     [key, val]
   );
