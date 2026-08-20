@@ -5,8 +5,7 @@
 // way out is to answer.
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest, getQueryFn, queryClient } from "@/lib/queryClient";
-import type { User } from "@shared/schema";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, CalendarClock, CheckCircle2, Receipt } from "lucide-react";
 
@@ -113,15 +112,10 @@ function VerdictRow({ deal }: { deal: PendingDeal }) {
 
 export default function DealVerdictAlarm() {
   const [open, setOpen] = useState(false);
-  // Staff-agent feature only — client logins are denied /api/deal-verdicts by
-  // the client API allowlist, so don't poll at all for them (403 storm).
-  const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
-  const isClient = user?.role === "Client";
   const { data } = useQuery<{ count: number; maxDaysOverdue: number; deals: PendingDeal[] }>({
     queryKey: ["/api/deal-verdicts/pending"],
     refetchInterval: 5 * 60 * 1000,
     staleTime: 60 * 1000,
-    enabled: !!user && !isClient,
   });
 
   if (!data || data.count === 0) return null;

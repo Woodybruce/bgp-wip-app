@@ -65,7 +65,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1465,13 +1465,54 @@ async function victoriaRound(page, cross) {
     if (!r.targets.includes(`QA-TGT-R${ROUND}`)) throw new Error('added target missing from brief read-back');
     cross.briefId = r.briefId;
   });
+
+  // Invoice-verdict alarm (2026-08-19 feature): a deal past its target date
+  // with no verdict must show in /pending for its agent; "slipping" demands a
+  // date (400 bare), re-dates the deal, and clears the pending list. The deal
+  // is API-created LAST in victoriaRound and deleted in the same scenario so
+  // the un-dismissable alarm banner never overlays other browser scenarios;
+  // run-round.sh's 'QA-R%' purge sweeps any mid-death survivors.
+  await step(page, p, 'staff-deal-verdict-flow', async () => {
+    const r = await page.evaluate(async (round) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const past = new Date(Date.now() - 5 * 86400000).toISOString();
+      const cRes = await fetch('/api/crm/deals', { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ name: `QA-R${round} verdict probe`, dealType: 'Consultant', status: 'SOL', fee: 1000, targetDate: past, internalAgent: ['Victoria Broadhead'] }) });
+      const deal = cRes.ok ? await cRes.json() : null;
+      if (!deal?.id) return { fail: `deal create ${cRes.status}` };
+      const out = { dealId: deal.id };
+      const pending1 = await (await fetch('/api/deal-verdicts/pending', { credentials: 'include', headers: auth })).json();
+      out.listed = (pending1.deals || []).some(d => d.id === deal.id);
+      out.overdue = (pending1.deals || []).find(d => d.id === deal.id)?.daysOverdue;
+      const bare = await fetch(`/api/deal-verdicts/${deal.id}`, { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ verdict: 'slipping' }) });
+      out.bareStatus = bare.status;
+      const nextMonth = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+      const slip = await fetch(`/api/deal-verdicts/${deal.id}`, { method: 'POST', credentials: 'include', headers: auth, body: JSON.stringify({ verdict: 'slipping', newTargetDate: nextMonth }) });
+      out.slipStatus = slip.status;
+      const pending2 = await (await fetch('/api/deal-verdicts/pending', { credentials: 'include', headers: auth })).json();
+      out.stillListed = (pending2.deals || []).some(d => d.id === deal.id);
+      const deals = await (await fetch('/api/crm/deals', { headers: auth })).json().catch(() => []);
+      out.newTarget = (Array.isArray(deals) ? deals : []).find(d => d.id === deal.id)?.targetDate || null;
+      out.deleteStatus = (await fetch(`/api/crm/deals/${deal.id}`, { method: 'DELETE', credentials: 'include', headers: auth })).status;
+      return out;
+    }, ROUND);
+    if (r.fail) throw new Error(r.fail);
+    if (!r.listed) throw new Error('overdue deal missing from /api/deal-verdicts/pending');
+    if (!(r.overdue >= 4)) throw new Error(`daysOverdue wrong (${r.overdue}, expected ~5)`);
+    if (r.bareStatus !== 400) throw new Error(`slipping without a date should 400 (got ${r.bareStatus})`);
+    if (r.slipStatus !== 200) throw new Error(`slipping verdict failed (${r.slipStatus})`);
+    if (r.stillListed) throw new Error('deal still pending after a verdict this month');
+    if (!r.newTarget || new Date(r.newTarget) < new Date()) throw new Error(`slipping did not re-date the deal (targetDate ${r.newTarget})`);
+    if (r.deleteStatus !== 200 && r.deleteStatus !== 204) throw new Error(`probe deal cleanup failed (${r.deleteStatus})`);
+  });
 }
 
 async function markRound(page, cross) {
   const p = 'mark';
 
-  // 1. Crawl the client surface
-  for (const path of ['/', '/contacts', '/brands', '/comps', '/deals', '/leasing-schedule', '/m/images', '/news', '/tasks']) {
+  // 1. Crawl the client surface. The per-property leasing board is included
+  //    because it used to fire a staff-only /privacy fetch that 403'd for
+  //    clients on every load (r345) — the response hook catches a relapse.
+  for (const path of ['/', '/contacts', '/brands', '/comps', '/deals', '/leasing-schedule', `/leasing-schedule/${BLUEWATER}`, '/m/images', '/news', '/tasks']) {
     await visit(page, p, path);
   }
 

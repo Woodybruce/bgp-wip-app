@@ -67,6 +67,61 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r346 · 2026-08-20 · LIGHT (r345 had the journey)
+- Fresh container (pg_hba trust per r205; superuser bgp role + restore +
+  schema grant per r249). JOGQK merge: already up to date (staging ahead
+  with r344/r345 fixes; re-fetched before merge).
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
+  Two-bot round 346: exit 0, all scenarios ok, 3 logged issues all listed
+  noise (rocketreach-400; brand-gaps/live-intel 503; commentary-regen 503
+  — qa/logs/round-346.jsonl). Dev-server log: 0 raw 500/502/504 (tally:
+  2xx/3xx + expected 400/401/403/404/503); 403s all low-count deliberate
+  guard probes (no r344/r345-style repeated-endpoint pattern); 31×
+  client/sharepoint/root 404 = listed fixture noise; error-trace sweep
+  only keyless/no-network noise. Staging fixes hold: unit_interest
+  all-interest{,-counts} 200 as staff, deal-verdict staff-only mount +
+  leasing-privacy staff-only fetch verified in tree, verdict scenario's
+  deliberate 400 stayed suppressed. 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r346 was LIGHT → r347 FULL).
+
+### r345 · 2026-08-20 · FULL (rotation #3 client mobile 390px)
+- Fresh container (pg_hba trust per r205; bgp role + restore + schema grant
+  per r249). JOGQK merge: already up to date (staging ahead w/ r344 fixes).
+- Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
+  before and after the fix). Two-bot round 345: exit 0, all scenarios ok,
+  4 logged issues all noise (rocketreach-400; verdict-scenario's own
+  deliberate 400 — now suppressed, scenario added to
+  NEGATIVE_PROBE_SCENARIOS; brand-gaps/live-intel + commentary-regen 503s).
+- Journey: Mark Warne @ 390px iPhone UA — "prep for a Landsec asset review
+  on my phone": dashboard → leasing board /leasing-schedule/:bluewater
+  (ARCHIVED banner correct) → property page → tenancy-schedule full board
+  (KPIs + unit table clean at 390) → /brands hub → Honi Poke profile (KYC
+  visible per 2026-08-01 decision) → /contacts CRM directory → /requirements
+  (clean empty state) → /deals → /news. 10 surfaces, 0 h-overflow, 0 error
+  boundaries, 0 dead routes.
+- Bug fixed (1): client load of /leasing-schedule/:id fired staff-only
+  GET /api/leasing-schedule/property/:id/privacy → gateway 403 on every
+  client visit (same family as r344's deal-verdict alarm). privacy useQuery
+  in leasing-schedule.tsx now enabled only for staff. Verified: Mark fires
+  no privacy request, Victoria still gets 200. tsc clean.
+- NOT a bug: "Last updated by mark.warne@landsec.com" on the leasing board
+  — two-bot's client write scenarios legitimately touch own-property units
+  (r343: client unit writes intended); timestamp matched the two-bot run.
+- Harness growth: mark's crawl now visits /leasing-schedule/:bluewater
+  (response hook catches a privacy-403 relapse); staff-deal-verdict-flow
+  added to NEGATIVE_PROBE_SCENARIOS (its deliberate 400s no longer logged).
+- Bugs deferred: none. Suggestions added: UX-NOTES #75 (mobile brand
+  profile: Chat card fills first screen, facts below fold), #76 (archived
+  leasing board shows Set band / Set positioning / Enable to clients —
+  render read-only).
+- New flakes: none.
+- (Note: r344's entry sits at the bottom of this file — appended by its
+  replacement session; see line ~4413.)
+- Next journey: rotation #4 staff mobile 390px (r345 had the journey →
+  r346 LIGHT first if alternation holds).
+
 ### r343 · 2026-08-19 · FULL (rotation #2 client desktop)
 - Fresh container (pg_hba trust per r205; superuser bgp role + restore +
   schema grant per r249). origin/JOGQK merge: "Already up to date".
@@ -4410,23 +4465,40 @@ green through 2026-08-06, growing qa/two-bot-round.mjs as it went)
 - Next journey: rotation #4 staff mobile 390px (r225 had the journey →
   r226 may be LIGHT; then #4).
 
-### r344 · 2026-08-19 · LIGHT (no journey — r343 was FULL)
-- Merged origin/JOGQK into staging (brings the new invoice-verdict alarm:
-  server/deal-verdicts.ts + client deal-verdict-alarm.tsx). unit_interest
-  boot-heal kept through the merge.
-- Regression: run-smoke.sh GREEN twice (42 checks, 0 failures, FRESH_BUILD=1
-  — on the merged code and again after the fix). Two-bot round 344: exit 0,
-  all scenarios ok; 3 non-verdict issues all listed noise (rocketreach-400,
-  brand-gaps/live-intel 503, commentary-regen 503 — qa/logs/round-344.jsonl).
-- Bug fixed 1: the new DealVerdictAlarm polled /api/deal-verdicts/pending for
-  EVERY logged-in user, but /api/deal-verdicts isn't in CLIENT_ALLOWED_API,
-  so every client session 403-stormed (36 http-403s in one two-bot round,
-  console errors on every client page, refetch every 5 min). Alarm now skips
-  the query for user.role === "Client" (staff-agent feature). Verified in
-  browser: Mark fires NO verdict calls; Victoria polls 200 and an overdue
-  probe deal renders the full-screen block, "On track" answers and clears it
-  (new-feature happy path confirmed working). tsc clean.
-- Harness growth: client-no-deal-verdict-poll (any client-shell request to
-  /api/deal-verdicts fails the round).
-- Bugs deferred: none. Suggestions added: none. New flakes: none.
-- Next journey: rotation #3 client mobile 390px (r343 did #2 client desktop).
+### r344 · 2026-08-19/20 · LIGHT (r343 had the journey) — finished by replacement session
+- Original container reclaimed after its heartbeat; replacement session
+  finished the round 2026-08-20. JOGQK merge already in staging (66e102e);
+  smoke GREEN ×3 (42 checks, 0 failures; FRESH_BUILD=1 before and after fix).
+- Two-bot round 344: tally 36×403 + 1×400 + 2×503. The 400/503s are listed
+  noise (rocketreach-400, keyless-AI 503). The 36×403 were ONE real bug from
+  the merge: DealVerdictAlarm mounted for ALL users, but the client API
+  gateway (CLIENT_ALLOWED_API) blocks /api/deal-verdicts/* → every client
+  page load logged a 403 (mark + sam scenarios). No visual breakage (alarm
+  renders null on error), but per-page 403 console/monitor noise.
+- Bug fixed (1): App.tsx now mounts DealVerdictAlarm staff-only (same
+  role==='Client' || companyScopeId test as isClientShell). Verified
+  visually: Mark's pages fetch nothing, 0×403; Victoria unaffected.
+- Deal-verdict feature sweep (new surface, dev server + browser): /pending
+  correct (fixture has no due deals → dormant by default; probe deal listed
+  with daysOverdue); slipping w/o date 400; bogus verdict 400; slipping
+  re-dates deal + clears pending; on_track via UI clears the full-screen
+  block; banner (0-2d) and full-screen block (3d+) both render clean at
+  1440px; invoice_now push path guarded (no woody push sub in fixture, no-op).
+- Harness growth: staff-deal-verdict-flow scenario in two-bot-round.mjs
+  (create overdue probe deal → pending → 400 → slipping → cleared → deal
+  deleted in-scenario); run-round.sh purge now sweeps orphan deal_verdicts
+  rows. Scenario's API sequence dry-run green.
+- CAUTION for future rounds: a pending verdict deal for victoria@ full-screen
+  BLOCKS her browser at 3d+ overdue — never leave one seeded while the
+  two-bot round or a journey runs (this round briefly self-inflicted ~90s of
+  extra pending-fetch exposure mid-round; re-checked, no false failures
+  logged from it).
+- Bugs deferred: none. Suggestions added: UX-NOTES #74 (verdict banner
+  overlays the app header, hiding global search while pending).
+- New flakes: none. tsc clean.
+- Next journey: rotation — r343 covered client desktop; r345 FULL should take
+  rotation #3 client mobile 390px (staff mobile #4 after).
+- Addendum (original r344 session, resumed): independently reproduced and
+  verified the same client 403 storm + staff happy path; kept its extra
+  harness scenario client-no-deal-verdict-poll (mark's shell making ANY
+  /api/deal-verdicts request fails the round) alongside staff-deal-verdict-flow.

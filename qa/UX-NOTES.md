@@ -16,6 +16,32 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+75. 2026-08-20 · Landsec client / mobile 390px (QA r345) · "look up Honi
+    Poke on my phone before a meeting" · The brand profile's Chat card
+    fills the entire first screen after the hero photo — Key Contacts,
+    compliance and the actual brand facts all sit below the fold, so on a
+    phone the profile reads as a chat app before it reads as a profile. ·
+    Suggested: on mobile, render Chat collapsed (a "Chat" bar that expands
+    on tap) or move it below Key Contacts, so facts come first.
+
+76. 2026-08-20 · Landsec client / mobile 390px (QA r345) · "check the old
+    leasing strategy board" · The retired /leasing-schedule/:id board
+    (banner says "This board is retired") still shows editing affordances
+    to a client login — "Set band" / "Set positioning" buttons on every
+    unit and an "Enable" button for Strategic Principles — BGP strategy
+    controls that mean little to Mark and invite edits on a board nobody
+    maintains. · Suggested: for client logins render the archived board
+    read-only (keep the banner + reference data, drop the edit buttons).
+
+74. 2026-08-20 · BGP staff / desktop 1440px (QA r344) · "carry on working
+    with a pending invoice verdict" · The new red verdict banner (fixed,
+    top-0) overlays the app header instead of pushing it down, so the
+    global search box and header controls sit hidden behind it for as long
+    as a verdict is pending — annoying is the brief, but hiding search
+    costs real workflows. · Suggested: give the authenticated shell a
+    top offset when the banner is mounted (like iOS in-call bars) so the
+    header stays usable; keep the banner un-dismissable.
+
 72. 2026-08-19 · Landsec client / Letting Tracker desktop (QA r343) ·
     "narrow the tracker to my Bluewater units" · The filter row shows
     "All Teams" and "All Agents" dropdowns to a client login — BGP-internal
