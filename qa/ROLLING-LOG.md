@@ -67,15 +67,24 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r346 · 2026-08-20 · ROUND IN PROGRESS (provisional heartbeat)
-- LIGHT round (r345 had the client-mobile journey). Fresh container (pg_hba
-  trust per r205; superuser bgp role + restore + schema grant per r249).
-  JOGQK merge: already up to date (staging ahead with r344/r345 fixes).
+### r346 · 2026-08-20 · LIGHT (r345 had the journey)
+- Fresh container (pg_hba trust per r205; superuser bgp role + restore +
+  schema grant per r249). JOGQK merge: already up to date (staging ahead
+  with r344/r345 fixes; re-fetched before merge).
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
-  Two-bot round 346 still running at heartbeat; triage to follow.
-- Staging fixes verified present in tree: unit_interest boot heal
-  (server/index.ts), deal-verdict staff-only mount (App.tsx:840),
-  leasing-privacy staff-only fetch (leasing-schedule.tsx).
+  Two-bot round 346: exit 0, all scenarios ok, 3 logged issues all listed
+  noise (rocketreach-400; brand-gaps/live-intel 503; commentary-regen 503
+  — qa/logs/round-346.jsonl). Dev-server log: 0 raw 500/502/504 (tally:
+  2xx/3xx + expected 400/401/403/404/503); 403s all low-count deliberate
+  guard probes (no r344/r345-style repeated-endpoint pattern); 31×
+  client/sharepoint/root 404 = listed fixture noise; error-trace sweep
+  only keyless/no-network noise. Staging fixes hold: unit_interest
+  all-interest{,-counts} 200 as staff, deal-verdict staff-only mount +
+  leasing-privacy staff-only fetch verified in tree, verdict scenario's
+  deliberate 400 stayed suppressed. 0 app bugs.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r346 was LIGHT → r347 FULL).
 
 ### r345 · 2026-08-20 · FULL (rotation #3 client mobile 390px)
 - Fresh container (pg_hba trust per r205; bgp role + restore + schema grant
