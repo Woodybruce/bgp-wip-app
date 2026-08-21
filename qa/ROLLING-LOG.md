@@ -73,6 +73,21 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r360 · 2026-08-21 · IN PROGRESS (r359 finisher + LIGHT round)
+- Provisional heartbeat ~14:05 UTC. r359's container died mid-run; this round
+  verifies its pushed fix first. Regression on r359's code as pushed:
+  run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
+- r359 fix code-reviewed: gateway additions themselves are tight (exact-match
+  POSTs; purchase-title/propertydata/backfill/PATCHes still blocked). BUT the
+  pre-existing "/api/land-registry" READ allowlist entry + the now-working
+  client LR tab expose firm-wide GETs with no scoping: /searches +
+  /searches/recent (staff acquisition research: notes, statuses, ownership
+  intel, staff names+emails) and /purchases (paid-title ledger incl.
+  proprietor extracts + document URLs). Fixing as this round's #1 bug:
+  own-searches scoping for scoped clients, empty ledger for clients. Also
+  picking up r359's deferred Invalid-Date bug (searches/recent snake_case).
+  Token probes + visual verification queued.
+
 ### r359 · 2026-08-21 · FULL (rotation #2 Landsec client desktop)
 - Fresh container (pg_hba trust, bgp role + restore per r249). JOGQK merge:
   brought in 5977e99 (profile-photo card on Organisation page). Regression:
