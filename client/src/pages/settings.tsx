@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
+import { ProfilePhotoCard } from "@/components/profile-photo-card";
 
 interface TeamMember {
   id: string;
@@ -174,6 +175,8 @@ export default function SettingsPage() {
           Team structure and assignments — {members?.length || 0} members across {TEAM_GROUPS.length} teams
         </p>
       </div>
+
+      <ProfilePhotoCard />
 
       <div className="flex items-center gap-3 flex-wrap">
         {teamCounts.map((t) => (
