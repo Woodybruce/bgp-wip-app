@@ -73,6 +73,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r355 · 2026-08-21 · IN PROGRESS (FULL — rotation #4 staff mobile 390px)
+- Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
+  JOGQK merge: already up to date. Regression: run-smoke.sh GREEN (42 checks,
+  0 failures, FRESH_BUILD=1). Two-bot round 356: exit 0, all scenarios ok,
+  3 issues all listed noise (rocketreach-400, live-intel 503, commentary-
+  regen 503 — qa/logs/round-356.jsonl). Dev-server sweep: 0 raw 500/502/504;
+  403s spread guard probes; 404s = sharepoint-root/hr-photo noise + the
+  known image-studio purged-probe artefact (r354).
+- Journey (staff mobile 390px, Victoria) to follow this heartbeat.
+
 ### r354 · 2026-08-21 · LIGHT (r353 was FULL)
 - Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
   JOGQK merge: already up to date. Regression: run-smoke.sh GREEN (42 checks,
