@@ -73,15 +73,38 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r355 · 2026-08-21 · IN PROGRESS (FULL — rotation #4 staff mobile 390px)
+### r355 · 2026-08-21 · FULL (rotation #4 staff mobile 390px)
 - Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
-  JOGQK merge: already up to date. Regression: run-smoke.sh GREEN (42 checks,
-  0 failures, FRESH_BUILD=1). Two-bot round 356: exit 0, all scenarios ok,
-  3 issues all listed noise (rocketreach-400, live-intel 503, commentary-
-  regen 503 — qa/logs/round-356.jsonl). Dev-server sweep: 0 raw 500/502/504;
-  403s spread guard probes; 404s = sharepoint-root/hr-photo noise + the
-  known image-studio purged-probe artefact (r354).
-- Journey (staff mobile 390px, Victoria) to follow this heartbeat.
+  JOGQK merge: already up to date. Regression: run-smoke.sh GREEN ×2 (42
+  checks, 0 failures, FRESH_BUILD=1 before and after the fix). Two-bot round
+  356: exit 0, all scenarios ok, 3 issues all listed noise (rocketreach-400,
+  live-intel 503, commentary-regen 503 — qa/logs/round-356.jsonl).
+  Dev-server sweep: 0 raw 500/502/504; 403s spread guard probes; 404s =
+  sharepoint-root/hr-photo noise + image-studio purged-probe artefact (r354).
+- Journey: Victoria @ 390px iPhone — "between viewings: work the deals
+  pipeline from my phone, check mail, scan news, log a task": token login →
+  mobile dashboard (bottom nav Dashboard|Messages|ChatBGP|Deals|News; billing
+  card, boards grid clean) → Deals tab (chips + cards; QA-R356 probe deal
+  visible = inter-round artefact, purged next round) → deal detail via View
+  (U124 Gail's letting: action row, Parties, Fee Allocation, KYC panel all
+  clean at 390) → Mail (/mail degraded to Connect M365 prompt = noise) →
+  News → Tasks quick-add (toast + row + count) → Calendar day view →
+  Messages. 0 h-overflow, 0 pageerrors, 0 non-noise 4xx/5xx.
+- HARNESS NOTE: staff mobile layout swap requires touch emulation — a
+  Playwright context with 390px viewport + iPhone UA but NO
+  isMobile/hasTouch renders the DESKTOP sidebar at 390px (use-mobile.tsx
+  checkIsMobile requires isTouchDevice). Intended app behaviour (real
+  phones have touch); journey scripts must pass isMobile+hasTouch like
+  two-bot's mobile contexts do.
+- Bug fixed 1: deal-detail KYC banner said "Only 0 counterparty linked to
+  this deal" when no counterparties were set (deal-aml-status.tsx) — now
+  "No counterparties linked" at 0, "Only 1 counterparty linked" at 1.
+  tsc clean, rebuilt, verified visually at 390px on the Gail deal.
+- Harness growth: staff-deal-mobile-action-row now also asserts the AML
+  incomplete banner never regresses to "Only 0 counterparty".
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r355 was FULL → r356 LIGHT
+  first if alternation holds; then #1).
 
 ### r354 · 2026-08-21 · LIGHT (r353 was FULL)
 - Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).

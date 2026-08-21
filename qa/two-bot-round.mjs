@@ -665,6 +665,13 @@ async function victoriaRound(page, cross) {
           throw new Error(`deal action ${id} clipped at 390px (x ${Math.round(box.x)}, right ${Math.round(box.x + box.width)})`);
         }
       }
+      // r355: the KYC incomplete banner said "Only 0 counterparty linked"
+      // when nothing was linked — assert the zero-count copy stays humane.
+      const amlBanner = mob.locator('[data-testid="deal-aml-status-incomplete"]');
+      if (await amlBanner.count()) {
+        const txt = await amlBanner.innerText();
+        if (/Only 0 counterparty/.test(txt)) throw new Error(`AML banner regressed to "Only 0 counterparty": ${txt.slice(0, 80)}`);
+      }
     } finally {
       await mob.close();
       await mobCtx.close();

@@ -65,7 +65,7 @@ export function DealAmlStatusCard({ dealId }: { dealId: string }) {
           <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-md text-sm" data-testid="deal-aml-status-incomplete">
             <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
             <span>
-              Only {data.counterparties.length} counterparty linked to this deal — both sides need to be set on the deal record before AML status can clear and the invoice can unlock. AML AI tools below still work though.
+              {data.counterparties.length === 0 ? "No counterparties linked" : "Only 1 counterparty linked"} to this deal — both sides need to be set on the deal record before AML status can clear and the invoice can unlock. AML AI tools below still work though.
             </span>
           </div>
           <AmlAiPanel dealId={dealId} dealName={data.dealName} />
