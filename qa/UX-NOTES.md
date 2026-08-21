@@ -16,6 +16,15 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+83. 2026-08-21 · Landsec client / mobile 390px (QA r361) · "check my
+    property on the PI map from my phone" · On the Map tool at 390px the
+    map canvas runs underneath the fixed bottom nav: the Google Maps zoom
+    "+/-" control sits half-hidden behind the Portfolio/…/News bar
+    (bottom-right corner), and the search row's Resolve button touches the
+    right edge. Everything still works, but zoom is a fiddly tap. Suggest
+    giving the map container bottom padding equal to the bottom-nav height
+    on mobile (and a little right inset on the search row).
+
 82. 2026-08-21 · Landsec client / desktop 1440px (QA r360) · "review my
     saved Land Registry searches" · The Recent Searches cards show a status
     dropdown (New/Investigating/…) and a link-to-property button, but both
