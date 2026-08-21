@@ -73,9 +73,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r354 · 2026-08-21 · LIGHT (r353 was FULL) — IN PROGRESS
-- JOGQK merge: already up to date. Regression: run-smoke.sh GREEN (42 checks,
-  0 failures, FRESH_BUILD=1). Two-bot sweep + triage to follow.
+### r354 · 2026-08-21 · LIGHT (r353 was FULL)
+- Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
+  JOGQK merge: already up to date. Regression: run-smoke.sh GREEN (42 checks,
+  0 failures, FRESH_BUILD=1). Two-bot round 355: exit 0, all scenarios ok
+  (incl. r353's client-mobile-chat-error-prompt — no recurrence), 3 issues
+  all listed noise (rocketreach-400, live-intel 503, commentary-regen 503 —
+  qa/logs/round-355.jsonl). Dev-server sweep: 0 raw 500/502/504 (lone " 500 "
+  text = "500 articles" news echo); 186×403 spread guard probes; 404s =
+  sharepoint-root/hr-photo listed noise + 2 one-off image-studio thumb/full
+  fetches of the harness's own purged qa-unit-photo probe image (harness
+  artefact, not app).
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #4 staff mobile 390px (r354 was LIGHT → r355 FULL).
 
 ### r353 · 2026-08-20 · FULL (rotation #3 client mobile 390px)
 - JOGQK merge: already up to date. Regression: run-smoke.sh GREEN (42 checks,
