@@ -3977,6 +3977,13 @@ app.use("/api/branding/assets", express.static(
   app.use(propertyGapAnalysisRouter);
   app.use(brandPackRouter);
   app.use(dealVerdictsRouter);
+  // Interactive-plan demo for Pete (Brent Cross evidence map, 2026-08-21).
+  // Unguessable path in lieu of auth so it opens with one click from an
+  // email — same exposure class as attaching the deck itself.
+  app.get("/demo/brent-cross-evidence-kx7m2q", async (_req, res) => {
+    const { join } = await import("path");
+    res.sendFile(join(process.cwd(), "server", "assets", "demos", "brent-cross-evidence-map.html"));
+  });
   app.use(dealDocsRouter);
   app.use(weeklyReportRouter);
   app.use(dealReportRouter);
