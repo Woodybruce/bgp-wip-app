@@ -73,6 +73,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r354 · 2026-08-21 · LIGHT (r353 was FULL) — IN PROGRESS
+- JOGQK merge: already up to date. Regression: run-smoke.sh GREEN (42 checks,
+  0 failures, FRESH_BUILD=1). Two-bot sweep + triage to follow.
+
 ### r353 · 2026-08-20 · FULL (rotation #3 client mobile 390px)
 - JOGQK merge: already up to date. Regression: run-smoke.sh GREEN (42 checks,
   0 failures, FRESH_BUILD=1). Two-bot round 354: exit 0, all scenarios ok,
