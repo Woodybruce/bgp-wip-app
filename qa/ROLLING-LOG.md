@@ -73,6 +73,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r357 · 2026-08-21 · ROUND IN PROGRESS (provisional)
+- FULL round (r356 was LIGHT), rotation #1 staff desktop. Fresh container
+  (pg_hba trust, bgp role + restore + owner transfer per r249). JOGQK merge:
+  already up to date.
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
+  Two-bot round 358 in progress; journey (Victoria desktop 1440px — tenancy
+  schedule / brand profile / comps / KYC Clouseau / Image Studio) pending.
+
 ### r356 · 2026-08-21 · LIGHT (r355 was FULL) — finished by replacement session
 - Original container died after its heartbeat; replacement session re-ran the
   round from scratch 06:30-06:50 UTC. Fresh container (pg_hba trust, bgp role
