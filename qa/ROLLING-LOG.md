@@ -88,7 +88,11 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   picking up r359's deferred Invalid-Date bug (searches/recent snake_case).
   Token probes + visual verification queued.
 
-### r359 · 2026-08-21 · FULL (rotation #2 Landsec client desktop)
+### r359 · 2026-08-21 · FULL (rotation #2 Landsec client desktop) — FINAL (closed by r360)
+- Container reclaimed after the 13:09 UTC fix push; r360 verified everything
+  below independently (probes + browser) and closed the round. r359's
+  gateway fix is good as pushed, but the LR tab it opened exposed
+  pre-existing unscoped GETs — fixed in r360.
 - Fresh container (pg_hba trust, bgp role + restore per r249). JOGQK merge:
   brought in 5977e99 (profile-photo card on Organisation page). Regression:
   run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1 before and
