@@ -35,6 +35,9 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM unit_viewings WHERE attendees LIKE 'QA-VIEWING-%' OR attendees LIKE 'QA-VDEL-%';
   DELETE FROM unit_interest WHERE company_name LIKE 'QA-PROBE%';
   DELETE FROM crm_comps    WHERE name LIKE 'QA-COMP%';
+  -- client-pi-lookup-open resolves DA9 9ST each round; the resolve persists
+  -- a search-history row even when the title lookup itself comes back empty.
+  DELETE FROM land_registry_searches WHERE address IN ('DA9 9ST', 'Bluewater Shopping Centre, DA9 9ST');
   -- reimport-no-dup scenario cleans up after itself; sweep survivors of a
   -- mid-scenario death (tenancy + tracker rows, then the QA property).
   DELETE FROM tenancy_schedule_units WHERE unit_number = 'QA-REIMP-UNIT';

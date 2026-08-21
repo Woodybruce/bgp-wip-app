@@ -16,6 +16,15 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+81. 2026-08-21 · Landsec client / desktop 1440px (QA r359) · "look up my
+    property on the Property Intelligence map" · The intelligence panel's
+    header strip offers a "No Pathway run yet — Run Pathway" button, but
+    Pathway is a hidden staff-only tool for clients (every
+    /api/property-pathway route 403s), so the button can only dead-end;
+    the panel also fires a 403'd pathway/latest fetch on every resolve.
+    Suggest hiding the Pathway strip (and skipping the pathway/latest
+    fetch) for client logins, as the Pathway/Investigator tabs already are.
+
 80. 2026-08-20 · Landsec client / mobile 390px (QA r353) · "ask ChatBGP a
     question from my phone" · The empty-chat suggestion chips are one static
     list shared by every persona (AI_SUGGESTIONS in mobile-app.tsx), so a

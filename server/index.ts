@@ -3475,6 +3475,13 @@ app.use("/api/branding/assets", express.static(
     // entry used to read "/api/os-data" (the FILE name), which matched no
     // route, so the client Property Intelligence map's OS layers all 403'd.
     "/api/voa", "/api/map-layers", "/api/os/", "/api/edozo",
+    // Property Intelligence map panel + its search box: property-lookup is
+    // the public-data aggregate (price paid, VOA, EPC, flood, planning, TfL)
+    // and address-search proxies postcodes.io/Google autocomplete — no BGP
+    // internals in either. Without these the client Map tab (their PI
+    // landing tab, and the #69 My-properties quick-pick) opened an EMPTY
+    // intelligence panel on every resolve.
+    "/api/property-lookup", "/api/address-search",
     "/api/image-studio", "/api/ai-briefing",
     "/api/notifications", "/api/daily-digest", "/api/activity-feed",
     "/api/dashboard/", "/api/search", "/api/users", "/api/news-feed/",
@@ -3726,6 +3733,13 @@ app.use("/api/branding/assets", express.static(
         // caller's scope/visible brands; sync + discover-contacts don't match
         // this shape and stay staff-only.
         if (req.method === "POST" && /^\/api\/interactions\/[^/]+\/summarise$/.test(p)) return next();
+        // Land Registry search on the client-visible LR tab + PI map resolve:
+        // the resolve POST reads external title data (user-stamped search
+        // history row), the searches POST persists that history. Exact-match
+        // only — purchase-title (paid), backfill and the searches PATCHes
+        // stay staff-only. Without these the Land Registry tab's Search
+        // button dead-ended in a 403 for clients while #69 prefilled it.
+        if (req.method === "POST" && (p === "/api/land-registry/resolve" || p === "/api/land-registry/searches")) return next();
         // Same prefix-matching rule as the read allowlist: entries ending in
         // "/" match by prefix, others match exactly or as a path segment.
         if (CLIENT_ALLOWED_WRITES.some(w =>

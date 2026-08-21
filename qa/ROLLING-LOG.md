@@ -73,36 +73,50 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r359 · 2026-08-21 · FULL (rotation #2 Landsec client desktop) — IN PROGRESS
-- Provisional heartbeat ~13:05 UTC. Fresh container (pg_hba trust, bgp role +
-  restore per r249). JOGQK merge: brought in 5977e99 (profile-photo card).
-  Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
-  Two-bot: queued next.
-- Journey (Mark Warne @ 1440px, UX 65-73 verification) first pass done:
-  #69 quick-pick bar renders + Land Registry prefill OK; #72 Teams/Agents
-  filters hidden OK; #68 recount "6 of 153 units" OK; #65 deal header
-  "BGP contact: Test Staff" mailto OK. TRIAGE: client PI Map panel renders
-  EMPTY — /api/property-lookup and /api/address-search 403 for clients
-  (not in CLIENT_ALLOWED_API; token-verified). Fix in progress. #71
-  Log-interest dialog not yet reached (journey clicked the KPI chip, not
-  the unit action) — re-probe queued.
-
-### r358 · 2026-08-21 · LIGHT (r357 was FULL)
-- Fresh container (pg_hba trust, bgp role + restore + owner transfer + schema
-  grant per r249). JOGQK merge: already up to date. Regression: run-smoke.sh
-  GREEN (42 checks, 0 failures, FRESH_BUILD=1). Two-bot round 359: exit 0,
-  all scenarios ok, 3 issues all listed noise (rocketreach-400, live-intel
-  503, commentary-regen 503 — qa/logs/round-359.jsonl). Dev-server sweep:
-  0 raw 500/502/504 across ~4,000 requests; 186×403 = spread guard probes;
-  404s = hr-photo/sharepoint-root noise + image-studio purged-probe artefact
-  (r354) + one requirements-leasing probe fetch; 3×400 = rocketreach noise +
-  deliberate bogus-verdict and bulk-assign-scope probes.
-- Bugs fixed: 0 (nothing broken found). Deferred: none (r357 deferred none).
-  Suggestions added: none. New flakes: none.
-- Next journey: rotation #2 Landsec client desktop (r358 was LIGHT → r359
-  FULL) — good target: UX 65-73 batch still browser-UNVERIFIED client-side
-  (PI "My properties" quick-pick, Log-interest form on tracker, clickable
-  BGP contact on client deals, client tracker filter trims).
+### r359 · 2026-08-21 · FULL (rotation #2 Landsec client desktop)
+- Fresh container (pg_hba trust, bgp role + restore per r249). JOGQK merge:
+  brought in 5977e99 (profile-photo card on Organisation page). Regression:
+  run-smoke.sh GREEN ×2 (42 checks, 0 failures; FRESH_BUILD=1 before and
+  after the fixes). Two-bot round 360: exit 0, all scenarios ok, 3 issues
+  all listed noise (rocketreach-400, live-intel 503, commentary-regen 503 —
+  qa/logs/round-360.jsonl).
+- Journey: Mark Warne @ 1440px — "Monday-morning asset-manager session:
+  my property tools in the PI hub, the lettings tracker (search + log a
+  phone-call interest), open a deal and email my BGP contact". UX 65-73
+  client-side batch now browser-VERIFIED: #69 quick-pick bar renders,
+  chip pick seeds the map + prefills Land Registry ("Bluewater Shopping
+  Centre, DA9 9ST"); #72 Teams/Agents filters absent for client; #68
+  header recounts ("6 of 153 units" under search); #71 Log-interest form
+  works end-to-end (client logged + deleted an interest row, write allowed
+  via /api/available-units); #65 deal header "BGP contact: Test Staff"
+  with a live mailto. PI hidden staff tabs stay hidden.
+- Bug fixed 1: client PI Map panel rendered EMPTY on every resolve —
+  /api/property-lookup (public-data aggregate the panel is built from) and
+  /api/address-search (map search box autocomplete) were missing from
+  CLIENT_ALLOWED_API. Added both (GET, external public data only).
+  Verified by token probe (403→200) and visually: panel now shows
+  Titles/Rates/Planning KPIs, Ownership, Planning Designations.
+- Bug fixed 2: client Land Registry tab search dead-ended in a 403 —
+  POST /api/land-registry/resolve + POST /searches hit the client write
+  gate even though #69 prefills the tab for clients. Added an exact-match
+  client-write allowance for just those two POSTs (user-stamped search
+  history); purchase-title (paid), backfill and searches PATCHes verified
+  still 403. Visually: search persists to Recent Searches, resolve now
+  503s keyless (staff parity) instead of 403.
+- Harness growth: two-bot client-pi-lookup-open (lookup/addr/resolve not
+  403 + purchase-title & searches-PATCH stay 403; in NEGATIVE_PROBE set);
+  run-round.sh purge now sweeps the scenario's DA9 9ST search rows.
+  tsc clean; probe rows (interest, LR searches) all cleaned.
+- Bugs deferred (1): Recent Searches card shows "Invalid Date" — GET
+  /api/land-registry/searches/recent returns snake_case created_at (raw
+  SQL) while the card reads s.createdAt (land-registry.tsx:963); affects
+  staff too. One-line fix: alias created_at AS "createdAt" in the recent
+  query (server/land-registry.ts:1759).
+- Suggestions added: UX #81 (client PI panel offers a staff-only "Run
+  Pathway" CTA that can only dead-end + fires a 403 pathway/latest fetch
+  per resolve). New flakes: none.
+- Next journey: r359 was FULL → r360 may be LIGHT; then rotation #3 client
+  mobile 390px.
 
 ### r357 · 2026-08-21 · FULL (rotation #1 staff desktop)
 - Fresh container (pg_hba trust, bgp role + restore + owner transfer per
