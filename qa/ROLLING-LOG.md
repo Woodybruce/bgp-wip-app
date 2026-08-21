@@ -73,54 +73,32 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r361 · 2026-08-21 · FULL (rotation #3 Landsec client mobile 390px) — IN PROGRESS
-- Provisional heartbeat. JOGQK merge: brought in Brent Cross evidence-map
-  demo route (server/assets/demos + server/index.ts). Regression:
+### r361 · 2026-08-21 · FULL (rotation #3 Landsec client mobile 390px)
+- JOGQK merge: brought in Brent Cross evidence-map demo route. Regression:
   run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1 post-merge).
-- Journey pass 1 (Mark @390px, PI hub + tracker) ran clean except known
-  UX #81 pathway/latest 403. NOTE (harness): a 390px context WITHOUT an
-  iPhone UA gets the DESKTOP layout (use-mobile isTouchDevice rejects
-  Linux UAs) — pinned sidebar at 390px is an artifact, not a bug; re-running
-  journey with the iPhone UA like two-bot does. Triage list: none yet.
-
-### r360 · 2026-08-21 · LIGHT (r359 finisher; r359 was FULL)
-- r359's container died mid-run; this round verified its pushed fix, then ran
-  LIGHT. JOGQK merge: already in staging. Regression: run-smoke.sh GREEN ×2
-  (42 checks, 0 failures — FRESH_BUILD=1 on r359's code as pushed, again on
-  this round's fixes). Two-bot round 361: exit 0, all 201 scenario steps ok
-  (incl. client-pi-lookup-open with this round's new scoping asserts), 3
-  issues all listed noise (rocketreach-400, live-intel 503, commentary-regen
-  503 — qa/logs/round-361.jsonl). Dev-server sweep: 0 raw 500/502/504 (lone
-  " 500 " = "500 articles" news echo).
-- r359 fix VERIFIED good as pushed: 16-probe matrix + browser (Mark @1440px,
-  real form login, dev server) — PI Map panel populates (Titles/Rates/
-  Planning KPIs, Ownership, Planning Designations), LR tab search resolves
-  DA9 9ST, purchase-title/propertydata/backfill/searches-PATCHes all still
-  403 for clients. NOTE: prod build over http shows the documented
-  secure-cookie artefact (all API 401 in-browser) — visual checks must use
-  the dev server (r229 note holds).
-- Bug fixed 1 (security, follows from r359's opening): the client LR tab was
-  reading the FIRM-WIDE team board — GET /land-registry/searches,
-  /searches/recent (staff acquisition research: notes, statuses like
-  "Contacted Owner"/"Acquired", ownership intel, staff names+emails) and
-  GET /purchases (paid-title ledger incl. proprietor extracts + document
-  URLs) had no client scoping under the pre-existing "/api/land-registry"
-  read-allowlist entry. Now: scoped clients get own-searches only on all
-  three search GETs (+ /property-searches/:id), and an empty purchases
-  ledger; staff keep the shared board (probe-verified both sides, visually
-  verified staff row invisible to Mark).
-- Bug fixed 2 (r359's deferred): Recent Searches card showed "Invalid Date"
-  and no count badges — searches/recent returned snake_case; now aliased
-  camelCase (+ ownership col the card renders). Verified visually: date
-  "21 Aug 2026" + "3 freeholds" badge render.
-- Harness growth: client-pi-lookup-open now seeds a staff LR search and
-  asserts the client can't see it, ledger returns empty, and recent rows
-  carry createdAt; run-round.sh purges QA-LR-SCOPE rows.
-- Bugs deferred: none. Suggestions added: UX #82 (client Recent Searches
-  cards expose status dropdown + link button whose PATCHes 403 for clients).
-  New flakes: none. tsc clean.
-- Next journey: r360 was LIGHT (verification browser work only) → r361 FULL,
-  rotation #3 client mobile 390px (staff mobile #4 after).
+  Two-bot round 362: exit 0, all 201 scenario steps ok, 3 issues all listed
+  noise (rocketreach-400, live-intel 503, commentary-regen 503 —
+  qa/logs/round-362.jsonl). Dev-server sweep: 0 raw 500/502/504 (lone
+  " 500 " = "500 articles" news echo). tsc clean on the merged tree.
+- Journey: Mark Warne @390px iPhone UA — "on the train to a Bluewater site
+  visit": dashboard → PI hub (quick-pick chip seeds map, KPIs/Ownership/
+  Planning render; LR tab prefilled Bluewater DA9 9ST, no Invalid Date;
+  Business Rates tab) → Letting Tracker /available (search recounts
+  "151 of 153", status chips wrap, unit cards actionable) → Brand
+  Intelligence + Amorino profile (chat, key contacts) → ChatBGP home.
+  0 new bugs, 0 h-overflow, 0 pageerrors; only known UX #81 pathway 403.
+- HARNESS LEARNING: a 390px Playwright context WITHOUT an iPhone UA gets
+  the DESKTOP layout (use-mobile isTouchDevice() rejects Linux desktop
+  UAs) — pinned-sidebar-at-390px is an artifact, not a bug. Always set the
+  iPhone UA like two-bot does.
+- Wrong-turn notes (app behaved correctly): /leasing-schedule shows the
+  intentional ARCHIVED banner (live tracker is /available); /chat is not a
+  route (ChatBGP is /chatbgp) and the client guard bounces bad URLs home.
+- Bugs fixed: none found. Bugs deferred: none. Suggestions added: UX #83
+  (mobile PI map: Google zoom control half-hidden under bottom nav, Resolve
+  button touches right edge — pad map container on mobile). New flakes: none.
+- Next journey: r361 was FULL → r362 LIGHT; then rotation #4 staff mobile
+  390px.
 
 ### r359 · 2026-08-21 · FULL (rotation #2 Landsec client desktop) — FINAL (closed by r360)
 - Container reclaimed after the 13:09 UTC fix push; r360 verified everything
