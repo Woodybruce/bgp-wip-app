@@ -6,6 +6,7 @@ import { landRegistrySearches } from "@shared/schema";
 import { desc, eq, sql } from "drizzle-orm";
 import pLimit from "p-limit";
 import { findProprietorsByAddress, findFreeholdsByPostcode, isHmlrProprietorsAvailable, lastIngestRun, type HmlrProprietor } from "./hmlr-direct";
+import { resolveCompanyScope } from "./company-scope";
 import { isOsConfigured } from "./os-data";
 
 /**
@@ -1206,8 +1207,12 @@ export function registerLandRegistryRoutes(app: Express) {
 
   // List previously-purchased titles so the Land Registry board can badge rows
   // the firm already owns a copy of.
-  app.get("/api/land-registry/purchases", requireAuth, async (_req: any, res) => {
+  app.get("/api/land-registry/purchases", requireAuth, async (req: any, res) => {
     try {
+      // The purchase ledger (paid documents + proprietor extracts) is
+      // staff-only; client logins get an empty list so the board renders
+      // without badges instead of 403-noise.
+      if (await resolveCompanyScope(req)) return res.json([]);
       const rows = await pool.query(
         `SELECT title_number AS "titleNumber", documents, register_url AS "registerUrl", plan_url AS "planUrl",
                 proprietor_data AS "proprietorData", created_at AS "purchasedAt"
@@ -1589,11 +1594,16 @@ Respond with ONLY a JSON object (no markdown, no backticks):
 
   app.get("/api/land-registry/searches", requireAuth, async (req: any, res) => {
     try {
-      // Land Registry is a shared team board — every user sees every search
-      // (regardless of who ran it) so the team can collaborate on the same
-      // research without duplicating work. Each row keeps its userId so the
-      // UI can show "searched by X" if useful.
+      // Land Registry is a shared team board for STAFF — every staff user
+      // sees every search (regardless of who ran it) so the team can
+      // collaborate on the same research without duplicating work. Client
+      // logins only see their OWN searches: the firm-wide board carries
+      // acquisition research (notes, statuses, ownership intel) that must
+      // not leak to a client account.
+      const scoped = await resolveCompanyScope(req);
+      const userId = req.session?.userId || req.tokenUserId;
       const rows = await db.select().from(landRegistrySearches)
+        .where(scoped ? eq(landRegistrySearches.userId, userId) : undefined)
         .orderBy(desc(landRegistrySearches.createdAt))
         .limit(200);
       res.json(rows);
@@ -1674,8 +1684,14 @@ Respond with ONLY a JSON object (no markdown, no backticks):
   app.get("/api/land-registry/property-searches/:crmPropertyId", requireAuth, async (req: any, res) => {
     try {
       const { crmPropertyId } = req.params;
+      // Same client rule as GET /searches: staff see the team's searches on
+      // a property, client logins only their own.
+      const scoped = await resolveCompanyScope(req);
+      const callerId = req.session?.userId || req.tokenUserId;
       const rows = await db.select().from(landRegistrySearches)
-        .where(eq(landRegistrySearches.crmPropertyId, crmPropertyId))
+        .where(scoped
+          ? sql`${landRegistrySearches.crmPropertyId} = ${crmPropertyId} AND ${landRegistrySearches.userId} = ${callerId}`
+          : eq(landRegistrySearches.crmPropertyId, crmPropertyId))
         .orderBy(desc(landRegistrySearches.createdAt));
       res.json(rows);
     } catch (e: any) {
@@ -1746,18 +1762,26 @@ Respond with ONLY a JSON object (no markdown, no backticks):
   // team board can show "searched by X". Shared across all users.
   app.get("/api/land-registry/searches/recent", requireAuth, async (req: any, res) => {
     try {
+      // Same client rule as GET /searches: staff see the shared team board,
+      // client logins only their own searches (staff names/notes/research
+      // must not leak). camelCase aliases match what the Recent Searches
+      // card reads (s.createdAt, s.freeholdsCount…) — the raw snake_case
+      // rows rendered "Invalid Date" and hid the count badges.
+      const scoped = await resolveCompanyScope(req);
+      const callerId = req.session?.userId || req.tokenUserId;
       const rows = await db.execute(sql`
         SELECT
           lrs.id,
           lrs.address,
           lrs.postcode,
-          lrs.freeholds_count,
-          lrs.leaseholds_count,
+          lrs.freeholds_count AS "freeholdsCount",
+          lrs.leaseholds_count AS "leaseholdsCount",
           lrs.status,
           lrs.notes,
-          lrs.crm_property_id,
-          lrs.created_at,
-          lrs.user_id,
+          lrs.ownership,
+          lrs.crm_property_id AS "crmPropertyId",
+          lrs.created_at AS "createdAt",
+          lrs.user_id AS "userId",
           u.name AS searched_by_name,
           u.email AS searched_by_email,
           (
@@ -1778,6 +1802,7 @@ Respond with ONLY a JSON object (no markdown, no backticks):
           ) AS linked_property
         FROM land_registry_searches lrs
         LEFT JOIN users u ON u.id = lrs.user_id
+        WHERE ${scoped ? sql`lrs.user_id = ${callerId}` : sql`TRUE`}
         ORDER BY lrs.created_at DESC
         LIMIT 100
       `);

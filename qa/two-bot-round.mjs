@@ -2929,6 +2929,24 @@ async function markRound(page, cross) {
     if (r.resolve === 403) throw new Error('client land-registry resolve 403d — LR tab search dead-ends for clients again');
     if (r.purchase !== 403) throw new Error(`client reached the PAID purchase-title endpoint (expected 403, got ${r.purchase})`);
     if (r.patchSearch !== 403) throw new Error(`client patched a land-registry search (expected 403, got ${r.patchSearch})`);
+    // Own-searches scoping (r360): staff LR research and the paid-title
+    // ledger must never surface for a client login.
+    const staffLogin = await (await fetch(`${BASE}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: AGENT_USER, password: PASSWORD }) })).json();
+    await fetch(`${BASE}/api/land-registry/searches`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${staffLogin.token}` }, body: JSON.stringify({ address: 'QA-LR-SCOPE staff research probe', postcode: 'ZZ1 1ZZ' }) });
+    const scope = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = await (await fetch('/api/land-registry/searches', { headers: auth })).json();
+      const recent = await (await fetch('/api/land-registry/searches/recent', { headers: auth })).json();
+      const ledger = await (await fetch('/api/land-registry/purchases', { headers: auth })).json();
+      return {
+        leak: [].concat(list, recent).some((s) => (s.address || '').includes('QA-LR-SCOPE')),
+        ledgerRows: Array.isArray(ledger) ? ledger.length : -1,
+        badDate: (Array.isArray(recent) ? recent : []).some((s) => !s.createdAt),
+      };
+    });
+    if (scope.leak) throw new Error('client can read STAFF land-registry research (own-searches scoping broken)');
+    if (scope.ledgerRows !== 0) throw new Error(`client purchase ledger not empty (got ${scope.ledgerRows})`);
+    if (scope.badDate) throw new Error('searches/recent row missing createdAt (Invalid Date regression)');
   });
 
   // Covenant reads are open to clients for THEIR OWN visible brands only

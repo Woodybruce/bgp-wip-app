@@ -16,6 +16,14 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+82. 2026-08-21 · Landsec client / desktop 1440px (QA r360) · "review my
+    saved Land Registry searches" · The Recent Searches cards show a status
+    dropdown (New/Investigating/…) and a link-to-property button, but both
+    write via PATCH /api/land-registry/searches/* which is staff-only — a
+    client picking a status just gets a silent 403. Suggest rendering the
+    status as a plain badge and hiding the link button for client logins
+    (the statuses are acquisition-pipeline labels aimed at staff anyway).
+
 81. 2026-08-21 · Landsec client / desktop 1440px (QA r359) · "look up my
     property on the Property Intelligence map" · The intelligence panel's
     header strip offers a "No Pathway run yet — Run Pathway" button, but
