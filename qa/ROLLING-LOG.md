@@ -73,6 +73,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r358 · 2026-08-21 · LIGHT (r357 was FULL) — IN PROGRESS
+- Fresh container (pg_hba trust, bgp role + restore + owner transfer + schema
+  grant per r249). JOGQK merge: already up to date. Regression: run-smoke.sh
+  GREEN (42 checks, 0 failures, FRESH_BUILD=1). Two-bot round 359 in
+  progress — issues so far all listed noise (rocketreach-400, live-intel 503).
+- Triage list so far: none beyond noise. Deferred from r357: none.
+
 ### r357 · 2026-08-21 · FULL (rotation #1 staff desktop)
 - Fresh container (pg_hba trust, bgp role + restore + owner transfer per
   r249). JOGQK merge: already up to date. Regression: run-smoke.sh GREEN ×2
