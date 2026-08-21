@@ -73,6 +73,20 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r359 · 2026-08-21 · FULL (rotation #2 Landsec client desktop) — IN PROGRESS
+- Provisional heartbeat ~13:05 UTC. Fresh container (pg_hba trust, bgp role +
+  restore per r249). JOGQK merge: brought in 5977e99 (profile-photo card).
+  Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
+  Two-bot: queued next.
+- Journey (Mark Warne @ 1440px, UX 65-73 verification) first pass done:
+  #69 quick-pick bar renders + Land Registry prefill OK; #72 Teams/Agents
+  filters hidden OK; #68 recount "6 of 153 units" OK; #65 deal header
+  "BGP contact: Test Staff" mailto OK. TRIAGE: client PI Map panel renders
+  EMPTY — /api/property-lookup and /api/address-search 403 for clients
+  (not in CLIENT_ALLOWED_API; token-verified). Fix in progress. #71
+  Log-interest dialog not yet reached (journey clicked the KPI chip, not
+  the unit action) — re-probe queued.
+
 ### r358 · 2026-08-21 · LIGHT (r357 was FULL)
 - Fresh container (pg_hba trust, bgp role + restore + owner transfer + schema
   grant per r249). JOGQK merge: already up to date. Regression: run-smoke.sh
