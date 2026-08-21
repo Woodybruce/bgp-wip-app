@@ -73,13 +73,39 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r357 · 2026-08-21 · ROUND IN PROGRESS (provisional)
-- FULL round (r356 was LIGHT), rotation #1 staff desktop. Fresh container
-  (pg_hba trust, bgp role + restore + owner transfer per r249). JOGQK merge:
-  already up to date.
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
-  Two-bot round 358 in progress; journey (Victoria desktop 1440px — tenancy
-  schedule / brand profile / comps / KYC Clouseau / Image Studio) pending.
+### r357 · 2026-08-21 · FULL (rotation #1 staff desktop)
+- Fresh container (pg_hba trust, bgp role + restore + owner transfer per
+  r249). JOGQK merge: already up to date. Regression: run-smoke.sh GREEN ×2
+  (42 checks, 0 failures, FRESH_BUILD=1 before and after the fix). Two-bot
+  round 358: exit 0, all 200 scenario steps ok, 3 issues all listed noise
+  (rocketreach-400, live-intel 503, commentary-regen 503 —
+  qa/logs/round-358.jsonl). Dev-server sweep: 0 raw 500/502/504; 403s =
+  guard probes; 404s = hr-photo/sharepoint-root noise.
+- Journey: Victoria @ 1440px — "prep for the Landsec review meeting":
+  dashboard → Bluewater property (tenancy section, data-linkage widget) →
+  full /tenancy-schedule/:id (201 rows clean) → Honi Poke brand profile
+  (compliance panel present) → comps → /kyc-clouseau board → Image Studio
+  (albums + open album) → tasks. 0 dead routes, 0 h-overflow, 0 pageerrors,
+  0 non-noise 4xx/5xx. QA-R358 probe deal/comp/unit visible = inter-round
+  artefacts, purged next round as usual.
+- Bug fixed 1: Wikipedia brand-image source imported photos from a
+  completely unrelated article when the brand has no Wikipedia page —
+  srsearch fuzzy-match turned "Honi Poke" into wrestler AJ Ferrari's bio
+  and his headshot became the brand profile hero (round 358's two-bot run
+  imported it live). findWikipediaImages (server/brand-images.ts) now
+  rejects the article unless its normalised title overlaps the brand name.
+  tsc clean, guard unit-checked (Apple→Apple Inc. / Pret→Pret a Manger
+  still accept), bad row deleted, profile re-verified visually — clean
+  fallback, no re-import on profile load. Harness growth: none (fix
+  depends on live Wikipedia responses — not cheaply assertable).
+- False alarms triaged, not bugs: property-page Tenancy Schedule section
+  starts OPEN — probe clicks were collapsing it (journey scripts: don't
+  click toggle-schedule expecting to expand); Image Studio "Uncategorised
+  2 photos" vs sidebar count 1 is albums-vs-categories grouping; blank grey
+  album tile is the QA probe photo's literal content (tiny grey jpg).
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: rotation #2 Landsec client desktop (r357 was FULL → r358
+  LIGHT first; then #2).
 
 ### r356 · 2026-08-21 · LIGHT (r355 was FULL) — finished by replacement session
 - Original container died after its heartbeat; replacement session re-ran the
