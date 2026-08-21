@@ -73,12 +73,22 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r358 · 2026-08-21 · LIGHT (r357 was FULL) — IN PROGRESS
+### r358 · 2026-08-21 · LIGHT (r357 was FULL)
 - Fresh container (pg_hba trust, bgp role + restore + owner transfer + schema
   grant per r249). JOGQK merge: already up to date. Regression: run-smoke.sh
-  GREEN (42 checks, 0 failures, FRESH_BUILD=1). Two-bot round 359 in
-  progress — issues so far all listed noise (rocketreach-400, live-intel 503).
-- Triage list so far: none beyond noise. Deferred from r357: none.
+  GREEN (42 checks, 0 failures, FRESH_BUILD=1). Two-bot round 359: exit 0,
+  all scenarios ok, 3 issues all listed noise (rocketreach-400, live-intel
+  503, commentary-regen 503 — qa/logs/round-359.jsonl). Dev-server sweep:
+  0 raw 500/502/504 across ~4,000 requests; 186×403 = spread guard probes;
+  404s = hr-photo/sharepoint-root noise + image-studio purged-probe artefact
+  (r354) + one requirements-leasing probe fetch; 3×400 = rocketreach noise +
+  deliberate bogus-verdict and bulk-assign-scope probes.
+- Bugs fixed: 0 (nothing broken found). Deferred: none (r357 deferred none).
+  Suggestions added: none. New flakes: none.
+- Next journey: rotation #2 Landsec client desktop (r358 was LIGHT → r359
+  FULL) — good target: UX 65-73 batch still browser-UNVERIFIED client-side
+  (PI "My properties" quick-pick, Log-interest form on tracker, clickable
+  BGP contact on client deals, client tracker filter trims).
 
 ### r357 · 2026-08-21 · FULL (rotation #1 staff desktop)
 - Fresh container (pg_hba trust, bgp role + restore + owner transfer per
