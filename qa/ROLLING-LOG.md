@@ -73,20 +73,44 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r360 · 2026-08-21 · IN PROGRESS (r359 finisher + LIGHT round)
-- Provisional heartbeat ~14:05 UTC. r359's container died mid-run; this round
-  verifies its pushed fix first. Regression on r359's code as pushed:
-  run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
-- r359 fix code-reviewed: gateway additions themselves are tight (exact-match
-  POSTs; purchase-title/propertydata/backfill/PATCHes still blocked). BUT the
-  pre-existing "/api/land-registry" READ allowlist entry + the now-working
-  client LR tab expose firm-wide GETs with no scoping: /searches +
-  /searches/recent (staff acquisition research: notes, statuses, ownership
-  intel, staff names+emails) and /purchases (paid-title ledger incl.
-  proprietor extracts + document URLs). Fixing as this round's #1 bug:
-  own-searches scoping for scoped clients, empty ledger for clients. Also
-  picking up r359's deferred Invalid-Date bug (searches/recent snake_case).
-  Token probes + visual verification queued.
+### r360 · 2026-08-21 · LIGHT (r359 finisher; r359 was FULL)
+- r359's container died mid-run; this round verified its pushed fix, then ran
+  LIGHT. JOGQK merge: already in staging. Regression: run-smoke.sh GREEN ×2
+  (42 checks, 0 failures — FRESH_BUILD=1 on r359's code as pushed, again on
+  this round's fixes). Two-bot round 361: exit 0, all 201 scenario steps ok
+  (incl. client-pi-lookup-open with this round's new scoping asserts), 3
+  issues all listed noise (rocketreach-400, live-intel 503, commentary-regen
+  503 — qa/logs/round-361.jsonl). Dev-server sweep: 0 raw 500/502/504 (lone
+  " 500 " = "500 articles" news echo).
+- r359 fix VERIFIED good as pushed: 16-probe matrix + browser (Mark @1440px,
+  real form login, dev server) — PI Map panel populates (Titles/Rates/
+  Planning KPIs, Ownership, Planning Designations), LR tab search resolves
+  DA9 9ST, purchase-title/propertydata/backfill/searches-PATCHes all still
+  403 for clients. NOTE: prod build over http shows the documented
+  secure-cookie artefact (all API 401 in-browser) — visual checks must use
+  the dev server (r229 note holds).
+- Bug fixed 1 (security, follows from r359's opening): the client LR tab was
+  reading the FIRM-WIDE team board — GET /land-registry/searches,
+  /searches/recent (staff acquisition research: notes, statuses like
+  "Contacted Owner"/"Acquired", ownership intel, staff names+emails) and
+  GET /purchases (paid-title ledger incl. proprietor extracts + document
+  URLs) had no client scoping under the pre-existing "/api/land-registry"
+  read-allowlist entry. Now: scoped clients get own-searches only on all
+  three search GETs (+ /property-searches/:id), and an empty purchases
+  ledger; staff keep the shared board (probe-verified both sides, visually
+  verified staff row invisible to Mark).
+- Bug fixed 2 (r359's deferred): Recent Searches card showed "Invalid Date"
+  and no count badges — searches/recent returned snake_case; now aliased
+  camelCase (+ ownership col the card renders). Verified visually: date
+  "21 Aug 2026" + "3 freeholds" badge render.
+- Harness growth: client-pi-lookup-open now seeds a staff LR search and
+  asserts the client can't see it, ledger returns empty, and recent rows
+  carry createdAt; run-round.sh purges QA-LR-SCOPE rows.
+- Bugs deferred: none. Suggestions added: UX #82 (client Recent Searches
+  cards expose status dropdown + link button whose PATCHes 403 for clients).
+  New flakes: none. tsc clean.
+- Next journey: r360 was LIGHT (verification browser work only) → r361 FULL,
+  rotation #3 client mobile 390px (staff mobile #4 after).
 
 ### r359 · 2026-08-21 · FULL (rotation #2 Landsec client desktop) — FINAL (closed by r360)
 - Container reclaimed after the 13:09 UTC fix push; r360 verified everything
