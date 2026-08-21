@@ -73,6 +73,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r361 · 2026-08-21 · FULL (rotation #3 Landsec client mobile 390px) — IN PROGRESS
+- Provisional heartbeat. JOGQK merge: brought in Brent Cross evidence-map
+  demo route (server/assets/demos + server/index.ts). Regression:
+  run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1 post-merge).
+- Journey pass 1 (Mark @390px, PI hub + tracker) ran clean except known
+  UX #81 pathway/latest 403. NOTE (harness): a 390px context WITHOUT an
+  iPhone UA gets the DESKTOP layout (use-mobile isTouchDevice rejects
+  Linux UAs) — pinned sidebar at 390px is an artifact, not a bug; re-running
+  journey with the iPhone UA like two-bot does. Triage list: none yet.
+
 ### r360 · 2026-08-21 · LIGHT (r359 finisher; r359 was FULL)
 - r359's container died mid-run; this round verified its pushed fix, then ran
   LIGHT. JOGQK merge: already in staging. Regression: run-smoke.sh GREEN ×2
