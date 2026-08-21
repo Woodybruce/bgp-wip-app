@@ -73,10 +73,23 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r356 · 2026-08-21 · ROUND IN PROGRESS (provisional)
-- LIGHT round (r355 was FULL). JOGQK merge: already up to date. Regression:
-  run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1). Two-bot round
-  357 running; triage to follow.
+### r356 · 2026-08-21 · LIGHT (r355 was FULL) — finished by replacement session
+- Original container died after its heartbeat; replacement session re-ran the
+  round from scratch 06:30-06:50 UTC. Fresh container (pg_hba trust, bgp role
+  + restore + schema grant per r249). JOGQK merge: already up to date.
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
+  Two-bot round 357: exit 0, all scenarios ok (incl. r355's
+  staff-deal-mobile-action-row AML-copy assert and r353's
+  client-mobile-chat-error-prompt — no recurrences), 3 issues all listed
+  noise (rocketreach-400, live-intel 503, commentary-regen 503 —
+  qa/logs/round-357.jsonl). Dev-server sweep: 0 raw 500/502/504; 186×403 =
+  spread guard probes; 404s = hr-photo/sharepoint-root noise + image-studio
+  purged-probe artefact (r354) + one requirements-leasing probe fetch; the
+  3×400 = rocketreach noise + deliberate bogus-verdict and bulk-assign-scope
+  probes. r355's QA-R356 probe deal purged by run-round.sh as expected.
+- Bugs fixed: 0 (nothing broken found). Deferred: none. Suggestions added:
+  none. New flakes: none.
+- Next journey: rotation #1 staff desktop (r356 was LIGHT → r357 FULL).
 
 ### r355 · 2026-08-21 · FULL (rotation #4 staff mobile 390px)
 - Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
