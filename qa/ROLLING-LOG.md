@@ -73,6 +73,11 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r356 · 2026-08-21 · ROUND IN PROGRESS (provisional)
+- LIGHT round (r355 was FULL). JOGQK merge: already up to date. Regression:
+  run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1). Two-bot round
+  357 running; triage to follow.
+
 ### r355 · 2026-08-21 · FULL (rotation #4 staff mobile 390px)
 - Fresh container (pg_hba trust, bgp role + restore + schema grant per r249).
   JOGQK merge: already up to date. Regression: run-smoke.sh GREEN ×2 (42
