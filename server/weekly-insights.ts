@@ -21,14 +21,21 @@ const RUN_HOUR = 14; // server clock (≈15:00 UK in summer)
 // document_design_preferences under scope 'bgp_insights'; from then on the
 // team evolves the look by adding rows (same pattern as Why Buy decks).
 const HOUSE_STYLE_SEED: Array<{ preference: string; category: string }> = [
-  { preference: "Use the BGP brand palette throughout: deep green #2E5E3F and dark green #1A3A28 as the primary colours, warm gold as the single accent, off-white page grounds. Never teal, orange or navy.", category: "branding" },
+  { preference: "Use the 2026 BGP rebrand palette (BGP Rebrand v18): Bordeaux #6E0C25 as the signature colour for headlines, stat blocks and emphasis; Nectar #FC9F8D as the single warm accent, used sparingly; Stone #C2BAA3 / stone-tinted off-white grounds for panels and backgrounds. Never green, teal, orange or navy.", category: "branding" },
   { preference: "Put the Bruce Gillingham Pollard wordmark at the top of page 1 and small in every footer — the wordmark, not the name typed out in tracked capitals.", category: "branding" },
-  { preference: "Serif headlines (Georgia-style, as the Why Buy decks use) with clean sans body text; generous margins; consistent light pages — no alternating dark/light page schemes.", category: "typography" },
+  { preference: "Serif headlines with clean sans body text; generous margins; consistent light pages — no alternating dark/light page schemes.", category: "typography" },
   { preference: "Keep the strong information design of edition one: the six-stat strip up front, status pills on deal tables, the horizontal bar chart for scheme deep-dives, and the closing watch list.", category: "layout" },
 ];
 
 async function ensureHouseStyle(): Promise<void> {
   try {
+    // Retire the short-lived green rows (Woody, 2026-08-21: green isn't a
+    // BGP colour — the live rebrand is Bordeaux/Nectar/Stone).
+    await pool.query(
+      `UPDATE document_design_preferences SET enabled = false, disabled_at = now()
+        WHERE scope = 'bgp_insights' AND enabled = true
+          AND (preference ILIKE '%#2E5E3F%' OR preference ILIKE '%Georgia-style%')`
+    );
     for (const p of HOUSE_STYLE_SEED) {
       await pool.query(
         `INSERT INTO document_design_preferences (scope, preference, category, notes)
