@@ -13311,6 +13311,16 @@ export function setupChatBGPRoutes(app: Express) {
                 type: "image_url",
                 image_url: { url: `data:${normalised.mimeType};base64,${base64}`, detail: "auto" },
               });
+              // Tell the agent WHERE the stored binary lives. Documents get
+              // this hint below; images didn't — so the model could SEE a
+              // photo yet had no filename to hand to the image/SharePoint
+              // tools and reported it "missing from the chat-media store"
+              // (Woody's signature photo, 2026-08-21).
+              documentTexts.push(
+                `=== IMAGE ATTACHED: ${file.originalname} ===\n` +
+                `chat-media filename: ${chatMediaName}\n` +
+                `The image itself is in this message for you to look at. The stored file is at /api/chat-media/${chatMediaName} — use that filename with edit_image / save_to_image_studio / upload_to_sharepoint or any tool that needs the underlying file.`
+              );
             } catch (err: any) {
               console.error(`Chat image read error (${file.originalname}):`, err?.message);
             }
@@ -14453,6 +14463,23 @@ export function setupChatBGPRoutes(app: Express) {
       let saved = false;
       if (verifiedThreadId && data.reply && !data.error) {
         try {
+          // Never save the same assistant reply twice in a row — a stale
+          // retry / queued re-send after a timeout regenerated an earlier
+          // answer verbatim and the thread showed it twice (Woody's
+          // signature hunt, 2026-08-21). Identical consecutive assistant
+          // content is never intentional; drop the save and the push.
+          try {
+            const last = await pool.query(
+              `SELECT role, content FROM chat_messages WHERE thread_id = $1 ORDER BY created_at DESC LIMIT 1`,
+              [verifiedThreadId]
+            );
+            if (last.rows[0]?.role === "assistant" && last.rows[0]?.content === data.reply) {
+              console.warn(`[ChatBGP] Skipped duplicate assistant reply to thread ${verifiedThreadId}`);
+              if (!safeSseWrite(`data: ${JSON.stringify({ ...data, savedToThread: false, duplicate: true })}\n\n`)) return;
+              try { res.end(); } catch {}
+              return;
+            }
+          } catch {}
           await storage.createChatMessage({
             threadId: verifiedThreadId,
             role: "assistant",
