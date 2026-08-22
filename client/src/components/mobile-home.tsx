@@ -210,9 +210,10 @@ export default function MobileHome() {
     staleTime: 5 * 60 * 1000,
   });
   // Personal (my billing) vs Company (equity finance) tab on the combined
-  // finance tile — last choice sticks per device.
+  // finance tile — Company is the default (Woody, 2026-08-22), an explicit
+  // switch to Personal sticks per device.
   const [finTab, setFinTab] = useState<"personal" | "company">(() => {
-    try { return localStorage.getItem("mobile-fin-tab") === "company" ? "company" : "personal"; } catch { return "personal"; }
+    try { return localStorage.getItem("mobile-fin-tab") === "personal" ? "personal" : "company"; } catch { return "company"; }
   });
   const pickFinTab = (t: "personal" | "company") => {
     setFinTab(t);
@@ -387,17 +388,17 @@ export default function MobileHome() {
           <div className="rounded-2xl bg-[#1C1917] text-white shadow-sm px-4 py-3.5" data-testid="mobile-home-finance">
             <div className="flex items-center gap-2 mb-2.5">
               {showTabs ? (
-                <div className="flex rounded-full bg-white/10 p-0.5">
+                <div className="flex rounded-full bg-white/10 p-px">
                   <button
                     onClick={() => pickFinTab("personal")}
-                    className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-colors ${tab === "personal" ? "bg-white text-[#1C1917]" : "text-white/70"}`}
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide transition-colors ${tab === "personal" ? "bg-white/90 text-[#1C1917]" : "text-white/60"}`}
                     data-testid="fin-tab-personal"
                   >
                     Personal
                   </button>
                   <button
                     onClick={() => pickFinTab("company")}
-                    className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-colors ${tab === "company" ? "bg-white text-[#1C1917]" : "text-white/70"}`}
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide transition-colors ${tab === "company" ? "bg-white/90 text-[#1C1917]" : "text-white/60"}`}
                     data-testid="fin-tab-company"
                   >
                     Company
