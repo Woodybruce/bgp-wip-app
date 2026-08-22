@@ -1,15 +1,15 @@
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { LayoutDashboard, MessageCircle, Sparkles, BarChart3, Newspaper, CheckSquare } from "lucide-react";
+import { LayoutDashboard, MessageCircle, BarChart3, Newspaper, CheckSquare } from "lucide-react";
 import { useKeyboardOpen } from "@/hooks/use-mobile";
 
-// ChatBGP replaced Mail in the tab bar (Woody, 2026-08-18) — the sparkle
-// always starts a FRESH AI chat; Mail lives on via the Dashboard tile at
-// /mail. The tile dashboard stays at "/", the unified chat list at /messages.
+// ChatBGP tab REMOVED (Woody, 2026-08-22: "it's the same thing as
+// Messages") — supersedes the 2026-08-18 decision that put it there.
+// ChatBGP is still one tap away: the pinned row at the top of Messages,
+// and the "Ask ChatBGP" button on the Dashboard home.
 const NAV_ITEMS = [
   { label: "Dashboard", icon: LayoutDashboard, path: "/" },
   { label: "Messages", icon: MessageCircle, path: "/messages" },
-  { label: "ChatBGP", icon: Sparkles, path: "/chatbgp" },
   { label: "Deals", icon: BarChart3, path: "/deals" },
   { label: "News", icon: Newspaper, path: "/news" },
 ] as const;
@@ -60,19 +60,7 @@ export function MobileBottomNav() {
           return (
             <button
               key={item.label}
-              onClick={() => {
-                if (item.path === "/chatbgp") {
-                  // The sparkle always means "new chat": clear the restored-
-                  // thread marker (fresh mount) and tell an already-mounted
-                  // chat screen to reset to the greeting.
-                  try {
-                    sessionStorage.removeItem("mobile-chat-thread");
-                    sessionStorage.removeItem("mobile-chat-thread-ai");
-                  } catch {}
-                  window.dispatchEvent(new Event("chatbgp-new-chat"));
-                }
-                navigate(item.path);
-              }}
+              onClick={() => navigate(item.path)}
               className={`flex flex-col items-center justify-center gap-0.5 min-w-[56px] min-h-[44px] px-2 py-1.5 rounded-lg transition-colors ${
                 active ? "text-foreground" : "text-muted-foreground"
               }`}

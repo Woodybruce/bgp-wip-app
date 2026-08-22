@@ -9,6 +9,7 @@ import {
   Receipt, Image as ImageIcon, Building2, Store, ClipboardList, Newspaper, Users, Mail,
 } from "lucide-react";
 import { legacyToCode } from "@shared/deal-status";
+import { isEquityUser } from "@/lib/utils";
 
 type BriefingData = { briefing: string; generatedAt: string };
 
@@ -199,6 +200,14 @@ export default function MobileHome() {
   // Client logins (e.g. Landsec): no Expenses tile, and skip the BGP
   // commission/WIP queries entirely — they're staff-only and would 403.
   const isClientHome = user?.role === "Client" || !!(user as any)?.companyScopeId;
+  // Equity directors (Woody, Jack, Rupert, Charlotte) get the company
+  // finance tile — server-gated API, so the query only runs for them.
+  const isEquity = isEquityUser(user) && !isClientHome;
+  const { data: equityFin } = useQuery<any>({
+    queryKey: ["/api/xero/financials"],
+    enabled: isEquity,
+    staleTime: 5 * 60 * 1000,
+  });
   // Only real client logins get the portfolio home. Staff keep the full
   // staff home (Expenses, billing, boards) even with the Landsec team
   // selected — the team switcher scopes data, not the phone shell
@@ -393,6 +402,51 @@ export default function MobileHome() {
               </div>
             </div>
           )}
+        </Link>
+      )}
+
+      {/* Equity finance — the firm's position, equity directors only. Taps
+          through to the full Finance page. */}
+      {isEquity && equityFin && !equityFin.notConnected && !equityFin.needsReconnect && (
+        <Link
+          href="/finance"
+          className="block rounded-2xl bg-[#1C1917] text-white shadow-sm active:opacity-90 px-4 py-3.5"
+          data-testid="mobile-home-equity-finance"
+        >
+          <div className="flex items-center gap-2 mb-2.5">
+            <BarChart3 className="w-4 h-4 opacity-80" />
+            <span className="text-xs font-semibold uppercase tracking-wider opacity-80">Equity finance</span>
+            <ChevronRight className="w-4 h-4 ml-auto opacity-60" />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <p className="text-lg font-bold tabular-nums leading-tight">£{Math.round(equityFin.headline?.income || 0).toLocaleString("en-GB")}</p>
+              <p className="text-[10px] opacity-70">Income FYTD</p>
+            </div>
+            <div>
+              <p className={`text-lg font-bold tabular-nums leading-tight ${(equityFin.headline?.netProfit || 0) < 0 ? "text-red-400" : "text-emerald-400"}`}>
+                £{Math.round(equityFin.headline?.netProfit || 0).toLocaleString("en-GB")}
+              </p>
+              <p className="text-[10px] opacity-70">Net FYTD</p>
+            </div>
+            <div>
+              <p className="text-lg font-bold tabular-nums leading-tight">£{Math.round(equityFin.cashTotal || 0).toLocaleString("en-GB")}</p>
+              <p className="text-[10px] opacity-70">Cash at bank</p>
+            </div>
+            {equityFin.projection?.projectedNet != null ? (
+              <div>
+                <p className={`text-lg font-bold tabular-nums leading-tight ${equityFin.projection.projectedNet < 0 ? "text-red-400" : "text-emerald-400"}`}>
+                  £{Math.round(equityFin.projection.projectedNet).toLocaleString("en-GB")}
+                </p>
+                <p className="text-[10px] opacity-70">Projected FY net</p>
+              </div>
+            ) : (
+              <div>
+                <p className="text-lg font-bold tabular-nums leading-tight">£{Math.round(equityFin.debtors?.outstanding || 0).toLocaleString("en-GB")}</p>
+                <p className="text-[10px] opacity-70">Debtors</p>
+              </div>
+            )}
+          </div>
         </Link>
       )}
 
