@@ -1261,6 +1261,23 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   // Keyboard up → the fixed bottom nav hides itself, so drop the padding
   // that clears it or the composer floats above a dead band (Woody, 2026-08-22).
   const keyboardOpen = useKeyboardOpen();
+  // iOS scrolls the layout viewport when the keyboard opens, dragging the
+  // fixed shell up so the header slides under the status bar and message
+  // text collides with the clock (Woody's screenshot, 2026-08-22). Snap the
+  // window back to the top whenever that happens while the keyboard is up.
+  useEffect(() => {
+    if (!keyboardOpen) return;
+    const snap = () => {
+      if (window.scrollY !== 0) window.scrollTo(0, 0);
+    };
+    snap();
+    window.visualViewport?.addEventListener("scroll", snap);
+    window.addEventListener("scroll", snap, { passive: true });
+    return () => {
+      window.visualViewport?.removeEventListener("scroll", snap);
+      window.removeEventListener("scroll", snap);
+    };
+  }, [keyboardOpen]);
 
   const { data: activeThread } = useQuery<ThreadData>({
     queryKey: ["/api/chat/threads", threadId],
