@@ -79,6 +79,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useTeam, TEAMS } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
+import { isEquityUser } from "@/lib/utils";
 import type { User } from "@shared/schema";
 import { useRecentItems, type RecentItem } from "@/hooks/use-recent-items";
 import { History, ClipboardCheck } from "lucide-react";
@@ -347,7 +348,7 @@ export function AppSidebar() {
   const isViewingAsClient = !isRealClientLogin && !!(user as any)?.companyScopeId;
   const viewingAsName = (user as any)?.companyScopeName || activeTeam;
   const CLIENT_HIDDEN_URLS = ["/hr", "/my-expenses", "/team-expenses", "/reporting", "/wip-report"];
-  const coreNav = isClientUser
+  const coreNavStaff = isClientUser
     ? [
         ...coreWithTeamExpenses.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url)),
         // Clients get the read-only brand-signals feed (UX #35) — News
@@ -355,6 +356,12 @@ export function AppSidebar() {
         { title: "News", url: "/news", icon: Newspaper },
       ]
     : coreWithTeamExpenses;
+  // Equity directors who aren't admins still get Finance (Woody, 2026-08-22:
+  // equity = Woody, Jack, Rupert, Charlotte). Admins already have it in the
+  // admin section below.
+  const coreNav = !isClientUser && !user?.isAdmin && isEquityUser(user as any)
+    ? [...coreNavStaff, { title: "Finance", url: "/finance", icon: Landmark }]
+    : coreNavStaff;
   const unfinishedNavCleaned = isClientUser
     ? unfinishedNav.filter(i => !CLIENT_HIDDEN_URLS.includes(i.url))
     : unfinishedNav;

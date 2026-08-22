@@ -9,6 +9,7 @@ import { Link } from "wouter";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useTeam } from "@/lib/team-context";
+import { isEquityUser } from "@/lib/utils";
 import { useBrand } from "@/lib/brand-context";
 import { DraggableGrid } from "@/components/draggable-grid";
 import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
@@ -84,6 +85,7 @@ import {
   StudiosWidget,
   MyPortfolioWidget,
   KpiOverviewWidget,
+  EquityFinanceWidget,
   LandsecAnalyticsWidget,
   LandsecOverviewCard,
   LandsecAgentPerformanceCard,
@@ -91,6 +93,7 @@ import {
   LandsecRecentActivity,
   WidgetPickerDialog,
   WIDGET_REGISTRY,
+  BOARD_REGISTRY,
   DEFAULT_WIDGETS,
   DEFAULT_BOARDS,
   CLIENT_BOARD_REGISTRY,
@@ -1268,6 +1271,7 @@ export default function Dashboard() {
   const knownIds = WIDGET_REGISTRY.map(w => w.id);
   // Preferred display order; any known widget not listed here falls to the end.
   const WIDGET_ORDER = [
+    "equity-finance",
     "my-leads", "news-summary", "kpi-overview",
     "today-diary", "key-instructions", "active-contacts",
   ];
@@ -1280,6 +1284,10 @@ export default function Dashboard() {
   // widget is BGP-ops (inbox, WIP, SharePoint, KPI fees, org alerts) and is
   // filtered out even if it somehow ends up saved.
   const isClientUser = user?.role === "Client" || !!(user as any)?.companyScopeId;
+  // Equity directors get the Equity Finance widget (default-on for them);
+  // everyone else has it silently filtered out — the API behind it is
+  // server-gated anyway, this just avoids offering a dead card.
+  const isEquity = isEquityUser(user as any) && !isClientUser;
   // Migrate one renamed legacy id, then ensure the three always-on widgets are
   // present (staff only — clients fully control their own safe widget set).
   // Clients DEFAULT to the Letting Tracker + Tasks widgets (Woody,
@@ -1293,6 +1301,7 @@ export default function Dashboard() {
   const activeWidgets = withDefaults
     .filter((id: string) => knownIds.includes(id)) // single filter: drop unknown ids
     .filter((id: string) => !isClientUser || CLIENT_SAFE_WIDGET_IDS.includes(id)) // clients: safe set only
+    .filter((id: string) => id !== "equity-finance" || isEquity) // equity directors only
     .sort((a: string, b: string) => orderIndex(a) - orderIndex(b)); // single sort
 
   const widgetLabelMap = useMemo(() => {
@@ -1413,7 +1422,7 @@ export default function Dashboard() {
                 saving={saveMutation.isPending}
                 viewMode={dashboardViewMode}
                 onViewModeChange={handleViewModeChange}
-                boards={isClientUser ? CLIENT_BOARD_REGISTRY : undefined}
+                boards={isClientUser ? CLIENT_BOARD_REGISTRY : (isEquity ? undefined : BOARD_REGISTRY.filter(b => b.id !== "equity-finance-board"))}
                 showViewMode={!isClientUser}
               />
             </>
@@ -2394,6 +2403,7 @@ export default function Dashboard() {
           "my-portfolio": { w: 6, h: 10, minW: 4, minH: 6 },
           "landsec-analytics": { w: 12, h: 20, minW: 8, minH: 12 },
           "kpi-overview": { w: 12, h: 5, minW: 6, minH: 4 },
+          "equity-finance": { w: 12, h: 6, minW: 6, minH: 5 },
         };
 
         const renderWidget = (widgetId: string) => {
@@ -2988,6 +2998,7 @@ export default function Dashboard() {
         if (widgetId === "landsec-analytics") return <LandsecAnalyticsWidget key="landsec-analytics" />;
 
         if (widgetId === "kpi-overview") return <KpiOverviewWidget key="kpi-overview" />;
+        if (widgetId === "equity-finance") return <EquityFinanceWidget key="equity-finance" />;
 
         return null;
         };

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { Switch, Route, useLocation } from "wouter";
 import { queryClient, getQueryFn, apiRequest } from "./lib/queryClient";
+import { isEquityUser } from "./lib/utils";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { MessageSquare, ArrowLeft, Sparkles, Menu, Smartphone } from "lucide-react";
 import { Toaster } from "@/components/ui/toaster";
@@ -225,6 +226,17 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Finance is admin OR equity director (Woody, Jack, Rupert, Charlotte —
+// Woody, 2026-08-22). Mirrors the server's requireEquityOrAdmin gate.
+function EquityRoute({ children }: { children: React.ReactNode }) {
+  const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
+  const [, navigate] = useLocation();
+  const allowed = !!user && (user.isAdmin || isEquityUser(user as any));
+  useEffect(() => { if (user && !allowed) navigate("/"); }, [user, allowed, navigate]);
+  if (!allowed) return <PageLoader />;
+  return <>{children}</>;
+}
+
 // The full Image Studio is open to every logged-in user (Woody, 2026-08-13:
 // "image studio for non admin just needs to be the same as it is for admin"
 // — UX #43; previously non-admin staff were bounced to /m/images). Client
@@ -364,7 +376,7 @@ function Router() {
       <Route path="/marketing-files" component={MarketingFilesPage} />
       <Route path="/addins" component={AddinsPage} />
       <Route path="/edozo" component={PropertiesHub} />
-      <Route path="/finance">{() => <AdminRoute><FinancePage /></AdminRoute>}</Route>
+      <Route path="/finance">{() => <EquityRoute><FinancePage /></EquityRoute>}</Route>
       <Route path="/expenses" component={ExpensesAdmin} />
       <Route path="/expenses/approvals" component={ExpensesApprovals} />
       <Route path="/expenses/revolut" component={ExpensesRevolut} />

@@ -15,7 +15,7 @@
 // cached in-memory for 15 minutes; ?refresh=1 busts the cache.
 
 import type { Express, Request, Response } from "express";
-import { requireAdmin } from "./auth";
+import { requireEquityOrAdmin } from "./auth";
 import { xeroApi } from "./xero";
 import { withSystemXero } from "./xero-system-session";
 import { pool } from "./db";
@@ -572,7 +572,7 @@ async function buildSpendSnapshot(fyStartIso: string): Promise<any> {
 }
 
 export function registerXeroFinancialRoutes(app: Express): void {
-  app.get("/api/xero/financials", requireAdmin, async (req: Request, res: Response) => {
+  app.get("/api/xero/financials", requireEquityOrAdmin, async (req: Request, res: Response) => {
     try {
       if (cache && Date.now() - cache.at < CACHE_TTL_MS && req.query.refresh !== "1") {
         return res.json(cache.payload);
