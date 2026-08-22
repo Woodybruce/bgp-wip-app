@@ -48,7 +48,32 @@ interface Financials {
     invoiceCount: number;
   };
   wip?: WipForecast | null;
-  projection?: { actuals: number; toInvoice: number; weightedPipeline: number; total: number };
+  projection?: { actuals: number; toInvoice: number; weightedPipeline: number; total: number; projectedFyCosts?: number; projectedNet?: number };
+  costs?: {
+    fytdExpenses: number;
+    runRate: number;
+    runRateBasisMonths: number;
+    monthsRemaining: number;
+    projectedRemainingCosts: number;
+    projectedFyCosts: number;
+    topLines: Array<{ label: string; fytd: number; share: number }>;
+    movers: Array<{ label: string; lastMonth: number; priorAvg: number; delta: number }>;
+  } | null;
+  recurring?: {
+    monthlyBills: number;
+    monthlyIncome: number;
+    bills: Array<{ contact: string; reference: string; monthly: number }>;
+  } | null;
+  creditors?: {
+    outstanding: number;
+    buckets: { overdue: number; thisMonth: number; nextMonth: number; later: number };
+    top: Array<{ contact: string; number: string; due: string; amount: number }>;
+    billCount: number;
+  } | null;
+  cashflow?: {
+    receiptsDue: { overdue: number; thisMonth: number; nextMonth: number; later: number };
+    billsDue: { overdue: number; thisMonth: number; nextMonth: number; later: number };
+  } | null;
   paid?: {
     totalPaid: number;
     count: number;
@@ -340,6 +365,153 @@ function AppCostsSection() {
   );
 }
 
+// Costs & forecast — the other half of the projection. Income forecasting
+// comes from the WIP pipeline; this is the cost base (per-account P&L lines),
+// a run-rate projection to FY end (Wendy doesn't budget in Xero, so the
+// forecast is trailing-average based), committed bills, and near-term cash
+// flow both directions.
+function CostsSection({ costs, creditors, cashflow, recurring, projection }: {
+  costs: NonNullable<Financials["costs"]>;
+  creditors?: Financials["creditors"];
+  cashflow?: Financials["cashflow"];
+  recurring?: Financials["recurring"];
+  projection?: Financials["projection"];
+}) {
+  const cf = cashflow;
+  const cfCols = cf ? [
+    { label: "Overdue", in: cf.receiptsDue.overdue, out: cf.billsDue.overdue },
+    { label: "This month", in: cf.receiptsDue.thisMonth, out: cf.billsDue.thisMonth },
+    { label: "Next month", in: cf.receiptsDue.nextMonth, out: cf.billsDue.nextMonth },
+    { label: "Later", in: cf.receiptsDue.later, out: cf.billsDue.later },
+  ] : [];
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard
+          label="Cost run rate"
+          value={`${money(costs.runRate)}/mo`}
+          sub={costs.runRateBasisMonths > 0 ? `Avg of last ${costs.runRateBasisMonths} full month(s)` : "Current month so far"}
+        />
+        <StatCard
+          label="Projected FY costs"
+          value={money(costs.projectedFyCosts)}
+          sub={`${money(costs.fytdExpenses)} to date + ${costs.monthsRemaining} mo at run rate`}
+        />
+        {projection?.projectedNet != null && (
+          <StatCard
+            label="Projected FY net"
+            value={money(projection.projectedNet)}
+            negative={projection.projectedNet < 0}
+            sub={`Projected income ${money(projection.total)} − costs`}
+          />
+        )}
+        {creditors && (
+          <StatCard
+            label="Bills outstanding"
+            value={money(creditors.outstanding)}
+            negative={creditors.buckets.overdue > 0}
+            sub={creditors.buckets.overdue > 0 ? `${money(creditors.buckets.overdue)} overdue` : `${creditors.billCount} open bill(s)`}
+          />
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Where the money goes */}
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Where the money goes — FY to date</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-0.5">
+            {costs.topLines.map((c, i) => (
+              <div key={i} className="flex items-center gap-2 text-sm py-0.5">
+                <span className="truncate flex-1">{c.label}</span>
+                <span className="text-[11px] text-muted-foreground w-9 text-right shrink-0">{c.share}%</span>
+                <span className="font-mono shrink-0 w-24 text-right">{money(c.fytd)}</span>
+              </div>
+            ))}
+            {costs.movers.length > 0 && (
+              <div className="pt-3">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Biggest movers vs 3-month average</p>
+                {costs.movers.map((m, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm py-0.5">
+                    <span className="truncate pr-3">{m.label}</span>
+                    <span className={`font-mono shrink-0 ${m.delta > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                      {m.delta > 0 ? "+" : ""}{money(m.delta)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <div className="space-y-4">
+          {/* Near-term cash flow */}
+          {cf && (
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm">Cash due in vs out</CardTitle></CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-4 gap-2 text-center">
+                  {cfCols.map((c, i) => (
+                    <div key={i} className="rounded-md border p-2">
+                      <p className="text-[10px] text-muted-foreground">{c.label}</p>
+                      <p className="text-xs font-mono text-emerald-600 dark:text-emerald-400">+{money(c.in)}</p>
+                      <p className="text-xs font-mono text-red-600 dark:text-red-400">−{money(c.out)}</p>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-2">
+                  Invoices due in vs bills due out, by due date. Bills are already inside the P&L cost figures — this is timing, not extra cost.
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Largest open bills */}
+          {creditors && creditors.top.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center justify-between">
+                  <span>Largest open bills</span>
+                  <Badge variant="secondary" className="text-[10px]">{creditors.billCount} bill(s)</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-0.5">
+                {creditors.top.map((b, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm py-0.5">
+                    <span className="truncate pr-3">{b.contact} <span className="text-muted-foreground text-xs">{b.number}{b.due ? ` · due ${formatDate(b.due)}` : ""}</span></span>
+                    <span className="font-mono shrink-0">{money(b.amount)}</span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Recurring commitments */}
+          {recurring && (recurring.monthlyBills > 0 || recurring.bills.length > 0) && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm flex items-center justify-between">
+                  <span>Recurring commitments</span>
+                  <Badge variant="secondary" className="text-[10px]">{money(recurring.monthlyBills)}/mo</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-0.5">
+                {recurring.bills.map((r, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm py-0.5">
+                    <span className="truncate pr-3">{r.contact}{r.reference ? <span className="text-muted-foreground text-xs"> · {r.reference}</span> : null}</span>
+                    <span className="font-mono shrink-0">{money(r.monthly)}/mo</span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function FinancePage() {
   const { toast } = useToast();
   const { data, isLoading, isFetching, refetch, error } = useQuery<Financials>({
@@ -460,6 +632,17 @@ export default function FinancePage() {
 
       {/* WIP pipeline + projection (CRM ⇄ Xero cross-reference) */}
       {data.wip && <WipSection wip={data.wip} projection={data.projection} />}
+
+      {/* Costs & forecast — cost base, run-rate projection, bills, cash flow */}
+      {data.costs && (
+        <CostsSection
+          costs={data.costs}
+          creditors={data.creditors}
+          cashflow={data.cashflow}
+          recurring={data.recurring}
+          projection={data.projection}
+        />
+      )}
 
       {/* Paid this FY — when the client's money actually landed. */}
       {data.paid && data.paid.count > 0 && (
