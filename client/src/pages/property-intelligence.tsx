@@ -150,7 +150,11 @@ export default function PropertyIntelligence() {
 
   return (
     <PropertyProvider initial={resolvedProperty}>
-    <div className="flex flex-col h-full min-h-screen">
+    {/* UX #83: min-h-screen only from md up — on phones the mobile shell
+        already sizes this page to the space above the fixed bottom nav, and
+        forcing 100vh pushed the map (h-full chain) underneath it, half-hiding
+        the zoom controls. */}
+    <div className="flex flex-col h-full md:min-h-screen">
       <Tabs value={tab} onValueChange={handleTabChange} className="flex flex-col h-full">
         <div className="border-b bg-background sticky top-0 z-10">
           <div className="px-4 lg:px-6 pt-4">

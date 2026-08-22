@@ -6480,7 +6480,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
             prefills from it. Vague inputs ("Knightsbridge") fall back to a
             plain map pan via onPanTo. Replaces the previous pair of boxes
             (sidebar resolver + separate Places search). */}
-        <div className="absolute top-3 left-3 z-[1000] w-[calc(100%-24px)] sm:w-[440px] max-w-[500px] flex items-start gap-2">
+        <div className="absolute top-3 left-3 z-[1000] w-[calc(100%-32px)] sm:w-[440px] max-w-[500px] flex items-start gap-2">
           <button
             type="button"
             onClick={() => window.history.back()}
