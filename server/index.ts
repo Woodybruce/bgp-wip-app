@@ -4797,6 +4797,18 @@ app.use("/api/branding/assets", express.static(
         setTimeout(verdictTick, 90 * 1000); // catch-up shortly after boot
       }
 
+      // BGP Insights — weekly leasing round-up, Friday afternoon (Woody,
+      // 2026-08-21). Same restart-proof slot-guard pattern as the verdict
+      // jobs; the run itself is a full ChatBGP turn that compiles, designs
+      // the PDF and emails it.
+      if (process.env.NODE_ENV === "production") {
+        const insightsTick = () =>
+          import("./weekly-insights").then(m => m.tickWeeklyInsights()).catch(err =>
+            console.error("[bgp-insights] tick failed:", err?.message));
+        setInterval(insightsTick, 5 * 60 * 1000);
+        setTimeout(insightsTick, 2 * 60 * 1000);
+      }
+
       // AML orchestrator top-up on boot (production): screens up to 12
       // never-screened / overdue companies ~4 min after deploy, so a brand
       // whose CH entity resolved during the day gets its PEP / adverse-media
