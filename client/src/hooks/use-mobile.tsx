@@ -67,6 +67,51 @@ export function useIsMobile() {
   return isMobile
 }
 
+// iOS home-screen (standalone) bug: the CSS viewport is sometimes SHORT by
+// exactly the status-bar inset (~63pt on a 16 Pro Max), permanently — not
+// just after the keyboard. bottom-0 fixed elements then pin to the short
+// viewport and a dead app-coloured band shows beneath them (Woody,
+// 2026-08-22, two screenshots — scroll-nudge heal didn't clear it). The
+// webview canvas DOES paint the full screen, so the fix is to measure the
+// shortfall (screen.height − innerHeight) and shift the bottom bar down by
+// it. Guarded hard: iPhone/iPad + installed-app mode + portrait + keyboard
+// closed + a plausible delta only, so it can never misfire in Safari (where
+// browser chrome legitimately eats that space) or mid-typing.
+export function useViewportShortfall() {
+  const [shortfall, setShortfall] = React.useState(0)
+
+  React.useEffect(() => {
+    const standalone =
+      (navigator as any).standalone === true ||
+      (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches)
+    const apple = /iPhone|iPad|iPod/i.test(navigator.userAgent || "")
+    if (!standalone || !apple) return
+    const measure = () => {
+      const el = document.activeElement as HTMLElement | null
+      const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)
+      const portrait = window.innerHeight >= window.innerWidth
+      const d = window.screen.height - window.innerHeight
+      setShortfall(!typing && portrait && d > 0 && d <= 110 ? d : 0)
+    }
+    const deferredMeasure = () => { measure(); setTimeout(measure, 150); setTimeout(measure, 450) }
+    window.addEventListener("resize", measure)
+    window.visualViewport?.addEventListener("resize", measure)
+    window.addEventListener("focusin", deferredMeasure)
+    window.addEventListener("focusout", deferredMeasure)
+    window.addEventListener("orientationchange", deferredMeasure)
+    measure()
+    return () => {
+      window.removeEventListener("resize", measure)
+      window.visualViewport?.removeEventListener("resize", measure)
+      window.removeEventListener("focusin", deferredMeasure)
+      window.removeEventListener("focusout", deferredMeasure)
+      window.removeEventListener("orientationchange", deferredMeasure)
+    }
+  }, [])
+
+  return shortfall
+}
+
 // True while the on-screen keyboard is (probably) open — the visual
 // viewport shrinks well below the layout viewport. Used to hide the fixed
 // bottom nav while typing (it otherwise floats above the iOS keyboard) and
