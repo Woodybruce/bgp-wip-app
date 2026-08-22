@@ -34,6 +34,7 @@ import {
   Palette, ChevronRight, Sun, CalendarDays, Bell,
 } from "lucide-react";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
+import { useKeyboardOpen } from "@/hooks/use-mobile";
 import { ThreadMediaDialog } from "@/components/chat-panel";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { legacyToCode } from "@shared/deal-status";
@@ -1257,6 +1258,9 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const [, navigate] = useLocation();
 
   const { typingUsers, sendTyping, stopTyping } = useTypingIndicator(threadId);
+  // Keyboard up → the fixed bottom nav hides itself, so drop the padding
+  // that clears it or the composer floats above a dead band (Woody, 2026-08-22).
+  const keyboardOpen = useKeyboardOpen();
 
   const { data: activeThread } = useQuery<ThreadData>({
     queryKey: ["/api/chat/threads", threadId],
@@ -2253,7 +2257,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     // nav so the composer sits above it. Team chats stay full-screen.
     <div
       className={`flex flex-col w-screen overflow-x-hidden fixed inset-0 bg-gray-50`}
-      style={isActiveThreadAi ? { paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom))" } : undefined}
+      style={isActiveThreadAi && !keyboardOpen ? { paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom))" } : undefined}
     >
       {isActiveThreadAi && <MobileBottomNav />}
       {isActiveThreadAi ? (
@@ -2460,7 +2464,9 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
               <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }}>
                 <Sparkles className="w-4 h-4 text-white" />
               </div>
-              <div className="flex-1 min-w-0 pt-2 space-y-1.5">
+              {/* Bubble like every other message — flat text read as a
+                  detached strip above the composer (Woody, 2026-08-22). */}
+              <div className="flex-1 min-w-0 max-w-[85%] bg-white border border-gray-100 shadow-sm rounded-2xl rounded-tl-md px-4 py-3 space-y-1.5">
                 <div className="flex items-center gap-2.5">
                   <div className="flex gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "0ms" }} />

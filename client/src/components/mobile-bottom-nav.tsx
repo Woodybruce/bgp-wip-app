@@ -1,6 +1,7 @@
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { LayoutDashboard, MessageCircle, Sparkles, BarChart3, Newspaper, CheckSquare } from "lucide-react";
+import { useKeyboardOpen } from "@/hooks/use-mobile";
 
 // ChatBGP replaced Mail in the tab bar (Woody, 2026-08-18) — the sparkle
 // always starts a FRESH AI chat; Mail lives on via the Dashboard tile at
@@ -39,6 +40,12 @@ export function MobileBottomNav() {
     if (path === "/") return location === "/";
     return location.startsWith(path);
   };
+
+  // Hide while the keyboard is up — a fixed tab bar otherwise rides the
+  // iOS keyboard and floats mid-screen between the composer and the keys
+  // (Woody, 2026-08-22). WhatsApp behaviour: typing = no tab bar.
+  const keyboardOpen = useKeyboardOpen();
+  if (keyboardOpen) return null;
 
   return (
     <nav

@@ -66,3 +66,26 @@ export function useIsMobile() {
 
   return isMobile
 }
+
+// True while the on-screen keyboard is (probably) open — the visual
+// viewport shrinks well below the layout viewport. Used to hide the fixed
+// bottom nav while typing (it otherwise floats above the iOS keyboard) and
+// to collapse the nav-clearance padding under chat composers.
+export function useKeyboardOpen() {
+  const [open, setOpen] = React.useState(false)
+
+  React.useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    const update = () => setOpen(window.innerHeight - vv.height > 140)
+    vv.addEventListener("resize", update)
+    vv.addEventListener("scroll", update)
+    update()
+    return () => {
+      vv.removeEventListener("resize", update)
+      vv.removeEventListener("scroll", update)
+    }
+  }, [])
+
+  return open
+}
