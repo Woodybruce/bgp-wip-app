@@ -406,7 +406,7 @@ function formatMsgTime(dateStr?: string) {
   return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} ${time}`;
 }
 
-function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick, selectedCheckboxes, isAiThread }: {
+function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick, selectedCheckboxes, isAiThread, othersAllSeen }: {
   message: LocalChatMessage;
   currentUserId?: string;
   threadId?: string | null;
@@ -416,6 +416,8 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
   onCheckboxClick?: (text: string) => void;
   selectedCheckboxes?: string[];
   isAiThread?: boolean;
+  /** Thread-level read state: every other member has seen the thread. */
+  othersAllSeen?: boolean;
 }) {
   const isUser = message.role === "user";
   const isOwn = isUser && currentUserId && message.userId === currentUserId;
@@ -584,12 +586,22 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
             onTouchEnd={handleTouchEnd}
             onTouchCancel={handleTouchEnd}
           >
-            <div className={`rounded-2xl px-4 py-2.5 text-[15px] leading-[1.6] whitespace-pre-wrap break-words ${
+            {/* WhatsApp anatomy (Woody, 2026-08-22): mine = soft green with
+                time + ticks INSIDE the bubble, theirs = white. */}
+            <div className={`rounded-2xl px-3.5 py-2 text-[15px] leading-[1.55] whitespace-pre-wrap break-words shadow-sm ${
               isOwn
-                ? "bg-[#292524] text-white rounded-br-md"
-                : "bg-white text-[#1C1917] rounded-bl-md border border-[#E7E5E4]"
+                ? "bg-[#D9FDD3] text-[#111B21] rounded-br-md"
+                : "bg-white text-[#111B21] rounded-bl-md"
             }`}>
-              <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} isUserBubble={isOwn ? true : false} selectedCheckboxes={!isUser ? selectedCheckboxes : undefined} />
+              <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} isUserBubble={false} selectedCheckboxes={!isUser ? selectedCheckboxes : undefined} />
+              {message.createdAt && (
+                <span className="float-right flex items-center gap-0.5 ml-2 mt-2 -mb-0.5 translate-y-1">
+                  <span className="text-[10.5px] text-[#667781] leading-none">{formatMsgTime(message.createdAt)}</span>
+                  {isOwn && (
+                    <CheckCheck className="w-[15px] h-[15px]" style={{ color: othersAllSeen ? "#53BDEB" : "#8696A0" }} />
+                  )}
+                </span>
+              )}
             </div>
             {showActions && (
               <div className={`absolute -top-11 ${isOwn ? "right-0" : "left-0"} flex items-center gap-1 bg-white rounded-xl shadow-lg border border-gray-200 px-1 py-1 z-20 animate-in fade-in zoom-in-95 duration-150`}>
@@ -617,9 +629,6 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
           </div>
         )}
         {message.action && <ActionCard action={message.action} />}
-        {message.createdAt && (
-          <div className={`text-[11px] text-gray-400 mt-1 px-1 ${isOwn ? "text-right" : ""}`}>{formatMsgTime(message.createdAt)}</div>
-        )}
       </div>
     </div>
   );
@@ -2402,7 +2411,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         </div>
       )}
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 relative" onScroll={(e) => {
+      <div ref={scrollRef} className={`flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 relative ${!isActiveThreadAi ? "bg-[#EFE7DD]" : ""}`} onScroll={(e) => {
         const el = e.currentTarget;
         const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
         setShowScrollBottom(distFromBottom > 200);
@@ -2451,8 +2460,25 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           const matchesSearch = !chatSearchQuery || msg.content.toLowerCase().includes(chatSearchQuery.toLowerCase());
           if (searchInChat && chatSearchQuery && !matchesSearch) return null;
           const showNewDivider = initialMsgCountRef.current !== null && i === initialMsgCountRef.current && i > 0 && i < messages.length;
+          // WhatsApp-style date chips between days (team chats only).
+          const dayLabel = (() => {
+            if (isActiveThreadAi || !msg.createdAt) return null;
+            const d = new Date(msg.createdAt);
+            const prev = i > 0 ? messages[i - 1]?.createdAt : null;
+            if (prev && new Date(prev).toDateString() === d.toDateString()) return null;
+            const today = new Date();
+            const yesterday = new Date(Date.now() - 86400000);
+            if (d.toDateString() === today.toDateString()) return "Today";
+            if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+            return d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+          })();
           return (
             <div key={msg.id || i}>
+              {dayLabel && (
+                <div className="flex justify-center my-3">
+                  <span className="text-[12px] font-medium text-[#54656F] bg-white/90 rounded-lg px-3 py-1 shadow-sm">{dayLabel}</span>
+                </div>
+              )}
               {showNewDivider && (
                 <div className="flex items-center gap-3 my-3 px-2" data-testid="new-messages-divider">
                   <div className="flex-1 h-px bg-blue-400" />
@@ -2470,6 +2496,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 onCheckboxClick={handleCheckboxClick}
                 selectedCheckboxes={selectedCheckboxes}
                 isAiThread={isActiveThreadAi}
+                othersAllSeen={threadMembers.filter(m => m.id !== currentUser?.id).length > 0 && threadMembers.filter(m => m.id !== currentUser?.id).every(m => m.seen)}
               />
             </div>
           );
