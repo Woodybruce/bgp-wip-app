@@ -77,13 +77,29 @@ export function useKeyboardOpen() {
   React.useEffect(() => {
     const vv = window.visualViewport
     if (!vv) return
-    const update = () => setOpen(window.innerHeight - vv.height > 140)
+    // BOTH conditions required: a text field is focused AND the visual
+    // viewport has shrunk. Viewport height alone misfires — Safari's
+    // collapsing toolbar and slow post-dismiss viewport restores left the
+    // nav hidden with a blank band at the bottom (Woody, 2026-08-22
+    // "lots of space at the bottom").
+    const textFocused = () => {
+      const el = document.activeElement as HTMLElement | null
+      return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)
+    }
+    const update = () => setOpen(textFocused() && window.innerHeight - vv.height > 140)
+    // focusout fires before the viewport grows back — schedule a re-check
+    // so the nav returns promptly once the keyboard is gone.
+    const deferredUpdate = () => { update(); setTimeout(update, 120); setTimeout(update, 400) }
     vv.addEventListener("resize", update)
     vv.addEventListener("scroll", update)
+    window.addEventListener("focusin", deferredUpdate)
+    window.addEventListener("focusout", deferredUpdate)
     update()
     return () => {
       vv.removeEventListener("resize", update)
       vv.removeEventListener("scroll", update)
+      window.removeEventListener("focusin", deferredUpdate)
+      window.removeEventListener("focusout", deferredUpdate)
     }
   }, [])
 
