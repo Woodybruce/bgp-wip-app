@@ -1,7 +1,7 @@
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { LayoutDashboard, MessageCircle, Sparkles, BarChart3, Newspaper, CheckSquare } from "lucide-react";
-import { useKeyboardOpen, useViewportShortfall } from "@/hooks/use-mobile";
+import { useKeyboardOpen } from "@/hooks/use-mobile";
 
 // ChatBGP replaced Mail in the tab bar (Woody, 2026-08-18) — the sparkle
 // always starts a FRESH AI chat; Mail lives on via the Dashboard tile at
@@ -45,19 +45,12 @@ export function MobileBottomNav() {
   // iOS keyboard and floats mid-screen between the composer and the keys
   // (Woody, 2026-08-22). WhatsApp behaviour: typing = no tab bar.
   const keyboardOpen = useKeyboardOpen();
-  // iOS standalone can report a viewport short of the real screen — pin the
-  // bar to the TRUE bottom by shifting it down by the measured shortfall
-  // (0 on healthy devices). See useViewportShortfall.
-  const viewportShortfall = useViewportShortfall();
   if (keyboardOpen) return null;
 
   return (
     <nav
       className="fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-border md:hidden"
-      style={{
-        paddingBottom: "env(safe-area-inset-bottom)",
-        marginBottom: viewportShortfall ? -viewportShortfall : undefined,
-      }}
+      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       data-testid="mobile-bottom-nav"
     >
       <div className="flex items-center justify-around h-14">
