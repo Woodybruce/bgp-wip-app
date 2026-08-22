@@ -87,19 +87,43 @@ export function useKeyboardOpen() {
       return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)
     }
     const update = () => setOpen(textFocused() && window.innerHeight - vv.height > 140)
+    // iOS standalone (home-screen) bug: after the keyboard dismisses, WebKit
+    // sometimes leaves the layout viewport SHORT, so bottom-anchored fixed
+    // elements (the tab bar) float above a dead white band (Woody, 2026-08-22
+    // screenshot: ~68pt gap under the nav, no keyboard up). A scroll nudge +
+    // one-frame root-height jiggle forces the viewport to recompute. Safe on
+    // our mobile shells: they're `fixed inset-0` with inner scrollers, so the
+    // window itself never legitimately scrolls.
+    const healViewport = () => {
+      if (textFocused()) return
+      window.scrollTo(0, 0)
+      const de = document.documentElement
+      de.style.height = "100.1%"
+      requestAnimationFrame(() => { de.style.height = "" })
+    }
     // focusout fires before the viewport grows back — schedule a re-check
     // so the nav returns promptly once the keyboard is gone.
-    const deferredUpdate = () => { update(); setTimeout(update, 120); setTimeout(update, 400) }
+    const deferredUpdate = () => {
+      update()
+      setTimeout(update, 120)
+      setTimeout(() => { update(); healViewport() }, 400)
+    }
+    // Returning to a backgrounded app can land on an already-stuck viewport.
+    const onShow = () => { if (!document.hidden) setTimeout(healViewport, 100) }
     vv.addEventListener("resize", update)
     vv.addEventListener("scroll", update)
     window.addEventListener("focusin", deferredUpdate)
     window.addEventListener("focusout", deferredUpdate)
+    window.addEventListener("pageshow", onShow)
+    document.addEventListener("visibilitychange", onShow)
     update()
     return () => {
       vv.removeEventListener("resize", update)
       vv.removeEventListener("scroll", update)
       window.removeEventListener("focusin", deferredUpdate)
       window.removeEventListener("focusout", deferredUpdate)
+      window.removeEventListener("pageshow", onShow)
+      document.removeEventListener("visibilitychange", onShow)
     }
   }, [])
 
