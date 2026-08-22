@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { mobileOverlayItems } from "@/components/app-sidebar";
@@ -208,6 +209,15 @@ export default function MobileHome() {
     enabled: isEquity,
     staleTime: 5 * 60 * 1000,
   });
+  // Personal (my billing) vs Company (equity finance) tab on the combined
+  // finance tile — last choice sticks per device.
+  const [finTab, setFinTab] = useState<"personal" | "company">(() => {
+    try { return localStorage.getItem("mobile-fin-tab") === "company" ? "company" : "personal"; } catch { return "personal"; }
+  });
+  const pickFinTab = (t: "personal" | "company") => {
+    setFinTab(t);
+    try { localStorage.setItem("mobile-fin-tab", t); } catch {}
+  };
   // Only real client logins get the portfolio home. Staff keep the full
   // staff home (Expenses, billing, boards) even with the Landsec team
   // selected — the team switcher scopes data, not the phone shell
@@ -364,91 +374,120 @@ export default function MobileHome() {
         </>
       )}
 
-      {/* My billing & commission — the number everyone wants to see */}
-      {commission && (
-        <Link
-          href="/deals"
-          className="block rounded-2xl bg-[#1C1917] text-white shadow-sm active:opacity-90 px-4 py-3.5"
-          data-testid="mobile-home-commission"
-        >
-          <div className="flex items-center gap-2 mb-2.5">
-            <Wallet className="w-4 h-4 opacity-80" />
-            <span className="text-xs font-semibold uppercase tracking-wider opacity-80">My billing — {commission.schemeYear}</span>
-            <ChevronRight className="w-4 h-4 ml-auto opacity-60" />
+      {/* Finance tile — Personal (my billing) and Company (equity finance)
+          combined into one board with tabs (Woody, 2026-08-22). Non-equity
+          staff only ever see Personal; the tabs appear when both apply. */}
+      {(() => {
+        const equityOk = isEquity && equityFin && !equityFin.notConnected && !equityFin.needsReconnect;
+        if (!commission && !equityOk) return null;
+        const showTabs = !!commission && equityOk;
+        const tab = showTabs ? finTab : (commission ? "personal" : "company");
+        const target = tab === "personal" ? "/deals" : "/finance";
+        return (
+          <div className="rounded-2xl bg-[#1C1917] text-white shadow-sm px-4 py-3.5" data-testid="mobile-home-finance">
+            <div className="flex items-center gap-2 mb-2.5">
+              {showTabs ? (
+                <div className="flex rounded-full bg-white/10 p-0.5">
+                  <button
+                    onClick={() => pickFinTab("personal")}
+                    className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-colors ${tab === "personal" ? "bg-white text-[#1C1917]" : "text-white/70"}`}
+                    data-testid="fin-tab-personal"
+                  >
+                    Personal
+                  </button>
+                  <button
+                    onClick={() => pickFinTab("company")}
+                    className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-colors ${tab === "company" ? "bg-white text-[#1C1917]" : "text-white/70"}`}
+                    data-testid="fin-tab-company"
+                  >
+                    Company
+                  </button>
+                </div>
+              ) : tab === "personal" && commission ? (
+                <>
+                  <Wallet className="w-4 h-4 opacity-80" />
+                  <span className="text-xs font-semibold uppercase tracking-wider opacity-80">My billing — {commission.schemeYear}</span>
+                </>
+              ) : (
+                <>
+                  <BarChart3 className="w-4 h-4 opacity-80" />
+                  <span className="text-xs font-semibold uppercase tracking-wider opacity-80">Equity finance</span>
+                </>
+              )}
+              <button onClick={() => navigate(target)} className="ml-auto flex items-center gap-1 active:opacity-70" data-testid="fin-tile-open">
+                {showTabs && (
+                  <span className="text-[10px] uppercase tracking-wider opacity-60">
+                    {tab === "personal" ? commission?.schemeYear : "Full view"}
+                  </span>
+                )}
+                <ChevronRight className="w-4 h-4 opacity-60" />
+              </button>
+            </div>
+            <button onClick={() => navigate(target)} className="block w-full text-left active:opacity-90">
+              {tab === "personal" && commission ? (
+                <>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.billedPence)}</p>
+                      <p className="text-[10px] opacity-70">Billed</p>
+                    </div>
+                    <div>
+                      <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.commissionEarned)}</p>
+                      <p className="text-[10px] opacity-70">Commission</p>
+                    </div>
+                    <div>
+                      <p className="text-lg font-bold tabular-nums leading-tight text-emerald-400">{fmtMoney(commission.commissionForecast)}</p>
+                      <p className="text-[10px] opacity-70">Potential</p>
+                    </div>
+                  </div>
+                  {commission.wipByStage && (
+                    <div className="mt-2.5 pt-2.5 border-t border-white/10 grid grid-cols-2 gap-2">
+                      <div>
+                        <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.wipByStage.neg)}</p>
+                        <p className="text-[10px] opacity-70">Negotiating</p>
+                      </div>
+                      <div>
+                        <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.wipByStage.sol)}</p>
+                        <p className="text-[10px] opacity-70">Solicitors</p>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <p className="text-lg font-bold tabular-nums leading-tight">£{Math.round(equityFin.headline?.income || 0).toLocaleString("en-GB")}</p>
+                    <p className="text-[10px] opacity-70">Income FYTD</p>
+                  </div>
+                  <div>
+                    <p className={`text-lg font-bold tabular-nums leading-tight ${(equityFin.headline?.netProfit || 0) < 0 ? "text-red-400" : "text-emerald-400"}`}>
+                      £{Math.round(equityFin.headline?.netProfit || 0).toLocaleString("en-GB")}
+                    </p>
+                    <p className="text-[10px] opacity-70">Net FYTD</p>
+                  </div>
+                  <div>
+                    <p className="text-lg font-bold tabular-nums leading-tight">£{Math.round(equityFin.cashTotal || 0).toLocaleString("en-GB")}</p>
+                    <p className="text-[10px] opacity-70">Cash at bank</p>
+                  </div>
+                  {equityFin.projection?.projectedNet != null ? (
+                    <div>
+                      <p className={`text-lg font-bold tabular-nums leading-tight ${equityFin.projection.projectedNet < 0 ? "text-red-400" : "text-emerald-400"}`}>
+                        £{Math.round(equityFin.projection.projectedNet).toLocaleString("en-GB")}
+                      </p>
+                      <p className="text-[10px] opacity-70">Projected FY net</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-lg font-bold tabular-nums leading-tight">£{Math.round(equityFin.debtors?.outstanding || 0).toLocaleString("en-GB")}</p>
+                      <p className="text-[10px] opacity-70">Debtors</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </button>
           </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div>
-              <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.billedPence)}</p>
-              <p className="text-[10px] opacity-70">Billed</p>
-            </div>
-            <div>
-              <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.commissionEarned)}</p>
-              <p className="text-[10px] opacity-70">Commission</p>
-            </div>
-            <div>
-              <p className="text-lg font-bold tabular-nums leading-tight text-emerald-400">{fmtMoney(commission.commissionForecast)}</p>
-              <p className="text-[10px] opacity-70">Potential</p>
-            </div>
-          </div>
-          {commission.wipByStage && (
-            <div className="mt-2.5 pt-2.5 border-t border-white/10 grid grid-cols-2 gap-2">
-              <div>
-                <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.wipByStage.neg)}</p>
-                <p className="text-[10px] opacity-70">Negotiating</p>
-              </div>
-              <div>
-                <p className="text-lg font-bold tabular-nums leading-tight">{fmtMoney(commission.wipByStage.sol)}</p>
-                <p className="text-[10px] opacity-70">Solicitors</p>
-              </div>
-            </div>
-          )}
-        </Link>
-      )}
-
-      {/* Equity finance — the firm's position, equity directors only. Taps
-          through to the full Finance page. */}
-      {isEquity && equityFin && !equityFin.notConnected && !equityFin.needsReconnect && (
-        <Link
-          href="/finance"
-          className="block rounded-2xl bg-[#1C1917] text-white shadow-sm active:opacity-90 px-4 py-3.5"
-          data-testid="mobile-home-equity-finance"
-        >
-          <div className="flex items-center gap-2 mb-2.5">
-            <BarChart3 className="w-4 h-4 opacity-80" />
-            <span className="text-xs font-semibold uppercase tracking-wider opacity-80">Equity finance</span>
-            <ChevronRight className="w-4 h-4 ml-auto opacity-60" />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <p className="text-lg font-bold tabular-nums leading-tight">£{Math.round(equityFin.headline?.income || 0).toLocaleString("en-GB")}</p>
-              <p className="text-[10px] opacity-70">Income FYTD</p>
-            </div>
-            <div>
-              <p className={`text-lg font-bold tabular-nums leading-tight ${(equityFin.headline?.netProfit || 0) < 0 ? "text-red-400" : "text-emerald-400"}`}>
-                £{Math.round(equityFin.headline?.netProfit || 0).toLocaleString("en-GB")}
-              </p>
-              <p className="text-[10px] opacity-70">Net FYTD</p>
-            </div>
-            <div>
-              <p className="text-lg font-bold tabular-nums leading-tight">£{Math.round(equityFin.cashTotal || 0).toLocaleString("en-GB")}</p>
-              <p className="text-[10px] opacity-70">Cash at bank</p>
-            </div>
-            {equityFin.projection?.projectedNet != null ? (
-              <div>
-                <p className={`text-lg font-bold tabular-nums leading-tight ${equityFin.projection.projectedNet < 0 ? "text-red-400" : "text-emerald-400"}`}>
-                  £{Math.round(equityFin.projection.projectedNet).toLocaleString("en-GB")}
-                </p>
-                <p className="text-[10px] opacity-70">Projected FY net</p>
-              </div>
-            ) : (
-              <div>
-                <p className="text-lg font-bold tabular-nums leading-tight">£{Math.round(equityFin.debtors?.outstanding || 0).toLocaleString("en-GB")}</p>
-                <p className="text-[10px] opacity-70">Debtors</p>
-              </div>
-            )}
-          </div>
-        </Link>
-      )}
+        );
+      })()}
 
       {/* Total billing — team/firm WIP roll-up; taps through to the full WIP report */}
       {totalBilling > 0 && (
