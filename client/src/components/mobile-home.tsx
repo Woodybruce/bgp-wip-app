@@ -388,17 +388,17 @@ export default function MobileHome() {
           <div className="rounded-2xl bg-[#1C1917] text-white shadow-sm px-4 py-3.5" data-testid="mobile-home-finance">
             <div className="flex items-center gap-2 mb-2.5">
               {showTabs ? (
-                <div className="flex rounded-full bg-white/10 p-px">
+                <div className="flex items-center rounded-full bg-white/10 p-px">
                   <button
                     onClick={() => pickFinTab("personal")}
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide transition-colors ${tab === "personal" ? "bg-white/90 text-[#1C1917]" : "text-white/60"}`}
+                    className={`px-2 py-[3px] rounded-full text-[10px] leading-none font-semibold uppercase tracking-wide transition-colors ${tab === "personal" ? "bg-white/90 text-[#1C1917]" : "text-white/60"}`}
                     data-testid="fin-tab-personal"
                   >
                     Personal
                   </button>
                   <button
                     onClick={() => pickFinTab("company")}
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide transition-colors ${tab === "company" ? "bg-white/90 text-[#1C1917]" : "text-white/60"}`}
+                    className={`px-2 py-[3px] rounded-full text-[10px] leading-none font-semibold uppercase tracking-wide transition-colors ${tab === "company" ? "bg-white/90 text-[#1C1917]" : "text-white/60"}`}
                     data-testid="fin-tab-company"
                   >
                     Company
