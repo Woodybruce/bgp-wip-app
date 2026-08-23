@@ -25,17 +25,19 @@ The dashboard runs in two shells and they are NOT the same:
 ### Phone app (installed, staff)
 Bottom tabs (exactly 4): **Dashboard** (home tiles), **Messages** (unified chat list), **Deals**, **News**. There is NO ChatBGP tab — ChatBGP is the pinned top row inside Messages, or the black "Ask ChatBGP…" button on the home screen.
 Phone home screen, top to bottom:
-- "Ask ChatBGP…" button (fresh AI chat).
+- "Ask ChatBGP…" button (opens ChatBGP on the most recent conversation).
 - Black finance tile with small **Personal | Company** pill tabs — Personal = the user's own billing/commission (from their fee allocations); Company = firm-wide income/net/cash/projected FY net (equity directors only: Woody, Jack, Rupert, Charlotte; others never see the Company tab). Tapping opens Deals (Personal) or the Finance page (Company).
 - Total billing tile (firm WIP roll-up → WIP report).
 - "N expenses to approve" banner (approvers only) → approval queue.
 - Quick links: Deals, Expenses, Images, CRM.
 - Boards grid: Brand Intelligence, Comps, SharePoint, Property Intelligence.
-- **My profile row** (name + avatar) → opens the WhatsApp-style profile screen at /m/profile: big photo with a green camera badge (tap to change it — camera roll, JPG/PNG/WebP/HEIC max 5MB; propagates to chat messages and everywhere their name shows), phone/email/team rows, their CV from HR (about, summary, specialisms, notable clients, career history, education, LinkedIn), and a "Full HR profile" jump-off for edits/documents/holidays. THIS is where a phone user sets their profile photo.
+- (My profile moved to the Messages header — see below.)
 - AI Daily Briefing card, then My Tasks.
-Phone Messages/chat: WhatsApp-style — beige wallpaper, green bubbles for own messages with in-bubble time + read ticks (blue when everyone has seen the thread), date chips, swipe a thread to archive, drafts auto-saved per thread. **Group chat icon**: open the group chat and tap the group's avatar circle in the header — opens the photo picker, sets the icon for everyone. 1-to-1 chats automatically show each person's profile photo.
+**My Profile on the phone**: tap YOUR OWN avatar in the top-right of the Messages header (chats list) — opens the WhatsApp-style profile screen at /m/profile: big photo with a camera badge (tap to change it — camera roll, JPG/PNG/WebP/HEIC max 5MB; propagates to chat messages and everywhere their name shows), phone/email/team rows, their CV from HR (about, summary, specialisms, notable clients, career history, education, LinkedIn), and a "Full HR profile" jump-off for edits/documents/holidays. THIS is where a phone user sets their profile photo.
+Opening ChatBGP (home button or the pinned Messages row) lands on the user's MOST RECENT ChatBGP conversation; a fresh chat is the "+" button in the ChatBGP header.
+Phone Messages/chat: WhatsApp-style in BGP colours — warm stone wallpaper, own messages in soft nectar bubbles with in-bubble time + read ticks (terracotta when everyone has seen the thread, grey otherwise), date chips, swipe a thread to archive, drafts auto-saved per thread. **Group chat icon**: open the group chat and tap the group's avatar circle in the header — opens the photo picker, sets the icon for everyone. 1-to-1 chats automatically show each person's profile photo.
 Phone client logins (e.g. Landsec) get different tabs: Portfolio, Messages, Deals, Tasks, News.
-There is NO Settings menu on the phone. Anything described as "in Settings" is desktop-only — except the profile photo, which lives on the phone home screen (above).
+There is NO Settings menu on the phone. Anything described as "in Settings" is desktop-only — except the profile photo, which on the phone is set from the My Profile screen (avatar in the Messages header, above).
 
 ### Desktop navigation (sidebar)
 - Core: Dashboard (/), My Tasks, Deals (WIP source of truth), Requirements, Brand Intelligence (/brands), CRM (/contacts), People & HR, My Card (personal expenses), Comps, ChatBGP, Image Studio, Property Intelligence, Cann CAD (beta measuring), SharePoint, Calendar, Mail, Portfolios, AML Compliance (KYC Clouseau board).

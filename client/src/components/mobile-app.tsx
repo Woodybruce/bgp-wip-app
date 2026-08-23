@@ -590,15 +590,15 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
                 time + ticks INSIDE the bubble, theirs = white. */}
             <div className={`rounded-2xl px-3.5 py-2 text-[15px] leading-[1.55] whitespace-pre-wrap break-words shadow-sm ${
               isOwn
-                ? "bg-[#D9FDD3] text-[#111B21] rounded-br-md"
-                : "bg-white text-[#111B21] rounded-bl-md"
+                ? "bg-[#F6E3DA] text-[#292524] rounded-br-md"
+                : "bg-white text-[#292524] rounded-bl-md"
             }`}>
               <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} isUserBubble={false} selectedCheckboxes={!isUser ? selectedCheckboxes : undefined} />
               {message.createdAt && (
                 <span className="float-right flex items-center gap-0.5 ml-2 mt-2 -mb-0.5 translate-y-1">
-                  <span className="text-[10.5px] text-[#667781] leading-none">{formatMsgTime(message.createdAt)}</span>
+                  <span className="text-[10.5px] text-[#8A8177] leading-none">{formatMsgTime(message.createdAt)}</span>
                   {isOwn && (
-                    <CheckCheck className="w-[15px] h-[15px]" style={{ color: othersAllSeen ? "#53BDEB" : "#8696A0" }} />
+                    <CheckCheck className="w-[15px] h-[15px]" style={{ color: othersAllSeen ? "#C2410C" : "#A8A29E" }} />
                   )}
                 </span>
               )}
@@ -2411,7 +2411,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         </div>
       )}
 
-      <div ref={scrollRef} className={`flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 relative ${!isActiveThreadAi ? "bg-[#EFE7DD]" : ""}`} onScroll={(e) => {
+      <div ref={scrollRef} className={`flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 relative ${!isActiveThreadAi ? "bg-[#F4F1EA]" : ""}`} onScroll={(e) => {
         const el = e.currentTarget;
         const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
         setShowScrollBottom(distFromBottom > 200);
@@ -2476,7 +2476,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
             <div key={msg.id || i}>
               {dayLabel && (
                 <div className="flex justify-center my-3">
-                  <span className="text-[12px] font-medium text-[#54656F] bg-white/90 rounded-lg px-3 py-1 shadow-sm">{dayLabel}</span>
+                  <span className="text-[12px] font-medium text-[#6B6259] bg-white/90 rounded-lg px-3 py-1 shadow-sm">{dayLabel}</span>
                 </div>
               )}
               {showNewDivider && (
@@ -3122,6 +3122,29 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     } catch {}
   }, [threads]);
 
+  // Opening ChatBGP lands on the MAIN (most recent) conversation, not a
+  // fresh greeting (Woody, 2026-08-23). Runs once when the thread list
+  // arrives, and only if nothing else has picked a thread — a session
+  // restore, a push deep link (?thread=), or the user tapping "+" all win.
+  const adoptedLastAiRef = useRef(false);
+  useEffect(() => {
+    if (adoptedLastAiRef.current) return;
+    if (initialTab !== "ai" || restored || activeThreadId || !showChat) { adoptedLastAiRef.current = true; return; }
+    try {
+      if (new URLSearchParams(window.location.search).get("thread")) { adoptedLastAiRef.current = true; return; }
+    } catch {}
+    if (!threads?.length) return;
+    adoptedLastAiRef.current = true;
+    const lastAi = threads
+      .filter(t => t.isAiChat)
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+    if (lastAi) {
+      setActiveThreadId(lastAi.id);
+      setActiveThreadAi(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threads]);
+
   const { data: allUsers } = useQuery<Array<{ id: string; name: string; username: string; team?: string | null }>>({
     queryKey: ["/api/users"],
     queryFn: getQueryFn({ on401: "throw" }),
@@ -3709,6 +3732,22 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             {tab === "ai" && (
               <button onClick={() => { setTab("chats"); setChatSearch(""); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-switch-team-chats" aria-label="Messages">
                 <MessageCircle className="w-5 h-5" />
+              </button>
+            )}
+            {tab === "chats" && (
+              <button
+                onClick={() => navigate("/m/profile")}
+                className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:opacity-80 overflow-hidden"
+                data-testid="button-mobile-my-profile"
+                aria-label="My profile"
+              >
+                {(currentUser as any)?.profilePicUrl ? (
+                  <img src={(currentUser as any).profilePicUrl} alt="Me" className="w-10 h-10 rounded-full object-cover" />
+                ) : (
+                  <span className="text-[13px] font-semibold">
+                    {(currentUser?.name || "?").split(/\s+/).map(p => p[0]).slice(0, 2).join("").toUpperCase()}
+                  </span>
+                )}
               </button>
             )}
             {tab === "chats" && (

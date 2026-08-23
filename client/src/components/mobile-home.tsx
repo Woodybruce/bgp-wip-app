@@ -576,30 +576,6 @@ export default function MobileHome() {
         </div>
       </section>
 
-      {/* My profile — WhatsApp-style profile screen at /m/profile: big
-          photo (tap to change), contact details, CV from HR. This row is
-          the phone's only entry point (no Settings menu on mobile). */}
-      <Link
-        href="/m/profile"
-        className="flex items-center gap-3 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] dark:border-border shadow-sm active:bg-gray-50 px-4 py-3"
-        data-testid="mobile-home-profile"
-      >
-        {user?.profilePicUrl ? (
-          <img src={user.profilePicUrl} alt={user?.name || "Me"} className="w-11 h-11 rounded-full object-cover shrink-0" />
-        ) : (
-          <span className="w-11 h-11 rounded-full bg-[#1C1917] text-white flex items-center justify-center text-sm font-semibold shrink-0">
-            {(user?.name || "?").split(/\s+/).map((p: string) => p[0]).slice(0, 2).join("").toUpperCase()}
-          </span>
-        )}
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold truncate">{user?.name || "My profile"}</p>
-          <p className="text-[11px] text-muted-foreground truncate">
-            {user?.profilePicUrl ? "View profile · photo · CV" : "Add your photo · view profile & CV"}
-          </p>
-        </div>
-        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-      </Link>
-
       {/* AI Daily Briefing — the personalised morning summary */}
       <AiDailyBriefing />
 
