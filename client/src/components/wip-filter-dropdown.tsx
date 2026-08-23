@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { pillMetrics, pillActive, pillInactive, PillCount } from "@/components/ui/pill";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -45,20 +45,18 @@ export function FilterDropdown({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className={`h-8 gap-1.5 ${isFiltered ? "border-green-600 bg-green-50 text-green-800 hover:bg-green-100" : ""}`}
+        {/* Trigger follows the app pill standard (ui/pill.tsx) — slim capsule,
+            filled when a filter is active. */}
+        <button
+          type="button"
+          data-no-min-touch
+          className={cn(pillMetrics, isFiltered ? pillActive : cn(pillInactive, "bg-white"))}
           data-testid={`wip-filter-${slug}`}
         >
           {title}
-          {isFiltered && (
-            <Badge variant="secondary" className="text-[10px] h-4 px-1 bg-green-600 text-white hover:bg-green-600">
-              {selected.size}
-            </Badge>
-          )}
-          <ChevronDown className="h-3.5 w-3.5 opacity-60" />
-        </Button>
+          {isFiltered && <PillCount n={selected.size} active />}
+          <ChevronDown className="h-3 w-3 opacity-60" />
+        </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 p-0">
         <div className="bg-gray-50 border-b px-3 py-2 flex items-center justify-between rounded-t-md">

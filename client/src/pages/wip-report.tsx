@@ -19,6 +19,7 @@ import {
   Search as SearchIcon,
 } from "lucide-react";
 import { FilterDropdown } from "@/components/wip-filter-dropdown";
+import { Pill } from "@/components/ui/pill";
 import { ScrollableTable } from "@/components/scrollable-table";
 import bgpLogo from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTeam } from "@/lib/team-context";
@@ -1193,58 +1194,16 @@ export default function WipReport() {
         </div>
       </div>
 
-      {/* Tab switcher */}
-      <div className="flex items-center justify-between gap-2 mb-4 flex-shrink-0 no-print border-b" data-testid="wip-tabs">
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setActiveTab("report")}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === "report"
-                ? "border-green-600 text-green-700"
-                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-            }`}
-            data-testid="wip-tab-report"
-          >
-            WIP Report
-          </button>
-          <button
-            onClick={() => setActiveTab("agent-summary")}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === "agent-summary"
-                ? "border-green-600 text-green-700"
-                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-            }`}
-            data-testid="wip-tab-agent-summary"
-          >
-            Agent Summary
-          </button>
-          {canSeeAll && (
-            <button
-              onClick={() => setActiveTab("fee-check")}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === "fee-check"
-                  ? "border-green-600 text-green-700"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-              data-testid="wip-tab-fee-check"
-            >
-              Fee Check
-            </button>
-          )}
-          {canSeeAll && (
-            <button
-              onClick={() => setActiveTab("health")}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === "health"
-                  ? "border-green-600 text-green-700"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-              data-testid="wip-tab-health"
-            >
-              Needs Attention
-            </button>
-          )}
-        </div>
+      {/* Tab switcher — app pill standard (ui/pill.tsx) */}
+      <div className="flex items-center gap-1.5 mb-4 flex-shrink-0 no-print flex-wrap" data-testid="wip-tabs">
+        <Pill active={activeTab === "report"} onClick={() => setActiveTab("report")} data-testid="wip-tab-report">WIP Report</Pill>
+        <Pill active={activeTab === "agent-summary"} onClick={() => setActiveTab("agent-summary")} data-testid="wip-tab-agent-summary">Agent Summary</Pill>
+        {canSeeAll && (
+          <Pill active={activeTab === "fee-check"} onClick={() => setActiveTab("fee-check")} data-testid="wip-tab-fee-check">Fee Check</Pill>
+        )}
+        {canSeeAll && (
+          <Pill active={activeTab === "health"} onClick={() => setActiveTab("health")} data-testid="wip-tab-health">Needs Attention</Pill>
+        )}
       </div>
 
       {activeTab === "agent-summary" ? (
