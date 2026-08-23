@@ -326,7 +326,7 @@ export default function MobileHome() {
       {/* Ask ChatBGP — primary action */}
       <button
         onClick={() => navigate("/chatbgp?ask=1")}
-        className="w-full flex items-center gap-3 rounded-2xl px-4 py-3.5 bg-[#1C1917] text-white shadow-sm active:opacity-90"
+        className="w-full flex items-center gap-3 rounded-2xl px-4 py-3.5 bg-[hsl(var(--mobile-chrome))] text-white shadow-sm active:opacity-90"
         data-testid="mobile-home-ask-chatbgp"
       >
         <Sparkles className="w-5 h-5 shrink-0" />
@@ -341,7 +341,7 @@ export default function MobileHome() {
         <>
           <Link
             href="/available"
-            className="block rounded-2xl bg-[#1C1917] text-white shadow-sm active:opacity-90 px-4 py-3.5"
+            className="block rounded-2xl bg-[hsl(var(--mobile-chrome))] text-white shadow-sm active:opacity-90 px-4 py-3.5"
             data-testid="mobile-home-portfolio"
           >
             <div className="flex items-center gap-2 mb-2.5">
@@ -385,14 +385,14 @@ export default function MobileHome() {
         const tab = showTabs ? finTab : (commission ? "personal" : "company");
         const target = tab === "personal" ? "/deals" : "/finance";
         return (
-          <div className="rounded-2xl bg-[#1C1917] text-white shadow-sm px-4 py-3.5" data-testid="mobile-home-finance">
+          <div className="rounded-2xl bg-[hsl(var(--mobile-chrome))] text-white shadow-sm px-4 py-3.5" data-testid="mobile-home-finance">
             <div className="flex items-center gap-2 mb-2.5">
               {showTabs ? (
                 <div className="flex items-center rounded-full bg-white/10 p-px">
                   <button
                     onClick={() => pickFinTab("personal")}
                     data-no-min-touch
-                    className={`px-2 py-[3px] rounded-full text-[10px] leading-none font-semibold uppercase tracking-wide transition-colors ${tab === "personal" ? "bg-white/90 text-[#1C1917]" : "text-white/60"}`}
+                    className={`px-2 py-[3px] rounded-full text-[10px] leading-none font-semibold uppercase tracking-wide transition-colors ${tab === "personal" ? "bg-white/90 text-[hsl(var(--mobile-chrome))]" : "text-white/60"}`}
                     data-testid="fin-tab-personal"
                   >
                     Personal
@@ -400,7 +400,7 @@ export default function MobileHome() {
                   <button
                     onClick={() => pickFinTab("company")}
                     data-no-min-touch
-                    className={`px-2 py-[3px] rounded-full text-[10px] leading-none font-semibold uppercase tracking-wide transition-colors ${tab === "company" ? "bg-white/90 text-[#1C1917]" : "text-white/60"}`}
+                    className={`px-2 py-[3px] rounded-full text-[10px] leading-none font-semibold uppercase tracking-wide transition-colors ${tab === "company" ? "bg-white/90 text-[hsl(var(--mobile-chrome))]" : "text-white/60"}`}
                     data-testid="fin-tab-company"
                   >
                     Company

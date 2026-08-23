@@ -588,6 +588,15 @@ thead th.sticky {
   border-radius: 0.5rem;
 }
 
+/* Mobile chrome — the dark header/tile colour on the phone shell. Hardcoded
+   #1C1917 ignored the colour schemes (Woody, 2026-08-23); each scheme now
+   tints it. Used as bg-[hsl(var(--mobile-chrome))] in the mobile components. */
+:root { --mobile-chrome: 24 8% 10%; }
+:root.scheme-claude { --mobile-chrome: 25 32% 16%; }
+:root.scheme-ocean { --mobile-chrome: 330 55% 20%; }
+:root.scheme-ember { --mobile-chrome: 45 65% 16%; }
+:root.scheme-landsec { --mobile-chrome: 200 100% 11%; }
+
 :root.scheme-claude {
   --primary: 25 60% 45%;
   --primary-foreground: 30 20% 98%;

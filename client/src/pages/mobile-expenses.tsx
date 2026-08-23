@@ -1400,7 +1400,7 @@ export default function MobileExpenses() {
         <div className="px-4 mb-3 flex gap-1.5 overflow-x-auto" data-testid="m-expenses-status-filter">
           <button
             onClick={() => setStatusFilter("all")}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${statusFilter === "all" ? "bg-[#1C1917] text-white border-[#1C1917]" : "bg-white dark:bg-card text-muted-foreground border-border active:bg-gray-50"}`}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${statusFilter === "all" ? "bg-[hsl(var(--mobile-chrome))] text-white border-[hsl(var(--mobile-chrome))]" : "bg-white dark:bg-card text-muted-foreground border-border active:bg-gray-50"}`}
             data-testid="m-expenses-filter-all"
           >
             All {expenses.length}
@@ -1409,7 +1409,7 @@ export default function MobileExpenses() {
             <button
               key={s.key}
               onClick={() => setStatusFilter(statusFilter === s.key ? "all" : s.key)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${statusFilter === s.key ? "bg-[#1C1917] text-white border-[#1C1917]" : "bg-white dark:bg-card text-muted-foreground border-border active:bg-gray-50"}`}
+              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${statusFilter === s.key ? "bg-[hsl(var(--mobile-chrome))] text-white border-[hsl(var(--mobile-chrome))]" : "bg-white dark:bg-card text-muted-foreground border-border active:bg-gray-50"}`}
               data-testid={`m-expenses-filter-${s.key}`}
             >
               {s.label} {s.count}

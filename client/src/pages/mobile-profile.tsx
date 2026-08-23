@@ -99,7 +99,7 @@ export default function MobileProfilePage() {
           {me?.profilePicUrl ? (
             <img src={me.profilePicUrl} alt={me?.name || "Me"} className="w-36 h-36 rounded-full object-cover border border-[#E7E5E4]" />
           ) : (
-            <div className="w-36 h-36 rounded-full bg-[#1C1917] text-white flex items-center justify-center text-4xl font-semibold">
+            <div className="w-36 h-36 rounded-full bg-[hsl(var(--mobile-chrome))] text-white flex items-center justify-center text-4xl font-semibold">
               {initials}
             </div>
           )}
