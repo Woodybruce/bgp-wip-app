@@ -31,7 +31,7 @@ Phone home screen, top to bottom:
 - "N expenses to approve" banner (approvers only) → approval queue.
 - Quick links: Deals, Expenses, Images, CRM.
 - Boards grid: Brand Intelligence, Comps, SharePoint, Property Intelligence.
-- **My profile card** — name + initials circle + "Add photo" button: THIS is where a phone user sets their profile photo (tap the circle or button, pick from camera roll, JPG/PNG/WebP/HEIC max 5MB). It propagates to chat messages and everywhere their name shows.
+- **My profile row** (name + avatar) → opens the WhatsApp-style profile screen at /m/profile: big photo with a green camera badge (tap to change it — camera roll, JPG/PNG/WebP/HEIC max 5MB; propagates to chat messages and everywhere their name shows), phone/email/team rows, their CV from HR (about, summary, specialisms, notable clients, career history, education, LinkedIn), and a "Full HR profile" jump-off for edits/documents/holidays. THIS is where a phone user sets their profile photo.
 - AI Daily Briefing card, then My Tasks.
 Phone Messages/chat: WhatsApp-style — beige wallpaper, green bubbles for own messages with in-bubble time + read ticks (blue when everyone has seen the thread), date chips, swipe a thread to archive, drafts auto-saved per thread. **Group chat icon**: open the group chat and tap the group's avatar circle in the header — opens the photo picker, sets the icon for everyone. 1-to-1 chats automatically show each person's profile photo.
 Phone client logins (e.g. Landsec) get different tabs: Portfolio, Messages, Deals, Tasks, News.
