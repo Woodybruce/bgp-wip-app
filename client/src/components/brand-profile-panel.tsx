@@ -592,7 +592,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
     },
     onSuccess: (out: { updated?: string[]; skipped?: string[]; reason?: string }) => {
       if (out.reason) {
-        toast({ title: "AI enrichment skipped", description: out.reason, variant: "destructive" });
+        toast({ title: "Brand data not refreshed", description: "Automatic enrichment is unavailable right now — try Refresh later." });
       } else if (!out.updated || out.updated.length === 0) {
         toast({ title: "No new info found", description: "AI had nothing to add." });
       } else {

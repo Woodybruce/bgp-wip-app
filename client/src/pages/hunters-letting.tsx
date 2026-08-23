@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Building2, Flame, Search, ArrowUpDown, Clock, AlertTriangle } from "lucide-react";
 import { Link } from "wouter";
 import { AIActivityTrigger } from "@/components/ai-activity-card";
+import { MobileCardView } from "@/components/mobile-card-view";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 type Row = {
   id: string;
@@ -27,6 +29,7 @@ type Row = {
 type SortKey = "score" | "upcomingEvents" | "upcomingSqft" | "staleAgentCount" | "ownedCount" | "recentAcq" | "name";
 
 export default function HuntersLetting() {
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("score");
   const [showHunterOnly, setShowHunterOnly] = useState(false);
@@ -76,6 +79,21 @@ export default function HuntersLetting() {
             <div className="p-6 text-center text-sm text-muted-foreground">Loading hunt list…</div>
           ) : filtered.length === 0 ? (
             <div className="p-6 text-center text-sm text-muted-foreground">No landlords match.</div>
+          ) : isMobile ? (
+            <MobileCardView
+              items={filtered.map((r) => ({
+                id: r.id,
+                title: r.name,
+                subtitle: r.companyType || undefined,
+                href: `/companies/${r.id}`,
+                fields: [
+                  { label: "Score", value: r.score },
+                  { label: "Owned", value: r.ownedCount || null },
+                  { label: "Events 12mo", value: r.upcomingEvents || null },
+                  { label: "Stale agent", value: r.staleAgentCount || null },
+                ],
+              }))}
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs">

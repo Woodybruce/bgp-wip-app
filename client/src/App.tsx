@@ -616,6 +616,20 @@ function AuthenticatedApp() {
                 contacts: "Contact", hr: "Profile", comps: "Comp",
               };
               if (hasId && DETAIL_LABELS[root]) return DETAIL_LABELS[root];
+              // Real page names — the slug title-caser below mangles
+              // acronyms and codenames ("Wip Report", "Pla", "Kyc
+              // Clouseau", "Hr", "Sharepoint"; design review 2026-08-23).
+              const ROUTE_TITLES: Record<string, string> = {
+                "wip-report": "WIP Report", pla: "PLA Matters",
+                "kyc-clouseau": "KYC Clouseau", hr: "People & HR",
+                sharepoint: "SharePoint", "aml-compliance": "AML Compliance",
+                "aml-training": "AML Training", "cad-measure": "Cann CAD",
+                edozo: "Properties", available: "Letting Tracker",
+                contacts: "CRM", companies: "CRM", chatbgp: "ChatBGP",
+                "map-bgp": "Map", "westminster-restaurants": "London Restaurants",
+                "property-intelligence": "Property Intelligence",
+              };
+              if (ROUTE_TITLES[root]) return ROUTE_TITLES[root];
               return root.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
             })()}
           </span>

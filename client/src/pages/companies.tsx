@@ -92,6 +92,13 @@ interface CHProfile {
   lastAccountsMadeUpTo: string | null;
 }
 
+// Company types are stored as "Tenant - F&B" etc. — identity chips render
+// them in the middot form ("Tenant · F&B", docs/DESIGN.md §9). Display-only:
+// stored values, selects and filters keep the canonical hyphen form.
+function formatCompanyType(t: string | null | undefined): string {
+  return (t || "").replace(/\s+-\s+/g, " · ");
+}
+
 function extractDomain(raw: string | null | undefined): string | null {
   if (!raw) return null;
   try {
@@ -188,7 +195,7 @@ function SubCompaniesPanel({ parentId, parentName }: { parentId: string; parentN
                 <div className="flex items-center gap-2 min-w-0">
                   <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                   <span className="text-sm truncate">{sub.name}</span>
-                  {sub.company_type && <Badge variant="outline" className="text-[10px] shrink-0">{sub.company_type}</Badge>}
+                  {sub.company_type && <Badge variant="outline" className="text-[10px] shrink-0">{formatCompanyType(sub.company_type)}</Badge>}
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   {sub.kyc_status === "approved" && <Badge className="text-[9px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0 px-1.5"><CheckCircle2 className="w-2.5 h-2.5 mr-0.5 inline" />KYC</Badge>}
@@ -1297,10 +1304,13 @@ function CompanyDetail({ id }: { id: string }) {
     return (
       <div className="overflow-x-hidden" data-testid="company-detail-mobile">
         <div className="flex items-center gap-2 px-4 pt-3">
+          {/* The phone shell top bar already renders "← Company" — showing a
+              second back arrow here duplicated it (design review 2026-08-23).
+              Hidden below md; kept for the md+ edge case (forced desktop). */}
           <Button
             variant="ghost"
             size="sm"
-            className="shrink-0 px-2"
+            className="shrink-0 px-2 hidden md:inline-flex"
             data-testid="button-back-companies-mobile"
             onClick={() => {
               if (window.history.length > 1) window.history.back();
@@ -1343,7 +1353,7 @@ function CompanyDetail({ id }: { id: string }) {
         <div className="flex-1">
           <h1 className="text-xl font-bold" data-testid="text-company-detail-name">{company.name}</h1>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
-            {company.companyType && <Badge variant="secondary" className="text-xs">{company.companyType}</Badge>}
+            {company.companyType && <Badge variant="secondary" className="text-xs">{formatCompanyType(company.companyType)}</Badge>}
             {company.aiDisabled && (
               <Badge variant="outline" className="text-[10px] border-red-300 text-red-700 bg-red-50" data-testid="badge-ai-disabled">
                 <BotOff className="w-2.5 h-2.5 mr-0.5" />AI Disabled

@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { Pill } from "@/components/ui/pill";
+import { countLabel } from "@/lib/utils";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { guessDomain, extractDomain, localBrandLogoUrl } from "@/lib/company-logos";
@@ -172,16 +173,19 @@ function LandlordsTab({
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Pill active={landlordFilter === "all"} onClick={() => setLandlordFilter("all")} data-testid="stat-total-landlords">
+          Total Landlords <span className="font-mono tabular-nums">{landlords.length}</span>
+        </Pill>
+        <Pill active={landlordFilter === "clients"} onClick={() => setLandlordFilter(landlordFilter === "clients" ? "all" : "clients")} data-testid="stat-bgp-clients">
+          BGP Clients <span className="font-mono tabular-nums">{clientLandlords.length}</span>
+        </Pill>
+        <Pill active={landlordFilter === "non-clients"} onClick={() => setLandlordFilter(landlordFilter === "non-clients" ? "all" : "non-clients")} data-testid="stat-non-clients">
+          Non-Clients <span className="font-mono tabular-nums">{nonClientLandlords.length}</span>
+        </Pill>
+      </div>
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="cursor-pointer" onClick={() => setLandlordFilter("all")} data-testid="stat-total-landlords">
-          <StatCard label="Total Landlords" value={landlords.length} active={landlordFilter === "all"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setLandlordFilter(landlordFilter === "clients" ? "all" : "clients")} data-testid="stat-bgp-clients">
-          <StatCard label="BGP Clients" value={clientLandlords.length} active={landlordFilter === "clients"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setLandlordFilter(landlordFilter === "non-clients" ? "all" : "non-clients")} data-testid="stat-non-clients">
-          <StatCard label="Non-Clients" value={nonClientLandlords.length} active={landlordFilter === "non-clients"} />
-        </div>
         {/* Same definition as the page-header count: contacts at landlord OR
             agent companies (brand/tenant contacts live in Brands Hub). The
             two previously counted different sets and showed different totals
@@ -205,7 +209,7 @@ function LandlordsTab({
             </button>
           )}
         </div>
-        <p className="text-sm text-muted-foreground">{filtered.length} results</p>
+        <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "result")}</p>
       </div>
 
       {viewMode === "table" ? (
@@ -249,7 +253,7 @@ function LandlordsTab({
                       <TableCell className="text-right">
                         <div className="flex items-center gap-1 justify-end">
                           {onScopeLandlord && (
-                            <button onClick={(e) => { e.stopPropagation(); onScopeLandlord(company.id); }} className="text-xs text-primary hover:text-primary/80 font-medium whitespace-nowrap">View People</button>
+                            <button onClick={(e) => { e.stopPropagation(); onScopeLandlord(company.id); }} className="text-xs text-primary hover:text-primary/80 font-medium whitespace-nowrap">Open people</button>
                           )}
                           {onDeleteCompany && (
                             <button onClick={(e) => { e.stopPropagation(); onDeleteCompany(company.id, company.name); }} className="p-1 rounded-full opacity-60 md:opacity-0 md:group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all">
@@ -321,7 +325,7 @@ function LandlordsTab({
                         data-testid={`button-scope-${company.id}`}
                       >
                         <Users className="w-3 h-3" />
-                        View People
+                        Open people
                         <ChevronRight className="w-3 h-3" />
                       </button>
                     )}
@@ -507,25 +511,25 @@ function AgentsTab({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div className="cursor-pointer" onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-agent-firms">
-          <StatCard label="Agent Firms" value={agentCompanies.length} active={!specialtyFilter} />
-        </div>
-        <div className="cursor-pointer" onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-individual-agents">
-          <StatCard label="Individual Agents" value={agentContacts.length} active={!specialtyFilter} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setSpecialtyFilter(specialtyFilter === "Leasing" ? null : "Leasing")} data-testid="stat-leasing">
-          <StatCard label="Leasing" value={agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "leasing").length} active={specialtyFilter === "Leasing"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setSpecialtyFilter(specialtyFilter === "Investment" ? null : "Investment")} data-testid="stat-investment">
-          <StatCard label="Investment" value={agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "investment").length} active={specialtyFilter === "Investment"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setSpecialtyFilter(specialtyFilter === "Tenant Rep" ? null : "Tenant Rep")} data-testid="stat-tenant-rep">
-          <StatCard label="Tenant Rep" value={agentContacts.filter(c => agentReqCounts[c.id] > 0).length} active={specialtyFilter === "Tenant Rep"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setSpecialtyFilter(specialtyFilter === "Lease Advisory" ? null : "Lease Advisory")} data-testid="stat-lease-advisory">
-          <StatCard label="Lease Advisory" value={agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "lease advisory").length} active={specialtyFilter === "Lease Advisory"} />
-        </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Pill active={!specialtyFilter} onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-agent-firms">
+          Agent Firms <span className="font-mono tabular-nums">{agentCompanies.length}</span>
+        </Pill>
+        <Pill active={!specialtyFilter} onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-individual-agents">
+          Individual Agents <span className="font-mono tabular-nums">{agentContacts.length}</span>
+        </Pill>
+        <Pill active={specialtyFilter === "Leasing"} onClick={() => setSpecialtyFilter(specialtyFilter === "Leasing" ? null : "Leasing")} data-testid="stat-leasing">
+          Leasing <span className="font-mono tabular-nums">{agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "leasing").length}</span>
+        </Pill>
+        <Pill active={specialtyFilter === "Investment"} onClick={() => setSpecialtyFilter(specialtyFilter === "Investment" ? null : "Investment")} data-testid="stat-investment">
+          Investment <span className="font-mono tabular-nums">{agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "investment").length}</span>
+        </Pill>
+        <Pill active={specialtyFilter === "Tenant Rep"} onClick={() => setSpecialtyFilter(specialtyFilter === "Tenant Rep" ? null : "Tenant Rep")} data-testid="stat-tenant-rep">
+          Tenant Rep <span className="font-mono tabular-nums">{agentContacts.filter(c => agentReqCounts[c.id] > 0).length}</span>
+        </Pill>
+        <Pill active={specialtyFilter === "Lease Advisory"} onClick={() => setSpecialtyFilter(specialtyFilter === "Lease Advisory" ? null : "Lease Advisory")} data-testid="stat-lease-advisory">
+          Lease Advisory <span className="font-mono tabular-nums">{agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "lease advisory").length}</span>
+        </Pill>
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -585,7 +589,7 @@ function AgentsTab({
           </select>
         )}
 
-        <p className="text-sm text-muted-foreground">{filtered.length} firms</p>
+        <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "firm")}</p>
       </div>
 
       <div className="space-y-2">
@@ -899,7 +903,7 @@ function LendersTab({
             </button>
           )}
         </div>
-        <p className="text-sm text-muted-foreground">{filtered.length} results</p>
+        <p className="text-sm text-muted-foreground">{countLabel(filtered.length, "result")}</p>
         {onAddCompany && (
           <Button size="sm" onClick={onAddCompany} className="ml-auto">
             <Landmark className="w-4 h-4 mr-1.5" />
@@ -1641,7 +1645,7 @@ function PeopleHub() {
             CRM
           </h1>
           <p className="text-sm text-muted-foreground">
-            {`${landlordCompanies.length.toLocaleString()} landlords · ${agentCompaniesCount.toLocaleString()} agents · ${hubContactCount.toLocaleString()} contacts`}
+            {`${countLabel(landlordCompanies.length, "landlord")} · ${countLabel(agentCompaniesCount, "agent")} · ${countLabel(hubContactCount, "contact")}`}
           </p>
         </div>
         <div className="flex items-center gap-2">

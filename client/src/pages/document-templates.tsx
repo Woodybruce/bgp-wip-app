@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
+import { Pill, pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import {
   Upload,
   FileText,
@@ -326,14 +326,11 @@ export default function DocumentTemplates() {
 
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Document Generate</h1>
-          <p className="text-muted-foreground mt-1">
-            Create templates from example documents, then smart-generate new documents from source data
-          </p>
-        </div>
-      </div>
+      {/* Title comes from the Document Studio wrapper (document-briefs.tsx) —
+          one 2xl title per view, so this page only carries the subtitle. */}
+      <p className="text-sm text-muted-foreground" data-testid="text-page-title">
+        Create templates from example documents, then smart-generate new documents from source data
+      </p>
 
       {editingRun ? (
         <div className="mt-4">
@@ -2036,16 +2033,10 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#232323] to-[#444] flex items-center justify-center shadow-sm">
-            <Sparkles className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold">Document Studio</h2>
-            <p className="text-sm text-muted-foreground">{isClientScoped ? `${scopeInfo?.team} document templates` : "AI-powered documents with BGP branding"}</p>
-          </div>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {isClientScoped ? `${scopeInfo?.team} document templates` : "AI-powered documents with BGP branding"}
+        </p>
         <div className="flex items-center gap-2">
           {!isClientScoped && canvaStatus?.connected ? (
             <DropdownMenu>
@@ -2346,7 +2337,7 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
 
         return (
           <div>
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
               <div className="flex items-center gap-2">
                 <Label className="text-xs uppercase tracking-wider text-muted-foreground">
                   {isClientScoped ? `${scopeInfo?.team} Templates` : "Choose Template"}
@@ -2356,16 +2347,16 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
                 )}
               </div>
               {!isClientScoped && (
-                <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-0.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                   {categories.map(cat => (
-                    <button
+                    <Pill
                       key={cat.key}
-                      className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${activeCategory === cat.key ? "bg-white shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                      active={activeCategory === cat.key}
                       onClick={() => setActiveCategory(cat.key)}
                       data-testid={`filter-cat-${cat.key}`}
                     >
                       {cat.label}
-                    </button>
+                    </Pill>
                   ))}
                 </div>
               )}

@@ -125,7 +125,7 @@ export default function AdminDedupe() {
             data-testid="button-scan"
           >
             {scanMutation.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
-            Run scan (AI-assisted)
+            Scan (AI-assisted)
           </Button>
           <Button
             variant="outline"
