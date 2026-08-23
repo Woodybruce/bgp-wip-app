@@ -1,3 +1,9 @@
+// ⚠️ PARKED (2026-08-23, Woody: "rewind and try again in 3 months"):
+// unwired from the UI because Google kept refusing the project Custom
+// Search access despite the API being enabled, the key permitted and
+// billing active. The server side (/api/image-search + the two
+// *-from-url endpoints in routes.ts) is still live — to revive, re-wire
+// this component per commit 0cb332b7 and re-test /api/image-search.
 // Image source chooser — shown BEFORE iOS's native file menu so the app can
 // offer "Search the web" alongside the camera/library (Woody, 2026-08-23:
 // the Apple drop-down can't be extended, so we put our own sheet in front).
