@@ -11,12 +11,14 @@ import { useLocation } from "wouter";
 import { queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Camera, Loader2, Phone, Mail, Users, Briefcase, GraduationCap, Linkedin, ChevronRight, FileText } from "lucide-react";
+import { ImageSourceSheet } from "@/components/image-source-sheet";
 
 export default function MobileProfilePage() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [showPicSheet, setShowPicSheet] = useState(false);
 
   const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const { data: hr } = useQuery<any>({
@@ -60,6 +62,24 @@ export default function MobileProfilePage() {
     }
   };
 
+  const setFromWeb = async (url: string) => {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/users/profile-pic-from-url", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ url }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || "Failed to set photo");
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: "Profile photo updated", description: "It now shows on your chat messages across the app." });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const infoRows: Array<{ icon: any; label: string; value: string; href?: string }> = [];
   if (me?.phone) infoRows.push({ icon: Phone, label: "Phone", value: me.phone, href: `tel:${me.phone.replace(/\s+/g, "")}` });
   if (me?.email) infoRows.push({ icon: Mail, label: "Email", value: me.email, href: `mailto:${me.email}` });
@@ -91,7 +111,7 @@ export default function MobileProfilePage() {
       <div className="flex flex-col items-center pt-8 pb-5 px-4">
         <button
           type="button"
-          onClick={() => inputRef.current?.click()}
+          onClick={() => setShowPicSheet(true)}
           disabled={busy}
           className="relative active:opacity-80"
           data-testid="button-profile-photo"
@@ -113,6 +133,13 @@ export default function MobileProfilePage() {
           accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
           className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); }}
+        />
+        <ImageSourceSheet
+          open={showPicSheet}
+          onClose={() => setShowPicSheet(false)}
+          onPickFile={() => inputRef.current?.click()}
+          onWebSelect={setFromWeb}
+          title="Profile photo"
         />
         <h2 className="text-xl font-bold mt-4 text-center">{me?.name || me?.username || ""}</h2>
         {(hr?.title || me?.role) && (

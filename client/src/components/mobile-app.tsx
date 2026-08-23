@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
 import { useKeyboardOpen } from "@/hooks/use-mobile";
+import { ImageSourceSheet } from "@/components/image-source-sheet";
 import { ThreadMediaDialog } from "@/components/chat-panel";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { legacyToCode } from "@shared/deal-status";
@@ -2200,6 +2201,21 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const headerInitials = isDm && dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
   const isGroup = !isActiveThreadAi && !isDm;
   const groupPicFileRef = useRef<HTMLInputElement>(null);
+  // Our chooser in front of iOS's file menu — adds "Search the web".
+  const [showGroupPicSheet, setShowGroupPicSheet] = useState(false);
+
+  const handleGroupPicFromUrl = async (url: string) => {
+    if (!threadId) return;
+    const res = await fetch(`/api/chat/threads/${threadId}/group-pic-from-url`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({ url }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || "Failed to set photo");
+    queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
+    queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+  };
 
   const handleGroupPicUpload = async (file: File) => {
     if (!threadId) return;
@@ -2244,25 +2260,23 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     }
     if (activeThread?.groupPicUrl) {
       return (
-        <label className="relative cursor-pointer">
+        <button type="button" className="relative" onClick={() => setShowGroupPicSheet(true)} data-testid="button-group-pic">
           <img src={activeThread.groupPicUrl} alt="" className="w-10 h-10 rounded-full object-cover" />
           <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white/90 flex items-center justify-center">
             <Camera className="w-2.5 h-2.5 text-black" />
           </div>
-          <input type="file" accept="image/*" className="hidden" ref={groupPicFileRef} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGroupPicUpload(f); e.target.value = ""; }} />
-        </label>
+        </button>
       );
     }
     return (
-      <label className="relative cursor-pointer">
+      <button type="button" className="relative" onClick={() => setShowGroupPicSheet(true)} data-testid="button-group-pic">
         <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
           <Users className="w-5 h-5" />
         </div>
         <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white/90 flex items-center justify-center">
           <Camera className="w-2.5 h-2.5 text-black" />
         </div>
-        <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGroupPicUpload(f); e.target.value = ""; }} />
-      </label>
+      </button>
     );
   };
 
@@ -2285,6 +2299,14 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
       className={`flex flex-col w-screen overflow-x-hidden fixed inset-0 bg-gray-50`}
       style={isActiveThreadAi && !keyboardOpen ? { paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom))" } : undefined}
     >
+      <input type="file" accept="image/*" className="hidden" ref={groupPicFileRef} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGroupPicUpload(f); e.target.value = ""; }} />
+      <ImageSourceSheet
+        open={showGroupPicSheet}
+        onClose={() => setShowGroupPicSheet(false)}
+        onPickFile={() => groupPicFileRef.current?.click()}
+        onWebSelect={handleGroupPicFromUrl}
+        title="Group photo"
+      />
       {isActiveThreadAi && <MobileBottomNav />}
       {isActiveThreadAi ? (
         <div className="bg-white text-gray-900 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-2.5 px-4 shrink-0 border-b border-gray-100">
