@@ -89,9 +89,14 @@ function fp(kind, page, detail) {
 const KNOWN_PATH = path.join(__dirname, "explorer-known.json");
 const known = new Set(fs.existsSync(KNOWN_PATH) ? JSON.parse(fs.readFileSync(KNOWN_PATH, "utf8")) : []);
 
+// Dedupe at record time — a page erroring in a loop (map tiles, polling)
+// must not grow memory for the whole run (the v1 unbounded array OOM'd node).
 const failures = [];
+const seenFp = new Set();
 function report(kind, persona, viewport, pageUrl, detail) {
   const f = { kind, persona, viewport, page: pageUrl, detail: String(detail || "").slice(0, 300), fp: fp(kind, pageUrl, detail) };
+  if (seenFp.has(f.fp)) return;
+  seenFp.add(f.fp);
   failures.push(f);
 }
 
@@ -114,29 +119,33 @@ async function explore(persona, viewport, routes) {
   });
   await login(context, persona.username);
 
-  const page = await context.newPage();
   let currentRoute = "/";
   let reqSeq = 0;
 
-  page.on("dialog", (d) => d.dismiss().catch(() => {}));
-  page.on("request", () => { reqSeq++; });
-  page.on("response", (res) => {
-    const url = res.url();
-    if (!url.startsWith(BASE) || NOISE_URL.test(url)) return;
-    const s = res.status();
-    const short = url.replace(BASE, "").split("?")[0];
-    if (s >= 500) report("http-5xx", persona.key, viewport.key, currentRoute, `${s} ${short}`);
-    else if (s === 403 && persona.staff) report("staff-403", persona.key, viewport.key, currentRoute, `403 ${short}`);
-  });
-  page.on("pageerror", (err) => {
-    report("page-error", persona.key, viewport.key, currentRoute, err?.message || String(err));
-  });
-  page.on("console", (msg) => {
-    if (msg.type() !== "error") return;
-    const t = msg.text();
-    if (NOISE_CONSOLE.test(t)) return;
-    report("console-error", persona.key, viewport.key, currentRoute, t);
-  });
+  const makePage = async () => {
+    const p = await context.newPage();
+    p.on("dialog", (d) => d.dismiss().catch(() => {}));
+    p.on("request", () => { reqSeq++; });
+    p.on("response", (res) => {
+      const url = res.url();
+      if (!url.startsWith(BASE) || NOISE_URL.test(url)) return;
+      const s = res.status();
+      const short = url.replace(BASE, "").split("?")[0];
+      if (s >= 500) report("http-5xx", persona.key, viewport.key, currentRoute, `${s} ${short}`);
+      else if (s === 403 && persona.staff) report("staff-403", persona.key, viewport.key, currentRoute, `403 ${short}`);
+    });
+    p.on("pageerror", (err) => {
+      report("page-error", persona.key, viewport.key, currentRoute, err?.message || String(err));
+    });
+    p.on("console", (msg) => {
+      if (msg.type() !== "error") return;
+      const t = msg.text();
+      if (NOISE_CONSOLE.test(t)) return;
+      report("console-error", persona.key, viewport.key, currentRoute, t);
+    });
+    return p;
+  };
+  let page = await makePage();
 
   // Clients explore only from their own landing page outward.
   const queue = persona.linkCrawlOnly ? ["/"] : [...routes];
@@ -151,6 +160,13 @@ async function explore(persona, viewport, routes) {
     if (visited.has(route)) continue;
     visited.add(route);
     currentRoute = route;
+
+    // Recycle the tab every 25 routes — a single long-lived page accumulates
+    // Chromium state across map/chart-heavy screens.
+    if (visited.size % 25 === 0) {
+      await page.close().catch(() => {});
+      page = await makePage();
+    }
 
     try {
       await page.goto(`${BASE}${route}`, { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -222,6 +238,8 @@ async function explore(persona, viewport, routes) {
         }
       } catch {
         // Element detached / covered — normal churn, not a failure.
+      } finally {
+        await h.dispose().catch(() => {});
       }
     }
     process.stdout.write(`  [${persona.key}/${viewport.key}] ${route} (${clicks} clicks)\n`);
