@@ -82,7 +82,7 @@ export default function WestminsterRestaurantsPage() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "prospects" | "in_crm">("prospects");
   const [refreshing, setRefreshing] = useState(false);
-  const [laId, setLaId] = useState<string>("197");
+  const [laId, setLaId] = useState<string>("120");
 
   const { data: boroughs = [] } = useQuery<Array<{ id: number; name: string }>>({
     queryKey: ["/api/westminster/boroughs"],
