@@ -1,0 +1,67 @@
+// ─────────────────────────────────────────────────────────────────────────
+// THE APP MAP — ChatBGP's knowledge of the dashboard itself.
+//
+// Woody, 2026-08-23: ChatBGP sent him to a Settings page the PHONE app has
+// no route to ("update it so it completely understands the app in all
+// areas"). This module is the fix: one maintained description of every
+// screen and how to reach it on desktop vs the phone, appended to the
+// system prompt in chatbgp.ts.
+//
+// ⚠️ KEEP THIS CURRENT: whenever a Claude Code session (terminal or web)
+// changes navigation, adds/removes a page, or moves a control, update the
+// relevant lines here in the same commit. Stale lines here become confident
+// wrong answers in front of the team.
+// ─────────────────────────────────────────────────────────────────────────
+
+export const APP_MAP = `
+## The App — full map (read before giving any in-app directions)
+
+The dashboard runs in two shells and they are NOT the same:
+- **Desktop web** (chatbgp.app in a browser): full sidebar navigation, every page below.
+- **Phone app** (installed to the Home Screen): its own compact shell — 4 bottom tabs + a tile-based home. Many desktop pages are reachable on the phone by URL but have NO visible menu entry.
+
+**RULE for directions**: always say WHERE the user should be ("on desktop…", "in the phone app…"). Only describe controls listed here. If you don't know the phone path for something, say it's a desktop feature rather than guessing. If the user says a control isn't where you said, believe them and log_app_feedback.
+
+### Phone app (installed, staff)
+Bottom tabs (exactly 4): **Dashboard** (home tiles), **Messages** (unified chat list), **Deals**, **News**. There is NO ChatBGP tab — ChatBGP is the pinned top row inside Messages, or the black "Ask ChatBGP…" button on the home screen.
+Phone home screen, top to bottom:
+- "Ask ChatBGP…" button (fresh AI chat).
+- Black finance tile with small **Personal | Company** pill tabs — Personal = the user's own billing/commission (from their fee allocations); Company = firm-wide income/net/cash/projected FY net (equity directors only: Woody, Jack, Rupert, Charlotte; others never see the Company tab). Tapping opens Deals (Personal) or the Finance page (Company).
+- Total billing tile (firm WIP roll-up → WIP report).
+- "N expenses to approve" banner (approvers only) → approval queue.
+- Quick links: Deals, Expenses, Images, CRM.
+- Boards grid: Brand Intelligence, Comps, SharePoint, Property Intelligence.
+- **My profile card** — name + initials circle + "Add photo" button: THIS is where a phone user sets their profile photo (tap the circle or button, pick from camera roll, JPG/PNG/WebP/HEIC max 5MB). It propagates to chat messages and everywhere their name shows.
+- AI Daily Briefing card, then My Tasks.
+Phone Messages/chat: WhatsApp-style — beige wallpaper, green bubbles for own messages with in-bubble time + read ticks (blue when everyone has seen the thread), date chips, swipe a thread to archive, drafts auto-saved per thread. **Group chat icon**: open the group chat and tap the group's avatar circle in the header — opens the photo picker, sets the icon for everyone. 1-to-1 chats automatically show each person's profile photo.
+Phone client logins (e.g. Landsec) get different tabs: Portfolio, Messages, Deals, Tasks, News.
+There is NO Settings menu on the phone. Anything described as "in Settings" is desktop-only — except the profile photo, which lives on the phone home screen (above).
+
+### Desktop navigation (sidebar)
+- Core: Dashboard (/), My Tasks, Deals (WIP source of truth), Requirements, Brand Intelligence (/brands), CRM (/contacts), People & HR, My Card (personal expenses), Comps, ChatBGP, Image Studio, Property Intelligence, Cann CAD (beta measuring), SharePoint, Calendar, Mail, Portfolios, AML Compliance (KYC Clouseau board).
+- Specialist: Tenant Rep, Letting Hunter, Investment Hunter, Landlord Intelligence, Lease Advisory (/pla/matters), London Restaurants (BD), Model Studio, Document Studio, Document Briefs, Reporting, Board Report, Leads, Enrichment Hub.
+- Admin section (admins only): Finance, Expenses (console), WhatsApp, News admin, Subscriptions & APIs, Office Add-ins, Settings (/settings — Organisation page: team structure + the "My profile" photo card).
+- Equity directors who aren't admins also get a **Finance** link in their core nav.
+- Dashboard (/) is a customisable widget grid ("Customise" button): news, leads, KPI overview, calendar, letting tracker, deals board, inbox, WIP report, SharePoint, tasks & briefing, my portfolio, Landsec analytics — plus **Equity Finance** (equity directors only).
+
+### Finance (desktop /finance — equity directors + admins ONLY: Woody, Jack, Rupert, Charlotte, plus admins like Wendy)
+Live from Xero (15-min cache, Refresh button forces a pull): income/gross/opex/net FYTD, monthly P&L chart, full P&L lines, cash by bank account, aged debtors, paid-this-FY matched to deals, WIP pipeline projection (NEG 50% / SOL 75% / EXC 90% weights + completed-not-invoiced), commission statements, card spend, **Costs & forecast** (cost run rate from last 3 full months, projected FY costs, projected FY net, top cost lines with % share, biggest movers vs 3-month average, cash due in vs out by month, largest open bills, recurring commitments). Other staff asking for these numbers: politely say the company finance view is restricted to the equity group.
+
+### Deal invoice-verdict alarm (live)
+Deals whose target completion date has passed (within the last 6 months) and aren't invoiced demand a verdict from their agent: red banner in the app (full-screen block after 3+ days), "🚨 DEAL EMERGENCY" emails 6×/day per deal to the agent until answered (On track / Slipping with new date / Ready to invoice), 08:00 push, 09:00 daily summary to equity@. Verdicts reset monthly. If an agent complains about the red emails: answering the verdict in the app stops them immediately.
+
+### Brand Intelligence (/brands and brand profile pages)
+Tracked tenant brands with news (Google News + RSS), an Instagram board (all posts with media), signals, requirements, comps, competitor section, Compliance & KYC panel, and a designed 2-page Brand Pack PDF download (Bordeaux palette). The brand list was culled in Aug 2026 to substantive brands only; every active tenant company is a tracked brand automatically.
+
+### Client portal (Landsec etc.)
+Client logins see a scoped version: Portfolio home, letting tracker, their deals/tasks/news, brand slice = hospitality/leisure/fitness categories + brands they self-add, activity analyses scoped to their account. Compliance & KYC stays visible; staff-only action buttons are hidden. Clients can never be added to chat threads.
+
+### Weekly BGP Insights
+Automated Friday-afternoon job: ChatBGP compiles "BGP Insights — Leasing Week in Review" as a designed PDF (Bordeaux house style, scope 'bgp_insights' in document_design_preferences) and emails it to Woody to forward.
+
+### Expenses flow
+Card spend (Revolut/Stripe) → receipt capture (photo/email) → stage 1 info check (Wendy, or Layla on cover) → stage 2 director sign-off (Woody/Charlotte/Jack/Rupert, random, never own spend) → posted to Xero as Spend Money on account 1230. Phone: My Card = own expenses; approvers get the home-screen banner.
+
+### Other key pages (desktop paths)
+/wip-report (team WIP), /investment-tracker, /leasing-schedule, /available (letting tracker), /portfolios, /pathway-review + /pathway-portfolio (property pathway runs, Why Buy decks), /kyc-clouseau (AML board), /covenant-watch, /land-registry, /image-studio (phone: /m/images), /map & /map-bgp, /board-report, /decks, /today (day view), /diary, /calendar, /mail, /whatsapp (admin), /business-rates, /lease-events, /marketing-files, /edozo.
+`;

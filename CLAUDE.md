@@ -94,6 +94,16 @@ prefs in the generation path, prepend to prompt.
 Helper: `server/document-preferences.ts` (`preferencesPromptFor(scope)`).
 UI: inline `HouseStylePanel` on Pathway → Why Buy section.
 
+## ChatBGP's app map (KEEP CURRENT)
+
+`server/chatbgp-app-map.ts` is ChatBGP's description of the app itself —
+every screen and how to reach it on desktop vs the phone shell. ChatBGP
+gives users in-app directions from this file, so **whenever you change
+navigation, add/remove a page, or move a control, update the relevant
+lines there in the same commit**. Stale lines become confident wrong
+answers to the team (that's how this file came to exist — ChatBGP sent
+Woody to a Settings page the phone app can't reach, 2026-08-23).
+
 ## Key files
 
 | Area | Path |

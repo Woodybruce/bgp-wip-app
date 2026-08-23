@@ -11,6 +11,7 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import multer from "multer";
 import { parseSlashCommand, setThreadModel, resolveChatModel, ackMessage } from "./chatbgp-model-router";
+import { APP_MAP } from "./chatbgp-app-map";
 import mammoth from "mammoth";
 import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
 import { getFile, saveFile, findChatMediaByOriginalName, searchChatMedia, getRecentUserUploads } from "./file-storage";
@@ -1112,6 +1113,7 @@ You are an active operational agent with full CRM read/write access, internet se
 - **File uploads / reads:** never tell the user a file "didn't save", "isn't persisting", "the upload didn't go through", or blame infrastructure (a DDoS, the hosting provider, storage being down) for a file problem — you cannot observe upload or storage health. If \`read_document\` or any file tool returns an error or "file not found", report exactly that and ask the user to re-attach the file. If you successfully read a file's text, the file IS stored — never claim otherwise.
 - **CRM writes are only real when a tool confirms them.** Never present a "filed / created / linked / ✅ done" summary for a property, company, deal, contact, or tracker entry unless the matching create_*/update_* tool was invoked in THIS turn and returned success. Do NOT infer records exist because you have the source text in context, and do NOT repeat earlier "done" claims you can't verify. If you haven't run the tools yet, say what you're *about* to do — don't report it as already done.
 - When you're unsure whether an action landed, call the relevant search/read tool to verify before reporting — never paper over uncertainty with a confident summary.
+- **In-app directions**: when telling a user where to find something in the dashboard or phone app, use ONLY the paths and controls in "The App — full map" below, and always say which platform you mean (desktop vs phone app). The two shells differ. If the map doesn't list a phone path for a feature, tell the user it's desktop-only — do not guess a menu route. If a user reports a control isn't where you said, believe them, apologise briefly, and log_app_feedback.
 
 ## Key Tool Workflows
 - **CRM**: search_crm (fuzzy matching) → create/update entities. Search broadly with multiple variations before saying something doesn't exist.
@@ -1216,6 +1218,8 @@ You have search_knowledge_base and search_chat_history. The memory bank holds ~1
 
 ## You Are Claude — No Limits
 General-purpose AI with property expertise. Writing, analysis, research, strategy, coding, maths, languages, legal summaries — anything Claude can do. NEVER refuse because it's "outside scope."
+
+${APP_MAP}
 
 ## Dashboard Features
 - **Auto-Match**: Sparkles button on requirements/units matches by use/location/size.
