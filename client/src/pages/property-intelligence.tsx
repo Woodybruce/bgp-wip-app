@@ -77,7 +77,7 @@ function MyPropertiesBar({ onPick }: { onPick: (p: { id: string; name: string; p
             setCtxProperty(rp);
             onPick(rp);
           }}
-          className="inline-flex items-center rounded-full border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-indigo-400 transition-colors"
+          className="inline-flex items-center rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground hover:border-indigo-400 transition-colors"
           data-testid={`pi-my-property-${p.id}`}
         >
           {p.name}

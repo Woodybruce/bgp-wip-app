@@ -3,6 +3,7 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import {
@@ -1605,28 +1606,25 @@ export default function AvailableUnitsPage() {
           renders the thin chip row (same filters, ~1/3 the height). */}
       {(isMobile || compactHeader) ? (
         <div className="flex flex-wrap gap-1.5">
-          <button
+          <Pill
+            active={viewAll}
             onClick={() => { setViewAll(!viewAll); setStatusFilter("all"); }}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${viewAll ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
             data-testid="stat-chip-all"
           >
-            <Layers className="w-3 h-3" />
-            All statuses
-            <span className="font-bold tabular-nums">{toolbarFiltered.length}</span>
-          </button>
+            All <span className="opacity-70 font-mono tabular-nums">{toolbarFiltered.length}</span>
+          </Pill>
           {MARKETING_STATUSES.map(s => {
             const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
             return (
-              <button
+              <Pill
                 key={s}
+                active={statusFilter === s}
                 onClick={() => { setViewAll(false); setStatusFilter(statusFilter === s ? "all" : s); }}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${statusFilter === s ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
                 data-testid={`stat-chip-${s.toLowerCase()}`}
               >
-                <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
-                {DEAL_STATUS_LABELS[s]}
-                <span className="font-bold tabular-nums">{count}</span>
-              </button>
+                <span className={`w-1.5 h-1.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
+                {DEAL_STATUS_LABELS[s]} <span className="opacity-70 font-mono tabular-nums">{count}</span>
+              </Pill>
             );
           })}
         </div>

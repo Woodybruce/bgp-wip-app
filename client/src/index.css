@@ -977,10 +977,14 @@ a:not([class]):hover {
    Mobile / Touch-friendly improvements
    ======================================================================== */
 
-/* Minimum 44px touch targets on mobile for all interactive elements */
+/* Minimum 44px touch targets on mobile for all interactive elements.
+   rounded-full buttons are EXEMPT (Woody, 2026-08-23: every chip/pill built
+   as a button was ballooning to 44px — "massive pills… full sweep").
+   Capsule chips render at their natural slim size; genuine round icon
+   buttons keep their explicit w/h classes. */
 @media (max-width: 767px) {
-  button:not([data-no-min-touch]):not(.inline-edit-btn):not([class*="h-5"]):not([class*="h-4"]):not([class*="w-5"]):not([class*="w-4"]),
-  [role="button"]:not([data-no-min-touch]):not(.inline-edit-btn) {
+  button:not([data-no-min-touch]):not(.inline-edit-btn):not([class*="rounded-full"]):not([class*="h-5"]):not([class*="h-4"]):not([class*="w-5"]):not([class*="w-4"]),
+  [role="button"]:not([data-no-min-touch]):not(.inline-edit-btn):not([class*="rounded-full"]) {
     min-height: 44px;
   }
 
