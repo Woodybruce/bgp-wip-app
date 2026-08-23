@@ -94,6 +94,17 @@ prefs in the generation path, prepend to prompt.
 Helper: `server/document-preferences.ts` (`preferencesPromptFor(scope)`).
 UI: inline `HouseStylePanel` on Pathway → Why Buy section.
 
+## Pill standard (Woody, 2026-08-23)
+
+Small tab switches, filter chips and dropdown triggers use ONE look app-wide:
+`client/src/components/ui/pill.tsx` (slim capsule, 11px semibold uppercase,
+leading-none, px-2.5 py-[5px]). Use the `Pill` component where theme tokens
+work; on dark custom chrome (phone finance tile, chat headers) keep local
+colours but match `pillMetrics` exactly. Don't invent new chip styles —
+Woody called out the inconsistency explicitly. Adopted so far: finance tile
+tabs, phone + desktop chat chips, WIP report tabs + filter triggers. When
+touching a page with old-style chips, migrate them.
+
 ## ChatBGP's app map (KEEP CURRENT)
 
 `server/chatbgp-app-map.ts` is ChatBGP's description of the app itself —

@@ -25,6 +25,15 @@ interface WipForecast {
   toInvoice: { total: number; count: number; deals: Array<{ id: string; name: string; fee: number; completedAt: string | null; agent: string | null }> };
   invoicedAwaitingPayment: number;
   earlyPipeline: { total: number; count: number };
+  health?: {
+    affectedCount: number;
+    affectedFee: number;
+    noClient: number;
+    noAgent: number;
+    noDate: number;
+    invNoXero: number;
+    noFee: number;
+  } | null;
 }
 
 interface Financials {
@@ -640,6 +649,10 @@ export default function FinancePage() {
 
       {/* WIP pipeline + projection (CRM ⇄ Xero cross-reference) */}
       {data.wip && <WipSection wip={data.wip} projection={data.projection} />}
+
+      {/* (Data-health card removed — Woody, 2026-08-23: a weekly fix-list
+          email to equity@ replaced it; see runWipHealthEmail. The live list
+          stays on WIP report → Needs Attention.) */}
 
       {/* Costs & forecast — cost base, run-rate projection, bills, cash flow */}
       {data.costs && (

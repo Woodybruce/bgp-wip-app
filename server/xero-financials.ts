@@ -482,6 +482,26 @@ async function buildWipForecast(): Promise<any> {
     // INV — invoiced; the amounts live in Xero's actuals already.
   }
 
+  // Data health — how much of the WIP book has broken links (no client /
+  // agent / date / Xero invoice). Shown to the equity group so they know how
+  // trustworthy the projections above are.
+  let health: any = null;
+  try {
+    const { computeWipHealth } = await import("./crm");
+    const h = await computeWipHealth();
+    health = {
+      affectedCount: h.affected.count,
+      affectedFee: h.affected.fee,
+      noClient: h.buckets.noClient.count,
+      noAgent: h.buckets.noAgent.count,
+      noDate: h.buckets.noDate.count,
+      invNoXero: h.buckets.invNoXero.count,
+      noFee: h.buckets.noFee.count,
+    };
+  } catch (e: any) {
+    console.warn("[xero-financials] wip health failed:", e?.message);
+  }
+
   toInvoiceDeals.sort((a, b) => new Date(b.completedAt || 0).getTime() - new Date(a.completedAt || 0).getTime());
   const weightedPipeline =
     pipeline.NEG.total * STAGE_WEIGHTS.NEG +
@@ -496,6 +516,7 @@ async function buildWipForecast(): Promise<any> {
     toInvoice: { total: Math.round(toInvoiceTotal), count: toInvoiceDeals.length, deals: toInvoiceDeals.slice(0, 12) },
     invoicedAwaitingPayment: Math.round(invoicedAwaitingPayment),
     earlyPipeline: { total: Math.round(early.total), count: early.count },
+    health,
   };
 }
 

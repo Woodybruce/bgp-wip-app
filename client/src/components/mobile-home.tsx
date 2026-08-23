@@ -392,7 +392,7 @@ export default function MobileHome() {
                   <button
                     onClick={() => pickFinTab("personal")}
                     data-no-min-touch
-                    className={`px-2 py-[3px] rounded-full text-[10px] leading-none font-semibold uppercase tracking-wide transition-colors ${tab === "personal" ? "bg-white/90 text-[hsl(var(--mobile-chrome))]" : "text-white/60"}`}
+                    className={`px-2.5 py-[5px] rounded-full text-[11px] leading-none font-semibold uppercase tracking-wide transition-colors ${tab === "personal" ? "bg-white/90 text-[hsl(var(--mobile-chrome))]" : "text-white/60"}`}
                     data-testid="fin-tab-personal"
                   >
                     Personal
@@ -400,7 +400,7 @@ export default function MobileHome() {
                   <button
                     onClick={() => pickFinTab("company")}
                     data-no-min-touch
-                    className={`px-2 py-[3px] rounded-full text-[10px] leading-none font-semibold uppercase tracking-wide transition-colors ${tab === "company" ? "bg-white/90 text-[hsl(var(--mobile-chrome))]" : "text-white/60"}`}
+                    className={`px-2.5 py-[5px] rounded-full text-[11px] leading-none font-semibold uppercase tracking-wide transition-colors ${tab === "company" ? "bg-white/90 text-[hsl(var(--mobile-chrome))]" : "text-white/60"}`}
                     data-testid="fin-tab-company"
                   >
                     Company

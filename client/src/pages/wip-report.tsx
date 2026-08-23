@@ -19,6 +19,7 @@ import {
   Search as SearchIcon,
 } from "lucide-react";
 import { FilterDropdown } from "@/components/wip-filter-dropdown";
+import { Pill } from "@/components/ui/pill";
 import { ScrollableTable } from "@/components/scrollable-table";
 import bgpLogo from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTeam } from "@/lib/team-context";
@@ -96,7 +97,7 @@ const DEAL_TYPE_BADGE_COLORS: Record<string, string> = {
 const WIP_FILTERS_STORAGE_KEY = "bgp-wip-report-filters-v2";
 
 interface SavedWipFilters {
-  activeTab: "report" | "agent-summary" | "fee-check";
+  activeTab: "report" | "agent-summary" | "fee-check" | "health";
   clients?: string[];
   teams: string[];
   months: string[];
@@ -195,6 +196,72 @@ interface FeeReconRow {
 // Fee Check — invoiced deals whose recorded fee (what the WIP + commission use)
 // doesn't match the NET invoiced in Xero. Net-to-net, so VAT isn't flagged as a
 // discrepancy. Leadership only (the tab is hidden otherwise).
+// Needs Attention — the unlinked-entries audit (Woody, 2026-08-23: "there
+// are entries which are not linked"). Each bucket is a data problem that
+// distorts the report and the equity Finance projections; every row links to
+// its deal so it can be fixed in place.
+function HealthTab() {
+  const { data, isLoading, error } = useQuery<any>({
+    queryKey: ["/api/wip/health"],
+    queryFn: async () => {
+      const res = await fetch("/api/wip/health", { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("Failed to load data health");
+      return res.json();
+    },
+  });
+  const money = (n: number) => `£${Math.round(n || 0).toLocaleString("en-GB")}`;
+  if (isLoading) return <Skeleton className="h-[300px]" />;
+  if (error || !data) return <p className="text-sm text-muted-foreground p-4">Couldn't load the audit — try again shortly.</p>;
+  const b = data.buckets;
+  const sections: Array<{ key: string; title: string; why: string; data: any }> = [
+    { key: "noClient", title: "No client linked", why: "Shows as \"Unknown\" in the Client column — set the landlord / tenant / vendor / purchaser on the deal.", data: b.noClient },
+    { key: "noAgent", title: "No BGP agent", why: "Invisible in the Agent Summary and earns nobody commission — add the agent or a fee allocation.", data: b.noAgent },
+    { key: "noDate", title: "No date at all", why: "No target, exchange or completion date — the deal lands in no month and skews the year view.", data: b.noDate },
+    { key: "invNoXero", title: "Invoiced with no Xero invoice", why: "Status says Invoiced but no Xero invoice is linked — raise or link the invoice so cash tracking works.", data: b.invNoXero },
+    { key: "noFee", title: "Live deal with no fee", why: "In the pipeline but fee is blank — it's excluded from the WIP report entirely (invisible money).", data: b.noFee },
+    { key: "noProperty", title: "No property linked", why: "Fine for consultancy mandates; worth linking for everything else.", data: b.noProperty },
+  ];
+  return (
+    <div className="space-y-4" data-testid="wip-health-tab">
+      <div className="rounded-lg border bg-amber-50 border-amber-200 px-4 py-3">
+        <p className="text-sm font-medium text-amber-900">
+          {data.affected.count > 0
+            ? `${data.affected.count} deal(s) worth ${money(data.affected.fee)} have broken links that distort this report and the Finance projections.`
+            : "All linked — every WIP deal has a client, agent and date. Lovely."}
+        </p>
+        <p className="text-xs text-amber-800/80 mt-0.5">{data.totalWipDeals} deals checked · tap any row to open the deal and fix it</p>
+      </div>
+      {sections.filter(sec => sec.data.count > 0).map(sec => (
+        <div key={sec.key} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-2.5 border-b bg-gray-50 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">{sec.title} <span className="text-muted-foreground font-normal">({sec.data.count}{sec.data.fee ? ` · ${money(sec.data.fee)}` : ""})</span></p>
+              <p className="text-[11px] text-muted-foreground">{sec.why}</p>
+            </div>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {sec.data.deals.map((d: any) => (
+              <Link key={d.dealId} href={`/deals/${d.dealId}`}>
+                <div className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 cursor-pointer text-sm">
+                  <span className="flex-1 min-w-0 truncate">
+                    {d.name || "(unnamed deal)"}
+                    <span className="text-xs text-muted-foreground"> {d.dealType ? `· ${d.dealType}` : ""}{d.team ? ` · ${d.team}` : ""}</span>
+                  </span>
+                  <Badge variant="secondary" className="text-[10px] shrink-0">{(() => { const c = legacyToCode(d.status); return c ? DEAL_STATUS_LABELS[c] : d.status; })()}</Badge>
+                  <span className="font-mono text-xs shrink-0 w-20 text-right">{d.fee ? money(d.fee) : "—"}</span>
+                </div>
+              </Link>
+            ))}
+            {sec.data.count > sec.data.deals.length && (
+              <p className="px-4 py-2 text-[11px] text-muted-foreground">Showing first {sec.data.deals.length} of {sec.data.count}.</p>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function FeeCheckTab() {
   const { data = [], isLoading, error } = useQuery<FeeReconRow[]>({
     queryKey: ["/api/wip/fee-reconciliation"],
@@ -589,7 +656,7 @@ export default function WipReport() {
   // are now the canonical source. The page shows the live deals view
   // and the per-agent summary only.
   const [savedFilters] = useState(loadSavedWipFilters);
-  const [activeTab, setActiveTab] = useState<"report" | "agent-summary" | "fee-check">(savedFilters?.activeTab || "report");
+  const [activeTab, setActiveTab] = useState<"report" | "agent-summary" | "fee-check" | "health">(savedFilters?.activeTab || "report");
 
   const { data: user } = useQuery<{ id: string; name: string; email: string; team: string; isAdmin?: boolean }>({
     queryKey: ["/api/auth/me"],
@@ -904,6 +971,48 @@ export default function WipReport() {
     return { client, team, agent, project, status, month };
   }, [entries]);
 
+  // Stage pills — per-stage totals over ALL entries (same basis as the
+  // dropdown fee hints). Tapping a pill toggles every raw status that maps
+  // to that stage in selectedStatuses, so the pills and the Deal Status
+  // dropdown are one filter, never two (Woody, 2026-08-23).
+  const STAGE_PILLS: Array<{ code: string; label: string }> = [
+    { code: "NEG", label: "Negotiating" },
+    { code: "SOL", label: "Solicitors" },
+    { code: "EXC", label: "Exchanged" },
+    { code: "COM", label: "Completed" },
+    { code: "INV", label: "Invoiced" },
+  ];
+  const stageAgg = useMemo(() => {
+    const agg: Record<string, { total: number; deals: Set<string> }> = {};
+    entries.forEach((e) => {
+      const code = legacyToCode(e.dealStatus);
+      if (!code) return;
+      if (!agg[code]) agg[code] = { total: 0, deals: new Set() };
+      agg[code].total += (e.amtWip || 0) + (e.amtInvoice || 0);
+      agg[code].deals.add(e.dealId || e.id || "");
+    });
+    return agg;
+  }, [entries]);
+  const statusesForStage = useCallback(
+    (code: string) => allStatuses.filter((st) => legacyToCode(st) === code),
+    [allStatuses],
+  );
+  const stageActive = (code: string) => {
+    const list = statusesForStage(code);
+    return list.length > 0 && list.every((st) => selectedStatuses.has(st));
+  };
+  const toggleStage = (code: string) => {
+    const list = statusesForStage(code);
+    if (!list.length) return;
+    setSelectedStatuses((prev) => {
+      const next = new Set(prev);
+      const active = list.every((st) => next.has(st));
+      if (active) list.forEach((st) => next.delete(st));
+      else list.forEach((st) => next.add(st));
+      return next;
+    });
+  };
+
   // The server emits one entry per agent fee-split (so agent filtering and
   // per-agent fees work), but Deal Detail should read one row per deal —
   // a split deal was showing twice. Collapse splits by dealId: sum the fee
@@ -1127,80 +1236,50 @@ export default function WipReport() {
         </div>
       </div>
 
-      {/* Tab switcher */}
-      <div className="flex items-center justify-between gap-2 mb-4 flex-shrink-0 no-print border-b" data-testid="wip-tabs">
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setActiveTab("report")}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === "report"
-                ? "border-green-600 text-green-700"
-                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-            }`}
-            data-testid="wip-tab-report"
-          >
-            WIP Report
-          </button>
-          <button
-            onClick={() => setActiveTab("agent-summary")}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === "agent-summary"
-                ? "border-green-600 text-green-700"
-                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-            }`}
-            data-testid="wip-tab-agent-summary"
-          >
-            Agent Summary
-          </button>
-          {canSeeAll && (
-            <button
-              onClick={() => setActiveTab("fee-check")}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === "fee-check"
-                  ? "border-green-600 text-green-700"
-                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-              }`}
-              data-testid="wip-tab-fee-check"
-            >
-              Fee Check
-            </button>
-          )}
-        </div>
+      {/* Tab switcher — app pill standard (ui/pill.tsx) */}
+      <div className="flex items-center gap-1.5 mb-4 flex-shrink-0 no-print flex-wrap" data-testid="wip-tabs">
+        <Pill active={activeTab === "report"} onClick={() => setActiveTab("report")} data-testid="wip-tab-report">WIP Report</Pill>
+        <Pill active={activeTab === "agent-summary"} onClick={() => setActiveTab("agent-summary")} data-testid="wip-tab-agent-summary">Agent Summary</Pill>
+        {canSeeAll && (
+          <Pill active={activeTab === "fee-check"} onClick={() => setActiveTab("fee-check")} data-testid="wip-tab-fee-check">Fee Check</Pill>
+        )}
+        {canSeeAll && (
+          <Pill active={activeTab === "health"} onClick={() => setActiveTab("health")} data-testid="wip-tab-health">Needs Attention</Pill>
+        )}
       </div>
 
       {activeTab === "agent-summary" ? (
         <AgentSummaryTab />
       ) : activeTab === "fee-check" ? (
         <FeeCheckTab />
+      ) : activeTab === "health" ? (
+        <HealthTab />
       ) : (
       <div className="flex flex-col gap-4">
-          {/* KPI stat cards — matching Investment Tracker style */}
-          <ScrollArea className="w-full shrink-0">
-            <div className="flex items-center gap-3 pb-1">
-              {[
-                { label: "Total Entries", value: filteredEntries.length.toString(), color: "bg-primary/60" },
-                { label: "Pipeline", value: filteredEntries.filter(e => e.stage === "pipeline").length.toString(), color: "bg-amber-500" },
-                { label: "WIP", value: formatFullCurrency(totalWip), color: "bg-blue-500" },
-                { label: "Invoiced", value: formatFullCurrency(totalInvoiced), color: "bg-green-500" },
-                { label: "Net Fees", value: formatFullCurrency(totalNetFees), color: "bg-emerald-600" },
-                { label: "Unique Deals", value: new Set(filteredEntries.map(e => e.dealId).filter(Boolean)).size.toString(), color: "bg-violet-500" },
-                { label: "Teams", value: new Set(filteredEntries.map(e => e.team).filter(Boolean)).size.toString(), color: "bg-sky-500" },
-              ].map(stat => (
-                <Card key={stat.label} className="flex-shrink-0 min-w-[120px]" data-testid={`stat-${stat.label.toLowerCase().replace(/\s/g, "-")}`}>
-                  <CardContent className="p-3">
-                    <div className="flex items-center gap-2">
-                      <div className={`w-2.5 h-2.5 rounded-full ${stat.color}`} />
-                      <div>
-                        <p className="text-lg font-bold">{stat.value}</p>
-                        <p className="text-xs text-muted-foreground">{stat.label}</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          {/* Stage pills — the stat strip and the stage filter in one:
+              each shows that stage's total and tapping filters the table
+              below (synced with the Deal Status dropdown). */}
+          <div className="flex flex-wrap items-center gap-1.5 shrink-0" data-testid="wip-stage-pills">
+            <Pill
+              active={selectedStatuses.size === 0}
+              onClick={() => setSelectedStatuses(new Set())}
+              data-testid="wip-stage-pill-all"
+            >
+              All <span className="opacity-70 font-mono normal-case">{formatCurrency(totalNetFees)}</span>
+            </Pill>
+            {STAGE_PILLS.filter(sp => stageAgg[sp.code]).map(sp => (
+              <Pill
+                key={sp.code}
+                active={stageActive(sp.code)}
+                onClick={() => toggleStage(sp.code)}
+                data-testid={`wip-stage-pill-${sp.code.toLowerCase()}`}
+              >
+                {sp.label}{" "}
+                <span className="opacity-70 font-mono normal-case">{formatCurrency(stageAgg[sp.code].total)}</span>
+                <span className="opacity-50">· {stageAgg[sp.code].deals.size}</span>
+              </Pill>
+            ))}
+          </div>
 
           {/* Filter dropdowns — one per former summary board */}
           <div className="flex flex-wrap items-center gap-2 flex-shrink-0 no-print" data-testid="wip-filters-bar">

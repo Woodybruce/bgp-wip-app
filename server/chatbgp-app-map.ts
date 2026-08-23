@@ -64,6 +64,9 @@ Automated Friday-afternoon job: ChatBGP compiles "BGP Insights — Leasing Week 
 ### Expenses flow
 Card spend (Revolut/Stripe) → receipt capture (photo/email) → stage 1 info check (Wendy, or Layla on cover) → stage 2 director sign-off (Woody/Charlotte/Jack/Rupert, random, never own spend) → posted to Xero as Spend Money on account 1230. Phone: My Card = own expenses; approvers get the home-screen banner.
 
+### WIP report (/wip-report)
+The firm's money list, live from crm_deals. Tabs: **WIP Report** (filterable deal detail — on phones it renders as tappable cards instead of the wide table), **Agent Summary** (per-agent WIP/invoiced with drill-down), **Fee Check** (deal fee vs Xero invoice mismatches, seniors only), **Needs Attention** (seniors only — deals with broken links: no client, no agent, no date, invoiced without a Xero invoice, live deals with no fee; each row opens the deal to fix). Broken links also surface as an amber card on the Finance page. If someone asks why a deal shows "Unknown" client or is missing from a month: it's almost certainly in Needs Attention.
+
 ### Other key pages (desktop paths)
 /wip-report (team WIP — quick search box above the filters finds a deal/client/property by name; Client, Tenant and Property cells click through to their pages; on the phone the table becomes a card list, one card per deal), /investment-tracker, /leasing-schedule, /available (letting tracker), /portfolios, /pathway-review + /pathway-portfolio (property pathway runs, Why Buy decks), /kyc-clouseau (AML board), /covenant-watch, /land-registry, /image-studio (phone: /m/images), /map & /map-bgp, /board-report, /decks, /today (day view), /diary, /calendar, /mail, /whatsapp (admin), /business-rates, /lease-events, /marketing-files, /edozo.
 `;

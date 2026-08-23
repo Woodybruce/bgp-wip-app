@@ -3902,7 +3902,8 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 <button
                   key={key}
                   onClick={() => setChatChip(key)}
-                  className={`px-3.5 py-1.5 rounded-full text-[12.5px] font-medium transition-colors border ${
+                  data-no-min-touch
+                  className={`px-2.5 py-[5px] rounded-full text-[11px] leading-none font-semibold uppercase tracking-wide transition-colors border ${
                     chatChip === key
                       ? "bg-[hsl(var(--mobile-chrome))] text-white border-transparent"
                       : "bg-white text-gray-500 border-gray-200"
