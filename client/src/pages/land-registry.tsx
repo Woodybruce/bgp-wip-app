@@ -942,7 +942,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                             <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                             <p className="text-sm font-medium truncate">{s.address}</p>
                           </div>
-                          <Badge className={`text-[9px] shrink-0 ${statusColor(s.status)}`}>
+                          <Badge variant="outline" className={`border-transparent text-[9px] shrink-0 ${statusColor(s.status)}`}>
                             {s.status || "New"}
                           </Badge>
                         </div>

@@ -313,7 +313,7 @@ export function InlineEngagement({
             <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${current.includes(option) ? colorMap[option] || "bg-gray-500" : "border-muted-foreground/30"}`}>
               {current.includes(option) && <span className="text-white text-[8px]">✓</span>}
             </div>
-            <Badge className={`text-[10px] px-1.5 py-0 text-white ${colorMap[option] || "bg-gray-500"}`}>
+            <Badge variant="outline" className={`border-transparent text-[10px] px-1.5 py-0 text-white ${colorMap[option] || "bg-gray-500"}`}>
               {option}
             </Badge>
           </DropdownMenuItem>
@@ -4069,7 +4069,7 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
                           <Sparkles className="w-3 h-3" />
                         </button>
                       )}
-                      <Badge className={`text-[10px] ${statusColor(unit.marketingStatus || "AVA")}`}>{(() => { const c = legacyToCode(unit.marketingStatus); return c ? DEAL_STATUS_LABELS[c] : (unit.marketingStatus || "Available"); })()}</Badge>
+                      <Badge variant="outline" className={`border-transparent text-[10px] ${statusColor(unit.marketingStatus || "AVA")}`}>{(() => { const c = legacyToCode(unit.marketingStatus); return c ? DEAL_STATUS_LABELS[c] : (unit.marketingStatus || "Available"); })()}</Badge>
                     </div>
                   </div>
                 );
@@ -6282,7 +6282,7 @@ function PropertiesList({
                   onClick={() => bulkUpdateMutation.mutate({ ids: Array.from(selectedIds), field: "bgpEngagement", value: [team] })}
                   data-testid={`bulk-team-option-${team.toLowerCase().replace(/[\s\/]/g, "-")}`}
                 >
-                  <Badge className={`text-[10px] px-1.5 py-0 text-white ${TEAM_COLORS[team] || "bg-gray-500"}`}>
+                  <Badge variant="outline" className={`border-transparent text-[10px] px-1.5 py-0 text-white ${TEAM_COLORS[team] || "bg-gray-500"}`}>
                     {team}
                   </Badge>
                 </DropdownMenuItem>

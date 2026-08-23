@@ -145,7 +145,7 @@ function PropertyCard({ property }: { property: CrmProperty }) {
             </div>
             <div className="flex flex-col items-end gap-1 shrink-0">
               {property.status && (
-                <Badge className={`text-[10px] px-1.5 py-0 text-white ${STATUS_COLORS[property.status] || "bg-gray-500"}`}>
+                <Badge variant="outline" className={`border-transparent text-[10px] px-1.5 py-0 text-white ${STATUS_COLORS[property.status] || "bg-gray-500"}`}>
                   {property.status}
                 </Badge>
               )}

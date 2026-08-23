@@ -824,7 +824,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
             >
               <CardContent className="p-3">
                 <div className="flex items-center gap-2">
-                  <Badge className={`${groupColor} text-white text-[10px] px-1.5 py-0 shrink-0`}>{group}</Badge>
+                  <Badge variant="outline" className={`border-transparent ${groupColor} text-white text-[10px] px-1.5 py-0 shrink-0`}>{group}</Badge>
                   <div>
                     <p className="text-lg font-bold">{count}</p>
                   </div>
@@ -3505,7 +3505,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
             >
               <CardContent className="p-3">
                 <div className="flex items-center gap-2">
-                  <Badge className={`${badgeColor} text-white text-[10px] px-1.5 py-0 shrink-0`}>{group}</Badge>
+                  <Badge variant="outline" className={`border-transparent ${badgeColor} text-white text-[10px] px-1.5 py-0 shrink-0`}>{group}</Badge>
                   <div>
                     <p className="text-lg font-bold">{count}</p>
                   </div>

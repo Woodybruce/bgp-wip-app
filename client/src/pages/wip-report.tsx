@@ -599,7 +599,7 @@ function AgentSummaryTab() {
                       <td className="px-3 py-2 text-muted-foreground truncate max-w-[160px]">{d.property || "---"}</td>
                       <td className="px-3 py-2">
                         {d.dealType ? (
-                          <Badge className={`text-[10px] ${DEAL_TYPE_BADGE_COLORS[d.dealType] || "bg-gray-100 text-gray-800"}`}>
+                          <Badge variant="outline" className={`border-transparent text-[10px] ${DEAL_TYPE_BADGE_COLORS[d.dealType] || "bg-gray-100 text-gray-800"}`}>
                             {d.dealType}
                           </Badge>
                         ) : "---"}

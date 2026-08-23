@@ -780,7 +780,7 @@ function ContactDetail({ id }: { id: string }) {
           <h1 className="text-xl font-bold" data-testid="text-contact-detail-name">{contact.name}</h1>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             {contact.groupName && (
-              <Badge className={`${getGroupColor(contact.groupName)} text-white text-xs`}>
+              <Badge variant="outline" className={`border-transparent ${getGroupColor(contact.groupName)} text-white text-xs`}>
                 {contact.groupName}
               </Badge>
             )}
@@ -791,7 +791,7 @@ function ContactDetail({ id }: { id: string }) {
               return <Badge className={`${colorClass} text-white text-xs`}>{derivedType}</Badge>;
             })()}
             {contact.agentSpecialty && (
-              <Badge className={`${CRM_OPTIONS.agentSpecialtyColors[contact.agentSpecialty] || "bg-gray-500"} text-white text-xs`}>{contact.agentSpecialty}</Badge>
+              <Badge variant="outline" className={`border-transparent ${CRM_OPTIONS.agentSpecialtyColors[contact.agentSpecialty] || "bg-gray-500"} text-white text-xs`}>{contact.agentSpecialty}</Badge>
             )}
             {contact.bgpClient && <Badge className="bg-black text-white dark:bg-white dark:text-black text-xs">BGP Client</Badge>}
             {parseAlloc(contact.bgpAllocation).length > 0 && parseAlloc(contact.bgpAllocation).map(alloc => (
@@ -1168,7 +1168,7 @@ function ContactDetail({ id }: { id: string }) {
                       <div>
                         <p className="text-sm font-medium">{company?.name || contact.companyName}</p>
                         {company?.companyType && (
-                          <Badge className={`${CRM_OPTIONS.companyTypeColors[company.companyType] || "bg-gray-500"} text-white text-[10px] mt-0.5`}>
+                          <Badge variant="outline" className={`border-transparent ${CRM_OPTIONS.companyTypeColors[company.companyType] || "bg-gray-500"} text-white text-[10px] mt-0.5`}>
                             {company.companyType}
                           </Badge>
                         )}

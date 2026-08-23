@@ -135,7 +135,7 @@ function InlineEngagement({
             <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${current.includes(option) ? colorMap[option] || "bg-gray-500" : "border-muted-foreground/30"}`}>
               {current.includes(option) && <span className="text-white text-[8px]">✓</span>}
             </div>
-            <Badge className={`text-[10px] px-1.5 py-0 text-white ${colorMap[option] || "bg-gray-500"}`}>{option}</Badge>
+            <Badge variant="outline" className={`border-transparent text-[10px] px-1.5 py-0 text-white ${colorMap[option] || "bg-gray-500"}`}>{option}</Badge>
           </DropdownMenuItem>
         ))}
         {current.length > 0 && (

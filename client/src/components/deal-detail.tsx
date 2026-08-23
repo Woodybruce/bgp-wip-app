@@ -826,7 +826,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               <div key={field.label} className="flex flex-col py-1">
                 <p className="text-[10px] text-muted-foreground leading-tight">{field.label}</p>
                 {field.colorMap && field.value && field.colorMap[field.value] ? (
-                  <Badge className={`text-[9px] text-white w-fit mt-0.5 ${field.colorMap[field.value]}`} data-testid={`text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`}>
+                  <Badge variant="outline" className={`border-transparent text-[9px] text-white w-fit mt-0.5 ${field.colorMap[field.value]}`} data-testid={`text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`}>
                     {field.value}
                   </Badge>
                 ) : field.href ? (

@@ -1523,7 +1523,7 @@ function ChatBGPLearningsSection() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <Badge className={`text-[10px] ${LEARNING_CATEGORY_COLORS[item.category] || "bg-gray-100 text-gray-800"}`}>
+                      <Badge variant="outline" className={`border-transparent text-[10px] ${LEARNING_CATEGORY_COLORS[item.category] || "bg-gray-100 text-gray-800"}`}>
                         {LEARNING_CATEGORY_LABELS[item.category] || item.category}
                       </Badge>
                       {!item.active && (
@@ -1637,10 +1637,10 @@ function AppFeedbackSection() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <Badge className={`text-[10px] ${FEEDBACK_CATEGORY_COLORS[item.category] || "bg-gray-100 text-gray-800"}`}>
+                      <Badge variant="outline" className={`border-transparent text-[10px] ${FEEDBACK_CATEGORY_COLORS[item.category] || "bg-gray-100 text-gray-800"}`}>
                         {item.category}
                       </Badge>
-                      <Badge className={`text-[10px] ${FEEDBACK_STATUS_COLORS[item.status] || "bg-gray-100 text-gray-800"}`}>
+                      <Badge variant="outline" className={`border-transparent text-[10px] ${FEEDBACK_STATUS_COLORS[item.status] || "bg-gray-100 text-gray-800"}`}>
                         {item.status.replace("_", " ")}
                       </Badge>
                       {item.pageContext && (

@@ -1802,11 +1802,11 @@ export default function InvestmentTrackerPage() {
                         {item.address && <p className="text-xs text-muted-foreground truncate">{item.address}</p>}
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        {item.status && <Badge className={`${statusColor} text-white text-[10px]`}>{DEAL_STATUS_LABELS[statusCode] || statusCode}</Badge>}
+                        {item.status && <Badge variant="outline" className={`border-transparent ${statusColor} text-white text-[10px]`}>{DEAL_STATUS_LABELS[statusCode] || statusCode}</Badge>}
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
-                      {item.assetType && <Badge className={`${classColor} text-white text-[10px]`}>{item.assetType}</Badge>}
+                      {item.assetType && <Badge variant="outline" className={`border-transparent ${classColor} text-white text-[10px]`}>{item.assetType}</Badge>}
                       {item.tenure && <Badge variant="outline" className="text-[10px]">{item.tenure}</Badge>}
                     </div>
                     {item.propertyId && (

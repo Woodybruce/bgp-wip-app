@@ -665,7 +665,7 @@ function BulkScreenDialog() {
                       <Badge variant="destructive" className="text-xs">Sanctions</Badge>
                     )}
                     {r.riskLevel ? (
-                      <Badge className={`text-xs ${riskColors[r.riskLevel] || ""}`}>
+                      <Badge variant="outline" className={`border-transparent text-xs ${riskColors[r.riskLevel] || ""}`}>
                         {r.riskLevel} {r.riskScore !== undefined ? `(${r.riskScore})` : ""}
                       </Badge>
                     ) : (

@@ -4205,7 +4205,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
             {invoices.map((inv: any) => (
               <div key={inv.id} className="flex items-center justify-between p-2 rounded-md border text-sm">
                 <div className="flex items-center gap-2 min-w-0">
-                  <Badge className={`text-[10px] text-white ${XERO_STATUS_COLORS[inv.status] || "bg-zinc-500"}`}>
+                  <Badge variant="outline" className={`border-transparent text-[10px] text-white ${XERO_STATUS_COLORS[inv.status] || "bg-zinc-500"}`}>
                     {inv.status}
                   </Badge>
                   <span className="truncate">
