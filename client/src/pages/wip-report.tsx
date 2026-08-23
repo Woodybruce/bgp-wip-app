@@ -971,6 +971,48 @@ export default function WipReport() {
     return { client, team, agent, project, status, month };
   }, [entries]);
 
+  // Stage pills — per-stage totals over ALL entries (same basis as the
+  // dropdown fee hints). Tapping a pill toggles every raw status that maps
+  // to that stage in selectedStatuses, so the pills and the Deal Status
+  // dropdown are one filter, never two (Woody, 2026-08-23).
+  const STAGE_PILLS: Array<{ code: string; label: string }> = [
+    { code: "NEG", label: "Negotiating" },
+    { code: "SOL", label: "Solicitors" },
+    { code: "EXC", label: "Exchanged" },
+    { code: "COM", label: "Completed" },
+    { code: "INV", label: "Invoiced" },
+  ];
+  const stageAgg = useMemo(() => {
+    const agg: Record<string, { total: number; deals: Set<string> }> = {};
+    entries.forEach((e) => {
+      const code = legacyToCode(e.dealStatus);
+      if (!code) return;
+      if (!agg[code]) agg[code] = { total: 0, deals: new Set() };
+      agg[code].total += (e.amtWip || 0) + (e.amtInvoice || 0);
+      agg[code].deals.add(e.dealId || e.id || "");
+    });
+    return agg;
+  }, [entries]);
+  const statusesForStage = useCallback(
+    (code: string) => allStatuses.filter((st) => legacyToCode(st) === code),
+    [allStatuses],
+  );
+  const stageActive = (code: string) => {
+    const list = statusesForStage(code);
+    return list.length > 0 && list.every((st) => selectedStatuses.has(st));
+  };
+  const toggleStage = (code: string) => {
+    const list = statusesForStage(code);
+    if (!list.length) return;
+    setSelectedStatuses((prev) => {
+      const next = new Set(prev);
+      const active = list.every((st) => next.has(st));
+      if (active) list.forEach((st) => next.delete(st));
+      else list.forEach((st) => next.add(st));
+      return next;
+    });
+  };
+
   // The server emits one entry per agent fee-split (so agent filtering and
   // per-agent fees work), but Deal Detail should read one row per deal —
   // a split deal was showing twice. Collapse splits by dealId: sum the fee
@@ -1214,33 +1256,30 @@ export default function WipReport() {
         <HealthTab />
       ) : (
       <div className="flex flex-col gap-4">
-          {/* KPI stat cards — matching Investment Tracker style */}
-          <ScrollArea className="w-full shrink-0">
-            <div className="flex items-center gap-3 pb-1">
-              {[
-                { label: "Total Entries", value: filteredEntries.length.toString(), color: "bg-primary/60" },
-                { label: "Pipeline", value: filteredEntries.filter(e => e.stage === "pipeline").length.toString(), color: "bg-amber-500" },
-                { label: "WIP", value: formatFullCurrency(totalWip), color: "bg-blue-500" },
-                { label: "Invoiced", value: formatFullCurrency(totalInvoiced), color: "bg-green-500" },
-                { label: "Net Fees", value: formatFullCurrency(totalNetFees), color: "bg-emerald-600" },
-                { label: "Unique Deals", value: new Set(filteredEntries.map(e => e.dealId).filter(Boolean)).size.toString(), color: "bg-violet-500" },
-                { label: "Teams", value: new Set(filteredEntries.map(e => e.team).filter(Boolean)).size.toString(), color: "bg-sky-500" },
-              ].map(stat => (
-                <Card key={stat.label} className="flex-shrink-0 min-w-[120px]" data-testid={`stat-${stat.label.toLowerCase().replace(/\s/g, "-")}`}>
-                  <CardContent className="p-3">
-                    <div className="flex items-center gap-2">
-                      <div className={`w-2.5 h-2.5 rounded-full ${stat.color}`} />
-                      <div>
-                        <p className="text-lg font-bold">{stat.value}</p>
-                        <p className="text-xs text-muted-foreground">{stat.label}</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
+          {/* Stage pills — the stat strip and the stage filter in one:
+              each shows that stage's total and tapping filters the table
+              below (synced with the Deal Status dropdown). */}
+          <div className="flex flex-wrap items-center gap-1.5 shrink-0" data-testid="wip-stage-pills">
+            <Pill
+              active={selectedStatuses.size === 0}
+              onClick={() => setSelectedStatuses(new Set())}
+              data-testid="wip-stage-pill-all"
+            >
+              All <span className="opacity-70 font-mono normal-case">{formatCurrency(totalNetFees)}</span>
+            </Pill>
+            {STAGE_PILLS.filter(sp => stageAgg[sp.code]).map(sp => (
+              <Pill
+                key={sp.code}
+                active={stageActive(sp.code)}
+                onClick={() => toggleStage(sp.code)}
+                data-testid={`wip-stage-pill-${sp.code.toLowerCase()}`}
+              >
+                {sp.label}{" "}
+                <span className="opacity-70 font-mono normal-case">{formatCurrency(stageAgg[sp.code].total)}</span>
+                <span className="opacity-50">· {stageAgg[sp.code].deals.size}</span>
+              </Pill>
+            ))}
+          </div>
 
           {/* Filter dropdowns — one per former summary board */}
           <div className="flex flex-wrap items-center gap-2 flex-shrink-0 no-print" data-testid="wip-filters-bar">
