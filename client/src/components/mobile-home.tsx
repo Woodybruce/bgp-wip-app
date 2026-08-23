@@ -325,7 +325,7 @@ export default function MobileHome() {
 
       {/* Ask ChatBGP — primary action */}
       <button
-        onClick={() => navigate("/chatbgp")}
+        onClick={() => navigate("/chatbgp?ask=1")}
         className="w-full flex items-center gap-3 rounded-2xl px-4 py-3.5 bg-[#1C1917] text-white shadow-sm active:opacity-90"
         data-testid="mobile-home-ask-chatbgp"
       >

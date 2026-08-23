@@ -3007,7 +3007,6 @@ function MobileDocumentStudio() {
 
 export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" | "ai" | "today" | "menu" }) {
   const { theme, toggleTheme, colorScheme, setColorScheme } = useTheme();
-  const [tab, setTab] = useState<"chats" | "ai" | "today" | "menu">(initialTab);
   // Restore the open thread across remounts — tapping out to a brand page
   // and back to ChatBGP was landing on a fresh chat, losing the thread.
   // sessionStorage (not local) so a new browser session starts clean.
@@ -3015,13 +3014,26 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     if (initialTab !== "ai") return null;
     try { return sessionStorage.getItem("mobile-chat-thread"); } catch { return null; }
   })();
+  // A BARE open of /chatbgp (cold start / iOS relaunch state-restore) lands
+  // on the Messages LIST, not inside a conversation (Woody, 2026-08-23:
+  // "the messages page rather than last message"). Deliberate entries still
+  // open the chat: the home "Ask ChatBGP…" button passes ?ask=1, push
+  // notifications pass ?thread=, and in-session restores carry the marker.
+  const bareAiOpen = (() => {
+    if (initialTab !== "ai" || restored) return false;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("ask") !== "1" && !params.get("thread");
+    } catch { return true; }
+  })();
+  const [tab, setTab] = useState<"chats" | "ai" | "today" | "menu">(bareAiOpen ? "chats" : initialTab);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(restored);
   const [activeThreadAi, setActiveThreadAi] = useState(() => {
     if (restored) { try { return sessionStorage.getItem("mobile-chat-thread-ai") !== "0"; } catch { return true; } }
     return initialTab === "ai";
   });
   const [showNewGroup, setShowNewGroup] = useState(false);
-  const [showChat, setShowChat] = useState(initialTab === "ai");
+  const [showChat, setShowChat] = useState(initialTab === "ai" && !bareAiOpen);
   // True only when the chat was opened from MobileApp's own conversation
   // list. When entered directly (ChatBGP nav → chat), back leaves the old
   // shell and returns to the new app instead of exposing the list.
@@ -3054,6 +3066,16 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
   // Client logins (Landsec) have no internal team chats — hide the
   // switch-to-chats affordances, matching the desktop shell.
   const isClientUser = currentUser?.role === "Client" || !!(currentUser as any)?.companyScopeId;
+
+  // Strip ?ask=1 once consumed so an iOS relaunch of the saved URL doesn't
+  // re-open the chat after the user has backed out to the list.
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get("ask") === "1") {
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    } catch {}
+  }, []);
 
   // Keep the open-thread marker current so back-from-a-brand restores it.
   // Backing out to the list (showChat false) is an explicit exit — clear.
