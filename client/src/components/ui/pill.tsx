@@ -14,7 +14,7 @@ import { forwardRef } from "react";
 import { cn } from "@/lib/utils";
 
 export const pillMetrics =
-  "inline-flex items-center gap-1 rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] transition-colors select-none";
+  "inline-flex items-center gap-1 rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] transition-colors select-none whitespace-nowrap";
 export const pillActive = "bg-foreground text-background border border-transparent";
 export const pillInactive = "bg-transparent text-muted-foreground border border-border hover:text-foreground";
 
