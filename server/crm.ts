@@ -7126,6 +7126,24 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           lookup((deal as any).purchaserId) ||
           lookup(propLandlordId) ||
           null;
+        // The company id behind clientName, so the report can link the
+        // Client cell. Mirrors the name chain: role pick first, then the
+        // same fallbacks, keeping id and name pointing at the same company.
+        const clientIdByRole =
+          dt === "Sale"              ? (deal as any).vendorId :
+          dt === "Purchase"          ? (deal as any).purchaserId :
+          dt === "Lease Acquisition" ? deal.tenantId :
+          dt === "Lease Disposal"    ? deal.tenantId :
+          isTenantRepTeam            ? deal.tenantId :
+                                       deal.landlordId;
+        const clientId =
+          (clientIdByRole && compMap.has(clientIdByRole) ? clientIdByRole : null) ||
+          (deal.landlordId && compMap.has(deal.landlordId) ? deal.landlordId : null) ||
+          (deal.tenantId && compMap.has(deal.tenantId) ? deal.tenantId : null) ||
+          ((deal as any).vendorId && compMap.has((deal as any).vendorId) ? (deal as any).vendorId : null) ||
+          ((deal as any).purchaserId && compMap.has((deal as any).purchaserId) ? (deal as any).purchaserId : null) ||
+          (propLandlordId && compMap.has(propLandlordId) ? propLandlordId : null) ||
+          null;
         const billingEntityName = deal.xeroContactName || null;
         const invoice = invoicesByDeal.get(deal.id);
         const stage = deriveStage(deal.status);
@@ -7168,8 +7186,11 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               ref: deal.name,
               groupName: deal.groupName || null,
               client: clientName,
+              clientId,
               project: propertyName,
+              propertyId: deal.propertyId || null,
               tenant: tenantName,
+              tenantId: deal.tenantId || null,
               billingEntity: billingEntityName,
               team: teamStr,
               agent: alloc.agentName,
@@ -7203,8 +7224,11 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               ref: deal.name,
               groupName: deal.groupName || null,
               client: clientName,
+              clientId,
               project: propertyName,
+              propertyId: deal.propertyId || null,
               tenant: tenantName,
+              tenantId: deal.tenantId || null,
               billingEntity: billingEntityName,
               team: teamStr,
               agent: null,
@@ -7232,11 +7256,18 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 id: `${deal.id}_${agentName}`,
                 dealId: deal.id,
                 dealRef: deal.dealRef ?? null,
-                dealType: deal.dealType || null,
+                dealType: normaliseDealType(deal.dealType),
                 ref: deal.name,
                 groupName: deal.groupName || null,
+                // This branch (equal split across internal_agent, no fee
+                // allocations) never set client — those deals showed "—" in
+                // the Client column and slipped past the Client filter.
+                client: clientName,
+                clientId,
                 project: propertyName,
+                propertyId: deal.propertyId || null,
                 tenant: tenantName,
+                tenantId: deal.tenantId || null,
                 billingEntity: billingEntityName,
                 team: teamStr,
                 agent: agentName,
