@@ -38,6 +38,11 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
     staleTime: 2 * 60 * 1000,
   });
 
+  // Phone section switcher (docs/DESIGN.md §16) — this view is phone-only
+  // and ran 8+ boards deep in one scroll. Hook sits above the early return.
+  const [section, setSection] = useState<"chat" | "contacts" | "compliance" | "intel">("chat");
+  const sec = (k: typeof section) => (section === k ? "space-y-3" : "hidden");
+
   if (isLoading || !data?.company) {
     return (
       <div className="p-4 space-y-3">
@@ -64,10 +69,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       ? `/api/brand/${companyId}/flagship-image${firstImg ? `?exclude=${encodeURIComponent(firstImg.id)}` : ""}`
       : firstImg ? srcFor(firstImg) : null;
   const trackerComments: any[] = trackerData?.comments || [];
-  // Phone section switcher (docs/DESIGN.md §16) — this view is phone-only
-  // and ran 8+ boards deep in one scroll.
-  const [section, setSection] = useState<"chat" | "contacts" | "compliance" | "intel">("chat");
-  const sec = (k: typeof section) => (section === k ? "space-y-3" : "hidden");
+
   const signals: any[] = (data.signals || []).slice(0, 6);
 
   return (
@@ -79,7 +81,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        {c.company_type && <Badge variant="outline" className="text-[11px]">{c.company_type}</Badge>}
+        {c.company_type && <Badge variant="outline" className="text-[11px]">{String(c.company_type).replace(/\s*-\s*/g, " · ")}</Badge>}
         {c.industry && <Badge variant="outline" className="text-[11px]">{c.industry}</Badge>}
         {c.store_count != null && <Badge variant="outline" className="text-[11px] tabular-nums">{c.store_count} stores</Badge>}
         {(c as any).companies_house_number && <CovenantBadge companyNumber={(c as any).companies_house_number} />}

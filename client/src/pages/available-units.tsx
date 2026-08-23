@@ -84,7 +84,7 @@ const LOCATION_COLORS: Record<string, string> = {
 // and property summary all paint the same code the same hue (these used
 // to be three diverging local palettes).
 import { DEAL_STATUS_BADGE_COLORS as STATUS_COLORS } from "@/lib/deal-status-colors";
-import { DEAL_STATUS_DOT_COLORS as STATUS_LABEL_COLORS } from "@shared/deal-status";
+import { DEAL_STATUS_DOT_COLORS as STATUS_LABEL_COLORS } from "@/lib/deal-status-colors";
 
 const ASSET_CLASS_COLORS: Record<string, string> = {
   "E": "bg-blue-500",
@@ -1396,7 +1396,7 @@ export default function AvailableUnitsPage() {
           }}
           data-testid="button-add-unit"
         >
-          <Plus className="h-4 w-4 mr-1" /> Add Unit
+          <Plus className="h-4 w-4 mr-1" /> Add unit
         </Button>
         {!isMobile && (
           <Button
