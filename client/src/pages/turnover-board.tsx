@@ -753,8 +753,55 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                     </div>
                   )}
 
-                  {isExpanded && (
-                    <div className="border-t">
+                  {isExpanded && (<>
+                    {/* Phone: card per store (§7) — the per-store table below
+                        is desktop-only. */}
+                    <div className="md:hidden border-t p-3 space-y-2 bg-muted/10">
+                      {brandEntries.map(entry => (
+                        <div
+                          key={entry.id}
+                          className={`rounded-2xl bg-card border border-border p-3 shadow-sm ${entry.is_draft ? "opacity-60" : ""}`}
+                          data-testid={`row-entry-${entry.id}-brandcard`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex items-center gap-1.5">
+                              <p className="text-sm font-medium truncate">{entry.store_name || entry.property_name || entry.location || "—"}</p>
+                              {entry.is_draft && <Badge variant="secondary" className="text-[9px] bg-amber-100 text-amber-700 px-1 py-0 shrink-0">Draft</Badge>}
+                            </div>
+                            <span className="shrink-0 text-sm font-mono tabular-nums font-semibold">
+                              {entry.is_draft && !entry.turnover ? <span className="text-muted-foreground italic font-sans font-normal text-xs">No turnover</span> : formatCurrency(entry.turnover)}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                            {[entry.period, entry.sqft ? `${entry.sqft.toLocaleString()} sqft` : null].filter(Boolean).join(" · ") || "—"}
+                            {entry.lat && entry.lng ? (
+                              <a href={`https://www.google.com/maps?q=${entry.lat},${entry.lng}`} target="_blank" rel="noopener noreferrer" className="ml-1 inline-flex align-middle text-muted-foreground hover:text-primary">
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            ) : null}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                            <Badge variant="secondary" className={`text-[10px] ${sourceBadge(entry.source)}`}>{entry.source}</Badge>
+                            {entry.turnover_per_sqft ? (
+                              <span className="text-[10px] text-muted-foreground font-mono tabular-nums">£{entry.turnover_per_sqft.toFixed(0)}/sqft</span>
+                            ) : null}
+                            {!isClientViewer && (
+                              <span className="ml-auto flex items-center gap-0.5">
+                                {entry.is_draft && (
+                                  <Button size="icon" variant="ghost" className="h-7 w-7 text-green-600 hover:text-green-700" onClick={() => confirmMutation.mutate(entry.id)} title="Confirm store">
+                                    <Check className="w-3.5 h-3.5" />
+                                  </Button>
+                                )}
+                                <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-red-600" onClick={() => { if (confirm("Delete?")) deleteMutation.mutate(entry.id); }}>
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="border-t hidden md:block">
                       <table className="w-full text-xs">
                         <thead className="bg-muted/30">
                           <tr>
@@ -812,7 +859,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                         </tbody>
                       </table>
                     </div>
-                  )}
+                  </>)}
                 </Card>
               );
             })}
