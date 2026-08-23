@@ -21,6 +21,7 @@ import {
   Handshake, ClipboardList, Landmark, AlertCircle,
 } from "lucide-react";
 import { ViewToggle } from "@/components/mobile-card-view";
+import { Pill } from "@/components/ui/pill";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { guessDomain, extractDomain, localBrandLogoUrl } from "@/lib/company-logos";
@@ -1117,18 +1118,16 @@ function ClientCrmHub() {
         </p>
       </div>
 
-      <div className="flex gap-1 border-b">
+      <div className="flex flex-wrap gap-1.5">
         {([["brands", "Brand Directory"], ["agents", "Agents"], ["contacts", `${hubUser?.team || "Your"} Contacts`]] as const).map(([key, label]) => (
-          <button
+          <Pill
             key={key}
+            active={tab === key}
             onClick={() => setTab(key)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              tab === key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
             data-testid={`client-crm-tab-${key}`}
           >
             {label}
-          </button>
+          </Pill>
         ))}
       </div>
 
@@ -1659,21 +1658,16 @@ function PeopleHub() {
       </div>
       <ContactFormDialog open={hubAddContactOpen} onOpenChange={setHubAddContactOpen} />
 
-      <div className="flex items-center gap-1 border-b">
+      <div className="flex flex-wrap gap-1.5">
         {tabs.map((t) => (
-          <button
+          <Pill
             key={t.key}
+            active={tab === t.key}
             onClick={() => setTab(t.key)}
-            className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              tab === t.key
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
-            }`}
             data-testid={`tab-${t.key}`}
           >
-            <t.icon className="w-4 h-4" />
             {t.label}
-          </button>
+          </Pill>
         ))}
       </div>
 

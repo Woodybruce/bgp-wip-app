@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import {
   Upload,
   FileText,
@@ -344,21 +345,17 @@ export default function DocumentTemplates() {
         </div>
       ) : (
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="smart-generate" data-testid="tab-smart-generate">
-            <Sparkles className="w-4 h-4 mr-2" />
+        <TabsList className={pillTabsList}>
+          <TabsTrigger value="smart-generate" className={pillTabsTrigger} data-testid="tab-smart-generate">
             Document Studio
           </TabsTrigger>
-          <TabsTrigger value="template-builder" data-testid="tab-template-builder">
-            <LayoutTemplate className="w-4 h-4 mr-2" />
+          <TabsTrigger value="template-builder" className={pillTabsTrigger} data-testid="tab-template-builder">
             Template Builder
           </TabsTrigger>
-          <TabsTrigger value="legal-dd" data-testid="tab-legal-dd">
-            <Scale className="w-4 h-4 mr-2" />
+          <TabsTrigger value="legal-dd" className={pillTabsTrigger} data-testid="tab-legal-dd">
             Legal & DD
           </TabsTrigger>
-          <TabsTrigger value="runs" data-testid="tab-doc-runs">
-            <FileText className="w-4 h-4 mr-2" />
+          <TabsTrigger value="runs" className={pillTabsTrigger} data-testid="tab-doc-runs">
             Document Library
           </TabsTrigger>
         </TabsList>

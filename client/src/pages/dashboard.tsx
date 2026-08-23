@@ -124,12 +124,12 @@ function ActivityFeedWidget() {
     cooling_contact: Users,
   };
   const sourceIcons: Record<string, { icon: React.ElementType; color: string }> = {
-    "email-processor": { icon: MailIcon, color: "text-blue-500" },
-    "auto-enrich": { icon: Sparkles, color: "text-purple-500" },
-    "news-feed": { icon: Newspaper, color: "text-orange-500" },
-    "comp-extract": { icon: BarChart3, color: "text-green-500" },
-    "archivist": { icon: FolderOpen, color: "text-amber-500" },
-    "interaction-sync": { icon: Users, color: "text-cyan-500" },
+    "email-processor": { icon: MailIcon, color: "text-muted-foreground" },
+    "auto-enrich": { icon: Sparkles, color: "text-muted-foreground" },
+    "news-feed": { icon: Newspaper, color: "text-muted-foreground" },
+    "comp-extract": { icon: BarChart3, color: "text-muted-foreground" },
+    "archivist": { icon: FolderOpen, color: "text-muted-foreground" },
+    "interaction-sync": { icon: Users, color: "text-muted-foreground" },
   };
 
   const digestHref = (alert: any): string | null =>
@@ -246,7 +246,7 @@ function MyTasksWidget() {
     const diff = Math.floor((due.getTime() - startOfToday().getTime()) / 86400000);
     if (diff < 0) return <span className="text-xs text-red-600 font-medium">{Math.abs(diff)}d overdue</span>;
     if (diff === 0) return <span className="text-xs text-orange-600 font-medium">Today</span>;
-    if (diff === 1) return <span className="text-xs text-blue-600">Tomorrow</span>;
+    if (diff === 1) return <span className="text-xs text-foreground">Tomorrow</span>;
     return <span className="text-xs text-muted-foreground">{new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>;
   };
   const renderBriefingLine = (line: string, i: number) => {
@@ -749,14 +749,14 @@ function PortfolioContactsBoard({ companyId }: { companyId: string }) {
   const groups: Array<{ key: string; title: string; tint: string; count: number; body: React.ReactNode }> = [];
   const personRow = (c: Row) => (
     <Link key={c.id} href={c.id.startsWith("u-") ? "/hr" : c.id.startsWith("co-") ? `/companies/${c.company_id}` : `/contacts/${c.id}`} className="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-muted/50 min-w-0">
-      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-semibold shrink-0 ${c.side === "bgp" ? "bg-foreground text-background" : c.side === "client" ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"}`}>
+      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-semibold shrink-0 ${c.side === "bgp" ? "bg-foreground text-background" : c.side === "client" ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"}`}>
         {(c.name || "?").split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
       </span>
       <div className="flex-1 min-w-0">
         <span className="text-xs font-medium truncate block">{c.name}</span>
         <span className="text-[10px] text-muted-foreground truncate block">{[c.role, c.side === "bgp" ? "BGP" : c.company_name !== c.name ? c.company_name : null].filter(Boolean).join(" · ")}</span>
       </div>
-      {c.side === "client" && <Badge variant="outline" className="text-[9px] shrink-0 text-blue-700 border-blue-200">Client</Badge>}
+      {c.side === "client" && <Badge variant="outline" className="text-[9px] shrink-0 text-primary border-primary/30">Client</Badge>}
       {c.via && c.side !== "client" && c.side !== "bgp" && <Badge variant="outline" className="text-[9px] shrink-0 max-w-[130px] truncate" title={c.via}>{c.via}</Badge>}
     </Link>
   );
@@ -767,7 +767,7 @@ function PortfolioContactsBoard({ companyId }: { companyId: string }) {
   const consultants = data?.consultants || [];
   groups.push({ key: "internal", title: "Internal team", tint: "text-foreground", count: internal.length, body: internal.map(personRow) });
   groups.push({
-    key: "deals", title: "On deals & tracker", tint: "text-emerald-700", count: dealsRows.length + unlinked.length,
+    key: "deals", title: "On deals & tracker", tint: "text-foreground", count: dealsRows.length + unlinked.length,
     body: (<>
       {dealsRows.map(personRow)}
       {unlinked.map(u => (
@@ -794,7 +794,7 @@ function PortfolioContactsBoard({ companyId }: { companyId: string }) {
       </div>
     )),
   });
-  groups.push({ key: "consultants", title: "Consultants", tint: "text-violet-700", count: consultants.length, body: consultants.map(personRow) });
+  groups.push({ key: "consultants", title: "Consultants", tint: "text-foreground", count: consultants.length, body: consultants.map(personRow) });
 
   return (
     <Card className="h-full flex flex-col">

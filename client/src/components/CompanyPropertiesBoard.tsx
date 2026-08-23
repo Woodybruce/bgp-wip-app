@@ -592,7 +592,7 @@ export function CompanyPropertiesBoard({
       <CardContent className="p-3 space-y-3" data-testid="company-properties-board">
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <h3 className="font-semibold text-xs flex items-center gap-1.5">
-            <Building2 className="w-3.5 h-3.5 text-teal-500" />
+            <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
             Properties
             <span className="font-normal text-muted-foreground">
               {boardProperties.length} in CRM{discovered.length > 0 ? ` · ${discovered.length} discovered` : ""}
@@ -656,11 +656,11 @@ export function CompanyPropertiesBoard({
                   </Link>
                   <div className="flex items-center gap-1 ml-auto shrink-0">
                     {p.units.length > 0 && (
-                      <Badge className="text-[9px] bg-teal-100 text-teal-700 dark:bg-teal-800 dark:text-teal-300 border-0">{p.units.length} unit{p.units.length !== 1 ? "s" : ""} · {occ} occ</Badge>
+                      <Badge variant="secondary" className="text-[9px]">{p.units.length} unit{p.units.length !== 1 ? "s" : ""} · {occ} occ</Badge>
                     )}
                     {exp > 0 && <Badge variant="outline" className="text-[9px] border-amber-300 text-amber-600">{exp} exp</Badge>}
                     {p.deals.length > 0 && (
-                      <Badge className="text-[9px] bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 border-0">{p.deals.length} deal{p.deals.length !== 1 ? "s" : ""}</Badge>
+                      <Badge variant="secondary" className="text-[9px]">{p.deals.length} deal{p.deals.length !== 1 ? "s" : ""}</Badge>
                     )}
                     {p.agentNames.map(name => (
                       <Badge key={name} className={`text-[9px] px-1 py-0 text-white ${userColorMap[name] || "bg-zinc-500"}`}>{name.split(" ")[0]}</Badge>
@@ -748,7 +748,7 @@ export function CompanyPropertiesBoard({
         </div>
 
         {(totalUnits > 0 || totalDeals > 0) && (
-          <Link href="/leasing-schedule" className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 w-fit">
+          <Link href="/leasing-schedule" className="text-[10px] text-primary hover:underline flex items-center gap-1 w-fit">
             <ExternalLink className="w-3 h-3" />Open leasing board
           </Link>
         )}

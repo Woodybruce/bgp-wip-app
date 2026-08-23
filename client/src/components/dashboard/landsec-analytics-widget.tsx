@@ -74,16 +74,16 @@ export function LandsecOverviewCard({ data }: { data: LandsecAnalytics }) {
     <Card className="h-full flex flex-col">
       <CardHeader className="pb-2 pt-4 px-4">
         <div className="flex items-center gap-2">
-          <Landmark className="w-4 h-4 text-emerald-600" />
+          <Landmark className="w-4 h-4 text-muted-foreground" />
           <CardTitle className="text-sm font-semibold">Landsec Portfolio Overview</CardTitle>
           <Badge variant="secondary" className="text-[10px]">{data.totalDeals} deals</Badge>
         </div>
       </CardHeader>
       <CardContent className="px-4 pb-4 pt-0 flex-1 overflow-hidden space-y-3">
         {/* Total portfolio value */}
-        <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
-          <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium uppercase tracking-wider">Total Portfolio Value</p>
-          <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-300">{formatCurrencyFull(totalPortfolio)}</p>
+        <div className="p-3 rounded-lg bg-muted/40 border border-border">
+          <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Total Portfolio Value</p>
+          <p className="text-2xl font-bold font-mono tabular-nums">{formatCurrencyFull(totalPortfolio)}</p>
           <p className="text-[10px] text-muted-foreground mt-0.5">
             Avg deal: {formatCurrencyShort(data.averageDealSize)}
           </p>
@@ -130,7 +130,7 @@ export function LandsecOverviewCard({ data }: { data: LandsecAnalytics }) {
               <Badge
                 key={type}
                 variant="outline"
-                className="text-[10px] gap-1 border-emerald-200 dark:border-emerald-800"
+                className="text-[10px] gap-1"
                 title={`${count} deals, ${formatCurrencyShort(fees)} total fees`}
               >
                 <Briefcase className="w-2.5 h-2.5" />
@@ -163,7 +163,7 @@ export function LandsecAgentPerformanceCard({ data }: { data: LandsecAnalytics }
     <Card className="h-full flex flex-col">
       <CardHeader className="pb-2 pt-4 px-4">
         <div className="flex items-center gap-2">
-          <Users className="w-4 h-4 text-emerald-600" />
+          <Users className="w-4 h-4 text-muted-foreground" />
           <CardTitle className="text-sm font-semibold">Agent Performance</CardTitle>
           <Badge variant="secondary" className="text-[10px]">{agents.length} agents</Badge>
         </div>
@@ -183,7 +183,7 @@ export function LandsecAgentPerformanceCard({ data }: { data: LandsecAnalytics }
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs font-medium truncate">{agent.name}</span>
-                      <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 tabular-nums">
+                      <span className="text-xs font-semibold font-mono tabular-nums">
                         {formatCurrencyShort(agent.fees)}
                       </span>
                     </div>
@@ -238,7 +238,7 @@ export function LandsecPipelineFunnel({ data }: { data: LandsecAnalytics }) {
     <Card className="h-full flex flex-col">
       <CardHeader className="pb-2 pt-4 px-4">
         <div className="flex items-center gap-2">
-          <PieChart className="w-4 h-4 text-emerald-600" />
+          <PieChart className="w-4 h-4 text-muted-foreground" />
           <CardTitle className="text-sm font-semibold">Deal Pipeline</CardTitle>
           <Badge variant="secondary" className="text-[10px]">{totalActive} deals</Badge>
         </div>
@@ -300,7 +300,7 @@ export function LandsecRecentActivity({ data }: { data: LandsecAnalytics }) {
     <Card className="h-full flex flex-col">
       <CardHeader className="pb-2 pt-4 px-4">
         <div className="flex items-center gap-2">
-          <Clock className="w-4 h-4 text-emerald-600" />
+          <Clock className="w-4 h-4 text-muted-foreground" />
           <CardTitle className="text-sm font-semibold">Recent Landsec Activity</CardTitle>
         </div>
       </CardHeader>
@@ -321,8 +321,8 @@ export function LandsecRecentActivity({ data }: { data: LandsecAnalytics }) {
                     className="flex items-start gap-2.5 p-2 rounded-md hover:bg-muted/50 transition-colors"
                     data-testid={`landsec-activity-${deal.id}`}
                   >
-                    <div className="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center shrink-0 mt-0.5">
-                      <Briefcase className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                    <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5">
+                      <Briefcase className="w-3 h-3 text-muted-foreground" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium leading-tight truncate">{deal.name}</p>
@@ -338,7 +338,7 @@ export function LandsecRecentActivity({ data }: { data: LandsecAnalytics }) {
                           </Badge>
                         )}
                         {deal.fee > 0 && (
-                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                          <span className="text-[10px] font-medium font-mono tabular-nums">
                             {formatCurrencyShort(deal.fee)}
                           </span>
                         )}

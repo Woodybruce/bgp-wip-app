@@ -4,7 +4,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { TrendingUp, TrendingDown, AlertTriangle, Search, ArrowUpDown } from "lucide-react";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
+import { TrendingUp, AlertTriangle, Search, ArrowUpDown } from "lucide-react";
 import { Link } from "wouter";
 import { AIActivityTrigger } from "@/components/ai-activity-card";
 
@@ -73,14 +74,12 @@ export default function HuntersInvestment() {
       </div>
 
       <Tabs defaultValue="buyers" className="w-full">
-        <TabsList>
-          <TabsTrigger value="buyers" className="text-xs">
-            <TrendingUp className="w-3.5 h-3.5 mr-1 text-emerald-600" />
-            Buyers ({buyers.length})
+        <TabsList className={pillTabsList}>
+          <TabsTrigger value="buyers" className={pillTabsTrigger}>
+            Buyers <span className="font-mono normal-case opacity-70">{buyers.length}</span>
           </TabsTrigger>
-          <TabsTrigger value="distressed" className="text-xs">
-            <TrendingDown className="w-3.5 h-3.5 mr-1 text-red-600" />
-            Distressed / Sellers ({distressed.length})
+          <TabsTrigger value="distressed" className={pillTabsTrigger}>
+            Distressed / Sellers <span className="font-mono normal-case opacity-70">{distressed.length}</span>
           </TabsTrigger>
         </TabsList>
 

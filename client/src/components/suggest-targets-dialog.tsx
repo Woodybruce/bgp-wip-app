@@ -56,7 +56,7 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-purple-500" />
+            <Sparkles className="w-4 h-4 text-muted-foreground" />
             Suggested brands — {unit?.unitName}{data?.unit?.sqft ? ` (${Number(data.unit.sqft).toLocaleString()} sq ft)` : ""}
           </DialogTitle>
           <DialogDescription>

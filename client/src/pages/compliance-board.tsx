@@ -45,6 +45,7 @@ function extractSources(checklist: any): string[] {
 import { KycPanel } from "@/components/kyc-panel";
 import { AmlAiPanel } from "@/components/deal-aml-status";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 
 interface BoardRow {
   id: string;
@@ -326,14 +327,12 @@ export default function ComplianceBoard() {
       </div>
 
       <Tabs defaultValue="counterparties">
-        <TabsList>
-          <TabsTrigger value="counterparties" data-testid="tab-counterparties">
-            <Building2 className="w-3.5 h-3.5 mr-1.5" />
-            Counterparties ({data?.counts.total || 0})
+        <TabsList className={pillTabsList}>
+          <TabsTrigger value="counterparties" className={pillTabsTrigger} data-testid="tab-counterparties">
+            Counterparties <span className="font-mono normal-case opacity-70">{data?.counts.total || 0}</span>
           </TabsTrigger>
-          <TabsTrigger value="deals" data-testid="tab-deals">
-            <Handshake className="w-3.5 h-3.5 mr-1.5" />
-            Live deals ({dealsData?.counts.total || 0})
+          <TabsTrigger value="deals" className={pillTabsTrigger} data-testid="tab-deals">
+            Live deals <span className="font-mono normal-case opacity-70">{dealsData?.counts.total || 0}</span>
           </TabsTrigger>
         </TabsList>
 

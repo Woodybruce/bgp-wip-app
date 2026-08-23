@@ -19,6 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Pill } from "@/components/ui/pill";
 import { FileText, Loader2, Filter, Sparkles, Download, ExternalLink, Printer, Wand2 } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -234,20 +235,20 @@ export default function DocumentBriefsPage() {
         </div>
         {/* One cockpit, three tools — ready briefs, the original template
             generator, and the card-deck builder, all in one place. */}
-        <div className="flex items-center gap-1 border-b border-border -mb-px">
+        <div className="flex flex-wrap gap-1.5">
           {([
             { v: "ready", label: "Ready documents" },
             { v: "templates", label: "Your templates" },
             { v: "decks", label: "Decks" },
           ] as { v: StudioTab; label: string }[]).map((t) => (
-            <button
+            <Pill
               key={t.v}
+              active={tab === t.v}
               onClick={() => setTab(t.v)}
-              className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === t.v ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
               data-testid={`studio-tab-${t.v}`}
             >
               {t.label}
-            </button>
+            </Pill>
           ))}
         </div>
         {tab === "ready" && (

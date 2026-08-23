@@ -4,6 +4,7 @@ import { Link, useSearch } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -147,25 +148,20 @@ export default function LandlordsPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b">
+      <div className="flex flex-wrap gap-1.5">
         {([
-          { key: "overview", label: "Overview", icon: BarChart3 },
-          { key: "portfolio", label: "Portfolio", icon: Building2 },
-          { key: "hunter", label: "Investment Hunter", icon: Crosshair },
-        ] as { key: HubTab; label: string; icon: any }[]).map(t => (
-          <button
+          { key: "overview", label: "Overview" },
+          { key: "portfolio", label: "Portfolio" },
+          { key: "hunter", label: "Investment Hunter" },
+        ] as { key: HubTab; label: string }[]).map(t => (
+          <Pill
             key={t.key}
+            active={activeTab === t.key}
             onClick={() => setActiveTab(t.key)}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
-              activeTab === t.key
-                ? "border-indigo-500 text-indigo-600"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
             data-testid={`tab-${t.key}`}
           >
-            <t.icon className="w-3.5 h-3.5" />
             {t.label}
-          </button>
+          </Pill>
         ))}
       </div>
 

@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { Pill } from "@/components/ui/pill";
 import type { LucideIcon } from "lucide-react";
 
 interface PageLayoutProps {
@@ -66,25 +67,18 @@ export function PageLayout({
 
           {/* Tabs bar */}
           {tabs && tabs.length > 0 && (
-            <div className="flex items-center gap-1 mt-3 -mb-4 pb-0">
+            <div className="flex items-center flex-wrap gap-1.5 mt-3">
               {tabs.map((tab) => (
-                <button
+                <Pill
                   key={tab.value}
+                  active={activeTab === tab.value}
                   onClick={() => onTabChange?.(tab.value)}
-                  className={cn(
-                    "text-sm px-3 py-2 rounded-t-md border-b-2 transition-colors font-medium",
-                    activeTab === tab.value
-                      ? "border-primary text-foreground"
-                      : "border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300"
-                  )}
                 >
                   {tab.label}
                   {tab.count !== undefined && (
-                    <span className="ml-1.5 text-xs text-muted-foreground">
-                      ({tab.count})
-                    </span>
+                    <span className="font-mono normal-case opacity-70">{tab.count}</span>
                   )}
-                </button>
+                </Pill>
               ))}
             </div>
           )}
@@ -131,25 +125,18 @@ export function PageLayout({
 
       {/* Tabs bar */}
       {tabs && tabs.length > 0 && (
-        <div className="flex items-center gap-1 border-b -mt-1">
+        <div className="flex items-center flex-wrap gap-1.5 -mt-1">
           {tabs.map((tab) => (
-            <button
+            <Pill
               key={tab.value}
+              active={activeTab === tab.value}
               onClick={() => onTabChange?.(tab.value)}
-              className={cn(
-                "text-sm px-3 py-2 rounded-t-md border-b-2 transition-colors font-medium",
-                activeTab === tab.value
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-gray-300"
-              )}
             >
               {tab.label}
               {tab.count !== undefined && (
-                <span className="ml-1.5 text-xs text-muted-foreground">
-                  ({tab.count})
-                </span>
+                <span className="font-mono normal-case opacity-70">{tab.count}</span>
               )}
-            </button>
+            </Pill>
           ))}
         </div>
       )}

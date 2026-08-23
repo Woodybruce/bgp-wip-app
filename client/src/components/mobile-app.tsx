@@ -281,7 +281,7 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
         result.push(match[0]);
       }
     } else if (match[3] && match[4]) {
-      const linkColor = isUserBubble ? "text-blue-300" : "text-blue-600";
+      const linkColor = isUserBubble ? "text-[#9A3412]" : "text-primary";
       result.push(
         <a key={key++} href={match[4]} target="_blank" rel="noopener noreferrer"
           className={`underline ${linkColor}`}
@@ -297,7 +297,7 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
     } else if (match[8]) {
       const url = match[8].replace(/[.,;:!?]+$/, "");
       const trailing = match[8].slice(url.length);
-      const linkColor = isUserBubble ? "text-blue-300" : "text-blue-600";
+      const linkColor = isUserBubble ? "text-[#9A3412]" : "text-primary";
       result.push(
         <a key={key++} href={url} target="_blank" rel="noopener noreferrer"
           className={`underline break-all ${linkColor}`}
@@ -2485,9 +2485,9 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
               )}
               {showNewDivider && (
                 <div className="flex items-center gap-3 my-3 px-2" data-testid="new-messages-divider">
-                  <div className="flex-1 h-px bg-blue-400" />
-                  <span className="text-xs font-semibold text-blue-500 whitespace-nowrap">New Messages</span>
-                  <div className="flex-1 h-px bg-blue-400" />
+                  <div className="flex-1 h-px bg-primary/50" />
+                  <span className="text-xs font-semibold text-primary whitespace-nowrap">New Messages</span>
+                  <div className="flex-1 h-px bg-primary/50" />
                 </div>
               )}
               <MobileMessageBubble
@@ -2977,8 +2977,8 @@ function MobileDocumentStudio() {
   return (
     <div className="flex-1 overflow-y-auto px-4">
       <div className="flex items-center gap-3 mb-5">
-        <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center shrink-0">
-          <Sparkles className="w-5 h-5 text-blue-600" />
+        <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center shrink-0">
+          <Sparkles className="w-5 h-5 text-primary" />
         </div>
         <div>
           <h2 className="text-[18px] font-semibold text-gray-900 tracking-tight">Document Studio</h2>
@@ -4476,7 +4476,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                               {item.sqft && <span>{item.sqft.toLocaleString()} sq ft</span>}
                               {item.askingRent && <span className="font-semibold text-gray-800">£{item.askingRent.toLocaleString()} pa</span>}
                               {item.floor && <span>{item.floor}</span>}
-                              {item.useClass && <span className="text-blue-600">{item.useClass}</span>}
+                              {item.useClass && <span className="text-muted-foreground">{item.useClass}</span>}
                             </div>
                             {(item.viewingsCount > 0 || item.condition) && (
                               <div className="flex items-center gap-3 text-[12px] text-gray-400 mt-1.5">
@@ -4802,15 +4802,15 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
 
               <div className="grid grid-cols-2 gap-2 mb-4">
                 {selectedDeal.niy != null && (
-                  <div className="bg-blue-50 rounded-xl p-3 border border-blue-100">
-                    <div className="text-[16px] font-bold text-blue-700">{selectedDeal.niy}%</div>
-                    <div className="text-[11px] text-blue-500 font-medium">NIY</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">{selectedDeal.niy}%</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">NIY</div>
                   </div>
                 )}
                 {selectedDeal.eqy != null && (
-                  <div className="bg-indigo-50 rounded-xl p-3 border border-indigo-100">
-                    <div className="text-[16px] font-bold text-indigo-700">{selectedDeal.eqy}%</div>
-                    <div className="text-[11px] text-indigo-500 font-medium">EQY</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">{selectedDeal.eqy}%</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">EQY</div>
                   </div>
                 )}
                 {selectedDeal.sqft != null && (
@@ -4826,15 +4826,15 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   </div>
                 )}
                 {selectedDeal.ervPa != null && (
-                  <div className="bg-teal-50 rounded-xl p-3 border border-teal-100">
-                    <div className="text-[16px] font-bold text-teal-700">£{selectedDeal.ervPa.toLocaleString()}</div>
-                    <div className="text-[11px] text-teal-500 font-medium">ERV pa</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">£{selectedDeal.ervPa.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">ERV pa</div>
                   </div>
                 )}
                 {selectedDeal.fee != null && (
-                  <div className="bg-purple-50 rounded-xl p-3 border border-purple-100">
-                    <div className="text-[16px] font-bold text-purple-700">£{selectedDeal.fee.toLocaleString()}</div>
-                    <div className="text-[11px] text-purple-500 font-medium">Fee{selectedDeal.feeType ? ` (${selectedDeal.feeType})` : ""}</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">£{selectedDeal.fee.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">Fee{selectedDeal.feeType ? ` (${selectedDeal.feeType})` : ""}</div>
                   </div>
                 )}
               </div>
@@ -4913,7 +4913,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{r.label}</div>
-                            <div className={`text-[14px] font-medium truncate ${hasLink ? "text-blue-600" : "text-gray-900"}`}>{r.name}</div>
+                            <div className={`text-[14px] font-medium truncate ${hasLink ? "text-primary" : "text-gray-900"}`}>{r.name}</div>
                             {matchType && (
                               <div className="text-[11px] text-gray-400">{matchType === "company" ? "View company" : "View contact"} →</div>
                             )}
@@ -4927,8 +4927,8 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               )}
 
               {selectedDeal.notes && (
-                <div className="bg-yellow-50 rounded-xl p-3.5 mb-4 border border-yellow-100">
-                  <div className="text-[11px] font-semibold text-yellow-600 uppercase tracking-wide mb-1">Notes</div>
+                <div className="bg-muted/40 rounded-xl p-3.5 mb-4 border border-border">
+                  <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Notes</div>
                   <div className="text-[14px] text-gray-800 leading-relaxed whitespace-pre-wrap">{selectedDeal.notes}</div>
                 </div>
               )}
@@ -4952,8 +4952,8 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                         className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl active:bg-gray-100"
                         data-testid={`marketing-file-${file.id}`}
                       >
-                        <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
-                          <FileText className="w-5 h-5 text-blue-600" />
+                        <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
+                          <FileText className="w-5 h-5 text-muted-foreground" />
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="text-[14px] font-medium text-gray-900 truncate">{file.fileName}</div>
@@ -4995,7 +4995,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 {selectedUnit.propertyName && (
                   <button
                     onClick={() => { if (selectedUnit.propertyId) { setSelectedUnitId(null); navigate(`/properties/${selectedUnit.propertyId}`); } }}
-                    className="text-[14px] text-blue-600 truncate block"
+                    className="text-[14px] text-primary truncate block"
                     data-testid="unit-property-link"
                   >
                     {selectedUnit.propertyName} →
@@ -5031,9 +5031,9 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   </div>
                 )}
                 {selectedUnit.sqft && (
-                  <div className="bg-blue-50 rounded-xl p-3 border border-blue-100">
-                    <div className="text-[16px] font-bold text-blue-700">{selectedUnit.sqft.toLocaleString()}</div>
-                    <div className="text-[11px] text-blue-500 font-medium">Sq Ft</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">{selectedUnit.sqft.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">Sq Ft</div>
                   </div>
                 )}
                 {selectedUnit.ratesPa && (
@@ -5049,9 +5049,9 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   </div>
                 )}
                 {selectedUnit.fee && (
-                  <div className="bg-purple-50 rounded-xl p-3 border border-purple-100">
-                    <div className="text-[16px] font-bold text-purple-700">£{selectedUnit.fee.toLocaleString()}</div>
-                    <div className="text-[11px] text-purple-500 font-medium">Fee</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">£{selectedUnit.fee.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">Fee</div>
                   </div>
                 )}
               </div>
@@ -5109,7 +5109,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                             <div className="text-[12px] text-gray-400">{new Date(v.viewingDate).toLocaleDateString("en-GB")}</div>
                           )}
                         </div>
-                        {v.outcome && <div className="text-[12px] text-blue-600 font-medium">{v.outcome}</div>}
+                        {v.outcome && <div className="text-[12px] text-foreground font-medium">{v.outcome}</div>}
                         {v.notes && <div className="text-[12px] text-gray-500 mt-1">{v.notes}</div>}
                       </div>
                     ))}

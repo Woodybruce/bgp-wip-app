@@ -356,7 +356,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
         {activeFilterCount > 0 && (
           <button
             onClick={clearAllFilters}
-            className="text-xs text-blue-600 hover:underline flex items-center gap-0.5 ml-1"
+            className="text-xs text-primary hover:underline flex items-center gap-0.5 ml-1"
             data-testid="wip-dash-clear-all-filters"
           >
             <X className="h-3 w-3" /> Reset filters
@@ -407,7 +407,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
                   <tr key={e.id || i} className="hover:bg-gray-50">
                     <td className="px-2 py-1 text-gray-700 truncate max-w-[150px]">
                       {e.dealId ? (
-                        <Link href={`/deals/${e.dealId}`} className="text-blue-600 hover:underline text-[11px]">{e.ref}</Link>
+                        <Link href={`/deals/${e.dealId}`} className="text-primary hover:underline text-[11px]">{e.ref}</Link>
                       ) : e.ref}
                     </td>
                     <td className="px-2 py-1 text-gray-700 truncate max-w-[130px]">{e.client || "—"}</td>

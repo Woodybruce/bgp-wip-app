@@ -4,6 +4,8 @@
 // /expenses/approvals still works) — we just collapsed the sidebar.
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { cn } from "@/lib/utils";
+import { pillMetrics, pillActive, pillInactive } from "@/components/ui/pill";
 
 // Cards & Revolut was folded into 'All expenses' — the Cardholders table
 // there now shows card type + last 4, and the Spend by Cardholder rows
@@ -27,8 +29,8 @@ export function ExpensesNavTabs() {
   });
 
   return (
-    <div className="border-b border-border/60 mb-4">
-      <nav className="flex gap-1">
+    <div className="mb-4">
+      <nav className="flex flex-wrap gap-1.5">
         {TABS.map((t) => {
           const active = location === t.href || (t.href === "/expenses" && location === "/expenses/");
           const badge = t.href === "/expenses/approvals" && pending.length > 0 ? pending.length : null;
@@ -36,17 +38,13 @@ export function ExpensesNavTabs() {
             <Link
               key={t.href}
               href={t.href}
-              className={
-                "px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors flex items-center gap-1.5 " +
-                (active
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground")
-              }
+              data-no-min-touch
+              className={cn(pillMetrics, active ? pillActive : pillInactive)}
               data-testid={`expenses-tab-${t.href}`}
             >
               {t.label}
               {badge != null && (
-                <span className="text-[11px] min-w-[18px] h-[18px] px-1 rounded-full bg-amber-500 text-white font-semibold flex items-center justify-center">
+                <span className="text-[10px] min-w-[16px] px-1 rounded-full bg-amber-500 text-white font-semibold font-mono normal-case flex items-center justify-center">
                   {badge}
                 </span>
               )}

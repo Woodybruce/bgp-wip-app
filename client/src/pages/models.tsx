@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Pill, pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -536,23 +537,21 @@ function RunDetails({ runId }: { runId: string }) {
         </Badge>
       </div>
 
-      <div className="flex border-b">
-        <button
+      <div className="flex flex-wrap gap-1.5">
+        <Pill
+          active={activeTab === "summary"}
           onClick={() => setActiveTab("summary")}
-          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${activeTab === "summary" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-summary"
         >
-          <BarChart3 className="w-3.5 h-3.5 inline mr-1.5" />
           Summary
-        </button>
-        <button
+        </Pill>
+        <Pill
+          active={activeTab === "excel"}
           onClick={() => setActiveTab("excel")}
-          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${activeTab === "excel" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-excel"
         >
-          <FileSpreadsheet className="w-3.5 h-3.5 inline mr-1.5" />
           Excel Model
-        </button>
+        </Pill>
       </div>
 
       {activeTab === "summary" && (
@@ -2954,16 +2953,15 @@ export default function ModelsPage() {
       )}
 
       <Tabs defaultValue="ask-claude">
-        <TabsList data-testid="tabs-models" className="flex-wrap h-auto gap-1">
-          <TabsTrigger value="ask-claude" data-testid="tab-ask-claude">
-            <Sparkles className="w-3.5 h-3.5 mr-1" />
+        <TabsList data-testid="tabs-models" className={pillTabsList}>
+          <TabsTrigger value="ask-claude" className={pillTabsTrigger} data-testid="tab-ask-claude">
             Claude Studio
           </TabsTrigger>
-          <TabsTrigger value="templates" data-testid="tab-templates">
-            Templates ({templates?.length || 0})
+          <TabsTrigger value="templates" className={pillTabsTrigger} data-testid="tab-templates">
+            Templates <span className="font-mono normal-case opacity-70">{templates?.length || 0}</span>
           </TabsTrigger>
-          <TabsTrigger value="runs" data-testid="tab-runs">
-            Runs ({runs?.length || 0})
+          <TabsTrigger value="runs" className={pillTabsTrigger} data-testid="tab-runs">
+            Runs <span className="font-mono normal-case opacity-70">{runs?.length || 0}</span>
           </TabsTrigger>
         </TabsList>
 

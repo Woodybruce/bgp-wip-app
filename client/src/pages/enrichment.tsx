@@ -37,6 +37,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 
 interface EnrichmentStats {
   contacts: {
@@ -159,10 +160,10 @@ export default function EnrichmentHub() {
 
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList data-testid="enrichment-tabs">
-          <TabsTrigger value="overview" data-testid="tab-overview">Overview</TabsTrigger>
-          <TabsTrigger value="contacts" data-testid="tab-contacts">Contacts</TabsTrigger>
-          <TabsTrigger value="companies" data-testid="tab-companies">Companies</TabsTrigger>
+        <TabsList data-testid="enrichment-tabs" className={pillTabsList}>
+          <TabsTrigger value="overview" className={pillTabsTrigger} data-testid="tab-overview">Overview</TabsTrigger>
+          <TabsTrigger value="contacts" className={pillTabsTrigger} data-testid="tab-contacts">Contacts</TabsTrigger>
+          <TabsTrigger value="companies" className={pillTabsTrigger} data-testid="tab-companies">Companies</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6 mt-4">

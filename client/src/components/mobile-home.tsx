@@ -306,7 +306,7 @@ export default function MobileHome() {
         <button
           type="button"
           onClick={exitClientView}
-          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium shadow"
+          className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[hsl(var(--mobile-chrome))] text-white text-sm font-medium shadow"
           data-testid="button-mobile-exit-client-view"
         >
           <span className="truncate">Viewing as {(user as any)?.companyScopeName || "client"} — this is their view, not yours</span>
@@ -534,10 +534,10 @@ export default function MobileHome() {
       {!isClientHome && Array.isArray(user?.expenseOverseerTeams) && user.expenseOverseerTeams.length > 0 && (
         <Link
           href="/team-expenses"
-          className="flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-900/40 px-4 py-3 active:bg-blue-100"
+          className="flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 active:bg-muted"
           data-testid="mobile-home-team-expenses"
         >
-          <span className="w-9 h-9 rounded-full bg-blue-500/15 text-blue-600 flex items-center justify-center shrink-0">
+          <span className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center shrink-0">
             <Receipt className="w-5 h-5" />
           </span>
           <div className="min-w-0 flex-1">

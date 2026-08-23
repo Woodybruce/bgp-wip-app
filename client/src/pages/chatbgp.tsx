@@ -185,13 +185,13 @@ function renderTextWithImages(text: string, keyPrefix: string) {
         parts.push(<span key={`${keyPrefix}-t-${m.index}`}>{m[0]}</span>);
       }
     } else if (m[3] && m[4]) {
-      parts.push(<a key={`${keyPrefix}-link-${m.index}`} href={m[4]} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">{m[3]}</a>);
+      parts.push(<a key={`${keyPrefix}-link-${m.index}`} href={m[4]} target="_blank" rel="noopener noreferrer" className="text-primary underline">{m[3]}</a>);
     } else if (m[5]) {
       parts.push(<strong key={`${keyPrefix}-b-${m.index}`}>{m[5]}</strong>);
     } else if (m[6]) {
       const url = m[6].replace(/[.,;:!?]+$/, "");
       const trailing = m[6].slice(url.length);
-      parts.push(<a key={`${keyPrefix}-url-${m.index}`} href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline break-all">{url}</a>);
+      parts.push(<a key={`${keyPrefix}-url-${m.index}`} href={url} target="_blank" rel="noopener noreferrer" className="text-primary underline break-all">{url}</a>);
       if (trailing) parts.push(<span key={`${keyPrefix}-tr-${m.index}`}>{trailing}</span>);
     }
     lastIdx = m.index + m[0].length;
@@ -368,7 +368,7 @@ function ActionCheckboxGroup({ actions, completedActions, onSubmit }: {
         </div>
       )}
       {sending && (
-        <div className="flex items-center gap-2 mt-2 text-sm text-blue-600 animate-pulse">
+        <div className="flex items-center gap-2 mt-2 text-sm text-primary animate-pulse">
           <span>Sending…</span>
         </div>
       )}
@@ -1271,7 +1271,7 @@ function ProjectRightPanel({
             <div className="border-t border-border/50 pt-5">
               <div className="flex items-center justify-between mb-2.5">
                 <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                  <Globe className="w-4 h-4 text-blue-500" />
+                  <Globe className="w-4 h-4 text-muted-foreground" />
                   SharePoint
                 </h4>
               </div>
@@ -1601,7 +1601,7 @@ function ThreadInfoPanel({
               </span>
             )}
             {propertyDetail.assetClass && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 text-[10px] font-medium">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-[10px] font-medium">
                 {propertyDetail.assetClass}
               </span>
             )}
@@ -3889,10 +3889,10 @@ export default function ChatBGP() {
                     </div>
 
                     <div className="w-full max-w-xl mt-8">
-                      <div className="flex items-center gap-4 border-b mb-3">
-                        <button className="text-sm font-medium pb-2 border-b-2 border-foreground" data-testid="tab-your-chats">
+                      <div className="mb-3">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground" data-testid="tab-your-chats">
                           Your chats
-                        </button>
+                        </p>
                       </div>
                       <div className="text-center py-4">
                         {threadsLoading ? (

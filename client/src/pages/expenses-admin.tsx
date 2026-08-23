@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -288,11 +289,11 @@ export default function ExpensesAdmin() {
         <Tabs defaultValue="spend">
           <CardHeader className="pb-0 space-y-3">
             <div className="flex items-center justify-between gap-4 flex-wrap">
-              <TabsList className="grid grid-cols-4 w-full max-w-2xl">
-                <TabsTrigger value="spend">Spend by cardholder</TabsTrigger>
-                <TabsTrigger value="cardholders">Cardholders ({cardholders.length})</TabsTrigger>
-                <TabsTrigger value="recent">Recent ({expenses.length})</TabsTrigger>
-                <TabsTrigger value="analysis">Analysis</TabsTrigger>
+              <TabsList className={pillTabsList}>
+                <TabsTrigger className={pillTabsTrigger} value="spend">Spend by cardholder</TabsTrigger>
+                <TabsTrigger className={pillTabsTrigger} value="cardholders">Cardholders <span className="font-mono normal-case opacity-70">{cardholders.length}</span></TabsTrigger>
+                <TabsTrigger className={pillTabsTrigger} value="recent">Recent <span className="font-mono normal-case opacity-70">{expenses.length}</span></TabsTrigger>
+                <TabsTrigger className={pillTabsTrigger} value="analysis">Analysis</TabsTrigger>
               </TabsList>
               {/* Date range — shared across Spend by cardholder + Analysis
                   tabs. 'This month' is the default so the existing tile

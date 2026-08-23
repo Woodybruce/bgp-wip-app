@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Pill } from "@/components/ui/pill";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -836,33 +837,24 @@ export default function TasksPage() {
                     <CircleDot className="w-4 h-4 text-primary" />
                     Tasks
                   </CardTitle>
-                  <div className="flex flex-wrap gap-1 border-b">
-                    <button
-                      className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px flex items-center gap-1 ${
-                        viewAssigned
-                          ? "border-primary text-primary"
-                          : "border-transparent text-muted-foreground hover:text-foreground"
-                      }`}
+                  <div className="flex flex-wrap gap-1.5">
+                    <Pill
+                      active={viewAssigned}
                       onClick={() => setViewAssigned(v => !v)}
                       title="Tasks you assigned to other people"
                       data-testid="filter-assigned-by-me"
                     >
-                      <User className="w-3.5 h-3.5" />
                       Assigned by me
-                    </button>
+                    </Pill>
                     {(["all", "todo", "in_progress", "done"] as const).map(f => (
-                      <button
+                      <Pill
                         key={f}
-                        className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${
-                          filter === f
-                            ? "border-primary text-primary"
-                            : "border-transparent text-muted-foreground hover:text-foreground"
-                        }`}
+                        active={filter === f}
                         onClick={() => setFilter(f)}
                         data-testid={`filter-${f}`}
                       >
                         {f === "all" ? "All" : f === "todo" ? "To Do" : f === "in_progress" ? "In Progress" : "Done"}
-                      </button>
+                      </Pill>
                     ))}
                   </div>
                 </div>

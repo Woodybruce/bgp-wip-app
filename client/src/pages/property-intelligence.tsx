@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import { Loader2, Map, ShieldCheck, Landmark, Receipt, Sparkles, ImageIcon, Globe } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
@@ -171,22 +172,18 @@ export default function PropertyIntelligence() {
               via onResolveProperty so every other tab still prefills via
               PropertyContext + the resolvedProperty state below. Saves a
               full bar of vertical real estate above the tab strip. */}
-          <div className="px-4 lg:px-6 pt-3">
-            <TabsList className="bg-transparent p-0 h-auto gap-x-1 gap-y-0.5 flex flex-wrap lg:flex-nowrap lg:w-max">
-              {visibleTabs.map((t) => {
-                const Icon = t.icon;
-                return (
-                  <TabsTrigger
-                    key={t.id}
-                    value={t.id}
-                    className="flex items-center gap-1.5 px-2.5 lg:px-4 py-2.5 text-sm font-medium rounded-none border-b-2 -mb-px border-transparent text-muted-foreground hover:text-foreground data-[state=active]:border-indigo-500 data-[state=active]:text-indigo-600 data-[state=active]:shadow-none shrink-0 whitespace-nowrap"
-                    data-testid={`pi-tab-${t.id}`}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                    {t.label}
-                  </TabsTrigger>
-                );
-              })}
+          <div className="px-4 lg:px-6 py-3">
+            <TabsList className={pillTabsList}>
+              {visibleTabs.map((t) => (
+                <TabsTrigger
+                  key={t.id}
+                  value={t.id}
+                  className={pillTabsTrigger}
+                  data-testid={`pi-tab-${t.id}`}
+                >
+                  {t.label}
+                </TabsTrigger>
+              ))}
             </TabsList>
           </div>
           {piIsClient && (

@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Pill } from "@/components/ui/pill";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PropertyCombobox } from "@/components/property-combobox";
@@ -1104,28 +1105,28 @@ export default function ImageStudio() {
           </div>
         )}
       {/* Section tabs */}
-      <div className="flex gap-1 px-4 border-b bg-background flex-shrink-0">
-        <button
+      <div className="flex flex-wrap gap-1.5 px-4 py-2 flex-shrink-0">
+        <Pill
+          active={activeSection === "library" && collectionsTab === "grid"}
           onClick={() => { setActiveSection("library"); setCollectionsTab("grid"); setSelectMode(false); setSelectedIds(new Set()); }}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${activeSection === "library" && collectionsTab === "grid" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-library"
         >
-          Library ({images.filter(i => i.category !== "Brands").length})
-        </button>
-        <button
+          Library <span className="font-mono normal-case opacity-70">{images.filter(i => i.category !== "Brands").length}</span>
+        </Pill>
+        <Pill
+          active={activeSection === "brands"}
           onClick={() => { setActiveSection("brands"); setCollectionsTab("grid"); setSelectMode(false); setSelectedIds(new Set()); }}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${activeSection === "brands" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-brands"
         >
-          Brand Library ({images.filter(i => i.category === "Brands").length})
-        </button>
-        <button
+          Brand Library <span className="font-mono normal-case opacity-70">{images.filter(i => i.category === "Brands").length}</span>
+        </Pill>
+        <Pill
+          active={collectionsTab === "collections" && activeSection === "library"}
           onClick={() => { setActiveSection("library"); setCollectionsTab("collections"); setSelectMode(false); setSelectedIds(new Set()); }}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${collectionsTab === "collections" && activeSection === "library" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-collections"
         >
-          Collections ({collections.length})
-        </button>
+          Collections <span className="font-mono normal-case opacity-70">{collections.length}</span>
+        </Pill>
       </div>
 
       <div className="flex flex-1 overflow-hidden">

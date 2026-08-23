@@ -2,7 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Pill } from "@/components/ui/pill";
+import { Pill, pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -30,7 +30,6 @@ import {
   Clock,
   Loader2,
   Zap,
-  Lightbulb,
   Rss,
   BarChart3,
   Filter,
@@ -432,19 +431,16 @@ function FeedTab() {
 
       <Tabs value={activeTeam} onValueChange={setActiveTeam}>
         <TabsList
-          className="flex overflow-x-auto h-auto gap-1 bg-transparent p-0"
+          className={pillTabsList}
           data-testid="tabs-team-filter"
         >
           {visibleTeams.map((team) => (
             <TabsTrigger
               key={team}
               value={team}
-              className="data-[state=active]:bg-black data-[state=active]:text-white dark:data-[state=active]:bg-white dark:data-[state=active]:text-black text-xs px-3 py-1.5 rounded-full border shrink-0"
+              className={pillTabsTrigger}
               data-testid={`tab-team-${team.toLowerCase().replace(/\s/g, "-")}`}
             >
-              {team === "For You" && <Zap className="w-3 h-3 mr-1" />}
-              {team === "Insights" && <Lightbulb className="w-3 h-3 mr-1" />}
-              {team === "Saved" && <Bookmark className="w-3 h-3 mr-1" />}
               {team}
             </TabsTrigger>
           ))}
@@ -1476,25 +1472,20 @@ function StaffNews() {
       </div>
 
       <Tabs defaultValue="feed">
-        <TabsList className="mb-4" data-testid="tabs-news-main">
-          <TabsTrigger value="feed" data-testid="tab-feed">
-            <Newspaper className="w-4 h-4 mr-1" />
+        <TabsList className={`${pillTabsList} mb-4`} data-testid="tabs-news-main">
+          <TabsTrigger value="feed" className={pillTabsTrigger} data-testid="tab-feed">
             Feed
           </TabsTrigger>
-          <TabsTrigger value="leads" data-testid="tab-leads">
-            <Zap className="w-4 h-4 mr-1" />
+          <TabsTrigger value="leads" className={pillTabsTrigger} data-testid="tab-leads">
             Leads
           </TabsTrigger>
-          <TabsTrigger value="inbox" data-testid="tab-inbox">
-            <Mail className="w-4 h-4 mr-1" />
+          <TabsTrigger value="inbox" className={pillTabsTrigger} data-testid="tab-inbox">
             Inbox
           </TabsTrigger>
-          <TabsTrigger value="whatsapp" data-testid="tab-whatsapp">
-            <MessageCircle className="w-4 h-4 mr-1" />
+          <TabsTrigger value="whatsapp" className={pillTabsTrigger} data-testid="tab-whatsapp">
             WhatsApp
           </TabsTrigger>
-          <TabsTrigger value="sources" data-testid="tab-sources">
-            <Rss className="w-4 h-4 mr-1" />
+          <TabsTrigger value="sources" className={pillTabsTrigger} data-testid="tab-sources">
             Sources
           </TabsTrigger>
         </TabsList>

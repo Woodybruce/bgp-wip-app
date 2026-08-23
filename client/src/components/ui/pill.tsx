@@ -18,6 +18,16 @@ export const pillMetrics =
 export const pillActive = "bg-foreground text-background border border-transparent";
 export const pillInactive = "bg-transparent text-muted-foreground border border-border hover:text-foreground";
 
+// Pill-styled shadcn Tabs (docs/DESIGN.md §4). When a page keeps the Tabs
+// component for its content panels, pass these to TabsList / TabsTrigger so
+// the row reads as the standard pills instead of the grey segmented box.
+export const pillTabsList =
+  "h-auto bg-transparent p-0 gap-1.5 flex flex-wrap justify-start";
+export const pillTabsTrigger = cn(
+  pillMetrics,
+  "border border-border bg-transparent text-muted-foreground hover:text-foreground data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:border-transparent data-[state=active]:shadow-none",
+);
+
 export const Pill = forwardRef<
   HTMLButtonElement,
   React.ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean }

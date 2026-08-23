@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Pill } from "@/components/ui/pill";
 import {
   Select,
   SelectContent,
@@ -1326,21 +1327,21 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
           )}
 
           {(freeholds || leaseholds || Object.keys(intelligence).length > 0) && !freeholdsLoading && (
-            <div className="flex gap-1 border-b pb-2">
+            <div className="flex flex-wrap gap-1.5">
               {[
-                { id: "overview", label: "Market Data", icon: BarChart3 },
-                { id: "titles", label: `Titles (${(freeholds?.length || 0) + (leaseholds?.length || 0)})`, icon: Landmark },
-                { id: "sold", label: "Sales", icon: PoundSterling },
+                { id: "overview", label: "Market Data" },
+                { id: "titles", label: "Titles", count: (freeholds?.length || 0) + (leaseholds?.length || 0) },
+                { id: "sold", label: "Sales" },
               ].map(tab => (
-                <button
+                <Pill
                   key={tab.id}
+                  active={activeSection === tab.id}
                   onClick={() => setActiveSection(tab.id)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors ${activeSection === tab.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
                   data-testid={`tab-section-${tab.id}`}
                 >
-                  <tab.icon className="w-3.5 h-3.5" />
                   {tab.label}
-                </button>
+                  {tab.count !== undefined && <span className="font-mono normal-case opacity-70">{tab.count}</span>}
+                </Pill>
               ))}
             </div>
           )}

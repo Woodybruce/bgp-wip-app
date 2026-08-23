@@ -1,7 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Loader2, LayoutGrid, GraduationCap, Settings, UserSearch } from "lucide-react";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
+import { Loader2 } from "lucide-react";
 
 // Lazy so we only parse each tab's bundle when the user actually opens it.
 const ComplianceBoard = lazy(() => import("@/pages/compliance-board"));
@@ -11,11 +12,11 @@ const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
 
 type TabId = "board" | "investigator" | "training" | "settings";
 
-const TABS: Array<{ id: TabId; label: string; icon: any }> = [
-  { id: "board", label: "Compliance Board", icon: LayoutGrid },
-  { id: "investigator", label: "Investigator", icon: UserSearch },
-  { id: "training", label: "Training", icon: GraduationCap },
-  { id: "settings", label: "Firm Settings", icon: Settings },
+const TABS: Array<{ id: TabId; label: string }> = [
+  { id: "board", label: "Compliance Board" },
+  { id: "investigator", label: "Investigator" },
+  { id: "training", label: "Training" },
+  { id: "settings", label: "Firm Settings" },
 ];
 
 function readTabFromUrl(): TabId {
@@ -53,23 +54,19 @@ export default function KycHub() {
   return (
     <div className="flex flex-col h-full min-h-screen">
       <Tabs value={tab} onValueChange={handleTabChange} className="flex flex-col h-full">
-        <div className="border-b bg-background sticky top-0 z-10">
-          <div className="px-4 lg:px-6 pt-3">
-            <TabsList className="bg-transparent p-0 h-auto gap-1">
-              {TABS.map(t => {
-                const Icon = t.icon;
-                return (
-                  <TabsTrigger
-                    key={t.id}
-                    value={t.id}
-                    className="flex items-center gap-1.5 px-4 py-2 data-[state=active]:bg-muted data-[state=active]:text-foreground rounded-t-md rounded-b-none border-b-2 border-transparent data-[state=active]:border-primary"
-                    data-testid={`kyc-hub-tab-${t.id}`}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                    {t.label}
-                  </TabsTrigger>
-                );
-              })}
+        <div className="bg-background sticky top-0 z-10">
+          <div className="px-4 lg:px-6 py-3">
+            <TabsList className={pillTabsList}>
+              {TABS.map(t => (
+                <TabsTrigger
+                  key={t.id}
+                  value={t.id}
+                  className={pillTabsTrigger}
+                  data-testid={`kyc-hub-tab-${t.id}`}
+                >
+                  {t.label}
+                </TabsTrigger>
+              ))}
             </TabsList>
           </div>
         </div>
