@@ -318,7 +318,7 @@ function Sparkline({ values, width = 60, height = 16 }: { values: number[]; widt
 
 function AiChip() {
   return (
-    <span title="AI-generated — any edit makes it ground truth" className="inline-flex items-center gap-0.5 text-[10px] text-purple-600 ml-1">
+    <span title="AI-generated — any edit makes it ground truth" className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground ml-1">
       <Sparkles className="w-2.5 h-2.5" /> ai
     </span>
   );
@@ -1093,28 +1093,28 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       <CardHeader className="p-3 pb-2 flex flex-row items-start justify-between sticky top-0 z-20 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85 border-b border-border/40">
         <div className="flex flex-col gap-1 min-w-0 flex-1">
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
-          <Sparkles className="w-4 h-4 text-purple-500 shrink-0" />
+          <Sparkles className="w-4 h-4 text-primary shrink-0" />
           {(() => {
             const t = (c.company_type || "").toLowerCase();
             if (t === "agent" || t.includes("agent")) return "Agent Profile";
             if (t.includes("landlord")) return "Landlord Profile";
             return "Brand Profile";
           })()}
-          {c.is_tracked_brand && <Badge className="bg-purple-100 text-purple-700 border-purple-300 text-[10px]">Tracked brand</Badge>}
-          {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-purple-200 text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
+          {c.is_tracked_brand && <Badge variant="secondary" className="text-[10px]">Tracked brand</Badge>}
+          {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
           {hunter && hunter.expansionScore >= 40 && (
             <Badge
               className={
-                hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-purple-200 text-[10px]" :
-                hunter.expansionScore >= 55 ? "bg-amber-50 text-amber-700 border-purple-200 text-[10px]" :
-                "bg-zinc-50 text-zinc-700 border-purple-200 text-[10px]"
+                hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-transparent text-[10px]" :
+                hunter.expansionScore >= 55 ? "bg-amber-50 text-amber-700 border-transparent text-[10px]" :
+                "bg-zinc-50 text-zinc-700 border-transparent text-[10px]"
               }
               title={hunter.expansionFlags.join(" · ")}
             >
               Hunter {hunter.expansionScore}/100
             </Badge>
           )}
-          {c.agent_type && <Badge className="bg-blue-50 text-blue-700 border-purple-200 text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
+          {c.agent_type && <Badge variant="secondary" className="text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
           {(() => {
             const lastContactedAt = data.contacts.map((ct: any) => ct.last_contacted_at).filter(Boolean).sort().reverse()[0] as string | undefined;
             const lastContactor = lastContactedAt ? data.contacts.find((ct: any) => ct.last_contacted_at === lastContactedAt) : null;
@@ -1496,7 +1496,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 type="button"
                 onClick={() => runContactDiscovery()}
                 disabled={contactsFinding}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 text-xs font-medium transition-colors disabled:opacity-50"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border bg-background hover:bg-muted text-xs font-medium transition-colors disabled:opacity-50"
                 data-testid="button-refresh-contacts"
               >
                 <Sparkles className="w-3 h-3" /> {contactsFinding ? "Finding…" : "Refresh contacts"}
@@ -1536,7 +1536,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
               <button
                 type="button"
                 onClick={() => navigate(`/available?pitchBrand=${c.id}&pitchBrandName=${encodeURIComponent(c.name || "")}`)}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-medium transition-colors"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border bg-background hover:bg-muted text-xs font-medium transition-colors"
                 title="Browse available units to pitch to this brand"
               >
                 <Building2 className="w-3 h-3" /> Pitch property
@@ -1706,7 +1706,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                                         type="button"
                                         onClick={() => createBackerMutation.mutate({ name: b.name, type: b.type, description: b.description })}
                                         disabled={createBackerMutation.isPending}
-                                        className="ml-1.5 text-[10px] text-purple-600 hover:text-purple-700 underline decoration-dotted disabled:opacity-50"
+                                        className="ml-1.5 text-[10px] text-primary hover:underline underline decoration-dotted disabled:opacity-50"
                                       >
                                         {createBackerMutation.isPending && createBackerMutation.variables?.name === b.name ? "Creating…" : "+ Create"}
                                       </button>
@@ -1813,7 +1813,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             </div>
 
             {c.tracking_reason && (
-              <div className="text-xs text-muted-foreground italic border-l-2 border-purple-300 pl-2">
+              <div className="text-xs text-muted-foreground italic border-l-2 border-border pl-2">
                 {c.tracking_reason}
               </div>
             )}
@@ -2170,12 +2170,12 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                     </Badge>
                   )}
                   {activeDeals?.length > 0 && (
-                    <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-[10px]">
+                    <Badge variant="secondary" className="text-[10px]">
                       {activeDeals.length} active
                     </Badge>
                   )}
                   {requirements.filter(r => r.status === "Active").length > 0 && (
-                    <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px]">
+                    <Badge variant="secondary" className="text-[10px]">
                       {requirements.filter(r => r.status === "Active").length} active requirement{requirements.filter(r => r.status === "Active").length !== 1 ? "s" : ""}
                     </Badge>
                   )}
@@ -2400,8 +2400,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   </div>
                 )}
                 {c.brand_analysis ? (
-                  <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-2">
-                    <div className="flex items-center gap-1 text-xs text-purple-700 dark:text-purple-300 mb-1">
+                  <div className="rounded-md border border-border bg-muted/40 p-2">
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
                       <Sparkles className="w-3 h-3" /> Brand expansion
                       {c.brand_analysis_at && (
                         <span className="text-[10px] text-muted-foreground ml-auto">
@@ -2434,7 +2434,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   </span>
                   <Link
                     href={`/requirements?companyId=${c.id}`}
-                    className="text-[10px] text-blue-600 hover:underline"
+                    className="text-[10px] text-primary hover:underline"
                   >
                     manage →
                   </Link>
@@ -2700,7 +2700,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                               })}
                               className="w-full text-left px-2 py-1.5 hover:bg-accent text-xs flex items-start gap-2"
                             >
-                              <User className="w-3 h-3 text-blue-500 mt-0.5 shrink-0" />
+                              <User className="w-3 h-3 text-muted-foreground mt-0.5 shrink-0" />
                               <div className="min-w-0 flex-1">
                                 <div className="font-medium truncate">{ct.name}</div>
                                 <div className="text-[10px] text-muted-foreground truncate">
@@ -2729,8 +2729,8 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                             onClick={() => { setRepForm({ ...repForm, otherCompanyId: co.id, otherCompanyName: co.name, contactId: undefined, contactName: undefined }); setRepSearch(""); }}
                             className="w-full text-left px-2 py-1.5 hover:bg-accent text-xs flex items-center gap-2"
                           >
-                            {addRep === "agent" && <Handshake className="w-3 h-3 text-blue-500" />}
-                            {addRep === "brand" && <Sparkles className="w-3 h-3 text-purple-500" />}
+                            {addRep === "agent" && <Handshake className="w-3 h-3 text-muted-foreground" />}
+                            {addRep === "brand" && <Sparkles className="w-3 h-3 text-primary" />}
                             <span className="truncate">{co.name}</span>
                             {co.agent_type && <Badge variant="outline" className="text-[10px] ml-auto">{co.agent_type.replace(/_/g, " ")}</Badge>}
                           </button>
@@ -2933,7 +2933,7 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
   return (
     <div className="border-t pt-2">
       <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
-        <Sparkles className="w-3 h-3 text-purple-500" /> Similar tenants &amp; competitor set
+        <Sparkles className="w-3 h-3 text-primary" /> Similar tenants &amp; competitor set
         {generatedAt && (
           <span className="text-[10px] ml-1">· {new Date(generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
         )}
@@ -3128,7 +3128,7 @@ function AskChatBGPInline({ brandName }: { brandName: string }) {
   return (
     <div>
       <div className="text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5 flex items-center gap-1">
-        <Sparkles className="w-3 h-3 text-purple-500" /> Ask ChatBGP
+        <Sparkles className="w-3 h-3 text-primary" /> Ask ChatBGP
       </div>
       <div className="flex gap-1.5 flex-wrap">
         {topics.map(t => {
@@ -3138,10 +3138,10 @@ function AskChatBGPInline({ brandName }: { brandName: string }) {
               key={t.label}
               onClick={() => ask(t.label, t.question)}
               title={t.question}
-              className={`text-xs px-2.5 py-1 rounded-full border transition-colors flex items-center gap-1 leading-tight font-medium ${
+              className={`inline-flex items-center gap-1 rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] transition-colors border ${
                 isActive
-                  ? "bg-purple-100 text-purple-800 border-purple-400 dark:bg-purple-900 dark:text-purple-100 dark:border-purple-600"
-                  : "border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950"
+                  ? "bg-foreground text-background border-transparent"
+                  : "bg-transparent text-muted-foreground border-border hover:text-foreground"
               }`}
             >
               <Sparkles className="w-3 h-3 shrink-0" />{t.label}
@@ -3150,11 +3150,11 @@ function AskChatBGPInline({ brandName }: { brandName: string }) {
         })}
       </div>
       {active && activeTopic && (
-        <div className="mt-2 p-3 rounded-md border bg-purple-50/40 dark:bg-purple-950/20 border-purple-200 dark:border-purple-800 text-xs space-y-2">
+        <div className="mt-2 p-3 rounded-md border bg-muted/40 border-border text-xs space-y-2">
           <div className="flex items-start gap-2">
-            <Sparkles className="w-3.5 h-3.5 text-purple-500 shrink-0 mt-0.5" />
+            <Sparkles className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
-              <div className="text-[10px] uppercase tracking-wider text-purple-700 dark:text-purple-300 font-semibold">{activeTopic.label}</div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{activeTopic.label}</div>
               <div className="text-muted-foreground italic leading-snug">{activeTopic.question}</div>
             </div>
             <button
@@ -3165,7 +3165,7 @@ function AskChatBGPInline({ brandName }: { brandName: string }) {
               ✕
             </button>
           </div>
-          <div className="border-t border-purple-200/60 dark:border-purple-800/60 pt-2">
+          <div className="border-t border-border pt-2">
             {loading && !answer && (
               <p className="text-muted-foreground italic flex items-center gap-1">
                 <Loader2 className="w-3 h-3 animate-spin" />Asking ChatBGP…
@@ -3182,7 +3182,7 @@ function AskChatBGPInline({ brandName }: { brandName: string }) {
             <div className="flex justify-end">
               <button
                 onClick={() => openInFullChat(activeTopic.question)}
-                className="text-[10px] text-purple-600 dark:text-purple-300 hover:underline"
+                className="text-[10px] text-primary hover:underline"
               >
                 Open in full chat →
               </button>
@@ -3594,7 +3594,7 @@ function ContactRow({ dm }: { dm: { id: string; name: string; role: string | nul
         {dm.avatar_url ? (
           <img src={dm.avatar_url} alt={dm.name} className="w-6 h-6 rounded-full bg-muted shrink-0 object-cover" />
         ) : (
-          <div className="w-6 h-6 rounded-full bg-teal-100 dark:bg-teal-900 flex items-center justify-center text-[10px] font-semibold text-teal-700 dark:text-teal-300 shrink-0">
+          <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[10px] font-semibold text-muted-foreground shrink-0">
             {dm.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
           </div>
         )}
@@ -3843,7 +3843,7 @@ function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role
   });
 
   return (
-    <span className="inline-flex items-center gap-1 text-xs bg-purple-50 text-purple-700 border border-purple-200 rounded-full px-2 py-0.5">
+    <span className="inline-flex items-center gap-1 rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] border border-border bg-muted/40 text-muted-foreground">
       <Users className="w-2.5 h-2.5" />
       <span className="font-medium">{cov.name}</span>
       {editing ? (
@@ -3860,14 +3860,14 @@ function CovererChip({ cov, companyId }: { cov: { id: string; name: string; role
             if (e.key === "Escape") { setEditing(false); setDraft(cov.role || ""); }
           }}
           placeholder="role…"
-          className="text-[10px] w-24 border-0 bg-transparent focus:outline-none focus:bg-white dark:focus:bg-purple-900/50 rounded px-1"
+          className="text-[10px] w-24 border-0 bg-transparent focus:outline-none focus:bg-muted rounded px-1"
         />
       ) : ccIsClient ? (
-        cov.role ? <span className="text-[10px] text-purple-600">{cov.role}</span> : null
+        cov.role ? <span className="text-[10px] text-muted-foreground">{cov.role}</span> : null
       ) : (
         <button
           onClick={() => setEditing(true)}
-          className="text-[10px] text-purple-600 hover:text-purple-900 hover:underline decoration-dotted"
+          className="text-[10px] text-primary hover:underline decoration-dotted"
           title="Click to edit role for this account"
         >
           {cov.role || <span className="italic opacity-70">add role…</span>}
@@ -4296,7 +4296,7 @@ export function PortfolioActivityBlock({ companyId }: { companyId: string }) {
           <Tier label="Targeted" count={targeted.length}>
             {targeted.slice(0, 6).map((p: any) => (
               <Row key={`g-${p.via}-${p.id}`} propertyId={p.property_id} propertyName={p.property_name} unitName={p.unit_name}
-                right={<Badge variant="outline" className="text-[9px] shrink-0 text-blue-700 border-blue-200">{p.status || (p.via === "letting_tracker" ? "brief" : "schedule")}</Badge>} />
+                right={<Badge variant="outline" className="text-[9px] shrink-0">{p.status || (p.via === "letting_tracker" ? "brief" : "schedule")}</Badge>} />
             ))}
           </Tier>
         )}
@@ -5317,7 +5317,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
         <Card>
           <CardContent className="p-3 pt-3 space-y-2">
             <h3 className="font-semibold text-xs flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5 text-indigo-500" />
+              <Users className="w-3.5 h-3.5 text-muted-foreground" />
               BGP Team
             </h3>
             <ClientTeamOrgChart clientCompanyId={companyId} />
