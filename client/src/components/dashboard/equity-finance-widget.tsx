@@ -67,6 +67,13 @@ export function EquityFinanceWidget() {
   if (data.costs) {
     stats.push({ label: "Cost run rate", value: `${money(data.costs.runRate)}/mo`, sub: `${money(data.costs.projectedFyCosts)} projected FY` });
   }
+  if (data.wip) {
+    stats.push({
+      label: "Fee pipeline",
+      value: money(data.wip.unweightedPipeline),
+      sub: `${money(data.wip.weightedPipeline)} weighted · ${money(data.wip.toInvoice?.total)} to invoice`,
+    });
+  }
   if (data.projection?.projectedNet != null) {
     stats.push({
       label: "Projected FY net",
@@ -99,7 +106,8 @@ export function EquityFinanceWidget() {
           ))}
         </div>
         <p className="text-[11px] text-muted-foreground mt-3">
-          Live from Xero · equity directors only · projections = weighted deal pipeline vs cost run rate
+          Live from Xero · equity directors only · projections = weighted deal pipeline vs cost run rate ·{" "}
+          <Link href="/wip-report"><span className="text-primary cursor-pointer" data-testid="link-equity-wip-report">WIP report</span></Link>
         </p>
       </CardContent>
     </Card>

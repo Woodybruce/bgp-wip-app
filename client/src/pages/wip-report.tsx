@@ -16,12 +16,12 @@ import {
   Link2,
   Plus,
   Download,
+  Search as SearchIcon,
 } from "lucide-react";
 import { FilterDropdown } from "@/components/wip-filter-dropdown";
 import { ScrollableTable } from "@/components/scrollable-table";
 import bgpLogo from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTeam } from "@/lib/team-context";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { useBrand } from "@/lib/brand-context";
 import { Link } from "wouter";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
@@ -43,8 +43,11 @@ interface WipDealEntry {
   // Resolved counterparty name (landlord → vendor → purchaser fallback)
   // — this is the "Client" the WIP filter card and drilldown column show.
   client: string | null;
+  clientId?: string | null;
   project: string | null;
+  propertyId?: string | null;
   tenant: string | null;
+  tenantId?: string | null;
   billingEntity: string | null;
   team: string | null;
   agent: string | null;
@@ -648,9 +651,6 @@ export default function WipReport() {
   const { toast } = useToast();
   const { activeTeam } = useTeam();
   const { brand, isLandsec } = useBrand();
-  // Phones get a card list instead of the 1,400px-wide table (Woody,
-  // 2026-08-23: "pretty hard to navigate on phone").
-  const isMobile = useIsMobile();
   // Sage WIP reconciliation tab retired — Deals Board + Letting Tracker
   // are now the canonical source. The page shows the live deals view
   // and the per-agent summary only.
@@ -731,6 +731,10 @@ export default function WipReport() {
   const [selectedFiscalYears, setSelectedFiscalYears] = useState<Set<number>>(() => new Set(savedFilters?.fiscalYears || []));
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [syncingXero, setSyncingXero] = useState(false);
+  // Free-text quick search across the row's names — much faster than the
+  // dropdowns for "find the Bluewater deal" on desktop, and the primary way
+  // to navigate on the phone.
+  const [searchText, setSearchText] = useState("");
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -882,7 +886,15 @@ export default function WipReport() {
 
   // A dropdown with nothing ticked applies no filter; any tick narrows.
   const filteredEntries = useMemo(() => {
+    const q = searchText.trim().toLowerCase();
     return entries.filter((e) => {
+      if (q) {
+        const hay = [e.ref, e.client, e.tenant, e.project, e.billingEntity, e.agent, e.team, e.dealRef ? `#${e.dealRef}` : "", e.dealRef ? String(e.dealRef) : ""]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
       if (selectedClients.size > 0) {
         if (!e.client || !selectedClients.has(e.client)) return false;
       }
@@ -916,7 +928,7 @@ export default function WipReport() {
       }
       return true;
     });
-  }, [entries, selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses, selectedFiscalYears]);
+  }, [entries, searchText, selectedClients, selectedTeams, selectedMonths, selectedAgents, selectedProjects, selectedStatuses, selectedFiscalYears]);
 
   const totalWip = useMemo(
     () => filteredEntries.reduce((s, e) => s + (e.amtWip || 0), 0),
@@ -1273,6 +1285,17 @@ export default function WipReport() {
 
           {/* Filter dropdowns — one per former summary board */}
           <div className="flex flex-wrap items-center gap-2 flex-shrink-0 no-print" data-testid="wip-filters-bar">
+            <div className="relative w-full sm:w-56">
+              <SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 pointer-events-none" />
+              <input
+                type="search"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                placeholder="Search deal, client, property…"
+                className="w-full h-8 pl-8 pr-2 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:border-blue-400"
+                data-testid="wip-search-input"
+              />
+            </div>
             {allFiscalYears.length > 0 && (
               <FilterDropdown
                 title="Fiscal Year"
@@ -1402,46 +1425,76 @@ export default function WipReport() {
                 </Button>
               </div>
             )}
-            {isMobile ? (
-              <div className="space-y-2 pt-2" data-testid="wip-mobile-cards">
-                {sortedDetailEntries.slice(0, 200).map((e, i) => {
-                  const invoiced = (e.amtInvoice || 0) > 0;
-                  const inner = (
-                    <div className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 active:bg-gray-50">
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-sm font-semibold leading-tight flex-1 min-w-0 truncate">{e.ref || "(unnamed)"}</p>
-                        <p className={`text-sm font-mono font-semibold shrink-0 ${invoiced ? "text-green-700" : "text-gray-900"}`}>
-                          {formatFullCurrency((e.amtWip || 0) + (e.amtInvoice || 0))}
-                        </p>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground truncate mt-0.5">
-                        {[e.client, e.project].filter(Boolean).join(" · ") || "No client / property linked"}
-                      </p>
-                      <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                        {(() => { const c = legacyToCode(e.dealStatus); return (
-                          <Badge variant="secondary" className="text-[10px]">{c ? DEAL_STATUS_LABELS[c] : (e.dealStatus || "—")}</Badge>
-                        ); })()}
-                        {invoiced && <Badge className="text-[10px] bg-green-100 text-green-800 hover:bg-green-100">Invoiced</Badge>}
-                        {e.month && <span className="text-[10px] text-muted-foreground">{e.month}</span>}
-                        <span className="text-[10px] text-muted-foreground truncate">{[e.agent, e.team].filter(Boolean).join(" · ")}</span>
-                      </div>
+            {/* Phone layout: the 1400px table was unusable at 390px (pinch +
+                two-axis scrolling). One card per deal instead — name links to
+                the deal, client/property link through, fee + stage up front.
+                Desktop keeps the full table below. */}
+            <div className="md:hidden divide-y divide-gray-100" data-testid="wip-mobile-cards">
+              {sortedDetailEntries.length === 0 && (
+                <p className="py-8 text-center text-sm text-muted-foreground">No deals match the current filters.</p>
+              )}
+              {sortedDetailEntries.map((e, i) => (
+                <div key={e.id || i} className="py-3 px-1" data-testid={`wip-card-${i}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      {e.dealId ? (
+                        <Link href={`/deals/${e.dealId}`}>
+                          <span className="text-sm font-medium text-blue-700 cursor-pointer">{e.ref || "—"}</span>
+                        </Link>
+                      ) : (
+                        <span className="text-sm font-medium">{e.ref || "—"}</span>
+                      )}
+                      {e.dealRef && <span className="ml-1.5 text-[11px] font-mono text-gray-400">#{e.dealRef}</span>}
                     </div>
-                  );
-                  return e.dealId
-                    ? <Link key={e.id || i} href={`/deals/${e.dealId}`}>{inner}</Link>
-                    : <div key={e.id || i}>{inner}</div>;
-                })}
-                {sortedDetailEntries.length > 200 && (
-                  <p className="text-[11px] text-muted-foreground px-1">Showing the first 200 of {sortedDetailEntries.length} rows — use the filters above to narrow down.</p>
-                )}
-                <div className="rounded-xl border border-gray-300 bg-gray-100 px-3 py-2.5 flex items-center justify-between font-semibold text-sm">
+                    <div className="text-right shrink-0">
+                      {e.stage === "invoiced" ? (
+                        <span className="text-sm font-mono font-semibold text-green-700">{e.amtInvoice ? formatFullCurrency(e.amtInvoice) : "—"}</span>
+                      ) : (
+                        <span className="text-sm font-mono font-semibold text-gray-900">{e.amtWip ? formatFullCurrency(e.amtWip) : "—"}</span>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-600 mt-0.5 truncate">
+                    {e.client && e.clientId ? (
+                      <Link href={`/companies/${e.clientId}`}><span className="cursor-pointer">{e.client}</span></Link>
+                    ) : (e.client || null)}
+                    {e.client && e.project ? " · " : null}
+                    {e.project && e.propertyId ? (
+                      <Link href={`/properties/${e.propertyId}`}><span className="cursor-pointer">{e.project}</span></Link>
+                    ) : (e.project || null)}
+                    {!e.client && !e.project ? "—" : null}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                    {e.stage === "pipeline" && <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800">Pipeline</span>}
+                    {e.stage === "wip" && <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100 text-blue-800">WIP</span>}
+                    {e.stage === "invoiced" && <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-800">Invoiced</span>}
+                    {e.dealType && (
+                      <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${DEAL_TYPE_BADGE_COLORS[e.dealType] || "bg-gray-100 text-gray-700"}`}>{e.dealType}</span>
+                    )}
+                    {e.stage !== "invoiced" && e.targetDate && (() => {
+                      const d = new Date(e.targetDate);
+                      return isNaN(d.getTime()) ? null : (
+                        <span className="text-[10px] text-gray-500">Target {d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" })}</span>
+                      );
+                    })()}
+                    {e.agent && (
+                      <span className="text-[10px] text-gray-500 ml-auto">
+                        {e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ")}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {sortedDetailEntries.length > 0 && (
+                <div className="py-3 px-1 flex items-center justify-between text-sm font-semibold bg-gray-50 rounded-b">
                   <span>Total</span>
                   <span className="font-mono">
-                    {formatFullCurrency(sortedDetailEntries.reduce((s2, e) => s2 + (e.amtWip || 0) + (e.amtInvoice || 0), 0))}
+                    {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0) + (e.amtInvoice || 0), 0))}
                   </span>
                 </div>
-              </div>
-            ) : (
+              )}
+            </div>
+            <div className="hidden md:block">
             <ScrollableTable minWidth={1400} pageScroll>
               <table className="w-full">
                 <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
@@ -1496,9 +1549,27 @@ export default function WipReport() {
                         ) : (e.ref || "—")}
                       </td>
                       )}
-                      {colVisible("client") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">{e.client || "—"}</td>}
-                      {colVisible("tenant") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.tenant || "—"}</td>}
-                      {colVisible("project") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.project || "—"}</td>}
+                      {colVisible("client") && (
+                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">
+                        {e.client && e.clientId ? (
+                          <Link href={`/companies/${e.clientId}`}><span className="hover:underline hover:text-blue-600 cursor-pointer">{e.client}</span></Link>
+                        ) : (e.client || "—")}
+                      </td>
+                      )}
+                      {colVisible("tenant") && (
+                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">
+                        {e.tenant && e.tenantId ? (
+                          <Link href={`/companies/${e.tenantId}`}><span className="hover:underline hover:text-blue-600 cursor-pointer">{e.tenant}</span></Link>
+                        ) : (e.tenant || "—")}
+                      </td>
+                      )}
+                      {colVisible("project") && (
+                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">
+                        {e.project && e.propertyId ? (
+                          <Link href={`/properties/${e.propertyId}`}><span className="hover:underline hover:text-blue-600 cursor-pointer">{e.project}</span></Link>
+                        ) : (e.project || "—")}
+                      </td>
+                      )}
                       {colVisible("billingEntity") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.billingEntity || "—"}</td>}
                       {colVisible("team") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.team || "—"}</td>}
                       {colVisible("amtWip") && (
@@ -1617,7 +1688,7 @@ export default function WipReport() {
                 </tfoot>
               </table>
             </ScrollableTable>
-            )}
+            </div>
           </div>
       </div>
       )}

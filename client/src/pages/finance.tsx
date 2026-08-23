@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { formatDate } from "@/lib/format";
-import { RefreshCw, Landmark, TrendingUp, Banknote, AlertTriangle, ExternalLink, Briefcase } from "lucide-react";
+import { RefreshCw, Landmark, TrendingUp, Banknote, AlertTriangle, ExternalLink, Briefcase, ArrowRight } from "lucide-react";
 import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from "recharts";
@@ -152,6 +152,14 @@ function WipSection({ wip, projection }: { wip: WipForecast; projection?: Financ
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Deal pipeline</h2>
+        <Link href="/wip-report">
+          <span className="text-xs text-primary cursor-pointer inline-flex items-center gap-1" data-testid="finance-open-wip-report">
+            Open WIP report <ArrowRight className="w-3 h-3" />
+          </span>
+        </Link>
+      </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard
           label="Completed — to invoice"
