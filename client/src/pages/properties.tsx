@@ -9,6 +9,7 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -2307,6 +2308,7 @@ export function ClientPropertyFoldersPanel({ propertyName }: { propertyName: str
               <button
                 key={key}
                 onClick={() => setDocSort(key)}
+                data-no-min-touch
                 className={`text-[10px] px-1.5 py-0.5 rounded-full border ${docSort === key ? "bg-foreground text-background border-foreground" : "text-muted-foreground hover:bg-muted/50"}`}
                 data-testid={`docs-sort-${key}`}
               >
@@ -5753,23 +5755,22 @@ function PropertiesList({
       {activeView === "list" && <>{isMobile ? (
         <div className="flex flex-wrap gap-1.5">
           {groupCounts.map((g) => (
-            <button
+            <Pill
               key={g.id}
+              active={activeGroup === g.id}
               onClick={() => setActiveGroup(activeGroup === g.id ? "all" : g.id)}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${activeGroup === g.id ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
               data-testid={`chip-group-${g.id.toLowerCase()}`}
             >
-              {g.label}
-              <span className="font-bold tabular-nums">{g.count}</span>
-            </button>
+              {g.label} <span className="opacity-70 font-mono tabular-nums">{g.count}</span>
+            </Pill>
           ))}
-          <button
+          <Pill
+            active={activeGroup === "all"}
             onClick={() => setActiveGroup("all")}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${activeGroup === "all" ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
             data-testid="chip-group-all"
           >
-            All <span className="font-bold tabular-nums">{items.length}</span>
-          </button>
+            All <span className="opacity-70 font-mono tabular-nums">{items.length}</span>
+          </Pill>
         </div>
       ) : (
       <div className="flex items-center gap-3 overflow-x-auto pb-1">
