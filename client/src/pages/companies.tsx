@@ -1147,7 +1147,7 @@ function CompanyDetail({ id }: { id: string }) {
 
   useEffect(() => {
     if (company) {
-      trackRecentItem({ id: company.id, type: "company", name: company.name || "Untitled Company", subtitle: company.companyType || undefined });
+      trackRecentItem({ id: company.id, type: "company", name: company.name || "Untitled Company", subtitle: formatCompanyType(company.companyType) || undefined });
     }
   }, [company?.id, company?.name, company?.companyType]);
 

@@ -1674,11 +1674,17 @@ export default function WipReport() {
                         {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
                       </td>
                     )}
-                    {colVisible("amtInvoice") && (
-                      <td className="px-2 py-1.5 text-green-700 font-mono">
-                        {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0))}
-                      </td>
-                    )}
+                    {colVisible("amtInvoice") && (() => {
+                      // Status colour only when the total says something: red is
+                      // reserved for genuinely negative, £0 stays plain foreground
+                      // (docs/DESIGN.md §1 — red means negative, not emphasis).
+                      const invoiceTotal = sortedDetailEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0);
+                      return (
+                        <td className={`px-2 py-1.5 font-mono ${invoiceTotal < 0 ? "text-red-600" : invoiceTotal > 0 ? "text-green-700" : "text-foreground"}`}>
+                          {formatFullCurrency(invoiceTotal)}
+                        </td>
+                      );
+                    })()}
                     {WIP_TRAIL_KEYS.filter(colVisible).length > 0 && (
                       <td colSpan={WIP_TRAIL_KEYS.filter(colVisible).length} className="px-2 py-1.5" />
                     )}

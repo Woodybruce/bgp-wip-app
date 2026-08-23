@@ -21,7 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins, Flame,
-  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, Layers } from "lucide-react";
+  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2 } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -83,7 +83,8 @@ const LOCATION_COLORS: Record<string, string> = {
 // Status colours come from the shared module so the tracker, Deals board
 // and property summary all paint the same code the same hue (these used
 // to be three diverging local palettes).
-import { DEAL_STATUS_BADGE_COLORS as STATUS_COLORS, DEAL_STATUS_DOT_COLORS as STATUS_LABEL_COLORS } from "@/lib/deal-status-colors";
+import { DEAL_STATUS_BADGE_COLORS as STATUS_COLORS } from "@/lib/deal-status-colors";
+import { DEAL_STATUS_DOT_COLORS as STATUS_LABEL_COLORS } from "@shared/deal-status";
 
 const ASSET_CLASS_COLORS: Record<string, string> = {
   "E": "bg-blue-500",
@@ -1630,41 +1631,26 @@ export default function AvailableUnitsPage() {
         </div>
       ) : (
       <ScrollArea className="w-full">
-        <div className="flex items-center gap-3 pb-1">
-          <Card
-            className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${viewAll ? "border-primary" : ""}`}
+        <div className="flex items-center gap-1.5 pb-1">
+          <Pill
+            active={viewAll}
             onClick={() => { setViewAll(!viewAll); setStatusFilter("all"); }}
             data-testid="stat-card-all"
           >
-            <CardContent className="p-3">
-              <div className="flex items-center gap-2">
-                <Layers className="w-3.5 h-3.5 text-muted-foreground" />
-                <div>
-                  <p className="text-lg font-bold">{toolbarFiltered.length}</p>
-                  <p className="text-xs text-muted-foreground">All statuses</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+            All statuses <span className="font-mono normal-case opacity-60 tabular-nums">{toolbarFiltered.length}</span>
+          </Pill>
           {MARKETING_STATUSES.map(s => {
             const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
             return (
-              <Card
+              <Pill
                 key={s}
-                className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${statusFilter === s ? "border-primary" : ""}`}
+                active={statusFilter === s}
                 onClick={() => { setViewAll(false); setStatusFilter(statusFilter === s ? "all" : s); }}
                 data-testid={`stat-card-${s.toLowerCase()}`}
               >
-                <CardContent className="p-3">
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2.5 h-2.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
-                    <div>
-                      <p className="text-lg font-bold">{count}</p>
-                      <p className="text-xs text-muted-foreground">{DEAL_STATUS_LABELS[s]}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                <span className={`w-1.5 h-1.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
+                {DEAL_STATUS_LABELS[s]} <span className="font-mono normal-case opacity-60 tabular-nums">{count}</span>
+              </Pill>
             );
           })}
         </div>

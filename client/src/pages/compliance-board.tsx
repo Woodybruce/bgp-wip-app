@@ -282,7 +282,7 @@ export default function ComplianceBoard() {
             AML status for every counterparty on a live deal · {data?.counts?.total || 0} total
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button
             size="sm"
             variant="outline"
@@ -334,7 +334,9 @@ export default function ComplianceBoard() {
         </TabsList>
 
         <TabsContent value="counterparties" className="mt-4">
-          {/* Summary cards */}
+          {/* Summary cards — table/card views only; on the board they exactly
+              duplicated the kanban column headers + counts beneath them. */}
+          {viewMode !== "board" && (
           <div className="grid grid-cols-3 gap-3 mb-5">
             {COLUMNS.map(col => {
               const count = data?.counts[col.key] || 0;
@@ -353,6 +355,7 @@ export default function ComplianceBoard() {
               );
             })}
           </div>
+          )}
 
           {viewMode === "board" && (
             <>
@@ -515,25 +518,6 @@ function DealsKanban({ data, loading }: { data: DealBoardData | undefined; loadi
 
   return (
     <div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
-        {DEAL_COLUMNS.map(col => {
-          const count = (data.counts as any)[col.key] || 0;
-          const Icon = col.icon;
-          return (
-            <Card key={col.key} className={`border-l-4 ${col.tone}`}>
-              <CardContent className="p-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <Icon className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-[11px] uppercase font-semibold text-muted-foreground tracking-wide">{col.label}</span>
-                </div>
-                <div className="text-2xl font-bold">{count}</div>
-                <div className="text-[10px] text-muted-foreground">{col.description}</div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {DEAL_COLUMNS.map(col => {
           const items = data.rows.filter(r => r.column === col.key);

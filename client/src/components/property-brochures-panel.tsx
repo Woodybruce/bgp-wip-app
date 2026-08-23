@@ -12,8 +12,8 @@ import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import PDFViewer from "@/components/pdf-viewer";
@@ -210,28 +210,28 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
     return (
       <>
         <div className="flex items-center gap-1.5 mb-2 shrink-0">
-          <button
+          <Pill
+            active={tab === "leasing"}
             onClick={() => setTab("leasing")}
-            className={`px-2 py-1 rounded text-[11px] font-medium ${tab === "leasing" ? "bg-foreground text-background" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
             data-testid="tab-brochures-leasing"
           >
             Leasing
-            <Badge variant="secondary" className="ml-1 text-[9px] px-1 py-0 bg-white/30">{data.leasing.length}</Badge>
-          </button>
-          <button
+            <span className="font-mono tabular-nums">{data.leasing.length}</span>
+          </Pill>
+          <Pill
+            active={tab === "investment"}
             onClick={() => setTab("investment")}
-            className={`px-2 py-1 rounded text-[11px] font-medium ${tab === "investment" ? "bg-foreground text-background" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
             data-testid="tab-brochures-investment"
           >
             Investment
-            <Badge variant="secondary" className="ml-1 text-[9px] px-1 py-0 bg-white/30">{data.investment.length}</Badge>
-          </button>
+            <span className="font-mono tabular-nums">{data.investment.length}</span>
+          </Pill>
         </div>
 
         {active.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-xs text-muted-foreground py-8 text-center border border-dashed rounded-md min-h-[180px]">
             <Upload className="w-5 h-5 mb-1 opacity-40" />
-            Drag a PDF here or click <span className="font-medium text-foreground">Add</span> above.
+            No brochures yet — drop a PDF here or use Add.
           </div>
         ) : isHero ? (
           // Full-width row placement: give the hero preview real depth so
@@ -310,7 +310,7 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
         <CardContent className="p-3 flex-1 flex flex-col min-h-0">
           <div className="flex items-center gap-2 mb-2">
             <FileText className="w-3.5 h-3.5 text-muted-foreground" />
-            <span className="text-xs font-semibold">Brochures</span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Brochures</span>
             <span className="ml-auto flex items-center gap-1.5">
               {uploadMutation.isPending && <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />}
               <input

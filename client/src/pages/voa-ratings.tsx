@@ -36,6 +36,9 @@ import {
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { Pill } from "@/components/ui/pill";
+import { MobileCardView } from "@/components/mobile-card-view";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface VoaRating {
   id: number;
@@ -93,6 +96,7 @@ const formatLargeCurrency = (val: number) => {
 
 export default function VoaRatingsPage() {
   const { toast } = useToast();
+  const isMobile = useIsMobile();
   const ctxProperty = usePropertyContext();
   const [search, setSearch] = useState(ctxProperty?.postcode || ctxProperty?.name || "");
   // Refresh when the parent Property Intelligence resolves a different property
@@ -160,7 +164,7 @@ export default function VoaRatingsPage() {
 
   return (
     <div className="p-4 sm:p-6 space-y-6" data-testid="voa-ratings-page">
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Business Rates</h1>
           <p className="text-sm text-muted-foreground">
@@ -168,25 +172,23 @@ export default function VoaRatingsPage() {
             {data && <span className="ml-1">({data.total.toLocaleString()} properties)</span>}
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button
-            variant={tab === "browse" ? "default" : "outline"}
-            size="sm"
+        <div className="flex items-center gap-1.5">
+          <Pill
+            active={tab === "browse"}
             onClick={() => setTab("browse")}
             data-testid="button-tab-browse"
           >
-            <Building2 className="w-4 h-4 mr-1.5" />
+            <Building2 className="w-3 h-3" />
             Browse
-          </Button>
-          <Button
-            variant={tab === "stats" ? "default" : "outline"}
-            size="sm"
+          </Pill>
+          <Pill
+            active={tab === "stats"}
             onClick={() => setTab("stats")}
             data-testid="button-tab-stats"
           >
-            <BarChart3 className="w-4 h-4 mr-1.5" />
+            <BarChart3 className="w-3 h-3" />
             Statistics
-          </Button>
+          </Pill>
         </div>
       </div>
 
@@ -272,6 +274,49 @@ export default function VoaRatingsPage() {
               <div className="p-6 space-y-3">
                 {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-12" />)}
               </div>
+            ) : isMobile ? (
+              <>
+                <MobileCardView
+                  emptyMessage="No properties found"
+                  items={(data?.items || []).map((item) => ({
+                    id: String(item.id),
+                    title: item.firmName || item.numberOrName || "—",
+                    subtitle: item.street || undefined,
+                    fields: [
+                      { label: "Postcode", value: item.postcode },
+                      { label: "Type", value: item.descriptionText || item.descriptionCode },
+                      { label: "Rateable value", value: formatCurrency(item.rateableValue) },
+                    ],
+                  }))}
+                />
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-between p-4 border-t">
+                    <span className="text-sm text-muted-foreground">
+                      Page {page} of {totalPages} ({data?.total.toLocaleString()} results)
+                    </span>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPage(Math.max(1, page - 1))}
+                        disabled={page <= 1}
+                        data-testid="button-prev-page"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPage(Math.min(totalPages, page + 1))}
+                        disabled={page >= totalPages}
+                        data-testid="button-next-page"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </>
             ) : (
               <>
                 <ScrollableTable minWidth={1200}>

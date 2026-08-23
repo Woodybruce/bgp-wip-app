@@ -38,6 +38,7 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs";
 import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
+import { countLabel } from "@/lib/utils";
 
 interface EnrichmentStats {
   contacts: {
@@ -95,9 +96,9 @@ function FreshnessBar({ fresh, stale, never, total }: { fresh: number; stale: nu
         <div className="bg-red-400 transition-all" style={{ width: `${neverPct}%` }} title={`Never enriched: ${never}`} />
       </div>
       <div className="flex items-center gap-4 text-[10px] text-muted-foreground">
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />Fresh ({fresh})</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500" />Stale ({stale})</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400" />Never ({never})</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />Fresh <span className="font-mono tabular-nums">{fresh}</span></span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500" />Stale <span className="font-mono tabular-nums">{stale}</span></span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400" />Never <span className="font-mono tabular-nums">{never}</span></span>
       </div>
     </div>
   );
@@ -124,6 +125,11 @@ export default function EnrichmentHub() {
 
   const c = stats?.contacts;
   const co = stats?.companies;
+
+  // One rule for both cards: grey when there's nothing to enrich, red only
+  // when the stale share is genuinely bad.
+  const freshBadgeVariant = (s?: { total: number; fresh: number; stale: number; never_enriched: number }) =>
+    s && s.total > 0 && s.stale + s.never_enriched > s.fresh ? ("destructive" as const) : ("secondary" as const);
 
   if (isLoading) {
     return (
@@ -173,9 +179,9 @@ export default function EnrichmentHub() {
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     <Users className="w-4 h-4 text-violet-500" />
-                    Contacts ({c?.total || 0})
+                    {countLabel(c?.total || 0, "contact")}
                   </CardTitle>
-                  <Badge variant={c && c.stale + c.never_enriched > c.fresh ? "destructive" : "secondary"} className="text-[10px]">
+                  <Badge variant={freshBadgeVariant(c)} className="text-[10px]">
                     {c ? Math.round((c.fresh / Math.max(c.total, 1)) * 100) : 0}% fresh
                   </Badge>
                 </div>
@@ -213,9 +219,9 @@ export default function EnrichmentHub() {
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm font-semibold flex items-center gap-2">
                     <Building2 className="w-4 h-4 text-blue-500" />
-                    Companies ({co?.total || 0})
+                    {countLabel(co?.total || 0, "company", "companies")}
                   </CardTitle>
-                  <Badge variant={co && co.stale + co.never_enriched > co.fresh ? "destructive" : "secondary"} className="text-[10px]">
+                  <Badge variant={freshBadgeVariant(co)} className="text-[10px]">
                     {co ? Math.round((co.fresh / Math.max(co.total, 1)) * 100) : 0}% fresh
                   </Badge>
                 </div>

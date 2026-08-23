@@ -7,7 +7,6 @@ import { ViewToggle } from "@/components/mobile-card-view";
 import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
 import { BrandSearchInput } from "@/components/brand-search-input";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   DropdownMenu,
@@ -3507,7 +3506,7 @@ export default function LeasingSchedulePage() {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <ViewToggle view={viewMode} onToggle={setViewMode} />
           <div className="relative">
             <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-muted-foreground/70" />
@@ -3536,9 +3535,10 @@ export default function LeasingSchedulePage() {
         </div>
       </div>
 
-      {/* Stat cards — matching WIP / investment tracker style */}
-      <ScrollArea className="w-full shrink-0">
-        <div className="flex items-center gap-3 pb-1">
+      {/* Stat cards — matching WIP / investment tracker style.
+          2-up grid below md so tiles never clip at the phone edge. */}
+      <div className="w-full shrink-0">
+        <div className="grid grid-cols-2 gap-3 pb-1 md:flex md:flex-wrap md:items-center">
           <Card className="flex-shrink-0 min-w-[120px]">
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
@@ -3606,8 +3606,7 @@ export default function LeasingSchedulePage() {
             </CardContent>
           </Card>
         </div>
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
+      </div>
 
       {isLoading ? (
         <div className="flex items-center justify-center h-40">

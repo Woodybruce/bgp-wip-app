@@ -168,18 +168,21 @@ export default function LandlordsPage() {
       {activeTab === "overview" && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {/* Stat tiles are informational (docs/DESIGN.md §8) — icons stay
+                muted (no per-tile accent colours; red isn't for emphasis),
+                values in mono. */}
             {[
-              { label: "Landlords", value: totals.count.toString(), icon: Briefcase, colour: "text-indigo-500" },
-              { label: "Active deals", value: totals.activeDeals.toString(), icon: BarChart3, colour: "text-blue-500" },
-              { label: "Properties", value: totals.properties.toString(), icon: Building2, colour: "text-emerald-500" },
-              { label: "Total fees", value: formatGBP(totals.totalFee), icon: Landmark, colour: "text-amber-500" },
-              { label: "Hunter targets", value: totals.hunters.toString(), icon: Crosshair, colour: "text-rose-500" },
+              { label: "Landlords", value: totals.count.toString(), icon: Briefcase },
+              { label: "Active deals", value: totals.activeDeals.toString(), icon: BarChart3 },
+              { label: "Properties", value: totals.properties.toString(), icon: Building2 },
+              { label: "Total fees", value: formatGBP(totals.totalFee), icon: Landmark },
+              { label: "Hunter targets", value: totals.hunters.toString(), icon: Crosshair },
             ].map(s => (
               <Card key={s.label}>
                 <CardContent className="p-4 flex items-center gap-3">
-                  <s.icon className={`w-7 h-7 ${s.colour} shrink-0`} />
+                  <s.icon className="w-7 h-7 text-muted-foreground shrink-0" />
                   <div className="min-w-0">
-                    <div className="text-xl font-bold tabular-nums">{s.value}</div>
+                    <div className="text-xl font-bold font-mono tabular-nums">{s.value}</div>
                     <div className="text-xs text-muted-foreground">{s.label}</div>
                   </div>
                 </CardContent>

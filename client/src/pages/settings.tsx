@@ -187,10 +187,10 @@ export default function SettingsPage() {
           >
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
-                <Badge variant="secondary" className={`text-[10px] ${teamColors[t.name] || ""}`}>
+                <Badge variant="secondary" className={`text-[10px] whitespace-nowrap ${teamColors[t.name] || ""}`}>
                   {t.name}
                 </Badge>
-                <span className="text-lg font-bold ml-auto">{t.count}</span>
+                <span className="text-lg font-bold font-mono tabular-nums ml-auto">{t.count}</span>
               </div>
             </CardContent>
           </Card>
@@ -234,10 +234,15 @@ export default function SettingsPage() {
                         if (subTeamMembers.length === 0) return null;
                         return (
                           <div key={subTeam}>
+                            {/* Skip the micro-label when the sub-team just repeats
+                                the group name (e.g. Development → DEVELOPMENT) —
+                                duplicate section labelling, design review 2026-08-23. */}
+                            {subTeam !== group && (
                             <div className="flex items-center gap-2 mb-2">
                               <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{subTeam}</span>
                               <div className="flex-1 border-t border-border/50" />
                             </div>
+                            )}
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                               {subTeamMembers.map((member) => (
                                 <div
@@ -289,7 +294,7 @@ export default function SettingsPage() {
                                     onValueChange={(val) => updateTeam.mutate({ id: member.id, team: val })}
                                   >
                                     <SelectTrigger
-                                      className="h-7 w-[100px] text-[10px] border-transparent bg-transparent hover:bg-background hover:border-border shrink-0"
+                                      className="h-7 w-auto min-w-[120px] text-[10px] border-transparent bg-transparent hover:bg-background hover:border-border shrink-0"
                                       data-testid={`select-team-${member.username}`}
                                     >
                                       <SelectValue />
@@ -377,7 +382,7 @@ export default function SettingsPage() {
                         onValueChange={(val) => updateTeam.mutate({ id: member.id, team: val })}
                       >
                         <SelectTrigger
-                          className="h-7 w-[100px] text-[10px] shrink-0"
+                          className="h-7 w-auto min-w-[120px] text-[10px] shrink-0"
                           data-testid={`select-team-${member.username}`}
                         >
                           <SelectValue placeholder="Assign..." />

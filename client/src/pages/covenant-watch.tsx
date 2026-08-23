@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ShieldAlert, RefreshCw, Eye } from "lucide-react";
 import { CovenantBadge } from "@/components/covenant-badge";
+import { countLabel } from "@/lib/utils";
 
 export default function CovenantWatch() {
   const { data: alerts = [], isLoading: alertsLoading } = useQuery<any[]>({
@@ -33,15 +34,15 @@ export default function CovenantWatch() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
-      <div className="flex items-center justify-between gap-3">
-        <div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight">Covenant Watch</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             House financial-strength monitoring — Companies House, The Gazette and filed accounts. Recomputed nightly; alerts on any deterioration.
           </p>
         </div>
-        <Button variant="outline" onClick={() => runNow.mutate()} disabled={runNow.isPending}>
-          <RefreshCw className={`w-4 h-4 mr-1 ${runNow.isPending ? "animate-spin" : ""}`} /> Re-check all now
+        <Button variant="outline" size="sm" onClick={() => runNow.mutate()} disabled={runNow.isPending}>
+          <RefreshCw className={`w-4 h-4 mr-1 ${runNow.isPending ? "animate-spin" : ""}`} /> Refresh all
         </Button>
       </div>
 
@@ -66,7 +67,7 @@ export default function CovenantWatch() {
         </Card>
 
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Eye className="w-4 h-4" /> Watchlist ({watchlist.length})</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-base flex items-center gap-2"><Eye className="w-4 h-4" /> {countLabel(watchlist.length, "watched", "watched")}</CardTitle></CardHeader>
           <CardContent className="space-y-1.5">
             {watchLoading ? Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-9 rounded-lg" />)
               : watchlist.length === 0 ? <p className="text-sm text-muted-foreground py-4">Nothing watched yet. Companies are added automatically by KYC checks and pathway runs, or ask the chat: “check the covenant of X and watch it”.</p>

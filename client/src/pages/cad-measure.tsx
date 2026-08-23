@@ -693,19 +693,14 @@ export default function CadMeasurePage() {
   return (
     <>
       <div className="flex flex-col h-full">
-        <div className="flex items-center justify-between px-4 py-3 border-b bg-background">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Ruler className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-lg font-semibold tracking-tight">Cann CAD</h1>
-              <p className="text-xs text-muted-foreground">
-                {fileName ? `${fileName} — ${entityCount} entities` : "Upload a DXF or DWG floor plan to measure"}
-              </p>
-            </div>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 py-3 border-b bg-background">
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold tracking-tight">Cann CAD</h1>
+            <p className="text-xs text-muted-foreground truncate">
+              {fileName ? `${fileName} — ${entityCount} entities` : "Upload a DXF or DWG floor plan to measure"}
+            </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1.5 mr-2">
               <label className="text-xs text-muted-foreground">Units:</label>
               <select

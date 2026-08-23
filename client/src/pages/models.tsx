@@ -178,7 +178,7 @@ function TemplateUpload() {
       <DialogTrigger asChild>
         <Button data-testid="button-upload-template">
           <Upload className="w-4 h-4 mr-2" />
-          Upload Template
+          Upload template
         </Button>
       </DialogTrigger>
       <DialogContent>
@@ -250,7 +250,7 @@ function TemplateUpload() {
             className="w-full"
             data-testid="button-submit-upload"
           >
-            {uploadMutation.isPending ? "Uploading..." : "Upload Template"}
+            {uploadMutation.isPending ? "Uploading..." : "Upload template"}
           </Button>
         </div>
       </DialogContent>
@@ -2675,7 +2675,7 @@ function ClaudeModelStudio() {
               <Sparkles className="w-5 h-5 text-green-600" />
             </div>
             <div>
-              <CardTitle>Claude — Model Studio</CardTitle>
+              <CardTitle>Claude Studio</CardTitle>
               <CardDescription>Create new models, ask questions, edit formulas, and manage templates</CardDescription>
             </div>
           </div>
@@ -2914,9 +2914,9 @@ export default function ModelsPage() {
 
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold" data-testid="text-page-title">Model Generate</h1>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold" data-testid="text-page-title">Model Studio</h1>
           <p className="text-muted-foreground">Upload Excel models, run scenarios, and analyse results</p>
         </div>
         <TemplateUpload />
@@ -2938,7 +2938,7 @@ export default function ModelsPage() {
               data-testid="link-install-addin"
             >
               <FileSpreadsheet className="w-3 h-3" />
-              Go to Add-ins to install
+              Open in Add-ins
               <ArrowRight className="w-3 h-3" />
             </a>
           </div>

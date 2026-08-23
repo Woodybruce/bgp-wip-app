@@ -28,6 +28,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { countLabel } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineSelect, InlineLabelSelect } from "@/components/inline-edit";
 import { SOURCE_TYPES, SOURCE_LIST, normaliseSource, type SourceType } from "@shared/source-types";
@@ -226,12 +227,12 @@ export default function Leads() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Leads</h1>
           <p className="text-sm text-muted-foreground">
-            CRM Leads — {items.length} total
+            {countLabel(items.length, "lead")}
           </p>
         </div>
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-lead">
           <Plus className="w-4 h-4 mr-1" />
-          Add Lead
+          Add lead
         </Button>
       </div>
 

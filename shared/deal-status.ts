@@ -49,6 +49,23 @@ export const DEAL_STATUS_COLORS: Record<DealStatusCode, string> = {
   INV: "bg-green-100 text-green-800",
 };
 
+// Solid dot swatches per status — same hue family as the chip map above so a
+// status reads as one colour whether it's a soft chip or a tiny dot.
+export const DEAL_STATUS_DOT_COLORS: Record<DealStatusCode, string> = {
+  OPP: "bg-teal-500",
+  REP: "bg-slate-400",
+  SPEC: "bg-zinc-400",
+  LIVE: "bg-blue-500",
+  AVA: "bg-sky-500",
+  NEG: "bg-amber-500",
+  HOT: "bg-rose-500",
+  SOL: "bg-orange-600",
+  EXC: "bg-violet-500",
+  COM: "bg-emerald-500",
+  WIT: "bg-stone-400",
+  INV: "bg-green-600",
+};
+
 // Per-tracker subsets — which codes each view's dropdown should offer
 // REP dropped from the letting tracker headings (Alex, 2026-08-12: "not
 // relevant") — existing REP rows still render via legacyToCode, they just

@@ -216,12 +216,12 @@ export default function ExpensesAdmin() {
   return (
     <div className="container mx-auto p-6 space-y-6">
       <ExpensesNavTabs />
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold">All expenses</h1>
           <p className="text-sm text-muted-foreground">Every card transaction, manual claim, and pending receipt across the firm.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
             size="sm"

@@ -2412,12 +2412,12 @@ export default function Comps() {
               data-testid="button-scan-news-comps"
             >
               {scanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-              Scan All
+              Scan all
             </Button>
             )}
             <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={() => setCalcOpen(true)} data-testid="button-open-calculator">
               <Calculator className="w-3.5 h-3.5" />
-              Net Rent Calc
+              Net rent calc
             </Button>
             <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={() => setRpiOpen(true)} data-testid="button-open-rpi-calc">
               <TrendingUp className="w-3.5 h-3.5" />
@@ -2460,14 +2460,14 @@ export default function Comps() {
                 }}
               />
               <Button size="sm" variant="outline" className="gap-1.5 h-8" asChild data-testid="button-import-dataset">
-                <span><Download className="w-3.5 h-3.5 rotate-180" /> Import Dataset</span>
+                <span><Download className="w-3.5 h-3.5 rotate-180" /> Import dataset</span>
               </Button>
             </label>
             )}
             {!isClientComps && (
             <Button size="sm" className="gap-1.5 h-8" onClick={() => { resetCreateForm(); setCreateOpen(true); }} data-testid="button-create-comp">
               <Plus className="w-3.5 h-3.5" />
-              Add Comp
+              Add comp
             </Button>
             )}
           </div>
@@ -3345,7 +3345,7 @@ export default function Comps() {
             }}
           >
             {scanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            Scan All Sources
+            Scan all sources
           </Button>
         </div>
 
@@ -3353,7 +3353,7 @@ export default function Comps() {
           <div className="flex flex-col items-center justify-center h-64 text-center">
             <Inbox className="w-12 h-12 text-muted-foreground/20 mb-3" />
             <h3 className="text-sm font-semibold mb-1">No leads waiting</h3>
-            <p className="text-xs text-muted-foreground">Run "Scan All Sources" to extract new comps from news, team emails and SharePoint files.</p>
+            <p className="text-xs text-muted-foreground">Scan all sources to extract new comps from news, team emails and SharePoint files.</p>
           </div>
         ) : (
           <div className="border rounded-lg overflow-hidden">

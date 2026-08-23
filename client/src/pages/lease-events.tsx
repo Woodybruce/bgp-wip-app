@@ -15,6 +15,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { SOURCE_TYPES, SOURCE_LIST, normaliseSource, type SourceType } from "@shared/source-types";
 import { Calendar, Plus, Trash2, ExternalLink, AlertTriangle, Clock, Flame, Eye, Pencil, Info, FileText } from "lucide-react";
 import { buildUserIdColorMap } from "@/lib/agent-colors";
+import { cn } from "@/lib/utils";
+import { pillMetrics, pillInactive } from "@/components/ui/pill";
 
 type LeaseEvent = {
   id: string;
@@ -160,43 +162,45 @@ export default function LeaseEventsPage({ embedded }: { embedded?: boolean } = {
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card className="bg-red-50 dark:bg-red-950/30 border-red-200">
+        {/* Alert styling only when the count is genuinely non-zero (DESIGN.md §8) */}
+        <Card className={counts.overdue > 0 ? "bg-red-50 dark:bg-red-950/30 border-red-200" : undefined}>
           <CardContent className="p-3">
-            <p className="text-[10px] uppercase tracking-wider text-red-700 font-medium">Overdue</p>
-            <p className="text-2xl font-bold text-red-700">{counts.overdue}</p>
+            <p className={`text-[10px] uppercase tracking-wider font-medium ${counts.overdue > 0 ? "text-red-700" : "text-muted-foreground"}`}>Overdue</p>
+            <p className={`text-2xl font-bold font-mono tabular-nums ${counts.overdue > 0 ? "text-red-700" : "text-foreground"}`}>{counts.overdue}</p>
           </CardContent>
         </Card>
-        <Card className="bg-orange-50 dark:bg-orange-950/30 border-orange-200">
+        <Card className={counts.imminent > 0 ? "bg-orange-50 dark:bg-orange-950/30 border-orange-200" : undefined}>
           <CardContent className="p-3">
-            <p className="text-[10px] uppercase tracking-wider text-orange-700 font-medium">Due &lt; 3 months</p>
-            <p className="text-2xl font-bold text-orange-700">{counts.imminent}</p>
+            <p className={`text-[10px] uppercase tracking-wider font-medium ${counts.imminent > 0 ? "text-orange-700" : "text-muted-foreground"}`}>Due &lt; 3 months</p>
+            <p className={`text-2xl font-bold font-mono tabular-nums ${counts.imminent > 0 ? "text-orange-700" : "text-foreground"}`}>{counts.imminent}</p>
           </CardContent>
         </Card>
         <Card className="bg-amber-50 dark:bg-amber-950/30 border-amber-200">
           <CardContent className="p-3">
             <p className="text-[10px] uppercase tracking-wider text-amber-700 font-medium">Due &lt; 6 months</p>
-            <p className="text-2xl font-bold text-amber-700">{counts.near}</p>
+            <p className="text-2xl font-bold font-mono tabular-nums text-amber-700">{counts.near}</p>
           </CardContent>
         </Card>
         <Card className="bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200">
           <CardContent className="p-3">
             <p className="text-[10px] uppercase tracking-wider text-emerald-700 font-medium">Watching (18 mo)</p>
-            <p className="text-2xl font-bold text-emerald-700">{counts.watching}</p>
+            <p className="text-2xl font-bold font-mono tabular-nums text-emerald-700">{counts.watching}</p>
           </CardContent>
         </Card>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
         <Input placeholder="Search tenant, address, unit or notes..." value={search} onChange={e => setSearch(e.target.value)} className="max-w-sm" />
+        {/* Filter dropdowns as pill triggers (DESIGN.md §5) */}
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-40"><SelectValue placeholder="Status" /></SelectTrigger>
+          <SelectTrigger data-no-min-touch className={cn(pillMetrics, pillInactive, "h-auto w-auto")}><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All statuses</SelectItem>
             {STATUS_OPTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-44"><SelectValue placeholder="Event type" /></SelectTrigger>
+          <SelectTrigger data-no-min-touch className={cn(pillMetrics, pillInactive, "h-auto w-auto")}><SelectValue placeholder="Event type" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All types</SelectItem>
             {EVENT_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}

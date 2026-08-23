@@ -1055,7 +1055,8 @@ function InstructionsList({
           ) : isMobile ? (
             <div className="flex-1 min-h-0 overflow-y-auto">
               <MobileCardView
-                emptyMessage="No instructions found"
+                emptyMessage="No instructions yet"
+                emptyDescription="Add a property instruction to get started."
                 items={filteredProperties.map((property) => ({
                   id: property.id,
                   title: property.name || "Untitled property",
@@ -1069,6 +1070,11 @@ function InstructionsList({
                   ],
                 }))}
               />
+            </div>
+          ) : filteredProperties.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center py-16 px-6 text-center text-muted-foreground">
+              <Handshake className="w-8 h-8 mb-2 opacity-30" />
+              <p className="text-sm">No instructions yet — add a property instruction to get started.</p>
             </div>
           ) : (
             <ScrollableTable minWidth={1800}>
@@ -1217,15 +1223,6 @@ function InstructionsList({
                       </TableRow>
                     );
                   })}
-                  {filteredProperties.length === 0 && (
-                    <TableRow>
-                      <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
-                        <Handshake className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                        <p className="text-sm">No instructions found</p>
-                        <p className="text-xs mt-1">No properties with Instruction status</p>
-                      </TableCell>
-                    </TableRow>
-                  )}
                 </TableBody>
               </Table>
             </ScrollableTable>

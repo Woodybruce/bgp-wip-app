@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
+import { Pill } from "@/components/ui/pill";
 import {
   TrendingUp, Search, Plus, Trash2, X, Check, Loader2,
   Building2, MapPin, BarChart3, ArrowUpDown,
@@ -333,7 +334,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
             </div>
             {!isClientViewer && (
               <Button onClick={() => setShowAdd(true)} data-testid="button-add-entry">
-                <Plus className="w-4 h-4 mr-1" /> Add Entry
+                <Plus className="w-4 h-4 mr-1" /> Add entry
               </Button>
             )}
           </div>
@@ -341,31 +342,32 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
         {embedded && !isClientViewer && (
           <div className="flex justify-end">
             <Button onClick={() => setShowAdd(true)} data-testid="button-add-entry">
-              <Plus className="w-4 h-4 mr-1" /> Add Entry
+              <Plus className="w-4 h-4 mr-1" /> Add entry
             </Button>
           </div>
         )}
 
-        <div className="flex items-center gap-3 overflow-x-auto pb-1">
-          <Card className="flex-shrink-0 min-w-[120px]" data-testid="stat-total-entries">
+        {/* 2-up grid on phone so the third tile doesn't clip at the edge. */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Card data-testid="stat-total-entries">
             <CardContent className="p-3">
               <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Entries</p>
               <p className="text-2xl font-bold font-mono tabular-nums">{stats.total}</p>
             </CardContent>
           </Card>
-          <Card className="flex-shrink-0 min-w-[120px]" data-testid="stat-unique-brands">
+          <Card data-testid="stat-unique-brands">
             <CardContent className="p-3">
               <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Brands</p>
               <p className="text-2xl font-bold font-mono tabular-nums">{stats.brands}</p>
             </CardContent>
           </Card>
-          <Card className="flex-shrink-0 min-w-[120px]" data-testid="stat-avg-turnover">
+          <Card data-testid="stat-avg-turnover">
             <CardContent className="p-3">
               <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Avg Turnover</p>
-              <p className="text-2xl font-bold font-mono tabular-nums">{formatCurrency(stats.avgTurnover)}</p>
+              <p className="text-2xl font-bold font-mono tabular-nums">{stats.avgTurnover ? formatCurrency(stats.avgTurnover) : "—"}</p>
             </CardContent>
           </Card>
-          <Card className="flex-shrink-0 min-w-[120px]" data-testid="stat-avg-psf">
+          <Card data-testid="stat-avg-psf">
             <CardContent className="p-3">
               <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Avg £/sqft</p>
               <p className="text-2xl font-bold font-mono tabular-nums">{stats.avgPsf ? `£${stats.avgPsf.toFixed(0)}` : "—"}</p>
@@ -402,19 +404,13 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
               {SOURCES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
             </SelectContent>
           </Select>
-          <div className="flex items-center border rounded-md overflow-hidden ml-auto">
-            <button
-              className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === "table" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-              onClick={() => setViewMode("table")}
-            >
-              <BarChart3 className="w-3.5 h-3.5 inline mr-1" />Table
-            </button>
-            <button
-              className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === "brands" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-              onClick={() => setViewMode("brands")}
-            >
-              <Building2 className="w-3.5 h-3.5 inline mr-1" />By Brand
-            </button>
+          <div className="flex items-center gap-1.5 ml-auto">
+            <Pill active={viewMode === "table"} onClick={() => setViewMode("table")} data-testid="pill-view-table">
+              <BarChart3 className="w-3 h-3" />Table
+            </Pill>
+            <Pill active={viewMode === "brands"} onClick={() => setViewMode("brands")} data-testid="pill-view-brands">
+              <Building2 className="w-3 h-3" />By Brand
+            </Pill>
           </div>
           {!isClientViewer && (
             <Button variant="outline" size="sm" onClick={handlePopulateFromComps} disabled={populatingComps} data-testid="button-populate-comps">
@@ -439,8 +435,9 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                 <>
                   <h3 className="font-medium mb-1">No turnover data yet</h3>
                   <p className="text-sm text-muted-foreground mb-4">Add your first entry to start tracking brand revenue</p>
-                  <Button onClick={() => setShowAdd(true)} data-testid="button-add-first">
-                    <Plus className="w-4 h-4 mr-1" /> Add Entry
+                  {/* Outline: the header already carries the one filled primary (§5). */}
+                  <Button variant="outline" onClick={() => setShowAdd(true)} data-testid="button-add-first">
+                    <Plus className="w-4 h-4 mr-1" /> Add entry
                   </Button>
                 </>
                 )
@@ -899,7 +896,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                 data-testid="button-save"
               >
                 {addMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-                Add Entry
+                Add entry
               </Button>
             </div>
           </div>

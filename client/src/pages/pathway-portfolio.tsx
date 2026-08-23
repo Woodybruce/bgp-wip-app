@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { Pill } from "@/components/ui/pill";
+import { EmptyState } from "@/components/empty-state";
 import { apiRequest, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowUpDown, ExternalLink, FileText } from "lucide-react";
@@ -149,15 +151,20 @@ export default function PathwayPortfolio() {
               {showArchived ? "Hide" : "Show"} archived ({archivedCount})
             </Button>
           )}
-          <Link href="/pathway-review"><Button variant="outline" size="sm">Review queue</Button></Link>
-          <Link href="/property-pathway"><Button variant="outline" size="sm">Pathway board</Button></Link>
+          <Link href="/pathway-review"><Pill>Review queue</Pill></Link>
+          <Pill active>Portfolio</Pill>
+          <Link href="/property-pathway"><Pill>Pathway board</Pill></Link>
         </div>
       </div>
 
       {isLoading ? (
         <div className="text-sm text-muted-foreground">Loading…</div>
       ) : sorted.length === 0 ? (
-        <div className="text-sm text-muted-foreground">No runs with a business plan yet — the table fills as pathways reach Stage 6.</div>
+        <EmptyState
+          icon={FileText}
+          title="No runs with a business plan yet"
+          description="The table fills as pathways reach Stage 6."
+        />
       ) : (
         <div className="rounded-xl border bg-card overflow-x-auto">
           <table className="w-full text-sm">

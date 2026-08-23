@@ -292,7 +292,7 @@ export default function BrandsHub() {
             </div>
             <Link href="/brands?tab=turnover">
               <Button variant="ghost" size="sm" className="text-xs h-7">
-                Full <ChevronRight className="w-3 h-3 ml-0.5" />
+                Show all <ChevronRight className="w-3 h-3 ml-0.5" />
               </Button>
             </Link>
           </CardHeader>
@@ -382,7 +382,7 @@ export default function BrandsHub() {
             </div>
             <Link href="/companies?tab=tenants&cat=luxury">
               <Button variant="ghost" size="sm" className="text-xs h-7">
-                All <ChevronRight className="w-3 h-3 ml-0.5" />
+                Show all <ChevronRight className="w-3 h-3 ml-0.5" />
               </Button>
             </Link>
           </CardHeader>
@@ -411,7 +411,7 @@ export default function BrandsHub() {
           <div className="flex items-center gap-2">
             <Maximize2 className="w-4 h-4 text-blue-500" />
             <CardTitle className="text-sm font-semibold">Active Requirements Radar</CardTitle>
-            <Badge className="text-[10px]">{data?.activeRequirements?.length || 0} brands searching</Badge>
+            <Badge variant="secondary" className="text-[10px]">{data?.activeRequirements?.length || 0} brands searching</Badge>
           </div>
         </CardHeader>
         <CardContent className="px-5 pb-4">
@@ -930,7 +930,7 @@ function BrandExplorer() {
             <Badge variant="secondary" className="text-[10px]">{brandNews.length}</Badge>
             <Link href="/news" className="ml-auto">
               <Button variant="ghost" size="sm" className="text-xs h-7">
-                Full feed <ChevronRight className="w-3 h-3 ml-0.5" />
+                Show all <ChevronRight className="w-3 h-3 ml-0.5" />
               </Button>
             </Link>
           </div>

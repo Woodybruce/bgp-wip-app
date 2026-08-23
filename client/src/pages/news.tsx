@@ -2,13 +2,12 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Pill, pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
+import { Pill, PillCount, pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NewsSourcesTab } from "@/components/news-sources-tab";
-import { NewsTagFilterChips } from "@/components/news-tags-manager";
 import { InsightsFeed } from "@/components/insights-feed";
 import {
   Select,
@@ -351,6 +350,19 @@ function FeedTab() {
     return counts;
   }, [articles, categoryFilter, dismissedArticles]);
 
+  // Tag vocabulary for the filter pill row (same endpoint the tags manager
+  // curates). Zero-hit tags grey out and disable so a sparse feed reads as
+  // a data gap, not a broken filter (UX #49).
+  const { data: newsTags = [] } = useQuery<{ id: string; name: string; label: string; active: boolean; sortOrder: number }[]>({
+    queryKey: ["/api/news-feed/tags"],
+    queryFn: async () => {
+      const r = await fetch("/api/news-feed/tags", { headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+  const activeNewsTags = newsTags.filter((t) => t.active);
+
   const totalArticles = articles?.length || 0;
   const scoredArticles = articles?.filter((a) => a.processed)?.length || 0;
   const activeSources = sources?.filter((s: any) => s.active)?.length || 0;
@@ -473,7 +485,42 @@ function FeedTab() {
         </Select>
       </div>
 
-      <NewsTagFilterChips selected={tagFilter} onChange={setTagFilter} counts={tagCounts} />
+      {activeNewsTags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {activeNewsTags.map((t) => {
+            const on = tagFilter.has(t.name);
+            const n = tagCounts[t.name] ?? 0;
+            const dead = n === 0 && !on;
+            return (
+              <Pill
+                key={t.id}
+                active={on}
+                disabled={dead}
+                title={dead ? "No matching articles in this feed" : undefined}
+                className={dead ? "opacity-40" : undefined}
+                onClick={() => {
+                  const next = new Set(tagFilter);
+                  if (on) next.delete(t.name); else next.add(t.name);
+                  setTagFilter(next);
+                }}
+                data-testid={`chip-news-tag-${t.name}`}
+              >
+                {t.label}
+                {n > 0 && <PillCount n={n} active={on} />}
+              </Pill>
+            );
+          })}
+          {tagFilter.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setTagFilter(new Set())}
+              className="text-xs text-muted-foreground hover:text-foreground underline self-center ml-1"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
 
       {isInsightsTab ? (
         <InsightsFeed isStaff={!isClientNews} />
@@ -528,7 +575,7 @@ function FeedTab() {
                         {article.category &&
                           article.category !== "general" && (
                             <Badge
-                              variant="secondary"
+                              variant="outline"
                               className="text-[10px] capitalize"
                             >
                               {article.category}
@@ -684,7 +731,7 @@ function FeedTab() {
                         {article.category &&
                           article.category !== "general" && (
                             <Badge
-                              variant="secondary"
+                              variant="outline"
                               className="text-[10px] capitalize"
                             >
                               {article.category}

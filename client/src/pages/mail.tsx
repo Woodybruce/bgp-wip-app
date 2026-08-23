@@ -266,8 +266,8 @@ function ConnectPrompt() {
   return (
     <div className="h-full flex items-center justify-center" data-testid="mail-connect-prompt">
       <div className="text-center space-y-4 max-w-sm px-6">
-        <div className="w-20 h-20 rounded-2xl bg-blue-500/10 flex items-center justify-center mx-auto">
-          <MailIcon className="w-10 h-10 text-blue-500" />
+        <div className="w-20 h-20 rounded-2xl bg-muted/40 flex items-center justify-center mx-auto">
+          <MailIcon className="w-10 h-10 text-primary" />
         </div>
         <div>
           <h2 className="text-xl font-semibold">Outlook Mail</h2>

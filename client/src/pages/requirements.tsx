@@ -33,6 +33,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Search, Users, FileText, AlertCircle, X, Plus, Pencil, Trash2, Building2, Archive, User, Mail, Phone, Upload, Download, File, MapPin, Check, Circle, Loader2, Sparkles, MessageCircle, Target, Flame } from "lucide-react";
+import { countLabel } from "@/lib/utils";
 import { TENANT_CATEGORIES, CLIENT_CRM_CATEGORIES } from "@shared/tenant-categories";
 import {
   DropdownMenu,
@@ -300,7 +301,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
       });
       const kick = await res.json();
       if (!res.ok) throw new Error(kick.message || "Sync failed");
-      toast({ title: "Pipnet sync started", description: "Importing in the background — this can take a few minutes." });
+      toast({ title: "PIPnet sync started", description: "Importing in the background — this can take a few minutes." });
 
       const started = Date.now();
       while (Date.now() - started < 15 * 60_000) {
@@ -318,14 +319,14 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
             d.promoted ? `${d.promoted} added to requirements` : null,
             d.skippedOld ? `${d.skippedOld} older skipped` : null,
           ].filter(Boolean).join(" · ");
-          toast({ title: "Pipnet synced", description: parts || "No new requirements found" });
+          toast({ title: "PIPnet synced", description: parts || "No new requirements found" });
           return;
         }
         if (s.state === "error") throw new Error(s.error || "Import failed");
       }
-      toast({ title: "Pipnet sync still running", description: "Taking longer than expected — check back shortly." });
+      toast({ title: "PIPnet sync still running", description: "Taking longer than expected — check back shortly." });
     } catch (err: any) {
-      toast({ title: "Pipnet sync failed", description: err.message, variant: "destructive" });
+      toast({ title: "PIPnet sync failed", description: err.message, variant: "destructive" });
     } finally {
       setPipnetSyncing(false);
     }
@@ -456,9 +457,9 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
         `${data.imported} re-imported`,
         data.promoted ? `${data.promoted} re-promoted` : null,
       ].filter(Boolean).join(" · ");
-      toast({ title: "Pipnet wiped and re-synced", description: parts });
+      toast({ title: "PIPnet wiped and re-synced", description: parts });
     } catch (err: any) {
-      toast({ title: "Pipnet resync failed", description: err.message, variant: "destructive" });
+      toast({ title: "PIPnet resync failed", description: err.message, variant: "destructive" });
     } finally {
       setPipnetSyncing(false);
     }
@@ -801,6 +802,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
 
   return (
     <div className="space-y-4">
+      {Object.keys(groupCounts).some((group) => group !== "Ungrouped") && (
       <div className="flex items-center gap-3 flex-wrap">
         {Object.entries(groupCounts).filter(([group]) => group !== "Ungrouped").map(([group, count]) => {
           const groupColor = group === "Active" ? "bg-emerald-500" :
@@ -833,24 +835,8 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
             </Card>
           );
         })}
-        <Card
-          className={`flex-1 min-w-[130px] cursor-pointer transition-colors ${
-            groupFilter === "all" ? "border-primary" : ""
-          }`}
-          onClick={() => setGroupFilter("all")}
-          data-testid="card-leasing-group-all"
-        >
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-muted-foreground" />
-              <div>
-                <p className="text-lg font-bold">{items.length}</p>
-                <p className="text-xs text-muted-foreground">All</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
+      )}
 
       {/* Demand read-out: what the live requirements say the market wants —
           complements the group cards (use mix) with size, geography and how
@@ -949,10 +935,10 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
           onClick={syncPipnet}
           disabled={pipnetSyncing}
           data-testid="button-sync-pipnet"
-          title="Import active retail requirements from Pipnet"
+          title="Import active retail requirements from PIPnet"
         >
           {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
-          Sync Pipnet
+          Refresh PIPnet
         </Button>
         <Button
           variant="outline"
@@ -963,7 +949,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
           title="Delete previous PIPnet imports and re-run with corrected mapping"
         >
           {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
-          Wipe & Resync
+          Wipe & resync
         </Button>
         <Button
           variant="outline"
@@ -992,7 +978,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
           title="Pull every requirement from TheRequirementList"
         >
           {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
-          Sync TRL
+          Refresh TRL
         </Button>
         <Button
           variant="outline"
@@ -1003,13 +989,13 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
           title="Delete previous TRL imports and re-run"
         >
           {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
-          Wipe & Resync TRL
+          Wipe & resync TRL
         </Button>
         </>)}
         {!isClientView && (
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-leasing">
           <Plus className="w-4 h-4 mr-1" />
-          Add Requirement
+          Add requirement
         </Button>
         )}
       </div>
@@ -2285,9 +2271,9 @@ function LeasingSection({
     <Card>
       <CardContent className="p-0">
         {title && (
-          <div className={`px-4 py-2 border-b ${isArchived ? "bg-muted/30" : "bg-emerald-500/5"}`}>
-            <h3 className={`text-sm font-semibold ${isArchived ? "text-muted-foreground" : "text-emerald-700"}`} data-testid={`text-section-${isArchived ? "archived" : "active"}`}>
-              {title} ({items.length})
+          <div className={`px-4 py-2 border-b ${isArchived ? "bg-muted/30" : "bg-muted/40"}`}>
+            <h3 className={`text-sm font-semibold ${isArchived ? "text-muted-foreground" : ""}`} data-testid={`text-section-${isArchived ? "archived" : "active"}`}>
+              {title === "Active Requirements" ? countLabel(items.length, "active requirement") : `${title} (${items.length})`}
             </h3>
           </div>
         )}
@@ -3488,6 +3474,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
 
   return (
     <div className="space-y-4">
+      {Object.keys(groupCounts).some((group) => group !== "Ungrouped") && (
       <div className="flex items-center gap-3 flex-wrap">
         {Object.entries(groupCounts).filter(([group]) => group !== "Ungrouped").map(([group, count]) => {
           const badgeColor = group === "Institutional" ? "bg-indigo-500" :
@@ -3514,24 +3501,8 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
             </Card>
           );
         })}
-        <Card
-          className={`flex-1 min-w-[130px] cursor-pointer transition-colors ${
-            groupFilter === "all" ? "border-primary" : ""
-          }`}
-          onClick={() => setGroupFilter("all")}
-          data-testid="card-invest-group-all"
-        >
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-muted-foreground" />
-              <div>
-                <p className="text-lg font-bold">{items.length}</p>
-                <p className="text-xs text-muted-foreground">All</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
+      )}
 
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px]">
@@ -3591,7 +3562,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
         />
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-investment">
           <Plus className="w-4 h-4 mr-1" />
-          Add Requirement
+          Add requirement
         </Button>
       </div>
 

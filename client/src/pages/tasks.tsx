@@ -6,7 +6,7 @@ import { TaskNotesCanvas } from "@/components/task-notes-canvas";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import {
-  ListTodo, Plus, Check, Circle, Clock, AlertTriangle, Flame, ArrowRight,
+  Plus, Check, Circle, Clock, AlertTriangle, Flame, ArrowRight,
   Trash2, Pencil, Calendar as CalendarIcon, Building2, BarChart3, User,
   Sparkles, Brain, ChevronDown, ChevronRight, GripVertical, X, RefreshCw,
   CheckCircle2, CircleDot, Filter, SlidersHorizontal, Loader2, Star,
@@ -678,17 +678,12 @@ export default function TasksPage() {
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 space-y-6">
 
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                  <ListTodo className="w-5 h-5 text-primary" />
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold tracking-tight">My Tasks</h1>
-                  <p className="text-sm text-muted-foreground mt-0.5">
-                    {activeTasks.length} open{overdueTasks.length > 0 ? ` · ${overdueTasks.length} overdue` : ""}{todayTasks.length > 0 ? ` · ${todayTasks.length} due today` : ""}
-                  </p>
-                </div>
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">My Tasks</h1>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  {activeTasks.length} open{overdueTasks.length > 0 ? ` · ${overdueTasks.length} overdue` : ""}{todayTasks.length > 0 ? ` · ${todayTasks.length} due today` : ""}
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 <Button
@@ -715,7 +710,7 @@ export default function TasksPage() {
                   data-testid="button-new-task"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  New Task
+                  Add task
                 </Button>
               </div>
             </div>

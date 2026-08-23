@@ -105,14 +105,16 @@ function formatMonth(month: string): string {
 
 // --- KPI Card ---
 
+// Stat tile per docs/DESIGN.md §8 — uppercase micro-label, mono value, no
+// icon square (icon prop kept so callers stay untouched; it no longer renders).
+// Delta tone follows direction: up = emerald, down = red, flat = muted.
 function KpiCard({
-  icon: Icon,
   label,
   value,
   subtitle,
   change,
 }: {
-  icon: any;
+  icon?: any;
   label: string;
   value: string;
   subtitle?: string;
@@ -121,18 +123,13 @@ function KpiCard({
   return (
     <Card>
       <CardContent className="p-5">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Icon className="w-4.5 h-4.5 text-primary" />
-          </div>
-          <span className="text-sm font-medium text-muted-foreground">{label}</span>
-        </div>
-        <div className="text-2xl font-bold tracking-tight">{value}</div>
+        <p className="text-[11px] uppercase tracking-wider text-muted-foreground mb-2">{label}</p>
+        <div className="text-2xl font-bold font-mono tabular-nums tracking-tight">{value}</div>
         {(subtitle || change !== undefined) && (
           <div className="flex items-center gap-2 mt-1">
             {subtitle && <span className="text-xs text-muted-foreground">{subtitle}</span>}
-            {change !== undefined && change !== 0 && (
-              <span className={`text-xs font-medium ${change > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
+            {change !== undefined && (
+              <span className={`text-xs font-medium font-mono tabular-nums ${change > 0 ? "text-emerald-600 dark:text-emerald-400" : change < 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}>
                 {change > 0 ? "+" : ""}{change}%
               </span>
             )}
@@ -238,7 +235,7 @@ export default function Reporting() {
             <KpiCard
               icon={Clock}
               label="Avg Time to Close"
-              value={boardReport?.performance.avgTimeToClose ? `${boardReport.performance.avgTimeToClose} days` : "--"}
+              value={boardReport?.performance.avgTimeToClose ? `${boardReport.performance.avgTimeToClose} days` : "—"}
               subtitle="HOTs to completion"
             />
           </>

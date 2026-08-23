@@ -120,6 +120,7 @@ import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { useTableSort } from "@/hooks/use-table-sort";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { CRM_OPTIONS } from "@/lib/crm-options";
+import { countLabel } from "@/lib/utils";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { PropertyDetail } from "@/components/property-detail";
@@ -2988,7 +2989,7 @@ function CreatePropertyDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Building2 className="w-5 h-5" />
-            New Property
+            Add property
           </DialogTitle>
           <DialogDescription>Add a new property to the CRM</DialogDescription>
         </DialogHeader>
@@ -5489,7 +5490,7 @@ function PropertiesList({
   const { activeTeam } = useTeam();
   const isLandsecView = activeTeam === "Landsec";
   // Client logins get a read-oriented table: the inline ownership editors,
-  // status/class/team setters and the header's Import / New Property /
+  // status/class/team setters and the header's Import / Add property /
   // Landlord Health are staff tools (their writes are server-blocked anyway).
   const { data: propsViewer } = useQuery<any>({ queryKey: ["/api/auth/me"], staleTime: 5 * 60 * 1000 });
   const isClientViewer = propsViewer?.role === "Client" || !!propsViewer?.companyScopeId;
@@ -5702,7 +5703,7 @@ function PropertiesList({
       title="Properties"
       icon={Building2}
       fullHeight
-      subtitle={`${items.length} properties in the CRM${isLandsecView ? " · Landsec portfolio" : teamFilter ? ` · Filtered by ${teamFilter} team` : ""}`}
+      subtitle={`${countLabel(items.length, "property", "properties")} in the CRM${isLandsecView ? " · Landsec portfolio" : teamFilter ? ` · Filtered by ${teamFilter} team` : ""}`}
       actions={
         isClientViewer ? undefined : (
         <>
@@ -5734,7 +5735,7 @@ function PropertiesList({
             data-testid="button-create-property"
           >
             <Plus className="w-4 h-4 mr-2" />
-            New Property
+            Add property
           </Button>
         </>
         )
@@ -5755,7 +5756,7 @@ function PropertiesList({
 
       {activeView === "list" && <PropertiesBoardHeader items={filteredItems} />}
 
-      {activeView === "list" && <>{isMobile ? (
+      {activeView === "list" && <>
         <div className="flex flex-wrap gap-1.5">
           {groupCounts.map((g) => (
             <Pill
@@ -5775,47 +5776,6 @@ function PropertiesList({
             All <span className="opacity-70 font-mono tabular-nums">{items.length}</span>
           </Pill>
         </div>
-      ) : (
-      <div className="flex items-center gap-3 overflow-x-auto pb-1">
-        {groupCounts.map((g) => (
-          <Card
-            key={g.id}
-            className={`flex-1 min-w-[140px] cursor-pointer transition-colors ${
-              activeGroup === g.id ? "border-primary bg-primary/5" : ""
-            }`}
-            onClick={() => setActiveGroup(activeGroup === g.id ? "all" : g.id)}
-            data-testid={`card-group-${g.id.toLowerCase()}`}
-          >
-            <CardContent className="p-3">
-              <div className="flex items-center gap-2">
-                <Building2 className="w-4 h-4 text-muted-foreground" />
-                <div>
-                  <p className="text-lg font-bold" data-testid={`text-group-count-${g.id.toLowerCase()}`}>{g.count}</p>
-                  <p className="text-xs text-muted-foreground">{g.label}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-        <Card
-          className={`flex-1 min-w-[140px] cursor-pointer transition-colors ${
-            activeGroup === "all" ? "border-primary bg-primary/5" : ""
-          }`}
-          onClick={() => setActiveGroup("all")}
-          data-testid="card-group-all"
-        >
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-muted-foreground" />
-              <div>
-                <p className="text-lg font-bold" data-testid="text-group-count-all">{items.length}</p>
-                <p className="text-xs text-muted-foreground">All (inc. comps)</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[180px]">
@@ -5978,7 +5938,9 @@ function PropertiesList({
             <ScrollableTable minWidth={2200}>
               <Table>
                 <TableHeader>
-                  <TableRow>
+                  {/* §6 header spec — 11px semibold uppercase muted; the
+                      sorted/filtered column reads foreground, not terracotta. */}
+                  <TableRow className="[&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground [&_th_button]:font-semibold [&_th_.text-primary]:text-foreground">
                     <TableHead className="w-[40px] px-2">
                       <Checkbox
                         data-testid="checkbox-select-all-properties"
@@ -6499,7 +6461,7 @@ function LandlordHealthView({
           <ScrollableTable minWidth={900}>
             <Table>
               <TableHeader>
-                <TableRow>
+                <TableRow className="[&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground">
                   <TableHead className="min-w-[200px]">Property</TableHead>
                   <TableHead className="min-w-[160px]">Landlord / Client</TableHead>
                   <TableHead className="min-w-[160px]">Parent Brand</TableHead>

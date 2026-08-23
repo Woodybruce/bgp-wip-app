@@ -163,7 +163,7 @@ export function MyLeadsWidget() {
                 ) : (
                   <Sparkles className="w-3.5 h-3.5 mr-1.5" />
                 )}
-                {profile?.setupComplete ? "Update & Generate" : "Generate My Leads"}
+                {profile?.setupComplete ? "Update & generate" : "Generate my leads"}
               </Button>
             </div>
           </div>
