@@ -1064,7 +1064,7 @@ export default function ImageStudio() {
             data-testid="button-street-view"
           >
             <MapPin className="h-4 w-4 mr-1" />
-            Street View
+            Capture Street View
           </Button>
           <Button
             variant="outline"
@@ -1140,7 +1140,7 @@ export default function ImageStudio() {
                 onClick={() => { setSelectedCategory(cat); setSelectedPerson(null); }}
                 className={`w-full text-left px-2 py-1.5 rounded text-sm flex items-center justify-between transition-colors ${
                   selectedCategory === cat
-                    ? "bg-primary text-primary-foreground"
+                    ? "bg-foreground text-background"
                     : "hover:bg-muted"
                 }`}
                 data-testid={`button-category-${cat.toLowerCase().replace(/\s/g, "-")}`}
@@ -1383,35 +1383,29 @@ export default function ImageStudio() {
               {selectMode ? <X className="h-4 w-4 mr-1" /> : <StretchHorizontal className="h-4 w-4 mr-1" />}
               {selectMode ? "Cancel" : "Select"}
             </Button>
-            <div className="flex border rounded-md">
-              <Button
-                variant={libraryView === "albums" ? "default" : "ghost"}
-                size="sm"
-                className="h-9 px-2.5 rounded-r-none text-xs"
+            <div className="flex items-center gap-1.5">
+              <Pill
+                active={libraryView === "albums"}
                 onClick={() => { setLibraryView("albums"); setPropertyFilter(""); }}
                 title="Group photos into one folder per property"
                 data-testid="button-view-albums"
               >
                 Albums
-              </Button>
-              <Button
-                variant={libraryView === "all" && viewMode === "grid" ? "default" : "ghost"}
-                size="sm"
-                className="h-9 px-2 rounded-none"
+              </Pill>
+              <Pill
+                active={libraryView === "all" && viewMode === "grid"}
                 onClick={() => { setLibraryView("all"); setViewMode("grid"); }}
                 data-testid="button-view-grid"
               >
-                <Grid3X3 className="h-4 w-4" />
-              </Button>
-              <Button
-                variant={libraryView === "all" && viewMode === "list" ? "default" : "ghost"}
-                size="sm"
-                className="h-9 px-2 rounded-l-none"
+                <Grid3X3 className="h-3 w-3" />
+              </Pill>
+              <Pill
+                active={libraryView === "all" && viewMode === "list"}
                 onClick={() => { setLibraryView("all"); setViewMode("list"); }}
                 data-testid="button-view-list"
               >
-                <List className="h-4 w-4" />
-              </Button>
+                <List className="h-3 w-3" />
+              </Pill>
             </div>
           </div>
 

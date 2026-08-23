@@ -694,21 +694,26 @@ function TimeGrid({
         <div className="w-[52px] shrink-0" />
         {dates.map(date => {
           const isToday = isSameDay(date, today);
+          // Today's header takes the primary accent on weekdays only — a
+          // weekend "SUN 23" in the red-leaning terracotta read as negative
+          // (design review 2026-08-23). Weekend today stays bold but muted.
+          const isWeekendDay = [0, 6].includes(date.getDay());
+          const todayAccent = isToday && !isWeekendDay;
           const teamCols = teamColumnsByDay.get(date.toDateString()) || [];
           const totalCols = showTeamColumns ? 1 + teamCols.length : 1;
           return (
             <div key={date.toDateString()} className="flex-1 border-l min-w-0">
               {!showTeamColumns ? (
                 <div className={`text-center py-2 ${isToday ? "bg-primary/5" : ""}`}>
-                  <p className={`text-[10px] uppercase tracking-wider ${isToday ? "text-primary font-bold" : "text-muted-foreground font-medium"}`}>
+                  <p className={`text-[10px] uppercase tracking-wider ${todayAccent ? "text-primary font-bold" : isToday ? "text-muted-foreground font-bold" : "text-muted-foreground font-medium"}`}>
                     {date.toLocaleDateString("en-GB", { weekday: "short" })}
                   </p>
-                  <p className={`text-lg leading-tight ${isToday ? "text-primary font-bold" : "font-semibold"}`}>{date.getDate()}</p>
+                  <p className={`text-lg leading-tight ${todayAccent ? "text-primary font-bold" : isToday ? "font-bold" : "font-semibold"}`}>{date.getDate()}</p>
                 </div>
               ) : (
                 <div className="flex">
                   <div className={`flex-1 text-center py-1.5 border-r border-border/30 ${isToday ? "bg-primary/5" : ""}`}>
-                    <p className={`text-[10px] uppercase tracking-wider font-bold ${isToday ? "text-primary" : ""}`}>
+                    <p className={`text-[10px] uppercase tracking-wider font-bold ${todayAccent ? "text-primary" : isToday ? "text-muted-foreground" : ""}`}>
                       {date.toLocaleDateString("en-GB", { weekday: "short" })} {date.getDate()}
                     </p>
                     <p className="text-[9px] text-muted-foreground font-semibold">You</p>

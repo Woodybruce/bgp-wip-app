@@ -501,26 +501,22 @@ export default function Subscriptions() {
           />
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
-          <Button
-            variant={!selectedCategory ? "default" : "outline"}
-            size="sm"
-            className="h-8 text-xs"
+          <Pill
+            active={!selectedCategory}
             onClick={() => setSelectedCategory(null)}
             data-testid="filter-category-all"
           >
             All
-          </Button>
+          </Pill>
           {categories.map((cat) => (
-            <Button
+            <Pill
               key={cat}
-              variant={selectedCategory === cat ? "default" : "outline"}
-              size="sm"
-              className="h-8 text-xs"
+              active={selectedCategory === cat}
               onClick={() => setSelectedCategory(cat)}
               data-testid={`filter-category-${cat.toLowerCase().replace(/\s+/g, "-")}`}
             >
               {cat}
-            </Button>
+            </Pill>
           ))}
         </div>
       </div>
@@ -544,12 +540,12 @@ export default function Subscriptions() {
                     <div className="flex items-center gap-2">
                       <h3 className="text-sm font-semibold truncate">{sub.name}</h3>
                       {sub.hasApi && (
-                        <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 shrink-0">
+                        <Badge variant="secondary" className="rounded-full text-[10px] px-1.5 py-0 h-4 shrink-0">
                           API
                         </Badge>
                       )}
                     </div>
-                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 mt-1">
+                    <Badge variant="secondary" className="rounded-full text-[10px] px-1.5 py-0 h-4 mt-1">
                       {sub.category}
                     </Badge>
                     <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{sub.description}</p>
