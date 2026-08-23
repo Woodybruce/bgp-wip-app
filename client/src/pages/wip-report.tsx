@@ -232,17 +232,17 @@ function HealthTab() {
         <p className="text-xs text-amber-800/80 mt-0.5">{data.totalWipDeals} deals checked · tap any row to open the deal and fix it</p>
       </div>
       {sections.filter(sec => sec.data.count > 0).map(sec => (
-        <div key={sec.key} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-          <div className="px-4 py-2.5 border-b bg-gray-50 flex items-center justify-between gap-3">
+        <div key={sec.key} className="bg-card border border-border rounded-lg overflow-hidden">
+          <div className="px-4 py-2.5 border-b bg-muted/50 flex items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold">{sec.title} <span className="text-muted-foreground font-normal">({sec.data.count}{sec.data.fee ? ` · ${money(sec.data.fee)}` : ""})</span></p>
               <p className="text-[11px] text-muted-foreground">{sec.why}</p>
             </div>
           </div>
-          <div className="divide-y divide-gray-100">
+          <div className="divide-y divide-border">
             {sec.data.deals.map((d: any) => (
               <Link key={d.dealId} href={`/deals/${d.dealId}`}>
-                <div className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 cursor-pointer text-sm">
+                <div className="flex items-center gap-3 px-4 py-2 hover:bg-muted cursor-pointer text-sm">
                   <span className="flex-1 min-w-0 truncate">
                     {d.name || "(unnamed deal)"}
                     <span className="text-xs text-muted-foreground"> {d.dealType ? `· ${d.dealType}` : ""}{d.team ? ` · ${d.team}` : ""}</span>
@@ -309,9 +309,9 @@ function FeeCheckTab() {
         {data.length} deal{data.length === 1 ? "" : "s"} where the recorded fee doesn't match the net invoiced in Xero.
         The WIP and commission both use the <strong>recorded fee</strong>, so fix these on the Deals page to bring them in line with Xero.
       </p>
-      <div className="bg-white border border-gray-200 rounded-lg overflow-x-auto">
+      <div className="bg-card border border-border rounded-lg overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="bg-gray-50 text-left">
+          <thead className="bg-muted/50 text-left">
             <tr>
               <th className="px-3 py-2 font-medium">Deal</th>
               <th className="px-3 py-2 font-medium">Team</th>
@@ -326,7 +326,7 @@ function FeeCheckTab() {
           </thead>
           <tbody>
             {data.map((r) => (
-              <tr key={r.dealId} className="border-t hover:bg-gray-50" data-testid={`fee-check-${r.dealId}`}>
+              <tr key={r.dealId} className="border-t hover:bg-muted" data-testid={`fee-check-${r.dealId}`}>
                 <td className="px-3 py-2">
                   <Link href={`/deals/${r.dealId}`}>
                     <span className="text-primary hover:underline cursor-pointer">
@@ -334,15 +334,15 @@ function FeeCheckTab() {
                     </span>
                   </Link>
                 </td>
-                <td className="px-3 py-2 text-gray-600">{r.team || "—"}</td>
-                <td className="px-3 py-2 text-gray-600">{r.agents || "—"}</td>
+                <td className="px-3 py-2 text-muted-foreground">{r.team || "—"}</td>
+                <td className="px-3 py-2 text-muted-foreground">{r.agents || "—"}</td>
                 <td className="px-3 py-2 text-right font-mono">{money(r.fee)}</td>
                 <td className="px-3 py-2 text-right font-mono">{money(r.xeroNet)}</td>
-                <td className="px-3 py-2 text-right font-mono text-gray-400">{money(r.xeroGross)}</td>
+                <td className="px-3 py-2 text-right font-mono text-muted-foreground/70">{money(r.xeroGross)}</td>
                 <td className={`px-3 py-2 text-right font-mono font-semibold ${r.diff < 0 ? "text-red-600" : "text-amber-600"}`}>
                   {r.diff >= 0 ? "+" : "-"}{money(Math.abs(r.diff))}
                 </td>
-                <td className="px-3 py-2 text-gray-500">{r.invoiceNumbers || "—"}</td>
+                <td className="px-3 py-2 text-muted-foreground">{r.invoiceNumbers || "—"}</td>
                 <td className="px-3 py-2">
                   <button
                     onClick={() => matchToXero(r)}
@@ -412,9 +412,9 @@ function AgentSummaryTab() {
   return (
     <div className="space-y-6 overflow-y-auto flex-1 min-h-0">
       {/* Agent Bar Chart */}
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid="agent-summary-chart">
-        <div className="bg-gray-50 border-b px-4 py-3">
-          <span className="text-sm font-semibold text-gray-700">Agent Fee Breakdown</span>
+      <div className="bg-card border border-border rounded-lg overflow-hidden" data-testid="agent-summary-chart">
+        <div className="bg-muted/50 border-b px-4 py-3">
+          <span className="text-sm font-semibold text-muted-foreground">Agent Fee Breakdown</span>
         </div>
         <div className="p-4 space-y-2">
           {agents.map((a) => {
@@ -425,15 +425,15 @@ function AgentSummaryTab() {
               <div
                 key={a.agent}
                 className={`flex items-center gap-3 cursor-pointer rounded px-2 py-1.5 transition-colors ${
-                  isSelected ? "bg-green-50 ring-1 ring-green-300" : "hover:bg-gray-50"
+                  isSelected ? "bg-green-50 ring-1 ring-green-300" : "hover:bg-muted"
                 }`}
                 onClick={() => setSelectedAgent(isSelected ? null : a.agent)}
                 data-testid={`agent-bar-${a.agent}`}
               >
-                <span className="text-xs text-gray-700 w-36 text-right flex-shrink-0 truncate font-medium">
+                <span className="text-xs text-muted-foreground w-36 text-right flex-shrink-0 truncate font-medium">
                   {a.agent}
                 </span>
-                <div className="flex-1 h-6 bg-gray-100 rounded overflow-hidden relative flex">
+                <div className="flex-1 h-6 bg-muted rounded overflow-hidden relative flex">
                   {a.wip > 0 && (
                     <div
                       className="h-full transition-all duration-500"
@@ -455,7 +455,7 @@ function AgentSummaryTab() {
                     />
                   )}
                 </div>
-                <span className="text-xs font-mono text-gray-700 w-20 text-right flex-shrink-0">
+                <span className="text-xs font-mono text-muted-foreground w-20 text-right flex-shrink-0">
                   {formatCurrency(total)}
                 </span>
               </div>
@@ -464,7 +464,7 @@ function AgentSummaryTab() {
           {agents.length > 0 && (
             <div className="flex items-center gap-3 pt-2 border-t mt-2">
               <span className="text-xs w-36 text-right flex-shrink-0" />
-              <div className="flex gap-4 text-xs text-gray-500">
+              <div className="flex gap-4 text-xs text-muted-foreground">
                 <span className="flex items-center gap-1">
                   <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: "#86efac" }} />
                   WIP
@@ -480,23 +480,23 @@ function AgentSummaryTab() {
       </div>
 
       {/* Agent Summary Table */}
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid="agent-summary-table">
-        <div className="bg-gray-50 border-b px-4 py-3 flex items-center justify-between">
-          <span className="text-sm font-semibold text-gray-700">Agent Summary</span>
-          <span className="text-xs text-gray-500">{agents.length} agents</span>
+      <div className="bg-card border border-border rounded-lg overflow-hidden" data-testid="agent-summary-table">
+        <div className="bg-muted/50 border-b px-4 py-3 flex items-center justify-between">
+          <span className="text-sm font-semibold text-muted-foreground">Agent Summary</span>
+          <span className="text-xs text-muted-foreground">{agents.length} agents</span>
         </div>
         <ScrollableTable minWidth={700}>
           <table className="w-full">
-            <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
+            <thead className="bg-muted/50 border-b sticky top-0 z-10 text-sm">
               <tr>
-                <SortableTableHead sortKey="agent" sort={summarySort} raw className="px-4 py-2 text-left font-medium text-gray-600">Agent Name</SortableTableHead>
-                <SortableTableHead sortKey="wip" sort={summarySort} raw align="right" className="px-4 py-2 font-medium text-gray-600">WIP Amount</SortableTableHead>
-                <SortableTableHead sortKey="invoiced" sort={summarySort} raw align="right" className="px-4 py-2 font-medium text-gray-600">Invoiced Amount</SortableTableHead>
-                <SortableTableHead sortKey="total" sort={summarySort} raw align="right" className="px-4 py-2 font-medium text-gray-600">Total</SortableTableHead>
-                <th className="px-4 py-2 text-right font-medium text-gray-600">% of Total</th>
+                <SortableTableHead sortKey="agent" sort={summarySort} raw className="px-4 py-2 text-left font-medium text-muted-foreground">Agent Name</SortableTableHead>
+                <SortableTableHead sortKey="wip" sort={summarySort} raw align="right" className="px-4 py-2 font-medium text-muted-foreground">WIP Amount</SortableTableHead>
+                <SortableTableHead sortKey="invoiced" sort={summarySort} raw align="right" className="px-4 py-2 font-medium text-muted-foreground">Invoiced Amount</SortableTableHead>
+                <SortableTableHead sortKey="total" sort={summarySort} raw align="right" className="px-4 py-2 font-medium text-muted-foreground">Total</SortableTableHead>
+                <th className="px-4 py-2 text-right font-medium text-muted-foreground">% of Total</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100 text-xs">
+            <tbody className="divide-y divide-border text-xs">
               {agents.map((a) => {
                 const total = a.wip + a.invoiced;
                 const pct = grandTotal > 0 ? ((total / grandTotal) * 100).toFixed(1) : "0.0";
@@ -505,33 +505,33 @@ function AgentSummaryTab() {
                   <tr
                     key={a.agent}
                     className={`cursor-pointer transition-colors ${
-                      isSelected ? "bg-green-50" : "hover:bg-gray-50"
+                      isSelected ? "bg-green-50" : "hover:bg-muted"
                     }`}
                     onClick={() => setSelectedAgent(isSelected ? null : a.agent)}
                     data-testid={`agent-row-${a.agent}`}
                   >
-                    <td className="px-4 py-2 text-gray-800 font-medium">{a.agent}</td>
-                    <td className="px-4 py-2 text-right font-mono text-gray-700">{formatFullCurrency(a.wip)}</td>
+                    <td className="px-4 py-2 text-foreground font-medium">{a.agent}</td>
+                    <td className="px-4 py-2 text-right font-mono text-muted-foreground">{formatFullCurrency(a.wip)}</td>
                     <td className="px-4 py-2 text-right font-mono text-green-700">{formatFullCurrency(a.invoiced)}</td>
-                    <td className="px-4 py-2 text-right font-mono text-gray-900 font-semibold">{formatFullCurrency(total)}</td>
-                    <td className="px-4 py-2 text-right text-gray-600">{pct}%</td>
+                    <td className="px-4 py-2 text-right font-mono text-foreground font-semibold">{formatFullCurrency(total)}</td>
+                    <td className="px-4 py-2 text-right text-muted-foreground">{pct}%</td>
                   </tr>
                 );
               })}
             </tbody>
-            <tfoot className="bg-gray-100 border-t font-semibold text-sm">
+            <tfoot className="bg-muted border-t font-semibold text-sm">
               <tr>
-                <td className="px-4 py-2 text-gray-800">Total</td>
-                <td className="px-4 py-2 text-right font-mono text-gray-900">
+                <td className="px-4 py-2 text-foreground">Total</td>
+                <td className="px-4 py-2 text-right font-mono text-foreground">
                   {formatFullCurrency(agents.reduce((s, a) => s + a.wip, 0))}
                 </td>
                 <td className="px-4 py-2 text-right font-mono text-green-700">
                   {formatFullCurrency(agents.reduce((s, a) => s + a.invoiced, 0))}
                 </td>
-                <td className="px-4 py-2 text-right font-mono text-gray-900">
+                <td className="px-4 py-2 text-right font-mono text-foreground">
                   {formatFullCurrency(grandTotal)}
                 </td>
-                <td className="px-4 py-2 text-right text-gray-600">100%</td>
+                <td className="px-4 py-2 text-right text-muted-foreground">100%</td>
               </tr>
             </tfoot>
           </table>
@@ -540,10 +540,10 @@ function AgentSummaryTab() {
 
       {/* Agent Drilldown */}
       {selectedAgent && (
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid="agent-drilldown">
-          <div className="bg-gray-50 border-b px-4 py-3 flex items-center justify-between">
+        <div className="bg-card border border-border rounded-lg overflow-hidden" data-testid="agent-drilldown">
+          <div className="bg-muted/50 border-b px-4 py-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-gray-700">
+              <span className="text-sm font-semibold text-muted-foreground">
                 Deals for {selectedAgent}
               </span>
               {drilldownData && (
@@ -554,30 +554,30 @@ function AgentSummaryTab() {
             </div>
             <button
               onClick={() => setSelectedAgent(null)}
-              className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
             >
               <X className="w-3 h-3" /> Close
             </button>
           </div>
           {drilldownLoading ? (
-            <div className="px-4 py-8 text-center text-sm text-gray-500">Loading deals...</div>
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">Loading deals...</div>
           ) : !drilldownData || drilldownData.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-gray-500">No deals found for this agent</div>
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">No deals found for this agent</div>
           ) : (
             <ScrollableTable minWidth={900}>
               <table className="w-full">
-                <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
+                <thead className="bg-muted/50 border-b sticky top-0 z-10 text-sm">
                   <tr>
-                    <SortableTableHead sortKey="name" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-gray-600">Deal Name</SortableTableHead>
-                    <SortableTableHead sortKey="property" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-gray-600">Property</SortableTableHead>
-                    <SortableTableHead sortKey="dealType" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-gray-600">Type</SortableTableHead>
-                    <SortableTableHead sortKey="totalFee" sort={drillSort} raw align="right" className="px-3 py-2 font-medium text-gray-600">Total Fee</SortableTableHead>
-                    <SortableTableHead sortKey="allocated" sort={drillSort} raw align="right" className="px-3 py-2 font-medium text-gray-600">Allocated</SortableTableHead>
-                    <SortableTableHead sortKey="status" sort={drillSort} raw align="center" className="px-3 py-2 font-medium text-gray-600">Status</SortableTableHead>
-                    <SortableTableHead sortKey="stage" sort={drillSort} raw align="center" className="px-3 py-2 font-medium text-gray-600">Stage</SortableTableHead>
+                    <SortableTableHead sortKey="name" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-muted-foreground">Deal Name</SortableTableHead>
+                    <SortableTableHead sortKey="property" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-muted-foreground">Property</SortableTableHead>
+                    <SortableTableHead sortKey="dealType" sort={drillSort} raw className="px-3 py-2 text-left font-medium text-muted-foreground">Type</SortableTableHead>
+                    <SortableTableHead sortKey="totalFee" sort={drillSort} raw align="right" className="px-3 py-2 font-medium text-muted-foreground">Total Fee</SortableTableHead>
+                    <SortableTableHead sortKey="allocated" sort={drillSort} raw align="right" className="px-3 py-2 font-medium text-muted-foreground">Allocated</SortableTableHead>
+                    <SortableTableHead sortKey="status" sort={drillSort} raw align="center" className="px-3 py-2 font-medium text-muted-foreground">Status</SortableTableHead>
+                    <SortableTableHead sortKey="stage" sort={drillSort} raw align="center" className="px-3 py-2 font-medium text-muted-foreground">Stage</SortableTableHead>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100 text-xs">
+                <tbody className="divide-y divide-border text-xs">
                   {(drillSort.sortKey
                     ? drillSort.sorted(drilldownData, {
                         name: d => d.name,
@@ -590,13 +590,13 @@ function AgentSummaryTab() {
                       })
                     : drilldownData
                   ).map((d) => (
-                    <tr key={d.dealId} className="hover:bg-gray-50">
-                      <td className="px-3 py-2 text-gray-700">
+                    <tr key={d.dealId} className="hover:bg-muted">
+                      <td className="px-3 py-2 text-muted-foreground">
                         <Link href={`/deals/${d.dealId}`}>
                           <span className="text-primary hover:underline cursor-pointer">{d.name}</span>
                         </Link>
                       </td>
-                      <td className="px-3 py-2 text-gray-700 truncate max-w-[160px]">{d.property || "---"}</td>
+                      <td className="px-3 py-2 text-muted-foreground truncate max-w-[160px]">{d.property || "---"}</td>
                       <td className="px-3 py-2">
                         {d.dealType ? (
                           <Badge className={`text-[10px] ${DEAL_TYPE_BADGE_COLORS[d.dealType] || "bg-gray-100 text-gray-800"}`}>
@@ -604,10 +604,10 @@ function AgentSummaryTab() {
                           </Badge>
                         ) : "---"}
                       </td>
-                      <td className="px-3 py-2 text-right font-mono text-gray-500">
+                      <td className="px-3 py-2 text-right font-mono text-muted-foreground">
                         {formatFullCurrency(d.totalFee)}
                       </td>
-                      <td className="px-3 py-2 text-right font-mono text-gray-900 font-semibold">
+                      <td className="px-3 py-2 text-right font-mono text-foreground font-semibold">
                         {formatFullCurrency(d.allocatedAmount)}
                       </td>
                       <td className="px-3 py-2 text-center">
@@ -621,19 +621,19 @@ function AgentSummaryTab() {
                         ) : d.stage === "wip" ? (
                           <Badge className="text-[10px] bg-yellow-100 text-yellow-800">WIP</Badge>
                         ) : (
-                          <span className="text-gray-500">{d.stage}</span>
+                          <span className="text-muted-foreground">{d.stage}</span>
                         )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
-                <tfoot className="bg-gray-100 border-t font-semibold text-xs">
+                <tfoot className="bg-muted border-t font-semibold text-xs">
                   <tr>
-                    <td colSpan={3} className="px-3 py-2 text-gray-800">Total</td>
-                    <td className="px-3 py-2 text-right font-mono text-gray-500">
+                    <td colSpan={3} className="px-3 py-2 text-foreground">Total</td>
+                    <td className="px-3 py-2 text-right font-mono text-muted-foreground">
                       {formatFullCurrency(drilldownData.reduce((s, d) => s + d.totalFee, 0))}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono text-gray-900">
+                    <td className="px-3 py-2 text-right font-mono text-foreground">
                       {formatFullCurrency(drilldownData.reduce((s, d) => s + d.allocatedAmount, 0))}
                     </td>
                     <td colSpan={2} />
@@ -1284,13 +1284,13 @@ export default function WipReport() {
           {/* Filter dropdowns — one per former summary board */}
           <div className="flex flex-wrap items-center gap-2 flex-shrink-0 no-print" data-testid="wip-filters-bar">
             <div className="relative w-full sm:w-56">
-              <SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 pointer-events-none" />
+              <SearchIcon className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/70 pointer-events-none" />
               <input
                 type="search"
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
                 placeholder="Search deal, client, property…"
-                className="w-full h-8 pl-8 pr-2 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:border-ring"
+                className="w-full h-8 pl-8 pr-2 text-sm border border-border rounded-md bg-background focus:outline-none focus:border-ring"
                 data-testid="wip-search-input"
               />
             </div>
@@ -1374,12 +1374,12 @@ export default function WipReport() {
           </div>
 
           <div className="print-break" data-testid="wip-detail-table">
-            <div className="border-b border-gray-200 pb-2 flex items-center justify-between">
+            <div className="border-b border-border pb-2 flex items-center justify-between">
               <div>
-                <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                   Deal Detail
                 </span>
-                <span className="text-xs text-gray-500 ml-2">({sortedDetailEntries.length} rows)</span>
+                <span className="text-xs text-muted-foreground ml-2">({sortedDetailEntries.length} rows)</span>
               </div>
               <div className="flex items-center gap-2">
                 {activeFilterCount > 0 && (
@@ -1390,7 +1390,7 @@ export default function WipReport() {
                 <div className="relative no-print">
                   <button
                     onClick={() => setColMenuOpen((o) => !o)}
-                    className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-600 hover:text-gray-900 border border-gray-200 rounded px-2 py-1 bg-white"
+                    className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground border border-border rounded px-2 py-1 bg-background"
                     data-testid="wip-columns-button"
                   >
                     Columns{hiddenWipCols.size > 0 ? ` (${WIP_DETAIL_COLS.length - hiddenWipCols.size}/${WIP_DETAIL_COLS.length})` : ""}
@@ -1398,10 +1398,10 @@ export default function WipReport() {
                   {colMenuOpen && (
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setColMenuOpen(false)} />
-                      <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-lg shadow-xl p-2 w-48 max-h-[320px] overflow-y-auto">
-                        <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide px-1 pb-1">Show columns</p>
+                      <div className="absolute right-0 top-full mt-1 z-50 bg-popover border border-border rounded-lg shadow-xl p-2 w-48 max-h-[320px] overflow-y-auto">
+                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-1 pb-1">Show columns</p>
                         {WIP_DETAIL_COLS.map((c) => (
-                          <label key={c.key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-gray-50 cursor-pointer text-xs text-gray-700">
+                          <label key={c.key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-muted cursor-pointer text-xs text-muted-foreground">
                             <Checkbox checked={showCol(c.key)} onCheckedChange={() => toggleWipCol(c.key)} className="h-3.5 w-3.5" />
                             <span>{c.label}</span>
                           </label>
@@ -1427,7 +1427,7 @@ export default function WipReport() {
                 two-axis scrolling). One card per deal instead — name links to
                 the deal, client/property link through, fee + stage up front.
                 Desktop keeps the full table below. */}
-            <div className="md:hidden divide-y divide-gray-100" data-testid="wip-mobile-cards">
+            <div className="md:hidden divide-y divide-border" data-testid="wip-mobile-cards">
               {sortedDetailEntries.length === 0 && (
                 <p className="py-8 text-center text-sm text-muted-foreground">No deals match the current filters.</p>
               )}
@@ -1442,17 +1442,17 @@ export default function WipReport() {
                       ) : (
                         <span className="text-sm font-medium">{e.ref || "—"}</span>
                       )}
-                      {e.dealRef && <span className="ml-1.5 text-[11px] font-mono text-gray-400">#{e.dealRef}</span>}
+                      {e.dealRef && <span className="ml-1.5 text-[11px] font-mono text-muted-foreground/70">#{e.dealRef}</span>}
                     </div>
                     <div className="text-right shrink-0">
                       {e.stage === "invoiced" ? (
                         <span className="text-sm font-mono font-semibold text-green-700">{e.amtInvoice ? formatFullCurrency(e.amtInvoice) : "—"}</span>
                       ) : (
-                        <span className="text-sm font-mono font-semibold text-gray-900">{e.amtWip ? formatFullCurrency(e.amtWip) : "—"}</span>
+                        <span className="text-sm font-mono font-semibold text-foreground">{e.amtWip ? formatFullCurrency(e.amtWip) : "—"}</span>
                       )}
                     </div>
                   </div>
-                  <p className="text-xs text-gray-600 mt-0.5 truncate">
+                  <p className="text-xs text-muted-foreground mt-0.5 truncate">
                     {e.client && e.clientId ? (
                       <Link href={`/companies/${e.clientId}`}><span className="cursor-pointer">{e.client}</span></Link>
                     ) : (e.client || null)}
@@ -1472,11 +1472,11 @@ export default function WipReport() {
                     {e.stage !== "invoiced" && e.targetDate && (() => {
                       const d = new Date(e.targetDate);
                       return isNaN(d.getTime()) ? null : (
-                        <span className="text-[10px] text-gray-500">Target {d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" })}</span>
+                        <span className="text-[10px] text-muted-foreground">Target {d.toLocaleDateString("en-GB", { month: "short", year: "2-digit" })}</span>
                       );
                     })()}
                     {e.agent && (
-                      <span className="text-[10px] text-gray-500 ml-auto">
+                      <span className="text-[10px] text-muted-foreground ml-auto">
                         {e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ")}
                       </span>
                     )}
@@ -1484,7 +1484,7 @@ export default function WipReport() {
                 </div>
               ))}
               {sortedDetailEntries.length > 0 && (
-                <div className="py-3 px-1 flex items-center justify-between text-sm font-semibold bg-gray-50 rounded-b">
+                <div className="py-3 px-1 flex items-center justify-between text-sm font-semibold bg-muted/50 rounded-b">
                   <span>Total</span>
                   <span className="font-mono">
                     {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0) + (e.amtInvoice || 0), 0))}
@@ -1495,7 +1495,7 @@ export default function WipReport() {
             <div className="hidden md:block">
             <ScrollableTable minWidth={1400} pageScroll>
               <table className="w-full">
-                <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
+                <thead className="bg-muted/50 border-b sticky top-0 z-10 text-sm">
                   <tr>
                     <th className="w-[36px] px-2 py-2">
                       <Checkbox
@@ -1508,7 +1508,7 @@ export default function WipReport() {
                     {WIP_DETAIL_COLS.filter((col) => colVisible(col.key)).map((col) => (
                       <th
                         key={col.key}
-                        className={`px-2 py-2 text-left font-medium text-gray-600 cursor-pointer hover:text-gray-900 ${col.width}`}
+                        className={`px-2 py-2 text-left font-medium text-muted-foreground cursor-pointer hover:text-foreground ${col.width}`}
                         onClick={() => toggleSort(col.key)}
                         data-testid={`wip-sort-${col.key}`}
                       >
@@ -1520,9 +1520,9 @@ export default function WipReport() {
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100 text-xs">
+                <tbody className="divide-y divide-border text-xs">
                   {sortedDetailEntries.map((e, i) => (
-                    <tr key={e.id || i} className={`hover:bg-gray-50 group ${e.id && selectedIds.has(e.id) ? "bg-primary/5" : ""}`} data-testid={`wip-row-${i}`}>
+                    <tr key={e.id || i} className={`hover:bg-muted group ${e.id && selectedIds.has(e.id) ? "bg-primary/5" : ""}`} data-testid={`wip-row-${i}`}>
                       <td className="px-2 py-1.5">
                         {e.id && (
                           <Checkbox
@@ -1534,12 +1534,12 @@ export default function WipReport() {
                         )}
                       </td>
                       {colVisible("dealRef") && (
-                      <td className="px-2 py-1.5 text-xs font-mono text-gray-400 whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-xs font-mono text-muted-foreground/70 whitespace-nowrap">
                         {e.dealRef ? `#${e.dealRef}` : "—"}
                       </td>
                       )}
                       {colVisible("ref") && (
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[180px]">
+                      <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[180px]">
                         {e.dealId ? (
                           <Link href={`/deals/${e.dealId}`}>
                             <span className="text-primary hover:underline cursor-pointer" data-testid={`link-deal-${e.dealId}`}>{e.ref || "—"}</span>
@@ -1548,30 +1548,30 @@ export default function WipReport() {
                       </td>
                       )}
                       {colVisible("client") && (
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">
+                      <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[130px]">
                         {e.client && e.clientId ? (
                           <Link href={`/companies/${e.clientId}`}><span className="hover:underline hover:text-primary cursor-pointer">{e.client}</span></Link>
                         ) : (e.client || "—")}
                       </td>
                       )}
                       {colVisible("tenant") && (
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">
+                      <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[150px]">
                         {e.tenant && e.tenantId ? (
                           <Link href={`/companies/${e.tenantId}`}><span className="hover:underline hover:text-primary cursor-pointer">{e.tenant}</span></Link>
                         ) : (e.tenant || "—")}
                       </td>
                       )}
                       {colVisible("project") && (
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">
+                      <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[150px]">
                         {e.project && e.propertyId ? (
                           <Link href={`/properties/${e.propertyId}`}><span className="hover:underline hover:text-primary cursor-pointer">{e.project}</span></Link>
                         ) : (e.project || "—")}
                       </td>
                       )}
-                      {colVisible("billingEntity") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.billingEntity || "—"}</td>}
-                      {colVisible("team") && <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.team || "—"}</td>}
+                      {colVisible("billingEntity") && <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[150px]">{e.billingEntity || "—"}</td>}
+                      {colVisible("team") && <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[150px]">{e.team || "—"}</td>}
                       {colVisible("amtWip") && (
-                      <td className="px-2 py-1.5 text-gray-900 font-mono">
+                      <td className="px-2 py-1.5 text-foreground font-mono">
                         {e.amtWip ? formatFullCurrency(e.amtWip) : "—"}
                       </td>
                       )}
@@ -1581,7 +1581,7 @@ export default function WipReport() {
                       </td>
                       )}
                       {colVisible("dealDate") && (
-                      <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">
+                      <td className="px-2 py-1.5 text-muted-foreground whitespace-nowrap">
                         {(() => {
                           // Invoiced deals are done — a target month is meaningless,
                           // so the cell stays blank.
@@ -1610,7 +1610,7 @@ export default function WipReport() {
                                   // (this was the "I keep changing it and it won't save" bug).
                                   key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`}
                                   defaultValue={toDateInputValue(e.targetDate).slice(0, 7)}
-                                  className="text-xs border border-gray-200 rounded px-1 py-0.5 w-[150px] focus:outline-none focus:border-ring"
+                                  className="text-xs border border-border rounded px-1 py-0.5 w-[150px] focus:outline-none focus:border-ring"
                                   onChange={async (ev) => {
                                     const val = ev.target.value;
                                     if (!val) return;
@@ -1645,11 +1645,11 @@ export default function WipReport() {
                       <td className="px-2 py-1.5">
                         {e.dealType ? (
                           <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${DEAL_TYPE_BADGE_COLORS[e.dealType] || "bg-gray-100 text-gray-700"}`}>{e.dealType}</span>
-                        ) : <span className="text-gray-400">—</span>}
+                        ) : <span className="text-muted-foreground/70">—</span>}
                       </td>
                       )}
-                      {colVisible("agent") && <td className="px-2 py-1.5 text-gray-700">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>}
-                      {colVisible("dealStatus") && <td className="px-2 py-1.5 text-gray-600 truncate max-w-[100px]">{e.dealStatus || "—"}</td>}
+                      {colVisible("agent") && <td className="px-2 py-1.5 text-muted-foreground">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>}
+                      {colVisible("dealStatus") && <td className="px-2 py-1.5 text-muted-foreground truncate max-w-[100px]">{e.dealStatus || "—"}</td>}
                       {colVisible("stage") && (
                       <td className="px-2 py-1.5 text-xs truncate max-w-[100px]">
                         {e.stage === "pipeline" ? (
@@ -1659,18 +1659,18 @@ export default function WipReport() {
                         ) : e.stage === "invoiced" ? (
                           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Invoiced</span>
                         ) : (
-                          <span className="text-gray-500">{e.stage || "—"}</span>
+                          <span className="text-muted-foreground">{e.stage || "—"}</span>
                         )}
                       </td>
                       )}
                     </tr>
                   ))}
                 </tbody>
-                <tfoot className="bg-gray-100 border-t font-semibold">
+                <tfoot className="bg-muted border-t font-semibold">
                   <tr>
-                    <td colSpan={1 + WIP_LEAD_KEYS.filter(colVisible).length} className="px-2 py-1.5 text-gray-800">Total</td>
+                    <td colSpan={1 + WIP_LEAD_KEYS.filter(colVisible).length} className="px-2 py-1.5 text-foreground">Total</td>
                     {colVisible("amtWip") && (
-                      <td className="px-2 py-1.5 text-gray-900 font-mono">
+                      <td className="px-2 py-1.5 text-foreground font-mono">
                         {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
                       </td>
                     )}

@@ -3184,7 +3184,7 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
-                    <tr className="bg-muted/50/50 border-b text-left text-sm">
+                    <tr className="bg-muted/30 border-b text-left text-sm">
                       <th className="px-3 py-1 font-medium text-muted-foreground">Zone</th>
                       <th className="px-3 py-1 font-medium text-muted-foreground">Tenant</th>
                       <th className="px-3 py-1 font-medium text-muted-foreground">Status</th>
