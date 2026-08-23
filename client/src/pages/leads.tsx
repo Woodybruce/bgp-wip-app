@@ -220,16 +220,11 @@ export default function Leads() {
   return (
     <div className="h-full flex flex-col p-4 sm:p-6 gap-6 min-h-0" data-testid="leads-page">
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            <UserPlus className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Leads</h1>
-            <p className="text-sm text-muted-foreground">
-              CRM Leads — {items.length} total
-            </p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Leads</h1>
+          <p className="text-sm text-muted-foreground">
+            CRM Leads — {items.length} total
+          </p>
         </div>
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-lead">
           <Plus className="w-4 h-4 mr-1" />

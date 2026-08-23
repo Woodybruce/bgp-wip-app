@@ -933,9 +933,10 @@ html {
 :root, html { scrollbar-color: rgba(0, 0, 0, 0.2) transparent; }
 .dark { scrollbar-color: rgba(255, 255, 255, 0.2) transparent; }
 
-/* Consistent focus ring (BGP green) */
+/* Consistent focus ring — token-driven so every colour scheme keeps its
+   own accent (was hardcoded legacy green #2E5E3F). */
 *:focus-visible {
-  outline: 2px solid #2E5E3F;
+  outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
 }
 /* …except command-palette / picker search inputs (cmdk). They autofocus
@@ -947,28 +948,24 @@ html {
   outline: none;
 }
 
-/* Consistent link color (BGP green) */
+/* Consistent link color — bare links take the scheme's primary accent
+   (was hardcoded legacy green). */
 a:not([class]) {
-  color: #2E5E3F;
+  color: hsl(var(--primary));
 }
 a:not([class]):hover {
-  color: #1A3A28;
-}
-.dark a:not([class]) {
-  color: #7FBF95;
+  filter: brightness(0.85);
 }
 .dark a:not([class]):hover {
-  color: #A8D4B4;
+  filter: brightness(1.15);
 }
 
-/* Selection highlight color (BGP light green) */
+/* Selection highlight — primary tint (was BGP light green). */
 ::selection {
-  background-color: #E8F0EB;
-  color: #1A3A28;
+  background-color: hsl(var(--primary) / 0.18);
 }
 .dark ::selection {
-  background-color: rgba(46, 94, 63, 0.4);
-  color: #E8F0EB;
+  background-color: hsl(var(--primary) / 0.35);
 }
 
 /* ─── End Design Uniformity ─── */

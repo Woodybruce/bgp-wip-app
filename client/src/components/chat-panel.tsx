@@ -324,7 +324,7 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
     } else if (match[3] && match[4]) {
       result.push(
         <a key={key++} href={match[4]} target="_blank" rel="noopener noreferrer"
-          className={`underline ${isUserBubble ? "text-blue-300" : "text-blue-600"}`}
+          className={`underline ${isUserBubble ? "text-white/90" : "text-primary"}`}
         >{match[3]}</a>
       );
     } else if (match[5] && match[6]) {
@@ -342,7 +342,7 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
       const trailing = match[8].slice(url.length);
       result.push(
         <a key={key++} href={url} target="_blank" rel="noopener noreferrer"
-          className={`underline break-all ${isUserBubble ? "text-blue-300" : "text-blue-600"}`}
+          className={`underline break-all ${isUserBubble ? "text-white/90" : "text-primary"}`}
         >{url}</a>
       );
       if (trailing) result.push(trailing);

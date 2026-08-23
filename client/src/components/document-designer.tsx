@@ -871,7 +871,7 @@ export default function DocumentDesigner({
               <div className="flex items-center gap-1 ml-auto">
                 <Button
                   size="sm"
-                  className="h-7 text-xs bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white"
+                  className="h-7 text-xs"
                   onClick={handleAutoDesign}
                   disabled={autoDesigning}
                   data-testid="button-ai-auto-design"
@@ -897,11 +897,11 @@ export default function DocumentDesigner({
                 return (
                   <div key={page.id} className="relative">
                     <div className="absolute -top-5 left-0 flex items-center gap-2">
-                      <span className={`text-[10px] font-medium ${isActive ? "text-blue-600" : "text-muted-foreground"}`}>Page {pageIdx + 1}</span>
+                      <span className={`text-[10px] font-medium ${isActive ? "text-primary" : "text-muted-foreground"}`}>Page {pageIdx + 1}</span>
                     </div>
                     <div
                       ref={isActive ? canvasRef : undefined}
-                      className={`relative bg-white shadow-xl ${isActive ? "cursor-crosshair ring-2 ring-blue-500/40" : "cursor-pointer ring-1 ring-border"}`}
+                      className={`relative bg-white shadow-xl ${isActive ? "cursor-crosshair ring-2 ring-primary/40" : "cursor-pointer ring-1 ring-border"}`}
                       style={{
                         width: pw * CANVAS_SCALE,
                         height: ph * CANVAS_SCALE,
@@ -922,7 +922,7 @@ export default function DocumentDesigner({
                         .map((el) => (
                           <div
                             key={el.id}
-                            className={`absolute group ${selectedElementId === el.id && isActive ? "ring-2 ring-blue-500" : ""}`}
+                            className={`absolute group ${selectedElementId === el.id && isActive ? "ring-2 ring-primary" : ""}`}
                             style={{
                               left: el.x * CANVAS_SCALE,
                               top: el.y * CANVAS_SCALE,
@@ -1035,7 +1035,7 @@ export default function DocumentDesigner({
 
                             {selectedElementId === el.id && isActive && (
                               <div
-                                className="absolute -bottom-1 -right-1 w-3 h-3 bg-blue-500 rounded-sm cursor-se-resize"
+                                className="absolute -bottom-1 -right-1 w-3 h-3 bg-primary rounded-sm cursor-se-resize"
                                 onMouseDown={(e) => handleResizeMouseDown(e, el.id, "se")}
                                 data-testid={`resize-handle-${el.id}`}
                               />
@@ -1359,11 +1359,11 @@ export default function DocumentDesigner({
             </Card>
           )}
 
-          <Card data-testid="design-chat" className="border-violet-200 dark:border-violet-800">
-            <CardHeader className="pb-2 cursor-pointer bg-gradient-to-r from-violet-50 to-purple-50 dark:from-violet-950/30 dark:to-purple-950/30 rounded-t-lg" onClick={() => setChatOpen(!chatOpen)}>
+          <Card data-testid="design-chat">
+            <CardHeader className="pb-2 cursor-pointer bg-muted/40 rounded-t-lg" onClick={() => setChatOpen(!chatOpen)}>
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm flex items-center gap-1.5">
-                  <MessageSquare className="w-4 h-4 text-violet-600" />
+                  <MessageSquare className="w-4 h-4 text-muted-foreground" />
                   Design Assistant
                 </CardTitle>
                 {chatOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
@@ -1375,7 +1375,7 @@ export default function DocumentDesigner({
                 <ScrollArea className="h-56 border rounded-md p-2 bg-background">
                   {chatMessages.length === 0 && (
                     <div className="text-xs text-muted-foreground text-center py-8 space-y-2">
-                      <Bot className="w-6 h-6 mx-auto text-violet-500" />
+                      <Bot className="w-6 h-6 mx-auto text-muted-foreground" />
                       <p className="font-medium">Tell the AI what to design</p>
                       <div className="space-y-1 text-[10px]">
                         <p>"Make the heading larger and bold"</p>
@@ -1386,7 +1386,7 @@ export default function DocumentDesigner({
                   )}
                   {chatMessages.map((msg, i) => (
                     <div key={i} className={`flex gap-1.5 mb-2 ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                      {msg.role === "assistant" && <Bot className="w-3.5 h-3.5 mt-0.5 shrink-0 text-violet-600" />}
+                      {msg.role === "assistant" && <Bot className="w-3.5 h-3.5 mt-0.5 shrink-0 text-muted-foreground" />}
                       <div className={`text-xs px-2 py-1.5 rounded-lg max-w-[85%] ${
                         msg.role === "user"
                           ? "bg-primary text-primary-foreground"
@@ -1398,7 +1398,7 @@ export default function DocumentDesigner({
                   ))}
                   {chatLoading && (
                     <div className="flex gap-1.5 mb-2">
-                      <Bot className="w-3.5 h-3.5 mt-0.5 shrink-0 text-violet-600" />
+                      <Bot className="w-3.5 h-3.5 mt-0.5 shrink-0 text-muted-foreground" />
                       <div className="bg-muted text-xs px-2 py-1.5 rounded-lg flex items-center gap-1">
                         <Loader2 className="w-3 h-3 animate-spin" />
                         Designing...
@@ -1419,7 +1419,7 @@ export default function DocumentDesigner({
                   />
                   <Button
                     size="sm"
-                    className="h-8 w-8 p-0 shrink-0 bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700"
+                    className="h-8 w-8 p-0 shrink-0"
                     onClick={sendChatMessage}
                     disabled={chatLoading || !chatInput.trim()}
                     data-testid="button-send-design-chat"

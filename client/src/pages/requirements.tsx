@@ -4,6 +4,7 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { useTeam } from "@/lib/team-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import {
@@ -4075,35 +4076,22 @@ export default function Requirements() {
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-[1600px] mx-auto" data-testid="requirements-page">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-            <FileText className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>
-            <p className="text-sm text-muted-foreground">
-              {showInvestment ? "Investment requirements" : "Leasing requirements"}
-              {teamParam ? ` · Filtered by ${teamParam} team` : ""}
-              {companyIdParam ? " · Filtered by company" : ""}
-            </p>
-          </div>
+        <div>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>
+          <p className="text-sm text-muted-foreground">
+            {showInvestment ? "Investment requirements" : "Leasing requirements"}
+            {teamParam ? ` · Filtered by ${teamParam} team` : ""}
+            {companyIdParam ? " · Filtered by company" : ""}
+          </p>
         </div>
         {!isClientView && (
-        <div className="flex items-center gap-1 bg-muted rounded-lg p-1 w-full sm:w-auto shrink-0" data-testid="view-toggle">
-          <button
-            onClick={() => setIsInvestmentView(false)}
-            className={`flex-1 sm:flex-none px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${!isInvestmentView ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            data-testid="button-leasing-view"
-          >
+        <div className="flex items-center gap-1.5 shrink-0" data-testid="view-toggle">
+          <Pill active={!isInvestmentView} onClick={() => setIsInvestmentView(false)} data-testid="button-leasing-view">
             Leasing
-          </button>
-          <button
-            onClick={() => setIsInvestmentView(true)}
-            className={`flex-1 sm:flex-none px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${isInvestmentView ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            data-testid="button-investment-view"
-          >
+          </Pill>
+          <Pill active={isInvestmentView} onClick={() => setIsInvestmentView(true)} data-testid="button-investment-view">
             Investment
-          </button>
+          </Pill>
         </div>
         )}
       </div>

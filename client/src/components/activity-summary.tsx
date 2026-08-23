@@ -135,7 +135,7 @@ function RecentRow({ a, propertyId, summaries, setSummaries }: {
             title="AI summary — what was this about?"
             data-testid={`activity-summarise-${a.id}`}
           >
-            {summarise.isPending ? <Loader2 className="w-3 h-3 animate-spin text-purple-500" /> : <Sparkles className="w-3 h-3 text-purple-500" />}
+            {summarise.isPending ? <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" /> : <Sparkles className="w-3 h-3 text-muted-foreground" />}
           </button>
         )}
         {!isDealMove && (
@@ -176,8 +176,8 @@ function RecentRow({ a, propertyId, summaries, setSummaries }: {
         )}
       </div>
       {aiText && (
-        <div className="ml-5 mt-0.5 text-[11px] leading-snug rounded border border-purple-200/70 bg-purple-50/50 dark:bg-purple-950/20 dark:border-purple-900 px-2 py-1">
-          <Sparkles className="w-2.5 h-2.5 inline mr-1 text-purple-500" />{aiText}
+        <div className="ml-5 mt-0.5 text-[11px] leading-snug rounded border border-border bg-muted/40 px-2 py-1">
+          <Sparkles className="w-2.5 h-2.5 inline mr-1 text-primary" />{aiText}
         </div>
       )}
     </div>
@@ -307,7 +307,7 @@ export function ActivitySummary({ propertyId, companyId, variant = "both" }: {
       {upcoming.length > 0 && (
         <div>
           {variant === "both" && (
-            <div className="text-[10px] uppercase tracking-wide font-semibold mb-1 sticky top-0 bg-card text-emerald-700">Upcoming · {upcoming.length}</div>
+            <div className="text-[10px] uppercase tracking-wide font-semibold mb-1 sticky top-0 bg-card text-muted-foreground">Upcoming · {upcoming.length}</div>
           )}
           <div className="space-y-0.5">
             {upcoming.map(ev => {

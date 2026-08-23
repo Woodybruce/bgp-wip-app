@@ -112,7 +112,7 @@ export function InlineText({ value, onSave, placeholder = "—", className = "",
       {maxLines && value && value.length > 60 && !expanded && (
         <button
           onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
-          className="text-[10px] text-blue-500 hover:underline ml-1"
+          className="text-[10px] text-primary hover:underline ml-1"
           data-testid="inline-edit-expand"
         >
           more
@@ -121,7 +121,7 @@ export function InlineText({ value, onSave, placeholder = "—", className = "",
       {maxLines && expanded && (
         <button
           onClick={(e) => { e.stopPropagation(); setExpanded(false); }}
-          className="text-[10px] text-blue-500 hover:underline ml-1"
+          className="text-[10px] text-primary hover:underline ml-1"
           data-testid="inline-edit-collapse"
         >
           less

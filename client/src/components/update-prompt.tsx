@@ -38,7 +38,7 @@ export function UpdatePrompt() {
       data-testid="banner-update-available"
     >
       <div className="flex items-center gap-3 rounded-xl border bg-background shadow-lg px-4 py-3">
-        <RefreshCw className="w-5 h-5 text-indigo-500 shrink-0" />
+        <RefreshCw className="w-5 h-5 text-primary shrink-0" />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium leading-tight">Update available</p>
           <p className="text-xs text-muted-foreground leading-tight mt-0.5">

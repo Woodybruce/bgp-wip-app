@@ -467,7 +467,7 @@ function CvTab({ userId, canEdit }: { userId: string; canEdit: boolean }) {
             )}
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-2xl font-serif font-bold text-slate-900">{data.name}</h2>
+            <h2 className="text-2xl font-serif font-bold text-foreground">{data.name}</h2>
             {data.title && <div className="text-base text-[#0F4C75] mt-0.5">{data.title}</div>}
             <div className="text-xs text-muted-foreground mt-2 space-x-2">
               {data.email && <span>{data.email}</span>}
