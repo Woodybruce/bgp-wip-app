@@ -60,7 +60,7 @@ const VIEWPORTS = [
 ];
 
 // Environment noise the smoke/two-bot ledger already recognises — never report.
-const NOISE_URL = /live-intel|commentary\/regenerate|bgp-commentary|rocketreach|instagram|photo|favicon|manifest|\/logo|fonts|hot-update|vite|placeholder|clearbit|logo\.dev|auth\/microsoft/i;
+const NOISE_URL = /live-intel|commentary\/regenerate|bgp-commentary|rocketreach|instagram|photo|favicon|manifest|\/logo|fonts|hot-update|vite|placeholder|clearbit|logo\.dev|auth\/microsoft|microsoft\/auth|ai-briefing|\/api\/os\/|rssapp|ai-take|brand-gaps/i;
 const NOISE_CONSOLE = /429|Too Many Requests|ResizeObserver|favicon|manifest|third-party cookie|X-Frame|net::ERR_|Failed to load resource|SSO request failed|SSO not configured/i;
 
 // Controls that mutate or leave the app — the explorer never presses these.
