@@ -1078,7 +1078,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
 
                 {!readOnly && <div className="space-y-2">
                   <label className="text-xs font-semibold flex items-center gap-1.5">
-                    <Wand2 className="w-3.5 h-3.5 text-violet-600" />
+                    <Wand2 className="w-3.5 h-3.5 text-muted-foreground" />
                     Edit with AI
                   </label>
                   <Textarea
@@ -1096,7 +1096,7 @@ function ImageEditSheet({ image, onClose, readOnly = false }: { image: StudioIma
                         key={q}
                         type="button"
                         onClick={() => insertPrompt(q)}
-                        className="text-[11px] px-2.5 py-1 rounded-full bg-violet-50 text-violet-700 border border-violet-100 active:bg-violet-100"
+                        className="text-[11px] px-2.5 py-1 rounded-full bg-muted/40 text-foreground border border-border active:bg-muted"
                       >
                         {q}
                       </button>

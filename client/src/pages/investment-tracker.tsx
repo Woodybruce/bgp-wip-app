@@ -166,7 +166,7 @@ function CrmPicker({ items, value, valueName, onSelect, placeholder, testId, onC
                   value={`__create__ ${search}`}
                   onSelect={handleCreate}
                   disabled={creating}
-                  className="bg-emerald-50/60 dark:bg-emerald-950/30 data-[selected=true]:bg-emerald-100 dark:data-[selected=true]:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-medium"
+                  className="bg-muted/40 data-[selected=true]:bg-muted text-primary font-medium"
                 >
                   {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
                   <span>Create {createKind || "row"} "{search.trim()}"</span>
@@ -1613,7 +1613,7 @@ export default function InvestmentTrackerPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <CalendarDays className="h-4 w-4 text-blue-500" />
+                <CalendarDays className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-semibold">Viewings</span>
               </div>
               <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
@@ -1646,7 +1646,7 @@ export default function InvestmentTrackerPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <HandCoins className="h-4 w-4 text-amber-500" />
+                <HandCoins className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-semibold">Offers</span>
               </div>
               <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
@@ -1679,7 +1679,7 @@ export default function InvestmentTrackerPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <Users className="h-4 w-4 text-green-500" />
+                <Users className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-semibold">Introductions</span>
               </div>
               <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
@@ -2063,12 +2063,12 @@ export default function InvestmentTrackerPage() {
                             return (
                               <>
                                 {ct.email && (
-                                  <a href={`mailto:${ct.email}`} className="text-muted-foreground hover:text-blue-500" title={ct.email} data-testid={`link-client-contact-email-${item.id}`}>
+                                  <a href={`mailto:${ct.email}`} className="text-muted-foreground hover:text-primary" title={ct.email} data-testid={`link-client-contact-email-${item.id}`}>
                                     <Mail className="h-3 w-3" />
                                   </a>
                                 )}
                                 {ct.phone && (
-                                  <a href={`tel:${ct.phone}`} className="text-muted-foreground hover:text-blue-500" title={ct.phone} data-testid={`link-client-contact-phone-${item.id}`}>
+                                  <a href={`tel:${ct.phone}`} className="text-muted-foreground hover:text-primary" title={ct.phone} data-testid={`link-client-contact-phone-${item.id}`}>
                                     <Phone className="h-3 w-3" />
                                   </a>
                                 )}
@@ -2114,12 +2114,12 @@ export default function InvestmentTrackerPage() {
                                 return (
                                   <>
                                     {agent.email && (
-                                      <a href={`mailto:${agent.email}`} className="text-muted-foreground hover:text-blue-500" title={agent.email} data-testid={`link-agent-email-${item.id}`}>
+                                      <a href={`mailto:${agent.email}`} className="text-muted-foreground hover:text-primary" title={agent.email} data-testid={`link-agent-email-${item.id}`}>
                                         <Mail className="h-3 w-3" />
                                       </a>
                                     )}
                                     {agent.phone && (
-                                      <a href={`tel:${agent.phone}`} className="text-muted-foreground hover:text-blue-500" title={agent.phone} data-testid={`link-agent-phone-${item.id}`}>
+                                      <a href={`tel:${agent.phone}`} className="text-muted-foreground hover:text-primary" title={agent.phone} data-testid={`link-agent-phone-${item.id}`}>
                                         <Phone className="h-3 w-3" />
                                       </a>
                                     )}
@@ -2235,7 +2235,7 @@ export default function InvestmentTrackerPage() {
                     <TableCell className="px-2 py-1.5">
                       {item.dealId ? (
                         <div className="flex items-center gap-1">
-                          <a href={`/deals/${item.dealId}`} className="text-[10px] text-blue-600 hover:underline truncate max-w-[80px]" data-testid={`link-deal-${item.id}`}>
+                          <a href={`/deals/${item.dealId}`} className="text-[10px] text-primary hover:underline truncate max-w-[80px]" data-testid={`link-deal-${item.id}`}>
                             {dealMap.get(item.dealId) || "View Deal"}
                           </a>
                           <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" onClick={() => unlinkDealMutation.mutate(item.id)} title="Unlink deal" data-testid={`button-unlink-deal-${item.id}`}>

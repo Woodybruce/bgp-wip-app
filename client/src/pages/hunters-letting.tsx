@@ -49,7 +49,7 @@ export default function HuntersLetting() {
     <div className="p-4 sm:p-6 space-y-4 max-w-[1400px] mx-auto">
       <div>
         <h1 className="text-xl font-semibold flex items-center gap-2">
-          <Building2 className="w-5 h-5 text-blue-600" />
+          <Building2 className="w-5 h-5 text-muted-foreground" />
           Letting Hunter
         </h1>
         <p className="text-xs text-muted-foreground mt-0.5">

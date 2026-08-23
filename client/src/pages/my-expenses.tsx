@@ -410,9 +410,9 @@ export default function MyExpenses() {
       </div>
 
       {/* How it works */}
-      <Card className="bg-blue-50/50 border-blue-200/50 dark:bg-blue-950/20 dark:border-blue-900/30">
+      <Card className="bg-muted/40 border-border">
         <CardContent className="p-4 flex gap-3 text-sm">
-          <Sparkles className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+          <Sparkles className="w-5 h-5 text-primary shrink-0 mt-0.5" />
           <div>
             <strong>How it works:</strong> Tap the card to pay (Apple Pay or online). You'll get a WhatsApp message —
             reply with a photo of the receipt. ChatBGP reads it and posts it to Xero automatically. No spreadsheets,
@@ -629,7 +629,7 @@ export default function MyExpenses() {
                             <Button
                               size="sm"
                               variant="ghost"
-                              className="h-7 text-xs text-blue-600"
+                              className="h-7 text-xs text-primary"
                               disabled={resubmitMutation.isPending && resubmitMutation.variables === e.id}
                               onClick={() => resubmitMutation.mutate(e.id)}
                               data-testid={`button-resubmit-${e.id}`}
@@ -644,7 +644,7 @@ export default function MyExpenses() {
                             <Button
                               size="sm"
                               variant="ghost"
-                              className="h-7 text-xs text-blue-600"
+                              className="h-7 text-xs text-primary"
                               disabled={submitForApprovalMutation.isPending && submitForApprovalMutation.variables === e.id}
                               onClick={() => submitForApprovalMutation.mutate(e.id)}
                               data-testid={`button-submit-expense-${e.id}`}
@@ -937,10 +937,10 @@ function EditExpenseDialog({ expense, onClose, onSaved }: { expense: Expense | n
               or type the correction and hit Re-read for another AI pass.
               Saving teaches it (merchant→category memory + the note). */}
           {expense.receiptFilename && (
-            <div className="rounded-lg border border-violet-200 dark:border-violet-900/40 bg-violet-50/50 dark:bg-violet-950/20 px-3 py-2.5 space-y-2">
+            <div className="rounded-lg border border-border bg-muted/40 px-3 py-2.5 space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-violet-500" />
+                  <Sparkles className="w-3.5 h-3.5 text-primary" />
                   <span className="text-xs font-medium">Receipt: {expense.receiptFilename}</span>
                 </div>
                 {!isPosted && (
@@ -1300,7 +1300,7 @@ function ContactMultiPicker({
                       className="w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-accent"
                       onClick={() => onChange(isSelected ? selected.filter(x => x !== id) : [...selected, id])}
                     >
-                      <span className={`text-emerald-600 w-3.5 ${isSelected ? "opacity-100" : "opacity-0"}`}>✓</span>
+                      <span className={`text-primary w-3.5 ${isSelected ? "opacity-100" : "opacity-0"}`}>✓</span>
                       <span>{u.name}</span>
                       {u.email && <span className="text-xs text-muted-foreground">{u.email}</span>}
                     </button>

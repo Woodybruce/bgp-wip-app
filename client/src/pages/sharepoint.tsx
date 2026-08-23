@@ -323,8 +323,8 @@ function ConnectPrompt() {
       </div>
       <Card className="max-w-md mx-auto">
         <CardContent className="p-8 text-center space-y-4">
-          <div className="w-16 h-16 rounded-2xl bg-blue-500/10 flex items-center justify-center mx-auto">
-            <Cloud className="w-8 h-8 text-blue-500" />
+          <div className="w-16 h-16 rounded-2xl bg-muted/40 border border-border flex items-center justify-center mx-auto">
+            <Cloud className="w-8 h-8 text-primary" />
           </div>
           <div>
             <h3 className="font-semibold text-lg">Connect to Microsoft 365</h3>

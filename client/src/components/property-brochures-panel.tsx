@@ -212,7 +212,7 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
         <div className="flex items-center gap-1.5 mb-2 shrink-0">
           <button
             onClick={() => setTab("leasing")}
-            className={`px-2 py-1 rounded text-[11px] font-medium ${tab === "leasing" ? "bg-blue-600 text-white" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
+            className={`px-2 py-1 rounded text-[11px] font-medium ${tab === "leasing" ? "bg-foreground text-background" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
             data-testid="tab-brochures-leasing"
           >
             Leasing
@@ -220,7 +220,7 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
           </button>
           <button
             onClick={() => setTab("investment")}
-            className={`px-2 py-1 rounded text-[11px] font-medium ${tab === "investment" ? "bg-emerald-700 text-white" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
+            className={`px-2 py-1 rounded text-[11px] font-medium ${tab === "investment" ? "bg-foreground text-background" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
             data-testid="tab-brochures-investment"
           >
             Investment
@@ -337,10 +337,10 @@ export function PropertyBrochuresPanel({ propertyId }: { propertyId: string }) {
         </CardContent>
 
         {isDragging && (
-          <div className="absolute inset-0 z-10 rounded-lg border-2 border-dashed border-blue-500 bg-blue-50/90 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+          <div className="absolute inset-0 z-10 rounded-lg border-2 border-dashed border-primary bg-background/90 backdrop-blur-sm flex items-center justify-center pointer-events-none">
             <div className="text-center">
-              <Upload className="w-8 h-8 mx-auto mb-1.5 text-blue-600" />
-              <p className="text-sm font-medium text-blue-900">Drop PDF as <span className="capitalize">{tab}</span> brochure</p>
+              <Upload className="w-8 h-8 mx-auto mb-1.5 text-primary" />
+              <p className="text-sm font-medium text-foreground">Drop PDF as <span className="capitalize">{tab}</span> brochure</p>
             </div>
           </div>
         )}
@@ -419,7 +419,7 @@ function BrochureTile({
   const ingestRunning = brochure.ingestStatus === "pending" || brochure.ingestStatus === "running";
   return (
     <div
-      className={`group border rounded-md overflow-hidden bg-white hover:border-blue-300 transition-colors ${hero ? "h-full flex flex-col" : ""}`}
+      className={`group border rounded-md overflow-hidden bg-white hover:border-primary/40 transition-colors ${hero ? "h-full flex flex-col" : ""}`}
       data-testid={`brochure-tile-${brochure.id}`}
     >
       {/* Inline PDF preview. The iframe owns its own pointer/scroll

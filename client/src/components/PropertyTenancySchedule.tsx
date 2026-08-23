@@ -308,7 +308,7 @@ function HeaderFilter({ field, label, distinctValues, active, onChange }: {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className={`inline-flex items-center justify-center w-4 h-4 rounded ml-1 ${isActive ? "text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30" : "text-gray-400 hover:text-gray-600"}`}
+          className={`inline-flex items-center justify-center w-4 h-4 rounded ml-1 ${isActive ? "text-primary bg-primary/10" : "text-gray-400 hover:text-gray-600"}`}
           title={`Filter ${label}`}
           data-testid={`tenancy-filter-trigger-${field}`}
         >
@@ -320,7 +320,7 @@ function HeaderFilter({ field, label, distinctValues, active, onChange }: {
           <span className="text-xs font-semibold">{label}</span>
           {isActive && (
             <button
-              className="text-[10px] text-indigo-500 hover:underline"
+              className="text-[10px] text-primary hover:underline"
               onClick={() => onChange(new Set())}
               data-testid={`tenancy-filter-clear-${field}`}
             >
@@ -947,7 +947,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
             </Button>
             {!onFullBoard && (
               <Link href={`/tenancy-schedule/${propertyId}`}>
-                <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-tenancy-full-board">
+                <span className="text-[10px] text-primary hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-tenancy-full-board">
                   <ExternalLink className="w-3 h-3" />Full Board
                 </span>
               </Link>
@@ -978,7 +978,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           {(Object.keys(colFilters).length > 0 || search || statusFilter) && (
             <Badge
               variant="outline"
-              className="text-[10px] cursor-pointer border-indigo-400 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
+              className="text-[10px] cursor-pointer hover:bg-muted"
               onClick={clearAllFilters}
               data-testid="tenancy-clear-filters"
             >
@@ -1076,7 +1076,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                 <span className="flex items-center gap-2">
                   {!keyColumnsActive && (
                     <button
-                      className="text-[10px] text-indigo-500 hover:underline"
+                      className="text-[10px] text-primary hover:underline"
                       onClick={applyKeyColumns}
                       data-testid="btn-tenancy-columns-key"
                     >
@@ -1085,7 +1085,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                   )}
                   {hiddenFields.size > 0 && (
                     <button
-                      className="text-[10px] text-indigo-500 hover:underline"
+                      className="text-[10px] text-primary hover:underline"
                       onClick={() => setHiddenFields(new Set())}
                       data-testid="btn-tenancy-columns-reset"
                     >
@@ -1125,7 +1125,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
           </Popover>
           {!onFullBoard && !readOnly && (
             <Link href={`/tenancy-schedule/${propertyId}`}>
-              <span className="text-[10px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer ml-1" data-testid="link-tenancy-full-board">
+              <span className="text-[10px] text-primary hover:underline flex items-center gap-1 cursor-pointer ml-1" data-testid="link-tenancy-full-board">
                 <ExternalLink className="w-3 h-3" />Full Board
               </span>
             </Link>
@@ -1160,7 +1160,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
             // (null === null) — so Total NIA / Passing Rent / Service Charge
             // all rendered with a permanent bright-blue ring. Filterable
             // tiles only.
-            className={`bg-gray-50 dark:bg-gray-800 rounded-lg p-2 text-center min-w-0 ${s.filter ? "cursor-pointer hover:ring-1 ring-blue-400" : ""} ${s.filter && statusFilter === s.filter ? "ring-2 ring-blue-500" : ""}`}
+            className={`bg-gray-50 dark:bg-gray-800 rounded-lg p-2 text-center min-w-0 ${s.filter ? "cursor-pointer hover:ring-1 ring-primary/60" : ""} ${s.filter && statusFilter === s.filter ? "ring-2 ring-primary" : ""}`}
             onClick={() => s.filter && setStatusFilter(statusFilter === s.filter ? null : s.filter)}
             data-testid={`tenancy-stat-${s.label.toLowerCase().replace(/\s/g, "-")}`}
           >
@@ -1478,7 +1478,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
             )}
             {unit.deal_id && (
               <a href={`/deals/${unit.deal_id}`} className="inline-flex items-center" title={`Open deal${unit.deal_ref ? ` ${unit.deal_ref}` : ""}`}>
-                <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-blue-50">
+                <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted">
                   <Link2 className="w-2.5 h-2.5" />
                   {unit.deal_ref ? `#${unit.deal_ref}` : "Deal"}
                 </Badge>
@@ -1648,7 +1648,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
                     onClick={(e: any) => e.stopPropagation()}
                   >
                     <span
-                      className={`text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer font-medium ${c.field === "tenant_name" && isVacant ? "text-amber-600" : ""}`}
+                      className={`text-primary hover:underline cursor-pointer font-medium ${c.field === "tenant_name" && isVacant ? "text-amber-600" : ""}`}
                       data-testid={`tenancy-tenant-link-${c.field}-${unit.id}`}
                     >
                       {displayVal}
@@ -1754,7 +1754,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
         <div className="flex gap-1 justify-center">
           {deal && (
             <a href={`/deals?id=${deal.id}`} className="inline-flex items-center" title={`Deal: ${deal.name} (${deal.status})`} data-testid={`tenancy-deal-link-${unit.id}`}>
-              <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-blue-50"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
+              <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted"><Link2 className="w-2.5 h-2.5" />WIP</Badge>
             </a>
           )}
           {/* View this unit on the plan — sets the URL hash so the
@@ -1774,7 +1774,7 @@ function UnitRow({ unit, columns, onUpdate, onDelete, onDeleteTracker, onPromote
             title="Highlight this unit on the property plan"
             data-testid={`tenancy-plan-link-${unit.id}`}
           >
-            <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-violet-50">
+            <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted">
               <MapPinIcon className="w-2.5 h-2.5" />Plan
             </Badge>
           </button>

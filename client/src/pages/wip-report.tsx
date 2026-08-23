@@ -329,7 +329,7 @@ function FeeCheckTab() {
               <tr key={r.dealId} className="border-t hover:bg-gray-50" data-testid={`fee-check-${r.dealId}`}>
                 <td className="px-3 py-2">
                   <Link href={`/deals/${r.dealId}`}>
-                    <span className="text-blue-600 hover:underline cursor-pointer">
+                    <span className="text-primary hover:underline cursor-pointer">
                       {r.dealRef ? `${r.dealRef} · ` : ""}{r.name || "—"}
                     </span>
                   </Link>
@@ -347,7 +347,7 @@ function FeeCheckTab() {
                   <button
                     onClick={() => matchToXero(r)}
                     disabled={savingId === r.dealId}
-                    className="text-xs px-2 py-1 rounded border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50 whitespace-nowrap"
+                    className="text-xs px-2 py-1 rounded border border-border hover:bg-muted disabled:opacity-50 whitespace-nowrap"
                     data-testid={`fee-check-match-${r.dealId}`}
                   >
                     {savingId === r.dealId ? "Saving…" : `Set → ${money(r.xeroNet)}`}
@@ -593,7 +593,7 @@ function AgentSummaryTab() {
                     <tr key={d.dealId} className="hover:bg-gray-50">
                       <td className="px-3 py-2 text-gray-700">
                         <Link href={`/deals/${d.dealId}`}>
-                          <span className="text-blue-600 hover:underline cursor-pointer">{d.name}</span>
+                          <span className="text-primary hover:underline cursor-pointer">{d.name}</span>
                         </Link>
                       </td>
                       <td className="px-3 py-2 text-gray-700 truncate max-w-[160px]">{d.property || "---"}</td>
@@ -1290,7 +1290,7 @@ export default function WipReport() {
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
                 placeholder="Search deal, client, property…"
-                className="w-full h-8 pl-8 pr-2 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:border-blue-400"
+                className="w-full h-8 pl-8 pr-2 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:border-ring"
                 data-testid="wip-search-input"
               />
             </div>
@@ -1365,7 +1365,7 @@ export default function WipReport() {
             {activeFilterCount > 0 && (
               <button
                 onClick={resetAllFilters}
-                className="text-xs text-blue-600 hover:underline flex items-center gap-0.5 ml-1"
+                className="text-xs text-primary hover:underline flex items-center gap-0.5 ml-1"
                 data-testid="wip-clear-all-filters"
               >
                 <X className="h-3 w-3" /> Reset filters
@@ -1437,7 +1437,7 @@ export default function WipReport() {
                     <div className="min-w-0">
                       {e.dealId ? (
                         <Link href={`/deals/${e.dealId}`}>
-                          <span className="text-sm font-medium text-blue-700 cursor-pointer">{e.ref || "—"}</span>
+                          <span className="text-sm font-medium text-primary cursor-pointer">{e.ref || "—"}</span>
                         </Link>
                       ) : (
                         <span className="text-sm font-medium">{e.ref || "—"}</span>
@@ -1542,7 +1542,7 @@ export default function WipReport() {
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[180px]">
                         {e.dealId ? (
                           <Link href={`/deals/${e.dealId}`}>
-                            <span className="text-blue-600 hover:underline cursor-pointer" data-testid={`link-deal-${e.dealId}`}>{e.ref || "—"}</span>
+                            <span className="text-primary hover:underline cursor-pointer" data-testid={`link-deal-${e.dealId}`}>{e.ref || "—"}</span>
                           </Link>
                         ) : (e.ref || "—")}
                       </td>
@@ -1550,21 +1550,21 @@ export default function WipReport() {
                       {colVisible("client") && (
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">
                         {e.client && e.clientId ? (
-                          <Link href={`/companies/${e.clientId}`}><span className="hover:underline hover:text-blue-600 cursor-pointer">{e.client}</span></Link>
+                          <Link href={`/companies/${e.clientId}`}><span className="hover:underline hover:text-primary cursor-pointer">{e.client}</span></Link>
                         ) : (e.client || "—")}
                       </td>
                       )}
                       {colVisible("tenant") && (
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">
                         {e.tenant && e.tenantId ? (
-                          <Link href={`/companies/${e.tenantId}`}><span className="hover:underline hover:text-blue-600 cursor-pointer">{e.tenant}</span></Link>
+                          <Link href={`/companies/${e.tenantId}`}><span className="hover:underline hover:text-primary cursor-pointer">{e.tenant}</span></Link>
                         ) : (e.tenant || "—")}
                       </td>
                       )}
                       {colVisible("project") && (
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">
                         {e.project && e.propertyId ? (
-                          <Link href={`/properties/${e.propertyId}`}><span className="hover:underline hover:text-blue-600 cursor-pointer">{e.project}</span></Link>
+                          <Link href={`/properties/${e.propertyId}`}><span className="hover:underline hover:text-primary cursor-pointer">{e.project}</span></Link>
                         ) : (e.project || "—")}
                       </td>
                       )}
@@ -1610,7 +1610,7 @@ export default function WipReport() {
                                   // (this was the "I keep changing it and it won't save" bug).
                                   key={`wip-target-${e.dealId}-${e.targetDate ?? ""}`}
                                   defaultValue={toDateInputValue(e.targetDate).slice(0, 7)}
-                                  className="text-xs border border-gray-200 rounded px-1 py-0.5 w-[150px] focus:outline-none focus:border-blue-400"
+                                  className="text-xs border border-gray-200 rounded px-1 py-0.5 w-[150px] focus:outline-none focus:border-ring"
                                   onChange={async (ev) => {
                                     const val = ev.target.value;
                                     if (!val) return;

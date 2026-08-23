@@ -178,7 +178,7 @@ function SubCompaniesPanel({ parentId, parentName }: { parentId: string; parentN
     <Card>
       <CardContent className="p-3 space-y-2">
         <h3 className="font-semibold text-xs flex items-center gap-1.5">
-          <Building2 className="w-3.5 h-3.5 text-teal-500" />
+          <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
           Sub-entities ({subs.length})
         </h3>
         <div className="space-y-1">
@@ -717,7 +717,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
               <KycSection title="Company Details" icon={Building2} defaultOpen>
                 <div className="space-y-1">
                   <div className="flex justify-between"><span className="text-muted-foreground">Company No.</span>
-                    <a href={`https://find-and-update.company-information.service.gov.uk/company/${displayNumber}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1" data-testid="link-ch-profile">
+                    <a href={`https://find-and-update.company-information.service.gov.uk/company/${displayNumber}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline flex items-center gap-1" data-testid="link-ch-profile">
                       {displayNumber} <ExternalLink className="w-3 h-3" />
                     </a>
                   </div>
@@ -1410,7 +1410,7 @@ function CompanyDetail({ id }: { id: string }) {
                 <Card className="md:col-span-2">
                   <CardContent className="p-3 space-y-2">
                     <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5 text-indigo-500" />
+                      <Users className="w-3.5 h-3.5 text-muted-foreground" />
                       BGP Team
                     </h3>
                     <ClientTeamOrgChart clientCompanyId={id} />
@@ -1436,7 +1436,7 @@ function CompanyDetail({ id }: { id: string }) {
                 <Card>
                   <CardContent className="p-3 space-y-2">
                     <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                      <Building2 className="w-3.5 h-3.5 text-teal-500" />
+                      <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
                       Linked Properties ({linkedProperties.length})
                     </h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 max-h-[300px] overflow-y-auto">
@@ -1598,7 +1598,7 @@ function PropertyFoldersBrowser({ propertyName }: { propertyName: string }) {
         className="flex items-center gap-1.5 w-full text-left px-2 py-1 rounded hover:bg-muted/50 transition-colors"
       >
         <ChevronRight className="w-3 h-3 text-muted-foreground" />
-        <Building className="w-3 h-3 text-teal-500" />
+        <Building className="w-3 h-3 text-muted-foreground" />
         <span className="text-xs truncate">{propertyName}</span>
       </button>
     );
@@ -1608,11 +1608,11 @@ function PropertyFoldersBrowser({ propertyName }: { propertyName: string }) {
     <div className="border rounded overflow-hidden">
       <button
         onClick={() => { setExpanded(false); setCurrentTeam(null); setCurrentPath(""); }}
-        className="flex items-center gap-1.5 w-full text-left px-2 py-1.5 bg-teal-50 dark:bg-teal-900/20 hover:bg-teal-100 dark:hover:bg-teal-900/30 transition-colors"
+        className="flex items-center gap-1.5 w-full text-left px-2 py-1.5 bg-muted/50 hover:bg-muted transition-colors"
       >
-        <ChevronDown className="w-3 h-3 text-teal-600" />
-        <Building className="w-3 h-3 text-teal-500" />
-        <span className="text-xs font-medium truncate text-teal-700 dark:text-teal-300">{propertyName}</span>
+        <ChevronDown className="w-3 h-3 text-muted-foreground" />
+        <Building className="w-3 h-3 text-muted-foreground" />
+        <span className="text-xs font-medium truncate">{propertyName}</span>
       </button>
       <div className="divide-y">
         {!teamResults && (
@@ -2346,15 +2346,15 @@ function CompanyList() {
     return counts;
   }, [companies]);
 
-  const TYPE_STAT_CARDS: { label: string; type: string | null; icon: any; color: string; activeColor: string }[] = [
-    { label: "All Companies", type: null, icon: Building2, color: "bg-blue-600", activeColor: "bg-blue-800 ring-2 ring-blue-400" },
-    { label: "Landlords", type: "Landlord", icon: Crown, color: "bg-emerald-600", activeColor: "bg-emerald-800 ring-2 ring-emerald-400" },
-    { label: "Agents", type: "Agent", icon: Briefcase, color: "bg-indigo-600", activeColor: "bg-indigo-800 ring-2 ring-indigo-400" },
-    { label: "Clients", type: "Client", icon: UserCheck, color: "bg-sky-600", activeColor: "bg-sky-800 ring-2 ring-sky-400" },
-    { label: "Tenant - Retail", type: "Tenant - Retail", icon: Building, color: "bg-teal-600", activeColor: "bg-teal-800 ring-2 ring-teal-400" },
-    { label: "Tenant - Restaurant", type: "Tenant - Restaurant", icon: Building, color: "bg-rose-600", activeColor: "bg-rose-800 ring-2 ring-rose-400" },
-    { label: "Tenant - Leisure", type: "Tenant - Leisure", icon: Building, color: "bg-purple-600", activeColor: "bg-purple-800 ring-2 ring-purple-400" },
-    { label: "Investors", type: "Investor", icon: Handshake, color: "bg-amber-600", activeColor: "bg-amber-800 ring-2 ring-amber-400" },
+  const TYPE_STAT_CARDS: { label: string; type: string | null; icon: any }[] = [
+    { label: "All Companies", type: null, icon: Building2 },
+    { label: "Landlords", type: "Landlord", icon: Crown },
+    { label: "Agents", type: "Agent", icon: Briefcase },
+    { label: "Clients", type: "Client", icon: UserCheck },
+    { label: "Tenant - Retail", type: "Tenant - Retail", icon: Building },
+    { label: "Tenant - Restaurant", type: "Tenant - Restaurant", icon: Building },
+    { label: "Tenant - Leisure", type: "Tenant - Leisure", icon: Building },
+    { label: "Investors", type: "Investor", icon: Handshake },
   ];
 
   const activeTypeFilter = columnFilters.type || [];
@@ -2437,14 +2437,9 @@ function CompanyList() {
             >
               <Card className={`overflow-hidden transition-all ${isActive ? "ring-2 ring-primary" : "hover:shadow-md"}`}>
                 <CardContent className="p-3">
-                  <div className="flex items-center gap-2">
-                    <div className={`w-8 h-8 rounded-lg ${isActive ? card.activeColor : card.color} flex items-center justify-center`}>
-                      <card.icon className="w-4 h-4 text-white" />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-lg font-bold leading-tight">{count}</p>
-                      <p className="text-[10px] text-muted-foreground truncate leading-tight">{card.label}</p>
-                    </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] uppercase tracking-wider text-muted-foreground truncate leading-tight">{card.label}</p>
+                    <p className="text-2xl font-bold font-mono tabular-nums leading-tight">{count}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -2646,7 +2641,7 @@ function CompanyList() {
                               href={company.domainUrl.startsWith("http") ? company.domainUrl : `https://${company.domainUrl}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+                              className="text-primary hover:underline flex items-center gap-1"
                               data-testid={`link-website-${company.id}`}
                             >
                               <Globe className="w-3 h-3 shrink-0" />

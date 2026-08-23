@@ -791,7 +791,7 @@ export function InlineLandlord({
           </div>
         ) : landlord.companiesHouseNumber && !landlord.parentCompanyId ? (
           <button
-            className="ml-3 text-[10px] text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200 flex items-center gap-0.5 transition-colors"
+            className="ml-3 text-[10px] text-primary hover:underline flex items-center gap-0.5 transition-colors"
             onClick={() => discoverParentMutation.mutate()}
             disabled={discoverParentMutation.isPending}
             data-testid={`discover-parent-${propertyId}`}
@@ -1078,7 +1078,7 @@ export function InlineCompetitorAgent({
           <button
             onClick={() => createMutation.mutate(searchTerm.trim())}
             disabled={createMutation.isPending}
-            className="w-full text-left px-3 py-2 border-t hover:bg-emerald-50 dark:hover:bg-emerald-950 text-xs flex items-center gap-2 text-emerald-700 dark:text-emerald-400"
+            className="w-full text-left px-3 py-2 border-t hover:bg-muted text-xs flex items-center gap-2 text-primary"
           >
             <Plus className="w-3 h-3" />
             <span>Add "<span className="font-medium">{searchTerm.trim()}</span>" as a new agent</span>
@@ -1986,7 +1986,7 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
                 className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate transition-colors group cursor-pointer"
                 data-testid={`folder-item-${folder.id}`}
               >
-                <FolderOpen className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                <FolderOpen className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                 <span className="text-xs flex-1 truncate">{folder.name}</span>
                 {folder.childCount > 0 && (
                   <span className="text-[10px] text-muted-foreground">{folder.childCount}</span>
@@ -2005,7 +2005,7 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
                 data-testid={`file-item-${file.id}`}
                 title={file.size ? `${Math.round(file.size / 1024).toLocaleString()} KB` : undefined}
               >
-                <FileText className="w-3.5 h-3.5 text-blue-500/70 flex-shrink-0" />
+                <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                 <span className="text-xs flex-1 truncate">{file.name}</span>
                 {file.size > 0 && <span className="text-[10px] text-muted-foreground">{file.size < 1024 * 1024 ? `${Math.round(file.size / 1024)} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`}</span>}
                 {driveId && rowMenu(file)}
@@ -2355,7 +2355,7 @@ export function ClientPropertyFoldersPanel({ propertyName }: { propertyName: str
                 className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50 text-left min-w-0"
                 data-testid={`client-folder-${item.id}`}
               >
-                <FolderOpen className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <FolderOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                 <span className="text-xs truncate flex-1">{item.name}</span>
                 {item.childCount != null && <span className="text-[10px] text-muted-foreground shrink-0">{item.childCount}</span>}
                 <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
@@ -3668,7 +3668,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
                       {property.proprietorCompanyNumber && (
                         <div className="flex gap-x-4 text-[11px]">
                           <span className="text-muted-foreground">Co. No:</span>
-                          <a href={`https://find-and-update.company-information.service.gov.uk/company/${property.proprietorCompanyNumber}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5">
+                          <a href={`https://find-and-update.company-information.service.gov.uk/company/${property.proprietorCompanyNumber}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline flex items-center gap-0.5">
                             {property.proprietorCompanyNumber} <ExternalLink className="w-2.5 h-2.5" />
                           </a>
                         </div>
@@ -3853,7 +3853,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
                   <span className="text-xs font-semibold">Companies House — {prof.companyName}</span>
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-muted-foreground">
-                  <a href={`https://find-and-update.company-information.service.gov.uk/company/${prof.companyNumber}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5">
+                  <a href={`https://find-and-update.company-information.service.gov.uk/company/${prof.companyNumber}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline flex items-center gap-0.5">
                     CH: {prof.companyNumber} <ExternalLink className="w-2.5 h-2.5" />
                   </a>
                   <span>Status: <span className={prof.companyStatus === "active" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>{prof.companyStatus}</span></span>
@@ -4061,7 +4061,7 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
                       {!ltsIsClient && legacyToCode(unit.marketingStatus || "AVA") === "AVA" && (
                         <button
                           onClick={() => setSuggestUnit({ id: unit.id, unitName: unit.unitName })}
-                          className="text-purple-500 hover:text-purple-700 transition-colors"
+                          className="text-muted-foreground hover:text-foreground transition-colors"
                           title="AI: which brands should we pitch this unit to?"
                           data-testid={`button-suggest-brands-${unit.id}`}
                         >
@@ -4371,7 +4371,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                   <div className="space-y-1">
                     <p className="text-[10px] text-muted-foreground mb-1">{freeholds.length} freehold title{freeholds.length !== 1 ? "s" : ""} found for {postcode}</p>
                     {aiMatchLoading && (
-                      <div className="flex items-center gap-2 p-2 bg-violet-50 dark:bg-violet-950/30 rounded text-[10px] text-violet-700 dark:text-violet-300">
+                      <div className="flex items-center gap-2 p-2 bg-muted/40 rounded text-[10px] text-muted-foreground">
                         <Loader2 className="w-3 h-3 animate-spin" />
                         AI is matching your property address to the correct title...
                       </div>
@@ -4405,12 +4405,12 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                         const isExpanded = expandedLeaseholds[tn];
                         return (
                           <div key={tn} className="space-y-1">
-                            <div className={`flex items-center justify-between p-2 rounded ${isSelected ? "bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800" : isAiRecommended ? "bg-green-50 dark:bg-green-950/20 border border-green-300 dark:border-green-800" : "bg-muted/30"}`}>
+                            <div className={`flex items-center justify-between p-2 rounded ${isSelected ? "bg-muted/40 border border-border" : isAiRecommended ? "bg-green-50 dark:bg-green-950/20 border border-green-300 dark:border-green-800" : "bg-muted/30"}`}>
                               <div className="min-w-0 flex-1">
                                 <span className="font-mono font-medium text-[11px]">{tn}</span>
                                 {fh.address && <span className="text-[10px] text-muted-foreground ml-2">{fh.address}</span>}
                                 {fh.ownership_type && <Badge variant="outline" className="text-[10px] ml-1">{fh.ownership_type}</Badge>}
-                                {isSelected && <Badge className="text-[10px] ml-1 bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Selected</Badge>}
+                                {isSelected && <Badge className="text-[10px] ml-1 bg-foreground text-background">Selected</Badge>}
                                 {isAiRecommended && <Badge className="text-[10px] ml-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">AI Match</Badge>}
                                 {lhCount > 0 && (
                                   <Badge variant="outline" className="text-[10px] ml-1 cursor-pointer hover:bg-muted" onClick={() => loadFreeholdLeaseholds(tn)}>
@@ -4716,7 +4716,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             {hasFreeholds && (
               <div className={`p-2.5 rounded-lg space-y-0.5 ${aiMatch && aiMatch.confidence !== "none" && !property.titleNumber ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800" : "bg-muted/30"}`} data-testid="intel-summary-ownership">
                 <div className="flex items-center gap-1.5">
-                  {aiMatch && !property.titleNumber ? <Sparkles className="w-3 h-3 text-green-500" /> : <FileSearch className="w-3 h-3 text-indigo-500" />}
+                  {aiMatch && !property.titleNumber ? <Sparkles className="w-3 h-3 text-green-500" /> : <FileSearch className="w-3 h-3 text-muted-foreground" />}
                   <span className="text-[10px] text-muted-foreground font-medium">Land Titles</span>
                 </div>
                 <p className="text-sm font-bold">{freeholds.length} freehold{freeholds.length !== 1 ? "s" : ""}</p>
@@ -4734,7 +4734,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               return (
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-epc">
                   <div className="flex items-center gap-1.5">
-                    <Zap className="w-3 h-3 text-amber-500" />
+                    <Zap className="w-3 h-3 text-muted-foreground" />
                     <span className="text-[10px] text-muted-foreground font-medium">EPC Rating</span>
                   </div>
                   <p className="text-sm font-bold">{topEpc.ratingBand || topEpc.rating || "N/A"}</p>
@@ -4747,7 +4747,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               return (
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-voa">
                   <div className="flex items-center gap-1.5">
-                    <Landmark className="w-3 h-3 text-blue-500" />
+                    <Landmark className="w-3 h-3 text-muted-foreground" />
                     <span className="text-[10px] text-muted-foreground font-medium">Rateable Value</span>
                   </div>
                   <p className="text-sm font-bold">£{Number(topVoa.rateableValue || 0).toLocaleString()}</p>
@@ -4757,7 +4757,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             })()}
             <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-flood">
               <div className="flex items-center gap-1.5">
-                <Droplets className="w-3 h-3 text-cyan-500" />
+                <Droplets className="w-3 h-3 text-muted-foreground" />
                 <span className="text-[10px] text-muted-foreground font-medium">Flood Risk</span>
               </div>
               {hasFlood && data.floodRisk.activeFloods > 0 ? (
@@ -4777,7 +4777,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               return (
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-tfl">
                   <div className="flex items-center gap-1.5">
-                    <Train className="w-3 h-3 text-purple-500" />
+                    <Train className="w-3 h-3 text-muted-foreground" />
                     <span className="text-[10px] text-muted-foreground font-medium">Nearest Station</span>
                   </div>
                   <p className="text-sm font-bold truncate">{nearest.name}</p>
@@ -4788,7 +4788,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             {hasPlanningApps && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-planning-apps">
                 <div className="flex items-center gap-1.5">
-                  <FileText className="w-3 h-3 text-blue-500" />
+                  <FileText className="w-3 h-3 text-muted-foreground" />
                   <span className="text-[10px] text-muted-foreground font-medium">Planning Apps</span>
                 </div>
                 <p className="text-sm font-bold">{planningApps.length} application{planningApps.length !== 1 ? "s" : ""}</p>
@@ -4798,7 +4798,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             {hasPlanning && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-planning">
                 <div className="flex items-center gap-1.5">
-                  <ShieldAlert className="w-3 h-3 text-orange-500" />
+                  <ShieldAlert className="w-3 h-3 text-muted-foreground" />
                   <span className="text-[10px] text-muted-foreground font-medium">Planning</span>
                 </div>
                 <p className="text-sm font-bold">{Object.values(data.planningData).filter((v: any) => Array.isArray(v) && v.length > 0).length} designation(s)</p>
@@ -4808,7 +4808,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             {hasListed && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-listed">
                 <div className="flex items-center gap-1.5">
-                  <Landmark className="w-3 h-3 text-rose-500" />
+                  <Landmark className="w-3 h-3 text-muted-foreground" />
                   <span className="text-[10px] text-muted-foreground font-medium">Listed Buildings</span>
                 </div>
                 <p className="text-sm font-bold">{data.listedBuilding.length} nearby</p>
@@ -4818,7 +4818,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             {hasPdStats && data.propertyDataCoUk["postcode-key-stats"].data.average_yield && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-yield">
                 <div className="flex items-center gap-1.5">
-                  <TrendingUp className="w-3 h-3 text-green-500" />
+                  <TrendingUp className="w-3 h-3 text-muted-foreground" />
                   <span className="text-[10px] text-muted-foreground font-medium">Avg Yield</span>
                 </div>
                 <p className="text-sm font-bold">{data.propertyDataCoUk["postcode-key-stats"].data.average_yield}</p>
@@ -4848,10 +4848,10 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
   return (
     <Card data-testid="property-news-panel" className="overflow-hidden">
       <CardContent className="p-4 pt-3">
-        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap -mx-4 -mt-3 px-4 pt-3 pb-2 bg-gradient-to-r from-sky-500/[0.07] to-transparent">
+        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap -mx-4 -mt-3 px-4 pt-3 pb-2 bg-muted/40">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="w-6 h-6 rounded-full bg-sky-500/10 flex items-center justify-center shrink-0">
-              <Newspaper className="h-3.5 w-3.5 text-sky-600" />
+            <span className="w-6 h-6 rounded-full bg-muted flex items-center justify-center shrink-0">
+              <Newspaper className="h-3.5 w-3.5 text-primary" />
             </span>
             <span className="text-sm font-semibold shrink-0">News Feed</span>
             {/* Property name in the badge is redundant with the page
@@ -5009,7 +5009,7 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
         {data!.matchingRequirements.length > 0 && (
           <div>
             <div className="flex items-center gap-1.5 mb-2">
-              <FileText className="w-3.5 h-3.5 text-purple-500" />
+              <FileText className="w-3.5 h-3.5 text-muted-foreground" />
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Matching Requirements</p>
               <Badge variant="secondary" className="text-[10px]">{data!.matchingRequirements.length}</Badge>
             </div>
@@ -5031,7 +5031,7 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
         {data!.comps.length > 0 && (
           <div>
             <div className="flex items-center gap-1.5 mb-2">
-              <TrendingUp className="w-3.5 h-3.5 text-orange-500" />
+              <TrendingUp className="w-3.5 h-3.5 text-muted-foreground" />
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Historical Comps</p>
               <Badge variant="secondary" className="text-[10px]">{data!.comps.length}</Badge>
             </div>
@@ -5054,7 +5054,7 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
         {data!.news.length > 0 && (
           <div>
             <div className="flex items-center gap-1.5 mb-2">
-              <Newspaper className="w-3.5 h-3.5 text-blue-500" />
+              <Newspaper className="w-3.5 h-3.5 text-muted-foreground" />
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">News Mentions</p>
               <Badge variant="secondary" className="text-[10px]">{data!.news.length}</Badge>
             </div>
@@ -6075,7 +6075,7 @@ function PropertiesList({
                                 const hasEnrichmentData = !!(item.proprietorName || item.landlordId || item.titleNumber);
                                 if (isRecent && !hasEnrichmentData && item.address) {
                                   return (
-                                    <span className="inline-flex items-center gap-1 text-[10px] text-purple-500 animate-pulse" data-testid={`enriching-${item.id}`}>
+                                    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground animate-pulse" data-testid={`enriching-${item.id}`}>
                                       <Loader2 className="w-2.5 h-2.5 animate-spin" />
                                       Enriching...
                                     </span>
@@ -6475,7 +6475,7 @@ function LandlordHealthView({
       </div>
 
       {/* Explanation banner */}
-      <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+      <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
         <strong>How this works:</strong> Each property should have (1) a <strong>Landlord / Client</strong> — the real relationship brand (e.g. Landsec, AEW, Grosvenor),
         and (2) a <strong>Billing Entity</strong> — the SPV/shell company used for invoicing (e.g. LS Tottenham Court Road Limited).
         Contacts, emails and calendar invites should always be linked to the Parent Brand.

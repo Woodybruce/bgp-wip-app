@@ -147,7 +147,7 @@ function MemberCard({ member, onClick, onDragStart, isLead, onDragOver, onDrop, 
         </div>
       )}
       {member.property_count > 0 && (
-        <div className="absolute -top-1.5 -right-1.5 bg-indigo-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center shadow">
+        <div className="absolute -top-1.5 -right-1.5 bg-foreground text-background text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center shadow">
           {member.property_count}
         </div>
       )}
@@ -158,7 +158,7 @@ function MemberCard({ member, onClick, onDragStart, isLead, onDragOver, onDrop, 
           <div className="font-semibold text-[12px] leading-tight truncate" title={displayName}>{displayName}</div>
           {member.bgp_title && <div className="text-[10px] text-muted-foreground truncate" title={member.bgp_title}>{member.bgp_title}</div>}
           {member.role && (
-            <div className="text-[10px] text-indigo-600 dark:text-indigo-400 truncate mt-0.5" title={member.role}>{member.role}</div>
+            <div className="text-[10px] text-muted-foreground truncate mt-0.5" title={member.role}>{member.role}</div>
           )}
           {Array.isArray(member.properties) && member.properties.length > 0 && (
             <div
@@ -688,12 +688,12 @@ function MemberSheet({ member, allMembers, clientCompanyId, columnNames, onClose
             <div className="flex-1 min-w-0 space-y-1">
               {member.bgp_title && <div className="text-sm">{member.bgp_title}</div>}
               {member.email && (
-                <a href={`mailto:${member.email}`} className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1">
+                <a href={`mailto:${member.email}`} className="text-xs text-primary hover:underline flex items-center gap-1">
                   <Mail className="w-3 h-3" />{member.email}
                 </a>
               )}
               <div className="text-xs text-muted-foreground">{member.property_count} {member.property_count === 1 ? "property" : "properties"} on this client</div>
-              <Link href={`/hr?person=${member.user_id}`} className="text-xs text-indigo-500 hover:underline inline-block">Open full HR profile →</Link>
+              <Link href={`/hr?person=${member.user_id}`} className="text-xs text-primary hover:underline inline-block">Open full HR profile →</Link>
             </div>
           </div>
 

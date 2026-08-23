@@ -528,10 +528,10 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
   const tr = data.tenancy_resolution || { total: 0, resolved: 0, unresolved: 0 };
   return (
     <div className="space-y-2.5">
-      <div className="rounded-md border border-purple-200 bg-purple-50/60 p-2">
+      <div className="rounded-md border border-border bg-muted/40 p-2">
         <div className="flex items-center justify-between mb-1">
-          <div className="text-[10px] uppercase tracking-wide text-purple-700 font-medium flex items-center gap-1">
-            <Sparkles className="w-3 h-3" /> Tenancy schedule (spine)
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium flex items-center gap-1">
+            <Sparkles className="w-3 h-3 text-primary" /> Tenancy schedule (spine)
           </div>
           <Badge variant="outline" className="text-[10px] bg-white">
             {tr.resolved}/{tr.total} linked to brand
@@ -542,7 +542,7 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
         </p>
         <div className="flex gap-1.5 flex-wrap">
           <Button
-            size="sm" variant="default" className="h-6 text-[11px] gap-1 bg-purple-600 hover:bg-purple-700"
+            size="sm" variant="default" className="h-6 text-[11px] gap-1"
             onClick={runResolve} disabled={resolving}
             data-testid="btn-resolve-tenants"
           >
@@ -551,7 +551,7 @@ export function PropertyLinkageCard({ propertyId }: { propertyId: string }) {
           </Button>
           {((data.integrity?.leasing_units_no_unit_fk || 0) > 0 || (data.integrity?.available_units_no_unit_fk || 0) > 0) && (
             <Button
-              size="sm" variant="outline" className="h-6 text-[11px] gap-1 border-purple-300 text-purple-700 hover:bg-purple-50"
+              size="sm" variant="outline" className="h-6 text-[11px] gap-1"
               onClick={runPromote} disabled={promoting}
               data-testid="btn-promote-orphans"
             >
@@ -690,7 +690,7 @@ function UnresolvedTenantsDialog({ propertyId, onClose }: { propertyId: string; 
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-base flex items-center gap-2">
-            <Search className="w-4 h-4 text-purple-600" />
+            <Search className="w-4 h-4 text-muted-foreground" />
             Unresolved tenants on this property
           </DialogTitle>
           <DialogDescription className="text-xs">
@@ -833,7 +833,7 @@ function DuplicateCluster({
           return (
             <div
               key={r.id}
-              className={`flex items-center gap-2 text-xs border rounded px-2 py-1 ${isPrimary ? "bg-emerald-50 border-emerald-300" : "bg-white"}`}
+              className={`flex items-center gap-2 text-xs border rounded px-2 py-1 ${isPrimary ? "border-primary bg-primary/5" : "bg-white"}`}
             >
               <label className="flex items-center gap-1 cursor-pointer">
                 <input
@@ -848,7 +848,7 @@ function DuplicateCluster({
                 <div className="flex items-center gap-1.5">
                   <span className="font-medium truncate">{r.tenant_name || r.trading_name || "—"}</span>
                   {r.tenant_company_id && (
-                    <Badge variant="outline" className="text-[9px] border-emerald-300 text-emerald-700">linked</Badge>
+                    <Badge variant="outline" className="text-[9px]">linked</Badge>
                   )}
                 </div>
                 <div className="text-[10px] text-muted-foreground">
@@ -923,7 +923,7 @@ function OrphanDealsList({ propertyId }: { propertyId: string }) {
           </span>
           <Badge variant="outline" className="text-[9px]">{d.status}</Badge>
           <Button
-            size="sm" variant="ghost" className="h-5 text-[10px] gap-0.5 px-1.5 text-emerald-700 hover:bg-emerald-50"
+            size="sm" variant="ghost" className="h-5 text-[10px] gap-0.5 px-1.5"
             onClick={() => adopt(d.id)} disabled={busyId === d.id}
             data-testid={`btn-adopt-deal-${d.id}`}
           >
@@ -1110,8 +1110,8 @@ export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { prope
   return (
     <Card>
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
-        <CardTitle className="text-xs flex items-center gap-2 text-purple-700 dark:text-purple-300">
-          <Sparkles className="w-3.5 h-3.5" /> BGP Commentary
+        <CardTitle className="text-xs flex items-center gap-2">
+          <Sparkles className="w-3.5 h-3.5 text-muted-foreground" /> BGP Commentary
           {updatedAt && (
             <span className="text-[10px] text-muted-foreground font-normal ml-auto">
               {new Date(updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
@@ -1121,7 +1121,7 @@ export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { prope
         <Button
           size="sm"
           variant="ghost"
-          className="h-6 text-[10px] text-purple-700 dark:text-purple-300"
+          className="h-6 text-[10px]"
           onClick={() => regenerate.mutate()}
           disabled={regenerate.isPending}
           title="Re-run Claude over the latest deals / activity / risks"
@@ -1132,11 +1132,11 @@ export function BgpCommentaryCard({ propertyId, commentary, updatedAt }: { prope
       </CardHeader>
       <CardContent className="p-3 pt-0">
         {commentary ? (
-          <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-3">
+          <div className="rounded-md border border-border bg-muted/40 p-3">
             {renderAiCommentary(commentary)}
           </div>
         ) : (
-          <div className="rounded-md border border-dashed border-purple-200 dark:border-purple-900 p-3 text-center">
+          <div className="rounded-md border border-dashed border-border p-3 text-center">
             <p className="text-xs text-muted-foreground">No commentary yet. Generate one based on the live deals, activity feed, risks, and leasing schedule for this property.</p>
           </div>
         )}
@@ -1239,13 +1239,11 @@ export function WeeklyFocusCard({ propertyId }: { propertyId: string; focus?: As
 
   return (
     <Card className="overflow-hidden">
-      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between bg-gradient-to-r from-violet-500/[0.07] to-transparent">
+      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <span className="w-6 h-6 rounded-full bg-violet-500/10 flex items-center justify-center shrink-0">
-            <Target className="w-3.5 h-3.5 text-violet-600" />
-          </span>
+          <Target className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           This week's focus
-          <Badge className="text-[10px] bg-violet-100 text-violet-700 hover:bg-violet-100 dark:bg-violet-950 dark:text-violet-300 border-transparent">{tasks.length}</Badge>
+          <Badge variant="secondary" className="text-[10px]">{tasks.length}</Badge>
         </CardTitle>
         <Link href="/tasks">
           <Button size="sm" variant="ghost" className="h-6 text-[10px]">

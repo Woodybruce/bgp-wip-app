@@ -172,7 +172,7 @@ export function AIActivityCard({ subjectType, subjectId, title, compact }: Props
         <CardHeader className={compact ? "pb-1.5 pt-2 px-3" : "pb-2"}>
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <CardTitle className={`flex items-center gap-2 ${compact ? "text-sm" : "text-base"}`}>
-              <Sparkles className="w-4 h-4 text-purple-500" />
+              <Sparkles className="w-4 h-4 text-muted-foreground" />
               {title || "Activity"}
               {lastTouchPill}
               {data?.generatedAt && (
@@ -312,8 +312,8 @@ function ActivityMarkdown({
             onClick={() => h && onOpenMeeting({ eventId: h.eventId, mailboxEmail: h.mailboxEmail })}
             title={title}
             className={`inline-flex items-center text-[10px] font-mono px-1 py-0 mx-0.5 rounded border ${disabled
-              ? "bg-violet-100/30 text-violet-600/60 border-violet-200/60 cursor-not-allowed"
-              : "bg-violet-100/60 text-violet-700 border-violet-300 hover:bg-violet-200/70 cursor-pointer dark:bg-violet-900/30 dark:text-violet-300"
+              ? "bg-muted/40 text-muted-foreground border-muted cursor-not-allowed"
+              : "bg-primary/10 text-primary border-primary/30 hover:bg-primary/20 cursor-pointer"
             }`}
           >
             <CalendarDays className="w-2.5 h-2.5 mr-0.5" />M{idx}
@@ -520,7 +520,7 @@ export function MeetingViewerDialog({ eventId, mailboxEmail, onClose }: { eventI
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="text-base pr-8 flex items-center gap-2">
-            <CalendarDays className="w-4 h-4 text-violet-500" />
+            <CalendarDays className="w-4 h-4 text-muted-foreground" />
             {loading ? "Loading meeting…" : event?.subject || "Meeting"}
             {event?.isCancelled && <Badge className="bg-red-50 text-red-700 border-red-200 text-[10px]">Cancelled</Badge>}
           </DialogTitle>
@@ -606,7 +606,7 @@ export function AIActivityTrigger({
           onClick={(e) => e.stopPropagation()}
           data-testid={`ai-activity-trigger-${subjectType}-${subjectId}`}
         >
-          <Sparkles className="w-3 h-3 text-purple-500" /> Activity
+          <Sparkles className="w-3 h-3 text-muted-foreground" /> Activity
         </Button>
       </SheetTrigger>
       <SheetContent side="right" className="w-[600px] sm:max-w-[600px] overflow-y-auto">

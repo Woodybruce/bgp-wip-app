@@ -395,7 +395,7 @@ export function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: str
       <div className="rounded-md border p-2.5">
         <div className="flex items-center justify-between mb-1.5">
           <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-violet-500" />
+            <Sparkles className="w-4 h-4 text-muted-foreground" />
             <span className="text-xs font-semibold uppercase tracking-wide">AI Source-of-Funds</span>
             <Badge variant="outline" className="text-[10px]">{sofItems.length} doc{sofItems.length === 1 ? "" : "s"}</Badge>
           </div>
@@ -490,7 +490,7 @@ function UploadLinksPanel({ dealId, dealName }: { dealId: string; dealName: stri
     <div className="rounded-md border p-2.5">
       <div className="flex items-center justify-between mb-1.5">
         <div className="flex items-center gap-2">
-          <Send className="w-4 h-4 text-blue-500" />
+          <Send className="w-4 h-4 text-muted-foreground" />
           <span className="text-xs font-semibold uppercase tracking-wide">Client upload links</span>
           <Badge variant="outline" className="text-[10px]">{links.length}</Badge>
         </div>
@@ -579,7 +579,7 @@ function MlroReportButtons({ dealId }: { dealId: string }) {
   return (
     <div className="flex items-center justify-end gap-2 flex-wrap">
       {savedUrl && (
-        <a href={savedUrl} target="_blank" rel="noreferrer" className="text-[11px] text-emerald-700 hover:underline">SP file ↗</a>
+        <a href={savedUrl} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline">SP file ↗</a>
       )}
       <Button size="sm" variant="outline" onClick={() => save.mutate()} disabled={save.isPending} data-testid="button-mlro-save-sp">
         {save.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Cloud className="w-3.5 h-3.5 mr-1.5" />}

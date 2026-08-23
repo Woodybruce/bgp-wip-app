@@ -126,10 +126,10 @@ function InlineEditCell({ unitId, field, value, onSave, className = "", placehol
   if (editing) {
     if (multiline) {
       return <textarea ref={textareaRef} value={val} onChange={e => setVal(e.target.value)} onBlur={save} onKeyDown={e => { if (e.key === "Escape") { setVal(value); setEditing(false); } }}
-        className={`w-full bg-white dark:bg-gray-900 border rounded px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-teal-400 resize-none ${className}`} rows={2} data-testid={`inline-edit-${field}-${unitId}`} />;
+        className={`w-full bg-white dark:bg-gray-900 border rounded px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-ring resize-none ${className}`} rows={2} data-testid={`inline-edit-${field}-${unitId}`} />;
     }
     return <input ref={inputRef} value={val} onChange={e => setVal(e.target.value)} onBlur={save} onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") { setVal(value); setEditing(false); } }}
-      className={`w-full bg-white dark:bg-gray-900 border rounded px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-teal-400 ${className}`} data-testid={`inline-edit-${field}-${unitId}`} />;
+      className={`w-full bg-white dark:bg-gray-900 border rounded px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-ring ${className}`} data-testid={`inline-edit-${field}-${unitId}`} />;
   }
 
   return <span onClick={() => setEditing(true)} className={`cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 rounded px-1 py-0.5 -mx-1 block min-h-[18px] ${className}`} data-testid={`inline-${field}-${unitId}`}>
@@ -354,7 +354,7 @@ function ExistingTenantCell({ unit, nameColour, onSave }: {
               onClick={(e: any) => e.stopPropagation()}
               data-testid={`existing-search-${unit.id}`}
             >
-              <ExternalLink className="w-2.5 h-2.5 text-indigo-500 hover:text-indigo-700" />
+              <ExternalLink className="w-2.5 h-2.5 text-primary" />
             </Link>
           )}
         </div>
@@ -588,7 +588,7 @@ function MentionTextarea({ unitId, propertyId, value, onSave }: {
         data-testid={`mention-display-${unitId}`}
       >
         {parts.map((p, i) => p.startsWith("@") ? (
-          <span key={i} className="text-blue-600 dark:text-blue-400 font-medium">{p}</span>
+          <span key={i} className="text-primary font-medium">{p}</span>
         ) : <span key={i}>{p}</span>)}
         {!value && <span className="italic text-muted-foreground">Update / agent input (use @ to tag)</span>}
       </div>
@@ -747,7 +747,7 @@ function InlineDateCell({ unitId, field, value, onSave, className = "" }: {
 
   if (editing) {
     return <input ref={ref} type="date" defaultValue={value || ""} onBlur={e => { setEditing(false); if (e.target.value !== (value || "")) onSave(unitId, field, e.target.value); }}
-      className={`bg-white dark:bg-gray-900 border rounded px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-teal-400 w-[110px] ${className}`} data-testid={`inline-date-${field}-${unitId}`} />;
+      className={`bg-white dark:bg-gray-900 border rounded px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-ring w-[110px] ${className}`} data-testid={`inline-date-${field}-${unitId}`} />;
   }
 
   return <span onClick={() => setEditing(true)} className={`cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 rounded px-1 py-0.5 -mx-1 block min-h-[18px] ${className}`} data-testid={`inline-${field}-${unitId}`}>
@@ -846,7 +846,7 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
           {linkedCompanies.length > 0 ? (
             linkedCompanies.map(c => (
               <Link key={c.id} href={`/companies/${c.id}`} onClick={e => e.stopPropagation()}>
-                <Badge variant="outline" className="text-[10px] cursor-pointer border-teal-300 text-teal-700 bg-teal-50 hover:bg-teal-100 px-1.5 py-0">
+                <Badge variant="outline" className="text-[10px] cursor-pointer hover:bg-muted px-1.5 py-0">
                   {c.name}
                 </Badge>
               </Link>
@@ -956,7 +956,7 @@ function TargetTenantRow({ target, onUpdate, onDelete }: {
         <div className="flex items-center gap-1.5">
           {target.company_id ? (
             <Link href={`/companies/${target.company_id}`}>
-              <span className="font-medium text-blue-600 hover:underline cursor-pointer" data-testid={`target-link-${target.id}`}>
+              <span className="font-medium text-primary hover:underline cursor-pointer" data-testid={`target-link-${target.id}`}>
                 {target.company_name || target.brand_name}
               </span>
             </Link>
@@ -1641,7 +1641,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
         <div>
           <div className="flex items-center gap-2">
             <Link href={`/properties/${propertyId}`}>
-              <h2 className="text-lg font-bold hover:text-blue-600 hover:underline cursor-pointer transition-colors" data-testid="property-title">{propertyName}</h2>
+              <h2 className="text-lg font-bold hover:text-primary hover:underline cursor-pointer transition-colors" data-testid="property-title">{propertyName}</h2>
             </Link>
             {privacyInfo?.privacy_enabled && (
               <Badge variant="outline" className="text-[11px] border-violet-300 text-violet-700 bg-violet-50">
@@ -2210,7 +2210,7 @@ function TargetCompanyNames({ targetCompanyIds, targetBrands }: { targetCompanyI
         onClick={(e) => e.stopPropagation()}
         className="inline-flex items-center hover:underline"
       >
-        <Badge variant="outline" className="text-[8px] border-teal-300 text-teal-700 bg-teal-50 px-1 py-0 cursor-pointer">
+        <Badge variant="outline" className="text-[8px] px-1 py-0 cursor-pointer">
           {r.name}
         </Badge>
       </Link>
@@ -2430,7 +2430,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
             <Plus className="w-3 h-3 mr-1" />Add Unit
           </Button>
           <Link href={`/leasing-schedule/${propertyId}`}>
-            <span className="text-[11px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer">
+            <span className="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer">
               <ExternalLink className="w-3 h-3" />Full Board
             </span>
           </Link>
@@ -2519,7 +2519,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
             <input
               value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Search units..."
-              className="pl-6 pr-2 h-7 text-[11px] border rounded-md bg-background w-[140px] outline-none focus:ring-1 focus:ring-teal-400"
+              className="pl-6 pr-2 h-7 text-[11px] border rounded-md bg-background w-[140px] outline-none focus:ring-1 focus:ring-ring"
               data-testid="search-prop-units"
             />
           </div>
@@ -2544,7 +2544,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
             <Plus className="w-3 h-3" />Add
           </Button>
           <Link href={`/leasing-schedule/${propertyId}`}>
-            <span className="text-[11px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-full-board">
+            <span className="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-full-board">
               <ExternalLink className="w-3 h-3" />Full Board
             </span>
           </Link>
@@ -2562,7 +2562,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
             <button
               key={s.key}
               onClick={() => setStatusFilter(statusFilter === s.key ? null : s.key)}
-              className={`rounded-lg border px-3 py-2 text-left transition-all ${statusFilter === s.key ? "ring-2 ring-teal-400 " + s.color : "border-gray-200 dark:border-gray-700 hover:border-gray-300"}`}
+              className={`rounded-lg border px-3 py-2 text-left transition-all ${statusFilter === s.key ? "ring-2 ring-ring " + s.color : "border-gray-200 dark:border-gray-700 hover:border-gray-300"}`}
               data-testid={`stat-${s.key}`}
             >
               <div className={`text-lg font-bold ${statusFilter === s.key ? "" : "text-foreground"}`}>{s.count}</div>
@@ -2860,7 +2860,7 @@ function StrategicPrinciplesPanel({ propertyId }: { propertyId: string }) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
         {/* Five Priorities */}
         <div>
-          <div className="font-semibold text-emerald-700 dark:text-emerald-400 mb-1.5">5 Priorities</div>
+          <div className="font-semibold text-muted-foreground mb-1.5">5 Priorities</div>
           <div className="space-y-1">
             {view.fivePriorities.map((p, i) => (
               <div key={i} className="grid grid-cols-[100px_1fr] gap-2 items-start">
@@ -2877,7 +2877,7 @@ function StrategicPrinciplesPanel({ propertyId }: { propertyId: string }) {
 
         {/* Top Three Strategic Priorities */}
         <div>
-          <div className="font-semibold text-emerald-700 dark:text-emerald-400 mb-1.5">Top Three Strategic Priorities</div>
+          <div className="font-semibold text-muted-foreground mb-1.5">Top Three Strategic Priorities</div>
           <div className="space-y-1">
             {view.topThree.map((p, i) => (
               <div key={i} className="grid grid-cols-[100px_1fr] gap-2 items-start">
@@ -3152,7 +3152,7 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
           <span className="text-emerald-600">{occupied} occupied</span>
           {expiring > 0 && <span className="text-amber-600">{expiring} expiring</span>}
           <Link href="/leasing-schedule">
-            <span className="text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-leasing-board">
+            <span className="text-primary hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-leasing-board">
               <ExternalLink className="w-3 h-3" />Open Board
             </span>
           </Link>
@@ -3177,7 +3177,7 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
               <span className="text-[11px] text-emerald-600 ml-auto">{propOccupied} occ</span>
               {propExpiring > 0 && <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-600 ml-1">{propExpiring} exp</Badge>}
               <Link href={`/leasing-schedule/${propId}`}>
-                <span className="text-[11px] text-indigo-500 hover:underline ml-2" onClick={e => e.stopPropagation()}>View Full</span>
+                <span className="text-[11px] text-primary hover:underline ml-2" onClick={e => e.stopPropagation()}>View Full</span>
               </Link>
             </button>
             {expanded && (
@@ -3542,7 +3542,7 @@ export default function LeasingSchedulePage() {
           <Card className="flex-shrink-0 min-w-[120px]">
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                <div className="w-2.5 h-2.5 rounded-full bg-primary/60" />
                 <div>
                   <p className="text-lg font-bold">{stats.totalProps}</p>
                   <p className="text-xs text-muted-foreground">Properties</p>
@@ -3597,7 +3597,7 @@ export default function LeasingSchedulePage() {
           <Card className="flex-shrink-0 min-w-[120px]">
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-purple-500" />
+                <div className="w-2.5 h-2.5 rounded-full bg-primary/60" />
                 <div>
                   <p className="text-lg font-bold">{stats.occupancy}%</p>
                   <p className="text-xs text-muted-foreground">Occupancy · board units only</p>
@@ -3641,7 +3641,7 @@ export default function LeasingSchedulePage() {
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {p.landlord_id ? (
-                          <Link href={`/companies/${p.landlord_id}`} className="hover:underline text-blue-600 dark:text-blue-400" onClick={(e: any) => e.stopPropagation()}>{p.landlord_name}</Link>
+                          <Link href={`/companies/${p.landlord_id}`} className="hover:underline text-primary" onClick={(e: any) => e.stopPropagation()}>{p.landlord_name}</Link>
                         ) : p.landlord_name || "—"}
                       </TableCell>
                       <TableCell className="text-sm">{p.asset_class || "—"}</TableCell>
@@ -3681,7 +3681,7 @@ export default function LeasingSchedulePage() {
                 <MapPin className="w-3.5 h-3.5" />
                 {landlordId ? (
                   <Link href={`/companies/${landlordId}`}>
-                    <span className="hover:underline cursor-pointer text-blue-600 dark:text-blue-400" data-testid={`link-landlord-${landlordId}`}>{landlord}</span>
+                    <span className="hover:underline cursor-pointer text-primary" data-testid={`link-landlord-${landlordId}`}>{landlord}</span>
                   </Link>
                 ) : landlord}
                 <Badge variant="secondary" className="text-[11px]">{props.reduce((s, p) => s + p.unit_count, 0)} units</Badge>
@@ -3926,8 +3926,8 @@ export default function LeasingSchedulePage() {
 function EmptyBoardImport({ onImportClick }: { onImportClick: () => void }) {
   return (
     <div className="text-center py-14 px-4">
-      <div className="mx-auto w-14 h-14 rounded-full bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center mb-3">
-        <Building2 className="w-7 h-7 text-blue-500" />
+      <div className="mx-auto w-14 h-14 rounded-full bg-muted/40 flex items-center justify-center mb-3">
+        <Building2 className="w-7 h-7 text-muted-foreground" />
       </div>
       <h3 className="text-base font-semibold mb-1">No leasing schedules yet</h3>
       <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">

@@ -368,8 +368,8 @@ export default function Leads() {
                             <div className="flex flex-wrap gap-1 mt-0.5">
                               {contactMatchMap.get(item.id)!.slice(0, 2).map(c => (
                                 <Link key={c.id} href={`/contacts/${c.id}`}>
-                                  <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted border-violet-300 dark:border-violet-700" data-testid={`lead-match-contact-${c.id}`}>
-                                    <Users className="w-2.5 h-2.5 text-violet-500" />{c.name}
+                                  <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted" data-testid={`lead-match-contact-${c.id}`}>
+                                    <Users className="w-2.5 h-2.5 text-muted-foreground" />{c.name}
                                   </Badge>
                                 </Link>
                               ))}
@@ -448,7 +448,7 @@ export default function Leads() {
                                 title="Convert to CRM Contact"
                                 data-testid={`button-convert-lead-${item.id}`}
                               >
-                                <ArrowRightCircle className="w-3.5 h-3.5 text-emerald-600" />
+                                <ArrowRightCircle className="w-3.5 h-3.5" />
                               </Button>
                             )}
                             <Button

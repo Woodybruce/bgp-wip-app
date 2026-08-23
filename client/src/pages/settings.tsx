@@ -266,7 +266,7 @@ export default function SettingsPage() {
                                       </button>
                                       <button
                                         onClick={() => { if (window.confirm(`Reset ${member.name}'s password? They'll be logged out everywhere.`)) resetPassword.mutate(member.id); }}
-                                        className="p-1 rounded-md hover:bg-blue-100 text-blue-500 transition-colors"
+                                        className="p-1 rounded-md hover:bg-muted text-muted-foreground transition-colors"
                                         title="Reset password"
                                         data-testid={`reset-password-${member.username}`}
                                       >
@@ -354,7 +354,7 @@ export default function SettingsPage() {
                           </button>
                                       <button
                                         onClick={() => { if (window.confirm(`Reset ${member.name}'s password? They'll be logged out everywhere.`)) resetPassword.mutate(member.id); }}
-                                        className="p-1 rounded-md hover:bg-blue-100 text-blue-500 transition-colors"
+                                        className="p-1 rounded-md hover:bg-muted text-muted-foreground transition-colors"
                                         title="Reset password"
                                         data-testid={`reset-password-${member.username}`}
                                       >
@@ -407,9 +407,9 @@ export default function SettingsPage() {
           <Card data-testid="card-landsec-demo">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
-                <Landmark className="w-4 h-4 text-blue-500" />
+                <Landmark className="w-4 h-4 text-muted-foreground" />
                 Landsec Demo Account
-                <Badge className="bg-blue-500 text-white text-[10px] ml-1">Demo</Badge>
+                <Badge variant="secondary" className="text-[10px] ml-1">Demo</Badge>
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -532,7 +532,7 @@ function UserActivitySection() {
                 {summary.usersOnline} online
               </span>
               <span className="flex items-center gap-1">
-                <Shield className="w-3 h-3 text-blue-500" />
+                <Shield className="w-3 h-3 text-muted-foreground" />
                 {summary.usersWithO365} O365
               </span>
               <span className="flex items-center gap-1">
@@ -552,21 +552,21 @@ function UserActivitySection() {
           <>
             {summary && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-                <div className="bg-green-50 dark:bg-green-950/30 rounded-lg p-3 text-center">
-                  <div className="text-lg font-bold text-green-700 dark:text-green-400">{summary.usersOnline}</div>
-                  <div className="text-[10px] text-green-600 dark:text-green-500 uppercase tracking-wider">Online Now</div>
+                <div className="bg-muted/40 border border-border rounded-lg p-3 text-center">
+                  <div className="text-lg font-bold font-mono tabular-nums">{summary.usersOnline}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Online Now</div>
                 </div>
-                <div className="bg-blue-50 dark:bg-blue-950/30 rounded-lg p-3 text-center">
-                  <div className="text-lg font-bold text-blue-700 dark:text-blue-400">{summary.usersWithO365}</div>
-                  <div className="text-[10px] text-blue-600 dark:text-blue-500 uppercase tracking-wider">O365 Linked</div>
+                <div className="bg-muted/40 border border-border rounded-lg p-3 text-center">
+                  <div className="text-lg font-bold font-mono tabular-nums">{summary.usersWithO365}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">O365 Linked</div>
                 </div>
-                <div className="bg-purple-50 dark:bg-purple-950/30 rounded-lg p-3 text-center">
-                  <div className="text-lg font-bold text-purple-700 dark:text-purple-400">{summary.usersActiveThisWeek}</div>
-                  <div className="text-[10px] text-purple-600 dark:text-purple-500 uppercase tracking-wider">Active This Week</div>
+                <div className="bg-muted/40 border border-border rounded-lg p-3 text-center">
+                  <div className="text-lg font-bold font-mono tabular-nums">{summary.usersActiveThisWeek}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Active This Week</div>
                 </div>
-                <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3 text-center">
-                  <div className="text-lg font-bold text-amber-700 dark:text-amber-400">{summary.totalAiMessages}</div>
-                  <div className="text-[10px] text-amber-600 dark:text-amber-500 uppercase tracking-wider">ChatBGP Messages</div>
+                <div className="bg-muted/40 border border-border rounded-lg p-3 text-center">
+                  <div className="text-lg font-bold font-mono tabular-nums">{summary.totalAiMessages}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">ChatBGP Messages</div>
                 </div>
               </div>
             )}
@@ -621,7 +621,7 @@ function UserActivitySection() {
                       </div>
                       <div className="flex justify-center">
                         {o365Status ? (
-                          <Badge className="text-[9px] px-1.5 py-0 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-0">
+                          <Badge variant="secondary" className="text-[9px] px-1.5 py-0 border-0">
                             <Shield className="w-2.5 h-2.5 mr-0.5" />
                             Linked
                           </Badge>
@@ -1356,7 +1356,7 @@ function SortTeamsDialog({ open, onClose }: { open: boolean; onClose: () => void
           <button
             onClick={() => setFilterTeam("__all__")}
             className={`text-[11px] px-2 py-0.5 rounded border ${filterTeam === "__all__"
-              ? "bg-amber-100 border-amber-300 text-amber-900"
+              ? "bg-foreground text-background border-foreground"
               : "bg-card hover:bg-muted/40"
             }`}
           >
@@ -1367,7 +1367,7 @@ function SortTeamsDialog({ open, onClose }: { open: boolean; onClose: () => void
               key={t}
               onClick={() => setFilterTeam(t)}
               className={`text-[11px] px-2 py-0.5 rounded border ${filterTeam === t
-                ? "bg-amber-100 border-amber-300 text-amber-900"
+                ? "bg-foreground text-background border-foreground"
                 : "bg-card hover:bg-muted/40"
               }`}
             >
@@ -1492,7 +1492,7 @@ function ChatBGPLearningsSection() {
           <div>
             <CardTitle className="text-lg flex items-center gap-2">
               ChatBGP Memory
-              <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300">
+              <Badge variant="secondary">
                 {activeCount} active
               </Badge>
             </CardTitle>
@@ -1927,7 +1927,7 @@ function EmailProcessorSection() {
               </Badge>
             ))}
             {stats.repliesSent > 0 && (
-              <div className="flex items-center gap-1.5 text-xs text-blue-600">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <CheckCircle2 className="w-3 h-3" />
                 {stats.repliesSent} replies sent
               </div>
@@ -1960,7 +1960,7 @@ function EmailProcessorSection() {
                         {classificationLabels[entry.classification] || entry.classification}
                       </Badge>
                       {entry.replySent && (
-                        <Badge variant="outline" className="text-[10px] border-blue-300 text-blue-600">
+                        <Badge variant="outline" className="text-[10px]">
                           Reply sent
                         </Badge>
                       )}

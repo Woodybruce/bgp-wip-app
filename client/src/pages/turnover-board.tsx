@@ -349,46 +349,26 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
         <div className="flex items-center gap-3 overflow-x-auto pb-1">
           <Card className="flex-shrink-0 min-w-[120px]" data-testid="stat-total-entries">
             <CardContent className="p-3">
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-primary/60" />
-                <div>
-                  <p className="text-lg font-bold">{stats.total}</p>
-                  <p className="text-xs text-muted-foreground">Entries</p>
-                </div>
-              </div>
+              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Entries</p>
+              <p className="text-2xl font-bold font-mono tabular-nums">{stats.total}</p>
             </CardContent>
           </Card>
           <Card className="flex-shrink-0 min-w-[120px]" data-testid="stat-unique-brands">
             <CardContent className="p-3">
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-                <div>
-                  <p className="text-lg font-bold">{stats.brands}</p>
-                  <p className="text-xs text-muted-foreground">Brands</p>
-                </div>
-              </div>
+              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Brands</p>
+              <p className="text-2xl font-bold font-mono tabular-nums">{stats.brands}</p>
             </CardContent>
           </Card>
           <Card className="flex-shrink-0 min-w-[120px]" data-testid="stat-avg-turnover">
             <CardContent className="p-3">
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
-                <div>
-                  <p className="text-lg font-bold">{formatCurrency(stats.avgTurnover)}</p>
-                  <p className="text-xs text-muted-foreground">Avg Turnover</p>
-                </div>
-              </div>
+              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Avg Turnover</p>
+              <p className="text-2xl font-bold font-mono tabular-nums">{formatCurrency(stats.avgTurnover)}</p>
             </CardContent>
           </Card>
           <Card className="flex-shrink-0 min-w-[120px]" data-testid="stat-avg-psf">
             <CardContent className="p-3">
-              <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                <div>
-                  <p className="text-lg font-bold">{stats.avgPsf ? `£${stats.avgPsf.toFixed(0)}` : "—"}</p>
-                  <p className="text-xs text-muted-foreground">Avg £/sqft</p>
-                </div>
-              </div>
+              <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Avg £/sqft</p>
+              <p className="text-2xl font-bold font-mono tabular-nums">{stats.avgPsf ? `£${stats.avgPsf.toFixed(0)}` : "—"}</p>
             </CardContent>
           </Card>
         </div>
@@ -506,7 +486,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                           </div>
                         ) : (
                           <div className="flex items-center gap-1.5">
-                            <span className="text-xs font-medium cursor-pointer hover:text-blue-600" onClick={() => startEdit(entry.id, "company_name", entry.company_name)} data-testid={`cell-brand-${entry.id}`}>
+                            <span className="text-xs font-medium cursor-pointer hover:text-primary" onClick={() => startEdit(entry.id, "company_name", entry.company_name)} data-testid={`cell-brand-${entry.id}`}>
                               {entry.company_name}
                             </span>
                             {entry.is_draft && <Badge variant="secondary" className="text-[9px] bg-amber-100 text-amber-700 px-1 py-0">Draft</Badge>}
@@ -540,7 +520,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                               {entry.store_name || entry.property_name || entry.location || <span className="text-muted-foreground/60 italic">—</span>}
                             </span>
                             {entry.lat && entry.lng && (
-                              <a href={`https://www.google.com/maps?q=${entry.lat},${entry.lng}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-blue-600">
+                              <a href={`https://www.google.com/maps?q=${entry.lat},${entry.lng}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary">
                                 <ExternalLink className="w-3 h-3" />
                               </a>
                             )}
@@ -699,21 +679,21 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                   </div>
 
                   {!isClientViewer && previewStores && previewStores.length > 0 && (
-                    <div className="px-4 pb-2 border-t bg-blue-50 dark:bg-blue-950/20">
+                    <div className="px-4 pb-2 border-t bg-muted/40">
                       <div className="flex items-center justify-between py-2">
-                        <span className="text-xs font-medium text-blue-700 dark:text-blue-300">{previewStores.length} stores found via OpenStreetMap</span>
+                        <span className="text-xs font-medium">{previewStores.length} stores found via OpenStreetMap</span>
                         <div className="flex gap-2">
                           <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => setFoundStores(prev => { const n = { ...prev }; delete n[brandName]; return n; })}>
                             Dismiss
                           </Button>
-                          <Button size="sm" className="h-6 text-xs bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handlePopulateStores(brandName, brandEntries[0]?.company_id || null)}>
+                          <Button size="sm" className="h-6 text-xs" onClick={() => handlePopulateStores(brandName, brandEntries[0]?.company_id || null)}>
                             Import as Drafts
                           </Button>
                         </div>
                       </div>
                       <div className="space-y-1 max-h-40 overflow-y-auto">
                         {previewStores.slice(0, 8).map((s: any, i: number) => (
-                          <div key={i} className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
+                          <div key={i} className="text-xs text-muted-foreground flex items-center gap-1.5">
                             <Store className="w-3 h-3 flex-shrink-0" />
                             <span>{s.address || s.name || "Unknown address"}</span>
                           </div>
@@ -745,7 +725,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                                   <MapPin className="w-3 h-3 text-muted-foreground flex-shrink-0" />
                                   <span className="font-medium">{entry.store_name || entry.property_name || entry.location || "—"}</span>
                                   {entry.lat && entry.lng && (
-                                    <a href={`https://www.google.com/maps?q=${entry.lat},${entry.lng}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-blue-600">
+                                    <a href={`https://www.google.com/maps?q=${entry.lat},${entry.lng}`} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary">
                                       <ExternalLink className="w-3 h-3" />
                                     </a>
                                   )}
