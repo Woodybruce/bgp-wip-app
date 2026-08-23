@@ -1877,8 +1877,8 @@ export default function ImageStudio() {
                   <div className="flex flex-col items-center justify-center py-20 text-center">
                     <Camera className="h-12 w-12 text-muted-foreground/30 mb-3" />
                     <p className="text-muted-foreground text-sm">No headshots yet. Upload portrait photos to get started.</p>
-                    <Button size="sm" className="mt-4" onClick={() => { setUploadCategory("Headshots"); setUploadDialogOpen(true); }} data-testid="button-upload-headshots">
-                      <Upload className="h-4 w-4 mr-1" /> Upload Headshots
+                    <Button size="sm" variant="outline" className="mt-4" onClick={() => { setUploadCategory("Headshots"); setUploadDialogOpen(true); }} data-testid="button-upload-headshots">
+                      <Upload className="h-4 w-4 mr-1" /> Upload headshots
                     </Button>
                   </div>
                 ) : (
@@ -1944,7 +1944,7 @@ export default function ImageStudio() {
                 </div>
               </div>
             ) : filteredImages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12">
+              <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
                 <EmptyState
                   icon={ImageIconLucide}
                   title="No images yet"
@@ -1952,9 +1952,11 @@ export default function ImageStudio() {
                     ? "No images match your filters"
                     : "Upload images or capture from Street View"}
                 />
-                <div className="flex gap-2 mt-2">
-                  <Button size="sm" onClick={() => setUploadDialogOpen(true)} data-testid="button-upload-empty">
-                    <Upload className="h-4 w-4 mr-1" /> Upload Images
+                {/* flex-wrap so the third action doesn't clip at the phone
+                    edge; outline — the header Upload is the one filled primary. */}
+                <div className="flex flex-wrap justify-center gap-2 mt-2">
+                  <Button size="sm" variant="outline" onClick={() => setUploadDialogOpen(true)} data-testid="button-upload-empty">
+                    <Upload className="h-4 w-4 mr-1" /> Upload images
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setAiGenerateOpen(true)} data-testid="button-ai-generate-empty">
                     <Sparkles className="h-4 w-4 mr-1" /> AI Generate
@@ -2281,7 +2283,7 @@ export default function ImageStudio() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Upload className="h-5 w-5" /> Upload Images
+              <Upload className="h-5 w-5" /> Upload images
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">

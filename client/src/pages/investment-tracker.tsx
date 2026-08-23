@@ -1,7 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { PropertyPlanningCard } from "@/components/property-planning-card";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -67,16 +66,6 @@ const STATUS_COLORS: Record<string, string> = {
   COM: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
   WIT: "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300",
   INV: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
-};
-
-const ASSET_CLASS_COLORS: Record<string, string> = {
-  "Retail": "bg-pink-500",
-  "Office": "bg-sky-500",
-  "Industrial": "bg-orange-500",
-  "Mixed Use": "bg-purple-500",
-  "F&B": "bg-red-500",
-  "Leisure": "bg-teal-500",
-  "Residential": "bg-emerald-500",
 };
 
 const STATUS_LABEL_COLORS: Record<string, string> = {
