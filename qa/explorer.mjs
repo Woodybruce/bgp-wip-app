@@ -42,9 +42,17 @@ const PAGE_CAP = argVal("--pages", 70);      // max routes per persona/viewport
 const CLICK_CAP = argVal("--clicks", 12);    // max interactive clicks per page
 const UPDATE_KNOWN = args.includes("--update-known");
 
+// Every fixture user type gets its own sweep. Staff personas start from the
+// full static route list; client personas crawl only what their own UI
+// links to (linkCrawlOnly) — that IS the client test: their world and
+// nothing else. A staff-only route surfacing in a client's link graph
+// shows up here as a finding.
 const PERSONAS = [
-  { key: "victoria", username: "victoria@brucegillinghampollard.com", staff: true },
-  { key: "mark", username: "mark.warne@landsec.com", staff: false },
+  { key: "woody", username: "woody@brucegillinghampollard.com", staff: true },        // admin + equity
+  { key: "victoria", username: "victoria@brucegillinghampollard.com", staff: true },  // team head
+  { key: "nick", username: "nick@brucegillinghampollard.com", staff: true },          // non-admin staff
+  { key: "mark", username: "mark.warne@landsec.com", staff: false, linkCrawlOnly: true },   // Landsec client
+  { key: "sam", username: "sam.cole@hammerson.com", staff: false, linkCrawlOnly: true },    // rival client (seed-personas)
 ];
 const VIEWPORTS = [
   { key: "desktop", width: 1440, height: 900, ua: null },
@@ -130,8 +138,13 @@ async function explore(persona, viewport, routes) {
     report("console-error", persona.key, viewport.key, currentRoute, t);
   });
 
-  const queue = [...routes];
+  // Clients explore only from their own landing page outward.
+  const queue = persona.linkCrawlOnly ? ["/"] : [...routes];
   const visited = new Set();
+  // Detail pages (/deals/:id etc.): follow a small sample per section so
+  // record pages are exercised without crawling every company in the CRM.
+  const DETAIL_CAP = 2;
+  const detailCounts = new Map();
 
   while (queue.length && visited.size < PAGE_CAP) {
     const route = queue.shift();
@@ -164,7 +177,15 @@ async function explore(persona, viewport, routes) {
       );
       for (const href of links) {
         const clean = href.split("?")[0].split("#")[0];
-        if (!visited.has(clean) && !SKIP_ROUTE.test(clean) && !/\/[0-9a-f]{8}-/.test(clean)) queue.push(clean);
+        if (visited.has(clean) || SKIP_ROUTE.test(clean)) continue;
+        if (/\/[0-9a-f]{8}-/.test(clean)) {
+          // Detail page — sample DETAIL_CAP per section (first path segment).
+          const family = clean.split("/")[1] || "?";
+          const n = detailCounts.get(family) || 0;
+          if (n >= DETAIL_CAP) continue;
+          detailCounts.set(family, n + 1);
+        }
+        queue.push(clean);
       }
     } catch {}
 
