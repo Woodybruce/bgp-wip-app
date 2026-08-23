@@ -650,30 +650,9 @@ export default function FinancePage() {
       {/* WIP pipeline + projection (CRM ⇄ Xero cross-reference) */}
       {data.wip && <WipSection wip={data.wip} projection={data.projection} />}
 
-      {/* WIP data health — how trustworthy the projections above are. */}
-      {data.wip?.health && data.wip.health.affectedCount > 0 && (
-        <Link href="/wip-report">
-          <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20 cursor-pointer hover:border-amber-400 transition-colors">
-            <CardContent className="p-4 flex items-start gap-3">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <div className="text-sm">
-                <p className="font-medium text-amber-900 dark:text-amber-200">
-                  {data.wip.health.affectedCount} deal(s) worth {money(data.wip.health.affectedFee)} have broken links — the projections above may undercount or misattribute them.
-                </p>
-                <p className="text-xs text-amber-800/80 dark:text-amber-300/70 mt-0.5">
-                  {[
-                    data.wip.health.noClient ? `${data.wip.health.noClient} without a client` : null,
-                    data.wip.health.noAgent ? `${data.wip.health.noAgent} without an agent` : null,
-                    data.wip.health.noDate ? `${data.wip.health.noDate} undated` : null,
-                    data.wip.health.invNoXero ? `${data.wip.health.invNoXero} invoiced with no Xero link` : null,
-                    data.wip.health.noFee ? `${data.wip.health.noFee} live with no fee` : null,
-                  ].filter(Boolean).join(" · ")} — open WIP report → Needs Attention to fix.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </Link>
-      )}
+      {/* (Data-health card removed — Woody, 2026-08-23: a weekly fix-list
+          email to equity@ replaced it; see runWipHealthEmail. The live list
+          stays on WIP report → Needs Attention.) */}
 
       {/* Costs & forecast — cost base, run-rate projection, bills, cash flow */}
       {data.costs && (

@@ -315,6 +315,47 @@ ${ancient.length ? `<hr style="border:none;border-top:1px solid #E5E7EB;margin:1
 const BLAST_HOURS = [8, 10, 12, 14, 16, 18];
 const PUSH_HOUR = 8;
 const SUMMARY_HOUR = 9;
+// WIP data-health fix-list: Monday mornings to equity@ (Woody, 2026-08-23:
+// "I just need a list emailed of things that look wrong and we can change
+// them"). Sent only when something IS wrong.
+const WIP_HEALTH_DAY = 1; // Monday
+const WIP_HEALTH_HOUR = 8;
+
+export async function runWipHealthEmail(): Promise<void> {
+  const { computeWipHealth } = await import("./crm");
+  const h = await computeWipHealth();
+  const b = h.buckets;
+  const anythingWrong = h.affected.count > 0 || b.noFee.count > 0 || b.noProperty.count > 0;
+  if (!anythingWrong) {
+    console.log("[deal-verdicts] wip health email skipped — nothing wrong");
+    return;
+  }
+  const money = (n: number) => `£${Math.round(n || 0).toLocaleString("en-GB")}`;
+  const section = (title: string, why: string, bucket: any) => {
+    if (!bucket.count) return "";
+    const rows = bucket.deals
+      .map((d: any) => `<li><a href="https://chatbgp.app/deals/${d.dealId}">${d.name || "(unnamed deal)"}</a>${d.team ? ` — ${d.team}` : ""}${d.fee ? ` — ${money(d.fee)}` : ""}</li>`)
+      .join("");
+    const more = bucket.count > bucket.deals.length ? `<p style="font-size:12px;color:#666">…and ${bucket.count - bucket.deals.length} more.</p>` : "";
+    return `<h3 style="margin:18px 0 2px">${title} (${bucket.count}${bucket.fee ? ` · ${money(bucket.fee)}` : ""})</h3><p style="margin:0 0 6px;font-size:13px;color:#555">${why}</p><ul style="margin:0;padding-left:18px;font-size:14px;line-height:1.6">${rows}</ul>${more}`;
+  };
+  const html = `
+    <p>Weekly WIP data check — ${h.totalWipDeals} live deals scanned. The rows below look wrong; each name links straight to the deal to fix.</p>
+    ${section("No client linked", "Shows as “Unknown” on the WIP report — set the landlord / tenant / vendor / purchaser.", b.noClient)}
+    ${section("No BGP agent", "Invisible in the Agent Summary and earns nobody commission.", b.noAgent)}
+    ${section("No date at all", "No target, exchange or completion date — lands in no month.", b.noDate)}
+    ${section("Marked Invoiced but no Xero invoice linked", "Cash tracking can't see these — raise or link the invoice.", b.invNoXero)}
+    ${section("Live deal with no fee", "In the pipeline but the fee is blank, so it's excluded from the WIP report entirely — invisible money.", b.noFee)}
+    ${section("No property linked", "Fine for consultancy mandates; worth linking for everything else.", b.noProperty)}
+    <p style="font-size:12px;color:#666;margin-top:18px">Also live in the app: WIP report → Needs Attention. This email only arrives when something needs fixing.</p>`;
+  const { sendSharedMailboxEmail } = await import("./shared-mailbox");
+  await sendSharedMailboxEmail({
+    to: SUMMARY_EMAIL,
+    subject: `WIP data check: ${h.affected.count + b.noFee.count} deal(s) need fixing${h.affected.fee ? ` (${money(h.affected.fee)} affected)` : ""}`,
+    body: `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1F2937;">${html}</div>`,
+  });
+  console.log(`[deal-verdicts] wip health email sent — affected=${h.affected.count}, noFee=${b.noFee.count}`);
+}
 
 async function claimSlot(kind: string, hour: number): Promise<boolean> {
   const day = new Date().toISOString().slice(0, 10);
@@ -341,6 +382,9 @@ export async function tickVerdictJobs(): Promise<void> {
     }
     if (h === SUMMARY_HOUR && (await claimSlot("summary", h))) {
       await runEquityVerdictSummary();
+    }
+    if (new Date().getDay() === WIP_HEALTH_DAY && h === WIP_HEALTH_HOUR && (await claimSlot("wip-health", h))) {
+      await runWipHealthEmail();
     }
   } catch (e: any) {
     console.error("[deal-verdicts] tick failed:", e?.message);

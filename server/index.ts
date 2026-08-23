@@ -4361,6 +4361,22 @@ app.use("/api/branding/assets", express.static(
         } catch (e: any) {
           console.warn("[wip-health] diag failed:", e?.message);
         }
+        // One-off (2026-08-23): send the first WIP fix-list email to equity@
+        // immediately — the Monday schedule takes over from next week. The
+        // settings row makes this fire exactly once across all deploys.
+        try {
+          const first = await pool.query(
+            `INSERT INTO system_settings (key, value) VALUES ('deal-verdicts:wip-health-first', '"sent"'::jsonb)
+             ON CONFLICT (key) DO NOTHING RETURNING key`
+          );
+          if (first.rowCount) {
+            const { runWipHealthEmail } = await import("./deal-verdicts");
+            await runWipHealthEmail();
+            console.log("[wip-health] first fix-list email dispatched to equity@");
+          }
+        } catch (e: any) {
+          console.warn("[wip-health] first email failed:", e?.message);
+        }
         // Estate-wide: un-clobber Instagram sources that the Google News
         // feed maintainer overwrote (category-only match — fixed in
         // news-brand-linking, this repairs the damage). Repaired sources
