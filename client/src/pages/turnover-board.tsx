@@ -453,7 +453,59 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
             </CardContent>
           </Card>
         ) : viewMode === "table" ? (
-          <Card className="overflow-hidden">
+          <>
+            {/* Phone: one card per entry (docs/DESIGN.md §7) — the wide table
+                below is desktop-only (§6/§13). Cards are a read-only summary;
+                staff keep the draft-confirm / delete actions. */}
+            <div className="md:hidden space-y-2" data-testid="turnover-mobile-cards">
+              {filtered.map(entry => (
+                <div
+                  key={entry.id}
+                  className={`rounded-2xl bg-card border border-border p-3 shadow-sm ${entry.is_draft ? "opacity-60" : ""}`}
+                  data-testid={`row-entry-${entry.id}-card`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex items-center gap-1.5">
+                      <p className="text-sm font-medium truncate">{entry.company_name}</p>
+                      {entry.is_draft && <Badge variant="secondary" className="text-[9px] bg-amber-100 text-amber-700 px-1 py-0 shrink-0">Draft</Badge>}
+                    </div>
+                    <span className="shrink-0 text-sm font-mono tabular-nums font-semibold">{formatCurrency(entry.turnover)}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                    {[entry.store_name || entry.property_name || entry.location, entry.period].filter(Boolean).join(" · ") || "—"}
+                    {entry.lat && entry.lng ? (
+                      <a href={`https://www.google.com/maps?q=${entry.lat},${entry.lng}`} target="_blank" rel="noopener noreferrer" className="ml-1 inline-flex align-middle text-muted-foreground hover:text-primary">
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    ) : null}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                    <Badge variant="secondary" className={`text-[10px] ${sourceBadge(entry.source)}`}>{entry.source}</Badge>
+                    <Badge variant="secondary" className={`text-[10px] ${confidenceBadge(entry.confidence)}`}>{entry.confidence}</Badge>
+                    {entry.category && <span className="text-[10px] text-muted-foreground">{entry.category}</span>}
+                    {entry.turnover_per_sqft ? (
+                      <span className="text-[10px] text-muted-foreground font-mono tabular-nums">£{entry.turnover_per_sqft.toFixed(0)}/sqft</span>
+                    ) : null}
+                    {!isClientViewer && (
+                      <span className="ml-auto flex items-center gap-0.5">
+                        {entry.is_draft && (
+                          <Button size="icon" variant="ghost" className="h-7 w-7 text-green-600 hover:text-green-700" onClick={() => confirmMutation.mutate(entry.id)} title="Confirm store" data-testid={`button-confirm-${entry.id}-card`}>
+                            <Check className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                        <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground hover:text-red-600" onClick={() => { if (confirm("Delete this entry?")) deleteMutation.mutate(entry.id); }} data-testid={`button-delete-${entry.id}-card`}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              <div className="px-1 text-xs text-muted-foreground" data-testid="text-results-count-mobile">
+                {filtered.length} {filtered.length === 1 ? "entry" : "entries"}{search || categoryFilter !== "all" || sourceFilter !== "all" ? " (filtered)" : ""}
+              </div>
+            </div>
+          <Card className="overflow-hidden hidden md:block">
             <div className="overflow-x-auto">
               <table className="w-full" data-testid="table-turnover">
                 <thead className="border-b">
@@ -632,6 +684,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
               {filtered.length} {filtered.length === 1 ? "entry" : "entries"}{search || categoryFilter !== "all" || sourceFilter !== "all" ? " (filtered)" : ""}
             </div>
           </Card>
+          </>
         ) : (
           // Brand grouped view
           <div className="space-y-2">
@@ -646,7 +699,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
               return (
                 <Card key={brandName} className="overflow-hidden">
                   <div
-                    className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors"
+                    className="flex items-center gap-x-3 gap-y-1 flex-wrap px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors"
                     onClick={() => setExpandedBrands(prev => {
                       const n = new Set(prev);
                       if (n.has(brandName)) n.delete(brandName); else n.add(brandName);
@@ -655,7 +708,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                   >
                     {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
                     <Building2 className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                    <span className="font-medium text-sm flex-1">{brandName}</span>
+                    <span className="font-medium text-sm flex-1 min-w-0 truncate">{brandName}</span>
                     {draftCount > 0 && <Badge variant="secondary" className="text-[10px] bg-amber-100 text-amber-700">{draftCount} draft</Badge>}
                     <span className="text-xs text-muted-foreground">{brandEntries.length} store{brandEntries.length !== 1 ? "s" : ""}</span>
                     {totalTurnover > 0 && <span className="text-xs font-semibold tabular-nums">{formatCurrency(totalTurnover)}</span>}

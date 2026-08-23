@@ -1,6 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Download, ExternalLink, Mail, FileSpreadsheet, FileText, Presentation, Users, Palette } from "lucide-react";
 
 const addins = [
@@ -114,7 +113,7 @@ function AddinsPage() {
                     onClick={() => handleDownload(addin.manifest!, `bgp-${addin.name.toLowerCase()}-addin${addin.manifest!.endsWith('.json') ? '.json' : '.xml'}`)}
                     data-testid={`button-download-${addin.name.toLowerCase()}`}
                   >
-                    <Download className="h-3 w-3 mr-1" /> Download Manifest
+                    <Download className="h-3 w-3 mr-1" /> Download manifest
                   </Button>
                 )}
                 <a href={addin.preview} target="_blank" rel="noopener noreferrer">

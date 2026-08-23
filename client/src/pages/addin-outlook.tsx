@@ -331,9 +331,9 @@ function AddinOutlook() {
       <div className="p-3 space-y-3">
 
         {senderEmail && (
-          <div className="p-2 bg-muted rounded-md space-y-1.5" data-testid="outlook-sender-card">
+          <div className="p-2 bg-muted/40 border border-border rounded-lg space-y-1.5" data-testid="outlook-sender-card">
             <div>
-              <p className="text-xs text-muted-foreground">Current email from:</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Current email from</p>
               <p className="text-sm font-medium">{senderName || senderEmail}</p>
               {senderName && <p className="text-xs text-muted-foreground">{senderEmail}</p>}
             </div>
@@ -383,8 +383,8 @@ function AddinOutlook() {
             <div className="space-y-4">
               {contacts.length > 0 && (
                 <div>
-                  <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1">
-                    <User className="h-3 w-3" /> Contacts ({contacts.length})
+                  <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                    Contacts <span className="font-mono tabular-nums">{contacts.length}</span>
                   </h2>
                   <div className="space-y-1.5">
                     {contacts.slice(0, 10).map((c: any) => (
@@ -393,7 +393,7 @@ function AddinOutlook() {
                           <CardContent className="p-2.5 flex items-center justify-between gap-2">
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-medium truncate">{c.name}</p>
-                              {c.subtitle && <p className="text-xs text-blue-600 dark:text-blue-400 truncate">{c.subtitle}</p>}
+                              {c.subtitle && <p className="text-xs text-primary truncate">{c.subtitle}</p>}
                             </div>
                             <div className="flex gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                               {c.subtitle?.includes("@") && (
@@ -412,8 +412,8 @@ function AddinOutlook() {
 
               {companies.length > 0 && (
                 <div>
-                  <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1">
-                    <Building2 className="h-3 w-3" /> Companies ({companies.length})
+                  <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                    Companies <span className="font-mono tabular-nums">{companies.length}</span>
                   </h2>
                   <div className="space-y-1.5">
                     {companies.slice(0, 10).map((c: any) => (
@@ -435,8 +435,8 @@ function AddinOutlook() {
 
               {deals.length > 0 && (
                 <div>
-                  <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 flex items-center gap-1">
-                    <Briefcase className="h-3 w-3" /> Deals ({deals.length})
+                  <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                    Deals <span className="font-mono tabular-nums">{deals.length}</span>
                   </h2>
                   <div className="space-y-1.5">
                     {deals.slice(0, 10).map((d: any) => (

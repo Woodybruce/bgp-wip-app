@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import { useToast } from "@/hooks/use-toast";
 import {
   Search, Building2, Briefcase, TrendingUp, Copy,
@@ -238,18 +239,18 @@ function AddinPowerPoint() {
       <div className="p-3">
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="w-full h-8">
-          <TabsTrigger value="chat" className="text-xs flex-1" data-testid="tab-chat">
-            <MessageSquare className="h-3 w-3 mr-1" /> Chat
+        <TabsList className={pillTabsList}>
+          <TabsTrigger value="chat" className={pillTabsTrigger} data-testid="tab-chat">
+            Chat
           </TabsTrigger>
-          <TabsTrigger value="search" className="text-xs flex-1" data-testid="tab-search">
-            <Search className="h-3 w-3 mr-1" /> Search
+          <TabsTrigger value="search" className={pillTabsTrigger} data-testid="tab-search">
+            Search
           </TabsTrigger>
-          <TabsTrigger value="comps" className="text-xs flex-1" data-testid="tab-comps">
-            <BarChart3 className="h-3 w-3 mr-1" /> Comps
+          <TabsTrigger value="comps" className={pillTabsTrigger} data-testid="tab-comps">
+            Comps
           </TabsTrigger>
-          <TabsTrigger value="available" className="text-xs flex-1" data-testid="tab-available">
-            <MapPin className="h-3 w-3 mr-1" /> Available
+          <TabsTrigger value="available" className={pillTabsTrigger} data-testid="tab-available">
+            Available
           </TabsTrigger>
         </TabsList>
 
@@ -364,8 +365,8 @@ function AddinPowerPoint() {
               <div className="space-y-3">
                 {properties.length > 0 && (
                   <div>
-                    <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                      <Building2 className="h-3 w-3" /> Properties
+                    <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                      Properties
                     </h2>
                     {properties.slice(0, 8).map((p: any) => (
                       <Card key={p.id} className="mb-1.5">
@@ -393,8 +394,8 @@ function AddinPowerPoint() {
 
                 {deals.length > 0 && (
                   <div>
-                    <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                      <Briefcase className="h-3 w-3" /> Deals
+                    <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                      Deals
                     </h2>
                     {deals.slice(0, 8).map((d: any) => (
                       <Card key={d.id} className="mb-1.5">
@@ -428,8 +429,8 @@ function AddinPowerPoint() {
 
                 {contacts.length > 0 && (
                   <div>
-                    <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center gap-1">
-                      <Users className="h-3 w-3" /> Contacts
+                    <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                      Contacts
                     </h2>
                     {contacts.slice(0, 6).map((c: any) => (
                       <Card key={c.id} className="mb-1.5">

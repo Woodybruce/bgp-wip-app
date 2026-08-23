@@ -5,12 +5,14 @@ import {
 } from "recharts";
 import { TrendingUp, DollarSign, Target, Clock, Printer, RefreshCw, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { pillMetrics } from "@/components/ui/pill";
+import { cn } from "@/lib/utils";
 import { getAuthHeaders } from "@/lib/queryClient";
 
+// Chart series palette (deliberate encoding, matches reporting.tsx — not chrome).
 const COLORS = [
-  "#818cf8", "#a78bfa", "#c084fc", "#e879f9", "#f472b6",
-  "#fb7185", "#f97316", "#facc15", "#4ade80", "#34d399",
-  "#22d3ee", "#38bdf8", "#60a5fa", "#6366f1", "#8b5cf6",
+  "#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#10b981",
+  "#06b6d4", "#eab308", "#ef4444", "#6366f1", "#14b8a6",
 ];
 
 const STATUS_COLORS: Record<string, string> = {
@@ -64,23 +66,21 @@ interface BoardReportData {
 
 function KPICard({ icon: Icon, label, value, sub }: { icon: any; label: string; value: string; sub?: string }) {
   return (
-    <div className="bg-[#1a1a2e] border border-[#2a2a4a] rounded-xl p-6 flex flex-col gap-2" data-testid={`kpi-${label.toLowerCase().replace(/\s/g, "-")}`}>
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-lg bg-[#2a2a4a] flex items-center justify-center">
-          <Icon className="w-5 h-5 text-indigo-400" />
-        </div>
-        <span className="text-sm text-gray-400 font-medium tracking-wide uppercase">{label}</span>
+    <div className="bg-card border border-border rounded-lg p-5 flex flex-col gap-1.5" data-testid={`kpi-${label.toLowerCase().replace(/\s/g, "-")}`}>
+      <div className="flex items-center gap-1.5">
+        <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
       </div>
-      <div className="text-3xl font-bold text-white tracking-tight mt-1">{value}</div>
-      {sub && <div className="text-xs text-gray-500">{sub}</div>}
+      <div className="text-2xl font-bold font-mono tabular-nums text-foreground tracking-tight">{value}</div>
+      {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
     </div>
   );
 }
 
 function ChartCard({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
   return (
-    <div className={`bg-[#1a1a2e] border border-[#2a2a4a] rounded-xl p-6 ${className}`} data-testid={`chart-${title.toLowerCase().replace(/\s/g, "-")}`}>
-      <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-4">{title}</h3>
+    <div className={`bg-card border border-border rounded-lg p-6 ${className}`} data-testid={`chart-${title.toLowerCase().replace(/\s/g, "-")}`}>
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-4">{title}</h3>
       {children}
     </div>
   );
@@ -89,10 +89,10 @@ function ChartCard({ title, children, className = "" }: { title: string; childre
 function CustomTooltip({ active, payload, label }: any) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-[#0f0f23] border border-[#2a2a4a] rounded-lg px-3 py-2 shadow-xl">
-      <p className="text-xs text-gray-400 mb-1">{label}</p>
+    <div className="bg-card border border-border rounded-lg px-3 py-2 shadow-lg">
+      <p className="text-xs text-muted-foreground mb-1">{label}</p>
       {payload.map((p: any, i: number) => (
-        <p key={i} className="text-sm font-semibold" style={{ color: p.color || "#818cf8" }}>
+        <p key={i} className="text-sm font-semibold font-mono tabular-nums text-foreground">
           {typeof p.value === "number" && p.value > 100 ? formatCurrency(p.value) : p.value}
         </p>
       ))}
@@ -128,10 +128,21 @@ export default function BoardReport() {
 
   if (isLoading || !data) {
     return (
-      <div className="min-h-screen bg-[#0f0f23] flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-gray-400 text-sm">Generating board report...</p>
+      <div className="min-h-screen bg-background">
+        <div className="max-w-[1400px] mx-auto px-6 py-8 animate-pulse">
+          <div className="mb-10">
+            <div className="h-7 w-48 rounded bg-muted" />
+            <div className="h-4 w-72 rounded bg-muted mt-2" />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="h-28 rounded-lg bg-muted" />
+            ))}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="h-[360px] rounded-lg bg-muted" />
+            <div className="h-[360px] rounded-lg bg-muted" />
+          </div>
         </div>
       </div>
     );
@@ -142,14 +153,28 @@ export default function BoardReport() {
   });
 
   return (
-    <div className="board-report min-h-screen bg-[#0f0f23] text-white">
+    <div className="board-report min-h-screen bg-background text-foreground">
       <style>{`
         @media print {
-          body { background: #0f0f23 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-          .board-report { padding: 0 !important; }
+          /* Print pack is always the light/ink rendition, whatever the screen theme. */
+          :root {
+            --background: 0 0% 100% !important;
+            --foreground: 20 10% 12% !important;
+            --card: 0 0% 100% !important;
+            --card-foreground: 20 10% 12% !important;
+            --border: 30 10% 80% !important;
+            --muted: 30 10% 94% !important;
+            --muted-foreground: 25 8% 35% !important;
+            --primary: 25 60% 45% !important;
+          }
+          body { background: #fff !important; }
+          .board-report { background: #fff !important; padding: 0 !important; }
+          .board-report, .board-report * {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
           .no-print { display: none !important; }
           .print-break { page-break-before: always; }
-          .board-report * { color-adjust: exact; -webkit-print-color-adjust: exact; }
         }
       `}</style>
 
@@ -164,7 +189,6 @@ export default function BoardReport() {
               variant="outline"
               size="sm"
               onClick={() => refetch()}
-              className="border-white/20 text-white/80 hover:bg-white/10 hover:text-white"
               data-testid="button-refresh"
             >
               <RefreshCw className="w-4 h-4 mr-2" /> Refresh
@@ -173,16 +197,13 @@ export default function BoardReport() {
               variant="outline"
               size="sm"
               onClick={handleExportExcel}
-              className="border-white/20 text-white/80 hover:bg-white/10 hover:text-white"
               data-testid="button-export-excel"
             >
               <Download className="w-4 h-4 mr-2" /> Download Excel
             </Button>
             <Button
-              variant="outline"
               size="sm"
               onClick={() => window.print()}
-              className="border-white/20 text-white/80 hover:bg-white/10 hover:text-white"
               data-testid="button-print"
             >
               <Printer className="w-4 h-4 mr-2" /> Print
@@ -207,9 +228,9 @@ export default function BoardReport() {
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data.pipeline.byStatus} layout="vertical" margin={{ left: 10, right: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e1e3a" horizontal={false} />
-                  <XAxis type="number" tick={{ fill: "#6b7280", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" tick={{ fill: "#9ca3af", fontSize: 11 }} width={100} axisLine={false} tickLine={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
+                  <XAxis type="number" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="name" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} width={100} axisLine={false} tickLine={false} />
                   <Tooltip content={<CustomTooltip />} />
                   <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={28}>
                     {data.pipeline.byStatus.map((entry, i) => (
@@ -225,11 +246,11 @@ export default function BoardReport() {
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data.pipeline.byTeam} layout="vertical" margin={{ left: 10, right: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e1e3a" horizontal={false} />
-                  <XAxis type="number" tick={{ fill: "#6b7280", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" tick={{ fill: "#9ca3af", fontSize: 11 }} width={120} axisLine={false} tickLine={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
+                  <XAxis type="number" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="name" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} width={120} axisLine={false} tickLine={false} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Bar dataKey="value" fill="#818cf8" radius={[0, 4, 4, 0]} maxBarSize={28} />
+                  <Bar dataKey="value" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} maxBarSize={28} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -261,9 +282,9 @@ export default function BoardReport() {
             </div>
             <div className="flex flex-wrap gap-3 mt-2 justify-center">
               {data.pipeline.byDealType.map((entry, i) => (
-                <div key={entry.name} className="flex items-center gap-1.5 text-xs text-gray-400">
+                <div key={entry.name} className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <div className="w-2.5 h-2.5 rounded-full" style={{ background: COLORS[i % COLORS.length] }} />
-                  {entry.name} ({entry.value})
+                  {entry.name} (<span className="font-mono tabular-nums">{entry.value}</span>)
                 </div>
               ))}
             </div>
@@ -273,19 +294,19 @@ export default function BoardReport() {
             <div className="h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data.pipeline.byAssetClass.slice(0, 10)} margin={{ left: 0, right: 20, bottom: 60 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e1e3a" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                   <XAxis
                     dataKey="name"
-                    tick={{ fill: "#9ca3af", fontSize: 10 }}
+                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }}
                     axisLine={false}
                     tickLine={false}
                     angle={-45}
                     textAnchor="end"
                     height={70}
                   />
-                  <YAxis tick={{ fill: "#6b7280", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Bar dataKey="value" fill="#a78bfa" radius={[4, 4, 0, 0]} maxBarSize={36} />
+                  <Bar dataKey="value" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={36} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -299,26 +320,26 @@ export default function BoardReport() {
                 <AreaChart data={data.performance.monthlyFees} margin={{ left: 10, right: 20, top: 10 }}>
                   <defs>
                     <linearGradient id="feeGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#818cf8" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#818cf8" stopOpacity={0} />
+                      <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e1e3a" vertical={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                   <XAxis
                     dataKey="month"
                     tickFormatter={formatMonth}
-                    tick={{ fill: "#9ca3af", fontSize: 11 }}
+                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
                     axisLine={false}
                     tickLine={false}
                   />
                   <YAxis
                     tickFormatter={(v) => formatCurrency(v)}
-                    tick={{ fill: "#6b7280", fontSize: 11 }}
+                    tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
                     axisLine={false}
                     tickLine={false}
                   />
                   <Tooltip content={<CustomTooltip />} />
-                  <Area type="monotone" dataKey="total" stroke="#818cf8" strokeWidth={2} fill="url(#feeGradient)" />
+                  <Area type="monotone" dataKey="total" stroke="hsl(var(--primary))" strokeWidth={2} fill="url(#feeGradient)" />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -328,19 +349,15 @@ export default function BoardReport() {
             <div className="h-[280px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={data.performance.timeToCloseBuckets} margin={{ left: 0, right: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e1e3a" vertical={false} />
-                  <XAxis dataKey="range" tick={{ fill: "#9ca3af", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: "#6b7280", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                  <XAxis dataKey="range" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
                   <Tooltip content={<CustomTooltip />} />
-                  <Bar dataKey="count" fill="#22d3ee" radius={[4, 4, 0, 0]} maxBarSize={40}>
-                    {data.performance.timeToCloseBuckets.map((_, i) => (
-                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                    ))}
-                  </Bar>
+                  <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} maxBarSize={40} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
-            <p className="text-xs text-gray-500 mt-2 text-center">Days from deal creation to completion</p>
+            <p className="text-[11px] text-muted-foreground mt-2 text-center">Days from deal creation to completion</p>
           </ChartCard>
         </div>
 
@@ -353,21 +370,21 @@ export default function BoardReport() {
                 return (
                   <div key={i} className="group" data-testid={`row-top-deal-${i}`}>
                     <div className="flex items-center justify-between text-xs mb-1">
-                      <span className="text-gray-300 truncate max-w-[200px]" title={deal.name}>
-                        <span className="text-gray-500 mr-2">{i + 1}.</span>
+                      <span className="text-foreground truncate max-w-[200px]" title={deal.name}>
+                        <span className="text-muted-foreground mr-2">{i + 1}.</span>
                         {deal.name}
                       </span>
-                      <span className="text-white font-semibold">{formatCurrency(deal.fee)}</span>
+                      <span className="text-foreground font-semibold font-mono tabular-nums">{formatCurrency(deal.fee)}</span>
                     </div>
-                    <div className="h-1.5 bg-[#2a2a4a] rounded-full overflow-hidden">
+                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                       <div
-                        className="h-full rounded-full transition-all duration-700"
-                        style={{ width: `${pct}%`, background: COLORS[i % COLORS.length] }}
+                        className="h-full rounded-full bg-primary transition-all duration-700"
+                        style={{ width: `${pct}%` }}
                       />
                     </div>
                     <div className="flex gap-2 mt-0.5">
-                      {deal.team && <span className="text-[10px] text-gray-500">{deal.team}</span>}
-                      {deal.dealType && <span className="text-[10px] text-gray-500">· {deal.dealType}</span>}
+                      {deal.team && <span className="text-[10px] text-muted-foreground">{deal.team}</span>}
+                      {deal.dealType && <span className="text-[10px] text-muted-foreground">· {deal.dealType}</span>}
                     </div>
                   </div>
                 );
@@ -377,36 +394,35 @@ export default function BoardReport() {
 
           <ChartCard title={`Market Insights — Last 30 Days (${data.marketInsights.totalArticles} articles)`}>
             <div className="mb-5">
-              <h4 className="text-xs text-gray-500 uppercase tracking-wider mb-3">Trending Topics</h4>
+              <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">Trending Topics</h4>
               <div className="flex flex-wrap gap-2">
                 {data.marketInsights.trendingTags.map((t, i) => (
                   <span
                     key={t.tag}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border border-[#2a2a4a]"
-                    style={{ color: COLORS[i % COLORS.length], borderColor: `${COLORS[i % COLORS.length]}33` }}
+                    className={cn(pillMetrics, "border border-border text-foreground")}
                     data-testid={`tag-trending-${i}`}
                   >
                     {t.tag}
-                    <span className="text-gray-500 text-[10px]">{t.count}</span>
+                    <span className="text-muted-foreground text-[10px] font-mono tabular-nums">{t.count}</span>
                   </span>
                 ))}
               </div>
             </div>
             <div>
-              <h4 className="text-xs text-gray-500 uppercase tracking-wider mb-3">Category Breakdown</h4>
+              <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-3">Category Breakdown</h4>
               <div className="space-y-2">
                 {data.marketInsights.categoryBreakdown.map((cat, i) => {
                   const max = data.marketInsights.categoryBreakdown[0]?.count || 1;
                   return (
                     <div key={cat.category}>
                       <div className="flex items-center justify-between text-xs mb-1">
-                        <span className="text-gray-300">{cat.category}</span>
-                        <span className="text-gray-500">{cat.count}</span>
+                        <span className="text-foreground">{cat.category}</span>
+                        <span className="text-muted-foreground font-mono tabular-nums">{cat.count}</span>
                       </div>
-                      <div className="h-1.5 bg-[#2a2a4a] rounded-full overflow-hidden">
+                      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                         <div
-                          className="h-full rounded-full"
-                          style={{ width: `${(cat.count / max) * 100}%`, background: COLORS[i % COLORS.length] }}
+                          className="h-full rounded-full bg-primary"
+                          style={{ width: `${(cat.count / max) * 100}%` }}
                         />
                       </div>
                     </div>
@@ -417,7 +433,7 @@ export default function BoardReport() {
           </ChartCard>
         </div>
 
-        <div className="text-center text-xs text-gray-600 py-6 border-t border-[#1e1e3a]">
+        <div className="text-center text-[11px] text-muted-foreground py-6 border-t border-border">
           Generated {generatedDate} · Bruce Gillingham Pollard · Confidential
         </div>
       </div>

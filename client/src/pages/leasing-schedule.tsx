@@ -686,6 +686,19 @@ function StatusBandCell({ unitId, value, onSave }: { unitId: string; value: stri
   );
 }
 
+// Status chip colours — shared by the desktop InlineStatusCell dropdown and
+// the read-only chip on the phone unit cards.
+const STATUS_CHIP_COLORS: Record<string, string> = {
+  "Occupied": "border-emerald-300 text-emerald-700 bg-emerald-50",
+  "Trading": "border-emerald-300 text-emerald-700 bg-emerald-50",
+  "Lease Event": "border-orange-300 text-orange-700 bg-orange-50",
+  "Vacant": "border-gray-300 text-gray-500 bg-gray-50",
+  "Opportunity": "border-violet-300 text-violet-700 bg-violet-50",
+  "Under Offer": "border-blue-300 text-blue-700 bg-blue-50",
+  "In Negotiation": "border-amber-300 text-amber-700 bg-amber-50",
+  "Archived": "border-gray-300 text-gray-400 bg-gray-100 line-through",
+};
+
 function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: string; onSave: (id: string, field: string, value: string) => void }) {
   // Includes Landsec's operational states (Trading / Lease Event) that
   // arrive via the spine import, alongside the canonical letting states.
@@ -695,16 +708,7 @@ function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: st
   // unit onto the marketing tracker. Opportunity is a schedule-only flag
   // (a unit worth pursuing) — it shows on the schedule and doesn't mirror.
   const statuses = ["Occupied", "Trading", "Lease Event", "Vacant", "Opportunity", "Under Offer", "In Negotiation", "Archived"];
-  const colors: Record<string, string> = {
-    "Occupied": "border-emerald-300 text-emerald-700 bg-emerald-50",
-    "Trading": "border-emerald-300 text-emerald-700 bg-emerald-50",
-    "Lease Event": "border-orange-300 text-orange-700 bg-orange-50",
-    "Vacant": "border-gray-300 text-gray-500 bg-gray-50",
-    "Opportunity": "border-violet-300 text-violet-700 bg-violet-50",
-    "Under Offer": "border-blue-300 text-blue-700 bg-blue-50",
-    "In Negotiation": "border-amber-300 text-amber-700 bg-amber-50",
-    "Archived": "border-gray-300 text-gray-400 bg-gray-100 line-through",
-  };
+  const colors = STATUS_CHIP_COLORS;
   // Real <button> trigger — was previously a <Badge> (<div>) under
   // DropdownMenuTrigger asChild, which Radix doesn't reliably forward
   // click events to, so the dropdown never opened on Bluewater.
@@ -734,6 +738,61 @@ function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: st
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+// Phone card for one leasing unit — the table's mobile twin (docs/DESIGN.md
+// §7). Read-only summary: unit + tenant top line, rent p.a. in mono top-right,
+// positioning/lease context line, then the status-band row-pill + status chip.
+// Taps through to the linked brand profile where the table row links there.
+function UnitPhoneCard({ unit }: { unit: any }) {
+  const band = statusBandFor(unit.status_band);
+  const tenantName = unit.live_trading_name || unit.live_tenant_name || unit.tenant_name || "";
+  const displayName = tenantName || unit.unit_name || "—";
+  const linkedCompanyId = unit.resolved_tenant_company_id || unit.tenant_company_id || null;
+  const expFmt = formatLandsecDate(unit.live_lease_expiry || unit.lease_expiry);
+  const positioning = [unit.positioning_group, unit.positioning].filter(Boolean).join(" · ");
+  const rentPa = Number(unit.live_rent_pa ?? unit.rent_pa);
+  const rent = rentPa > 0 ? `£${rentPa.toLocaleString()}` : null;
+
+  const body = (
+    <>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-bold leading-tight truncate">{displayName}</p>
+          {unit.unit_name && unit.unit_name !== displayName && (
+            <p className="text-[11px] text-muted-foreground truncate">{unit.unit_name}</p>
+          )}
+        </div>
+        {rent && <span className="shrink-0 text-sm font-mono tabular-nums font-semibold">{rent}</span>}
+      </div>
+      <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+        {positioning || "No positioning"}
+        {expFmt ? ` · Exp. ${expFmt}` : ""}
+      </p>
+      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+        {band && (
+          <span className={`inline-flex items-center whitespace-nowrap rounded-md border px-2 py-0.5 text-[10px] font-semibold ${band.pillClass}`}>
+            {band.label}
+          </span>
+        )}
+        {unit.status && (
+          <span className={`inline-flex items-center text-[10px] px-2 py-0.5 rounded-full border font-medium ${STATUS_CHIP_COLORS[unit.status] || "border-gray-300 text-gray-700 bg-gray-50"}`}>
+            {unit.status}
+          </span>
+        )}
+      </div>
+    </>
+  );
+
+  const cardClass = `block rounded-2xl bg-card border border-border p-3 shadow-sm ${unit.status === "Archived" ? "opacity-50" : ""}`;
+  if (linkedCompanyId) {
+    return (
+      <Link href={`/companies/${linkedCompanyId}`} className={cardClass} data-testid={`unit-row-${unit.id}-card`}>
+        {body}
+      </Link>
+    );
+  }
+  return <div className={cardClass} data-testid={`unit-row-${unit.id}-card`}>{body}</div>;
 }
 
 function InlineDateCell({ unitId, field, value, onSave, className = "" }: {
@@ -1948,8 +2007,29 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                 <span className="text-[11px] text-muted-foreground/70 ml-2 truncate">{zoneUnits[0].positioning}</span>
               )}
             </button>
-            {isZoneExpanded(zone) && (
-              <div className="overflow-x-auto min-w-0">
+            {isZoneExpanded(zone) && (<>
+              {/* Phone: one card per unit (docs/DESIGN.md §7) — the zone
+                  header above stays as the section label. The desktop table
+                  never ships to the phone (§6/§13). */}
+              <div className="md:hidden p-3 space-y-2" data-testid={`zone-cards-${zone}`}>
+                {(() => {
+                  const showAll = expandedRowZones.has(zone);
+                  const visible = showAll ? zoneUnits : zoneUnits.slice(0, ZONE_ROW_LIMIT);
+                  const hasMore = zoneUnits.length > ZONE_ROW_LIMIT && !showAll;
+                  return (<>
+                    {visible.map(u => <UnitPhoneCard key={u.id} unit={u} />)}
+                    {hasMore && (
+                      <button
+                        onClick={() => setExpandedRowZones(prev => { const n = new Set(prev); n.add(zone); return n; })}
+                        className="w-full py-2 text-xs text-primary hover:underline font-medium"
+                      >
+                        Show all {zoneUnits.length} units ({zoneUnits.length - ZONE_ROW_LIMIT} more)
+                      </button>
+                    )}
+                  </>);
+                })()}
+              </div>
+              <div className="hidden md:block overflow-x-auto min-w-0">
                 {/* Width pinned to the colgroup total (not w-full) so the
                     columns stay at their declared sizes when the chat
                     dock opens/closes. With w-full, table-layout: fixed
@@ -2062,7 +2142,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                   </tbody>
                 </table>
               </div>
-            )}
+            </>)}
           </div>
         ))}
       </div>
@@ -2607,8 +2687,13 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                 <Badge variant="secondary" className="text-[10px]">{zoneUnits.length}</Badge>
                 <span className="text-[10px] text-emerald-600 ml-auto">{zoneOcc}/{zoneUnits.length} occ</span>
               </button>
-              {isExpanded && (
-                <div className="overflow-x-auto min-w-0">
+              {isExpanded && (<>
+                {/* Phone: card list per unit (docs/DESIGN.md §7); the table
+                    below is desktop-only. */}
+                <div className="md:hidden p-3 space-y-2 border-b" data-testid={`zone-cards-prop-${zone}`}>
+                  {zoneUnits.map(u => <UnitPhoneCard key={u.id} unit={u} />)}
+                </div>
+                <div className="hidden md:block overflow-x-auto min-w-0">
                   <table className="text-xs" style={{ tableLayout: "fixed", width: `${LEASING_TABLE_MIN_WIDTH}px` }}>
                     <LeasingColgroup />
                     <thead>
@@ -2686,7 +2771,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                     </tbody>
                   </table>
                 </div>
-              )}
+              </>)}
             </div>
           );
         })}

@@ -28,17 +28,17 @@ const fmtMoney = (pence: number) => {
 };
 const fmtFull = (pence: number) => `£${(pence / 100).toLocaleString("en-GB", { maximumFractionDigits: 0 })}`;
 
-const TEAM_STYLES: Record<string, { bg: string; border: string; accent: string; ring: string }> = {
-  "Office / Corporate": { bg: "from-purple-50 to-purple-100/50 dark:from-purple-950/40 dark:to-purple-900/20", border: "border-purple-200 dark:border-purple-800", accent: "text-purple-700 dark:text-purple-300", ring: "ring-purple-500/30" },
-  "Investment":         { bg: "from-emerald-50 to-emerald-100/50 dark:from-emerald-950/40 dark:to-emerald-900/20", border: "border-emerald-200 dark:border-emerald-800", accent: "text-emerald-700 dark:text-emerald-300", ring: "ring-emerald-500/30" },
-  "Lease Advisory":     { bg: "from-amber-50 to-amber-100/50 dark:from-amber-950/40 dark:to-amber-900/20", border: "border-amber-200 dark:border-amber-800", accent: "text-amber-700 dark:text-amber-300", ring: "ring-amber-500/30" },
-  "National Leasing":   { bg: "from-orange-50 to-orange-100/50 dark:from-orange-950/40 dark:to-orange-900/20", border: "border-orange-200 dark:border-orange-800", accent: "text-orange-700 dark:text-orange-300", ring: "ring-orange-500/30" },
-  "Development":        { bg: "from-pink-50 to-pink-100/50 dark:from-pink-950/40 dark:to-pink-900/20", border: "border-pink-200 dark:border-pink-800", accent: "text-pink-700 dark:text-pink-300", ring: "ring-pink-500/30" },
-  "Tenant Rep":         { bg: "from-sky-50 to-sky-100/50 dark:from-sky-950/40 dark:to-sky-900/20", border: "border-sky-200 dark:border-sky-800", accent: "text-sky-700 dark:text-sky-300", ring: "ring-sky-500/30" },
-  "London Retail":      { bg: "from-yellow-50 to-yellow-100/50 dark:from-yellow-950/40 dark:to-yellow-900/20", border: "border-yellow-200 dark:border-yellow-800", accent: "text-yellow-700 dark:text-yellow-300", ring: "ring-yellow-500/30" },
-  "London F&B":         { bg: "from-rose-50 to-rose-100/50 dark:from-rose-950/40 dark:to-rose-900/20", border: "border-rose-200 dark:border-rose-800", accent: "text-rose-700 dark:text-rose-300", ring: "ring-rose-500/30" },
+const TEAM_STYLES: Record<string, { bg: string; border: string; accent: string; ring: string; edge: string }> = {
+  "Office / Corporate": { bg: "from-purple-50 to-purple-100/50 dark:from-purple-950/40 dark:to-purple-900/20", border: "border-purple-200 dark:border-purple-800", accent: "text-purple-700 dark:text-purple-300", ring: "ring-purple-500/30", edge: "border-l-purple-500" },
+  "Investment":         { bg: "from-emerald-50 to-emerald-100/50 dark:from-emerald-950/40 dark:to-emerald-900/20", border: "border-emerald-200 dark:border-emerald-800", accent: "text-emerald-700 dark:text-emerald-300", ring: "ring-emerald-500/30", edge: "border-l-emerald-500" },
+  "Lease Advisory":     { bg: "from-amber-50 to-amber-100/50 dark:from-amber-950/40 dark:to-amber-900/20", border: "border-amber-200 dark:border-amber-800", accent: "text-amber-700 dark:text-amber-300", ring: "ring-amber-500/30", edge: "border-l-amber-500" },
+  "National Leasing":   { bg: "from-orange-50 to-orange-100/50 dark:from-orange-950/40 dark:to-orange-900/20", border: "border-orange-200 dark:border-orange-800", accent: "text-orange-700 dark:text-orange-300", ring: "ring-orange-500/30", edge: "border-l-orange-500" },
+  "Development":        { bg: "from-pink-50 to-pink-100/50 dark:from-pink-950/40 dark:to-pink-900/20", border: "border-pink-200 dark:border-pink-800", accent: "text-pink-700 dark:text-pink-300", ring: "ring-pink-500/30", edge: "border-l-pink-500" },
+  "Tenant Rep":         { bg: "from-sky-50 to-sky-100/50 dark:from-sky-950/40 dark:to-sky-900/20", border: "border-sky-200 dark:border-sky-800", accent: "text-sky-700 dark:text-sky-300", ring: "ring-sky-500/30", edge: "border-l-sky-500" },
+  "London Retail":      { bg: "from-yellow-50 to-yellow-100/50 dark:from-yellow-950/40 dark:to-yellow-900/20", border: "border-yellow-200 dark:border-yellow-800", accent: "text-yellow-700 dark:text-yellow-300", ring: "ring-yellow-500/30", edge: "border-l-yellow-500" },
+  "London F&B":         { bg: "from-rose-50 to-rose-100/50 dark:from-rose-950/40 dark:to-rose-900/20", border: "border-rose-200 dark:border-rose-800", accent: "text-rose-700 dark:text-rose-300", ring: "ring-rose-500/30", edge: "border-l-rose-500" },
 };
-const DEFAULT_TEAM_STYLE = { bg: "from-muted to-muted/50", border: "border-border", accent: "text-foreground", ring: "ring-muted" };
+const DEFAULT_TEAM_STYLE = { bg: "from-muted to-muted/50", border: "border-border", accent: "text-foreground", ring: "ring-muted", edge: "border-l-border" };
 const teamStyle = (t: string) => TEAM_STYLES[t] || DEFAULT_TEAM_STYLE;
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -142,10 +142,10 @@ function SkiTargetHero() {
     return <Skeleton className="h-24 w-full rounded-xl" />;
   }
   return (
-    <div className="relative overflow-hidden rounded-xl border bg-gradient-to-r from-sky-50 via-blue-50 to-indigo-50 dark:from-sky-950/40 dark:via-blue-950/40 dark:to-indigo-950/40 p-5 shadow-sm">
+    <div className="relative overflow-hidden rounded-xl border border-border bg-card p-5 shadow-sm">
       <div className="flex items-start gap-4">
-        <div className="rounded-full bg-white/70 dark:bg-white/10 p-2.5 backdrop-blur shrink-0">
-          <Mountain className="w-6 h-6 text-sky-600 dark:text-sky-300" />
+        <div className="rounded-full bg-muted p-2.5 shrink-0">
+          <Mountain className="w-6 h-6 text-primary" />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 flex-wrap">
@@ -153,21 +153,21 @@ function SkiTargetHero() {
             <span className="text-xs text-muted-foreground">{data.target.reward}</span>
           </div>
           <div className="mt-2 flex items-baseline gap-3 flex-wrap">
-            <span className="text-2xl font-bold tabular-nums">{fmtMoney(data.billedPence)}</span>
-            <span className="text-sm text-muted-foreground">billed of {fmtMoney(data.target.pence)} target</span>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-white/60 dark:bg-white/10 text-muted-foreground">+ {fmtMoney(data.wipPence)} WIP</span>
+            <span className="text-2xl font-bold font-mono tabular-nums">{fmtMoney(data.billedPence)}</span>
+            <span className="text-sm text-muted-foreground">billed of <span className="font-mono tabular-nums">{fmtMoney(data.target.pence)}</span> target</span>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">+ <span className="font-mono tabular-nums">{fmtMoney(data.wipPence)}</span> WIP</span>
           </div>
-          <div className="relative h-2.5 mt-3 rounded-full bg-white/60 dark:bg-white/10 overflow-hidden">
-            <div className="absolute inset-y-0 left-0 bg-sky-300 dark:bg-sky-700/70 rounded-full transition-all" style={{ width: `${data.pctForecast}%` }} />
-            <div className="absolute inset-y-0 left-0 bg-sky-600 dark:bg-sky-400 rounded-full transition-all" style={{ width: `${data.pctBilled}%` }} />
+          <div className="relative h-2.5 mt-3 rounded-full bg-muted overflow-hidden">
+            <div className="absolute inset-y-0 left-0 bg-primary/30 rounded-full transition-all" style={{ width: `${data.pctForecast}%` }} />
+            <div className="absolute inset-y-0 left-0 bg-primary rounded-full transition-all" style={{ width: `${data.pctBilled}%` }} />
           </div>
           <div className="mt-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
             <span>
               {data.toGoPence > 0
-                ? `${fmtMoney(data.toGoPence)} to go (incl. WIP)`
+                ? <><span className="font-mono tabular-nums">{fmtMoney(data.toGoPence)}</span> to go (incl. WIP)</>
                 : `Beating target — see you on the slopes`}
             </span>
-            <span>{data.daysRemaining} days left in {data.year}</span>
+            <span><span className="font-mono tabular-nums">{data.daysRemaining}</span> days left in {data.year}</span>
           </div>
         </div>
       </div>
@@ -403,14 +403,14 @@ function TeamCard({ team, allStaff, aiSummary, oooByUser, onSelectPerson }: { te
     return (
       <button
         onClick={() => onSelectPerson ? onSelectPerson(m.id) : navigate(`/hr?person=${m.id}`)}
-        className={`w-full flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-white/70 dark:hover:bg-white/5 ${isHead ? "bg-white/60 dark:bg-white/10" : ""} ${ooo ? "opacity-70" : ""}`}
+        className={`w-full flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/60 ${isHead ? "bg-muted/50" : ""} ${ooo ? "opacity-70" : ""}`}
         title={ooo ? `OOO: ${ooo.subject}` : wfh ? "Working from home today" : undefined}
       >
         <div className="relative shrink-0">
           {profilePic ? (
-            <img src={profilePic} alt={m.name} className={`rounded-full object-cover ${isHead ? "w-9 h-9 ring-2 ring-white dark:ring-black/20" : "w-7 h-7"}`} />
+            <img src={profilePic} alt={m.name} className={`rounded-full object-cover ${isHead ? "w-9 h-9 ring-2 ring-border" : "w-7 h-7"}`} />
           ) : (
-            <div className={`rounded-full bg-white/80 dark:bg-white/10 flex items-center justify-center font-medium ${isHead ? "w-9 h-9 text-xs ring-2 ring-white dark:ring-black/20" : "w-7 h-7 text-[10px]"}`}>
+            <div className={`rounded-full bg-muted flex items-center justify-center font-medium ${isHead ? "w-9 h-9 text-xs ring-2 ring-border" : "w-7 h-7 text-[10px]"}`}>
               {m.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
             </div>
           )}
@@ -427,20 +427,20 @@ function TeamCard({ team, allStaff, aiSummary, oooByUser, onSelectPerson }: { te
         </div>
         {ooo && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-orange-100 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 border-orange-300 shrink-0">OOO</Badge>}
         {wfh && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-sky-100 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border-sky-300 shrink-0">WFH</Badge>}
-        {isHead && !ooo && !wfh && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-white/70 dark:bg-white/10 border-white/40 shrink-0">Head</Badge>}
+        {isHead && !ooo && !wfh && <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">Head</Badge>}
       </button>
     );
   };
 
   return (
-    <div className={`rounded-xl border ${style.border} bg-gradient-to-br ${style.bg} shadow-sm hover:shadow-md transition-shadow overflow-hidden`} data-testid={`team-card-${team.team.replace(/\s+/g, "-").toLowerCase()}`}>
-      <div className="px-3 py-2 flex items-center justify-between border-b border-white/40 dark:border-black/20">
-        <h3 className={`font-semibold text-sm ${style.accent}`}>{team.team}</h3>
-        <Badge variant="outline" className="text-[10px] h-5 bg-white/60 dark:bg-white/10 border-white/40">{team.headcount}</Badge>
+    <div className={`rounded-xl border border-border border-l-4 ${style.edge} bg-card shadow-sm hover:shadow-md transition-shadow overflow-hidden`} data-testid={`team-card-${team.team.replace(/\s+/g, "-").toLowerCase()}`}>
+      <div className="px-3 py-2 flex items-center justify-between border-b border-border">
+        <h3 className="font-semibold text-sm">{team.team}</h3>
+        <Badge variant="outline" className="text-[10px] h-5 font-mono tabular-nums">{team.headcount}</Badge>
       </div>
       {aiSummary && (
-        <div className="px-3 py-1.5 text-[11px] text-muted-foreground italic flex items-start gap-1.5 bg-white/30 dark:bg-black/5 border-b border-white/40 dark:border-black/20">
-          <Sparkles className="w-3 h-3 text-violet-500 shrink-0 mt-0.5" />
+        <div className="px-3 py-1.5 text-[11px] text-muted-foreground italic flex items-start gap-1.5 bg-muted/40 border-b border-border">
+          <Sparkles className="w-3 h-3 text-primary shrink-0 mt-0.5" />
           <span>{aiSummary}</span>
         </div>
       )}
