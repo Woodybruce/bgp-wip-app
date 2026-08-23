@@ -3,6 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Area, AreaChart,
 } from "recharts";
+import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
 import { TrendingUp, DollarSign, Target, Clock, Printer, RefreshCw, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { pillMetrics } from "@/components/ui/pill";
@@ -15,17 +16,21 @@ const COLORS = [
   "#06b6d4", "#eab308", "#ef4444", "#6366f1", "#14b8a6",
 ];
 
-const STATUS_COLORS: Record<string, string> = {
-  "New": "#60a5fa",
-  "In Progress": "#818cf8",
-  "Under Offer": "#a78bfa",
-  "Exchanged": "#4ade80",
-  "Invoiced": "#34d399",
-  "On Hold": "#facc15",
-  "Lost": "#fb7185",
-  "Withdrawn": "#f87171",
-  "Unknown": "#6b7280",
+// Hex mirror of the canonical status palette (shared/deal-status.ts) —
+// Recharts needs literal colours. Keyed by code; legacy strings resolve
+// through legacyToCode below.
+const STATUS_HEX: Record<string, string> = {
+  OPP: "#14b8a6", REP: "#94a3b8", SPEC: "#a1a1aa", LIVE: "#3b82f6",
+  AVA: "#0ea5e9", NEG: "#f59e0b", HOT: "#f43f5e", SOL: "#ea580c",
+  EXC: "#8b5cf6", COM: "#10b981", WIT: "#a8a29e", INV: "#16a34a",
 };
+function statusDisplay(name: string): { label: string; fill: string } {
+  const code = legacyToCode(name);
+  return {
+    label: code ? DEAL_STATUS_LABELS[code] : name,
+    fill: (code && STATUS_HEX[code]) || "#a8a29e",
+  };
+}
 
 function formatCurrency(value: number): string {
   if (value >= 1_000_000) return `£${(value / 1_000_000).toFixed(1)}M`;
@@ -230,11 +235,11 @@ export default function BoardReport() {
                 <BarChart data={data.pipeline.byStatus} layout="vertical" margin={{ left: 10, right: 20 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
                   <XAxis type="number" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis type="category" dataKey="name" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} width={100} axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="name" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} width={100} axisLine={false} tickLine={false} tickFormatter={(v: string) => statusDisplay(v).label} />
                   <Tooltip content={<CustomTooltip />} />
                   <Bar dataKey="value" radius={[0, 4, 4, 0]} maxBarSize={28}>
                     {data.pipeline.byStatus.map((entry, i) => (
-                      <Cell key={i} fill={STATUS_COLORS[entry.name] || COLORS[i % COLORS.length]} />
+                      <Cell key={i} fill={statusDisplay(entry.name).fill} />
                     ))}
                   </Bar>
                 </BarChart>

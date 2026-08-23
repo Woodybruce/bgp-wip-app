@@ -6,6 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
+import { countLabel } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -854,7 +855,7 @@ function BrandExplorer() {
             )}
           </>
         )}
-        <p className="text-sm text-muted-foreground ml-auto">{filtered.length} results</p>
+        <p className="text-sm text-muted-foreground ml-auto">{countLabel(filtered.length, "result")}</p>
       </div>
 
       {/* Brand cards */}
