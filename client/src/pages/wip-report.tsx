@@ -21,6 +21,7 @@ import { FilterDropdown } from "@/components/wip-filter-dropdown";
 import { ScrollableTable } from "@/components/scrollable-table";
 import bgpLogo from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTeam } from "@/lib/team-context";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useBrand } from "@/lib/brand-context";
 import { Link } from "wouter";
 import { apiRequest, getAuthHeaders, invalidateDealCaches, queryClient } from "@/lib/queryClient";
@@ -92,7 +93,7 @@ const DEAL_TYPE_BADGE_COLORS: Record<string, string> = {
 const WIP_FILTERS_STORAGE_KEY = "bgp-wip-report-filters-v2";
 
 interface SavedWipFilters {
-  activeTab: "report" | "agent-summary" | "fee-check";
+  activeTab: "report" | "agent-summary" | "fee-check" | "health";
   clients?: string[];
   teams: string[];
   months: string[];
@@ -191,6 +192,72 @@ interface FeeReconRow {
 // Fee Check — invoiced deals whose recorded fee (what the WIP + commission use)
 // doesn't match the NET invoiced in Xero. Net-to-net, so VAT isn't flagged as a
 // discrepancy. Leadership only (the tab is hidden otherwise).
+// Needs Attention — the unlinked-entries audit (Woody, 2026-08-23: "there
+// are entries which are not linked"). Each bucket is a data problem that
+// distorts the report and the equity Finance projections; every row links to
+// its deal so it can be fixed in place.
+function HealthTab() {
+  const { data, isLoading, error } = useQuery<any>({
+    queryKey: ["/api/wip/health"],
+    queryFn: async () => {
+      const res = await fetch("/api/wip/health", { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("Failed to load data health");
+      return res.json();
+    },
+  });
+  const money = (n: number) => `£${Math.round(n || 0).toLocaleString("en-GB")}`;
+  if (isLoading) return <Skeleton className="h-[300px]" />;
+  if (error || !data) return <p className="text-sm text-muted-foreground p-4">Couldn't load the audit — try again shortly.</p>;
+  const b = data.buckets;
+  const sections: Array<{ key: string; title: string; why: string; data: any }> = [
+    { key: "noClient", title: "No client linked", why: "Shows as \"Unknown\" in the Client column — set the landlord / tenant / vendor / purchaser on the deal.", data: b.noClient },
+    { key: "noAgent", title: "No BGP agent", why: "Invisible in the Agent Summary and earns nobody commission — add the agent or a fee allocation.", data: b.noAgent },
+    { key: "noDate", title: "No date at all", why: "No target, exchange or completion date — the deal lands in no month and skews the year view.", data: b.noDate },
+    { key: "invNoXero", title: "Invoiced with no Xero invoice", why: "Status says Invoiced but no Xero invoice is linked — raise or link the invoice so cash tracking works.", data: b.invNoXero },
+    { key: "noFee", title: "Live deal with no fee", why: "In the pipeline but fee is blank — it's excluded from the WIP report entirely (invisible money).", data: b.noFee },
+    { key: "noProperty", title: "No property linked", why: "Fine for consultancy mandates; worth linking for everything else.", data: b.noProperty },
+  ];
+  return (
+    <div className="space-y-4" data-testid="wip-health-tab">
+      <div className="rounded-lg border bg-amber-50 border-amber-200 px-4 py-3">
+        <p className="text-sm font-medium text-amber-900">
+          {data.affected.count > 0
+            ? `${data.affected.count} deal(s) worth ${money(data.affected.fee)} have broken links that distort this report and the Finance projections.`
+            : "All linked — every WIP deal has a client, agent and date. Lovely."}
+        </p>
+        <p className="text-xs text-amber-800/80 mt-0.5">{data.totalWipDeals} deals checked · tap any row to open the deal and fix it</p>
+      </div>
+      {sections.filter(sec => sec.data.count > 0).map(sec => (
+        <div key={sec.key} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-2.5 border-b bg-gray-50 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">{sec.title} <span className="text-muted-foreground font-normal">({sec.data.count}{sec.data.fee ? ` · ${money(sec.data.fee)}` : ""})</span></p>
+              <p className="text-[11px] text-muted-foreground">{sec.why}</p>
+            </div>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {sec.data.deals.map((d: any) => (
+              <Link key={d.dealId} href={`/deals/${d.dealId}`}>
+                <div className="flex items-center gap-3 px-4 py-2 hover:bg-gray-50 cursor-pointer text-sm">
+                  <span className="flex-1 min-w-0 truncate">
+                    {d.name || "(unnamed deal)"}
+                    <span className="text-xs text-muted-foreground"> {d.dealType ? `· ${d.dealType}` : ""}{d.team ? ` · ${d.team}` : ""}</span>
+                  </span>
+                  <Badge variant="secondary" className="text-[10px] shrink-0">{(() => { const c = legacyToCode(d.status); return c ? DEAL_STATUS_LABELS[c] : d.status; })()}</Badge>
+                  <span className="font-mono text-xs shrink-0 w-20 text-right">{d.fee ? money(d.fee) : "—"}</span>
+                </div>
+              </Link>
+            ))}
+            {sec.data.count > sec.data.deals.length && (
+              <p className="px-4 py-2 text-[11px] text-muted-foreground">Showing first {sec.data.deals.length} of {sec.data.count}.</p>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function FeeCheckTab() {
   const { data = [], isLoading, error } = useQuery<FeeReconRow[]>({
     queryKey: ["/api/wip/fee-reconciliation"],
@@ -581,11 +648,14 @@ export default function WipReport() {
   const { toast } = useToast();
   const { activeTeam } = useTeam();
   const { brand, isLandsec } = useBrand();
+  // Phones get a card list instead of the 1,400px-wide table (Woody,
+  // 2026-08-23: "pretty hard to navigate on phone").
+  const isMobile = useIsMobile();
   // Sage WIP reconciliation tab retired — Deals Board + Letting Tracker
   // are now the canonical source. The page shows the live deals view
   // and the per-agent summary only.
   const [savedFilters] = useState(loadSavedWipFilters);
-  const [activeTab, setActiveTab] = useState<"report" | "agent-summary" | "fee-check">(savedFilters?.activeTab || "report");
+  const [activeTab, setActiveTab] = useState<"report" | "agent-summary" | "fee-check" | "health">(savedFilters?.activeTab || "report");
 
   const { data: user } = useQuery<{ id: string; name: string; email: string; team: string; isAdmin?: boolean }>({
     queryKey: ["/api/auth/me"],
@@ -1149,6 +1219,19 @@ export default function WipReport() {
               Fee Check
             </button>
           )}
+          {canSeeAll && (
+            <button
+              onClick={() => setActiveTab("health")}
+              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === "health"
+                  ? "border-green-600 text-green-700"
+                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+              }`}
+              data-testid="wip-tab-health"
+            >
+              Needs Attention
+            </button>
+          )}
         </div>
       </div>
 
@@ -1156,6 +1239,8 @@ export default function WipReport() {
         <AgentSummaryTab />
       ) : activeTab === "fee-check" ? (
         <FeeCheckTab />
+      ) : activeTab === "health" ? (
+        <HealthTab />
       ) : (
       <div className="flex flex-col gap-4">
           {/* KPI stat cards — matching Investment Tracker style */}
@@ -1317,6 +1402,46 @@ export default function WipReport() {
                 </Button>
               </div>
             )}
+            {isMobile ? (
+              <div className="space-y-2 pt-2" data-testid="wip-mobile-cards">
+                {sortedDetailEntries.slice(0, 200).map((e, i) => {
+                  const invoiced = (e.amtInvoice || 0) > 0;
+                  const inner = (
+                    <div className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 active:bg-gray-50">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-sm font-semibold leading-tight flex-1 min-w-0 truncate">{e.ref || "(unnamed)"}</p>
+                        <p className={`text-sm font-mono font-semibold shrink-0 ${invoiced ? "text-green-700" : "text-gray-900"}`}>
+                          {formatFullCurrency((e.amtWip || 0) + (e.amtInvoice || 0))}
+                        </p>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+                        {[e.client, e.project].filter(Boolean).join(" · ") || "No client / property linked"}
+                      </p>
+                      <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                        {(() => { const c = legacyToCode(e.dealStatus); return (
+                          <Badge variant="secondary" className="text-[10px]">{c ? DEAL_STATUS_LABELS[c] : (e.dealStatus || "—")}</Badge>
+                        ); })()}
+                        {invoiced && <Badge className="text-[10px] bg-green-100 text-green-800 hover:bg-green-100">Invoiced</Badge>}
+                        {e.month && <span className="text-[10px] text-muted-foreground">{e.month}</span>}
+                        <span className="text-[10px] text-muted-foreground truncate">{[e.agent, e.team].filter(Boolean).join(" · ")}</span>
+                      </div>
+                    </div>
+                  );
+                  return e.dealId
+                    ? <Link key={e.id || i} href={`/deals/${e.dealId}`}>{inner}</Link>
+                    : <div key={e.id || i}>{inner}</div>;
+                })}
+                {sortedDetailEntries.length > 200 && (
+                  <p className="text-[11px] text-muted-foreground px-1">Showing the first 200 of {sortedDetailEntries.length} rows — use the filters above to narrow down.</p>
+                )}
+                <div className="rounded-xl border border-gray-300 bg-gray-100 px-3 py-2.5 flex items-center justify-between font-semibold text-sm">
+                  <span>Total</span>
+                  <span className="font-mono">
+                    {formatFullCurrency(sortedDetailEntries.reduce((s2, e) => s2 + (e.amtWip || 0) + (e.amtInvoice || 0), 0))}
+                  </span>
+                </div>
+              </div>
+            ) : (
             <ScrollableTable minWidth={1400} pageScroll>
               <table className="w-full">
                 <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
@@ -1492,6 +1617,7 @@ export default function WipReport() {
                 </tfoot>
               </table>
             </ScrollableTable>
+            )}
           </div>
       </div>
       )}

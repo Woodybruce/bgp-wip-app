@@ -7338,6 +7338,19 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
+  // Needs Attention — the unlinked-entries audit behind the WIP report tab.
+  app.get("/api/wip/health", requireAuth, async (req, res) => {
+    try {
+      const senior = await isWipSenior(req);
+      const fullView = await hasWipFullView(req);
+      if (!senior && !fullView) return res.status(403).json({ error: "Not authorised" });
+      res.json(await computeWipHealth());
+    } catch (e: any) {
+      console.error("[wip/health]", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.delete("/api/wip", requireAuth, async (req, res) => {
     try {
       if (!(await isWipSenior(req))) return res.status(403).json({ error: "Not authorised" });
@@ -9712,6 +9725,87 @@ async function runAutoEnrichmentCycle() {
   } finally {
     autoEnrichRunning = false;
   }
+}
+
+// ── WIP data health — the "entries that aren't linked" audit ─────────────
+// (Woody, 2026-08-23: the WIP report is the firm's money list; rows missing
+// a client / agent / date silently corrupt every roll-up downstream,
+// including the equity Finance projections.) Buckets every WIP-status deal
+// by what's missing. Consumed by GET /api/wip/health (Needs Attention tab)
+// and folded into /api/xero/financials for the equity view.
+export async function computeWipHealth(): Promise<any> {
+  const { rows } = await pool.query(`
+    SELECT d.id, d.deal_ref AS "dealRef", d.name, d.status, d.fee::float AS fee,
+           d.team, d.deal_type AS "dealType",
+           d.property_id AS "propertyId", d.landlord_id AS "landlordId",
+           d.tenant_id AS "tenantId", d.vendor_id AS "vendorId", d.purchaser_id AS "purchaserId",
+           d.internal_agent AS "internalAgent",
+           d.target_date AS "targetDate", d.exchanged_at AS "exchangedAt",
+           d.completed_at AS "completedAt", d.invoiced_at AS "invoicedAt",
+           (SELECT COUNT(*) FROM deal_fee_allocations a WHERE a.deal_id = d.id)::int AS "allocCount",
+           (SELECT COUNT(*) FROM xero_invoices xi WHERE xi.deal_id = d.id AND COALESCE(xi.status,'') <> 'ERROR')::int AS "invoiceCount",
+           (SELECT p.landlord_id FROM crm_properties p WHERE p.id = d.property_id) AS "propLandlordId"
+      FROM crm_deals d
+  `);
+  const wipDeals = rows.filter((r: any) => {
+    const c = legacyToCode(r.status);
+    return c !== null && WIP_STATUSES.includes(c);
+  });
+  const slim = (r: any) => ({
+    dealId: r.id,
+    dealRef: r.dealRef ?? null,
+    name: r.name,
+    fee: r.fee || 0,
+    team: Array.isArray(r.team) ? r.team.join(", ") : (r.team || null),
+    status: r.status,
+    dealType: r.dealType || null,
+  });
+  const hasAgent = (r: any) => r.allocCount > 0 || (Array.isArray(r.internalAgent) && r.internalAgent.length > 0);
+  const hasClient = (r: any) => !!(r.landlordId || r.tenantId || r.vendorId || r.purchaserId || r.propLandlordId);
+  const hasDate = (r: any) => !!(r.targetDate || r.exchangedAt || r.completedAt || r.invoicedAt);
+  const feeBearing = wipDeals.filter((r: any) => (r.fee || 0) > 0);
+
+  const noClient = feeBearing.filter((r: any) => !hasClient(r));
+  const noAgent = feeBearing.filter((r: any) => !hasAgent(r));
+  const noProperty = feeBearing.filter((r: any) => !r.propertyId);
+  const noDate = feeBearing.filter((r: any) => !hasDate(r));
+  const invNoXero = feeBearing.filter((r: any) => legacyToCode(r.status) === "INV" && r.invoiceCount === 0);
+  // Live pipeline deals with NO fee at all — they're excluded from the WIP
+  // report entirely, so this is invisible money rather than a broken row.
+  const noFee = wipDeals.filter((r: any) => {
+    if ((r.fee || 0) > 0) return false;
+    const c = legacyToCode(r.status);
+    return ["NEG", "SOL", "EXC", "COM", "INV"].includes(c as string);
+  });
+
+  const bucket = (list: any[]) => ({
+    count: list.length,
+    fee: Math.round(list.reduce((s, r) => s + (r.fee || 0), 0)),
+    deals: list.slice(0, 100).map(slim),
+  });
+  // Headline "affected" = fee-bearing deals with at least one link problem
+  // that distorts the numbers (client / agent / date / missing Xero link).
+  // noProperty is listed but not counted — consultancy mandates legitimately
+  // have no property; noFee is counted separately (no fee to sum).
+  const affectedIds = new Set<string>();
+  for (const list of [noClient, noAgent, noDate, invNoXero]) for (const r of list) affectedIds.add(r.id);
+  const affectedFee = Math.round(
+    feeBearing.filter((r: any) => affectedIds.has(r.id)).reduce((s: number, r: any) => s + (r.fee || 0), 0),
+  );
+
+  return {
+    buckets: {
+      noClient: bucket(noClient),
+      noAgent: bucket(noAgent),
+      noProperty: bucket(noProperty),
+      noDate: bucket(noDate),
+      invNoXero: bucket(invNoXero),
+      noFee: bucket(noFee),
+    },
+    affected: { count: affectedIds.size, fee: affectedFee },
+    totalWipDeals: wipDeals.length,
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 export function startAutoEnrichment() {

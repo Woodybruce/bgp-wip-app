@@ -4350,6 +4350,17 @@ app.use("/api/branding/assets", express.static(
         } catch (e: any) {
           console.error("[bills-ig heal] failed:", e?.message);
         }
+        // TEMP boot diagnostic (2026-08-23): WIP data-health counts, so the
+        // real unlinked-entries numbers show in the deploy logs. Remove once
+        // the Needs Attention tab has been reviewed with Woody.
+        try {
+          const { computeWipHealth } = await import("./crm");
+          const h = await computeWipHealth();
+          const b = h.buckets;
+          console.log(`[wip-health] wipDeals=${h.totalWipDeals} affected=${h.affected.count} (£${h.affected.fee.toLocaleString("en-GB")}) — noClient=${b.noClient.count}(£${b.noClient.fee}) noAgent=${b.noAgent.count}(£${b.noAgent.fee}) noDate=${b.noDate.count}(£${b.noDate.fee}) invNoXero=${b.invNoXero.count}(£${b.invNoXero.fee}) noProperty=${b.noProperty.count} noFee=${b.noFee.count}`);
+        } catch (e: any) {
+          console.warn("[wip-health] diag failed:", e?.message);
+        }
         // Estate-wide: un-clobber Instagram sources that the Google News
         // feed maintainer overwrote (category-only match — fixed in
         // news-brand-linking, this repairs the damage). Repaired sources
