@@ -391,6 +391,7 @@ export default function MobileHome() {
                 <div className="flex items-center rounded-full bg-white/10 p-px">
                   <button
                     onClick={() => pickFinTab("personal")}
+                    data-no-min-touch
                     className={`px-2 py-[3px] rounded-full text-[10px] leading-none font-semibold uppercase tracking-wide transition-colors ${tab === "personal" ? "bg-white/90 text-[#1C1917]" : "text-white/60"}`}
                     data-testid="fin-tab-personal"
                   >
@@ -398,6 +399,7 @@ export default function MobileHome() {
                   </button>
                   <button
                     onClick={() => pickFinTab("company")}
+                    data-no-min-touch
                     className={`px-2 py-[3px] rounded-full text-[10px] leading-none font-semibold uppercase tracking-wide transition-colors ${tab === "company" ? "bg-white/90 text-[#1C1917]" : "text-white/60"}`}
                     data-testid="fin-tab-company"
                   >
