@@ -1896,15 +1896,16 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
             <FolderOpen className="w-4 h-4" />
             <h3 className="text-sm font-semibold">Documents</h3>
             {teamsToCheck.map((t, idx) => (
-              <Badge
+              <button
                 key={t}
-                variant={idx === activeTeamIdx ? "default" : "outline"}
-                className={`text-[10px] cursor-pointer ${idx === activeTeamIdx ? "" : "opacity-60"}`}
+                type="button"
+                data-no-min-touch
+                className={`inline-flex items-center rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] whitespace-nowrap border transition-colors cursor-pointer ${idx === activeTeamIdx ? "bg-foreground text-background border-transparent" : "bg-transparent text-muted-foreground border-border hover:text-foreground"}`}
                 onClick={() => { setActiveTeamName(t); setSubPath(""); }}
                 data-testid={`folder-team-tab-${t}`}
               >
                 {t}
-              </Badge>
+              </button>
             ))}
           </div>
           <div className="flex items-center gap-1 flex-wrap justify-end shrink min-w-0">

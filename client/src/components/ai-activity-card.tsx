@@ -288,6 +288,7 @@ function ActivityMarkdown({
           <button
             key={`e-${keyCounter++}`}
             type="button"
+            data-no-min-touch
             disabled={disabled}
             onClick={() => h && onOpenEmail({ msgId: h.msgId, mailboxEmail: h.mailboxEmail })}
             title={title}
@@ -308,6 +309,7 @@ function ActivityMarkdown({
           <button
             key={`m-${keyCounter++}`}
             type="button"
+            data-no-min-touch
             disabled={disabled}
             onClick={() => h && onOpenMeeting({ eventId: h.eventId, mailboxEmail: h.mailboxEmail })}
             title={title}
