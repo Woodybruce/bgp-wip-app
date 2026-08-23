@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { legacyToCode } from "@shared/deal-status";
 import { isEquityUser } from "@/lib/utils";
+import { ProfilePhotoCard } from "@/components/profile-photo-card";
 
 type BriefingData = { briefing: string; generatedAt: string };
 
@@ -575,6 +576,12 @@ export default function MobileHome() {
           ))}
         </div>
       </section>
+
+      {/* My profile photo — the same card as desktop Settings, here because
+          the phone shell has no Settings entry point (Woody, 2026-08-23:
+          "need to be able to add on mobile view"). Tap the circle or the
+          button to pick/replace the photo. */}
+      <ProfilePhotoCard />
 
       {/* AI Daily Briefing — the personalised morning summary */}
       <AiDailyBriefing />
