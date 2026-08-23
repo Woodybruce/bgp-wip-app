@@ -3,6 +3,7 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { XeroContactPicker, type XeroContact } from "@/components/xero-contact-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -6136,25 +6137,19 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
       {isMobile ? (
         <div className="flex flex-wrap gap-1.5 shrink-0">
-          <button
-            onClick={() => setActiveGroup("all")}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${activeGroup === "all" ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
-            data-testid="chip-group-all"
-          >
-            {isCompsMode ? "All Comps" : "All"}
-            <span className="font-bold tabular-nums">{searchedDeals.length}</span>
-          </button>
+          <Pill active={activeGroup === "all"} onClick={() => setActiveGroup("all")} data-testid="chip-group-all">
+            {isCompsMode ? "All Comps" : "All"} <span className="opacity-70 font-mono tabular-nums">{searchedDeals.length}</span>
+          </Pill>
           {statusCounts.map((s) => (
-            <button
+            <Pill
               key={s.name}
+              active={activeGroup === s.name}
               onClick={() => setActiveGroup(activeGroup === s.name ? "all" : s.name)}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${activeGroup === s.name ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
               data-testid={`chip-status-${s.name}`}
             >
-              <span className={`w-2 h-2 rounded-full ${DEAL_STATUS_COLORS[s.name] || "bg-primary/60"}`} />
-              {s.name}
-              <span className="font-bold tabular-nums">{s.count}</span>
-            </button>
+              <span className={`w-1.5 h-1.5 rounded-full ${DEAL_STATUS_COLORS[s.name] || "bg-primary/60"}`} />
+              {s.name} <span className="opacity-70 font-mono tabular-nums">{s.count}</span>
+            </Pill>
           ))}
         </div>
       ) : (

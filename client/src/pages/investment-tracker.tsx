@@ -5,6 +5,7 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -1481,16 +1482,15 @@ export default function InvestmentTrackerPage() {
       {isMobile ? (
         <div className="flex flex-wrap gap-1.5 shrink-0">
           {SUMMARY_STATUSES.map(s => (
-            <button
+            <Pill
               key={s}
+              active={statusFilter === s}
               onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${statusFilter === s ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
               data-testid={`stat-chip-${s.toLowerCase().replace(/\s/g, "-")}`}
             >
-              <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-primary/60"}`} />
-              {DEAL_STATUS_LABELS[s]}
-              <span className="font-bold tabular-nums">{statusSummary[s] || 0}</span>
-            </button>
+              <span className={`w-1.5 h-1.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-primary/60"}`} />
+              {DEAL_STATUS_LABELS[s]} <span className="opacity-70 font-mono tabular-nums">{statusSummary[s] || 0}</span>
+            </Pill>
           ))}
         </div>
       ) : (

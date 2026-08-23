@@ -2,6 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -1270,22 +1271,14 @@ function MobileNewsFeed() {
       data-testid="news-page"
     >
       <div className="flex gap-1.5">
-        <button
-          onClick={() => setMobileTab("latest")}
-          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] ${mobileTab === "latest" ? "border-gray-900 bg-gray-900 text-white dark:border-primary dark:bg-primary font-semibold" : "border-gray-200 text-gray-500 bg-white dark:bg-card dark:border-border"}`}
-          data-testid="mobile-news-tab-latest"
-        >
+        <Pill active={mobileTab === "latest"} onClick={() => setMobileTab("latest")} data-testid="mobile-news-tab-latest">
           Latest
-        </button>
-        <button
-          onClick={() => setMobileTab("saved")}
-          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] ${mobileTab === "saved" ? "border-gray-900 bg-gray-900 text-white dark:border-primary dark:bg-primary font-semibold" : "border-gray-200 text-gray-500 bg-white dark:bg-card dark:border-border"}`}
-          data-testid="mobile-news-tab-saved"
-        >
+        </Pill>
+        <Pill active={mobileTab === "saved"} onClick={() => setMobileTab("saved")} data-testid="mobile-news-tab-saved">
           <Bookmark className="w-3.5 h-3.5" />
           Saved
           {(savedList?.length || 0) > 0 && <span className="tabular-nums font-semibold">{savedList!.length}</span>}
-        </button>
+        </Pill>
       </div>
 
       {isLoading && (

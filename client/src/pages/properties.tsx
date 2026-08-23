@@ -5190,25 +5190,27 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
 
   return (
     <div className="space-y-2" data-testid="properties-board-header">
+      {/* Summary chips follow the app pill standard (ui/pill.tsx metrics). */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] bg-card">
+        <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide bg-card">
           <Building2 className="w-3 h-3 text-muted-foreground" />
-          <span className="font-semibold tabular-nums">{items.length}</span>
+          <span className="font-mono tabular-nums">{items.length}</span>
           <span className="text-muted-foreground">propert{items.length === 1 ? "y" : "ies"}</span>
         </span>
-        <Link href="/deals/letting" className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${liveLettings ? "bg-card" : "opacity-40"}`} title="Open the Letting Tracker">
+        <Link href="/deals/letting" className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide hover:opacity-80 ${liveLettings ? "bg-card" : "opacity-40"}`} title="Open the Letting Tracker">
           <Store className="w-3 h-3 text-muted-foreground" />
-          <span className="font-semibold tabular-nums">{liveLettings}</span>
+          <span className="font-mono tabular-nums">{liveLettings}</span>
           <span className="text-muted-foreground">live letting{liveLettings === 1 ? "" : "s"}</span>
         </Link>
-        <Link href="/deals/list" className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${liveDeals ? "bg-card" : "opacity-40"}`} title="Open the Deals board">
+        <Link href="/deals/list" className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide hover:opacity-80 ${liveDeals ? "bg-card" : "opacity-40"}`} title="Open the Deals board">
           <Handshake className="w-3 h-3 text-muted-foreground" />
-          <span className="font-semibold tabular-nums">{liveDeals}</span>
+          <span className="font-mono tabular-nums">{liveDeals}</span>
           <span className="text-muted-foreground">live deal{liveDeals === 1 ? "" : "s"}</span>
         </Link>
         <button
           onClick={() => setMapOpen(o => !o)}
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] bg-card hover:opacity-80"
+          data-no-min-touch
+          className="inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide bg-card hover:opacity-80"
           data-testid="btn-toggle-portfolio-map"
         >
           <MapPin className="w-3 h-3 text-muted-foreground" />
