@@ -1,10 +1,16 @@
-# BGP App Design Guidelines — v1 DRAFT
+# BGP App Design Guidelines — v2 DRAFT
 
 Status: **draft for the equity team to agree** (Woody requested a uniform
-standard, 2026-08-23: "everything has been built ad hoc and mismatches").
+standard, 2026-08-23: "everything has been built ad hoc and mismatches";
+v2 adds tables, phone cards, detail-page/brand anatomy, widgets, forms and
+empty states after "tables other layouts like the brand pages etc should be
+a much bigger consideration").
 Once agreed: every screen a session touches must be brought to this standard
 in the same commit ("convert on touch"), and new screens conform from birth.
 No big-bang restyle — the app converges.
+
+Visual companion (every rule rendered as a specimen): the "BGP Design
+Standard" artifact shared with Woody 2026-08-23.
 
 The reference screens (what "right" looks like): the phone home, the finance
 tile, the Finance page, the 2026 WIP report, Comps' header, the chat list.
@@ -22,7 +28,7 @@ tile, the Finance page, the 2026 WIP report, Comps' header, the chat list.
 - Phone dark chrome (headers, hero tiles) = `hsl(var(--mobile-chrome))` —
   never `#1C1917`/black literals (it's colour-scheme aware).
 - Status colours are semantic only (deal stages, alerts), from the existing
-  status maps — not decoration.
+  status maps — not decoration. Red means genuinely negative, not emphasis.
 - The Bordeaux/Nectar/Stone rebrand palette is for **documents** (PDFs,
   decks, emails), not app chrome, until decided otherwise.
 
@@ -41,7 +47,7 @@ tile, the Finance page, the 2026 WIP report, Comps' header, the chat list.
 
 - ONE chip look app-wide: slim capsule, 11px semibold uppercase,
   `leading-none`, `px-2.5 py-[5px]`, `whitespace-nowrap`. Active = filled
-  `foreground`; inactive = quiet outline. Counts inside in mono.
+  `foreground`; inactive = quiet outline. Counts/money inside in mono.
 - Use the `Pill` component wherever theme tokens work; on dark custom chrome
   match `pillMetrics` with local colours.
 - Chips never wrap to two lines (`whitespace-nowrap`) and never exceed ~26px
@@ -69,19 +75,81 @@ tile, the Finance page, the 2026 WIP report, Comps' header, the chat list.
 5. Filter dropdowns as pill triggers (see wip-filter-dropdown)
 6. Content
 
-## 6. Content surfaces
+## 6. Tables (desktop only)
 
-- Desktop data = table (sticky header, sortable). Phone = **card list**,
-  one card per row, amount top-right in mono, links inside the card (WIP
-  report is the reference). Never ship a >700px-wide table to the phone.
-- Cards: `rounded-2xl` on phone tiles, `rounded-lg`/Card component on
-  desktop; soft shadow only on phone tiles.
-- Stat tiles (when genuinely informational, not filters): label
-  11px muted, value big mono — like the Finance page StatCards.
-- Empty states: centred icon + one sentence + one primary action (Comps is
-  the reference).
+- Sticky header row; header cells `text-[11px] font-semibold uppercase
+  tracking-wider text-muted-foreground` (mono for numeric columns);
+  sortable where the data warrants it.
+- Money right-aligned, `font-mono tabular-nums`. Row text is body size
+  (`text-sm`) — never smaller than 12px.
+- Stage/status inside rows = small semantic row-pills from the status maps,
+  not free text and not full filter pills.
+- A totals row where a column sums (WIP report is the reference).
+- Wide tables scroll inside their own `overflow-x-auto` container — the
+  page itself never scrolls sideways.
+- **Never ship a table to the phone.** Phones get the card list (§7).
 
-## 7. Phone shell rules
+## 7. Phone card lists (the table's mobile twin)
+
+- One card per table row: name top-left, amount top-right in mono, one
+  `text-[11px] text-muted-foreground` context line (client · property),
+  then a chip row (stage row-pill + metadata). Tap opens the record.
+- `rounded-2xl bg-card border border-border`, soft shadow only on phone
+  tiles; desktop cards use the Card component / `rounded-lg`.
+- Links to related records (client, property) live inside the card.
+- WIP report's phone view is the reference implementation.
+
+## 8. Stat tiles — information, not filters
+
+- For purely informational numbers (Finance headlines, HR counts): label
+  `text-[11px] uppercase text-muted-foreground`, value big `font-mono`,
+  optional one-line context underneath ("live from Xero").
+- Red/alert styling only when the number is genuinely negative (overdue
+  debtors), never for emphasis.
+- If tapping the number should filter the list below, it's a Pill (§3),
+  not a tile — don't render both for the same figure.
+
+## 9. Detail pages — brand, property, deal
+
+- **Identity header**: logo/photo square (brands: white square with
+  `object-contain` logo; properties: hero photo where one exists), name,
+  ONE metadata line (`Tenant · F&B · 142 stores · tracked`), actions
+  right-aligned per §5. Deals put their stage row-pill beside the name.
+- **Pill row** for the page's boards/tabs (Overview / News 37 / Instagram /
+  Compliance …) — counts inside the pills in mono.
+- **Boards as labelled cards**: each board is a card with a mono uppercase
+  section label + count, answering ONE question, linking deeper. No board
+  taller than a screen without its own "view all".
+- Two-column board grid on desktop, one column on phone.
+- Same anatomy across brand, property and deal pages — they are the same
+  page type with different identity headers.
+
+## 10. Dashboard widgets
+
+- A widget is a card with a plain-words title, an optional jump-off link
+  ("Full view →") right-aligned in the header, and content that summarises
+  before it details (tiles/rows inside, per §8/§7).
+- No widget invents its own header style, fonts or colours — same tokens
+  as everything else. The Equity Finance widget is the reference.
+
+## 11. Forms & dialogs
+
+- Desktop = Dialog; phone = bottom sheet. Never a full navigated page for
+  a two-field form.
+- Uppercase micro-labels (`text-[11px] font-semibold uppercase
+  tracking-wider text-muted-foreground`) above inputs; comfortable input
+  height (44px on phone); money inputs mono.
+- Actions bottom-right: exactly one filled primary, the rest
+  outline/ghost.
+
+## 12. Empty states & loading
+
+- Empty: centred icon + one plain sentence + one primary action ("No comps
+  yet → Add First Comp"). Comps is the reference.
+- Loading: skeleton blocks in the shape of the coming content — not a bare
+  spinner, never a blank white void or raw error string.
+
+## 13. Phone shell rules
 
 - No horizontal page scroll, ever (wide things scroll inside their own
   container).
@@ -92,7 +160,7 @@ tile, the Finance page, the 2026 WIP report, Comps' header, the chat list.
 - Screens reachable on phone must be designed for phone (or card-listed) —
   "desktop page squeezed to 390px" fails review.
 
-## 8. Known deviations (the hit-list, from the 2026-08-23 full-app sweep)
+## 14. Known deviations (the hit-list, from the 2026-08-23 full-app sweep)
 
 Screenshots: design sweep harness (`design-sweep` — see git history) —
 153 screens captured; automated audit found no h-overflow and no blank pages.
@@ -102,14 +170,21 @@ Screenshots: design sweep harness (`design-sweep` — see git history) —
   pill tabs + token colours.
 - **Calendar/Diary**: green "CRM" toggle chip (off-palette), grey segmented
   Day/Week box, team chips were wrapping (fixed 2026-08-23) → pill row.
+- **Brand / property / deal detail pages**: align boards to §9's anatomy
+  (identity header + pill row + labelled board cards).
 - **Map / Map-BGP**: floating Map/Satellite/Street View segmented control —
   acceptable as a map overlay, revisit for pill styling only.
 - Various older pages: underline tabs (convert on touch).
 
-## 9. Process
+## 15. Process
 
 - This file is the law once agreed; `CLAUDE.md` points here.
 - Convert-on-touch: any commit touching a screen brings its chips, tabs,
-  header and colours to standard in the same commit.
+  header, surfaces and colours to standard in the same commit.
 - Re-run the design sweep after major UI work; it should stay at zero
   h-overflow / zero blank pages / zero chip-bloat.
+
+Open taste calls awaiting Woody: ① app palette stays warm stone +
+terracotta vs moving app chrome to Bordeaux; ② pill tabs everywhere vs
+underline tabs allowed on desktop; ③ agree §9's detail-board anatomy
+before converting the brand pages.
