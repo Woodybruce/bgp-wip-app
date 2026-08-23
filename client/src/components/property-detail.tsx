@@ -515,7 +515,7 @@ export function PropertyDetail({ id }: { id: string }) {
                     const hasEnrichmentData = !!(property.proprietorName || property.landlordId || property.titleNumber);
                     if (isRecent && !hasEnrichmentData && property.address && !isClientViewer) {
                       return (
-                        <Badge variant="outline" className="text-[10px] border-purple-300 text-purple-600 bg-purple-50 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800 animate-pulse gap-1" data-testid="badge-enriching">
+                        <Badge variant="outline" className="text-[10px] text-muted-foreground animate-pulse gap-1" data-testid="badge-enriching">
                           <Loader2 className="w-2.5 h-2.5 animate-spin" />
                           Auto-enriching...
                         </Badge>
@@ -1302,7 +1302,7 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
       <Dialog open={!!aiEditFor} onOpenChange={(o) => { if (!o) { setAiEditFor(null); setCanRevert(false); setImageVersion(0); } }}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-purple-500" /> {aiEditFor?.title || "Image"}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-primary" /> {aiEditFor?.title || "Image"}</DialogTitle>
             <DialogDescription>Preview and AI-edit. Edits write back to this image (and into Image Studio).</DialogDescription>
           </DialogHeader>
           {aiEditFor && (
