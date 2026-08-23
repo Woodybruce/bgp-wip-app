@@ -64,7 +64,7 @@ import type { CrmDeal, CrmProperty, CrmCompany, CrmContact } from "@shared/schem
 import { buildUserColorMap, resolveDealAgents } from "@/lib/agent-colors";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
-import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
+import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as STATUS_CHIP_COLORS, legacyToCode } from "@shared/deal-status";
 import { InlineLinkSelect, InlineText } from "@/components/inline-edit";
 import {
   DEAL_STATUS_COLORS,
@@ -704,7 +704,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                     <h1 className="text-xl font-bold truncate" data-testid="text-deal-name">{headingText}</h1>
                   )}
                   {deal.status && (
-                    <Badge variant="outline" className={`text-[10px] border-transparent ${DEAL_STATUS_COLORS[legacyToCode(deal.status) || ""] || "bg-muted text-muted-foreground"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
+                    <Badge variant="outline" className={`text-[10px] border-transparent ${STATUS_CHIP_COLORS[(legacyToCode(deal.status) || "") as keyof typeof STATUS_CHIP_COLORS] || "bg-muted text-muted-foreground"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
                   )}
                 </div>
                 <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap" data-testid="deal-breadcrumb">
