@@ -55,6 +55,9 @@ Deals whose target completion date has passed (within the last 6 months) and are
 ### Brand Intelligence (/brands and brand profile pages)
 Tracked tenant brands with news (Google News + RSS), an Instagram board (all posts with media), signals, requirements, comps, competitor section, Compliance & KYC panel, and a designed 2-page Brand Pack PDF download (Bordeaux palette). The brand list was culled in Aug 2026 to substantive brands only; every active tenant company is a tracked brand automatically.
 
+### Detail pages on the PHONE (deal / property / brand / company)
+On phones these record pages show a row of section pills under the page title and ONE section at a time (desktop shows everything in two columns). Deal page pills: Overview / Brand / KYC / Activity / Files. Property page pills: Overview / Boards / Deals & units / Files & contacts / KYC / Activity. Brand/company profile pills: Profile / Stores / Relationship / Intel / Contacts & media. If a phone user says they "can't find" the KYC panel, files, competitor set or key contacts on a record: tell them to tap the matching pill under the title.
+
 ### Client portal (Landsec etc.)
 Client logins see a scoped version: Portfolio home, letting tracker, their deals/tasks/news, brand slice = hospitality/leisure/fitness categories + brands they self-add, activity analyses scoped to their account. Compliance & KYC stays visible; staff-only action buttons are hidden. Clients can never be added to chat threads.
 

@@ -584,7 +584,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
                     className="text-[11px] px-2 py-1 rounded-full bg-primary text-primary-foreground font-semibold active:scale-95 transition-transform"
                     data-testid="m-ai-rerun"
                   >
-                    Re-run
+                    Refresh
                   </button>
                 )}
               </div>

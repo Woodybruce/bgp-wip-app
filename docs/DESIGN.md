@@ -184,7 +184,37 @@ Still deliberately outstanding:
 - Chat entity-tag chips, file-type icon colours, per-person/team identity
   palettes, chart series: kept as deliberate encodings, not drift.
 
-## 15. Process
+## 15. Copy (the words, not just the pixels)
+
+Woody, 2026-08-23: "loads of inconsistencies verbally". One vocabulary
+app-wide:
+
+- **One verb per action.** Re-fetching/re-generating anything is
+  **"Refresh"** (never Rescan / Re-run / Regenerate / Re-research).
+  Adding is **"Add X"**; uploading is **"Upload"**; expanding a truncated
+  list is **"Show all N"**; navigating away is **"Open in X"** (X = the
+  destination's real nav name: Hunter, KYC Hub, Image Studio).
+- Buttons say what happens, in sentence case ("Add contact", "Save to
+  SharePoint") — no ALL-CAPS buttons, no "Click here".
+- AI-written blocks are titled **"BGP take — <topic>"**; AI-curated
+  feeds are "<Thing> (AI curated)". Don't invent new AI labels.
+- Empty states: "No <things> yet — <the one action that fixes it>."
+- Dates in running UI: `23 Aug` (add the year only when it isn't this
+  year). Mono for dates in tables.
+- Counts read "26 contacts", never "(26)" — pill counts are bare mono
+  numbers inside the pill.
+- Section labels name the content, not the feature's codename (a client
+  reads "Files", not "SharePoint DriveItems").
+
+## 16. Detail pages on the phone (§9 addendum)
+
+Below md/lg the four big record pages (deal, property, brand/company)
+render a **section pill row** under the identity header — Overview /
+Boards / Deals & units / Files / KYC / Activity (per page) — and show
+one section at a time. Same treatment that fixed the WIP report: the
+20-board single scroll is gone. Desktop keeps the two-column layout.
+
+## 17. Process
 
 - This file is the law once agreed; `CLAUDE.md` points here.
 - Convert-on-touch: any commit touching a screen brings its chips, tabs,

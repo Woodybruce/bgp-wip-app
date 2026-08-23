@@ -16,6 +16,7 @@ import { CompanyPropertiesBoard } from "@/components/CompanyPropertiesBoard";
 import { useToast } from "@/hooks/use-toast";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Pill } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CovenantBadge, CovenantCommentary } from "@/components/covenant-badge";
@@ -378,6 +379,10 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   const [, navigate] = useLocation();
   const { setInput: setChatInput } = useChatBGPState();
   const [editing, setEditing] = useState(false);
+  // Phone section switcher (docs/DESIGN.md §9) — the profile runs many
+  // zones deep; below md we show one at a time. Desktop unchanged.
+  const [panelSection, setPanelSection] = useState<"profile" | "stores" | "relationship" | "intel" | "more">("profile");
+  const panelSec = (k: typeof panelSection) => (panelSection === k ? "space-y-2.5" : "hidden md:block md:space-y-2.5");
   const [form, setForm] = useState<Partial<BrandProfile["company"]>>({});
   const [addRep, setAddRep] = useState<"brand" | "agent" | null>(null);
   const [repForm, setRepForm] = useState<RepForm>(EMPTY_REP_FORM);
@@ -1150,6 +1155,15 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       </CardHeader>
 
       <CardContent className="p-3 pt-0 space-y-2.5">
+        {!editing && (
+          <div className="flex flex-wrap gap-1.5 md:hidden pt-2" data-testid="brand-panel-sections">
+            <Pill active={panelSection === "profile"} onClick={() => setPanelSection("profile")} data-testid="brand-section-profile">Profile</Pill>
+            <Pill active={panelSection === "stores"} onClick={() => setPanelSection("stores")} data-testid="brand-section-stores">Stores</Pill>
+            <Pill active={panelSection === "relationship"} onClick={() => setPanelSection("relationship")} data-testid="brand-section-relationship">Relationship</Pill>
+            <Pill active={panelSection === "intel"} onClick={() => setPanelSection("intel")} data-testid="brand-section-intel">Intel</Pill>
+            <Pill active={panelSection === "more"} onClick={() => setPanelSection("more")} data-testid="brand-section-more">Contacts &amp; media</Pill>
+          </div>
+        )}
         {editing ? (
           <div className="space-y-3">
             <div>
@@ -1257,6 +1271,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
           </div>
         ) : (
           <div className="w-full flex flex-col gap-2.5">
+            <div className={panelSec("profile")}>
             {/* ── Details card ─────────────────────────────── */}
             {(() => {
               const a: any = c.head_office_address;
@@ -1840,6 +1855,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 brand_signals → Expansion Intelligence. */}
             {!isLandlord && <ApolloIntelCard companyId={c.id} companyName={c.name} />}
 
+            </div>
+
+            <div className={panelSec("stores")}>
             {/* ── Stores — brand-side only. Landlords get the Ownership
                  block below instead. UK/Global toggle was rolled back
                  May 2026; backend + brand_stores.country schema kept in
@@ -1945,6 +1963,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 unified Properties board (CompanyPropertiesBoard) on the
                 company page — the board owns the map and the auto-scrape now. */}
 
+            </div>
+
+            <div className={panelSec("relationship")}>
             {/* ── Zone 4: BGP Relationship — now client-visible too (Woody,
                 2026-08-04: "BGP relationship still not on Landsec viewing
                 for Bills / brands"). Clients get the AI read, coverage,
@@ -2279,6 +2300,9 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             </div>
             </div>
 
+            </div>
+
+            <div className={panelSec("intel")}>
             {/* ── Expansion intelligence — single zone that merges what used
                  to be Brand Expansion + Hunter Intel + Active requirements.
                  Same job: gather everything we know about what space the
@@ -2309,7 +2333,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                   <Link
                     href={`/hunter?companyId=${companyId}`}
                     className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
-                    title="Open in Hunter dashboard"
+                    title="Open in Hunter"
                   >
                     Open in Hunter <ExternalLink className="w-2.5 h-2.5" />
                   </Link>
@@ -2784,13 +2808,17 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             </div>
 
 
+            </div>
+
             {/* News & Media + Documents & Gallery now live on the sidebar */}
           </div>
         )}
       </CardContent>
 
     </Card>
+    <div className={panelSec("more")}>
     <BrandProfileSidebar data={data} companyId={companyId} />
+    </div>
     {openEmail && (
       <EmailViewerDialog
         msgId={openEmail.msgId}
@@ -4064,7 +4092,7 @@ export function BrandComplianceCard({
                 onClick={() => rescrape.mutate()}
                 disabled={rescrape.isPending}
                 className="text-[10px] px-2 py-1 rounded border bg-card hover:bg-muted disabled:opacity-50"
-                title="Re-run the website scraper"
+                title="Refresh — run the website scraper again"
               >
                 {rescrape.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : "↻"}
               </button>

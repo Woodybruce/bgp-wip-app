@@ -289,9 +289,9 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
           onClick={() => rescan()}
           disabled={scanning}
           className="text-[10px] px-2 py-0.5 rounded border bg-card hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1"
-          title="Re-run the contact discovery engine (BGP email + RocketReach + Apollo + AI check)"
+          title="Refresh — runs the contact discovery engine again (BGP email + RocketReach + Apollo + AI check)"
         >
-          {scanning ? <><Loader2 className="w-3 h-3 animate-spin" /> Scanning…</> : <><RefreshCw className="w-3 h-3" /> Rescan</>}
+          {scanning ? <><Loader2 className="w-3 h-3 animate-spin" /> Scanning…</> : <><RefreshCw className="w-3 h-3" /> Refresh contacts</>}
         </button>
         )}
       </CardHeader>
@@ -301,7 +301,7 @@ export function CompanyContactsBoard({ companyId, companyName, contacts, pending
             {scanning
               ? "Mining BGP email, searching RocketReach + Apollo, AI-checking every candidate — 20-40s on first open…"
               : allContacts.length + discovered.length === 0
-                ? "No contacts found yet. Click Rescan to run discovery again."
+                ? "No contacts yet — Refresh contacts runs discovery again."
                 : "No property-tier contacts. Click Show all below."}
           </p>
         ) : (
