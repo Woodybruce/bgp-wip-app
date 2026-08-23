@@ -1603,7 +1603,7 @@ export default function Calendar() {
             <button
               key={t}
               onClick={() => setTeamFilter(t)}
-              className={`text-[10px] px-2.5 py-0.5 rounded-full border transition-colors ${effectiveTeamFilter === t ? "bg-black text-white dark:bg-white dark:text-black border-transparent" : "bg-background hover:bg-muted border-border text-foreground"}`}
+              className={`text-[11px] leading-none font-semibold uppercase tracking-wide whitespace-nowrap px-2.5 py-[5px] rounded-full border transition-colors ${effectiveTeamFilter === t ? "bg-foreground text-background border-transparent" : "bg-background hover:bg-muted border-border text-muted-foreground"}`}
               data-testid={`team-pill-${t.toLowerCase().replace(/[\s/]+/g, "-")}`}
             >
               {t}
