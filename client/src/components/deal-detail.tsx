@@ -535,7 +535,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     { label: "Exchanged", value: deal.exchangedAt ? formatDate(deal.exchangedAt) : null },
     { label: "Completed", value: deal.completedAt ? formatDate(deal.completedAt) : null },
     { label: "Invoiced", value: deal.invoicedAt ? formatDate(deal.invoicedAt) : null },
-    { label: "Last Interaction", value: deal.lastInteraction },
+    { label: "Last Interaction", value: deal.lastInteraction ? (isNaN(Date.parse(deal.lastInteraction)) ? deal.lastInteraction : formatDate(deal.lastInteraction)) : null },
   ];
 
   // Files / linked records / comments / history. Rendered in the right
@@ -687,8 +687,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             const counterparty = counterpartyId ? companies.find((c) => c.id === counterpartyId) : null;
             return (
               <>
-                <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-orange-600 dark:text-orange-400 mb-1" data-testid="deal-eyebrow">
-                  <span className="w-2 h-2 rounded-full bg-orange-500" /> Deal{deal.dealType ? ` · ${deal.dealType}` : ""}
+                <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-primary mb-1" data-testid="deal-eyebrow">
+                  <span className="w-2 h-2 rounded-full bg-primary" /> Deal{deal.dealType ? ` · ${deal.dealType}` : ""}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   {headingIsUnit ? (
@@ -704,7 +704,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                     <h1 className="text-xl font-bold truncate" data-testid="text-deal-name">{headingText}</h1>
                   )}
                   {deal.status && (
-                    <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[legacyToCode(deal.status) || ""] || "bg-zinc-500"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
+                    <Badge variant="outline" className={`text-[10px] border-transparent ${DEAL_STATUS_COLORS[legacyToCode(deal.status) || ""] || "bg-muted text-muted-foreground"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
                   )}
                 </div>
                 <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap" data-testid="deal-breadcrumb">

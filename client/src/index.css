@@ -948,15 +948,18 @@ html {
   outline: none;
 }
 
-/* Consistent link color — bare links take the scheme's primary accent
-   (was hardcoded legacy green). */
-a:not([class]) {
+/* Consistent link color — bare TEXT links take the scheme's primary accent
+   (was hardcoded legacy green). Anchors that merely wrap a Button (the
+   wouter <Link><Button/></Link> pattern all over the app) are excluded —
+   the button would inherit the accent and every outline button turned
+   orange (Woody's deal-page screenshot, 2026-08-23). */
+a:not([class]):not(:has(button)) {
   color: hsl(var(--primary));
 }
-a:not([class]):hover {
+a:not([class]):not(:has(button)):hover {
   filter: brightness(0.85);
 }
-.dark a:not([class]):hover {
+.dark a:not([class]):not(:has(button)):hover {
   filter: brightness(1.15);
 }
 
