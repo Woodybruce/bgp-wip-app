@@ -155,7 +155,7 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
             ? "bg-emerald-500 border-emerald-500 text-white"
             : isOverdue
               ? "border-red-400 hover:border-red-500 hover:bg-red-50"
-              : "border-gray-300 hover:border-primary hover:bg-primary/5"
+              : "border-border hover:border-primary hover:bg-primary/5"
         }`}
         data-testid={`task-toggle-${task.id}`}
       >
@@ -291,7 +291,7 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
             <button
               onClick={() => onToggleSubtask(sub.id)}
               className={`flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-all ${
-                sub.status === "done" ? "bg-emerald-500 border-emerald-500 text-white" : "border-gray-300 hover:border-primary"
+                sub.status === "done" ? "bg-emerald-500 border-emerald-500 text-white" : "border-border hover:border-primary"
               }`}
             >
               {sub.status === "done" && <Check className="w-2.5 h-2.5" />}

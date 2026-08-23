@@ -123,7 +123,7 @@ export function LeasingPitchPanel({ propertyId }: { propertyId: string }) {
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-base flex items-center gap-2">
-            <Target className="w-4 h-4 text-emerald-700" />
+            <Target className="w-4 h-4 text-muted-foreground" />
             Leasing pitch
           </CardTitle>
           <div className="flex items-center gap-2">
@@ -208,7 +208,7 @@ export function LeasingPitchPanel({ propertyId }: { propertyId: string }) {
           <div className="border-t pt-4 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-purple-600" />
+                <Sparkles className="w-4 h-4 text-muted-foreground" />
                 <span className="text-sm font-medium">Recommended tenant mix</span>
               </div>
               {lastMixAt && !mix && (

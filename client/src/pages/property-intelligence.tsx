@@ -159,8 +159,7 @@ export default function PropertyIntelligence() {
       <Tabs value={tab} onValueChange={handleTabChange} className="flex flex-col h-full">
         <div className="border-b bg-background sticky top-0 z-10">
           <div className="px-4 lg:px-6 pt-4">
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Globe className="w-6 h-6 text-indigo-500" />
+            <h1 className="text-2xl font-bold tracking-tight">
               Property Intelligence
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">

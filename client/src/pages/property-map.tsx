@@ -1059,7 +1059,6 @@ export default function PropertyMap() {
           variant={goadEnabled ? "default" : "outline"}
           size="sm"
           onClick={() => setGoadEnabled((v) => !v)}
-          className={goadEnabled ? "bg-violet-600 hover:bg-violet-700 text-white" : ""}
           data-testid="button-toggle-goad"
         >
           {goadLoading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Layers className="w-3.5 h-3.5 mr-1" />}

@@ -138,7 +138,7 @@ export default function MobileProfilePage() {
               </div>
             );
             return r.href
-              ? <a key={i} href={r.href} target={r.href.startsWith("http") ? "_blank" : undefined} rel="noreferrer" className="block active:bg-gray-50">{inner}</a>
+              ? <a key={i} href={r.href} target={r.href.startsWith("http") ? "_blank" : undefined} rel="noreferrer" className="block active:bg-muted">{inner}</a>
               : <div key={i}>{inner}</div>;
           })}
         </div>
@@ -159,7 +159,7 @@ export default function MobileProfilePage() {
       {me?.id && (
         <button
           onClick={() => navigate(`/hr/${me.id}`)}
-          className="mx-4 mt-3 w-[calc(100%-2rem)] flex items-center gap-3 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] dark:border-border px-4 py-3 active:bg-gray-50"
+          className="mx-4 mt-3 w-[calc(100%-2rem)] flex items-center gap-3 rounded-2xl bg-white dark:bg-card border border-[#E7E5E4] dark:border-border px-4 py-3 active:bg-muted"
           data-testid="button-profile-full-hr"
         >
           <Briefcase className="w-4 h-4 text-muted-foreground shrink-0" />

@@ -222,7 +222,7 @@ export function CrmEntityPicker({
       >
         {multi && selectedOptions.length > 0 ? (
           selectedOptions.map(o => (
-            <span key={o.id} className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0 text-[10px] border border-teal-300 text-teal-700 bg-teal-50 dark:bg-teal-950/30 dark:text-teal-300">
+            <span key={o.id} className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0 text-[10px] border border-transparent bg-foreground text-background">
               {o.name}
             </span>
           ))
@@ -249,7 +249,7 @@ export function CrmEntityPicker({
           }
         }}
         placeholder={searchPlaceholder}
-        className="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-indigo-400"
+        className="w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring"
         data-testid={`${testIdPrefix}-search`}
       />
       <div
@@ -262,7 +262,7 @@ export function CrmEntityPicker({
             {selectedOptions.map(o => (
               <span
                 key={o.id}
-                className="inline-flex items-center gap-0.5 rounded-full pl-1.5 pr-0.5 py-0 text-[10px] border border-teal-300 text-teal-700 bg-teal-50"
+                className="inline-flex items-center gap-0.5 rounded-full pl-1.5 pr-0.5 py-0 text-[10px] border border-transparent bg-foreground text-background"
               >
                 {o.name}
                 <button
@@ -285,7 +285,7 @@ export function CrmEntityPicker({
             key={o.id}
             type="button"
             onClick={() => pick(o)}
-            className="w-full text-left px-3 py-1.5 text-xs hover:bg-indigo-50 dark:hover:bg-indigo-950/40 flex items-center gap-2"
+            className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted flex items-center gap-2"
             data-testid={`${testIdPrefix}-option-${o.id}`}
           >
             <Icon className="w-3 h-3 text-gray-400 shrink-0" />
@@ -306,7 +306,7 @@ export function CrmEntityPicker({
             type="button"
             disabled={createMutation.isPending}
             onClick={() => createMutation.mutate(search.trim())}
-            className="w-full text-left px-3 py-2 text-xs border-t bg-emerald-50/60 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-medium"
+            className="w-full text-left px-3 py-2 text-xs border-t hover:bg-muted flex items-center gap-2 text-primary font-medium"
             data-testid={`${testIdPrefix}-create`}
           >
             {createMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}

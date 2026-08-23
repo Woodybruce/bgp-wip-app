@@ -1,5 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
+import { MobileCardView } from "@/components/mobile-card-view";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -37,6 +39,7 @@ import { Link } from "wouter";
 import type { CrmLead, CrmContact } from "@shared/schema";
 
 export default function Leads() {
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
@@ -220,16 +223,11 @@ export default function Leads() {
   return (
     <div className="h-full flex flex-col p-4 sm:p-6 gap-6 min-h-0" data-testid="leads-page">
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            <UserPlus className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Leads</h1>
-            <p className="text-sm text-muted-foreground">
-              CRM Leads — {items.length} total
-            </p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Leads</h1>
+          <p className="text-sm text-muted-foreground">
+            CRM Leads — {items.length} total
+          </p>
         </div>
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-lead">
           <Plus className="w-4 h-4 mr-1" />
@@ -325,6 +323,25 @@ export default function Leads() {
                 </p>
               </CardContent>
             </Card>
+          ) : isMobile ? (
+            <div className="flex-1 min-h-0 overflow-y-auto -mx-3">
+              <MobileCardView
+                emptyMessage="No leads found"
+                items={filteredItems.map((item) => ({
+                  id: item.id,
+                  title: item.name || item.email || "Unnamed lead",
+                  subtitle: item.groupName || undefined,
+                  status: item.status || undefined,
+                  fields: [
+                    { label: "Type", value: item.leadType },
+                    { label: "Assigned to", value: item.assignedTo },
+                    { label: "Source", value: item.source },
+                    { label: "Email", value: item.email },
+                    { label: "Phone", value: item.phone },
+                  ],
+                }))}
+              />
+            </div>
           ) : (
             <Card className="flex-1 min-h-0 flex flex-col">
               <ScrollableTable minWidth={1200}>
@@ -368,8 +385,8 @@ export default function Leads() {
                             <div className="flex flex-wrap gap-1 mt-0.5">
                               {contactMatchMap.get(item.id)!.slice(0, 2).map(c => (
                                 <Link key={c.id} href={`/contacts/${c.id}`}>
-                                  <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted border-violet-300 dark:border-violet-700" data-testid={`lead-match-contact-${c.id}`}>
-                                    <Users className="w-2.5 h-2.5 text-violet-500" />{c.name}
+                                  <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted" data-testid={`lead-match-contact-${c.id}`}>
+                                    <Users className="w-2.5 h-2.5 text-muted-foreground" />{c.name}
                                   </Badge>
                                 </Link>
                               ))}
@@ -448,7 +465,7 @@ export default function Leads() {
                                 title="Convert to CRM Contact"
                                 data-testid={`button-convert-lead-${item.id}`}
                               >
-                                <ArrowRightCircle className="w-3.5 h-3.5 text-emerald-600" />
+                                <ArrowRightCircle className="w-3.5 h-3.5" />
                               </Button>
                             )}
                             <Button

@@ -803,7 +803,7 @@ function HmlrFallbackPicker({ postcode, onPick }: { postcode: string; onPick: (a
           type="button"
           onClick={load}
           disabled={loading || !postcode}
-          className="text-[11px] font-medium text-blue-700 hover:underline disabled:opacity-40"
+          className="text-[11px] font-medium text-primary hover:underline disabled:opacity-40"
           data-testid="button-hmlr-fallback-picker"
         >
           {loading ? "Loading addresses…" : `Try a different address in ${postcode || "this postcode"} →`}
@@ -883,7 +883,7 @@ function LeaseholdFreeholdFinder({ titleNumber }: { titleNumber?: string | null 
     return (
       <div className="mt-1 text-[10px] text-gray-600 space-y-0.5">
         {reg && (
-          <a href={reg} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline block">
+          <a href={reg} target="_blank" rel="noreferrer" className="text-primary hover:underline block">
             Open title register →
           </a>
         )}
@@ -899,7 +899,7 @@ function LeaseholdFreeholdFinder({ titleNumber }: { titleNumber?: string | null 
       type="button"
       onClick={run}
       disabled={loading}
-      className="mt-1 text-[10px] text-blue-700 hover:underline disabled:opacity-50"
+      className="mt-1 text-[10px] text-primary hover:underline disabled:opacity-50"
     >
       {loading ? "Ordering register…" : "Find freehold (order register £3–4)"}
     </button>
@@ -916,7 +916,7 @@ function RawDataToggle({ data }: { data: any }) {
     <div className="mt-2 pt-2 border-t border-dashed border-gray-200">
       <button
         onClick={() => setShowRaw(!showRaw)}
-        className="text-[10px] text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1"
+        className="text-[10px] text-primary hover:text-primary/80 font-medium flex items-center gap-1"
         data-testid="raw-data-toggle"
       >
         {showRaw ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
@@ -978,7 +978,7 @@ function OwnershipTitleList({ titles, searchAddress }: { titles: any[]; searchAd
       {searchAddress && titles.length > 0 && (
         <div className="text-[10px] text-gray-500 px-1 mb-1">
           {matchCount > 0
-            ? <><span className="font-medium text-indigo-600">{matchCount}</span> matching "{searchAddress}" · {titles.length - matchCount} other titles at this postcode</>
+            ? <><span className="font-medium text-primary">{matchCount}</span> matching "{searchAddress}" · {titles.length - matchCount} other titles at this postcode</>
             : <>No exact matches for "{searchAddress}" — showing all {titles.length} titles at this postcode</>
           }
         </div>
@@ -989,10 +989,10 @@ function OwnershipTitleList({ titles, searchAddress }: { titles: any[]; searchAd
         const address = f.address || f.property_address || "N/A";
         const isMatch = searchAddress ? titleMatchesAddress(f, searchAddress) : false;
         return (
-          <div key={i} className={`text-xs border rounded overflow-hidden ${isMatch ? "bg-indigo-50 border-indigo-200" : "bg-gray-50"}`}>
+          <div key={i} className={`text-xs border rounded overflow-hidden ${isMatch ? "bg-primary/10 border-primary/40" : "bg-gray-50"}`}>
             <button
               onClick={() => setExpandedIdx(isExpanded ? null : i)}
-              className={`w-full text-left p-2 flex items-center gap-1.5 transition-colors cursor-pointer ${isMatch ? "hover:bg-indigo-100" : "hover:bg-gray-100"}`}
+              className={`w-full text-left p-2 flex items-center gap-1.5 transition-colors cursor-pointer ${isMatch ? "hover:bg-primary/20" : "hover:bg-gray-100"}`}
               data-testid={`ownership-row-${i}`}
             >
               {isExpanded ? <ChevronDown className="w-3 h-3 text-gray-400 shrink-0" /> : <ChevronRight className="w-3 h-3 text-gray-400 shrink-0" />}
@@ -1001,7 +1001,7 @@ function OwnershipTitleList({ titles, searchAddress }: { titles: any[]; searchAd
                 <span className="font-medium text-[11px] truncate block">{owner}</span>
                 {address !== "N/A" && <span className="text-[9px] text-gray-400 truncate block">{address}</span>}
               </div>
-              {isMatch && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded font-medium shrink-0">MATCH</span>}
+              {isMatch && <span className="text-[8px] bg-primary/10 text-primary px-1 py-0.5 rounded font-medium shrink-0">MATCH</span>}
               {f.price_paid && <span className="text-[9px] text-gray-400 shrink-0">£{Number(f.price_paid).toLocaleString()}</span>}
             </button>
 
@@ -1059,11 +1059,11 @@ function OwnershipTitleList({ titles, searchAddress }: { titles: any[]; searchAd
                           href={`https://find-and-update.company-information.service.gov.uk/company/${f.company_reg}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-blue-600 hover:underline font-mono"
+                          className="text-primary hover:underline font-mono"
                         >
                           {f.company_reg}
                         </a>
-                        <ExternalLink className="w-3 h-3 text-blue-400" />
+                        <ExternalLink className="w-3 h-3 text-primary" />
                       </div>
                     </>
                   )}
@@ -1148,19 +1148,19 @@ function OwnershipIntelligencePanel({ titles, address, postcode }: { titles: any
 
   if (!result) {
     return (
-      <div className="mt-3 p-3 bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-lg">
+      <div className="mt-3 p-3 bg-muted/40 border border-border rounded-lg">
         <div className="flex items-center gap-2 mb-2">
-          <Network className="w-4 h-4 text-indigo-600" />
-          <span className="text-xs font-semibold text-indigo-800">Ownership Intelligence</span>
+          <Network className="w-4 h-4 text-primary" />
+          <span className="text-xs font-semibold text-foreground">Ownership Intelligence</span>
         </div>
-        <p className="text-[10px] text-indigo-600 mb-2.5">
+        <p className="text-[10px] text-muted-foreground mb-2.5">
           Trace corporate ownership chains via Companies House, identify the beneficial owner and building manager using AI analysis.
         </p>
         <Button
           size="sm"
           onClick={runAnalysis}
           disabled={loading}
-          className="h-7 text-[11px] gap-1.5 bg-indigo-600 hover:bg-indigo-700"
+          className="h-7 text-[11px] gap-1.5 bg-primary hover:bg-primary/90"
           data-testid="button-ownership-intelligence"
         >
           {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Scan className="w-3 h-3" />}
@@ -1177,8 +1177,8 @@ function OwnershipIntelligencePanel({ titles, address, postcode }: { titles: any
   return (
     <div className="mt-3 space-y-3">
       <div className="flex items-center gap-2">
-        <Network className="w-4 h-4 text-indigo-600" />
-        <span className="text-xs font-semibold text-indigo-800">Ownership Intelligence</span>
+        <Network className="w-4 h-4 text-primary" />
+        <span className="text-xs font-semibold text-foreground">Ownership Intelligence</span>
         <Badge variant="secondary" className="text-[9px] h-4 ml-auto">{result.companies?.length || 0} companies traced</Badge>
       </div>
 
@@ -1189,7 +1189,7 @@ function OwnershipIntelligencePanel({ titles, address, postcode }: { titles: any
           </div>
 
           {ai.ownershipStructure && (
-            <div className="p-2 bg-purple-50 border border-purple-200 rounded text-[10px] text-purple-800">
+            <div className="p-2 bg-muted/40 border border-border rounded text-[10px] text-foreground">
               <span className="font-medium">Structure:</span> {ai.ownershipStructure}
             </div>
           )}
@@ -1203,7 +1203,7 @@ function OwnershipIntelligencePanel({ titles, address, postcode }: { titles: any
                 </div>
                 <p className="text-[11px] font-semibold text-gray-800">{ai.beneficialOwner.name}</p>
                 {ai.beneficialOwner.companyNumber && (
-                  <a href={`https://find-and-update.company-information.service.gov.uk/company/${ai.beneficialOwner.companyNumber}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-blue-600 hover:underline flex items-center gap-0.5">
+                  <a href={`https://find-and-update.company-information.service.gov.uk/company/${ai.beneficialOwner.companyNumber}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-primary hover:underline flex items-center gap-0.5">
                     <Link2 className="w-2.5 h-2.5" />{ai.beneficialOwner.companyNumber}
                   </a>
                 )}
@@ -1216,12 +1216,12 @@ function OwnershipIntelligencePanel({ titles, address, postcode }: { titles: any
             {ai.buildingManager?.name && (
               <div className="p-2 bg-white border rounded-lg">
                 <div className="flex items-center gap-1 mb-1">
-                  <UserCheck className="w-3 h-3 text-blue-600" />
+                  <UserCheck className="w-3 h-3 text-primary" />
                   <span className="text-[9px] font-medium text-gray-500">Building Manager</span>
                 </div>
                 <p className="text-[11px] font-semibold text-gray-800">{ai.buildingManager.name}</p>
                 {ai.buildingManager.companyNumber && (
-                  <a href={`https://find-and-update.company-information.service.gov.uk/company/${ai.buildingManager.companyNumber}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-blue-600 hover:underline flex items-center gap-0.5">
+                  <a href={`https://find-and-update.company-information.service.gov.uk/company/${ai.buildingManager.companyNumber}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-primary hover:underline flex items-center gap-0.5">
                     <Link2 className="w-2.5 h-2.5" />{ai.buildingManager.companyNumber}
                   </a>
                 )}
@@ -1314,7 +1314,7 @@ function OwnershipIntelligencePanel({ titles, address, postcode }: { titles: any
                             <div key={j} className="text-[10px] text-gray-700 ml-2">
                               • {p.name}
                               {p.registrationNumber && <span className="text-gray-400 ml-1">(#{p.registrationNumber})</span>}
-                              {p.naturesOfControl?.length > 0 && <span className="text-[9px] text-indigo-500 ml-1">[{p.naturesOfControl.map((n: string) => n.replace(/-/g, " ")).join(", ")}]</span>}
+                              {p.naturesOfControl?.length > 0 && <span className="text-[9px] text-primary ml-1">[{p.naturesOfControl.map((n: string) => n.replace(/-/g, " ")).join(", ")}]</span>}
                             </div>
                           ))}
                         </div>
@@ -1327,7 +1327,7 @@ function OwnershipIntelligencePanel({ titles, address, postcode }: { titles: any
                             {c.ownershipChain.map((ch: any, j: number) => (
                               <div key={j} className="text-[10px] flex items-center gap-1">
                                 <span className="text-gray-300">→</span>
-                                <a href={`https://find-and-update.company-information.service.gov.uk/company/${ch.number}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                                <a href={`https://find-and-update.company-information.service.gov.uk/company/${ch.number}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
                                   {ch.name}
                                 </a>
                                 <span className="text-[9px] text-gray-400">({ch.number})</span>
@@ -1351,7 +1351,7 @@ function OwnershipIntelligencePanel({ titles, address, postcode }: { titles: any
                         href={`https://find-and-update.company-information.service.gov.uk/company/${c.companyNumber}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-[9px] text-blue-600 hover:underline flex items-center gap-0.5 mt-1"
+                        className="text-[9px] text-primary hover:underline flex items-center gap-0.5 mt-1"
                       >
                         <ExternalLink className="w-2.5 h-2.5" /> View on Companies House
                       </a>
@@ -1461,7 +1461,7 @@ function FullReportView({ data, postcode, searchAddress }: { data: PropertyData;
       {data.voaRatings.length > 0 && (
         <div>
           <div className="flex items-center gap-1.5 mb-2">
-            <PoundSterling className="w-3.5 h-3.5 text-blue-600" />
+            <PoundSterling className="w-3.5 h-3.5 text-primary" />
             <h4 className="font-semibold text-xs">Rateable Values (VOA)</h4>
             <Badge variant="secondary" className="text-[10px] ml-auto h-4">{data.voaRatings.length}</Badge>
           </div>
@@ -1515,7 +1515,7 @@ function FullReportView({ data, postcode, searchAddress }: { data: PropertyData;
 
       <div>
         <div className="flex items-center gap-1.5 mb-2">
-          <Droplets className="w-3.5 h-3.5 text-cyan-600" />
+          <Droplets className="w-3.5 h-3.5 text-primary" />
           <h4 className="font-semibold text-xs">Flood Risk</h4>
         </div>
         {data.floodRisk ? (
@@ -1541,7 +1541,7 @@ function FullReportView({ data, postcode, searchAddress }: { data: PropertyData;
                 <p className="text-[10px] font-medium mb-0.5">Nearby flood areas:</p>
                 {data.floodRisk.nearbyFloodAreas.map((a: any, i: number) => (
                   <p key={i} className="text-[10px] text-gray-500 flex items-center gap-1">
-                    <Droplets className="w-2.5 h-2.5 text-blue-400" />
+                    <Droplets className="w-2.5 h-2.5 text-primary" />
                     {a.name}{a.riverOrSea ? ` (${a.riverOrSea})` : ""}
                   </p>
                 ))}
@@ -1584,7 +1584,7 @@ function FullReportView({ data, postcode, searchAddress }: { data: PropertyData;
       {hasPlanningData && (
         <div>
           <div className="flex items-center gap-1.5 mb-2">
-            <Landmark className="w-3.5 h-3.5 text-violet-600" />
+            <Landmark className="w-3.5 h-3.5 text-primary" />
             <h4 className="font-semibold text-xs">Planning Designations & Heritage</h4>
           </div>
           <div className="space-y-2">
@@ -1760,7 +1760,7 @@ function FullReportView({ data, postcode, searchAddress }: { data: PropertyData;
         return (
           <div className="mb-4">
             <h3 className="text-sm font-bold mb-2 flex items-center gap-1">
-              <Building2 className="w-4 h-4 text-purple-700" />
+              <Building2 className="w-4 h-4 text-primary" />
               Ownership / Title Register ({fCount} freehold, {lCount} leasehold)
             </h3>
             <OwnershipTitleList titles={allTitles.slice(0, 25)} searchAddress={searchAddress} />
@@ -1776,7 +1776,7 @@ function FullReportView({ data, postcode, searchAddress }: { data: PropertyData;
       {data.tflNearby?.stations?.length > 0 && (
         <div className="mb-4">
           <h3 className="text-sm font-bold mb-2 flex items-center gap-1">
-            <TrainFront className="w-4 h-4 text-blue-700" />
+            <TrainFront className="w-4 h-4 text-primary" />
             Transport Links (TfL)
           </h3>
           <div className="space-y-1">
@@ -2044,7 +2044,7 @@ function PropertyPanel({
                 setGeneratingPdf(false);
               }}
               disabled={generatingPdf}
-              className="flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-gray-300 hover:border-indigo-400 hover:text-indigo-600 text-gray-600 transition-colors disabled:opacity-50"
+              className="flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-gray-300 hover:border-primary/40 hover:text-primary text-gray-600 transition-colors disabled:opacity-50"
               title="Download PDF report"
             >
               {generatingPdf ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileDown className="w-3 h-3" />}
@@ -2083,17 +2083,17 @@ function PropertyPanel({
                   <a href={`/property-pathway?runId=${(data as any)._pathwayRun.id}`} className="text-[10px] text-emerald-700 dark:text-emerald-400 hover:underline shrink-0">Open full →</a>
                 </div>
               ) : (address || postcode) ? (
-                <div className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 rounded-lg p-2.5 flex items-center justify-between gap-2">
+                <div className="bg-primary/10 border border-primary/20 rounded-lg p-2.5 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
-                    <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <Sparkles className="w-4 h-4 text-primary shrink-0" />
                     <div className="min-w-0">
-                      <p className="text-xs font-semibold text-indigo-800 dark:text-indigo-300">No Pathway run yet</p>
-                      <p className="text-[10px] text-indigo-700 dark:text-indigo-400">Run for verified titles, planning, KYC &amp; business plan</p>
+                      <p className="text-xs font-semibold text-foreground">No Pathway run yet</p>
+                      <p className="text-[10px] text-muted-foreground">Run for verified titles, planning, KYC &amp; business plan</p>
                     </div>
                   </div>
                   <a
                     href={`/property-pathway?address=${encodeURIComponent(address || "")}&postcode=${encodeURIComponent(postcode || "")}`}
-                    className="text-[10px] bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded shrink-0"
+                    className="text-[10px] bg-primary hover:bg-primary/90 text-primary-foreground px-2 py-1 rounded shrink-0"
                   >
                     Run Pathway
                   </a>
@@ -2102,18 +2102,18 @@ function PropertyPanel({
 
               {summaryStats && (
                 <div className="grid grid-cols-3 gap-2">
-                  <div className="text-center p-2 bg-indigo-50 rounded border border-indigo-100">
-                    <div className="text-lg font-bold text-indigo-700">
+                  <div className="text-center p-2 bg-muted/40 rounded border border-border">
+                    <div className="text-lg font-bold text-foreground">
                       {(data.propertyDataCoUk?.["freeholds"]?.data?.length || 0) + (data.propertyDataCoUk?.["leaseholds"]?.data?.length || 0)}
                     </div>
-                    <div className="text-[10px] text-indigo-600">Titles</div>
+                    <div className="text-[10px] text-muted-foreground">Titles</div>
                   </div>
-                  <div className="text-center p-2 bg-blue-50 rounded border border-blue-100">
-                    <div className="text-lg font-bold text-blue-700">{summaryStats.voaCount}</div>
-                    <div className="text-[10px] text-blue-600">Rates</div>
+                  <div className="text-center p-2 bg-muted/40 rounded border border-border">
+                    <div className="text-lg font-bold text-foreground">{summaryStats.voaCount}</div>
+                    <div className="text-[10px] text-muted-foreground">Rates</div>
                   </div>
-                  <div className="text-center p-2 bg-violet-50 rounded border border-violet-100">
-                    <div className="text-lg font-bold text-violet-700">
+                  <div className="text-center p-2 bg-muted/40 rounded border border-border">
+                    <div className="text-lg font-bold text-foreground">
                       {(() => {
                         const govApps = (data.planningData as any)?.planningApplications?.length || 0;
                         const raw = data.propertyDataCoUk?.["planning-applications"]?.data;
@@ -2121,7 +2121,7 @@ function PropertyPanel({
                         return govApps + pdCount;
                       })()}
                     </div>
-                    <div className="text-[10px] text-violet-600">Planning Apps</div>
+                    <div className="text-[10px] text-muted-foreground">Planning Apps</div>
                   </div>
                 </div>
               )}
@@ -2148,7 +2148,7 @@ function PropertyPanel({
                   const pdErrors = (data as any)?._landRegistryResolve?.pdErrors || (data as any)?.pdErrors || [];
                   const hadError = Array.isArray(pdErrors) && pdErrors.length > 0;
                   return (
-                    <DataSection title={`Ownership`} icon={Building2} color="text-indigo-600">
+                    <DataSection title={`Ownership`} icon={Building2} color="text-primary">
                       <p className="text-xs text-gray-600 mb-1.5">
                         {hadError
                           ? "PropertyData could not return Land Registry titles for this postcode (API error — see below)."
@@ -2176,11 +2176,11 @@ function PropertyPanel({
                   : allTitles;
                 const matchCount = address ? sorted.filter(t => titleMatchesAddress(t, address)).length : 0;
                 return (
-                  <DataSection title={`Ownership (${freeholds.length}F / ${leaseholds.length}L)`} icon={Building2} color="text-indigo-600">
+                  <DataSection title={`Ownership (${freeholds.length}F / ${leaseholds.length}L)`} icon={Building2} color="text-primary">
                     {address && allTitles.length > 0 && (
                       <div className="text-[10px] text-gray-500 mb-1.5">
                         {matchCount > 0
-                          ? <><span className="font-medium text-indigo-600">{matchCount}</span> matching "{address}"{hiddenEmpty > 0 && <> · {hiddenEmpty} empty rows hidden</>}</>
+                          ? <><span className="font-medium text-primary">{matchCount}</span> matching "{address}"{hiddenEmpty > 0 && <> · {hiddenEmpty} empty rows hidden</>}</>
                           : <>No exact matches for "{address}" — showing all {allTitles.length} titles at this postcode{hiddenEmpty > 0 && <> · {hiddenEmpty} empty rows hidden</>}</>
                         }
                       </div>
@@ -2191,7 +2191,7 @@ function PropertyPanel({
                       const purchase = tn ? titlePurchases[tn] : null;
                       const proprietorFromBuy = purchase?.proprietor_data;
                       return (
-                        <div key={i} className={`text-xs border rounded p-2 space-y-0.5 overflow-hidden ${isMatch ? "bg-indigo-50 border-indigo-200" : "bg-gray-50"}`}>
+                        <div key={i} className={`text-xs border rounded p-2 space-y-0.5 overflow-hidden ${isMatch ? "bg-primary/10 border-primary/40" : "bg-gray-50"}`}>
                           <div className="flex items-center gap-1.5 min-w-0">
                             <Badge variant="outline" className={`text-[9px] px-1 py-0 shrink-0 ${t._tenure === "Freehold" ? "border-emerald-300 text-emerald-700 bg-emerald-50" : "border-blue-300 text-blue-700 bg-blue-50"}`}>
                               {t._tenure === "Freehold" ? "F" : "L"}
@@ -2199,7 +2199,7 @@ function PropertyPanel({
                             <span className="font-medium truncate flex-1 min-w-0">
                               {t.proprietor_name_1 || proprietorFromBuy?.name_1 || proprietorFromBuy?.proprietor_name_1 || t.address || (purchase?.cached || purchase?.register_url ? "Owner — see register" : "Unknown")}
                             </span>
-                            {isMatch && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded font-medium shrink-0">MATCH</span>}
+                            {isMatch && <span className="text-[8px] bg-primary/10 text-primary px-1 py-0.5 rounded font-medium shrink-0">MATCH</span>}
                             {t.proprietor_category && <span className="text-[9px] text-gray-400 shrink-0">{t.proprietor_category}</span>}
                           </div>
                           {t.title_number && <p className="text-gray-400 text-[10px] truncate">Title: {t.title_number}{t.company_reg ? ` · Co. ${t.company_reg}` : ""}</p>}
@@ -2219,7 +2219,7 @@ function PropertyPanel({
                                       <ExternalLink className="w-2.5 h-2.5" /> Register
                                     </a>
                                   ) : (
-                                    <button onClick={() => purchaseDocs(tn, "register")} className="text-[10px] bg-white border border-indigo-200 text-indigo-700 px-1.5 py-0.5 rounded hover:bg-indigo-50">
+                                    <button onClick={() => purchaseDocs(tn, "register")} className="text-[10px] bg-white border border-primary/40 text-primary px-1.5 py-0.5 rounded hover:bg-primary/10">
                                       Buy Register £4
                                     </button>
                                   )}
@@ -2228,7 +2228,7 @@ function PropertyPanel({
                                       <ExternalLink className="w-2.5 h-2.5" /> Plan
                                     </a>
                                   ) : (
-                                    <button onClick={() => purchaseDocs(tn, "plan")} className="text-[10px] bg-white border border-indigo-200 text-indigo-700 px-1.5 py-0.5 rounded hover:bg-indigo-50">
+                                    <button onClick={() => purchaseDocs(tn, "plan")} className="text-[10px] bg-white border border-primary/40 text-primary px-1.5 py-0.5 rounded hover:bg-primary/10">
                                       Buy Plan £3
                                     </button>
                                   )}
@@ -2246,7 +2246,7 @@ function PropertyPanel({
                       <Button
                         variant="outline"
                         size="sm"
-                        className="w-full mt-2 text-[11px] h-7 border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                        className="w-full mt-2 text-[11px] h-7 border-primary/40 text-primary hover:bg-primary/10"
                         onClick={() => runFullTitleSearch(freeholds)}
                         disabled={fullTitleLoading}
                         data-testid="btn-full-title-search"
@@ -2262,7 +2262,7 @@ function PropertyPanel({
                     {fullTitleData && fullTitleData.length > 0 && (
                       <div className="mt-2 border-t pt-2 space-y-1.5">
                         <div className="flex items-center justify-between gap-2">
-                          <p className="text-[10px] font-semibold text-indigo-700 truncate">
+                          <p className="text-[10px] font-semibold text-primary truncate">
                             Full Title Search — {fullTitleData.filter(t => t._tenure === "Freehold").length}F / {fullTitleData.filter(t => t._tenure === "Leasehold").length}L
                           </p>
                           <div className="flex items-center gap-1.5 shrink-0">
@@ -2291,7 +2291,7 @@ function PropertyPanel({
                                 a.click();
                                 URL.revokeObjectURL(url);
                               }}
-                              className="flex items-center gap-0.5 text-[9px] text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded px-1.5 py-0.5 hover:bg-indigo-50 transition-colors"
+                              className="flex items-center gap-0.5 text-[9px] text-primary hover:text-primary/80 border border-primary/40 rounded px-1.5 py-0.5 hover:bg-primary/10 transition-colors"
                               title="Download all title search results as CSV"
                             >
                               <Download className="w-2.5 h-2.5" /> CSV
@@ -2331,7 +2331,7 @@ function PropertyPanel({
               })()}
 
               {data.voaRatings.length > 0 && (
-                <DataSection title="Business Rates (VOA)" icon={PoundSterling} color="text-blue-600">
+                <DataSection title="Business Rates (VOA)" icon={PoundSterling} color="text-primary">
                   {data.voaRatings.slice(0, 5).map((v: any, i: number) => (
                     <div key={i} className="text-xs border rounded p-2 space-y-0.5 bg-gray-50">
                       <p className="font-medium">{v.firmName || "Vacant"}</p>
@@ -2364,7 +2364,7 @@ function PropertyPanel({
                 const merged = [...govApps, ...pdNormalised.filter((a: any) => !a.reference || !govRefs.has(a.reference))];
                 if (merged.length === 0) return null;
                 return (
-                  <DataSection title={`Planning Applications — last 10 yrs (${merged.length})`} icon={Landmark} color="text-violet-600">
+                  <DataSection title={`Planning Applications — last 10 yrs (${merged.length})`} icon={Landmark} color="text-primary">
                     {merged.slice(0, 10).map((pa: any, i: number) => (
                       <div key={i} className="text-xs border rounded p-2 space-y-0.5 bg-gray-50 overflow-hidden">
                         <p className="font-medium truncate">{pa.description || pa.address || pa.reference || "Application"}</p>
@@ -2385,7 +2385,7 @@ function PropertyPanel({
                         {pa.reference && <p className="text-[10px] text-gray-400">Ref: {pa.reference}</p>}
                         {pa.address && pa.description && <p className="text-[10px] text-gray-400 truncate">{pa.address}</p>}
                         {pa.documentUrl && (
-                          <a href={pa.documentUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-indigo-500 hover:underline inline-flex items-center gap-0.5">
+                          <a href={pa.documentUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5">
                             View <ExternalLink className="w-2.5 h-2.5" />
                           </a>
                         )}
@@ -2429,7 +2429,7 @@ function PropertyPanel({
               )}
 
               {data.floodRisk && (
-                <DataSection title="Flood Risk" icon={Droplets} color="text-cyan-600">
+                <DataSection title="Flood Risk" icon={Droplets} color="text-primary">
                   {data.floodRisk.activeFloods > 0 ? (
                     <div className="flex items-center gap-2 text-xs text-red-600">
                       <AlertTriangle className="w-3.5 h-3.5" />
@@ -2455,7 +2455,7 @@ function PropertyPanel({
               {data.propertyDataCoUk && (activeLayers.includes("market") || activeLayers.includes("area") || activeLayers.includes("planning") || activeLayers.includes("residential")) && <PropertyDataSection data={data.propertyDataCoUk} />}
 
               {data.tflNearby?.stations?.length > 0 && (
-                <DataSection title="Transport Links (TfL)" icon={TrainFront} color="text-blue-700">
+                <DataSection title="Transport Links (TfL)" icon={TrainFront} color="text-primary">
                   {data.tflNearby.stations.slice(0, 5).map((s: any, i: number) => {
                     const walkMins = Math.round(s.distance / 80);
                     return (
@@ -2494,8 +2494,8 @@ function PropertyPanel({
                         layer.loaded
                           ? "bg-gray-100 text-gray-400 border-gray-200 cursor-default"
                           : loadingLayer === layer.key
-                          ? "bg-indigo-50 text-indigo-600 border-indigo-200 animate-pulse"
-                          : "bg-white text-gray-700 border-gray-300 hover:border-indigo-400 hover:text-indigo-600 cursor-pointer"
+                          ? "bg-primary/10 text-primary border-primary/40 animate-pulse"
+                          : "bg-white text-gray-700 border-gray-300 hover:border-primary/40 hover:text-primary cursor-pointer"
                       }`}
                       data-testid={`layer-toggle-${layer.key}`}
                     >
@@ -2555,7 +2555,7 @@ function PlanningSection({ data }: { data: any }) {
   if (!hasData) return null;
 
   return (
-    <DataSection title="Planning Designations & Heritage" icon={Landmark} color="text-violet-600">
+    <DataSection title="Planning Designations & Heritage" icon={Landmark} color="text-primary">
       {sections.map(({ key, label, icon: Icon }) =>
         data[key]?.length > 0 ? (
           <div key={key}>
@@ -2639,10 +2639,10 @@ function PropertyDataSection({ data }: { data: any }) {
 
   return (
     <>
-      <DataSection title="Market Overview" icon={BarChart3} color="text-indigo-600">
+      <DataSection title="Market Overview" icon={BarChart3} color="text-primary">
         {ks && (
-          <div className="text-xs border rounded p-2 bg-indigo-50/50 space-y-1">
-            <p className="font-medium text-[10px] text-indigo-700 uppercase tracking-wide">Key Stats</p>
+          <div className="text-xs border rounded p-2 bg-muted/40 space-y-1">
+            <p className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide">Key Stats</p>
             <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
               {ks.average_price && <span>Avg Price: <b>£{Number(ks.average_price).toLocaleString()}</b></span>}
               {ks.average_rent && <span>Avg Rent: <b>£{ks.average_rent} pcm</b></span>}
@@ -2724,7 +2724,7 @@ function PropertyDataSection({ data }: { data: any }) {
         )}
       </DataSection>
 
-      <DataSection title="Rental Market" icon={Home} color="text-blue-600">
+      <DataSection title="Rental Market" icon={Home} color="text-primary">
         {commercialRents && (
           <div className="text-xs border rounded p-2 bg-gray-50 space-y-0.5">
             <p className="font-medium text-[10px]">Commercial Rents</p>
@@ -2776,7 +2776,7 @@ function PropertyDataSection({ data }: { data: any }) {
         )}
       </DataSection>
 
-      <DataSection title="Demographics & Area" icon={Users} color="text-violet-600">
+      <DataSection title="Demographics & Area" icon={Users} color="text-primary">
         {areaType && (
           <div className="text-xs border rounded p-2 bg-gray-50 space-y-0.5">
             <p className="font-medium text-[10px]">Area Classification</p>
@@ -2834,7 +2834,7 @@ function PropertyDataSection({ data }: { data: any }) {
         )}
         {politics && (
           <div className="text-xs border rounded p-2 bg-gray-50 space-y-0.5">
-            <p className="font-medium text-[10px] flex items-center gap-1"><Vote className="w-2.5 h-2.5 text-blue-600" /> Politics</p>
+            <p className="font-medium text-[10px] flex items-center gap-1"><Vote className="w-2.5 h-2.5 text-primary" /> Politics</p>
             <p className="text-[11px]">{politics.constituency}</p>
             {politics.last_result?.vote_counts && (
               <div className="text-[10px] text-gray-400">
@@ -2850,7 +2850,7 @@ function PropertyDataSection({ data }: { data: any }) {
       <DataSection title="Local Amenities" icon={MapPin} color="text-emerald-600">
         {ptal && (
           <div className="text-xs border rounded p-2 bg-gray-50 space-y-0.5">
-            <p className="font-medium text-[10px] flex items-center gap-1"><Bus className="w-2.5 h-2.5 text-blue-600" /> Public Transport (PTAL)</p>
+            <p className="font-medium text-[10px] flex items-center gap-1"><Bus className="w-2.5 h-2.5 text-primary" /> Public Transport (PTAL)</p>
             <p className="text-[11px]">PTAL Level: <b className="text-lg">{ptal.ptal}</b></p>
           </div>
         )}
@@ -2865,7 +2865,7 @@ function PropertyDataSection({ data }: { data: any }) {
         )}
         {schools?.state?.nearest?.length > 0 && (
           <div className="text-xs border rounded p-2 bg-gray-50 space-y-0.5">
-            <p className="font-medium text-[10px] flex items-center gap-1"><GraduationCap className="w-2.5 h-2.5 text-blue-600" /> Nearest Schools</p>
+            <p className="font-medium text-[10px] flex items-center gap-1"><GraduationCap className="w-2.5 h-2.5 text-primary" /> Nearest Schools</p>
             {schools.state.nearest.slice(0, 3).map((s: any, i: number) => (
               <p key={i} className="text-[11px] truncate">{s.name} <span className="text-gray-400">({s.phase})</span></p>
             ))}
@@ -2873,7 +2873,7 @@ function PropertyDataSection({ data }: { data: any }) {
         )}
         {internet && (
           <div className="text-xs border rounded p-2 bg-gray-50 space-y-0.5">
-            <p className="font-medium text-[10px] flex items-center gap-1"><Wifi className="w-2.5 h-2.5 text-cyan-600" /> Internet Speed</p>
+            <p className="font-medium text-[10px] flex items-center gap-1"><Wifi className="w-2.5 h-2.5 text-primary" /> Internet Speed</p>
             <div className="text-[11px]">
               <span>Superfast: <b>{internet.SFBB_availability}%</b></span>
               {internet.gigabit_availability && <span className="ml-2">Gigabit: <b>{internet.gigabit_availability}%</b></span>}
@@ -6742,7 +6742,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                     <div className="bg-amber-50 border border-amber-200 rounded p-2 space-y-1.5">
                       <div className="text-[12px] font-medium text-gray-900">{goadPanelContext.tenantPlace.name}</div>
                       {goadPanelContext.tenantPlace.website && (
-                        <a href={goadPanelContext.tenantPlace.website} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-600 hover:underline block truncate">
+                        <a href={goadPanelContext.tenantPlace.website} target="_blank" rel="noopener noreferrer" className="text-[10px] text-primary hover:underline block truncate">
                           {goadPanelContext.tenantPlace.website.replace(/^https?:\/\//, "").replace(/\/$/, "")}
                         </a>
                       )}
@@ -7063,9 +7063,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                               <div className="text-[9px] text-gray-500">score {c.score}</div>
                             </div>
                             {c.crmCompanyId ? (
-                              <a href={`/companies/${c.crmCompanyId}`} className="font-medium text-blue-700 hover:underline block mt-0.5">{c.proprietorName}</a>
+                              <a href={`/companies/${c.crmCompanyId}`} className="font-medium text-primary hover:underline block mt-0.5">{c.proprietorName}</a>
                             ) : (
-                              <button type="button" onClick={() => openInvestigator(c.proprietorName)} className="font-medium text-gray-900 text-left hover:text-blue-700 hover:underline">{c.proprietorName}</button>
+                              <button type="button" onClick={() => openInvestigator(c.proprietorName)} className="font-medium text-gray-900 text-left hover:text-primary hover:underline">{c.proprietorName}</button>
                             )}
                             <div className="text-[10px] text-gray-600 mt-0.5 font-mono">{c.titleNumber}{c.companyRegistrationNo ? ` · CH ${c.companyRegistrationNo}` : ""}</div>
                             {c.reasons?.length > 0 && (
@@ -7118,7 +7118,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                               <div className="text-[10px] text-gray-600 mb-0.5">Freehold ({fhs.length})</div>
                               {fhs.slice(0, 5).map((f: any, i: number) => (
                                 <div key={`fh-${i}`} className="bg-amber-50 border border-amber-200 rounded p-2 mb-1 text-[11px]">
-                                  <button type="button" onClick={() => openInvestigator(f.proprietor_name || f.proprietorName || f.proprietor_name_1)} className="font-medium text-gray-900 text-left hover:text-blue-700 hover:underline">{f.proprietor_name || f.proprietorName || f.proprietor_name_1 || "Unknown proprietor"}</button>
+                                  <button type="button" onClick={() => openInvestigator(f.proprietor_name || f.proprietorName || f.proprietor_name_1)} className="font-medium text-gray-900 text-left hover:text-primary hover:underline">{f.proprietor_name || f.proprietorName || f.proprietor_name_1 || "Unknown proprietor"}</button>
                                   {(f.title_number || f.titleNumber) && (
                                     <div className="text-gray-600 font-mono text-[10px] mt-0.5">{f.title_number || f.titleNumber}</div>
                                   )}
@@ -7134,7 +7134,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                               <div className="text-[10px] text-gray-600 mb-0.5">Leasehold ({lhs.length})</div>
                               {lhs.slice(0, 3).map((l: any, i: number) => (
                                 <div key={`lh-${i}`} className="bg-sky-50 border border-sky-200 rounded p-2 mb-1 text-[11px]">
-                                  <button type="button" onClick={() => openInvestigator(l.proprietor_name || l.proprietorName || l.proprietor_name_1)} className="font-medium text-gray-900 truncate text-left hover:text-blue-700 hover:underline block w-full">{l.proprietor_name || l.proprietorName || l.proprietor_name_1 || "Unknown leaseholder"}</button>
+                                  <button type="button" onClick={() => openInvestigator(l.proprietor_name || l.proprietorName || l.proprietor_name_1)} className="font-medium text-gray-900 truncate text-left hover:text-primary hover:underline block w-full">{l.proprietor_name || l.proprietorName || l.proprietor_name_1 || "Unknown leaseholder"}</button>
                                   {(l.title_number || l.titleNumber) && (
                                     <div className="text-gray-600 font-mono text-[10px] mt-0.5">{l.title_number || l.titleNumber}</div>
                                   )}
@@ -7152,7 +7152,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                               <p className="text-[10px] text-gray-500 italic mb-1">Estate-level titles — not matched to this exact unit. The superior freeholder is likely here.</p>
                               {ctxFhs.slice(0, 5).map((f: any, i: number) => (
                                 <div key={`cfh-${i}`} className="bg-stone-50 border border-stone-200 rounded p-2 mb-1 text-[11px]">
-                                  <button type="button" onClick={() => openInvestigator(f.proprietor_name || f.proprietorName || f.proprietor_name_1)} className="font-medium text-gray-900 text-left hover:text-blue-700 hover:underline">{f.proprietor_name || f.proprietorName || f.proprietor_name_1 || "Unknown proprietor"}</button>
+                                  <button type="button" onClick={() => openInvestigator(f.proprietor_name || f.proprietorName || f.proprietor_name_1)} className="font-medium text-gray-900 text-left hover:text-primary hover:underline">{f.proprietor_name || f.proprietorName || f.proprietor_name_1 || "Unknown proprietor"}</button>
                                   {(f.title_number || f.titleNumber) && (
                                     <div className="text-gray-600 font-mono text-[10px] mt-0.5">{f.title_number || f.titleNumber}</div>
                                   )}
@@ -7197,10 +7197,10 @@ export default function EdozoMap({ initialSearch, onSearchConsumed, onResolvePro
                         <div className="flex items-start gap-1.5">
                           <span className="w-1.5 h-1.5 rounded-full shrink-0 mt-1" style={{ background: dot }} />
                           <div className="min-w-0 flex-1">
-                            <div className={`line-clamp-2 leading-tight ${url ? "text-blue-700 group-hover:underline" : "text-gray-900"}`}>{a.description || a.proposal || "(no description)"}</div>
+                            <div className={`line-clamp-2 leading-tight ${url ? "text-primary group-hover:underline" : "text-gray-900"}`}>{a.description || a.proposal || "(no description)"}</div>
                             <div className="text-[10px] text-gray-500 mt-0.5">{meta}</div>
                           </div>
-                          {url && <ExternalLink className="w-3 h-3 text-gray-400 shrink-0 mt-0.5 group-hover:text-blue-700" />}
+                          {url && <ExternalLink className="w-3 h-3 text-gray-400 shrink-0 mt-0.5 group-hover:text-primary" />}
                         </div>
                       );
                       return url ? (

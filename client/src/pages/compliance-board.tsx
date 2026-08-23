@@ -277,10 +277,7 @@ export default function ComplianceBoard() {
     <div className="p-4 lg:p-6 max-w-[1600px] mx-auto">
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2 tracking-tight">
-            <ShieldCheck className="w-6 h-6 text-primary" />
-            Compliance Board
-          </h1>
+          <h1 className="text-2xl font-bold tracking-tight">Compliance Board</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             AML status for every counterparty on a live deal · {data?.counts?.total || 0} total
           </p>

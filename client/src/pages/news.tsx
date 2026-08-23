@@ -104,7 +104,7 @@ function RelevanceBar({ score }: { score: number }) {
   const label = score >= 70 ? "High" : score >= 40 ? "Medium" : "Low";
   return (
     <div className="flex items-center gap-1.5" data-testid="relevance-bar" title={`${label} relevance (${score}/100)`}>
-      <div className="w-14 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+      <div className="w-14 h-1.5 bg-muted rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${color}`}
           style={{ width: `${score}%` }}
@@ -1285,10 +1285,10 @@ function MobileNewsFeed() {
 
       {!isLoading && (!articles || articles.length === 0) && (
         <div className="flex flex-col items-center justify-center py-16 gap-3">
-          <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
-            {mobileTab === "saved" ? <Bookmark className="w-8 h-8 text-gray-300" /> : <Newspaper className="w-8 h-8 text-gray-300" />}
+          <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+            {mobileTab === "saved" ? <Bookmark className="w-8 h-8 text-muted-foreground/70" /> : <Newspaper className="w-8 h-8 text-muted-foreground/70" />}
           </div>
-          <p className="text-[15px] text-gray-400">{mobileTab === "saved" ? "No saved articles yet — tap the bookmark on any card" : "No news articles yet"}</p>
+          <p className="text-[15px] text-muted-foreground/70">{mobileTab === "saved" ? "No saved articles yet — tap the bookmark on any card" : "No news articles yet"}</p>
         </div>
       )}
 
@@ -1298,11 +1298,11 @@ function MobileNewsFeed() {
           href={article.url || "#"}
           target="_blank"
           rel="noopener noreferrer"
-          className="block bg-white dark:bg-card rounded-2xl overflow-hidden border border-gray-100 dark:border-border shadow-sm active:bg-gray-50"
+          className="block bg-white dark:bg-card rounded-2xl overflow-hidden border border-border shadow-sm active:bg-muted"
           data-testid={`news-card-${article.id}`}
         >
           {article.imageUrl && (
-            <div className="aspect-[16/9] w-full overflow-hidden bg-gray-50">
+            <div className="aspect-[16/9] w-full overflow-hidden bg-muted/50">
               <img
                 src={article.imageUrl}
                 alt=""
@@ -1314,11 +1314,11 @@ function MobileNewsFeed() {
           )}
           <div className="p-4">
             <div className="flex items-center gap-2 mb-2 flex-wrap">
-              {article.sourceName && <span className="text-[11px] font-medium text-gray-500">{article.sourceName}</span>}
+              {article.sourceName && <span className="text-[11px] font-medium text-muted-foreground">{article.sourceName}</span>}
               {article.publishedAt && (
                 <>
-                  <span className="text-gray-300">·</span>
-                  <span className="text-[11px] text-gray-400">{timeAgo(article.publishedAt)}</span>
+                  <span className="text-muted-foreground/70">·</span>
+                  <span className="text-[11px] text-muted-foreground/70">{timeAgo(article.publishedAt)}</span>
                 </>
               )}
               {article.category && article.category !== "general" && (
@@ -1327,7 +1327,7 @@ function MobileNewsFeed() {
               <button
                 type="button"
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSave(article); }}
-                className="ml-auto -my-1.5 -mr-1.5 p-2 rounded-full text-gray-400 active:bg-gray-100"
+                className="ml-auto -my-1.5 -mr-1.5 p-2 rounded-full text-muted-foreground/70 active:bg-muted"
                 aria-label={savedIds.has(article.id) ? "Remove from saved" : "Save article"}
                 data-testid={`mobile-news-save-${article.id}`}
               >
@@ -1336,9 +1336,9 @@ function MobileNewsFeed() {
                   : <Bookmark className="w-[18px] h-[18px]" />}
               </button>
             </div>
-            <div className="text-[16px] font-semibold text-gray-900 dark:text-white leading-snug mb-1.5 tracking-tight">{article.title}</div>
+            <div className="text-[16px] font-semibold text-foreground leading-snug mb-1.5 tracking-tight">{article.title}</div>
             {(article.aiSummary || article.summary) && (
-              <div className="text-[13px] text-gray-500 leading-relaxed line-clamp-3">{article.aiSummary || article.summary}</div>
+              <div className="text-[13px] text-muted-foreground leading-relaxed line-clamp-3">{article.aiSummary || article.summary}</div>
             )}
           </div>
         </a>
@@ -1422,14 +1422,9 @@ function StaffNews() {
   if (isClientNewsPage) {
     return (
       <div className="p-4 sm:p-6 space-y-5" data-testid="news-page">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            <Newspaper className="w-5 h-5 text-primary" />
-          </div>
-          <div className="space-y-1">
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">News</h1>
-            <p className="text-sm text-muted-foreground">AI-curated property &amp; retail market news</p>
-          </div>
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">News</h1>
+          <p className="text-sm text-muted-foreground">AI-curated property &amp; retail market news</p>
         </div>
         <FeedTab />
       </div>
@@ -1439,18 +1434,13 @@ function StaffNews() {
   return (
     <div className="p-4 sm:p-6 space-y-5" data-testid="news-page">
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            <Newspaper className="w-5 h-5 text-primary" />
-          </div>
-          <div className="space-y-1">
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
-              News
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              AI-powered property news, intelligence and lead generation
-            </p>
-          </div>
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
+            News
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            AI-powered property news, intelligence and lead generation
+          </p>
         </div>
         {intelStatus?.emailAddress && (
           <div className="flex items-center gap-2 bg-muted px-3 py-1.5 rounded-md">

@@ -35,7 +35,7 @@ export default function CovenantWatch() {
     <div className="p-6 max-w-6xl mx-auto space-y-6">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><ShieldAlert className="w-6 h-6" /> Covenant Watch</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Covenant Watch</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             House financial-strength monitoring — Companies House, The Gazette and filed accounts. Recomputed nightly; alerts on any deterioration.
           </p>

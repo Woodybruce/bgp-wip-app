@@ -1,5 +1,8 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { MobileCardView } from "@/components/mobile-card-view";
+import { Pill } from "@/components/ui/pill";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -860,6 +863,7 @@ function InstructionsList({
     queryKey: ["/api/users"],
   });
 
+  const isMobile = useIsMobile();
   const { data: allCompanies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
   });
@@ -994,85 +998,26 @@ function InstructionsList({
     <div className="h-full flex flex-col p-4 sm:p-6 gap-6 min-h-0" data-testid="instructions-page">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <Handshake className="w-6 h-6" />
-            Instructions
-          </h1>
+          <h1 className="text-2xl font-bold tracking-tight">Instructions</h1>
           <p className="text-sm text-muted-foreground">
             {effectiveTeam ? `${effectiveTeam} instructions` : "All team instructions"}
           </p>
         </div>
       </div>
 
-      <div className="flex items-center gap-3 overflow-x-auto pb-1">
-        <Card
-          className={`min-w-[140px] cursor-pointer transition-colors hover:border-primary/50 ${
-            typeFilter === "all" ? "border-primary bg-primary/5" : ""
-          }`}
-          onClick={() => setTypeFilter("all")}
-          data-testid="card-type-all"
-        >
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2">
-              <Handshake className="w-4 h-4 text-muted-foreground" />
-              <div>
-                <p className="text-lg font-bold">{instructionProperties.length}</p>
-                <p className="text-xs text-muted-foreground">All Instructions</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card
-          className={`min-w-[140px] cursor-pointer transition-colors hover:border-primary/50 ${
-            typeFilter === "leasing" ? "border-primary bg-primary/5" : ""
-          }`}
-          onClick={() => setTypeFilter(typeFilter === "leasing" ? "all" : "leasing")}
-          data-testid="card-type-leasing"
-        >
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2">
-              <Building2 className="w-4 h-4 text-blue-500" />
-              <div>
-                <p className="text-lg font-bold">{leasingCount}</p>
-                <p className="text-xs text-muted-foreground">Leasing</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card
-          className={`min-w-[140px] cursor-pointer transition-colors hover:border-primary/50 ${
-            typeFilter === "lease_advisory" ? "border-primary bg-primary/5" : ""
-          }`}
-          onClick={() => setTypeFilter(typeFilter === "lease_advisory" ? "all" : "lease_advisory")}
-          data-testid="card-type-lease-advisory"
-        >
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2">
-              <Building2 className="w-4 h-4 text-violet-500" />
-              <div>
-                <p className="text-lg font-bold">{leaseAdvisoryCount}</p>
-                <p className="text-xs text-muted-foreground">Lease Advisory</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card
-          className={`min-w-[140px] cursor-pointer transition-colors hover:border-primary/50 ${
-            typeFilter === "sale" ? "border-primary bg-primary/5" : ""
-          }`}
-          onClick={() => setTypeFilter(typeFilter === "sale" ? "all" : "sale")}
-          data-testid="card-type-sale"
-        >
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2">
-              <Building2 className="w-4 h-4 text-emerald-500" />
-              <div>
-                <p className="text-lg font-bold">{saleCount}</p>
-                <p className="text-xs text-muted-foreground">Sales</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="flex flex-wrap gap-1.5">
+        <Pill active={typeFilter === "all"} onClick={() => setTypeFilter("all")} data-testid="card-type-all">
+          All Instructions <span className={`font-mono normal-case ${typeFilter === "all" ? "opacity-80" : "opacity-60"}`}>{instructionProperties.length}</span>
+        </Pill>
+        <Pill active={typeFilter === "leasing"} onClick={() => setTypeFilter(typeFilter === "leasing" ? "all" : "leasing")} data-testid="card-type-leasing">
+          Leasing <span className={`font-mono normal-case ${typeFilter === "leasing" ? "opacity-80" : "opacity-60"}`}>{leasingCount}</span>
+        </Pill>
+        <Pill active={typeFilter === "lease_advisory"} onClick={() => setTypeFilter(typeFilter === "lease_advisory" ? "all" : "lease_advisory")} data-testid="card-type-lease-advisory">
+          Lease Advisory <span className={`font-mono normal-case ${typeFilter === "lease_advisory" ? "opacity-80" : "opacity-60"}`}>{leaseAdvisoryCount}</span>
+        </Pill>
+        <Pill active={typeFilter === "sale"} onClick={() => setTypeFilter(typeFilter === "sale" ? "all" : "sale")} data-testid="card-type-sale">
+          Sales <span className={`font-mono normal-case ${typeFilter === "sale" ? "opacity-80" : "opacity-60"}`}>{saleCount}</span>
+        </Pill>
       </div>
 
       <div className="flex items-center gap-3">
@@ -1106,6 +1051,24 @@ function InstructionsList({
               {[1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-12" />
               ))}
+            </div>
+          ) : isMobile ? (
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              <MobileCardView
+                emptyMessage="No instructions found"
+                items={filteredProperties.map((property) => ({
+                  id: property.id,
+                  title: property.name || "Untitled property",
+                  subtitle: allCompanies.find((c) => c.id === property.landlordId)?.name || undefined,
+                  status: property.status || undefined,
+                  href: `/properties/${property.id}`,
+                  fields: [
+                    { label: "Asset class", value: property.assetClass },
+                    { label: "Tenure", value: property.tenure },
+                    { label: "Sq Ft", value: property.sqft ? Number(property.sqft).toLocaleString() : null },
+                  ],
+                }))}
+              />
             </div>
           ) : (
             <ScrollableTable minWidth={1800}>

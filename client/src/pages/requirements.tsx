@@ -4,6 +4,7 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { useTeam } from "@/lib/team-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import {
@@ -221,7 +222,7 @@ function MapLocationsCell({
       {locations.map((loc) => (
         <div key={loc.placeId} className="flex items-center gap-1 group">
           <button
-            className="text-[11px] text-blue-600 hover:underline cursor-pointer flex items-center gap-0.5 truncate max-w-[160px]"
+            className="text-[11px] text-primary hover:underline cursor-pointer flex items-center gap-0.5 truncate max-w-[160px]"
             onClick={() => {
               if (loc.lat && loc.lng) {
                 navigate(`/map?lat=${loc.lat}&lng=${loc.lng}&zoom=15`);
@@ -859,7 +860,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
           <Card className={`flex-1 min-w-[170px] cursor-pointer transition-colors ${fitsOnly ? "border-primary" : ""}`} data-testid="card-demand-fits" onClick={() => setFitsOnly(!fitsOnly)}>
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
-                <Target className="w-4 h-4 text-emerald-600 shrink-0" />
+                <Target className="w-4 h-4 text-muted-foreground shrink-0" />
                 <div>
                   <p className="text-lg font-bold tabular-nums">{demand.fitsCount}<span className="text-xs font-normal text-muted-foreground"> / {demand.total}</span></p>
                   <p className="text-xs text-muted-foreground">fit your available units</p>
@@ -870,7 +871,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
           <Card className={`flex-1 min-w-[170px] cursor-pointer transition-colors ${freshOnly ? "border-primary" : ""}`} data-testid="card-demand-fresh" onClick={() => setFreshOnly(!freshOnly)}>
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
-                <Flame className="w-4 h-4 text-amber-500 shrink-0" />
+                <Flame className="w-4 h-4 text-muted-foreground shrink-0" />
                 <div>
                   <p className="text-lg font-bold tabular-nums">{demand.fresh90}</p>
                   <p className="text-xs text-muted-foreground">active in the last 90 days</p>
@@ -934,7 +935,7 @@ function LeasingTable({ teamFilter, companyFilter, autoCreate }: { teamFilter?: 
           data-testid="button-new-brand"
           title="Create a brand in the CRM — AI fills in description, industry and imagery"
         >
-          <Sparkles className="w-3.5 h-3.5 mr-1 text-purple-500" />
+          <Sparkles className="w-3.5 h-3.5 mr-1 text-muted-foreground" />
           New Brand
         </Button>
         )}
@@ -1435,14 +1436,14 @@ function FormMultiLocationPicker({
           {locations.map((loc) => (
             <div
               key={loc.placeId}
-              className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-full px-2.5 py-1 text-[11px]"
+              className="flex items-center gap-1 bg-muted/40 border border-border rounded-full px-2.5 py-1 text-[11px]"
             >
-              <MapPin className="w-2.5 h-2.5 text-blue-500 shrink-0" />
-              <span className="text-blue-700 max-w-[180px] truncate" title={loc.formatted}>{loc.formatted.split(",")[0]}</span>
+              <MapPin className="w-2.5 h-2.5 text-muted-foreground shrink-0" />
+              <span className="max-w-[180px] truncate" title={loc.formatted}>{loc.formatted.split(",")[0]}</span>
               <button
                 type="button"
                 onClick={() => removeLocation(loc.placeId)}
-                className="text-blue-400 hover:text-red-500 ml-0.5"
+                className="text-muted-foreground hover:text-destructive ml-0.5"
               >
                 <X className="w-3 h-3" />
               </button>
@@ -1504,7 +1505,7 @@ function LandlordPackCell({ itemId, landlordPack }: { itemId: string; landlordPa
           href={pack.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-xs text-blue-600 hover:underline flex items-center gap-1 cursor-pointer"
+          className="text-xs text-primary hover:underline flex items-center gap-1 cursor-pointer"
           data-testid={`link-landlord-pack-${itemId}`}
         >
           <File className="w-3 h-3 shrink-0" />
@@ -1643,13 +1644,13 @@ function InlineCompanyPicker({
     return (
       <div className="flex items-center gap-1.5 group">
         {company ? (
-          <Building2 className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+          <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
         ) : (
           <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
         )}
         {company ? (
           <button
-            className="text-left text-blue-600 hover:text-blue-800 hover:underline cursor-pointer font-medium truncate"
+            className="text-left text-primary hover:underline cursor-pointer font-medium truncate"
             onClick={() => navigate(`/companies/${currentCompanyId}`)}
             data-testid={`${testIdPrefix}-link`}
           >
@@ -1724,7 +1725,7 @@ function InlineCompanyPicker({
             <button
               type="button"
               disabled={createMutation.isPending}
-              className="w-full text-left px-3 py-2 text-xs border-t bg-emerald-50/60 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-medium"
+              className="w-full text-left px-3 py-2 text-xs border-t hover:bg-muted flex items-center gap-2 text-primary font-medium"
               onClick={() => createMutation.mutate(search.trim())}
               data-testid={`${testIdPrefix}-create`}
             >
@@ -1795,7 +1796,7 @@ function InlineUserPicker({
       <div className="flex items-center gap-1.5 group">
         {user ? (
           <>
-            <User className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
             <div className="min-w-0">
               <span className="text-xs font-medium truncate block max-w-[120px]">{user.name}</span>
               {user.department && (
@@ -1860,7 +1861,7 @@ function InlineUserPicker({
                 onClick={() => { onSelect(u.id); setEditing(false); }}
                 data-testid={`${testIdPrefix}-option-${u.id}`}
               >
-                <User className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                 <div className="min-w-0 flex-1">
                   <span className="text-xs font-medium truncate block">{u.name}</span>
                   {u.department && <span className="text-[10px] text-muted-foreground">{u.department}</span>}
@@ -2009,7 +2010,7 @@ function InlineMultiUserPicker({
                   <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${isActive ? (colorMap?.[u.id] || "bg-emerald-500") + " border-transparent" : "border-muted-foreground/30"}`}>
                     {isActive && <Check className="w-3 h-3 text-white" />}
                   </div>
-                  <User className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                   <div className="min-w-0 flex-1">
                     <span className="text-xs font-medium truncate block">{u.name}</span>
                     {u.department && <span className="text-[10px] text-muted-foreground">{u.department}</span>}
@@ -2115,10 +2116,10 @@ function InlineContactPicker({
       <div className="flex items-center gap-1.5 group">
         {contact ? (
           <>
-            <User className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+            <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
             <div className="min-w-0">
               <button
-                className="text-left text-xs font-medium text-blue-600 hover:text-blue-800 hover:underline cursor-pointer truncate block max-w-[140px]"
+                className="text-left text-xs font-medium text-primary hover:underline cursor-pointer truncate block max-w-[140px]"
                 onClick={() => navigate(`/contacts/${contact.id}`)}
                 data-testid={`${testIdPrefix}-link`}
               >
@@ -2195,7 +2196,7 @@ function InlineContactPicker({
                 onClick={() => { onSelect(c.id); setEditing(false); }}
                 data-testid={`${testIdPrefix}-option-${c.id}`}
               >
-                <User className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                 <div className="min-w-0 flex-1">
                   <span className="text-xs font-medium truncate block">{c.name}</span>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -2210,7 +2211,7 @@ function InlineContactPicker({
             <button
               type="button"
               disabled={createMutation.isPending}
-              className="w-full text-left px-3 py-2 text-xs border-t bg-emerald-50/60 dark:bg-emerald-950/30 hover:bg-emerald-100 dark:hover:bg-emerald-950/60 flex items-center gap-2 text-emerald-800 dark:text-emerald-300 font-medium"
+              className="w-full text-left px-3 py-2 text-xs border-t hover:bg-muted flex items-center gap-2 text-primary font-medium"
               onClick={() => createMutation.mutate(search.trim())}
               data-testid={`${testIdPrefix}-create`}
             >
@@ -2461,7 +2462,7 @@ function LeasingSection({
                             {fit.top.slice(0, 2).map((m: any) => (
                               <div key={m.unitId} className="flex items-center gap-1 group/fit">
                                 <button
-                                  className="text-[11px] text-emerald-700 hover:underline truncate max-w-[150px] text-left"
+                                  className="text-[11px] text-primary hover:underline truncate max-w-[150px] text-left"
                                   onClick={() => navigate(`/properties/${m.propertyId}`)}
                                   title={`${m.unitName} · ${m.propertyName} · ${m.sizeUnknown ? "size not recorded" : Number(m.sqft).toLocaleString() + " sq ft"}${m.locationHit ? " · location match" : ""}`}
                                 >
@@ -2470,7 +2471,7 @@ function LeasingSection({
                                 <span className="text-[9px] text-muted-foreground tabular-nums shrink-0">{m.sizeUnknown ? "size?" : Number(m.sqft).toLocaleString()}</span>
                                 {onBrief && (
                                   <button
-                                    className="text-[9px] text-blue-600 hover:underline opacity-0 group-hover/fit:opacity-100 shrink-0"
+                                    className="text-[9px] text-primary hover:underline opacity-0 group-hover/fit:opacity-100 shrink-0"
                                     onClick={() => onBrief(m, item)}
                                     title="Add this brand to the unit's targeting brief"
                                     data-testid={`button-brief-${item.id}-${m.unitId}`}
@@ -2498,8 +2499,8 @@ function LeasingSection({
                         <div className="flex flex-wrap gap-0.5 mt-1">
                           {propertyMatchMap.get(item.id)!.slice(0, 3).map(p => (
                             <Link key={p.id} href={`/properties/${p.id}`}>
-                              <Badge variant="outline" className="text-[8px] gap-0.5 cursor-pointer hover:bg-muted border-blue-300 dark:border-blue-700" data-testid={`req-prop-match-${item.id}-${p.id}`}>
-                                <Building2 className="w-2 h-2 text-blue-500" />{p.name}
+                              <Badge variant="outline" className="text-[8px] gap-0.5 cursor-pointer hover:bg-muted" data-testid={`req-prop-match-${item.id}-${p.id}`}>
+                                <Building2 className="w-2 h-2 text-muted-foreground" />{p.name}
                               </Badge>
                             </Link>
                           ))}
@@ -2534,7 +2535,7 @@ function LeasingSection({
                         if (!deal) return <span className="text-muted-foreground">—</span>;
                         return (
                           <button
-                            className="font-medium text-blue-600 hover:text-blue-800 hover:underline cursor-pointer flex items-center gap-1"
+                            className="font-medium text-primary hover:underline cursor-pointer flex items-center gap-1"
                             onClick={() => navigate(`/deals/${deal.id}`)}
                             data-testid={`link-deal-${item.id}`}
                           >
@@ -2565,7 +2566,7 @@ function LeasingSection({
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-7 w-7 text-emerald-600 hover:text-emerald-700"
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
                             onClick={() => onDiscuss(item)}
                             disabled={discussingId === item.id}
                             data-testid={`button-discuss-leasing-${item.id}`}
@@ -2578,7 +2579,7 @@ function LeasingSection({
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-7 w-7 text-purple-500 hover:text-purple-700"
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
                             onClick={() => onMatch(item)}
                             data-testid={`button-match-leasing-${item.id}`}
                             title="Find matching units"
@@ -2683,7 +2684,7 @@ function CompanySearchPicker({
     const company = companies.find((c) => c.id === selectedId);
     return (
       <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-muted/30">
-        <Building2 className="w-4 h-4 text-blue-500 shrink-0" />
+        <Building2 className="w-4 h-4 text-muted-foreground shrink-0" />
         <span className="text-sm font-medium flex-1 truncate min-w-0">{selectedName}</span>
         {company?.companyType && (
           <Badge variant="outline" className="text-[10px] shrink-0">{company.companyType}</Badge>
@@ -2811,7 +2812,7 @@ function ContactSearchPicker({
     if (contact && (!filterCompanyId || contact.companyId === filterCompanyId) && (!filterContactType || contact.contactType?.toLowerCase() === filterContactType.toLowerCase())) {
       return (
         <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-muted/30">
-          <User className="w-4 h-4 text-blue-500 shrink-0" />
+          <User className="w-4 h-4 text-muted-foreground shrink-0" />
           <div className="flex-1 min-w-0">
             <span className="text-sm font-medium truncate block">{contact.name}</span>
             <div className="flex items-center gap-2 flex-wrap">
@@ -2944,7 +2945,7 @@ function DealSearchPicker({
     if (deal) {
       return (
         <div className="flex items-center gap-2 border rounded-md px-3 py-2 bg-muted/30">
-          <FileText className="w-4 h-4 text-blue-500 shrink-0" />
+          <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
           <span className="text-sm font-medium flex-1 truncate min-w-0">{deal.name}</span>
           {deal.status && (
             <Badge variant="outline" className="text-[10px] shrink-0">{deal.status}</Badge>
@@ -3683,7 +3684,7 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
                       <TableCell className="px-1.5 py-1 font-medium text-sm max-w-[120px] sticky left-0 bg-background z-10">
                         {item.companyId && companyMap.has(item.companyId) ? (
                           <button
-                            className="flex items-center gap-2 text-left hover:underline cursor-pointer text-blue-600 dark:text-blue-400 max-w-full"
+                            className="flex items-center gap-2 text-left hover:underline cursor-pointer text-primary max-w-full"
                             onClick={() => navigate(`/contacts?company=${item.companyId}`)}
                             data-testid={`link-company-invest-${item.id}`}
                           >
@@ -3700,18 +3701,18 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
                       <TableCell className="text-xs">
                         {item.contactName ? (
                           <div className="space-y-0.5">
-                            <div className="font-medium flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                            <div className="font-medium flex items-center gap-1">
                               <User className="w-3 h-3 shrink-0" />
                               {item.contactName}
                             </div>
                             {item.contactEmail && (
-                              <a href={`mailto:${item.contactEmail}`} className="text-blue-500/70 hover:text-blue-600 hover:underline flex items-center gap-1">
+                              <a href={`mailto:${item.contactEmail}`} className="text-primary hover:underline flex items-center gap-1">
                                 <Mail className="w-3 h-3 shrink-0" />
                                 {item.contactEmail}
                               </a>
                             )}
                             {item.contactMobile && (
-                              <a href={`tel:${item.contactMobile}`} className="text-blue-500/70 hover:text-blue-600 hover:underline flex items-center gap-1">
+                              <a href={`tel:${item.contactMobile}`} className="text-primary hover:underline flex items-center gap-1">
                                 <Phone className="w-3 h-3 shrink-0" />
                                 {item.contactMobile}
                               </a>
@@ -3786,8 +3787,8 @@ function InvestmentTable({ teamFilter, autoCreate }: { teamFilter?: string | nul
                           <div className="flex flex-wrap gap-0.5 mt-1">
                             {invPropertyMatchMap.get(item.id)!.slice(0, 3).map(p => (
                               <Link key={p.id} href={`/properties/${p.id}`}>
-                                <Badge variant="outline" className="text-[8px] gap-0.5 cursor-pointer hover:bg-muted border-blue-300 dark:border-blue-700" data-testid={`inv-prop-match-${item.id}-${p.id}`}>
-                                  <Building2 className="w-2 h-2 text-blue-500" />{p.name}
+                                <Badge variant="outline" className="text-[8px] gap-0.5 cursor-pointer hover:bg-muted" data-testid={`inv-prop-match-${item.id}-${p.id}`}>
+                                  <Building2 className="w-2 h-2 text-muted-foreground" />{p.name}
                                 </Badge>
                               </Link>
                             ))}
@@ -4075,35 +4076,22 @@ export default function Requirements() {
   return (
     <div className="p-4 sm:p-6 space-y-6 max-w-[1600px] mx-auto" data-testid="requirements-page">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-            <FileText className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>
-            <p className="text-sm text-muted-foreground">
-              {showInvestment ? "Investment requirements" : "Leasing requirements"}
-              {teamParam ? ` · Filtered by ${teamParam} team` : ""}
-              {companyIdParam ? " · Filtered by company" : ""}
-            </p>
-          </div>
+        <div>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>
+          <p className="text-sm text-muted-foreground">
+            {showInvestment ? "Investment requirements" : "Leasing requirements"}
+            {teamParam ? ` · Filtered by ${teamParam} team` : ""}
+            {companyIdParam ? " · Filtered by company" : ""}
+          </p>
         </div>
         {!isClientView && (
-        <div className="flex items-center gap-1 bg-muted rounded-lg p-1 w-full sm:w-auto shrink-0" data-testid="view-toggle">
-          <button
-            onClick={() => setIsInvestmentView(false)}
-            className={`flex-1 sm:flex-none px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${!isInvestmentView ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            data-testid="button-leasing-view"
-          >
+        <div className="flex items-center gap-1.5 shrink-0" data-testid="view-toggle">
+          <Pill active={!isInvestmentView} onClick={() => setIsInvestmentView(false)} data-testid="button-leasing-view">
             Leasing
-          </button>
-          <button
-            onClick={() => setIsInvestmentView(true)}
-            className={`flex-1 sm:flex-none px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${isInvestmentView ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-            data-testid="button-investment-view"
-          >
+          </Pill>
+          <Pill active={isInvestmentView} onClick={() => setIsInvestmentView(true)} data-testid="button-investment-view">
             Investment
-          </button>
+          </Pill>
         </div>
         )}
       </div>

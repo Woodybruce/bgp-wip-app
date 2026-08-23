@@ -160,21 +160,29 @@ tile, the Finance page, the 2026 WIP report, Comps' header, the chat list.
 - Screens reachable on phone must be designed for phone (or card-listed) —
   "desktop page squeezed to 390px" fails review.
 
-## 14. Known deviations (the hit-list, from the 2026-08-23 full-app sweep)
+## 14. Known deviations (the hit-list)
 
-Screenshots: design sweep harness (`design-sweep` — see git history) —
-153 screens captured; automated audit found no h-overflow and no blank pages.
+2026-08-23 evening: the full-app conversion sweep CLEARED the original
+hit-list — Contacts/CRM, Calendar/Diary, brands hub, every underline/boxed
+tab bar (→ pill rows, incl. the shared PageLayout), decorative off-palette
+colours (→ tokens; semantic status maps kept), grey-family literals
+(→ theme tokens), icon-square page headers (→ title+subtitle), the legacy
+green focus ring / bare-link / selection colours (→ token-driven), and
+phone card lists for Instructions and Leads.
 
-- **Contacts/CRM**: bespoke header ("CRM" + separate title row), underline
-  tabs, navy/gold/brown icon stat tiles (off-palette) → header anatomy +
-  pill tabs + token colours.
-- **Calendar/Diary**: green "CRM" toggle chip (off-palette), grey segmented
-  Day/Week box, team chips were wrapping (fixed 2026-08-23) → pill row.
-- **Brand / property / deal detail pages**: align boards to §9's anatomy
-  (identity header + pill row + labelled board cards).
+Still deliberately outstanding:
+
+- **Board Report** (`/board-report`): purpose-built fixed-dark deck with
+  print CSS — retheming is its own job, needs a decision.
+- **Office add-in pages** (`/addin-*`): render inside Outlook/Excel/etc.,
+  not the app shell; product-brand card tints kept.
 - **Map / Map-BGP**: floating Map/Satellite/Street View segmented control —
-  acceptable as a map overlay, revisit for pill styling only.
-- Various older pages: underline tabs (convert on touch).
+  acceptable as a map overlay; tool buttons keep the colour of the shape
+  they draw.
+- **Leasing Schedule / Turnover Board on phone**: still desktop tables in
+  scroll containers — card-list treatment on touch if phone usage warrants.
+- Chat entity-tag chips, file-type icon colours, per-person/team identity
+  palettes, chart series: kept as deliberate encodings, not drift.
 
 ## 15. Process
 

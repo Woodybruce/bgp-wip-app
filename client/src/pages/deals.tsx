@@ -3715,11 +3715,11 @@ function HotsChecklistDialog({
         {(step === "form" || step === "saving") && (
           <div className="space-y-4 py-2">
             {aiSummary && (
-              <div className="rounded-md border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800 p-3">
-                <p className="text-xs font-medium text-blue-800 dark:text-blue-300 mb-1 flex items-center gap-1">
-                  <Sparkles className="w-3 h-3" /> AI Summary from HOTs
+              <div className="rounded-md border border-border bg-muted/40 p-3">
+                <p className="text-xs font-medium mb-1 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-primary" /> AI Summary from HOTs
                 </p>
-                <p className="text-xs text-blue-700 dark:text-blue-400">{aiSummary}</p>
+                <p className="text-xs text-muted-foreground">{aiSummary}</p>
                 {missingFields.length > 0 && (
                   <p className="text-xs text-amber-600 dark:text-amber-400 mt-2 font-medium">
                     Missing: {missingFields.join(", ")}
@@ -6566,7 +6566,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           {deal.dealRef ? (
                             <Link
                               href={`/deals/${deal.id}`}
-                              className="text-blue-600 hover:underline"
+                              className="text-primary hover:underline"
                               data-testid={`link-deal-${deal.id}`}
                             >
                               #{deal.dealRef}

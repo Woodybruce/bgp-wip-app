@@ -192,8 +192,8 @@ export default function ExpensesRevolut() {
       <ExpensesNavTabs />
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <CreditCard className="w-6 h-6" /> Cards & Revolut
+          <h1 className="text-2xl font-bold tracking-tight">
+            Cards & Revolut
           </h1>
           <p className="text-sm text-muted-foreground">Connect Revolut Business so card spend lands in BGP Expenses automatically.</p>
         </div>
@@ -431,10 +431,10 @@ export default function ExpensesRevolut() {
         </Card>
       )}
 
-      <Card className="bg-blue-50/50 border-blue-200/50 dark:bg-blue-950/20 dark:border-blue-900/30">
+      <Card className="bg-muted/40 border-border">
         <CardContent className="p-4 text-sm">
           <strong>Useful links:</strong>{" "}
-          <a className="text-blue-600 hover:underline inline-flex items-center gap-1" href="https://developer.revolut.com/docs/business/business-api" target="_blank" rel="noopener noreferrer">
+          <a className="text-primary hover:underline inline-flex items-center gap-1" href="https://developer.revolut.com/docs/business/business-api" target="_blank" rel="noopener noreferrer">
             Revolut Business API docs <ExternalLink className="w-3 h-3" />
           </a>
         </CardContent>

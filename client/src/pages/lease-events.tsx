@@ -141,8 +141,7 @@ export default function LeaseEventsPage({ embedded }: { embedded?: boolean } = {
       {!embedded && (
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-              <Calendar className="w-6 h-6 text-primary" />
+            <h1 className="text-2xl font-bold tracking-tight">
               Lease Events
             </h1>
             <p className="text-sm text-muted-foreground">Rent reviews, breaks, expiries, renewal options — forward-looking BD pipeline for lease advisory</p>

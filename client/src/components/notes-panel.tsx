@@ -92,13 +92,11 @@ export function NotesPanel(scope: EntityScope) {
   const notes = data?.notes || [];
   return (
     <Card className="overflow-hidden" data-testid="notes-panel">
-      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between bg-gradient-to-r from-amber-500/[0.07] to-transparent">
+      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
         <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
-          <span className="w-6 h-6 rounded-full bg-amber-500/10 flex items-center justify-center shrink-0">
-            <StickyNote className="w-3.5 h-3.5 text-amber-600" />
-          </span>
+          <StickyNote className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           Notes
-          {notes.length > 0 && <Badge className="text-[10px] bg-amber-100 text-amber-700 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300 border-transparent">{notes.length}</Badge>}
+          {notes.length > 0 && <Badge variant="secondary" className="text-[10px]">{notes.length}</Badge>}
         </CardTitle>
         <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => setShowOneNote(v => !v)} data-testid="notes-onenote-toggle">
           <BookOpen className="w-3 h-3 mr-1" /> OneNote import
@@ -106,7 +104,7 @@ export function NotesPanel(scope: EntityScope) {
       </CardHeader>
       <CardContent className="p-3 pt-2 space-y-2.5">
         {showOneNote && (
-          <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/40 dark:bg-purple-950/20 p-2.5 space-y-2" data-testid="notes-onenote-import">
+          <div className="rounded-md border border-border bg-muted/40 p-2.5 space-y-2" data-testid="notes-onenote-import">
             <p className="text-[11px] text-muted-foreground">Paste a OneNote notebook link (right-click the notebook → Copy Link to Notebook), pick the pages to bring in.</p>
             <div className="flex gap-1.5">
               <Input value={onUrl} onChange={e => setOnUrl(e.target.value)} placeholder="https://…sharepoint.com/…/Notebook" className="h-7 text-xs" />
@@ -160,7 +158,7 @@ export function NotesPanel(scope: EntityScope) {
               const isOpen = expanded.has(n.id);
               const bodyPreview = String(n.body || "");
               return (
-                <div key={n.id} className="rounded-md border border-l-2 border-l-amber-300 px-2.5 py-2 group" data-testid={`note-${n.id}`}>
+                <div key={n.id} className="rounded-md border border-l-2 border-l-muted-foreground/30 px-2.5 py-2 group" data-testid={`note-${n.id}`}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-xs font-semibold leading-snug">{n.title}</p>
@@ -189,8 +187,8 @@ export function NotesPanel(scope: EntityScope) {
                   {pending.length > 0 && (
                     <div className="mt-1.5 space-y-1">
                       {actions.map((a: any, i: number) => a.accepted ? null : (
-                        <div key={i} className="flex items-center gap-1.5 rounded bg-violet-50/60 dark:bg-violet-950/20 border border-violet-200/60 dark:border-violet-900 px-2 py-1">
-                          <Sparkles className="w-3 h-3 text-violet-500 shrink-0" />
+                        <div key={i} className="flex items-center gap-1.5 rounded bg-muted/40 border border-border px-2 py-1">
+                          <Sparkles className="w-3 h-3 text-primary shrink-0" />
                           <span className="text-[11px] flex-1 leading-snug">{a.title}{a.due_hint ? ` · ${a.due_hint}` : ""}</span>
                           <Button size="sm" variant="ghost" className="h-5 text-[10px] shrink-0" onClick={() => accept.mutate({ noteId: n.id, index: i })} disabled={accept.isPending} data-testid={`note-action-accept-${n.id}-${i}`}>
                             <Check className="w-3 h-3 mr-0.5" /> Add task

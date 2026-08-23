@@ -1123,8 +1123,8 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
           {!isMobile && (
           <div className="flex items-center gap-4 text-xs">
             <span className="flex items-center gap-1.5"><TrendingUp className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{stats.total}</span> comps</span>
-            <span className="flex items-center gap-1.5"><DollarSign className="w-3.5 h-3.5 text-green-600" /> <span className="font-semibold">{formatCurrency(totalPrice)}</span> total</span>
-            {avgCapRate != null && <span className="flex items-center gap-1.5"><Percent className="w-3.5 h-3.5 text-blue-600" /> <span className="font-semibold">{formatPercent(avgCapRate)}</span> avg cap</span>}
+            <span className="flex items-center gap-1.5"><DollarSign className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{formatCurrency(totalPrice)}</span> total</span>
+            {avgCapRate != null && <span className="flex items-center gap-1.5"><Percent className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{formatPercent(avgCapRate)}</span> avg cap</span>}
             <span className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{stats.cities}</span> cities</span>
             <span className="flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{stats.sales}</span> completed</span>
           </div>

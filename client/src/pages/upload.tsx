@@ -197,13 +197,13 @@ export default function UploadPage() {
   const currentPath = folderStack.map((f) => f.name).join(" / ") || "Root";
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
+    <div className="flex flex-col h-full bg-muted/50">
       <div className="bg-black text-white px-4 py-3 flex items-center gap-3 shrink-0 pt-[calc(0.75rem+env(safe-area-inset-top))]">
         <button onClick={() => navigate("/")} className="p-1" data-testid="upload-back">
           <ArrowLeft className="w-5 h-5" />
         </button>
         <h1 className="text-lg font-semibold flex-1">Upload Files</h1>
-        <Share2 className="w-5 h-5 text-gray-400" />
+        <Share2 className="w-5 h-5 text-muted-foreground/70" />
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -211,19 +211,19 @@ export default function UploadPage() {
           <div className="flex gap-2">
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="flex-1 bg-white rounded-xl border-2 border-dashed border-gray-300 p-6 flex flex-col items-center gap-2 active:bg-gray-50"
+              className="flex-1 bg-white rounded-xl border-2 border-dashed border-border p-6 flex flex-col items-center gap-2 active:bg-muted"
               data-testid="upload-pick-files"
             >
-              <Upload className="w-8 h-8 text-gray-400" />
-              <span className="text-sm font-medium text-gray-600">Choose Files</span>
+              <Upload className="w-8 h-8 text-muted-foreground/70" />
+              <span className="text-sm font-medium text-muted-foreground">Choose Files</span>
             </button>
             <button
               onClick={() => cameraInputRef.current?.click()}
-              className="flex-1 bg-white rounded-xl border-2 border-dashed border-gray-300 p-6 flex flex-col items-center gap-2 active:bg-gray-50"
+              className="flex-1 bg-white rounded-xl border-2 border-dashed border-border p-6 flex flex-col items-center gap-2 active:bg-muted"
               data-testid="upload-camera"
             >
-              <Camera className="w-8 h-8 text-gray-400" />
-              <span className="text-sm font-medium text-gray-600">Take Photo</span>
+              <Camera className="w-8 h-8 text-muted-foreground/70" />
+              <span className="text-sm font-medium text-muted-foreground">Take Photo</span>
             </button>
           </div>
 
@@ -245,7 +245,7 @@ export default function UploadPage() {
 
           {files.length > 0 && (
             <div className="bg-white rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <div className="px-4 py-3 border-b border-border flex items-center justify-between">
                 <span className="text-sm font-semibold">{files.length} file(s) selected</span>
                 {doneCount > 0 && (
                   <span className="text-xs text-green-600 font-medium flex items-center gap-1">
@@ -256,18 +256,18 @@ export default function UploadPage() {
               {files.map((uf) => {
                 const Icon = getFileIcon(uf.file.name);
                 return (
-                  <div key={uf.id} className="flex items-center gap-3 px-4 py-3 border-b border-gray-50" data-testid={`upload-file-${uf.id}`}>
-                    <Icon className="w-5 h-5 text-gray-400 shrink-0" />
+                  <div key={uf.id} className="flex items-center gap-3 px-4 py-3 border-b border-border/50" data-testid={`upload-file-${uf.id}`}>
+                    <Icon className="w-5 h-5 text-muted-foreground/70 shrink-0" />
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium truncate">{uf.file.name}</div>
-                      <div className="text-xs text-gray-400">{formatFileSize(uf.file.size)}</div>
+                      <div className="text-xs text-muted-foreground/70">{formatFileSize(uf.file.size)}</div>
                     </div>
                     {uf.status === "pending" && (
                       <button onClick={() => removeFile(uf.id)} className="p-1" data-testid={`upload-remove-${uf.id}`}>
-                        <X className="w-4 h-4 text-gray-400" />
+                        <X className="w-4 h-4 text-muted-foreground/70" />
                       </button>
                     )}
-                    {uf.status === "uploading" && <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />}
+                    {uf.status === "uploading" && <Loader2 className="w-4 h-4 text-muted-foreground/70 animate-spin" />}
                     {uf.status === "done" && <CheckCircle2 className="w-4 h-4 text-green-500" />}
                     {uf.status === "error" && (
                       <div className="flex items-center gap-1">
@@ -281,13 +281,13 @@ export default function UploadPage() {
           )}
 
           <div className="bg-white rounded-xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100">
+            <div className="px-4 py-3 border-b border-border">
               <span className="text-sm font-semibold">Upload to</span>
             </div>
             <div className="flex">
               <button
                 onClick={() => setDestination("sharepoint")}
-                className={`flex-1 flex flex-col items-center gap-2 py-4 ${destination === "sharepoint" ? "bg-black text-white" : "text-gray-500"}`}
+                className={`flex-1 flex flex-col items-center gap-2 py-4 ${destination === "sharepoint" ? "bg-black text-white" : "text-muted-foreground"}`}
                 data-testid="upload-dest-sharepoint"
               >
                 <Cloud className="w-5 h-5" />
@@ -295,7 +295,7 @@ export default function UploadPage() {
               </button>
               <button
                 onClick={() => setDestination("chat")}
-                className={`flex-1 flex flex-col items-center gap-2 py-4 ${destination === "chat" ? "bg-black text-white" : "text-gray-500"}`}
+                className={`flex-1 flex flex-col items-center gap-2 py-4 ${destination === "chat" ? "bg-black text-white" : "text-muted-foreground"}`}
                 data-testid="upload-dest-chat"
               >
                 <FileIcon className="w-5 h-5" />
@@ -306,21 +306,21 @@ export default function UploadPage() {
 
           {destination === "sharepoint" && (
             <div className="bg-white rounded-xl overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
+              <div className="px-4 py-3 border-b border-border flex items-center gap-2">
                 {folderStack.length > 0 && (
                   <button onClick={navigateBack} className="p-1" data-testid="upload-folder-back">
                     <ArrowLeft className="w-4 h-4" />
                   </button>
                 )}
-                <FolderOpen className="w-4 h-4 text-gray-400" />
-                <span className="text-sm font-medium text-gray-600 truncate">{currentPath}</span>
+                <FolderOpen className="w-4 h-4 text-muted-foreground/70" />
+                <span className="text-sm font-medium text-muted-foreground truncate">{currentPath}</span>
               </div>
               {foldersLoading ? (
                 <div className="flex items-center justify-center py-8">
-                  <Loader2 className="w-5 h-5 animate-spin text-gray-400" />
+                  <Loader2 className="w-5 h-5 animate-spin text-muted-foreground/70" />
                 </div>
               ) : folders.length === 0 ? (
-                <div className="px-4 py-6 text-center text-sm text-gray-400">
+                <div className="px-4 py-6 text-center text-sm text-muted-foreground/70">
                   No subfolders — files will upload here
                 </div>
               ) : (
@@ -328,12 +328,12 @@ export default function UploadPage() {
                   <button
                     key={folder.id}
                     onClick={() => navigateToFolder(folder)}
-                    className="flex items-center gap-3 px-4 py-3 border-b border-gray-50 w-full text-left active:bg-gray-50"
+                    className="flex items-center gap-3 px-4 py-3 border-b border-border/50 w-full text-left active:bg-muted"
                     data-testid={`upload-folder-${folder.id}`}
                   >
                     <FolderOpen className="w-5 h-5 text-yellow-500 shrink-0" />
                     <span className="text-sm flex-1 truncate">{folder.name}</span>
-                    <ChevronRight className="w-4 h-4 text-gray-300" />
+                    <ChevronRight className="w-4 h-4 text-muted-foreground/70" />
                   </button>
                 ))
               )}
@@ -343,7 +343,7 @@ export default function UploadPage() {
       </div>
 
       {pendingCount > 0 && (
-        <div className="p-4 bg-white border-t border-gray-200 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+        <div className="p-4 bg-white border-t border-border pb-[calc(1rem+env(safe-area-inset-bottom))]">
           <Button
             onClick={handleUpload}
             disabled={uploading}

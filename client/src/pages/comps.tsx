@@ -2365,10 +2365,6 @@ export default function Comps() {
             buttons onto their own line instead. */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-              <Scale className="w-5 h-5 text-primary" />
-            </div>
             <div className="min-w-0">
               <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-comps-title">
                 {activeTab === "investment" ? "Investment Comps"
@@ -2384,7 +2380,6 @@ export default function Comps() {
                   : activeTab === "pdf-template" ? "Customise the PDF export template"
                   : "Rent review evidence & comparable transactions"}
               </p>
-            </div>
             </div>
           </div>
           {activeTab === "table" && (

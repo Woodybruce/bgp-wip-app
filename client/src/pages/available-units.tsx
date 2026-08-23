@@ -1464,8 +1464,8 @@ export default function AvailableUnitsPage() {
       )}
 
       {pitchBrand && (
-        <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-900 px-3 py-2 text-xs" data-testid="pitch-brand-banner">
-          <Building2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs" data-testid="pitch-brand-banner">
+          <Building2 className="w-3.5 h-3.5 text-primary shrink-0" />
           <span>Pitching <span className="font-semibold">{pitchBrand.name}</span> — use the "+ {pitchBrand.name}" button on a unit to add them as a target operator.</span>
           <button
             type="button"
@@ -1894,7 +1894,7 @@ export default function AvailableUnitsPage() {
                           <div className="flex items-center gap-1.5">
                             <a
                               href={`/deals/${deal.id}`}
-                              className="text-blue-600 hover:underline"
+                              className="text-primary hover:underline"
                               title={`Open deal ${deal.dealRef}`}
                               data-testid={`link-deal-ref-${u.id}`}
                             >
@@ -2073,7 +2073,7 @@ export default function AvailableUnitsPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                className="h-7 px-2 text-[11px] border-blue-300 text-blue-700"
+                                className="h-7 px-2 text-[11px] text-primary"
                                 onClick={() => addUnitTarget(u, { name: pitchBrand.name, companyId: pitchBrand.id } as any)}
                                 data-testid={`pitch-here-${u.id}`}
                               >
@@ -2083,7 +2083,7 @@ export default function AvailableUnitsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-7 px-2 text-[11px] text-purple-600 hover:text-purple-700"
+                              className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
                               onClick={() => setSuggestUnit(u)}
                               title="AI-suggest target brands: live requirements that fit this unit + tracked brands in matching categories, ranked by Fable"
                               data-testid={`button-suggest-targets-${u.id}`}
@@ -2359,7 +2359,7 @@ export default function AvailableUnitsPage() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 w-7 p-0 text-purple-500 hover:text-purple-700"
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                             onClick={() => setMatchItem(u)}
                             data-testid={`button-match-${u.id}`}
                             title="Find matching requirements"
@@ -3028,9 +3028,9 @@ export default function AvailableUnitsPage() {
                 <div key={v.id} className="border rounded-lg p-3 text-sm space-y-1">
                   <div className="flex items-center justify-between">
                     <div className="font-medium flex items-center gap-2">
-                      {v.companyId ? <a href={`/contacts?company=${v.companyId}`} className="text-blue-600 hover:underline dark:text-blue-400">{v.companyName}</a> : (v.companyName || v.contactName || v.attendees || "No company")}
+                      {v.companyId ? <a href={`/contacts?company=${v.companyId}`} className="text-primary hover:underline">{v.companyName}</a> : (v.companyName || v.contactName || v.attendees || "No company")}
                       {v.source === "diary" && (
-                        <Badge variant="outline" className="text-[10px] gap-1 border-sky-400 text-sky-700 dark:text-sky-400">
+                        <Badge variant="outline" className="text-[10px] gap-1">
                           <CalendarDays className="w-2.5 h-2.5" /> Diary
                         </Badge>
                       )}
@@ -3049,7 +3049,7 @@ export default function AvailableUnitsPage() {
                       </Button>
                     </div>
                   </div>
-                  {v.contactName && <div className="text-xs text-muted-foreground">Contact: {v.contactId ? <a href={`/contacts?contact=${v.contactId}`} className="text-blue-600 hover:underline dark:text-blue-400">{v.contactName}</a> : v.contactName}</div>}
+                  {v.contactName && <div className="text-xs text-muted-foreground">Contact: {v.contactId ? <a href={`/contacts?contact=${v.contactId}`} className="text-primary hover:underline">{v.contactName}</a> : v.contactName}</div>}
                   {/* When the attendees string already headlines the card
                       (no company/contact), repeating it here read every
                       quick-logged viewing twice. */}
@@ -3152,8 +3152,8 @@ export default function AvailableUnitsPage() {
                 <div key={o.id} className="border rounded-lg p-3 text-sm space-y-1">
                   <div className="flex items-center justify-between">
                     <div className="font-medium">
-                      {o.companyId ? <a href={`/contacts?company=${o.companyId}`} className="text-blue-600 hover:underline dark:text-blue-400">{o.companyName}</a> : (o.companyName || o.contactName || "No company")}
-                      {o.contactName && <span className="text-xs text-muted-foreground ml-2">({o.contactId ? <a href={`/contacts?contact=${o.contactId}`} className="text-blue-600 hover:underline dark:text-blue-400">{o.contactName}</a> : o.contactName})</span>}
+                      {o.companyId ? <a href={`/contacts?company=${o.companyId}`} className="text-primary hover:underline">{o.companyName}</a> : (o.companyName || o.contactName || "No company")}
+                      {o.contactName && <span className="text-xs text-muted-foreground ml-2">({o.contactId ? <a href={`/contacts?contact=${o.contactId}`} className="text-primary hover:underline">{o.contactName}</a> : o.contactName})</span>}
                     </div>
                     <div className="flex items-center gap-2">
                       {o.source === "email" && (
@@ -3394,7 +3394,7 @@ function HotsDialog({ unit, propertyName, isClient, onClose }: {
           {/* Word-document flow: the standard set uploaded once per property,
               populated per unit from the best offer, edited in Word Online. */}
           <div className="flex items-center gap-2 flex-wrap rounded-md border border-dashed px-3 py-2">
-            <FileText className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
             {data?.templateDocx ? (
               <>
                 <span className="text-xs text-muted-foreground truncate max-w-[220px]" title={data.templateDocxName || ""}>
@@ -3413,7 +3413,7 @@ function HotsDialog({ unit, propertyName, isClient, onClose }: {
             )}
             {!isClient && (
               <>
-                <button type="button" className="text-[11px] text-blue-600 hover:underline ml-auto" onClick={() => docxInputRef.current?.click()} data-testid="hots-docx-upload">
+                <button type="button" className="text-[11px] text-primary hover:underline ml-auto" onClick={() => docxInputRef.current?.click()} data-testid="hots-docx-upload">
                   {data?.templateDocx ? "Replace document" : "Upload standard HOTs (.docx)"}
                 </button>
                 <input ref={docxInputRef} type="file" accept=".docx" className="hidden"

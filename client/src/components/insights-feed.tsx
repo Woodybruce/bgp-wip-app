@@ -99,9 +99,7 @@ export function InsightsFeed({ isStaff = false }: { isStaff?: boolean }) {
             <Card key={ins.id} className="overflow-hidden" data-testid={`insight-${ins.id}`}>
               <CardContent className="p-4">
                 <div className="flex items-start gap-3">
-                  <span className="w-8 h-8 rounded-full bg-amber-500/10 flex items-center justify-center shrink-0 mt-0.5">
-                    <Lightbulb className="w-4 h-4 text-amber-600" />
-                  </span>
+                  <Lightbulb className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold leading-snug">{ins.headline}</p>
                     {ins.detail && <p className="text-[13px] text-muted-foreground leading-snug mt-1">{ins.detail}</p>}
