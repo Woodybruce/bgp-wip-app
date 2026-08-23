@@ -170,19 +170,21 @@ colours (→ tokens; semantic status maps kept), grey-family literals
 green focus ring / bare-link / selection colours (→ token-driven), and
 phone card lists for Instructions and Leads.
 
-Still deliberately outstanding:
+2026-08-23 late: Woody approved clearing the last exclusions, and the
+AI design-review sweep (204 findings over 160 screenshots) was fixed in
+full — including removing the scheme utility-colour remaps that were
+repainting semantic status colours (the "Completed is tan" root cause),
+one canonical status palette across every board, Tailwind scanning
+shared/, phone section pills on all four record pages, and the Board
+Report / Office add-ins / Leasing-Turnover phone cards conversions.
 
-- **Board Report** (`/board-report`): purpose-built fixed-dark deck with
-  print CSS — retheming is its own job, needs a decision.
-- **Office add-in pages** (`/addin-*`): render inside Outlook/Excel/etc.,
-  not the app shell; product-brand card tints kept.
-- **Map / Map-BGP**: floating Map/Satellite/Street View segmented control —
-  acceptable as a map overlay; tool buttons keep the colour of the shape
-  they draw.
-- **Leasing Schedule / Turnover Board on phone**: still desktop tables in
-  scroll containers — card-list treatment on touch if phone usage warrants.
+Remaining deliberate exemptions (encodings, not drift):
+
+- **Map / Map-BGP**: floating Map/Satellite/Street View segmented control
+  as a map overlay; tool buttons keep the colour of the shape they draw.
 - Chat entity-tag chips, file-type icon colours, per-person/team identity
-  palettes, chart series: kept as deliberate encodings, not drift.
+  palettes (as dots/edges, never full fills), chart series, product tints
+  on the /addins directory cards, the Board Report's print-only palette.
 
 ## 15. Copy (the words, not just the pixels)
 
