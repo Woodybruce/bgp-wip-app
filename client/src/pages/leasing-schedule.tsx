@@ -3497,8 +3497,8 @@ export default function LeasingSchedulePage() {
       {archivedBanner}
       <div className="sticky top-0 z-10 bg-background -mx-4 sm:-mx-6 px-4 sm:px-6 -mt-4 sm:-mt-6 pt-4 sm:pt-6 pb-3 border-b flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2" data-testid="page-title">
-            <Building2 className="w-5 h-5" />Leasing Schedule Board
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="page-title">
+            Leasing Schedule Board
           </h1>
           <p className="text-sm text-muted-foreground">
             {filtered.length} {filtered.length === 1 ? "property" : "properties"} · {stats.totalUnits} units

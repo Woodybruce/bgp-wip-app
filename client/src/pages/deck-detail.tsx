@@ -184,8 +184,7 @@ export default function DeckDetailPage() {
         </Link>
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Layers className="w-6 h-6 text-primary" />
+            <h1 className="text-2xl font-bold tracking-tight">
               {deck.name}
             </h1>
             <div className="flex items-center gap-2 mt-1.5 flex-wrap">

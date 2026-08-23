@@ -6193,8 +6193,8 @@ export default function HRPage() {
       <div className="p-4 border-b sticky top-0 bg-background z-10">
         <div className="flex items-center gap-2 mb-3">
           <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Users className="w-6 h-6 text-emerald-500" /> People & HR
+            <h1 className="text-2xl font-bold tracking-tight">
+              People & HR
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">Team directory, benefits, holidays and policies</p>
           </div>

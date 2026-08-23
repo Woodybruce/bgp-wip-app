@@ -81,16 +81,11 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
   );
 }
 
-function StatCard({ label, value, icon: Icon, color }: { label: string; value: number | string; icon: any; color: string }) {
+function StatCard({ label, value, active }: { label: string; value: number | string; active?: boolean }) {
   return (
-    <div className="flex items-center gap-3 bg-card border rounded-lg px-4 py-3">
-      <div className={`w-9 h-9 rounded-lg ${color} flex items-center justify-center`}>
-        <Icon className="w-4 h-4 text-white" />
-      </div>
-      <div>
-        <p className="text-xl font-bold leading-none">{value}</p>
-        <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
-      </div>
+    <div className={`bg-card border rounded-lg px-4 py-3 transition-shadow ${active ? "ring-2 ring-primary" : ""}`}>
+      <p className="text-[11px] uppercase tracking-wider text-muted-foreground">{label}</p>
+      <p className="text-xl font-bold font-mono tabular-nums mt-0.5">{value}</p>
     </div>
   );
 }
@@ -179,19 +174,19 @@ function LandlordsTab({
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="cursor-pointer" onClick={() => setLandlordFilter("all")} data-testid="stat-total-landlords">
-          <StatCard label="Total Landlords" value={landlords.length} icon={Building2} color={landlordFilter === "all" ? "bg-slate-900 ring-2 ring-slate-400" : "bg-slate-700"} />
+          <StatCard label="Total Landlords" value={landlords.length} active={landlordFilter === "all"} />
         </div>
         <div className="cursor-pointer" onClick={() => setLandlordFilter(landlordFilter === "clients" ? "all" : "clients")} data-testid="stat-bgp-clients">
-          <StatCard label="BGP Clients" value={clientLandlords.length} icon={Crown} color={landlordFilter === "clients" ? "bg-amber-800 ring-2 ring-amber-400" : "bg-amber-600"} />
+          <StatCard label="BGP Clients" value={clientLandlords.length} active={landlordFilter === "clients"} />
         </div>
         <div className="cursor-pointer" onClick={() => setLandlordFilter(landlordFilter === "non-clients" ? "all" : "non-clients")} data-testid="stat-non-clients">
-          <StatCard label="Non-Clients" value={nonClientLandlords.length} icon={Building} color={landlordFilter === "non-clients" ? "bg-slate-700 ring-2 ring-slate-400" : "bg-slate-500"} />
+          <StatCard label="Non-Clients" value={nonClientLandlords.length} active={landlordFilter === "non-clients"} />
         </div>
         {/* Same definition as the page-header count: contacts at landlord OR
             agent companies (brand/tenant contacts live in Brands Hub). The
             two previously counted different sets and showed different totals
             on the same screen. */}
-        <StatCard label="Total Contacts" value={contacts.filter(c => c.companyId && (landlords.some(l => l.id === c.companyId) || companies.some(co => co.id === c.companyId && (co.companyType || "").toLowerCase().trim() === "agent"))).length} icon={Users} color="bg-blue-600" />
+        <StatCard label="Total Contacts" value={contacts.filter(c => c.companyId && (landlords.some(l => l.id === c.companyId) || companies.some(co => co.id === c.companyId && (co.companyType || "").toLowerCase().trim() === "agent"))).length}  />
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -514,22 +509,22 @@ function AgentsTab({
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <div className="cursor-pointer" onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-agent-firms">
-          <StatCard label="Agent Firms" value={agentCompanies.length} icon={Briefcase} color={!specialtyFilter ? "bg-blue-800 ring-2 ring-blue-400" : "bg-blue-600"} />
+          <StatCard label="Agent Firms" value={agentCompanies.length} active={!specialtyFilter} />
         </div>
         <div className="cursor-pointer" onClick={() => { setSpecialtyFilter(null); setLocationFilter(null); setSearch(""); }} data-testid="stat-individual-agents">
-          <StatCard label="Individual Agents" value={agentContacts.length} icon={Users} color={!specialtyFilter ? "bg-indigo-800 ring-2 ring-indigo-400" : "bg-indigo-600"} />
+          <StatCard label="Individual Agents" value={agentContacts.length} active={!specialtyFilter} />
         </div>
         <div className="cursor-pointer" onClick={() => setSpecialtyFilter(specialtyFilter === "Leasing" ? null : "Leasing")} data-testid="stat-leasing">
-          <StatCard label="Leasing" value={agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "leasing").length} icon={Building} color={specialtyFilter === "Leasing" ? "bg-sky-800 ring-2 ring-sky-400" : "bg-sky-600"} />
+          <StatCard label="Leasing" value={agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "leasing").length} active={specialtyFilter === "Leasing"} />
         </div>
         <div className="cursor-pointer" onClick={() => setSpecialtyFilter(specialtyFilter === "Investment" ? null : "Investment")} data-testid="stat-investment">
-          <StatCard label="Investment" value={agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "investment").length} icon={TrendingUp} color={specialtyFilter === "Investment" ? "bg-emerald-800 ring-2 ring-emerald-400" : "bg-emerald-600"} />
+          <StatCard label="Investment" value={agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "investment").length} active={specialtyFilter === "Investment"} />
         </div>
         <div className="cursor-pointer" onClick={() => setSpecialtyFilter(specialtyFilter === "Tenant Rep" ? null : "Tenant Rep")} data-testid="stat-tenant-rep">
-          <StatCard label="Tenant Rep" value={agentContacts.filter(c => agentReqCounts[c.id] > 0).length} icon={Handshake} color={specialtyFilter === "Tenant Rep" ? "bg-purple-800 ring-2 ring-purple-400" : "bg-purple-600"} />
+          <StatCard label="Tenant Rep" value={agentContacts.filter(c => agentReqCounts[c.id] > 0).length} active={specialtyFilter === "Tenant Rep"} />
         </div>
         <div className="cursor-pointer" onClick={() => setSpecialtyFilter(specialtyFilter === "Lease Advisory" ? null : "Lease Advisory")} data-testid="stat-lease-advisory">
-          <StatCard label="Lease Advisory" value={agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "lease advisory").length} icon={Crown} color={specialtyFilter === "Lease Advisory" ? "bg-amber-800 ring-2 ring-amber-400" : "bg-amber-600"} />
+          <StatCard label="Lease Advisory" value={agentContacts.filter(c => (c.agentSpecialty || "").toLowerCase() === "lease advisory").length} active={specialtyFilter === "Lease Advisory"} />
         </div>
       </div>
 
@@ -869,10 +864,10 @@ function LendersTab({
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="Total Lenders" value={lenders.length} icon={Landmark} color="bg-blue-700" />
-        <StatCard label="Currently Active" value={activeCount} icon={TrendingUp} color="bg-emerald-600" />
+        <StatCard label="Total Lenders" value={lenders.length} />
+        <StatCard label="Currently Active" value={activeCount} />
         {typeCounts.map(([type, count]) => (
-          <StatCard key={type} label={type} value={count} icon={Building} color="bg-slate-600" />
+          <StatCard key={type} label={type} value={count} />
         ))}
       </div>
 

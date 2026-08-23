@@ -617,8 +617,8 @@ export default function FinancePage() {
     <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-            <Landmark className="w-6 h-6 text-primary" /> Company Finance
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Company Finance
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             {data.orgName} · financial year from {formatDate(data.fyStart)} · as at {formatDate(data.asAt)} · live from Xero

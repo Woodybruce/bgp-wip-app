@@ -179,8 +179,7 @@ function ModuleList() {
     <div className="p-4 lg:p-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <GraduationCap className="w-6 h-6 text-primary" />
+          <h1 className="text-2xl font-bold tracking-tight">
             AML Training
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">

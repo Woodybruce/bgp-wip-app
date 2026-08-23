@@ -192,8 +192,8 @@ export default function ExpensesRevolut() {
       <ExpensesNavTabs />
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <CreditCard className="w-6 h-6" /> Cards & Revolut
+          <h1 className="text-2xl font-bold tracking-tight">
+            Cards & Revolut
           </h1>
           <p className="text-sm text-muted-foreground">Connect Revolut Business so card spend lands in BGP Expenses automatically.</p>
         </div>
