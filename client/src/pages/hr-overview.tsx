@@ -282,7 +282,7 @@ function YouPanel({ user, onSelectPerson }: { user: AuthUser; onSelectPerson?: (
               <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 Open tasks {totalOpen > 0 && <span className="text-foreground font-semibold ml-1">{totalOpen}</span>}
               </span>
-              <button onClick={() => navigate("/tasks")} className="text-[11px] text-primary hover:underline">See all</button>
+              <button onClick={() => navigate("/tasks")} className="text-[11px] text-primary hover:underline">Show all</button>
             </div>
             <form
               onSubmit={(e) => { e.preventDefault(); if (newTask.trim()) addTask.mutate(newTask.trim()); }}
