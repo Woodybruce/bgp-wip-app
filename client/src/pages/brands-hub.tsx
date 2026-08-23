@@ -719,67 +719,58 @@ function BrandExplorer() {
 
   return (
     <div className="space-y-4">
-      {/* Category cards */}
+      {/* Category cards — the category browser (docs/DESIGN.md §1/§8):
+          standard token cards with a small category-coloured dot, no
+          gradients. Distinct from the relationship pills below (tiles
+          filter by category, pills by relationship status). */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
-        <div
-          className={`cursor-pointer rounded-xl p-4 text-white transition-all hover:scale-[1.02] active:scale-[0.98] bg-gradient-to-br from-slate-700 to-slate-900 ${
-            activeCat === null ? "shadow-lg ring-2 ring-slate-400 ring-offset-2" : "opacity-80 hover:opacity-100"
+        <button
+          type="button"
+          className={`text-left rounded-2xl border bg-card p-3.5 transition-colors ${
+            activeCat === null ? "border-foreground shadow-sm" : "border-border hover:bg-muted/50"
           }`}
           onClick={() => { setCat(null); setSub(null); }}
         >
-          <Store className="w-6 h-6 mb-2 opacity-90" />
-          <div className="text-2xl font-bold">{companies.length}</div>
-          <div className="text-xs font-medium opacity-90 mt-0.5">All Brands</div>
-        </div>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-2 h-2 rounded-full bg-muted-foreground shrink-0" />
+            <span className="text-sm font-semibold truncate">All Brands</span>
+          </div>
+          <div className="text-sm font-mono tabular-nums text-muted-foreground mt-1">{companies.length}</div>
+        </button>
         {BRAND_CATEGORIES.filter(cat => !isClientExplorer || (catCounts[cat.key] || 0) > 0).map(cat => {
           const isActive = activeCat === cat.key;
-          const Icon = cat.icon;
           return (
-            <div
+            <button
+              type="button"
               key={cat.key}
-              className={`cursor-pointer rounded-xl p-4 text-white transition-all hover:scale-[1.02] active:scale-[0.98] bg-gradient-to-br ${cat.gradient} ${
-                isActive ? "shadow-lg ring-2 ring-white/40 ring-offset-2" : "opacity-80 hover:opacity-100"
+              className={`text-left rounded-2xl border bg-card p-3.5 transition-colors ${
+                isActive ? "border-foreground shadow-sm" : "border-border hover:bg-muted/50"
               }`}
               onClick={() => { setCat(isActive ? null : cat.key); setSub(null); }}
             >
-              <Icon className="w-6 h-6 mb-2 opacity-90" />
-              <div className="text-2xl font-bold">{catCounts[cat.key] || 0}</div>
-              <div className="text-xs font-medium opacity-90 mt-0.5">{cat.label}</div>
-            </div>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${cat.color}`} />
+                <span className="text-sm font-semibold truncate">{cat.label}</span>
+              </div>
+              <div className="text-sm font-mono tabular-nums text-muted-foreground mt-1">{catCounts[cat.key] || 0}</div>
+            </button>
           );
         })}
       </div>
 
       {/* Subcategory pills */}
       {activeCatObj && (
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => setSub(null)}
-            className={`text-sm px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all border ${
-              activeSub === null
-                ? `${activeCatObj.color} text-white border-transparent shadow-sm`
-                : "bg-muted/50 hover:bg-muted border-border text-foreground"
-            }`}
-          >
-            All {activeCatObj.label} <span className="text-xs opacity-75">({catCounts[activeCatObj.key] || 0})</span>
-          </button>
+        <div className="flex flex-wrap gap-1.5">
+          <Pill active={activeSub === null} onClick={() => setSub(null)}>
+            All {activeCatObj.label} <span className="font-mono tabular-nums">{catCounts[activeCatObj.key] || 0}</span>
+          </Pill>
           {activeCatObj.subs.filter(sub => !isClientExplorer || (catCounts[sub.key] || 0) > 0).map(sub => {
             const count = catCounts[sub.key] || 0;
             const isActive = activeSub === sub.key;
-            const Icon = sub.icon;
             return (
-              <button
-                key={sub.key}
-                onClick={() => setSub(isActive ? null : sub.key)}
-                className={`text-sm px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all border ${
-                  isActive
-                    ? `${activeCatObj.color} text-white border-transparent shadow-sm`
-                    : "bg-muted/50 hover:bg-muted border-border text-foreground"
-                }`}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                {sub.label} <span className="text-xs opacity-75">({count})</span>
-              </button>
+              <Pill key={sub.key} active={isActive} onClick={() => setSub(isActive ? null : sub.key)}>
+                {sub.label} <span className="font-mono tabular-nums">{count}</span>
+              </Pill>
             );
           })}
         </div>
@@ -838,16 +829,14 @@ function BrandExplorer() {
                 ["hunter", "Hunter-flagged"],
                 ["tracked", "Tracked"],
               ] as const).map(([key, label]) => (
-                <button
+                <Pill
                   key={key}
+                  active={relFilter === key}
                   onClick={() => setRelFilter(key)}
-                  className={`px-3 py-1 rounded-full text-xs border transition-colors ${
-                    relFilter === key ? "bg-teal-600 text-white border-teal-600" : "bg-background hover:bg-muted"
-                  }`}
                   data-testid={`explorer-rel-${key}`}
                 >
                   {label}
-                </button>
+                </Pill>
               ))}
             </div>
             {targetProperties.length > 0 && (
