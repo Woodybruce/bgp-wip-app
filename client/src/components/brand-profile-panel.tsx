@@ -2915,13 +2915,24 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
     return m;
   }, [allCompaniesForPicker, companyId]);
 
-  const segmentColor = (seg: string | null): string => {
+  // Tier is carried by a small dot inside the standard chip (docs/DESIGN.md
+  // §3 — one chip look app-wide; the old full pastel fills read as bloat).
+  const segmentDot = (seg: string | null): string => {
     switch ((seg || "").toLowerCase()) {
-      case "direct": return "bg-rose-100 text-rose-700 border-rose-300 hover:bg-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-800";
-      case "adjacent": return "bg-amber-100 text-amber-700 border-amber-300 hover:bg-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800";
-      case "aspirational": return "bg-violet-100 text-violet-700 border-violet-300 hover:bg-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-800";
-      case "value": return "bg-emerald-100 text-emerald-700 border-emerald-300 hover:bg-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800";
-      default: return "bg-zinc-100 text-zinc-700 border-zinc-300 hover:bg-zinc-200 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-700";
+      case "direct": return "bg-rose-500";
+      case "adjacent": return "bg-amber-500";
+      case "aspirational": return "bg-violet-500";
+      case "value": return "bg-emerald-500";
+      default: return "bg-zinc-400";
+    }
+  };
+  const segmentBadge = (seg: string | null): string => {
+    switch ((seg || "").toLowerCase()) {
+      case "direct": return "text-rose-700 border-rose-300 dark:text-rose-300 dark:border-rose-800";
+      case "adjacent": return "text-amber-700 border-amber-300 dark:text-amber-300 dark:border-amber-800";
+      case "aspirational": return "text-violet-700 border-violet-300 dark:text-violet-300 dark:border-violet-800";
+      case "value": return "text-emerald-700 border-emerald-300 dark:text-emerald-300 dark:border-emerald-800";
+      default: return "text-muted-foreground";
     }
   };
 
@@ -2956,9 +2967,9 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
           <div className="flex flex-wrap gap-1.5 items-center">
             {similarTenants.map((t) => (
               <Link key={t.id} href={`/companies/${t.id}`}>
-                <span className="text-xs font-medium px-3 py-1.5 rounded-md border bg-background hover:bg-muted cursor-pointer inline-block transition-colors" title="Similar tenant (same use class) — in CRM">
+                <span className="inline-flex items-center gap-1 rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] whitespace-nowrap border border-border bg-background text-foreground hover:bg-muted cursor-pointer transition-colors" title="Similar tenant (same use class) — in CRM">
                   {t.name}
-                  {t.store_count ? <span className="ml-1 text-muted-foreground">· {t.store_count}</span> : null}
+                  {t.store_count ? <span className="font-mono normal-case opacity-60">{t.store_count}</span> : null}
                 </span>
               </Link>
             ))}
@@ -2968,10 +2979,12 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
                 <button
                   key={i}
                   type="button"
+                  data-no-min-touch
                   onClick={() => setExpanded(isOpen ? null : i)}
-                  className={`text-xs font-medium px-3 py-1.5 rounded-md border transition-colors ${segmentColor(comp.segment)} ${isOpen ? "ring-2 ring-offset-1 ring-current" : ""}`}
+                  className={`inline-flex items-center gap-1.5 rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] whitespace-nowrap border transition-colors ${isOpen ? "bg-foreground text-background border-transparent" : "border-border text-muted-foreground hover:text-foreground hover:bg-muted"}`}
                   title={comp.segment ? `${comp.segment} competitor` : "competitor"}
                 >
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${segmentDot(comp.segment)}`} />
                   {comp.name}
                 </button>
               );
@@ -2991,7 +3004,7 @@ function AiCompetitorsPanel({ companyId, competitors, generatedAt, allCompaniesF
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-sm">{comp.name}</span>
                   {comp.segment && (
-                    <Badge variant="outline" className={`text-[10px] ${segmentColor(comp.segment)}`}>
+                    <Badge variant="outline" className={`text-[10px] ${segmentBadge(comp.segment)}`}>
                       {comp.segment}
                     </Badge>
                   )}
