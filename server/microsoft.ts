@@ -1167,7 +1167,12 @@ export function setupMicrosoftRoutes(app: Express) {
         insights.push({
           type: "pipeline",
           title: "CRM Deals",
-          detail: `${activeDealRows.length} active deals across ${new Set(activeDealRows.map((d: any) => d.deal_type).filter(Boolean)).size} categories`,
+          detail: (() => {
+            const n = activeDealRows.length;
+            const cats = new Set(activeDealRows.map((d: any) => d.deal_type).filter(Boolean)).size;
+            const dealPart = `${n} active deal${n === 1 ? "" : "s"}`;
+            return cats > 0 ? `${dealPart} across ${cats} categor${cats === 1 ? "y" : "ies"}` : dealPart;
+          })(),
           priority: 3,
         });
       }
@@ -1176,7 +1181,7 @@ export function setupMicrosoftRoutes(app: Express) {
         insights.push({
           type: "busiestDay",
           title: "Portfolio",
-          detail: `${allProps.length} properties tracked, ${availableProps.length} currently available`,
+          detail: `${allProps.length} propert${allProps.length === 1 ? "y" : "ies"} tracked, ${availableProps.length} currently available`,
           priority: 2,
         });
       }

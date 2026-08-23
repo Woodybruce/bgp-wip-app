@@ -1,3 +1,4 @@
+import { useState } from "react";
 // Phone-fit brand / landlord profile — the mobile answer to the desktop
 // BrandProfilePanel, which rendered effectively blank at phone widths
 // (Woody, 2026-08-04: "how the brands reflect" on the phone app). Stacked
@@ -8,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Pill } from "@/components/ui/pill";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Building2, TrendingUp, ClipboardList, Instagram } from "lucide-react";
@@ -62,6 +64,10 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       ? `/api/brand/${companyId}/flagship-image${firstImg ? `?exclude=${encodeURIComponent(firstImg.id)}` : ""}`
       : firstImg ? srcFor(firstImg) : null;
   const trackerComments: any[] = trackerData?.comments || [];
+  // Phone section switcher (docs/DESIGN.md §16) — this view is phone-only
+  // and ran 8+ boards deep in one scroll.
+  const [section, setSection] = useState<"chat" | "contacts" | "compliance" | "intel">("chat");
+  const sec = (k: typeof section) => (section === k ? "space-y-3" : "hidden");
   const signals: any[] = (data.signals || []).slice(0, 6);
 
   return (
@@ -80,11 +86,21 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
       </div>
       {c.description && <p className="text-sm leading-snug text-foreground/85">{c.description}</p>}
 
+      <div className="flex flex-wrap gap-1.5" data-testid="company-phone-sections">
+        <Pill active={section === "chat"} onClick={() => setSection("chat")} data-testid="company-section-chat">Chat</Pill>
+        <Pill active={section === "contacts"} onClick={() => setSection("contacts")} data-testid="company-section-contacts">Contacts</Pill>
+        <Pill active={section === "compliance"} onClick={() => setSection("compliance")} data-testid="company-section-compliance">Compliance</Pill>
+        <Pill active={section === "intel"} onClick={() => setSection("intel")} data-testid="company-section-intel">Intel</Pill>
+      </div>
+
+      <div className={sec("chat")}>
       {/* Chat — same thread as desktop and the main chat panel */}
       <div className="h-[320px]">
         <CompanyMiniChat companyId={companyId} companyName={c.name} fill />
       </div>
+      </div>
 
+      <div className={sec("contacts")}>
       {/* Key contacts — canonical board */}
       <CompanyContactsBoard
         companyId={companyId}
@@ -92,7 +108,9 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         contacts={data.contacts || []}
         pendingSenders={data.pendingContactSuggestions || []}
       />
+      </div>
 
+      <div className={sec("compliance")}>
       {/* Covenant */}
       <Card>
         <CardHeader className="p-3 pb-2">
@@ -116,7 +134,9 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
 
       {/* Compliance & KYC — same board as desktop (staff actions hide for clients inside) */}
       <BrandComplianceCard companyId={companyId} company={c} />
+      </div>
 
+      <div className={sec("intel")}>
       {/* Menu / best sellers (brands only) */}
       {!isLandlord && (
         <MenuIntelCard
@@ -211,6 +231,7 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
           </CardContent>
         </Card>
       )}
+      </div>
     </div>
   );
 }
