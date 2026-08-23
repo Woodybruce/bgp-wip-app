@@ -607,12 +607,12 @@ function PayrollTab() {
           Hits each scoped endpoint and reports which scopes the current
           token actually has, so you know what to fix in Revolut Business
           → APIs without re-bootstrapping blindly. */}
-      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+      <div className="rounded-2xl border border-border bg-muted/50 p-3">
         <div className="flex items-start gap-2">
-          <AlertCircle className="w-4 h-4 text-slate-700 shrink-0 mt-0.5" />
+          <AlertCircle className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-slate-900">Revolut API scopes</div>
-            <p className="text-[11px] text-slate-700 mt-0.5">
+            <div className="text-sm font-semibold text-foreground">Revolut API scopes</div>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
               Tap to probe the live token. If "Reveal card PAN" fails with 403, that's why Card Details shows the scope error — re-auth on Revolut Business with READ_SENSITIVE_CARD_DATA added.
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -714,7 +714,7 @@ export default function MobileAdminExpenses() {
         className="px-4 pb-2 flex items-center gap-3 border-b border-border/40 bg-background/95 backdrop-blur sticky top-0 z-10"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
       >
-        <Link href="/" className="p-2 -ml-2 rounded-full active:bg-gray-100">
+        <Link href="/" className="p-2 -ml-2 rounded-full active:bg-muted">
           <ChevronLeft className="w-6 h-6" />
         </Link>
         <h1 className="text-2xl font-semibold flex-1">Expenses</h1>

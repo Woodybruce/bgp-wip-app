@@ -188,7 +188,7 @@ export function LandsecAgentPerformanceCard({ data }: { data: LandsecAnalytics }
                       </span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <div className="flex-1 h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                      <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
                         <div
                           className="h-full rounded-full transition-all"
                           style={{
@@ -314,7 +314,7 @@ export function LandsecRecentActivity({ data }: { data: LandsecAnalytics }) {
           ) : (
             <div className="space-y-1 pr-2">
               {data.recentActivity.map((deal) => {
-                const statusClass = STATUS_COLOR_MAP[deal.status || ""] || "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300";
+                const statusClass = STATUS_COLOR_MAP[deal.status || ""] || "bg-muted text-muted-foreground";
                 return (
                   <div
                     key={deal.id}

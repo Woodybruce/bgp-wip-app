@@ -134,8 +134,8 @@ function PublicKycUploadRoute() {
 function PageLoader() {
   return (
     <div className="flex items-center justify-center h-full min-h-[200px]">
-      <div className="h-0.5 w-24 bg-neutral-200 dark:bg-neutral-800 rounded overflow-hidden">
-        <div className="h-full w-8 bg-neutral-400 dark:bg-neutral-600 rounded animate-pulse" />
+      <div className="h-0.5 w-24 bg-muted rounded overflow-hidden">
+        <div className="h-full w-8 bg-muted-foreground/50 rounded animate-pulse" />
       </div>
     </div>
   );
@@ -834,8 +834,8 @@ function AppContent() {
         <div className="space-y-4 text-center">
           <img src={bgpLogoDark} alt="BGP" className="h-10 w-auto mx-auto dark:hidden" />
           <img src={bgpLogoLight} alt="BGP" className="h-10 w-auto mx-auto hidden dark:block" />
-          <div className="h-0.5 w-24 mx-auto bg-neutral-200 dark:bg-neutral-800 rounded overflow-hidden">
-            <div className="h-full w-8 bg-neutral-400 dark:bg-neutral-600 rounded animate-pulse" />
+          <div className="h-0.5 w-24 mx-auto bg-muted rounded overflow-hidden">
+            <div className="h-full w-8 bg-muted-foreground/50 rounded animate-pulse" />
           </div>
         </div>
       </div>

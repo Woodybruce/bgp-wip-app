@@ -2609,7 +2609,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                     (() => {
                       const Icon = TAG_META[opt.type]?.icon || Building2;
                       return (
-                        <span className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${TAG_META[opt.type]?.chip || "bg-gray-100"}`}>
+                        <span className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${TAG_META[opt.type]?.chip || "bg-muted"}`}>
                           <Icon className="w-3.5 h-3.5" />
                         </span>
                       );
@@ -4900,7 +4900,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                       const bgColor = r.icon === "client" ? "bg-blue-100 text-blue-600" :
                                       r.icon === "vendor" ? "bg-orange-100 text-orange-600" :
                                       r.icon === "buyer" ? "bg-emerald-100 text-emerald-600" :
-                                      "bg-gray-100 text-gray-600";
+                                      "bg-muted text-muted-foreground";
                       return (
                         <button
                           key={r.label}

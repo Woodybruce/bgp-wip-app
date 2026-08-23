@@ -118,7 +118,7 @@ function StatusBadge({ status }: { status: string }) {
   if (status === "approved") return <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">Approved</span>;
   if (status === "synced_to_xero") return <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">In Xero</span>;
   if (status === "rejected") return <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium">Rejected</span>;
-  return <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{status}</span>;
+  return <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{status}</span>;
 }
 
 // ─── Edit sheet ─────────────────────────────────────────────────────────
@@ -473,7 +473,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
             <SheetTitle className="text-base text-left">
               {expense.merchant || "Edit expense"}
             </SheetTitle>
-            <button onClick={onClose} className="p-1.5 -mr-1.5 rounded-full active:bg-gray-100">
+            <button onClick={onClose} className="p-1.5 -mr-1.5 rounded-full active:bg-muted">
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -1278,7 +1278,7 @@ export default function MobileExpenses() {
         className="px-4 pb-3 flex items-center gap-3 border-b border-border/40 bg-background/95 backdrop-blur sticky top-0 z-10"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
       >
-        <Link href="/" className="p-2 -ml-2 rounded-full active:bg-gray-100">
+        <Link href="/" className="p-2 -ml-2 rounded-full active:bg-muted">
           <ChevronLeft className="w-6 h-6" />
         </Link>
         <h1 className="text-2xl font-semibold flex-1">Expenses</h1>
@@ -1400,7 +1400,7 @@ export default function MobileExpenses() {
         <div className="px-4 mb-3 flex gap-1.5 overflow-x-auto" data-testid="m-expenses-status-filter">
           <button
             onClick={() => setStatusFilter("all")}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${statusFilter === "all" ? "bg-[hsl(var(--mobile-chrome))] text-white border-[hsl(var(--mobile-chrome))]" : "bg-white dark:bg-card text-muted-foreground border-border active:bg-gray-50"}`}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${statusFilter === "all" ? "bg-[hsl(var(--mobile-chrome))] text-white border-[hsl(var(--mobile-chrome))]" : "bg-white dark:bg-card text-muted-foreground border-border active:bg-muted"}`}
             data-testid="m-expenses-filter-all"
           >
             All {expenses.length}
@@ -1409,7 +1409,7 @@ export default function MobileExpenses() {
             <button
               key={s.key}
               onClick={() => setStatusFilter(statusFilter === s.key ? "all" : s.key)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${statusFilter === s.key ? "bg-[hsl(var(--mobile-chrome))] text-white border-[hsl(var(--mobile-chrome))]" : "bg-white dark:bg-card text-muted-foreground border-border active:bg-gray-50"}`}
+              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${statusFilter === s.key ? "bg-[hsl(var(--mobile-chrome))] text-white border-[hsl(var(--mobile-chrome))]" : "bg-white dark:bg-card text-muted-foreground border-border active:bg-muted"}`}
               data-testid={`m-expenses-filter-${s.key}`}
             >
               {s.label} {s.count}
