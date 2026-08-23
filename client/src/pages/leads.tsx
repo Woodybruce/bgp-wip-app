@@ -1,5 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
+import { MobileCardView } from "@/components/mobile-card-view";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -37,6 +39,7 @@ import { Link } from "wouter";
 import type { CrmLead, CrmContact } from "@shared/schema";
 
 export default function Leads() {
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
@@ -320,6 +323,25 @@ export default function Leads() {
                 </p>
               </CardContent>
             </Card>
+          ) : isMobile ? (
+            <div className="flex-1 min-h-0 overflow-y-auto -mx-3">
+              <MobileCardView
+                emptyMessage="No leads found"
+                items={filteredItems.map((item) => ({
+                  id: item.id,
+                  title: item.name || item.email || "Unnamed lead",
+                  subtitle: item.groupName || undefined,
+                  status: item.status || undefined,
+                  fields: [
+                    { label: "Type", value: item.leadType },
+                    { label: "Assigned to", value: item.assignedTo },
+                    { label: "Source", value: item.source },
+                    { label: "Email", value: item.email },
+                    { label: "Phone", value: item.phone },
+                  ],
+                }))}
+              />
+            </div>
           ) : (
             <Card className="flex-1 min-h-0 flex flex-col">
               <ScrollableTable minWidth={1200}>

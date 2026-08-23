@@ -1,5 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { MobileCardView } from "@/components/mobile-card-view";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -860,6 +862,7 @@ function InstructionsList({
     queryKey: ["/api/users"],
   });
 
+  const isMobile = useIsMobile();
   const { data: allCompanies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
   });
@@ -1106,6 +1109,24 @@ function InstructionsList({
               {[1, 2, 3, 4, 5].map((i) => (
                 <Skeleton key={i} className="h-12" />
               ))}
+            </div>
+          ) : isMobile ? (
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              <MobileCardView
+                emptyMessage="No instructions found"
+                items={filteredProperties.map((property) => ({
+                  id: property.id,
+                  title: property.name || "Untitled property",
+                  subtitle: allCompanies.find((c) => c.id === property.landlordId)?.name || undefined,
+                  status: property.status || undefined,
+                  href: `/properties/${property.id}`,
+                  fields: [
+                    { label: "Asset class", value: property.assetClass },
+                    { label: "Tenure", value: property.tenure },
+                    { label: "Sq Ft", value: property.sqft ? Number(property.sqft).toLocaleString() : null },
+                  ],
+                }))}
+              />
             </div>
           ) : (
             <ScrollableTable minWidth={1800}>
