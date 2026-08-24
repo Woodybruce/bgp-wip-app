@@ -65,7 +65,7 @@ let currentScenario = { victoria: 'startup', mark: 'startup' };
 
 // Scenarios that deliberately provoke 4xx to prove a guard holds. A refusal
 // there is the PASS condition, so don't log it as an app issue.
-const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt']);
+const NEGATIVE_PROBE_SCENARIOS = new Set(['client-destructive-guards', 'client-bulk-mutation-guard', 'client-crm-ingest-guard', 'client-add-delete-unit', 'client-hots-roundtrip', 'client-foreign-unit-guards', 'rival-client-write-guards', 'rival-team-board-isolated', 'client-staff-deal-ops-guards', 'client-brand-slice-and-extras', 'client-requirements-write-guards', 'client-contact-scope-guards', 'client-unit-matches', 'client-brand-suggestions-scoped', 'client-brand-suggested-pitches-scoped', 'client-news-write-guards', 'client-contact-edit-not-delete', 'client-requirement-scoping', 'client-password-reset-guard', 'client-commentary-own-property', 'client-plans-board-scoped', 'client-brand-gaps-scoped', 'client-task-assign-guard', 'client-lease-events-guard', 'client-firm-reporting-guard', 'client-deal-report-guard', 'client-mailbox-guard', 'client-firm-internal-guard', 'client-expenses-guard', 'client-property-tenants-scoped', 'client-available-unit-read-scoped', 'client-detail-by-id-scoped', 'client-contact-override-scoped', 'client-portfolio-rollup-scoped', 'client-tasks-board-scoped', 'client-tenancy-export-scoped', 'client-tenancy-write-scoped', 'client-tenancy-staff-ops-guard', 'client-insights-scoped', 'client-interactions-guard', 'client-hunters-guard', 'client-leads-guard', 'client-news-intel-guard', 'client-document-briefs-guard', 'client-wip-report-guard', 'client-agent-directory-tenant-rep', 'client-property-pathway-guard', 'client-chat-delete-own-only', 'client-chat-thread-read-isolation', 'client-brand-kyc-visible-actions-blocked', 'client-kyc-board-guard', 'client-pi-investigator-hidden', 'client-pi-lookup-open', 'client-covenant-guard', 'client-crm-truth-engine-guard', 'client-apollo-enrichment-scope', 'client-sharepoint-surface', 'client-sharepoint-write-guard', 'client-nav-guard-consistency', 'rival-viewing-offer-patch-guard', 'client-image-assign-scope-guard', 'client-image-bytes-scoped', 'client-map-layer-scope', 'client-brief-target-scope', 'client-property-units-scoped', 'client-contact-detail-gates', 'client-comps-readonly', 'staff-ai-failure-terminal', 'staff-deal-verdict-flow', 'client-mobile-chat-error-prompt', 'client-turnover-slice-guard']);
 
 function attachCollectors(page, persona) {
   page.on('console', (msg) => {
@@ -1560,6 +1560,35 @@ async function victoriaRound(page, cross) {
     if (r.stillListed) throw new Error('deal still pending after a verdict this month');
     if (!r.newTarget || new Date(r.newTarget) < new Date()) throw new Error(`slipping did not re-date the deal (targetDate ${r.newTarget})`);
     if (r.deleteStatus !== 200 && r.deleteStatus !== 204) throw new Error(`probe deal cleanup failed (${r.deleteStatus})`);
+  });
+
+  // Staff logs turnover entries — one on an in-slice brand, one on an
+  // out-of-slice company (Hammerson) — so Mark's round can prove the client
+  // turnover read is sliced and the write staff-only. run-round.sh purges
+  // the rows by the QA-PROBE notes marker next round.
+  await step(page, p, 'staff-turnover-entries', async () => {
+    const marker = `QA-PROBE turnover R${ROUND}`;
+    const r = await page.evaluate(async (note) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const companies = await (await fetch('/api/crm/companies', { headers: auth })).json();
+      const arr = Array.isArray(companies) ? companies : (companies?.data || []);
+      const brand = arr.find((c) => c.id === window.QA_FIX.brand);
+      if (!brand) return { skip: true };
+      const hidden = arr.find((c) => /hammerson/i.test(c.name || ''));
+      const mk = (company, tag) => fetch('/api/turnover', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ company_id: company.id, company_name: company.name, period: 'QA FY', turnover: 999999, source: 'Conversation', notes: `${note} ${tag}` }) });
+      const pv = await mk(brand, 'visible');
+      if (!pv.ok) return { ok: false, why: `visible POST ${pv.status}` };
+      if (hidden) {
+        const ph = await mk(hidden, 'hidden');
+        if (!ph.ok) return { ok: false, why: `hidden POST ${ph.status}` };
+      }
+      return { ok: true, hiddenMade: !!hidden };
+    }, marker);
+    if (r.skip) return;
+    if (!r.ok) throw new Error(`staff turnover entry failed (${r.why})`);
+    cross.turnoverMarker = marker;
+    cross.turnoverHiddenMade = r.hiddenMade;
   });
 }
 
@@ -4806,6 +4835,27 @@ async function markRound(page, cross) {
     if (!r.ownIsArray) throw new Error('client own-property unit list is not an array');
     if (r.unfiltered !== 403) throw new Error(`unfiltered firm-wide unit list not refused (${r.unfiltered})`);
     if (r.write !== 403) throw new Error(`client property-units write not refused (${r.write})`);
+  });
+
+  // Turnover board slice (staff-creates → client-sees/stays-hidden): the
+  // entry Victoria logged on the in-slice brand must be readable, the one
+  // on the out-of-slice company must not, and the write is staff-only.
+  await step(page, p, 'client-turnover-slice-guard', async () => {
+    if (!cross.turnoverMarker) return;
+    const r = await page.evaluate(async (marker) => {
+      const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const list = await fetch('/api/turnover', { headers: auth });
+      if (!list.ok) return { ok: false, why: `GET ${list.status}` };
+      const rows = await list.json();
+      const mine = (Array.isArray(rows) ? rows : []).filter((t) => (t.notes || '').startsWith(marker));
+      const write = (await fetch('/api/turnover', { method: 'POST', credentials: 'include', headers: auth,
+        body: JSON.stringify({ company_name: 'QA-PROBE client write', period: 'QA FY' }) })).status;
+      return { ok: true, seesVisible: mine.some((t) => /visible$/.test(t.notes || '')), seesHidden: mine.some((t) => /hidden$/.test(t.notes || '')), write };
+    }, cross.turnoverMarker);
+    if (!r.ok) throw new Error(`client turnover read failed (${r.why})`);
+    if (!r.seesVisible) throw new Error('client cannot see the in-slice turnover entry');
+    if (cross.turnoverHiddenMade && r.seesHidden) throw new Error('client can see an out-of-slice turnover entry');
+    if (r.write !== 403) throw new Error(`client turnover write not refused (${r.write})`);
   });
 }
 

@@ -16,6 +16,28 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+87. 2026-08-24 · BGP staff / desktop 1440px (QA r364) · "log a turnover
+    figure for a brand" · Add Turnover Entry works cleanly, but a row added
+    for Amorino (a Restaurant brand) lands with Category "—" because the
+    dialog's Category select starts empty and nothing pre-fills it from the
+    selected brand's companyType — the same brand's AI-estimate rows show
+    "Restaurant", so the board's category filter now misses the hand-added
+    row. Suggest defaulting the dialog's Category from the selected
+    company's type (still editable). (Also noted in passing: the Brand
+    dropdown renders only the first 100 companies with no search — fine on
+    the fixture's 17, but on prod's full brand book most brands would be
+    unreachable except via the free-text name fallback, which skips the
+    company link. A searchable combobox would fix both.)
+
+86. 2026-08-24 · BGP staff / desktop 1440px (QA r364) · "see who's earning
+    what on the WIP report" · The Agent Summary tab on a book where no deal
+    has an agent/BGP-contact assigned shows an "Agent Fee Breakdown" panel
+    that is simply blank (header + empty body) and a 0-row table whose
+    footer reads "Total £0 · £0 · £0 · 100%" — 100% of nothing. No hint
+    of WHY it's empty. Suggest an empty state ("No fees are attributed to
+    agents yet — assign a BGP contact on a deal to see the split") and
+    suppressing the 100% when the total is zero.
+
 85. 2026-08-24 · BGP staff / mobile 390px (QA r363) · "look up a brand's
     contact from my phone" · On the brand profile's Contacts pill, the Key
     Contacts panel opened with "No property-tier contacts. Click Show all
