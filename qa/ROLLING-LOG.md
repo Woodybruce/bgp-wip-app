@@ -73,6 +73,15 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r366 · 2026-08-24 · LIGHT — ROUND IN PROGRESS (provisional)
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1;
+  pg_hba trust fix needed, r205 note; fixture restore needed -U postgres +
+  ownership handoff — "must be able to SET ROLE postgres" as bgp).
+- Two-bot round 371: exit 0, all scenarios ok, 3 issues all listed noise
+  (rocketreach-400, live-intel 503, commentary-regen 503). Dev-server
+  sweep: 0 raw 500/502/504 (lone " 500 " = "500 articles" news echo).
+- Triage: nothing non-noise. LIGHT round — candidate probes next.
+
 ### r365 · 2026-08-24 · FULL (rotation #1 staff desktop)
 - Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
   before and after the fixes; pg_hba trust fix needed, r205 note).
