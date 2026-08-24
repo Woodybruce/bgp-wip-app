@@ -73,17 +73,48 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r362 · 2026-08-24 · LIGHT — ROUND IN PROGRESS (provisional)
+### r362 · 2026-08-24 · LIGHT (r361 had the journey)
 - JOGQK merge (3 days of work): tracked-brand removal (is_tracked_brand gone,
   every tenant company is a brand), National & Regional category retired into
-  Fashion & Retail, design-review batches, deal-status palette unification.
-  One conflict in mobile-app.tsx (create-group button) resolved favouring
-  JOGQK. tsc clean on merged tree.
+  Fashion & Retail, design-review batches, deal-status palette unification,
+  phone section pills on detail pages. One conflict in mobile-app.tsx
+  (create-group button) resolved favouring JOGQK. tsc clean on merged tree.
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1
-  post-merge). Two-bot round 363 running; triage to follow.
-- Plan: LIGHT round (r361 was FULL). Targeted regression of newest JOGQK
-  surfaces: brands hub (no Tracked pill/badge, no National & Regional),
-  brand profile staff + client, WIP report.
+  post-merge). Two-bot round 363: 5 issues — 3 listed noise (rocketreach-400,
+  live-intel 503, commentary-regen 503) + 2 flow-failures that were STALE
+  TESTS against intended JOGQK behaviour, not app bugs (verified in-browser
+  both ways at 390px iPhone UA):
+  (a) client-deal-mobile-sidebar — phone deal detail now gates the stacked
+      sidebar sections behind section pills (Overview/Brand/Activity/Files);
+      pills verified working: Files pill → Files + Linked Property, Activity
+      pill → Comments + History & activity. Scenario updated to drive pills.
+  (b) client-mobile-chat-error-prompt — a BARE /chatbgp open deliberately
+      lands on the Messages LIST (Woody 2026-08-23, comment in
+      mobile-app.tsx ~3025); ?ask=1 / pinned-row entries open the composer
+      (both verified). Scenario updated: guards the list landing AND reaches
+      the composer via ?ask=1.
+  Dev-server sweep: 0 raw 500/502/504 across the round (lone " 500 " =
+  "500 articles" news echo).
+- Targeted JOGQK regression (probe + screenshots, staff + client desktop):
+  brands hub Overview + Brand Explorer — NO Tracked pill/filter anywhere,
+  NO National & Regional tile (staff sees 5 categories incl. Luxury; client
+  tiles count-gated: Fashion & Retail:1 is the fixture's self-added Testco
+  Fashion, i.e. slice + self-adds holds, confirmed via crm_extra_brand_ids);
+  Starbucks staff profile clean ("Tenant · Restaurant" middot chip, no
+  Tracked badge); Amorino client profile keeps Compliance & KYC panel
+  (2026-08-01 decision holds); WIP report renders (6 rows, stage chips,
+  filter row, totals, Sync Xero / Excel / Print). Client slice also checked
+  API-side: mark sees 10 companies, only slice categories + the self-add.
+- Bugs fixed: 0 app bugs found (both flow-failures were harness debt).
+  Harness updated: 2 scenarios modernised (see above). Deferred: none.
+- Suggestions added: none (LIGHT round; nothing clunky surfaced beyond
+  already-logged notes).
+- Confirmation run: two-bot round 364 with the updated scenarios —
+  RESULT_364_PLACEHOLDER.
+- Next journey: r362 was LIGHT → r363 FULL, rotation #4 staff mobile 390px
+  (then #1 staff desktop). Good FULL-round targets given the merge: deal
+  detail phone pills as staff, brands phone explorer house cards, Turnover
+  board phone cards (JOGQK marked "in progress").
 
 ### r361 · 2026-08-21 · FULL (rotation #3 Landsec client mobile 390px)
 - JOGQK merge: brought in Brent Cross evidence-map demo route. Regression:
