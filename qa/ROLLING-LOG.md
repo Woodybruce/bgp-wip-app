@@ -73,6 +73,14 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r368 · 2026-08-24 · ROUND IN PROGRESS (provisional heartbeat)
+- LIGHT round (r367 was FULL). Regression: run-smoke.sh GREEN (42 checks,
+  0 failures, FRESH_BUILD=1; pg_hba trust fix needed, r205 note). Two-bot
+  round 375: exit 0, all scenarios ok (incl. client-tenancy-bulk-ticks-hidden
+  from r367), 3 issues all listed noise (rocketreach-400, keyless-AI 503 ×2).
+  Dev-server sweep: 0 raw 500/502/504 (lone " 500 " = "500 articles" echo).
+- Triage list: nothing real so far; deeper light-round probes to follow.
+
 ### r367 · 2026-08-24 · FULL (rotation #2 Landsec client desktop)
 - Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
   before and after the fix; pg_hba trust fix needed, r205 note). Two-bot
