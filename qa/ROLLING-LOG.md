@@ -109,8 +109,10 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
   Harness updated: 2 scenarios modernised (see above). Deferred: none.
 - Suggestions added: none (LIGHT round; nothing clunky surfaced beyond
   already-logged notes).
-- Confirmation run: two-bot round 364 with the updated scenarios —
-  RESULT_364_PLACEHOLDER.
+- Confirmation run: two-bot round 364 with the updated scenarios — exit 0,
+  all scenario steps ok, 3 issues all listed noise (rocketreach-400,
+  live-intel 503, commentary-regen 503); both modernised scenarios green
+  (qa/logs/round-364.jsonl).
 - Next journey: r362 was LIGHT → r363 FULL, rotation #4 staff mobile 390px
   (then #1 staff desktop). Good FULL-round targets given the merge: deal
   detail phone pills as staff, brands phone explorer house cards, Turnover
