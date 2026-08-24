@@ -16,6 +16,14 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+89. 2026-08-24 · Landsec client / desktop 1440px (QA r366) · "see which of
+    my brands are active right now" · On Brand Intelligence → Overview, the
+    Who's Hot rows use "d" for two different things side by side: a filled
+    badge "1d" means 1 DEAL while the timestamp directly under it reads
+    "21d" meaning 21 DAYS ago — a client can easily read the deal badge as
+    another age. Suggest distinct labels (e.g. "1 deal" / badge tooltip, or
+    "21d ago" for the timestamp) so the two "d"s can't be confused.
+
 88. 2026-08-24 · BGP staff / desktop 1440px (QA r365) · "pull turnover
     entries in from CRM comps" · Clicking From CRM Comps when no comp tenant
     matches a brand name just toasts "Created 0 draft entries from CRM comps

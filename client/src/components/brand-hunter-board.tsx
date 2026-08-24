@@ -89,8 +89,9 @@ const FLAG_META: Record<string, { color: string; icon: any }> = {
 
 function formatCap(gbp: number | null): string | null {
   if (gbp == null) return null;
-  if (gbp >= 1_000_000_000) return `£${(gbp / 1_000_000_000).toFixed(1)}bn`;
-  if (gbp >= 1_000_000) return `£${(gbp / 1_000_000).toFixed(0)}m`;
+  // Round before picking the unit so 999,999,999 shows as £1.0bn, not £1000m.
+  if (Math.round(gbp / 1_000_000) >= 1_000) return `£${(gbp / 1_000_000_000).toFixed(1)}bn`;
+  if (Math.round(gbp / 1_000) >= 1_000) return `£${(gbp / 1_000_000).toFixed(1)}m`;
   return `£${(gbp / 1_000).toFixed(0)}k`;
 }
 

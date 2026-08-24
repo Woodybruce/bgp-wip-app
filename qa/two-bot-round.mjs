@@ -1598,6 +1598,14 @@ async function victoriaRound(page, cross) {
     const body = await page.evaluate(() => document.body.innerText);
     if (body.includes('£1000k')) throw new Error('turnover board renders £1000k (formatCurrency rounding edge regressed)');
     if (!body.includes('£1.0m')) throw new Error('turnover board missing £1.0m for the 999999 probe entry');
+
+    // The brands-hub Overview "Turnover Leaders" tile has its own formatter —
+    // r366 caught it rendering the same probe as £1000k after r365's fix.
+    await page.goto(`${BASE}/brands`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1500);
+    const hubBody = await page.evaluate(() => document.body.innerText);
+    if (hubBody.includes('£1000k') || hubBody.includes('£1000m')) throw new Error('brands hub renders £1000k/£1000m (formatTurnover rounding edge regressed)');
   });
 }
 

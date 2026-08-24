@@ -3675,8 +3675,9 @@ function StockSnapshotCard({ companyId, ticker }: { companyId: string; ticker: s
   const chg = s.fiftyTwoWeekChange != null ? s.fiftyTwoWeekChange * 100 : null;
   const chgColor = chg == null ? "text-muted-foreground" : chg >= 20 ? "text-emerald-600" : chg >= 0 ? "text-green-600" : "text-red-600";
   const capLabel = s.marketCapGBP == null ? null
-    : s.marketCapGBP >= 1_000_000_000 ? `£${(s.marketCapGBP / 1_000_000_000).toFixed(1)}bn`
-    : s.marketCapGBP >= 1_000_000 ? `£${(s.marketCapGBP / 1_000_000).toFixed(0)}m`
+    // Round before picking the unit so 999,999,999 shows as £1.0bn, not £1000m.
+    : Math.round(s.marketCapGBP / 1_000_000) >= 1_000 ? `£${(s.marketCapGBP / 1_000_000_000).toFixed(1)}bn`
+    : Math.round(s.marketCapGBP / 1_000) >= 1_000 ? `£${(s.marketCapGBP / 1_000_000).toFixed(1)}m`
     : `£${(s.marketCapGBP / 1_000).toFixed(0)}k`;
   const currencySymbol = s.currency === "GBp" ? "p" : s.currency === "GBP" ? "£" : s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : "";
   const priceLabel = s.price != null ? `${currencySymbol}${s.price.toFixed(2)}` : "—";
