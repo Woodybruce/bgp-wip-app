@@ -73,6 +73,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r365 · 2026-08-24 · FULL (rotation #1 staff desktop) — IN PROGRESS
+- Provisional heartbeat ~16:50 UTC. Regression: run-smoke.sh GREEN (42
+  checks, 0 failures, FRESH_BUILD=1; pg_hba trust fix needed, r205 note).
+- Two-bot round 369: exit 0, all scenarios ok — incl. r364's new
+  staff-turnover-entries + client-turnover-slice-guard and the FIXED
+  client-brand-hub-hunter-scoped (in-harness confirmation r364 asked for).
+  3 issues all listed noise (rocketreach-400, live-intel 503,
+  commentary-regen 503). Dev-server sweep: 0 raw 500/502/504 (lone " 500 "
+  = "500 articles" news echo).
+- Journey next: Victoria desktop 1440px — Turnover table/By-Brand/From CRM
+  Comps + draft confirm, Comps board, staff contacts.
+
 ### r364 · 2026-08-24 · LIGHT (r363 had the journey)
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1;
   pg_hba trust fix needed, r205 note). Two-bot round 367: exit 0, all
