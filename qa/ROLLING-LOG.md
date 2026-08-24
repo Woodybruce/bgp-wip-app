@@ -73,6 +73,12 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r363 · 2026-08-24 · ROUND IN PROGRESS (provisional)
+- FULL round planned: rotation #4 staff mobile 390px (deal detail phone
+  pills, brands phone explorer, Turnover board phone cards per r362 note).
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
+- Two-bot round 365 running; triage + journey to follow.
+
 ### r362 · 2026-08-24 · LIGHT (r361 had the journey)
 - JOGQK merge (3 days of work): tracked-brand removal (is_tracked_brand gone,
   every tenant company is a brand), National & Regional category retired into
