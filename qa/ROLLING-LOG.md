@@ -73,13 +73,39 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r368 · 2026-08-24 · ROUND IN PROGRESS (provisional heartbeat)
-- LIGHT round (r367 was FULL). Regression: run-smoke.sh GREEN (42 checks,
-  0 failures, FRESH_BUILD=1; pg_hba trust fix needed, r205 note). Two-bot
-  round 375: exit 0, all scenarios ok (incl. client-tenancy-bulk-ticks-hidden
-  from r367), 3 issues all listed noise (rocketreach-400, keyless-AI 503 ×2).
-  Dev-server sweep: 0 raw 500/502/504 (lone " 500 " = "500 articles" echo).
-- Triage list: nothing real so far; deeper light-round probes to follow.
+### r368 · 2026-08-24 · LIGHT (r367 was FULL)
+- Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
+  before and after the fix; pg_hba trust fix needed, r205 note). Two-bot
+  rounds 375/376/377: all exit 0, all scenarios ok. 375+377 tally = 3 issues,
+  all listed noise (rocketreach-400, live-intel 503, commentary-regen 503);
+  376's extra 3×403 were the new scenario's own negative probes, now in
+  NEGATIVE_PROBE_SCENARIOS. Dev-server sweep: 0 raw 500/502/504 (lone
+  " 500 " = "500 articles" news echo).
+- Light-round probe (no journey): verified the r367 tick fix holds on the
+  CLIENT MOBILE tenancy board at 390px (board open, 201 rows, 0 checkboxes
+  anywhere, 0 h-overflow, 0 pageerrors). Note for future probes: the
+  property-page CollapsibleCards (Plans / Tenancy Schedule) default OPEN —
+  tapping the header toggles them CLOSED, which reads as "0 rows".
+- Bug fixed (1): client plans panel (property-plans-panel.tsx) offered every
+  staff-only control — Auto-detect, "Add unit" draw mode, Delete plan, floor
+  rename (dbl-click PATCH), polygon status-override + Remove polygon — but
+  all those writes 403 for clients ("Read-only access"); only the upload
+  POST is client-allowed on their own property (gateway board-parity line).
+  Same class as r367 ticks / r223 Import. Now gated on the same
+  isClientViewer test as PropertyTenancySchedule; upload button stays.
+  Verified via API (own upload 200, foreign 403, patch/auto/delete 403) and
+  visually both ways at 1440px (staff: all controls; client: upload only).
+  tsc clean, rebuilt, smoke re-green.
+- Harness growth: client-plans-write-controls-hidden (client uploads a
+  QA-PLAN-GATE plan → rename/auto-detect/delete must 403 → panel must show
+  the floor chip but no draw/auto-detect/delete controls); run-round.sh
+  purge sweeps the QA-PLAN-GATE property_plans row (client can't delete its
+  own upload — staff-only). Green in round 377.
+- Bugs deferred: none. Suggestions added: none. New flakes: none.
+- Next journey: r368 was LIGHT → r369 FULL, rotation #3 Landsec client
+  mobile 390px. Candidate tasks (from r367): phone brand Intel section
+  (UK stores map / Competition card / Instagram board, commit b9b9678e —
+  hasTouch:true + iPhone UA + isMobile, Amorino has geocoded stores).
 
 ### r367 · 2026-08-24 · FULL (rotation #2 Landsec client desktop)
 - Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
