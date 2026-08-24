@@ -73,6 +73,13 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r364 · 2026-08-24 · LIGHT — ROUND IN PROGRESS (provisional)
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
+  pg_hba trust fix needed (r205 note). Two-bot round 367 running next;
+  triage to follow. LIGHT round (r363 had the journey) — no exploratory
+  journey; time goes to triage + r363 candidate targets (Turnover
+  Add-entry, WIP report interactions, staff /tasks) if budget allows.
+
 ### r363 · 2026-08-24 · FULL (rotation #4 BGP staff mobile 390px)
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
   Two-bot round 365: exit 0, all steps ok, 3 issues all listed noise
