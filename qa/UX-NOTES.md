@@ -16,6 +16,17 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+88. 2026-08-24 · BGP staff / desktop 1440px (QA r365) · "pull turnover
+    entries in from CRM comps" · Clicking From CRM Comps when no comp tenant
+    matches a brand name just toasts "Created 0 draft entries from CRM comps
+    (0 skipped)" and the board doesn't change — the user gets no hint WHY
+    nothing matched (matching is exact name-equality between crm_comps.tenant
+    and the brand book) or what to do next. Suggest the 0-created toast
+    explain the match rule and point at the gap, e.g. "No comp tenants
+    matched a brand name — check tenant spellings on the Comps board", and
+    ideally list the top unmatched tenant names so staff can fix or add the
+    brands.
+
 87. 2026-08-24 · BGP staff / desktop 1440px (QA r364) · "log a turnover
     figure for a brand" · Add Turnover Entry works cleanly, but a row added
     for Amorino (a Restaurant brand) lands with Category "—" because the

@@ -50,8 +50,9 @@ const CATEGORIES = ["F&B", "Retail", "Leisure", "Services", "Health & Beauty", "
 
 function formatCurrency(val: number | null) {
   if (val == null) return "—";
-  if (val >= 1_000_000) return `£${(val / 1_000_000).toFixed(1)}m`;
-  if (val >= 1_000) return `£${(val / 1_000).toFixed(0)}k`;
+  // Round before picking the unit so 999,999 shows as £1.0m, not £1000k.
+  if (Math.round(val / 1_000) >= 1_000) return `£${(val / 1_000_000).toFixed(1)}m`;
+  if (Math.round(val) >= 1_000) return `£${(val / 1_000).toFixed(0)}k`;
   return `£${val.toFixed(0)}`;
 }
 

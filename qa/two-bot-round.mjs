@@ -1589,6 +1589,15 @@ async function victoriaRound(page, cross) {
     if (!r.ok) throw new Error(`staff turnover entry failed (${r.why})`);
     cross.turnoverMarker = marker;
     cross.turnoverHiddenMade = r.hiddenMade;
+
+    // The 999999 probe value sits on formatCurrency's rounding edge: the
+    // board must show it as £1.0m, never the r365 "£1000k" regression.
+    await page.goto(`${BASE}/turnover`);
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1500);
+    const body = await page.evaluate(() => document.body.innerText);
+    if (body.includes('£1000k')) throw new Error('turnover board renders £1000k (formatCurrency rounding edge regressed)');
+    if (!body.includes('£1.0m')) throw new Error('turnover board missing £1.0m for the 999999 probe entry');
   });
 }
 
