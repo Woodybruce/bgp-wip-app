@@ -558,9 +558,9 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
   const [importing, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Import and Re-sync (all) are staff-only server-side (the client gateway
-  // only opens /unit row edits) — hide them from client viewers so the
-  // buttons don't 403.
+  // Import, Re-sync (all) and bulk-delete are staff-only server-side (the
+  // client gateway only opens /unit row edits) — hide them from client
+  // viewers so the controls don't 403.
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientViewer = !currentUser || currentUser.role === "Client" || !!currentUser.companyScopeId;
 
@@ -1293,7 +1293,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
               {/* Sticky right so the delete button is always visible
                   without horizontal scrolling to the end of the table. */}
               <th className="text-center p-2 font-medium w-10 sticky max-md:static right-0 bg-gray-100 dark:bg-gray-800 border-l z-10">
-                {!readOnly && (
+                {!readOnly && !isClientViewer && (
                   <input
                     type="checkbox"
                     className="accent-red-500 cursor-pointer"
@@ -1325,7 +1325,7 @@ export function PropertyTenancySchedule({ propertyId, lens, readOnly }: { proper
                   onDelete={() => deleteMutation.mutate(unit.id)}
                   onDeleteTracker={readOnly || !unit.available_unit_id ? undefined : () => deleteTrackerUnitMutation.mutate(String(unit.available_unit_id))}
                   selected={selectedForDelete.has(unit.id)}
-                  onToggleSelect={readOnly || unit.is_vacant ? undefined : () => setSelectedForDelete(prev => {
+                  onToggleSelect={readOnly || isClientViewer || unit.is_vacant ? undefined : () => setSelectedForDelete(prev => {
                     const next = new Set(prev);
                     if (next.has(unit.id)) next.delete(unit.id); else next.add(unit.id);
                     return next;

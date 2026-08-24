@@ -3560,6 +3560,21 @@ async function markRound(page, cross) {
     if (r.resync !== 403) throw new Error(`client fired global resync-mirror (expected 403, got ${r.resync})`);
   });
 
+  // r367: bulk-delete is staff-only (guard above), so the tenancy board must
+  // not offer a client the tick column / "Delete selected" bar that can only
+  // 403 (same class as the r223 Import/Re-sync fix). Per-row trash stays —
+  // single-row delete is client-allowed on their own property.
+  await step(page, p, 'client-tenancy-bulk-ticks-hidden', async () => {
+    await page.goto(`${BASE}/tenancy-schedule/${BLUEWATER}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.getByText('Tenancy Schedule', { exact: false }).first().waitFor({ timeout: 30000 });
+    await page.waitForTimeout(2500);
+    if (await page.getByTestId('tenancy-select-all').count()) {
+      throw new Error('bulk-delete select-all checkbox leaked to client tenancy board');
+    }
+    const rowTicks = await page.locator('tbody input[type="checkbox"]').count();
+    if (rowTicks > 0) throw new Error(`${rowTicks} bulk-delete row ticks leaked to client tenancy board`);
+  });
+
   // The unified tenancy schedule's deal/letting link-map on the client's OWN
   // property must load (drives the tenancy view's linked-deal chips). It's
   // scope-checked; the foreign case is covered in client-foreign-unit-guards.

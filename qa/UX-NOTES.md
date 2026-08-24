@@ -16,6 +16,24 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+91. 2026-08-24 · Landsec client / desktop 1440px (QA r367) · "catch up on
+    news about my tenants" · The Brand News list shows the same story twice
+    when the raw feed headline and the normalised signal differ slightly —
+    e.g. "Musician sues Starbucks for £2m after 'career-ending' incident in
+    London branch - London Evening Standard" and "Musician sues Starbucks
+    for £2m over incident at London branch" render as two entries a few rows
+    apart. Brand-profile Signals already dedupe by normalised headline (UX
+    #12); suggest applying the same near-duplicate collapse to the News tab
+    list so clients don't read the same lawsuit twice.
+
+90. 2026-08-24 · Landsec client / desktop 1440px (QA r367) · "open the
+    tenancy schedule" · Typing/bookmarking /tenancy-schedule silently lands
+    on the Properties list with no explanation (the redirect is intended —
+    the schedule is per-property) — the user asked for a schedule and gets
+    a different page with no hint they should pick a property. Suggest a
+    one-line toast or banner after the redirect: "Pick a property to open
+    its tenancy schedule."
+
 89. 2026-08-24 · Landsec client / desktop 1440px (QA r366) · "see which of
     my brands are active right now" · On Brand Intelligence → Overview, the
     Who's Hot rows use "d" for two different things side by side: a filled
