@@ -73,6 +73,18 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r362 · 2026-08-24 · LIGHT — ROUND IN PROGRESS (provisional)
+- JOGQK merge (3 days of work): tracked-brand removal (is_tracked_brand gone,
+  every tenant company is a brand), National & Regional category retired into
+  Fashion & Retail, design-review batches, deal-status palette unification.
+  One conflict in mobile-app.tsx (create-group button) resolved favouring
+  JOGQK. tsc clean on merged tree.
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1
+  post-merge). Two-bot round 363 running; triage to follow.
+- Plan: LIGHT round (r361 was FULL). Targeted regression of newest JOGQK
+  surfaces: brands hub (no Tracked pill/badge, no National & Regional),
+  brand profile staff + client, WIP report.
+
 ### r361 · 2026-08-21 · FULL (rotation #3 Landsec client mobile 390px)
 - JOGQK merge: brought in Brent Cross evidence-map demo route. Regression:
   run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1 post-merge).
