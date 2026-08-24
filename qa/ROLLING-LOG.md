@@ -73,17 +73,39 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r365 · 2026-08-24 · FULL (rotation #1 staff desktop) — IN PROGRESS
-- Provisional heartbeat ~16:50 UTC. Regression: run-smoke.sh GREEN (42
-  checks, 0 failures, FRESH_BUILD=1; pg_hba trust fix needed, r205 note).
+### r365 · 2026-08-24 · FULL (rotation #1 staff desktop)
+- Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
+  before and after the fixes; pg_hba trust fix needed, r205 note).
 - Two-bot round 369: exit 0, all scenarios ok — incl. r364's new
   staff-turnover-entries + client-turnover-slice-guard and the FIXED
   client-brand-hub-hunter-scoped (in-harness confirmation r364 asked for).
   3 issues all listed noise (rocketreach-400, live-intel 503,
   commentary-regen 503). Dev-server sweep: 0 raw 500/502/504 (lone " 500 "
   = "500 articles" news echo).
-- Journey next: Victoria desktop 1440px — Turnover table/By-Brand/From CRM
-  Comps + draft confirm, Comps board, staff contacts.
+- Journey: Victoria @ 1440px — "month-end turnover review": /turnover table
+  (KPIs, probe rows visible = inter-round artefacts) → By Brand view (brand
+  groups + Find Stores render) → From CRM Comps (POST 200; fixture has 0
+  name-matches so 0 drafts created — endpoint fine, feedback gap logged as
+  UX #88; client gateway blocks the POST, checked in code) → Comps board
+  (chips, stats strip, 11 AI leads line) → CRM landlords + contacts search.
+  0 pageerrors, 0 h-overflow, 0 non-noise 4xx/5xx; all tasks achievable.
+- Bug fixed 1: turnover formatCurrency rounding edge — values in
+  [999,500..999,999] rendered "£1000k" (KPI header read "AVG TURNOVER
+  £1000k" every round, since the harness probes seed 999999). Now rounds
+  before picking the unit → "£1.0m". Verified visually (0×£1000k, 5×£1.0m).
+- Bug fixed 2: comps stats strip + bulk-delete dialog said "1 comps" —
+  pluralized both. Verified visually ("1 comp" on the fixture board).
+- Harness growth: staff-turnover-entries now opens /turnover in-browser and
+  fails on any "£1000k" (and requires "£1.0m" for its 999999 probe).
+- Confirmation round 370: exit 0, all scenarios ok incl. the new assert,
+  3 issues all listed noise (qa/logs/round-370.jsonl). tsc clean.
+- Bugs deferred: none. Suggestions added: UX #88 (From CRM Comps 0-created
+  toast explains nothing about the name-match rule). New flakes: none.
+- Housekeeping: heartbeat commit 3160151d carries a non-standard co-author
+  footer (harness default slipped in); later commits back to repo style.
+- Next journey: r365 was FULL → r366 LIGHT; then rotation #2 Landsec client
+  desktop. Candidate tasks: client news, client tasks board, client
+  tenancy-schedule edits (positioning/bands), brand self-add flow.
 
 ### r364 · 2026-08-24 · LIGHT (r363 had the journey)
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1;
