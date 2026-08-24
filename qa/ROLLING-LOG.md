@@ -73,11 +73,41 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r363 · 2026-08-24 · ROUND IN PROGRESS (provisional)
-- FULL round planned: rotation #4 staff mobile 390px (deal detail phone
-  pills, brands phone explorer, Turnover board phone cards per r362 note).
+### r363 · 2026-08-24 · FULL (rotation #4 BGP staff mobile 390px)
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
-- Two-bot round 365 running; triage + journey to follow.
+  Two-bot round 365: exit 0, all steps ok, 3 issues all listed noise
+  (rocketreach-400, live-intel 503, commentary-regen 503). Dev-server
+  sweep: 0 raw 500/502/504 across the round.
+- Journey: Victoria @390px iPhone UA — "between viewings: check my deals,
+  read one deal's activity, check Turnover, look up a brand contact". Cold
+  open lands ChatBGP Messages (intended), Dashboard tab → tile home, Deals
+  tab → deals hub cards, deal detail section pills, /turnover cards +
+  By-Brand toggle, /brands explorer search → Honi Poke profile pills
+  (Chat/Contacts/Compliance/Intel). 0 pageerrors, 0 h-overflow, 0
+  unexplained 4xx/5xx.
+- Bug fixed 1: phone deal detail — on a deal with NO linked tenant/landlord
+  the Brand section pill landed on a blank screen whose only content was
+  the red Delete Deal button (Brand card renders only when a party is
+  linked; Delete Deal was ungated by the section switcher). Now: empty
+  state ("No brand linked yet — link a tenant or landlord…",
+  deal-brand-empty) + Delete Deal gated to the Overview section on phones
+  (desktop unchanged). tsc clean; verified visually phone+desktop both
+  states. Harness: staff-deal-mobile-action-row extended with the
+  empty-state + delete-gating asserts (runs when the picked deal has no
+  parties — Gail fixture deal qualifies).
+- Confirmation: two-bot round 366 with the extended scenario — exit 0, all
+  steps ok incl. staff-deal-mobile-action-row, same 3 listed-noise issues
+  (qa/logs/round-366.jsonl).
+- Bugs deferred: none. Suggestions added: UX #84 (phone deal back-arrow
+  wraps next to status chip — reads as mystery control), UX #85 (brand
+  Contacts pill hides the only contact behind "Show all 1 contacts").
+- HARNESS LEARNING (extends r361): iPhone UA alone is NOT enough for the
+  phone shell — isTouchDevice() needs touch, so a 390px context must also
+  set isMobile: true, hasTouch: true (like two-bot does), else you get the
+  desktop sidebar and misread it as a bug.
+- Next journey: r363 was FULL → r364 LIGHT; then rotation #1 staff desktop.
+  Candidate targets: Turnover Add-entry flow (only rendered this round),
+  WIP report interactions, staff /tasks.
 
 ### r362 · 2026-08-24 · LIGHT (r361 had the journey)
 - JOGQK merge (3 days of work): tracked-brand removal (is_tracked_brand gone,
