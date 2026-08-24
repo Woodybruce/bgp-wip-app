@@ -3575,6 +3575,43 @@ async function markRound(page, cross) {
     if (rowTicks > 0) throw new Error(`${rowTicks} bulk-delete row ticks leaked to client tenancy board`);
   });
 
+  // r368: plan upload is client-allowed on their own property (board parity)
+  // but every other plan write — rename, auto-detect, delete — is staff-only,
+  // so the plans panel must not offer a client those controls (same class as
+  // the r367 tick fix) and the server must 403 the writes even on a plan the
+  // client itself uploaded. run-round.sh purges the QA-PLAN-GATE row.
+  await step(page, p, 'client-plans-write-controls-hidden', async () => {
+    const r = await page.evaluate(async () => {
+      const auth = { Authorization: 'Bearer ' + localStorage.getItem('authToken') };
+      const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      const raw = atob(b64);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      const fd = new FormData();
+      fd.append('file', new Blob([bytes], { type: 'image/png' }), 'qa-plan-gate.png');
+      fd.append('floor', 'QA-PLAN-GATE');
+      const up = await fetch(`/api/properties/${window.QA_FIX.bluewater}/plans`, { method: 'POST', credentials: 'include', headers: auth, body: fd }).catch(() => ({ status: 0 }));
+      const plan = up.status === 200 ? await up.json().catch(() => null) : null;
+      if (!plan) return { up: up.status };
+      const jsonAuth = { ...auth, 'Content-Type': 'application/json' };
+      const patch = (await fetch(`/api/plans/${plan.id}`, { method: 'PATCH', credentials: 'include', headers: jsonAuth, body: JSON.stringify({ floor: 'QA-PLAN-GATE' }) }).catch(() => ({ status: 0 }))).status;
+      const auto = (await fetch(`/api/plans/${plan.id}/auto-detect`, { method: 'POST', credentials: 'include', headers: auth }).catch(() => ({ status: 0 }))).status;
+      const del = (await fetch(`/api/plans/${plan.id}`, { method: 'DELETE', credentials: 'include', headers: auth }).catch(() => ({ status: 0 }))).status;
+      return { up: up.status, patch, auto, del };
+    });
+    if (r.up !== 200) throw new Error(`client own-property plan upload should be allowed (expected 200, got ${r.up})`);
+    if (r.patch !== 403) throw new Error(`client renamed a plan (expected 403, got ${r.patch})`);
+    if (r.auto !== 403) throw new Error(`client fired plan auto-detect (expected 403, got ${r.auto})`);
+    if (r.del !== 403) throw new Error(`client deleted a plan (expected 403, got ${r.del})`);
+    await page.goto(`${BASE}/properties/${BLUEWATER}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.getByTestId('button-upload-plan').waitFor({ timeout: 30000 });
+    await page.waitForTimeout(2000);
+    if (!(await page.getByTestId('button-floor-QA-PLAN-GATE').count())) throw new Error('uploaded plan chip not rendered on client plans panel');
+    if (await page.getByTestId('button-toggle-draw-mode').count()) throw new Error('Add-unit draw toggle leaked to client plans panel');
+    if ((await page.getByTestId('button-auto-detect-plan').count()) + (await page.getByTestId('button-auto-detect-plan-hq').count())) throw new Error('Auto-detect leaked to client plans panel');
+    if (await page.locator('[data-testid="property-plans-panel"] button[title^="Delete"]').count()) throw new Error('Delete-plan button leaked to client plans panel');
+  });
+
   // The unified tenancy schedule's deal/letting link-map on the client's OWN
   // property must load (drives the tenancy view's linked-deal chips). It's
   // scope-checked; the foreign case is covered in client-foreign-unit-guards.

@@ -35,6 +35,7 @@ psql -U bgp -h localhost bgp -tA -c "
   DELETE FROM unit_viewings WHERE attendees LIKE 'QA-VIEWING-%' OR attendees LIKE 'QA-VDEL-%';
   DELETE FROM unit_interest WHERE company_name LIKE 'QA-PROBE%';
   DELETE FROM crm_comps    WHERE name LIKE 'QA-COMP%';
+  DELETE FROM property_plans WHERE floor = 'QA-PLAN-GATE';
   DELETE FROM turnover_data WHERE notes LIKE 'QA-PROBE%';
   -- client-pi-lookup-open resolves DA9 9ST each round; the resolve persists
   -- a search-history row even when the title lookup itself comes back empty.
