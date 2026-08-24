@@ -12,12 +12,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pill } from "@/components/ui/pill";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Building2, TrendingUp, ClipboardList, Instagram } from "lucide-react";
+import { Building2, TrendingUp, ClipboardList, Instagram, Store, Swords } from "lucide-react";
 import {
-  CompanyMiniChat, MenuIntelCard, PortfolioActivityBlock, BrandComplianceCard,
+  CompanyMiniChat, MenuIntelCard, PortfolioActivityBlock, BrandComplianceCard, BrandInstagramCard,
 } from "@/components/brand-profile-panel";
 import { CompanyContactsBoard } from "@/components/company-contacts-board";
 import { CovenantBadge, CovenantCommentary } from "@/components/covenant-badge";
+import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 
 export function MobileBrandView({ companyId }: { companyId: string }) {
   const { data, isLoading } = useQuery<any>({
@@ -71,6 +72,15 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
   const trackerComments: any[] = trackerData?.comments || [];
 
   const signals: any[] = (data.signals || []).slice(0, 6);
+  // Same UK slice as the desktop Stores section — the map only earns its
+  // place once at least one store is geocoded.
+  const ukStores: any[] = (data.stores || []).filter((s: any) => !s.country || s.country === "GB");
+  const mappableStores = ukStores.filter((s: any) => typeof s.lat === "number" && typeof s.lng === "number");
+  const similarTenants: any[] = (data.competitors || []).slice(0, 8);
+  const similarNames = new Set(similarTenants.map((t: any) => String(t.name).toLowerCase().trim()));
+  const aiCompetitors: any[] = ((c.ai_competitors as any[]) || []).filter(
+    (comp: any) => !similarNames.has(String(comp.name).toLowerCase().trim())
+  );
 
   return (
     <div className="p-4 space-y-3 pb-6">
@@ -202,7 +212,56 @@ export function MobileBrandView({ companyId }: { companyId: string }) {
         </Card>
       )}
 
-      {/* Instagram handle shortcut */}
+      {/* UK stores — same data as the desktop Stores section, map first */}
+      {!isLandlord && mappableStores.length > 0 && (
+        <Card>
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+              <Store className="w-3.5 h-3.5" /> UK stores
+              <Badge variant="outline" className="text-[10px] tabular-nums">{ukStores.length}</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0">
+            <div className="rounded-lg overflow-hidden border border-border/50">
+              <BrandPortfolioMap stores={mappableStores as any} height={240} />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Competition — CRM similar tenants (linkable) + AI competitor set */}
+      {!isLandlord && (similarTenants.length > 0 || aiCompetitors.length > 0) && (
+        <Card>
+          <CardHeader className="p-3 pb-2">
+            <CardTitle className="text-xs flex items-center gap-2 uppercase tracking-wider text-muted-foreground">
+              <Swords className="w-3.5 h-3.5" /> Competition
+              <Badge variant="outline" className="text-[10px] tabular-nums">{similarTenants.length + aiCompetitors.length}</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0 space-y-2">
+            {similarTenants.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {similarTenants.map((t: any) => (
+                  <Link key={t.id} href={`/companies/${t.id}`} className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border bg-card hover:bg-muted">
+                    {t.name}
+                    {t.store_count != null && <span className="text-muted-foreground tabular-nums">{t.store_count}</span>}
+                  </Link>
+                ))}
+              </div>
+            )}
+            {aiCompetitors.slice(0, 6).map((comp: any, i: number) => (
+              <div key={i} className="text-xs border-l-2 border-l-muted pl-2">
+                <span className="font-medium">{comp.name}</span>
+                {comp.segment && <span className="text-muted-foreground"> · {comp.segment}</span>}
+                {comp.reason && <p className="text-[11px] text-muted-foreground leading-snug">{comp.reason}</p>}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Instagram board — same card as desktop (posts + follower stats) */}
+      <BrandInstagramCard companyId={companyId} />
       {c.instagram_handle && (
         <a
           href={`https://instagram.com/${c.instagram_handle}`}

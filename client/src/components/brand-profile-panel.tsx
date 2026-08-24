@@ -5548,7 +5548,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
 //   feed        → grid of recent posts (news_articles from the paid feed)
 //   handle_only → slim card: handle link + follower count, no feed slot yet
 //   no_handle   → card hides itself entirely
-function BrandInstagramCard({ companyId }: { companyId: string }) {
+export function BrandInstagramCard({ companyId }: { companyId: string }) {
   const { data, isLoading } = useQuery<any>({
     queryKey: ["/api/brand", companyId, "instagram"],
     queryFn: async () => {
