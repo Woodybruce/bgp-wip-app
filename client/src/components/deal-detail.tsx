@@ -54,6 +54,7 @@ import {
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useState, useMemo, useEffect } from "react";
+import { Pill } from "@/components/ui/pill";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -63,7 +64,7 @@ import type { CrmDeal, CrmProperty, CrmCompany, CrmContact } from "@shared/schem
 import { buildUserColorMap, resolveDealAgents } from "@/lib/agent-colors";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
-import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
+import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as STATUS_CHIP_COLORS, legacyToCode } from "@shared/deal-status";
 import { InlineLinkSelect, InlineText } from "@/components/inline-edit";
 import {
   DEAL_STATUS_COLORS,
@@ -184,6 +185,12 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     meetings: false,
   });
   const toggleMain = (key: string) => setMainSections(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // Phone section switcher (docs/DESIGN.md §9) — the deal page runs 15+
+  // boards deep in one scroll; below md we show one section at a time,
+  // same treatment that fixed the WIP report. Desktop layout unchanged.
+  const [phoneSection, setPhoneSection] = useState<"overview" | "brand" | "compliance" | "activity" | "files">("overview");
+  const sec = (k: typeof phoneSection) => (phoneSection === k ? "" : "hidden md:block");
 
   // Right sidebar — linked records, files, contacts.
   const [sidebarSections, setSidebarSections] = useState<Record<string, boolean>>({
@@ -445,7 +452,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       const r = await apiRequest("POST", "/api/crm/companies", {
         name: name.trim(),
         companyType,
-        isTrackedBrand: companyType.startsWith("Tenant"),
       });
       const created = await r.json();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
@@ -528,14 +534,14 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     { label: "Exchanged", value: deal.exchangedAt ? formatDate(deal.exchangedAt) : null },
     { label: "Completed", value: deal.completedAt ? formatDate(deal.completedAt) : null },
     { label: "Invoiced", value: deal.invoicedAt ? formatDate(deal.invoicedAt) : null },
-    { label: "Last Interaction", value: deal.lastInteraction },
+    { label: "Last Interaction", value: deal.lastInteraction ? (isNaN(Date.parse(deal.lastInteraction)) ? deal.lastInteraction : formatDate(deal.lastInteraction)) : null },
   ];
 
   // Files / linked records / comments / history. Rendered in the right
   // sidebar on ≥md screens and stacked under the main column on mobile —
   // the sidebar is display:none below md, which used to make these
   // sections unreachable on phones.
-  const sidebarPanels = (
+  const sidebarLinkPanels = (
     <>
       <SidebarSection open={sidebarSections.files} onToggle={() => toggleSidebar("files")} icon={FileText} title="Files" testId="toggle-sidebar-files">
         <div className="space-y-2" data-testid="deal-files-section">
@@ -593,6 +599,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </SidebarSection>
       )}
 
+    </>
+  );
+
+  const sidebarActivityPanels = (
+    <>
       <SidebarSection open={sidebarSections.comments} onToggle={() => toggleSidebar("comments")} icon={MessageSquare} title="Comments" testId="toggle-sidebar-comments">
         <DealComments dealId={id} comments={deal.comments} />
       </SidebarSection>
@@ -612,6 +623,13 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           </CollapsibleCard>
         </div>
       </SidebarSection>
+    </>
+  );
+
+  const sidebarPanels = (
+    <>
+      {sidebarLinkPanels}
+      {sidebarActivityPanels}
     </>
   );
 
@@ -668,8 +686,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
             const counterparty = counterpartyId ? companies.find((c) => c.id === counterpartyId) : null;
             return (
               <>
-                <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-orange-600 dark:text-orange-400 mb-1" data-testid="deal-eyebrow">
-                  <span className="w-2 h-2 rounded-full bg-orange-500" /> Deal{deal.dealType ? ` · ${deal.dealType}` : ""}
+                <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-primary mb-1" data-testid="deal-eyebrow">
+                  <span className="w-2 h-2 rounded-full bg-primary" /> Deal{deal.dealType ? ` · ${deal.dealType}` : ""}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   {headingIsUnit ? (
@@ -685,7 +703,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                     <h1 className="text-xl font-bold truncate" data-testid="text-deal-name">{headingText}</h1>
                   )}
                   {deal.status && (
-                    <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[legacyToCode(deal.status) || ""] || "bg-zinc-500"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
+                    <Badge variant="outline" className={`text-[10px] border-transparent ${STATUS_CHIP_COLORS[(legacyToCode(deal.status) || "") as keyof typeof STATUS_CHIP_COLORS] || "bg-muted text-muted-foreground"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
                   )}
                 </div>
                 <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap" data-testid="deal-breadcrumb">
@@ -788,6 +806,17 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-1.5 md:hidden" data-testid="deal-phone-sections">
+        <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="deal-section-overview">Overview</Pill>
+        <Pill active={phoneSection === "brand"} onClick={() => { setPhoneSection("brand"); setMainSections(prev => ({ ...prev, brands: true })); }} data-testid="deal-section-brand">Brand</Pill>
+        {!isClientDeal && (
+          <Pill active={phoneSection === "compliance"} onClick={() => { setPhoneSection("compliance"); setMainSections(prev => ({ ...prev, kyc: true })); }} data-testid="deal-section-compliance">KYC</Pill>
+        )}
+        <Pill active={phoneSection === "activity"} onClick={() => setPhoneSection("activity")} data-testid="deal-section-activity">Activity</Pill>
+        <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="deal-section-files">Files</Pill>
+      </div>
+
+      <div className={`space-y-2.5 ${sec("overview")}`}>
       {textFields.some((f) => f.value) && (
       <Card>
         <CardContent className="p-3">
@@ -796,7 +825,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               <div key={field.label} className="flex flex-col py-1">
                 <p className="text-[10px] text-muted-foreground leading-tight">{field.label}</p>
                 {field.colorMap && field.value && field.colorMap[field.value] ? (
-                  <Badge className={`text-[9px] text-white w-fit mt-0.5 ${field.colorMap[field.value]}`} data-testid={`text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`}>
+                  <Badge variant="outline" className="text-[9px] w-fit mt-0.5 gap-1" data-testid={`text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${field.colorMap[field.value]}`} />
                     {field.value}
                   </Badge>
                 ) : field.href ? (
@@ -1049,13 +1079,20 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </DialogContent>
       </Dialog>
 
+      </div>
+
       {/* AI-curated activity — primary comms feed (emails + meetings), shown
           above KYC. Raw sources live in "History & activity" in the rail.
           Hidden for clients: it surfaces BGP staff emails/meetings. */}
-      {!isClientDeal && <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />}
+      {!isClientDeal && (
+        <div className={sec("activity")}>
+          <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />
+        </div>
+      )}
 
       {/* KYC/AML is BGP-internal compliance — never shown to clients. */}
       {!isClientDeal && (
+      <div className={sec("compliance")}>
       <CollapsibleCard open={mainSections.kyc} onToggle={() => toggleMain("kyc")} icon={ShieldCheck} title="KYC" testId="toggle-deal-kyc">
         <div className="space-y-3">
           <DealKYCPanel deal={deal} companies={companies} />
@@ -1065,6 +1102,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           <DealAmlStatusCard dealId={id} />
         </div>
       </CollapsibleCard>
+      </div>
       )}
 
       {[
@@ -1073,6 +1111,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       ]
         .filter(({ company }) => !!company)
         .filter(({ company }, i, arr) => arr.findIndex(a => a.company!.id === company!.id) === i).length > 0 && (
+        <div className={sec("brand")}>
         <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Profiles" testId="toggle-deal-brands">
           <div className="space-y-3">
             {[
@@ -1091,11 +1130,12 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               ))}
           </div>
         </CollapsibleCard>
+        </div>
       )}
 
 
       {deal.updatedAt && (
-        <p className="text-xs text-muted-foreground flex items-center gap-1">
+        <p className={`text-xs text-muted-foreground items-center gap-1 ${phoneSection === "overview" ? "flex" : "hidden md:flex"}`}>
           <Clock className="w-3 h-3" />
           Last updated: {new Date(deal.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
         </p>
@@ -1186,8 +1226,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       {/* Below md the right sidebar is hidden — surface the same sections
           stacked here so files/contacts/comments/history stay reachable
           on phones. */}
-      <div className="md:hidden border rounded-md mt-4" data-testid="deal-sidebar-mobile">
-        {sidebarPanels}
+      <div className={`md:hidden border rounded-md mt-4 ${phoneSection === "files" ? "" : "hidden"}`} data-testid="deal-sidebar-mobile">
+        {sidebarLinkPanels}
+      </div>
+      <div className={`md:hidden border rounded-md mt-4 ${phoneSection === "activity" ? "" : "hidden"}`} data-testid="deal-sidebar-mobile-activity">
+        {sidebarActivityPanels}
       </div>
 
       {!isClientDeal && (

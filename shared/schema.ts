@@ -479,8 +479,6 @@ export const crmCompanies = pgTable("crm_companies", {
   lastEnrichedAt: timestamp("last_enriched_at"),
   enrichmentSource: text("enrichment_source"),
   // ── Brand Bible fields ─────────────────────────────────────────────
-  isTrackedBrand: boolean("is_tracked_brand").default(false),
-  trackingReason: text("tracking_reason"),
   brandGroupId: varchar("brand_group_id"), // parent brand group (e.g. Inditex for Zara)
   // Brand theme (from logo.dev Brand API) — drives the client-app skin so a
   // landlord client sees their own logo + colours ("their version of the app").

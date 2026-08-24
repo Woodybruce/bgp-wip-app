@@ -641,8 +641,8 @@ export default function AmlCompliancePage() {
       </div>
 
       <div className="p-6 space-y-6 max-w-4xl">
-        <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 text-xs text-blue-800 dark:text-blue-300">
-          <p className="font-semibold mb-1">UK Money Laundering Regulations 2017 — Estate Agent Obligations</p>
+        <div className="p-3 rounded-lg bg-muted/40 border border-border text-xs text-muted-foreground">
+          <p className="font-semibold mb-1 text-foreground">UK Money Laundering Regulations 2017 — Estate Agent Obligations</p>
           <p>Estate agents are subject to the MLR 2017 and must implement Customer Due Diligence (CDD), maintain policies & procedures, appoint a Nominated Officer (MLRO), ensure staff training, and conduct ongoing monitoring. HMRC is the supervisory authority for estate agents.</p>
         </div>
 

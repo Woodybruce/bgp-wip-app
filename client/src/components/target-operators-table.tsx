@@ -188,7 +188,7 @@ export function TargetRowCells({ target: t, clientCompanyId, onChanged, showDele
         <Select value={t.status || "Identified"} onValueChange={v => patchTarget({ status: v })}>
           <SelectTrigger className="h-7 text-xs w-[124px]">
             <SelectValue>
-              <Badge className={`text-[10px] text-white ${TARGET_STATUS_COLORS[t.status || "Identified"]}`}>{targetStatusLabel(t.status || "Identified")}</Badge>
+              <Badge variant="outline" className={`border-transparent text-[10px] text-white ${TARGET_STATUS_COLORS[t.status || "Identified"]}`}>{targetStatusLabel(t.status || "Identified")}</Badge>
             </SelectValue>
           </SelectTrigger>
           <SelectContent>

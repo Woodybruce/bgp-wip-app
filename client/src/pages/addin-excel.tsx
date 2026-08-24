@@ -16,6 +16,7 @@ import {
 import bgpLogoBlack from "@assets/BGP_BlackHolder_1771853582461.png";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { AddinHeader } from "@/components/addin-header";
+import { Pill } from "@/components/ui/pill";
 import { useToast } from "@/hooks/use-toast";
 
 interface Message {
@@ -46,10 +47,10 @@ const TOKEN_KEY = "bgp_addin_token";
 const USER_KEY = "bgp_addin_user";
 
 const QUICK_ACTIONS = [
-  { label: "Write a formula", prompt: "Help me write an Excel formula to ", icon: FileSpreadsheet, color: "text-emerald-500" },
-  { label: "Property data", prompt: "Look up CRM data for property ", icon: Building2, color: "text-blue-500" },
-  { label: "Financial model", prompt: "Help me build a financial model for ", icon: BarChart3, color: "text-amber-500" },
-  { label: "Contact lookup", prompt: "Find contact details for ", icon: Users, color: "text-violet-500" },
+  { label: "Write a formula", prompt: "Help me write an Excel formula to ", icon: FileSpreadsheet, color: "text-muted-foreground" },
+  { label: "Property data", prompt: "Look up CRM data for property ", icon: Building2, color: "text-muted-foreground" },
+  { label: "Financial model", prompt: "Help me build a financial model for ", icon: BarChart3, color: "text-muted-foreground" },
+  { label: "Contact lookup", prompt: "Find contact details for ", icon: Users, color: "text-muted-foreground" },
 ];
 
 function CodeBlock({ code, language }: { code: string; language: string }) {
@@ -300,7 +301,7 @@ function AddinLogin({ onLogin }: { onLogin: (token: string, name: string) => voi
             }}
           >
             {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-            Sign In
+            Sign in
           </button>
         </form>
       </div>
@@ -610,7 +611,7 @@ function SharePointBrowser({ getHeaders }: { getHeaders: () => Record<string, st
           </div>
         ) : sortedItems.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-20 text-[11px] text-muted-foreground">
-            {searchQuery ? "No matching files" : "Drop files here or click Upload"}
+            {searchQuery ? "No matching files" : "Drop files here, or upload"}
           </div>
         ) : (
           <div className="py-1">
@@ -1691,26 +1692,26 @@ function ModelBuilder({ getHeaders }: { getHeaders: () => Record<string, string>
   };
 
   const fields: Array<{ key: string; label: string; prefix?: string; suffix?: string; step?: number }> = [
-    { key: "propertyName", label: "Property Name" },
-    { key: "purchasePrice", label: "Purchase Price", prefix: "\u00a3" },
-    { key: "totalAreaSqFt", label: "Net Area", suffix: "sq ft" },
+    { key: "propertyName", label: "Property name" },
+    { key: "purchasePrice", label: "Purchase price", prefix: "\u00a3" },
+    { key: "totalAreaSqFt", label: "Net area", suffix: "sq ft" },
     { key: "ervPerSqFt", label: "Rent per sq ft", prefix: "\u00a3" },
-    { key: "currentRentPA", label: "Current Rent p.a.", prefix: "\u00a3" },
-    { key: "voidPeriodMonths", label: "Void Period", suffix: "months", step: 1 },
+    { key: "currentRentPA", label: "Current rent p.a.", prefix: "\u00a3" },
+    { key: "voidPeriodMonths", label: "Void period", suffix: "months", step: 1 },
     { key: "ltv", label: "LTV", suffix: "%" },
-    { key: "interestRate", label: "Interest Rate", suffix: "%" },
-    { key: "exitCapRate", label: "Exit Cap Rate", suffix: "%" },
-    { key: "holdPeriodYears", label: "Hold Period", suffix: "years", step: 1 },
-    { key: "rentGrowthPA", label: "Rent Growth p.a.", suffix: "%" },
-    { key: "stampDutyRate", label: "SDLT Rate", suffix: "%" },
+    { key: "interestRate", label: "Interest rate", suffix: "%" },
+    { key: "exitCapRate", label: "Exit cap rate", suffix: "%" },
+    { key: "holdPeriodYears", label: "Hold period", suffix: "years", step: 1 },
+    { key: "rentGrowthPA", label: "Rent growth p.a.", suffix: "%" },
+    { key: "stampDutyRate", label: "SDLT rate", suffix: "%" },
   ];
 
   return (
     <div className="flex flex-col h-full">
       <div className="px-3 py-2.5 border-b border-border/40 shrink-0">
         <div className="flex items-center gap-2 mb-2">
-          <Hammer className="w-4 h-4 text-amber-500" />
-          <span className="text-[12px] font-semibold">Model Builder</span>
+          <Hammer className="w-4 h-4 text-muted-foreground" />
+          <span className="text-[12px] font-semibold">Model builder</span>
         </div>
         <select
           value={modelType}
@@ -1798,7 +1799,7 @@ function ModelBuilder({ getHeaders }: { getHeaders: () => Record<string, string>
           ) : (
             <Play className="w-3.5 h-3.5 mr-1.5" />
           )}
-          Build Model in Excel
+          Build model in Excel
         </Button>
         <Button
           variant="outline"
@@ -1808,7 +1809,7 @@ function ModelBuilder({ getHeaders }: { getHeaders: () => Record<string, string>
           data-testid="button-sync-assumptions"
         >
           <RefreshCw className="w-3 h-3 mr-1.5" />
-          Sync Assumptions from Sheet
+          Refresh assumptions from sheet
         </Button>
       </div>
     </div>
@@ -1865,7 +1866,7 @@ function ExcelActionButton({ action, onApply }: { action: ExcelAction; onApply: 
         applied
           ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
           : error
-            ? "bg-red-50 text-red-700 hover:bg-red-100"
+            ? "bg-destructive/10 text-destructive hover:bg-destructive/20"
             : "bg-primary/10 text-primary hover:bg-primary/20"
       }`}
       data-testid="button-excel-action"
@@ -2012,7 +2013,7 @@ function SharePointAttachPicker({
               <Loader2 className="w-4 h-4 animate-spin" />
             </div>
           ) : error ? (
-            <div className="px-3 py-4 text-[12px] text-red-500">{error}</div>
+            <div className="px-3 py-4 text-[12px] text-destructive">{error}</div>
           ) : (
             <div>
               {folders.map((it) => (
@@ -2059,7 +2060,7 @@ function SharePointAttachPicker({
             <Button size="sm" variant="ghost" onClick={onClose} className="h-7 text-[12px]">Cancel</Button>
             <Button size="sm" onClick={attachSelected} disabled={selectedCount === 0 || attaching} className="h-7 text-[12px]" data-testid="button-sp-picker-attach">
               {attaching ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
-              Attach {selectedCount > 0 ? `(${selectedCount})` : ""}
+              Attach{selectedCount > 0 ? <span className="font-mono tabular-nums ml-1">{selectedCount}</span> : null}
             </Button>
           </div>
         </div>
@@ -2515,34 +2516,16 @@ function AddinExcel() {
         </Button>
       </AddinHeader>
 
-      <div className="flex items-center h-9 border-b border-border/40 shrink-0">
-        <button
-          onClick={() => setActiveTab("chat")}
-          className={`flex-1 flex items-center justify-center gap-1.5 h-full text-[11px] font-medium transition-all relative ${activeTab === "chat" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-          data-testid="tab-chat"
-        >
-          <MessageSquare className="w-3.5 h-3.5" />
+      <div className="flex items-center flex-wrap gap-1.5 px-3 py-2 border-b border-border/40 shrink-0">
+        <Pill active={activeTab === "chat"} onClick={() => setActiveTab("chat")} data-testid="tab-chat">
           Chat
-          {activeTab === "chat" && <div className="absolute bottom-0 left-3 right-3 h-[2px] bg-primary rounded-full" />}
-        </button>
-        <button
-          onClick={() => setActiveTab("models")}
-          className={`flex-1 flex items-center justify-center gap-1.5 h-full text-[11px] font-medium transition-all relative ${activeTab === "models" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-          data-testid="tab-models"
-        >
-          <Hammer className="w-3.5 h-3.5" />
+        </Pill>
+        <Pill active={activeTab === "models"} onClick={() => setActiveTab("models")} data-testid="tab-models">
           Models
-          {activeTab === "models" && <div className="absolute bottom-0 left-3 right-3 h-[2px] bg-primary rounded-full" />}
-        </button>
-        <button
-          onClick={() => setActiveTab("files")}
-          className={`flex-1 flex items-center justify-center gap-1.5 h-full text-[11px] font-medium transition-all relative ${activeTab === "files" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-          data-testid="tab-files"
-        >
-          <FolderOpen className="w-3.5 h-3.5" />
+        </Pill>
+        <Pill active={activeTab === "files"} onClick={() => setActiveTab("files")} data-testid="tab-files">
           SharePoint
-          {activeTab === "files" && <div className="absolute bottom-0 left-3 right-3 h-[2px] bg-primary rounded-full" />}
-        </button>
+        </Pill>
       </div>
 
       {activeTab === "chat" ? (
@@ -2822,14 +2805,14 @@ function AddinExcel() {
             </div>
             <div className="flex items-center justify-center gap-2 mt-1.5">
               <span className="text-[9px] text-muted-foreground/50">Claude Fable 5 · BGP CRM</span>
-              <button
+              <Pill
+                active={autoApply}
                 onClick={() => setAutoApply(v => !v)}
-                className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border transition-colors ${autoApply ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-border text-muted-foreground/60"}`}
-                title={autoApply ? "Changes are written to the workbook automatically — click to switch to Apply buttons" : "Changes wait for you to click Apply — click to write them automatically"}
+                title={autoApply ? "Changes are written to the workbook automatically — switch to Apply buttons" : "Changes wait for you to apply them — switch to writing them automatically"}
                 data-testid="button-toggle-autoapply"
               >
                 Auto-apply {autoApply ? "on" : "off"}
-              </button>
+              </Pill>
             </div>
           </div>
         </>

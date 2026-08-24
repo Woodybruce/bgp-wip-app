@@ -173,7 +173,7 @@ Return ONLY the JSON array. No commentary.`;
 export async function runMonthlyPerplexityRefresh(): Promise<{ scanned: number; signalsAdded: number; analysisUpdated: number; errors: number }> {
   const brands = await pool.query(
     `SELECT id FROM crm_companies
-      WHERE is_tracked_brand = true AND merged_into_id IS NULL
+      WHERE company_type ILIKE 'tenant%' AND merged_into_id IS NULL
       ORDER BY name`
   );
   let signalsAdded = 0;

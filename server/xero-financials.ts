@@ -15,7 +15,7 @@
 // cached in-memory for 15 minutes; ?refresh=1 busts the cache.
 
 import type { Express, Request, Response } from "express";
-import { requireAdmin } from "./auth";
+import { requireEquityOrAdmin } from "./auth";
 import { xeroApi } from "./xero";
 import { withSystemXero } from "./xero-system-session";
 import { pool } from "./db";
@@ -119,6 +119,23 @@ function monthsBetween(a: Date, b: Date): number {
   return (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth());
 }
 
+// Xero pages invoices at 100/call with no total count — follow pages until a
+// short page. Capped so a runaway ledger can't eat the 60/min rate limit;
+// 6 pages (600 invoices) is far beyond BGP's live volumes.
+async function fetchInvoicePages(session: any, where: string, order: string, maxPages = 6): Promise<any[]> {
+  const all: any[] = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const res = await xeroApi(
+      session,
+      `/Invoices?where=${encodeURIComponent(where)}&order=${encodeURIComponent(order)}&page=${page}`,
+    );
+    const batch: any[] = res?.Invoices || [];
+    all.push(...batch);
+    if (batch.length < 100) break;
+  }
+  return all;
+}
+
 async function buildFinancials(session: any): Promise<any> {
   const orgRes = await xeroApi(session, "/Organisation");
   const org = orgRes?.Organisations?.[0] || {};
@@ -131,17 +148,19 @@ async function buildFinancials(session: any): Promise<any> {
   // the requested month.
   const periods = Math.min(Math.max(monthsBetween(fyStart, today), 0), 11);
 
-  const [pnlRes, pnlMonthlyRes, bsRes, invRes, paidRes] = await Promise.all([
+  const [pnlRes, pnlMonthlyRes, bsRes, invoices, paidAll, bills] = await Promise.all([
     xeroApi(session, `/Reports/ProfitAndLoss?fromDate=${from}&toDate=${to}`),
     xeroApi(session, `/Reports/ProfitAndLoss?toDate=${to}&periods=${periods}&timeframe=MONTH`),
     xeroApi(session, `/Reports/BalanceSheet?date=${to}`),
-    // Outstanding sales invoices (debtors). One page of 100, most recent
-    // first, is plenty for the dashboard's aged view.
-    xeroApi(session, `/Invoices?where=${encodeURIComponent('Type=="ACCREC" AND Status=="AUTHORISED"')}&order=${encodeURIComponent("DueDate ASC")}&page=1`),
+    // Outstanding sales invoices (debtors) — all pages, not just the first
+    // 100 (a 101st invoice used to silently drop out of the aged view).
+    fetchInvoicePages(session, 'Type=="ACCREC" AND Status=="AUTHORISED"', "DueDate ASC"),
     // Paid sales invoices — the commission trigger (Wendy pays commission
     // when the money lands, not when the invoice is raised). FY filter is
     // applied after fetch since FullyPaidOnDate isn't filterable in where.
-    xeroApi(session, `/Invoices?where=${encodeURIComponent('Type=="ACCREC" AND Status=="PAID"')}&order=${encodeURIComponent("UpdatedDateUTC DESC")}&page=1`),
+    fetchInvoicePages(session, 'Type=="ACCREC" AND Status=="PAID"', "UpdatedDateUTC DESC"),
+    // Outstanding bills (creditors) — committed cash out with due dates.
+    fetchInvoicePages(session, 'Type=="ACCPAY" AND Status=="AUTHORISED"', "DueDate ASC"),
   ]);
 
   const pnl = flattenReport(pnlRes?.Reports?.[0]);
@@ -191,7 +210,6 @@ async function buildFinancials(session: any): Promise<any> {
   };
 
   // ---- Debtors (outstanding ACCREC invoices) ----
-  const invoices: any[] = invRes?.Invoices || [];
   const now = today.getTime();
   const buckets = { current: 0, d1to30: 0, d31to60: 0, d60plus: 0 };
   let outstanding = 0, overdue = 0;
@@ -221,7 +239,7 @@ async function buildFinancials(session: any): Promise<any> {
 
   // ---- Paid this FY (commission basis) ----
   const fyStartMs = fyStart.getTime();
-  const paidInvoices = ((paidRes?.Invoices || []) as any[])
+  const paidInvoices = (paidAll as any[])
     .map((inv: any) => ({
       xeroInvoiceId: inv.InvoiceID,
       number: inv.InvoiceNumber || "",
@@ -234,8 +252,148 @@ async function buildFinancials(session: any): Promise<any> {
     .filter(p => p.paidOn && p.paidOn.getTime() >= fyStartMs)
     .sort((a, b) => (b.paidOn!.getTime() - a.paidOn!.getTime()));
 
+  // ---- Creditors (outstanding ACCPAY bills) + cash-out schedule ----
+  // Bills are accrual entries: an AUTHORISED bill is already inside the P&L
+  // expense figures. This view is about WHEN the cash leaves, not extra cost.
+  const monthEnd = Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0);
+  const nextMonthEnd = Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 2, 0);
+  const credBuckets = { overdue: 0, thisMonth: 0, nextMonth: 0, later: 0 };
+  let creditorsOutstanding = 0;
+  const upcomingBills: Array<{ contact: string; number: string; due: string; amount: number }> = [];
+  for (const b of bills as any[]) {
+    const amount = toNum(b.AmountDue);
+    if (!amount) continue;
+    creditorsOutstanding += amount;
+    const due = parseXeroDate(b.DueDateString || b.DueDate);
+    const dueMs = due ? due.getTime() : NaN;
+    if (!isNaN(dueMs) && dueMs < now) credBuckets.overdue += amount;
+    else if (!isNaN(dueMs) && dueMs <= monthEnd) credBuckets.thisMonth += amount;
+    else if (!isNaN(dueMs) && dueMs <= nextMonthEnd) credBuckets.nextMonth += amount;
+    else credBuckets.later += amount;
+    upcomingBills.push({
+      contact: b.Contact?.Name || "—",
+      number: b.InvoiceNumber || "",
+      due: due ? iso(due) : "",
+      amount,
+    });
+  }
+  upcomingBills.sort((a, b) => b.amount - a.amount);
+
+  // Receipts due IN, same forward buckets — pairs with the bills schedule to
+  // make a simple near-term cash-flow view (debtors above only look backward).
+  const recBuckets = { overdue: 0, thisMonth: 0, nextMonth: 0, later: 0 };
+  for (const inv of invoices) {
+    const amount = toNum(inv.AmountDue);
+    if (!amount) continue;
+    const due = parseXeroDate(inv.DueDateString || inv.DueDate);
+    const dueMs = due ? due.getTime() : NaN;
+    if (!isNaN(dueMs) && dueMs < now) recBuckets.overdue += amount;
+    else if (!isNaN(dueMs) && dueMs <= monthEnd) recBuckets.thisMonth += amount;
+    else if (!isNaN(dueMs) && dueMs <= nextMonthEnd) recBuckets.nextMonth += amount;
+    else recBuckets.later += amount;
+  }
+
+  // ---- Cost analysis + run-rate forecast ----
+  // Everything derives from the P&L reports already fetched: per-account cost
+  // lines from the FY report, movement from the monthly report (columns come
+  // newest-first: values[0] = current partial month, values[1] = last full
+  // month). Wendy doesn't budget in Xero, so the forecast is a run-rate: the
+  // average of the last 3 full months, projected over the rest of the FY.
+  const isCostSection = (t: string) => /expense|overhead|administrat|direct cost|cost of sales/i.test(t);
+  const fytdExpenses = (opexRow?.values[0] ?? 0) || 0;
+
+  const costLines: Array<{ label: string; fytd: number; share: number }> = [];
+  for (const sec of pnl.sections) {
+    if (!isCostSection(sec.title)) continue;
+    for (const r of sec.rows) {
+      if (r.isTotal || !r.values[0]) continue;
+      costLines.push({ label: r.label, fytd: r.values[0], share: 0 });
+    }
+  }
+  costLines.sort((a, b) => b.fytd - a.fytd);
+  for (const c of costLines) c.share = fytdExpenses ? Math.round((c.fytd / fytdExpenses) * 100) : 0;
+
+  const movers: Array<{ label: string; lastMonth: number; priorAvg: number; delta: number }> = [];
+  for (const sec of pnlMonthly.sections) {
+    if (!isCostSection(sec.title)) continue;
+    for (const r of sec.rows) {
+      if (r.isTotal || r.values.length < 3) continue;
+      const lastMonth = r.values[1] ?? 0;
+      const prior = r.values.slice(2, 5).filter(v => v !== undefined);
+      if (!prior.length) continue;
+      const priorAvg = prior.reduce((s, v) => s + v, 0) / prior.length;
+      const delta = lastMonth - priorAvg;
+      if (Math.abs(delta) >= 250) movers.push({ label: r.label, lastMonth, priorAvg: Math.round(priorAvg), delta: Math.round(delta) });
+    }
+  }
+  movers.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+
+  // Run rate from the chronological monthly series, excluding the current
+  // (partial) month; falls back to the partial month if the FY just started.
+  const currentLabel = monthly.length ? monthly[monthly.length - 1] : null;
+  const fullMonths = monthly.slice(0, -1);
+  const runRateBasis = fullMonths.slice(-3);
+  const runRate = runRateBasis.length
+    ? runRateBasis.reduce((s, m) => s + (m.expenses || 0), 0) / runRateBasis.length
+    : (currentLabel?.expenses || 0);
+  const daysInMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0)).getUTCDate();
+  const monthsElapsedExact = monthsBetween(fyStart, today) + today.getUTCDate() / daysInMonth;
+  const monthsRemaining = Math.max(0, 12 - monthsElapsedExact);
+  const projectedRemainingCosts = runRate * monthsRemaining;
+  const projectedFyCosts = fytdExpenses + projectedRemainingCosts;
+
+  const costs = {
+    fytdExpenses: Math.round(fytdExpenses),
+    runRate: Math.round(runRate),
+    runRateBasisMonths: runRateBasis.length,
+    monthsRemaining: Math.round(monthsRemaining * 10) / 10,
+    projectedRemainingCosts: Math.round(projectedRemainingCosts),
+    projectedFyCosts: Math.round(projectedFyCosts),
+    topLines: costLines.slice(0, 12),
+    movers: movers.slice(0, 6),
+  };
+
+  // ---- Recurring commitments (repeating bill/invoice templates) ----
+  // Best-effort: repeating invoices may sit outside the granted granular
+  // scopes on older consents — degrade to null rather than fail the page.
+  let recurring: any = null;
+  try {
+    const repRes = await xeroApi(session, "/RepeatingInvoices");
+    const reps: any[] = repRes?.RepeatingInvoices || [];
+    const monthlyEquivalent = (r: any) => {
+      const unit = r?.Schedule?.Unit;
+      const period = Number(r?.Schedule?.Period) || 1;
+      const total = toNum(r.Total);
+      if (unit === "WEEKLY") return (total * 52) / 12 / period;
+      if (unit === "MONTHLY") return total / period;
+      return 0;
+    };
+    const active = reps.filter(r => r.Status === "AUTHORISED");
+    const billTemplates = active.filter(r => r.Type === "ACCPAY");
+    const incomeTemplates = active.filter(r => r.Type === "ACCREC");
+    recurring = {
+      monthlyBills: Math.round(billTemplates.reduce((s, r) => s + monthlyEquivalent(r), 0)),
+      monthlyIncome: Math.round(incomeTemplates.reduce((s, r) => s + monthlyEquivalent(r), 0)),
+      bills: billTemplates
+        .map(r => ({ contact: r.Contact?.Name || "—", reference: r.Reference || "", monthly: Math.round(monthlyEquivalent(r)) }))
+        .sort((a, b) => b.monthly - a.monthly)
+        .slice(0, 10),
+    };
+  } catch (e: any) {
+    console.warn("[xero-financials] repeating invoices unavailable:", e?.message);
+  }
+
   return {
     paidInvoices: paidInvoices.map(p => ({ ...p, paidOn: p.paidOn ? iso(p.paidOn) : null })),
+    costs,
+    recurring,
+    creditors: {
+      outstanding: Math.round(creditorsOutstanding),
+      buckets: credBuckets,
+      top: upcomingBills.slice(0, 8),
+      billCount: (bills as any[]).length,
+    },
+    cashflow: { receiptsDue: recBuckets, billsDue: credBuckets },
     orgName: org.Name || "Xero",
     currency: org.BaseCurrency || "GBP",
     fyStart: from,
@@ -324,6 +482,26 @@ async function buildWipForecast(): Promise<any> {
     // INV — invoiced; the amounts live in Xero's actuals already.
   }
 
+  // Data health — how much of the WIP book has broken links (no client /
+  // agent / date / Xero invoice). Shown to the equity group so they know how
+  // trustworthy the projections above are.
+  let health: any = null;
+  try {
+    const { computeWipHealth } = await import("./crm");
+    const h = await computeWipHealth();
+    health = {
+      affectedCount: h.affected.count,
+      affectedFee: h.affected.fee,
+      noClient: h.buckets.noClient.count,
+      noAgent: h.buckets.noAgent.count,
+      noDate: h.buckets.noDate.count,
+      invNoXero: h.buckets.invNoXero.count,
+      noFee: h.buckets.noFee.count,
+    };
+  } catch (e: any) {
+    console.warn("[xero-financials] wip health failed:", e?.message);
+  }
+
   toInvoiceDeals.sort((a, b) => new Date(b.completedAt || 0).getTime() - new Date(a.completedAt || 0).getTime());
   const weightedPipeline =
     pipeline.NEG.total * STAGE_WEIGHTS.NEG +
@@ -338,6 +516,7 @@ async function buildWipForecast(): Promise<any> {
     toInvoice: { total: Math.round(toInvoiceTotal), count: toInvoiceDeals.length, deals: toInvoiceDeals.slice(0, 12) },
     invoicedAwaitingPayment: Math.round(invoicedAwaitingPayment),
     earlyPipeline: { total: Math.round(early.total), count: early.count },
+    health,
   };
 }
 
@@ -414,7 +593,7 @@ async function buildSpendSnapshot(fyStartIso: string): Promise<any> {
 }
 
 export function registerXeroFinancialRoutes(app: Express): void {
-  app.get("/api/xero/financials", requireAdmin, async (req: Request, res: Response) => {
+  app.get("/api/xero/financials", requireEquityOrAdmin, async (req: Request, res: Response) => {
     try {
       if (cache && Date.now() - cache.at < CACHE_TTL_MS && req.query.refresh !== "1") {
         return res.json(cache.payload);
@@ -478,6 +657,12 @@ export function registerXeroFinancialRoutes(app: Express): void {
           weightedPipeline: wip.weightedPipeline,
           total: Math.round(actuals + wip.toInvoice.total + wip.weightedPipeline),
         };
+        // Projected FY net = projected income (above) − projected FY costs
+        // (actual opex to date + run-rate for the remaining months).
+        if (payload.costs?.projectedFyCosts != null) {
+          payload.projection.projectedFyCosts = payload.costs.projectedFyCosts;
+          payload.projection.projectedNet = Math.round(payload.projection.total - payload.costs.projectedFyCosts);
+        }
       }
       cache = { at: Date.now(), payload };
       res.json(payload);

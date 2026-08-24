@@ -259,9 +259,9 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
   if (wipEntries.length === 0) {
     return (
       <Card className="p-8 text-center" data-testid="wip-dashboard-card">
-        <BarChart3 className="w-8 h-8 mx-auto mb-2 text-gray-300" />
-        <p className="text-sm text-gray-500">No deals with fees found</p>
-        <p className="text-xs text-gray-400 mt-1">Add fees to deals on the WIP board to see data here</p>
+        <BarChart3 className="w-8 h-8 mx-auto mb-2 text-muted-foreground/70" />
+        <p className="text-sm text-muted-foreground">No deals with fees found</p>
+        <p className="text-xs text-muted-foreground/70 mt-1">Add fees to deals on the WIP board to see data here</p>
         <Link href="/wip-report">
           <Button variant="outline" size="sm" className="mt-3" data-testid="link-wip-upload">
             Go to WIP Report <ArrowRight className="w-3.5 h-3.5 ml-1" />
@@ -274,9 +274,9 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
   if (teamEntries.length === 0) {
     return (
       <Card className="p-8 text-center" data-testid="wip-dashboard-card">
-        <BarChart3 className="w-8 h-8 mx-auto mb-2 text-gray-300" />
-        <p className="text-sm text-gray-500">No WIP entries found for {displayTeam}</p>
-        <p className="text-xs text-gray-400 mt-1">Try selecting a different team</p>
+        <BarChart3 className="w-8 h-8 mx-auto mb-2 text-muted-foreground/70" />
+        <p className="text-sm text-muted-foreground">No WIP entries found for {displayTeam}</p>
+        <p className="text-xs text-muted-foreground/70 mt-1">Try selecting a different team</p>
       </Card>
     );
   }
@@ -285,8 +285,8 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
     <Card className="p-4 space-y-3" data-testid="wip-dashboard-card">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-base font-bold text-gray-900" data-testid="wip-dash-title">{title}</h2>
-          <p className="text-xs text-gray-500">
+          <h2 className="text-base font-bold text-foreground" data-testid="wip-dash-title">{title}</h2>
+          <p className="text-xs text-muted-foreground">
             {mergedDetailEntries.length} deal{mergedDetailEntries.length !== 1 ? "s" : ""} · Total net fees: {formatCurrencyFull(totalNetFees)}
           </p>
         </div>
@@ -356,7 +356,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
         {activeFilterCount > 0 && (
           <button
             onClick={clearAllFilters}
-            className="text-xs text-blue-600 hover:underline flex items-center gap-0.5 ml-1"
+            className="text-xs text-primary hover:underline flex items-center gap-0.5 ml-1"
             data-testid="wip-dash-clear-all-filters"
           >
             <X className="h-3 w-3" /> Reset filters
@@ -364,22 +364,22 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
         )}
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid="wip-dash-detail-table">
+      <div className="bg-card border border-border rounded-lg overflow-hidden" data-testid="wip-dash-detail-table">
         <button
           onClick={() => setDetailOpen(prev => !prev)}
-          className="w-full bg-gray-50 border-b px-3 py-1.5 flex items-center justify-between hover:bg-gray-100 transition-colors"
+          className="w-full bg-muted/50 border-b px-3 py-1.5 flex items-center justify-between hover:bg-muted transition-colors"
           data-testid="wip-dash-detail-toggle"
         >
           <div>
-            <span className="text-[11px] font-semibold text-gray-700 uppercase tracking-wide">Deal Detail</span>
-            <span className="text-[10px] text-gray-500 ml-2">({sortedDetailEntries.length} rows)</span>
+            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Deal Detail</span>
+            <span className="text-[10px] text-muted-foreground ml-2">({sortedDetailEntries.length} rows)</span>
           </div>
-          {detailOpen ? <ChevronUp className="h-4 w-4 text-gray-500" /> : <ChevronDown className="h-4 w-4 text-gray-500" />}
+          {detailOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
         </button>
         {detailOpen && (
           <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
             <table className="w-full text-[11px]">
-              <thead className="bg-gray-50 border-b sticky top-0 z-10">
+              <thead className="bg-muted/50 border-b sticky top-0 z-10">
                 <tr>
                   {[
                     { key: "ref", label: "Deal", width: "w-28" },
@@ -393,7 +393,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
                     { key: "month", label: "Month", width: "w-14" },
                     { key: "dealStatus", label: "Deal Status", width: "w-20" },
                   ].map((col) => (
-                    <th key={col.key} className={`px-2 py-1.5 text-left font-medium text-gray-600 cursor-pointer hover:text-gray-900 ${col.width}`} onClick={() => toggleSort(col.key)}>
+                    <th key={col.key} className={`px-2 py-1.5 text-left font-medium text-muted-foreground cursor-pointer hover:text-foreground ${col.width}`} onClick={() => toggleSort(col.key)}>
                       <div className="flex items-center gap-0.5">
                         {col.label}
                         <ArrowUpDown className="h-2.5 w-2.5" />
@@ -402,30 +402,30 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-border">
                 {sortedDetailEntries.map((e: any, i: number) => (
-                  <tr key={e.id || i} className="hover:bg-gray-50">
-                    <td className="px-2 py-1 text-gray-700 truncate max-w-[150px]">
+                  <tr key={e.id || i} className="hover:bg-muted">
+                    <td className="px-2 py-1 text-muted-foreground truncate max-w-[150px]">
                       {e.dealId ? (
-                        <Link href={`/deals/${e.dealId}`} className="text-blue-600 hover:underline text-[11px]">{e.ref}</Link>
+                        <Link href={`/deals/${e.dealId}`} className="text-primary hover:underline text-[11px]">{e.ref}</Link>
                       ) : e.ref}
                     </td>
-                    <td className="px-2 py-1 text-gray-700 truncate max-w-[130px]">{e.client || "—"}</td>
-                    <td className="px-2 py-1 text-gray-700 truncate max-w-[130px]">{e.tenant || "—"}</td>
-                    <td className="px-2 py-1 text-gray-700 truncate max-w-[130px]">{e.project || "—"}</td>
-                    <td className="px-2 py-1 text-gray-700 truncate max-w-[160px]">{e.team || "—"}</td>
-                    <td className="px-2 py-1 text-gray-700">{e.agent ? (e.agent as string).split(",").map((a: string) => a.trim()).map((a: string) => a.includes(" ") ? a.split(" ").map((p: string) => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>
-                    <td className="px-2 py-1 text-gray-900 font-mono">{e.amtWip ? formatCurrencyFull(e.amtWip) : "—"}</td>
+                    <td className="px-2 py-1 text-muted-foreground truncate max-w-[130px]">{e.client || "—"}</td>
+                    <td className="px-2 py-1 text-muted-foreground truncate max-w-[130px]">{e.tenant || "—"}</td>
+                    <td className="px-2 py-1 text-muted-foreground truncate max-w-[130px]">{e.project || "—"}</td>
+                    <td className="px-2 py-1 text-muted-foreground truncate max-w-[160px]">{e.team || "—"}</td>
+                    <td className="px-2 py-1 text-muted-foreground">{e.agent ? (e.agent as string).split(",").map((a: string) => a.trim()).map((a: string) => a.includes(" ") ? a.split(" ").map((p: string) => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>
+                    <td className="px-2 py-1 text-foreground font-mono">{e.amtWip ? formatCurrencyFull(e.amtWip) : "—"}</td>
                     <td className="px-2 py-1 text-green-700 font-mono">{e.amtInvoice ? formatCurrencyFull(e.amtInvoice) : "—"}</td>
-                    <td className="px-2 py-1 text-gray-600">{e.month || "—"}</td>
-                    <td className="px-2 py-1 text-gray-600 truncate max-w-[100px]">{e.dealStatus || "—"}</td>
+                    <td className="px-2 py-1 text-muted-foreground">{e.month || "—"}</td>
+                    <td className="px-2 py-1 text-muted-foreground truncate max-w-[100px]">{e.dealStatus || "—"}</td>
                   </tr>
                 ))}
               </tbody>
-              <tfoot className="bg-gray-100 border-t font-semibold">
+              <tfoot className="bg-muted border-t font-semibold">
                 <tr>
-                  <td colSpan={6} className="px-2 py-1 text-gray-800 text-xs">Total</td>
-                  <td className="px-2 py-1 text-gray-900 font-mono text-xs">{formatCurrencyFull(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}</td>
+                  <td colSpan={6} className="px-2 py-1 text-foreground text-xs">Total</td>
+                  <td className="px-2 py-1 text-foreground font-mono text-xs">{formatCurrencyFull(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}</td>
                   <td className="px-2 py-1 text-green-700 font-mono text-xs">{formatCurrencyFull(sortedDetailEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0))}</td>
                   <td colSpan={2} />
                 </tr>

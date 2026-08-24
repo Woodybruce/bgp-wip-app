@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getQueryFn, apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
+import { Pill } from "@/components/ui/pill";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -323,7 +324,7 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
     } else if (match[3] && match[4]) {
       result.push(
         <a key={key++} href={match[4]} target="_blank" rel="noopener noreferrer"
-          className={`underline ${isUserBubble ? "text-blue-300" : "text-blue-600"}`}
+          className={`underline ${isUserBubble ? "text-white/90" : "text-primary"}`}
         >{match[3]}</a>
       );
     } else if (match[5] && match[6]) {
@@ -341,7 +342,7 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
       const trailing = match[8].slice(url.length);
       result.push(
         <a key={key++} href={url} target="_blank" rel="noopener noreferrer"
-          className={`underline break-all ${isUserBubble ? "text-blue-300" : "text-blue-600"}`}
+          className={`underline break-all ${isUserBubble ? "text-white/90" : "text-primary"}`}
         >{url}</a>
       );
       if (trailing) result.push(trailing);
@@ -1270,18 +1271,9 @@ function ThreadList({ threads, onSelect, onNewGroupChat, unseenCount, onOpenAiFu
           { key: "groups", label: "Groups" },
           { key: "ai", label: "AI" },
         ] as const).map(({ key, label }) => (
-          <button
-            key={key}
-            onClick={() => setChip(key)}
-            className={`px-3 py-1 rounded-full text-[11px] font-medium transition-colors border ${
-              chip === key
-                ? "bg-foreground text-background border-transparent"
-                : "bg-background text-muted-foreground border-border hover:text-foreground"
-            }`}
-            data-testid={`chip-threads-${key}`}
-          >
+          <Pill key={key} active={chip === key} onClick={() => setChip(key)} data-testid={`chip-threads-${key}`}>
             {label}
-          </button>
+          </Pill>
         ))}
       </div>
 

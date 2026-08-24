@@ -137,7 +137,7 @@ export default function ExperianAuditPage() {
 
           {/* Coverage map — single most useful summary. Maps BGP needs to what's bundled. */}
           {result.coverage && result.coverage.length > 0 && (
-            <Card className="border-blue-300">
+            <Card>
               <CardHeader>
                 <CardTitle className="text-base">BGP coverage map</CardTitle>
                 <p className="text-xs text-muted-foreground mt-1">
@@ -185,7 +185,7 @@ export default function ExperianAuditPage() {
 
           {/* Full bundle shapes — drilldown for the 3 working products */}
           {result.probes.filter(p => p.ok && p.responseShape && p.responseShape.length > 0).map((p, i) => (
-            <Card key={`bundle-${i}`} className="border-emerald-200">
+            <Card key={`bundle-${i}`}>
               <CardHeader>
                 <CardTitle className="text-base">{p.product} — full response shape</CardTitle>
                 <p className="text-[11px] text-muted-foreground font-mono">{p.method} {p.path}</p>

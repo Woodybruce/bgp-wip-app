@@ -1,10 +1,10 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { PropertyPlanningCard } from "@/components/property-planning-card";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -66,16 +66,6 @@ const STATUS_COLORS: Record<string, string> = {
   COM: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
   WIT: "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300",
   INV: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
-};
-
-const ASSET_CLASS_COLORS: Record<string, string> = {
-  "Retail": "bg-pink-500",
-  "Office": "bg-sky-500",
-  "Industrial": "bg-orange-500",
-  "Mixed Use": "bg-purple-500",
-  "F&B": "bg-red-500",
-  "Leisure": "bg-teal-500",
-  "Residential": "bg-emerald-500",
 };
 
 const STATUS_LABEL_COLORS: Record<string, string> = {
@@ -165,7 +155,7 @@ function CrmPicker({ items, value, valueName, onSelect, placeholder, testId, onC
                   value={`__create__ ${search}`}
                   onSelect={handleCreate}
                   disabled={creating}
-                  className="bg-emerald-50/60 dark:bg-emerald-950/30 data-[selected=true]:bg-emerald-100 dark:data-[selected=true]:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-medium"
+                  className="bg-muted/40 data-[selected=true]:bg-muted text-primary font-medium"
                 >
                   {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
                   <span>Create {createKind || "row"} "{search.trim()}"</span>
@@ -1449,20 +1439,16 @@ export default function InvestmentTrackerPage() {
         <div>
           <div className="flex items-center gap-4">
             <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Investment Tracker</h1>
-            <div className="inline-flex rounded-lg border bg-muted p-0.5" data-testid="toggle-board-type">
+            <div className="inline-flex items-center gap-1.5" data-testid="toggle-board-type">
               {BOARD_TYPES.map(bt => (
-                <button
+                <Pill
                   key={bt}
+                  active={boardType === bt}
                   onClick={() => { setBoardType(bt); setStatusFilter("all"); }}
-                  className={`inline-flex items-center rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                    boardType === bt
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
                   data-testid={`toggle-board-${bt.toLowerCase()}`}
                 >
                   {bt}
-                </button>
+                </Pill>
               ))}
             </div>
           </div>
@@ -1478,45 +1464,22 @@ export default function InvestmentTrackerPage() {
         </div>
       </div>
 
-      {isMobile ? (
+      {/* No separate stat-tile strip — the stage pills ARE the stats
+          (mobile here, desktop in the filter row below), counts inside. */}
+      {isMobile && (
         <div className="flex flex-wrap gap-1.5 shrink-0">
           {SUMMARY_STATUSES.map(s => (
-            <button
+            <Pill
               key={s}
+              active={statusFilter === s}
               onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${statusFilter === s ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
               data-testid={`stat-chip-${s.toLowerCase().replace(/\s/g, "-")}`}
             >
-              <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-primary/60"}`} />
-              {DEAL_STATUS_LABELS[s]}
-              <span className="font-bold tabular-nums">{statusSummary[s] || 0}</span>
-            </button>
+              <span className={`w-1.5 h-1.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-primary/60"}`} />
+              {DEAL_STATUS_LABELS[s]} <span className="opacity-70 font-mono tabular-nums">{statusSummary[s] || 0}</span>
+            </Pill>
           ))}
         </div>
-      ) : (
-      <ScrollArea className="w-full shrink-0">
-        <div className="flex items-center gap-3 pb-1">
-          {SUMMARY_STATUSES.map(s => (
-            <Card
-              key={s}
-              className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${statusFilter === s ? "border-primary" : ""}`}
-              onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
-              data-testid={`card-status-${s.toLowerCase().replace(/\s/g, "-")}`}
-            >
-              <CardContent className="p-3">
-                <div className="flex items-center gap-2">
-                  <div className={`w-2.5 h-2.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-primary/60"}`} />
-                  <div>
-                    <p className="text-lg font-bold">{statusSummary[s] || 0}</p>
-                    <p className="text-xs text-muted-foreground truncate max-w-[100px]">{DEAL_STATUS_LABELS[s]}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
       )}
 
       <div className="flex items-center gap-3 flex-wrap shrink-0">
@@ -1533,33 +1496,28 @@ export default function InvestmentTrackerPage() {
         {!isMobile && (<>
         <div className="flex items-center gap-1.5 flex-wrap">
           {STATUSES.map(s => (
-            <button
+            <Pill
               key={s}
+              active={statusFilter === s}
               onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
-              className={`${STATUS_LABEL_COLORS[s]} text-white text-[11px] font-medium px-2.5 py-1 rounded-full transition-all whitespace-nowrap ${
-                statusFilter === s ? "ring-2 ring-primary ring-offset-1 scale-105" : statusFilter !== "all" ? "opacity-40" : "hover:opacity-90"
-              }`}
               data-testid={`filter-status-${s.toLowerCase()}`}
             >
-              {DEAL_STATUS_LABELS[s]}
-              {statusFilter === s && <X className="inline h-3 w-3 ml-1 -mr-0.5" />}
-            </button>
+              <span className={`w-1.5 h-1.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-primary/60"}`} />
+              {DEAL_STATUS_LABELS[s]} <span className="font-mono normal-case opacity-60 tabular-nums">{statusSummary[s] || 0}</span>
+            </Pill>
           ))}
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-xs text-muted-foreground mr-0.5">Class:</span>
           {ASSET_CLASSES.map(c => (
-            <button
+            <Pill
               key={c}
+              active={assetClassFilter === c}
               onClick={() => setAssetClassFilter(assetClassFilter === c ? "all" : c)}
-              className={`${ASSET_CLASS_COLORS[c] || "bg-gray-500"} text-white text-[11px] font-medium px-2.5 py-1 rounded-full transition-all whitespace-nowrap ${
-                assetClassFilter === c ? "ring-2 ring-primary ring-offset-1 scale-105" : assetClassFilter !== "all" ? "opacity-40" : "hover:opacity-90"
-              }`}
               data-testid={`filter-class-${c.toLowerCase().replace(/\s/g, "-")}`}
             >
               {c}
-              {assetClassFilter === c && <X className="inline h-3 w-3 ml-0.5 -mr-0.5" />}
-            </button>
+            </Pill>
           ))}
         </div>
         <Select value={tenureFilter} onValueChange={setTenureFilter}>
@@ -1613,7 +1571,7 @@ export default function InvestmentTrackerPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <CalendarDays className="h-4 w-4 text-blue-500" />
+                <CalendarDays className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-semibold">Viewings</span>
               </div>
               <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
@@ -1646,7 +1604,7 @@ export default function InvestmentTrackerPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <HandCoins className="h-4 w-4 text-amber-500" />
+                <HandCoins className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-semibold">Offers</span>
               </div>
               <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
@@ -1679,7 +1637,7 @@ export default function InvestmentTrackerPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <Users className="h-4 w-4 text-green-500" />
+                <Users className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm font-semibold">Introductions</span>
               </div>
               <span className="text-xs text-muted-foreground">FY {currentFYStart}/{currentFYStart + 1}</span>
@@ -1792,7 +1750,6 @@ export default function InvestmentTrackerPage() {
               // canonical code so colours + labels resolve like the table view.
               const statusCode = legacyToCode(item.status) || "REP";
               const statusColor = STATUS_LABEL_COLORS[statusCode] || "bg-gray-400";
-              const classColor = ASSET_CLASS_COLORS[item.assetType || ""] || "bg-gray-500";
               return (
                 <Card key={item.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => setEditItem(item)}>
                   <CardContent className="p-4 space-y-2">
@@ -1802,11 +1759,11 @@ export default function InvestmentTrackerPage() {
                         {item.address && <p className="text-xs text-muted-foreground truncate">{item.address}</p>}
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        {item.status && <Badge className={`${statusColor} text-white text-[10px]`}>{DEAL_STATUS_LABELS[statusCode] || statusCode}</Badge>}
+                        {item.status && <Badge variant="outline" className={`border-transparent ${statusColor} text-white text-[10px]`}>{DEAL_STATUS_LABELS[statusCode] || statusCode}</Badge>}
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
-                      {item.assetType && <Badge className={`${classColor} text-white text-[10px]`}>{item.assetType}</Badge>}
+                      {item.assetType && <Badge variant="outline" className="text-[10px]">{item.assetType}</Badge>}
                       {item.tenure && <Badge variant="outline" className="text-[10px]">{item.tenure}</Badge>}
                     </div>
                     {item.propertyId && (
@@ -1815,7 +1772,7 @@ export default function InvestmentTrackerPage() {
                       </div>
                     )}
                     <div className="grid grid-cols-3 gap-2 text-xs pt-1 border-t">
-                      {item.guidePrice != null && (
+                      {!!item.guidePrice && (
                         <div>
                           <p className="text-muted-foreground">Guide</p>
                           <p className="font-semibold">£{Number(item.guidePrice).toLocaleString()}</p>
@@ -1874,7 +1831,7 @@ export default function InvestmentTrackerPage() {
                   </TableHead>
                   <SortableTableHead sortKey="ref" sort={sort} className="w-[50px]">Ref</SortableTableHead>
                   <SortableTableHead sortKey="property" sort={sort} className="w-[180px]">Property</SortableTableHead>
-                  <FilterHead label="Asset Class" value={assetClassFilter} options={ASSET_CLASSES} onChange={setAssetClassFilter} colorMap={ASSET_CLASS_COLORS} className="w-[90px]" />
+                  <FilterHead label="Asset Class" value={assetClassFilter} options={ASSET_CLASSES} onChange={setAssetClassFilter} className="w-[90px]" />
                   <FilterHead label="Tenure" value={tenureFilter} options={TENURES} onChange={setTenureFilter} className="w-[70px]" />
                   <SortableTableHead sortKey="guidePrice" sort={sort} className="w-[90px]" align="right">Guide Price</SortableTableHead>
                   <SortableTableHead sortKey="niy" sort={sort} className="w-[60px]" align="right">NIY (%)</SortableTableHead>
@@ -1982,7 +1939,6 @@ export default function InvestmentTrackerPage() {
                       <InlineLabelSelect
                         value={item.assetType || ""}
                         options={ASSET_CLASSES}
-                        colorMap={ASSET_CLASS_COLORS}
                         onSave={v => inlineUpdate(item.id, "assetType", v || null)}
                       />
                     </TableCell>
@@ -1996,7 +1952,7 @@ export default function InvestmentTrackerPage() {
                     </TableCell>
                     <TableCell className="px-2 py-1.5 text-right font-medium">
                       <InlineNumber
-                        value={item.guidePrice}
+                        value={item.guidePrice || null}
                         onSave={v => inlineUpdate(item.id, "guidePrice", v)}
                         prefix="£"
                         format={v => v.toLocaleString("en-GB")}
@@ -2063,12 +2019,12 @@ export default function InvestmentTrackerPage() {
                             return (
                               <>
                                 {ct.email && (
-                                  <a href={`mailto:${ct.email}`} className="text-muted-foreground hover:text-blue-500" title={ct.email} data-testid={`link-client-contact-email-${item.id}`}>
+                                  <a href={`mailto:${ct.email}`} className="text-muted-foreground hover:text-primary" title={ct.email} data-testid={`link-client-contact-email-${item.id}`}>
                                     <Mail className="h-3 w-3" />
                                   </a>
                                 )}
                                 {ct.phone && (
-                                  <a href={`tel:${ct.phone}`} className="text-muted-foreground hover:text-blue-500" title={ct.phone} data-testid={`link-client-contact-phone-${item.id}`}>
+                                  <a href={`tel:${ct.phone}`} className="text-muted-foreground hover:text-primary" title={ct.phone} data-testid={`link-client-contact-phone-${item.id}`}>
                                     <Phone className="h-3 w-3" />
                                   </a>
                                 )}
@@ -2114,12 +2070,12 @@ export default function InvestmentTrackerPage() {
                                 return (
                                   <>
                                     {agent.email && (
-                                      <a href={`mailto:${agent.email}`} className="text-muted-foreground hover:text-blue-500" title={agent.email} data-testid={`link-agent-email-${item.id}`}>
+                                      <a href={`mailto:${agent.email}`} className="text-muted-foreground hover:text-primary" title={agent.email} data-testid={`link-agent-email-${item.id}`}>
                                         <Mail className="h-3 w-3" />
                                       </a>
                                     )}
                                     {agent.phone && (
-                                      <a href={`tel:${agent.phone}`} className="text-muted-foreground hover:text-blue-500" title={agent.phone} data-testid={`link-agent-phone-${item.id}`}>
+                                      <a href={`tel:${agent.phone}`} className="text-muted-foreground hover:text-primary" title={agent.phone} data-testid={`link-agent-phone-${item.id}`}>
                                         <Phone className="h-3 w-3" />
                                       </a>
                                     )}
@@ -2235,7 +2191,7 @@ export default function InvestmentTrackerPage() {
                     <TableCell className="px-2 py-1.5">
                       {item.dealId ? (
                         <div className="flex items-center gap-1">
-                          <a href={`/deals/${item.dealId}`} className="text-[10px] text-blue-600 hover:underline truncate max-w-[80px]" data-testid={`link-deal-${item.id}`}>
+                          <a href={`/deals/${item.dealId}`} className="text-[10px] text-primary hover:underline truncate max-w-[80px]" data-testid={`link-deal-${item.id}`}>
                             {dealMap.get(item.dealId) || "View Deal"}
                           </a>
                           <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" onClick={() => unlinkDealMutation.mutate(item.id)} title="Unlink deal" data-testid={`button-unlink-deal-${item.id}`}>

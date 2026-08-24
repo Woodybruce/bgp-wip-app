@@ -52,7 +52,7 @@ export function MyPortfolioWidget() {
       <CardContent className="p-3 space-y-2 flex-1 overflow-hidden">
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-xs flex items-center gap-1.5" data-testid="text-my-portfolio-title">
-            <Building2 className="w-3.5 h-3.5 text-indigo-500" />
+            <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
             My Portfolio
             {properties.length > 0 && (
               <Badge variant="secondary" className="text-[10px] h-4 px-1 ml-1">
@@ -62,7 +62,7 @@ export function MyPortfolioWidget() {
           </h3>
           {properties.length > 8 && (
             <Link href="/properties">
-              <span className="text-[10px] text-blue-600 hover:underline cursor-pointer">
+              <span className="text-[10px] text-primary hover:underline cursor-pointer">
                 View all
               </span>
             </Link>

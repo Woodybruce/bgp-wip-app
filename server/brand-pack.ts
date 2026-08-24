@@ -21,13 +21,16 @@ import * as fs from "fs";
 
 const router = Router();
 
-const BGP_GREEN = "#2E5E3F";
-const BGP_DARK_GREEN = "#1A3A28";
-const INK = "#1F2937";
-const MUTED = "#6B7280";
-const FAINT = "#9CA3AF";
-const PANEL_BG = "#F4F7F5";
-const RULE = "#E5E7EB";
+// 2026 rebrand palette (BGP Rebrand v18, Marketing/BGP Rebrand — Bordeaux
+// signature, Nectar + Stone supporting; Woody, 2026-08-21: "I don't feel
+// the green is a BGP colour"). Constant names kept to avoid churn.
+const BGP_GREEN = "#6E0C25";      // Bordeaux — signature
+const BGP_DARK_GREEN = "#43081A"; // deep Bordeaux
+const INK = "#2A2422";
+const MUTED = "#6B7566";
+const FAINT = "#9CA394";
+const PANEL_BG = "#F6F3EC";       // Stone-tinted ground
+const RULE = "#E4DFD4";
 
 const GRADE_COLORS: Record<string, string> = {
   A: "#1E7A3C", B: "#3D8F52", C: "#B7791F", D: "#C2410C", E: "#B91C1C",

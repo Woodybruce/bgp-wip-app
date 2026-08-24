@@ -70,8 +70,8 @@ export default function DocumentStudio() {
       {/* Header */}
       <div className="flex items-center justify-between gap-3 px-4 md:px-6 py-4 border-b">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <FileText className="w-6 h-6" /> Document Studio
+          <h1 className="text-2xl font-bold tracking-tight">
+            Document Studio
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             Every BGP document in one place — generate, preview, edit in PowerPoint/Word, file to SharePoint.

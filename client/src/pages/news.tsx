@@ -2,12 +2,12 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill, PillCount, pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NewsSourcesTab } from "@/components/news-sources-tab";
-import { NewsTagFilterChips } from "@/components/news-tags-manager";
 import { InsightsFeed } from "@/components/insights-feed";
 import {
   Select,
@@ -29,7 +29,6 @@ import {
   Clock,
   Loader2,
   Zap,
-  Lightbulb,
   Rss,
   BarChart3,
   Filter,
@@ -104,7 +103,7 @@ function RelevanceBar({ score }: { score: number }) {
   const label = score >= 70 ? "High" : score >= 40 ? "Medium" : "Low";
   return (
     <div className="flex items-center gap-1.5" data-testid="relevance-bar" title={`${label} relevance (${score}/100)`}>
-      <div className="w-14 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+      <div className="w-14 h-1.5 bg-muted rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${color}`}
           style={{ width: `${score}%` }}
@@ -351,6 +350,19 @@ function FeedTab() {
     return counts;
   }, [articles, categoryFilter, dismissedArticles]);
 
+  // Tag vocabulary for the filter pill row (same endpoint the tags manager
+  // curates). Zero-hit tags grey out and disable so a sparse feed reads as
+  // a data gap, not a broken filter (UX #49).
+  const { data: newsTags = [] } = useQuery<{ id: string; name: string; label: string; active: boolean; sortOrder: number }[]>({
+    queryKey: ["/api/news-feed/tags"],
+    queryFn: async () => {
+      const r = await fetch("/api/news-feed/tags", { headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+  const activeNewsTags = newsTags.filter((t) => t.active);
+
   const totalArticles = articles?.length || 0;
   const scoredArticles = articles?.filter((a) => a.processed)?.length || 0;
   const activeSources = sources?.filter((s: any) => s.active)?.length || 0;
@@ -431,19 +443,16 @@ function FeedTab() {
 
       <Tabs value={activeTeam} onValueChange={setActiveTeam}>
         <TabsList
-          className="flex overflow-x-auto h-auto gap-1 bg-transparent p-0"
+          className={pillTabsList}
           data-testid="tabs-team-filter"
         >
           {visibleTeams.map((team) => (
             <TabsTrigger
               key={team}
               value={team}
-              className="data-[state=active]:bg-black data-[state=active]:text-white dark:data-[state=active]:bg-white dark:data-[state=active]:text-black text-xs px-3 py-1.5 rounded-full border shrink-0"
+              className={pillTabsTrigger}
               data-testid={`tab-team-${team.toLowerCase().replace(/\s/g, "-")}`}
             >
-              {team === "For You" && <Zap className="w-3 h-3 mr-1" />}
-              {team === "Insights" && <Lightbulb className="w-3 h-3 mr-1" />}
-              {team === "Saved" && <Bookmark className="w-3 h-3 mr-1" />}
               {team}
             </TabsTrigger>
           ))}
@@ -476,7 +485,42 @@ function FeedTab() {
         </Select>
       </div>
 
-      <NewsTagFilterChips selected={tagFilter} onChange={setTagFilter} counts={tagCounts} />
+      {activeNewsTags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {activeNewsTags.map((t) => {
+            const on = tagFilter.has(t.name);
+            const n = tagCounts[t.name] ?? 0;
+            const dead = n === 0 && !on;
+            return (
+              <Pill
+                key={t.id}
+                active={on}
+                disabled={dead}
+                title={dead ? "No matching articles in this feed" : undefined}
+                className={dead ? "opacity-40" : undefined}
+                onClick={() => {
+                  const next = new Set(tagFilter);
+                  if (on) next.delete(t.name); else next.add(t.name);
+                  setTagFilter(next);
+                }}
+                data-testid={`chip-news-tag-${t.name}`}
+              >
+                {t.label}
+                {n > 0 && <PillCount n={n} active={on} />}
+              </Pill>
+            );
+          })}
+          {tagFilter.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setTagFilter(new Set())}
+              className="text-xs text-muted-foreground hover:text-foreground underline self-center ml-1"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
 
       {isInsightsTab ? (
         <InsightsFeed isStaff={!isClientNews} />
@@ -531,7 +575,7 @@ function FeedTab() {
                         {article.category &&
                           article.category !== "general" && (
                             <Badge
-                              variant="secondary"
+                              variant="outline"
                               className="text-[10px] capitalize"
                             >
                               {article.category}
@@ -687,7 +731,7 @@ function FeedTab() {
                         {article.category &&
                           article.category !== "general" && (
                             <Badge
-                              variant="secondary"
+                              variant="outline"
                               className="text-[10px] capitalize"
                             >
                               {article.category}
@@ -1270,22 +1314,14 @@ function MobileNewsFeed() {
       data-testid="news-page"
     >
       <div className="flex gap-1.5">
-        <button
-          onClick={() => setMobileTab("latest")}
-          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] ${mobileTab === "latest" ? "border-gray-900 bg-gray-900 text-white dark:border-primary dark:bg-primary font-semibold" : "border-gray-200 text-gray-500 bg-white dark:bg-card dark:border-border"}`}
-          data-testid="mobile-news-tab-latest"
-        >
+        <Pill active={mobileTab === "latest"} onClick={() => setMobileTab("latest")} data-testid="mobile-news-tab-latest">
           Latest
-        </button>
-        <button
-          onClick={() => setMobileTab("saved")}
-          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] ${mobileTab === "saved" ? "border-gray-900 bg-gray-900 text-white dark:border-primary dark:bg-primary font-semibold" : "border-gray-200 text-gray-500 bg-white dark:bg-card dark:border-border"}`}
-          data-testid="mobile-news-tab-saved"
-        >
+        </Pill>
+        <Pill active={mobileTab === "saved"} onClick={() => setMobileTab("saved")} data-testid="mobile-news-tab-saved">
           <Bookmark className="w-3.5 h-3.5" />
           Saved
           {(savedList?.length || 0) > 0 && <span className="tabular-nums font-semibold">{savedList!.length}</span>}
-        </button>
+        </Pill>
       </div>
 
       {isLoading && (
@@ -1296,10 +1332,10 @@ function MobileNewsFeed() {
 
       {!isLoading && (!articles || articles.length === 0) && (
         <div className="flex flex-col items-center justify-center py-16 gap-3">
-          <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
-            {mobileTab === "saved" ? <Bookmark className="w-8 h-8 text-gray-300" /> : <Newspaper className="w-8 h-8 text-gray-300" />}
+          <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+            {mobileTab === "saved" ? <Bookmark className="w-8 h-8 text-muted-foreground/70" /> : <Newspaper className="w-8 h-8 text-muted-foreground/70" />}
           </div>
-          <p className="text-[15px] text-gray-400">{mobileTab === "saved" ? "No saved articles yet — tap the bookmark on any card" : "No news articles yet"}</p>
+          <p className="text-[15px] text-muted-foreground/70">{mobileTab === "saved" ? "No saved articles yet — tap the bookmark on any card" : "No news articles yet"}</p>
         </div>
       )}
 
@@ -1309,11 +1345,11 @@ function MobileNewsFeed() {
           href={article.url || "#"}
           target="_blank"
           rel="noopener noreferrer"
-          className="block bg-white dark:bg-card rounded-2xl overflow-hidden border border-gray-100 dark:border-border shadow-sm active:bg-gray-50"
+          className="block bg-white dark:bg-card rounded-2xl overflow-hidden border border-border shadow-sm active:bg-muted"
           data-testid={`news-card-${article.id}`}
         >
           {article.imageUrl && (
-            <div className="aspect-[16/9] w-full overflow-hidden bg-gray-50">
+            <div className="aspect-[16/9] w-full overflow-hidden bg-muted/50">
               <img
                 src={article.imageUrl}
                 alt=""
@@ -1325,11 +1361,11 @@ function MobileNewsFeed() {
           )}
           <div className="p-4">
             <div className="flex items-center gap-2 mb-2 flex-wrap">
-              {article.sourceName && <span className="text-[11px] font-medium text-gray-500">{article.sourceName}</span>}
+              {article.sourceName && <span className="text-[11px] font-medium text-muted-foreground">{article.sourceName}</span>}
               {article.publishedAt && (
                 <>
-                  <span className="text-gray-300">·</span>
-                  <span className="text-[11px] text-gray-400">{timeAgo(article.publishedAt)}</span>
+                  <span className="text-muted-foreground/70">·</span>
+                  <span className="text-[11px] text-muted-foreground/70">{timeAgo(article.publishedAt)}</span>
                 </>
               )}
               {article.category && article.category !== "general" && (
@@ -1338,7 +1374,7 @@ function MobileNewsFeed() {
               <button
                 type="button"
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSave(article); }}
-                className="ml-auto -my-1.5 -mr-1.5 p-2 rounded-full text-gray-400 active:bg-gray-100"
+                className="ml-auto -my-1.5 -mr-1.5 p-2 rounded-full text-muted-foreground/70 active:bg-muted"
                 aria-label={savedIds.has(article.id) ? "Remove from saved" : "Save article"}
                 data-testid={`mobile-news-save-${article.id}`}
               >
@@ -1347,9 +1383,9 @@ function MobileNewsFeed() {
                   : <Bookmark className="w-[18px] h-[18px]" />}
               </button>
             </div>
-            <div className="text-[16px] font-semibold text-gray-900 dark:text-white leading-snug mb-1.5 tracking-tight">{article.title}</div>
+            <div className="text-[16px] font-semibold text-foreground leading-snug mb-1.5 tracking-tight">{article.title}</div>
             {(article.aiSummary || article.summary) && (
-              <div className="text-[13px] text-gray-500 leading-relaxed line-clamp-3">{article.aiSummary || article.summary}</div>
+              <div className="text-[13px] text-muted-foreground leading-relaxed line-clamp-3">{article.aiSummary || article.summary}</div>
             )}
           </div>
         </a>
@@ -1433,14 +1469,9 @@ function StaffNews() {
   if (isClientNewsPage) {
     return (
       <div className="p-4 sm:p-6 space-y-5" data-testid="news-page">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            <Newspaper className="w-5 h-5 text-primary" />
-          </div>
-          <div className="space-y-1">
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">News</h1>
-            <p className="text-sm text-muted-foreground">AI-curated property &amp; retail market news</p>
-          </div>
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">News</h1>
+          <p className="text-sm text-muted-foreground">AI-curated property &amp; retail market news</p>
         </div>
         <FeedTab />
       </div>
@@ -1450,18 +1481,13 @@ function StaffNews() {
   return (
     <div className="p-4 sm:p-6 space-y-5" data-testid="news-page">
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            <Newspaper className="w-5 h-5 text-primary" />
-          </div>
-          <div className="space-y-1">
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
-              News
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              AI-powered property news, intelligence and lead generation
-            </p>
-          </div>
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
+            News
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            AI-powered property news, intelligence and lead generation
+          </p>
         </div>
         {intelStatus?.emailAddress && (
           <div className="flex items-center gap-2 bg-muted px-3 py-1.5 rounded-md">
@@ -1483,25 +1509,20 @@ function StaffNews() {
       </div>
 
       <Tabs defaultValue="feed">
-        <TabsList className="mb-4" data-testid="tabs-news-main">
-          <TabsTrigger value="feed" data-testid="tab-feed">
-            <Newspaper className="w-4 h-4 mr-1" />
+        <TabsList className={`${pillTabsList} mb-4`} data-testid="tabs-news-main">
+          <TabsTrigger value="feed" className={pillTabsTrigger} data-testid="tab-feed">
             Feed
           </TabsTrigger>
-          <TabsTrigger value="leads" data-testid="tab-leads">
-            <Zap className="w-4 h-4 mr-1" />
+          <TabsTrigger value="leads" className={pillTabsTrigger} data-testid="tab-leads">
             Leads
           </TabsTrigger>
-          <TabsTrigger value="inbox" data-testid="tab-inbox">
-            <Mail className="w-4 h-4 mr-1" />
+          <TabsTrigger value="inbox" className={pillTabsTrigger} data-testid="tab-inbox">
             Inbox
           </TabsTrigger>
-          <TabsTrigger value="whatsapp" data-testid="tab-whatsapp">
-            <MessageCircle className="w-4 h-4 mr-1" />
+          <TabsTrigger value="whatsapp" className={pillTabsTrigger} data-testid="tab-whatsapp">
             WhatsApp
           </TabsTrigger>
-          <TabsTrigger value="sources" data-testid="tab-sources">
-            <Rss className="w-4 h-4 mr-1" />
+          <TabsTrigger value="sources" className={pillTabsTrigger} data-testid="tab-sources">
             Sources
           </TabsTrigger>
         </TabsList>

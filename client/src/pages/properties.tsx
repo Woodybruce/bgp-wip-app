@@ -9,6 +9,7 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -119,6 +120,7 @@ import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { useTableSort } from "@/hooks/use-table-sort";
 import { SortableTableHead } from "@/components/sortable-table-head";
 import { CRM_OPTIONS } from "@/lib/crm-options";
+import { countLabel } from "@/lib/utils";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { PropertyDetail } from "@/components/property-detail";
@@ -312,7 +314,7 @@ export function InlineEngagement({
             <div className={`w-3 h-3 rounded-sm border mr-2 flex items-center justify-center ${current.includes(option) ? colorMap[option] || "bg-gray-500" : "border-muted-foreground/30"}`}>
               {current.includes(option) && <span className="text-white text-[8px]">✓</span>}
             </div>
-            <Badge className={`text-[10px] px-1.5 py-0 text-white ${colorMap[option] || "bg-gray-500"}`}>
+            <Badge variant="outline" className={`border-transparent text-[10px] px-1.5 py-0 text-white ${colorMap[option] || "bg-gray-500"}`}>
               {option}
             </Badge>
           </DropdownMenuItem>
@@ -790,7 +792,7 @@ export function InlineLandlord({
           </div>
         ) : landlord.companiesHouseNumber && !landlord.parentCompanyId ? (
           <button
-            className="ml-3 text-[10px] text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200 flex items-center gap-0.5 transition-colors"
+            className="ml-3 text-[10px] text-primary hover:underline flex items-center gap-0.5 transition-colors"
             onClick={() => discoverParentMutation.mutate()}
             disabled={discoverParentMutation.isPending}
             data-testid={`discover-parent-${propertyId}`}
@@ -1077,7 +1079,7 @@ export function InlineCompetitorAgent({
           <button
             onClick={() => createMutation.mutate(searchTerm.trim())}
             disabled={createMutation.isPending}
-            className="w-full text-left px-3 py-2 border-t hover:bg-emerald-50 dark:hover:bg-emerald-950 text-xs flex items-center gap-2 text-emerald-700 dark:text-emerald-400"
+            className="w-full text-left px-3 py-2 border-t hover:bg-muted text-xs flex items-center gap-2 text-primary"
           >
             <Plus className="w-3 h-3" />
             <span>Add "<span className="font-medium">{searchTerm.trim()}</span>" as a new agent</span>
@@ -1895,15 +1897,16 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
             <FolderOpen className="w-4 h-4" />
             <h3 className="text-sm font-semibold">Documents</h3>
             {teamsToCheck.map((t, idx) => (
-              <Badge
+              <button
                 key={t}
-                variant={idx === activeTeamIdx ? "default" : "outline"}
-                className={`text-[10px] cursor-pointer ${idx === activeTeamIdx ? "" : "opacity-60"}`}
+                type="button"
+                data-no-min-touch
+                className={`inline-flex items-center rounded-full leading-none text-[11px] font-semibold uppercase tracking-wide px-2.5 py-[5px] whitespace-nowrap border transition-colors cursor-pointer ${idx === activeTeamIdx ? "bg-foreground text-background border-transparent" : "bg-transparent text-muted-foreground border-border hover:text-foreground"}`}
                 onClick={() => { setActiveTeamName(t); setSubPath(""); }}
                 data-testid={`folder-team-tab-${t}`}
               >
                 {t}
-              </Badge>
+              </button>
             ))}
           </div>
           <div className="flex items-center gap-1 flex-wrap justify-end shrink min-w-0">
@@ -1985,7 +1988,7 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
                 className="flex items-center gap-2 px-2 py-1.5 rounded-md hover-elevate transition-colors group cursor-pointer"
                 data-testid={`folder-item-${folder.id}`}
               >
-                <FolderOpen className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                <FolderOpen className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                 <span className="text-xs flex-1 truncate">{folder.name}</span>
                 {folder.childCount > 0 && (
                   <span className="text-[10px] text-muted-foreground">{folder.childCount}</span>
@@ -2004,7 +2007,7 @@ export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFold
                 data-testid={`file-item-${file.id}`}
                 title={file.size ? `${Math.round(file.size / 1024).toLocaleString()} KB` : undefined}
               >
-                <FileText className="w-3.5 h-3.5 text-blue-500/70 flex-shrink-0" />
+                <FileText className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                 <span className="text-xs flex-1 truncate">{file.name}</span>
                 {file.size > 0 && <span className="text-[10px] text-muted-foreground">{file.size < 1024 * 1024 ? `${Math.round(file.size / 1024)} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`}</span>}
                 {driveId && rowMenu(file)}
@@ -2307,6 +2310,7 @@ export function ClientPropertyFoldersPanel({ propertyName }: { propertyName: str
               <button
                 key={key}
                 onClick={() => setDocSort(key)}
+                data-no-min-touch
                 className={`text-[10px] px-1.5 py-0.5 rounded-full border ${docSort === key ? "bg-foreground text-background border-foreground" : "text-muted-foreground hover:bg-muted/50"}`}
                 data-testid={`docs-sort-${key}`}
               >
@@ -2353,7 +2357,7 @@ export function ClientPropertyFoldersPanel({ propertyName }: { propertyName: str
                 className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-muted/50 text-left min-w-0"
                 data-testid={`client-folder-${item.id}`}
               >
-                <FolderOpen className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <FolderOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                 <span className="text-xs truncate flex-1">{item.name}</span>
                 {item.childCount != null && <span className="text-[10px] text-muted-foreground shrink-0">{item.childCount}</span>}
                 <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
@@ -2985,7 +2989,7 @@ function CreatePropertyDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Building2 className="w-5 h-5" />
-            New Property
+            Add property
           </DialogTitle>
           <DialogDescription>Add a new property to the CRM</DialogDescription>
         </DialogHeader>
@@ -3666,7 +3670,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
                       {property.proprietorCompanyNumber && (
                         <div className="flex gap-x-4 text-[11px]">
                           <span className="text-muted-foreground">Co. No:</span>
-                          <a href={`https://find-and-update.company-information.service.gov.uk/company/${property.proprietorCompanyNumber}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5">
+                          <a href={`https://find-and-update.company-information.service.gov.uk/company/${property.proprietorCompanyNumber}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline flex items-center gap-0.5">
                             {property.proprietorCompanyNumber} <ExternalLink className="w-2.5 h-2.5" />
                           </a>
                         </div>
@@ -3851,7 +3855,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
                   <span className="text-xs font-semibold">Companies House — {prof.companyName}</span>
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-muted-foreground">
-                  <a href={`https://find-and-update.company-information.service.gov.uk/company/${prof.companyNumber}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-0.5">
+                  <a href={`https://find-and-update.company-information.service.gov.uk/company/${prof.companyNumber}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline flex items-center gap-0.5">
                     CH: {prof.companyNumber} <ExternalLink className="w-2.5 h-2.5" />
                   </a>
                   <span>Status: <span className={prof.companyStatus === "active" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>{prof.companyStatus}</span></span>
@@ -4059,14 +4063,14 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
                       {!ltsIsClient && legacyToCode(unit.marketingStatus || "AVA") === "AVA" && (
                         <button
                           onClick={() => setSuggestUnit({ id: unit.id, unitName: unit.unitName })}
-                          className="text-purple-500 hover:text-purple-700 transition-colors"
+                          className="text-muted-foreground hover:text-foreground transition-colors"
                           title="AI: which brands should we pitch this unit to?"
                           data-testid={`button-suggest-brands-${unit.id}`}
                         >
                           <Sparkles className="w-3 h-3" />
                         </button>
                       )}
-                      <Badge className={`text-[10px] ${statusColor(unit.marketingStatus || "AVA")}`}>{(() => { const c = legacyToCode(unit.marketingStatus); return c ? DEAL_STATUS_LABELS[c] : (unit.marketingStatus || "Available"); })()}</Badge>
+                      <Badge variant="outline" className={`border-transparent text-[10px] ${statusColor(unit.marketingStatus || "AVA")}`}>{(() => { const c = legacyToCode(unit.marketingStatus); return c ? DEAL_STATUS_LABELS[c] : (unit.marketingStatus || "Available"); })()}</Badge>
                     </div>
                   </div>
                 );
@@ -4369,7 +4373,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                   <div className="space-y-1">
                     <p className="text-[10px] text-muted-foreground mb-1">{freeholds.length} freehold title{freeholds.length !== 1 ? "s" : ""} found for {postcode}</p>
                     {aiMatchLoading && (
-                      <div className="flex items-center gap-2 p-2 bg-violet-50 dark:bg-violet-950/30 rounded text-[10px] text-violet-700 dark:text-violet-300">
+                      <div className="flex items-center gap-2 p-2 bg-muted/40 rounded text-[10px] text-muted-foreground">
                         <Loader2 className="w-3 h-3 animate-spin" />
                         AI is matching your property address to the correct title...
                       </div>
@@ -4403,12 +4407,12 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                         const isExpanded = expandedLeaseholds[tn];
                         return (
                           <div key={tn} className="space-y-1">
-                            <div className={`flex items-center justify-between p-2 rounded ${isSelected ? "bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800" : isAiRecommended ? "bg-green-50 dark:bg-green-950/20 border border-green-300 dark:border-green-800" : "bg-muted/30"}`}>
+                            <div className={`flex items-center justify-between p-2 rounded ${isSelected ? "bg-muted/40 border border-border" : isAiRecommended ? "bg-green-50 dark:bg-green-950/20 border border-green-300 dark:border-green-800" : "bg-muted/30"}`}>
                               <div className="min-w-0 flex-1">
                                 <span className="font-mono font-medium text-[11px]">{tn}</span>
                                 {fh.address && <span className="text-[10px] text-muted-foreground ml-2">{fh.address}</span>}
                                 {fh.ownership_type && <Badge variant="outline" className="text-[10px] ml-1">{fh.ownership_type}</Badge>}
-                                {isSelected && <Badge className="text-[10px] ml-1 bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">Selected</Badge>}
+                                {isSelected && <Badge className="text-[10px] ml-1 bg-foreground text-background">Selected</Badge>}
                                 {isAiRecommended && <Badge className="text-[10px] ml-1 bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">AI Match</Badge>}
                                 {lhCount > 0 && (
                                   <Badge variant="outline" className="text-[10px] ml-1 cursor-pointer hover:bg-muted" onClick={() => loadFreeholdLeaseholds(tn)}>
@@ -4714,7 +4718,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             {hasFreeholds && (
               <div className={`p-2.5 rounded-lg space-y-0.5 ${aiMatch && aiMatch.confidence !== "none" && !property.titleNumber ? "bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800" : "bg-muted/30"}`} data-testid="intel-summary-ownership">
                 <div className="flex items-center gap-1.5">
-                  {aiMatch && !property.titleNumber ? <Sparkles className="w-3 h-3 text-green-500" /> : <FileSearch className="w-3 h-3 text-indigo-500" />}
+                  {aiMatch && !property.titleNumber ? <Sparkles className="w-3 h-3 text-green-500" /> : <FileSearch className="w-3 h-3 text-muted-foreground" />}
                   <span className="text-[10px] text-muted-foreground font-medium">Land Titles</span>
                 </div>
                 <p className="text-sm font-bold">{freeholds.length} freehold{freeholds.length !== 1 ? "s" : ""}</p>
@@ -4732,7 +4736,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               return (
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-epc">
                   <div className="flex items-center gap-1.5">
-                    <Zap className="w-3 h-3 text-amber-500" />
+                    <Zap className="w-3 h-3 text-muted-foreground" />
                     <span className="text-[10px] text-muted-foreground font-medium">EPC Rating</span>
                   </div>
                   <p className="text-sm font-bold">{topEpc.ratingBand || topEpc.rating || "N/A"}</p>
@@ -4745,7 +4749,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               return (
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-voa">
                   <div className="flex items-center gap-1.5">
-                    <Landmark className="w-3 h-3 text-blue-500" />
+                    <Landmark className="w-3 h-3 text-muted-foreground" />
                     <span className="text-[10px] text-muted-foreground font-medium">Rateable Value</span>
                   </div>
                   <p className="text-sm font-bold">£{Number(topVoa.rateableValue || 0).toLocaleString()}</p>
@@ -4755,7 +4759,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             })()}
             <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-flood">
               <div className="flex items-center gap-1.5">
-                <Droplets className="w-3 h-3 text-cyan-500" />
+                <Droplets className="w-3 h-3 text-muted-foreground" />
                 <span className="text-[10px] text-muted-foreground font-medium">Flood Risk</span>
               </div>
               {hasFlood && data.floodRisk.activeFloods > 0 ? (
@@ -4775,7 +4779,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
               return (
                 <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-tfl">
                   <div className="flex items-center gap-1.5">
-                    <Train className="w-3 h-3 text-purple-500" />
+                    <Train className="w-3 h-3 text-muted-foreground" />
                     <span className="text-[10px] text-muted-foreground font-medium">Nearest Station</span>
                   </div>
                   <p className="text-sm font-bold truncate">{nearest.name}</p>
@@ -4786,7 +4790,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             {hasPlanningApps && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-planning-apps">
                 <div className="flex items-center gap-1.5">
-                  <FileText className="w-3 h-3 text-blue-500" />
+                  <FileText className="w-3 h-3 text-muted-foreground" />
                   <span className="text-[10px] text-muted-foreground font-medium">Planning Apps</span>
                 </div>
                 <p className="text-sm font-bold">{planningApps.length} application{planningApps.length !== 1 ? "s" : ""}</p>
@@ -4796,7 +4800,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             {hasPlanning && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-planning">
                 <div className="flex items-center gap-1.5">
-                  <ShieldAlert className="w-3 h-3 text-orange-500" />
+                  <ShieldAlert className="w-3 h-3 text-muted-foreground" />
                   <span className="text-[10px] text-muted-foreground font-medium">Planning</span>
                 </div>
                 <p className="text-sm font-bold">{Object.values(data.planningData).filter((v: any) => Array.isArray(v) && v.length > 0).length} designation(s)</p>
@@ -4806,7 +4810,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             {hasListed && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-listed">
                 <div className="flex items-center gap-1.5">
-                  <Landmark className="w-3 h-3 text-rose-500" />
+                  <Landmark className="w-3 h-3 text-muted-foreground" />
                   <span className="text-[10px] text-muted-foreground font-medium">Listed Buildings</span>
                 </div>
                 <p className="text-sm font-bold">{data.listedBuilding.length} nearby</p>
@@ -4816,7 +4820,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
             {hasPdStats && data.propertyDataCoUk["postcode-key-stats"].data.average_yield && (
               <div className="p-2.5 bg-muted/30 rounded-lg space-y-0.5" data-testid="intel-summary-yield">
                 <div className="flex items-center gap-1.5">
-                  <TrendingUp className="w-3 h-3 text-green-500" />
+                  <TrendingUp className="w-3 h-3 text-muted-foreground" />
                   <span className="text-[10px] text-muted-foreground font-medium">Avg Yield</span>
                 </div>
                 <p className="text-sm font-bold">{data.propertyDataCoUk["postcode-key-stats"].data.average_yield}</p>
@@ -4846,10 +4850,10 @@ export function PropertyNewsPanel({ propertyId, propertyName }: { propertyId: st
   return (
     <Card data-testid="property-news-panel" className="overflow-hidden">
       <CardContent className="p-4 pt-3">
-        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap -mx-4 -mt-3 px-4 pt-3 pb-2 bg-gradient-to-r from-sky-500/[0.07] to-transparent">
+        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap -mx-4 -mt-3 px-4 pt-3 pb-2 bg-muted/40">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="w-6 h-6 rounded-full bg-sky-500/10 flex items-center justify-center shrink-0">
-              <Newspaper className="h-3.5 w-3.5 text-sky-600" />
+            <span className="w-6 h-6 rounded-full bg-muted flex items-center justify-center shrink-0">
+              <Newspaper className="h-3.5 w-3.5 text-primary" />
             </span>
             <span className="text-sm font-semibold shrink-0">News Feed</span>
             {/* Property name in the badge is redundant with the page
@@ -5007,7 +5011,7 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
         {data!.matchingRequirements.length > 0 && (
           <div>
             <div className="flex items-center gap-1.5 mb-2">
-              <FileText className="w-3.5 h-3.5 text-purple-500" />
+              <FileText className="w-3.5 h-3.5 text-muted-foreground" />
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Matching Requirements</p>
               <Badge variant="secondary" className="text-[10px]">{data!.matchingRequirements.length}</Badge>
             </div>
@@ -5029,7 +5033,7 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
         {data!.comps.length > 0 && (
           <div>
             <div className="flex items-center gap-1.5 mb-2">
-              <TrendingUp className="w-3.5 h-3.5 text-orange-500" />
+              <TrendingUp className="w-3.5 h-3.5 text-muted-foreground" />
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Historical Comps</p>
               <Badge variant="secondary" className="text-[10px]">{data!.comps.length}</Badge>
             </div>
@@ -5052,7 +5056,7 @@ export function Property360Panel({ propertyId }: { propertyId: string }) {
         {data!.news.length > 0 && (
           <div>
             <div className="flex items-center gap-1.5 mb-2">
-              <Newspaper className="w-3.5 h-3.5 text-blue-500" />
+              <Newspaper className="w-3.5 h-3.5 text-muted-foreground" />
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">News Mentions</p>
               <Badge variant="secondary" className="text-[10px]">{data!.news.length}</Badge>
             </div>
@@ -5188,25 +5192,27 @@ function PropertiesBoardHeader({ items }: { items: CrmProperty[] }) {
 
   return (
     <div className="space-y-2" data-testid="properties-board-header">
+      {/* Summary chips follow the app pill standard (ui/pill.tsx metrics). */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] bg-card">
+        <span className="inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide bg-card">
           <Building2 className="w-3 h-3 text-muted-foreground" />
-          <span className="font-semibold tabular-nums">{items.length}</span>
+          <span className="font-mono tabular-nums">{items.length}</span>
           <span className="text-muted-foreground">propert{items.length === 1 ? "y" : "ies"}</span>
         </span>
-        <Link href="/deals/letting" className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${liveLettings ? "bg-card" : "opacity-40"}`} title="Open the Letting Tracker">
+        <Link href="/deals/letting" className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide hover:opacity-80 ${liveLettings ? "bg-card" : "opacity-40"}`} title="Open the Letting Tracker">
           <Store className="w-3 h-3 text-muted-foreground" />
-          <span className="font-semibold tabular-nums">{liveLettings}</span>
+          <span className="font-mono tabular-nums">{liveLettings}</span>
           <span className="text-muted-foreground">live letting{liveLettings === 1 ? "" : "s"}</span>
         </Link>
-        <Link href="/deals/list" className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] hover:opacity-80 ${liveDeals ? "bg-card" : "opacity-40"}`} title="Open the Deals board">
+        <Link href="/deals/list" className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide hover:opacity-80 ${liveDeals ? "bg-card" : "opacity-40"}`} title="Open the Deals board">
           <Handshake className="w-3 h-3 text-muted-foreground" />
-          <span className="font-semibold tabular-nums">{liveDeals}</span>
+          <span className="font-mono tabular-nums">{liveDeals}</span>
           <span className="text-muted-foreground">live deal{liveDeals === 1 ? "" : "s"}</span>
         </Link>
         <button
           onClick={() => setMapOpen(o => !o)}
-          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[11px] bg-card hover:opacity-80"
+          data-no-min-touch
+          className="inline-flex items-center gap-1 rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide bg-card hover:opacity-80"
           data-testid="btn-toggle-portfolio-map"
         >
           <MapPin className="w-3 h-3 text-muted-foreground" />
@@ -5484,7 +5490,7 @@ function PropertiesList({
   const { activeTeam } = useTeam();
   const isLandsecView = activeTeam === "Landsec";
   // Client logins get a read-oriented table: the inline ownership editors,
-  // status/class/team setters and the header's Import / New Property /
+  // status/class/team setters and the header's Import / Add property /
   // Landlord Health are staff tools (their writes are server-blocked anyway).
   const { data: propsViewer } = useQuery<any>({ queryKey: ["/api/auth/me"], staleTime: 5 * 60 * 1000 });
   const isClientViewer = propsViewer?.role === "Client" || !!propsViewer?.companyScopeId;
@@ -5697,7 +5703,7 @@ function PropertiesList({
       title="Properties"
       icon={Building2}
       fullHeight
-      subtitle={`${items.length} properties in the CRM${isLandsecView ? " · Landsec portfolio" : teamFilter ? ` · Filtered by ${teamFilter} team` : ""}`}
+      subtitle={`${countLabel(items.length, "property", "properties")} in the CRM${isLandsecView ? " · Landsec portfolio" : teamFilter ? ` · Filtered by ${teamFilter} team` : ""}`}
       actions={
         isClientViewer ? undefined : (
         <>
@@ -5729,7 +5735,7 @@ function PropertiesList({
             data-testid="button-create-property"
           >
             <Plus className="w-4 h-4 mr-2" />
-            New Property
+            Add property
           </Button>
         </>
         )
@@ -5750,68 +5756,26 @@ function PropertiesList({
 
       {activeView === "list" && <PropertiesBoardHeader items={filteredItems} />}
 
-      {activeView === "list" && <>{isMobile ? (
+      {activeView === "list" && <>
         <div className="flex flex-wrap gap-1.5">
           {groupCounts.map((g) => (
-            <button
+            <Pill
               key={g.id}
+              active={activeGroup === g.id}
               onClick={() => setActiveGroup(activeGroup === g.id ? "all" : g.id)}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${activeGroup === g.id ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
               data-testid={`chip-group-${g.id.toLowerCase()}`}
             >
-              {g.label}
-              <span className="font-bold tabular-nums">{g.count}</span>
-            </button>
+              {g.label} <span className="opacity-70 font-mono tabular-nums">{g.count}</span>
+            </Pill>
           ))}
-          <button
+          <Pill
+            active={activeGroup === "all"}
             onClick={() => setActiveGroup("all")}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${activeGroup === "all" ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
             data-testid="chip-group-all"
           >
-            All <span className="font-bold tabular-nums">{items.length}</span>
-          </button>
+            All <span className="opacity-70 font-mono tabular-nums">{items.length}</span>
+          </Pill>
         </div>
-      ) : (
-      <div className="flex items-center gap-3 overflow-x-auto pb-1">
-        {groupCounts.map((g) => (
-          <Card
-            key={g.id}
-            className={`flex-1 min-w-[140px] cursor-pointer transition-colors ${
-              activeGroup === g.id ? "border-primary bg-primary/5" : ""
-            }`}
-            onClick={() => setActiveGroup(activeGroup === g.id ? "all" : g.id)}
-            data-testid={`card-group-${g.id.toLowerCase()}`}
-          >
-            <CardContent className="p-3">
-              <div className="flex items-center gap-2">
-                <Building2 className="w-4 h-4 text-muted-foreground" />
-                <div>
-                  <p className="text-lg font-bold" data-testid={`text-group-count-${g.id.toLowerCase()}`}>{g.count}</p>
-                  <p className="text-xs text-muted-foreground">{g.label}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-        <Card
-          className={`flex-1 min-w-[140px] cursor-pointer transition-colors ${
-            activeGroup === "all" ? "border-primary bg-primary/5" : ""
-          }`}
-          onClick={() => setActiveGroup("all")}
-          data-testid="card-group-all"
-        >
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-muted-foreground" />
-              <div>
-                <p className="text-lg font-bold" data-testid="text-group-count-all">{items.length}</p>
-                <p className="text-xs text-muted-foreground">All (inc. comps)</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[180px]">
@@ -5974,7 +5938,9 @@ function PropertiesList({
             <ScrollableTable minWidth={2200}>
               <Table>
                 <TableHeader>
-                  <TableRow>
+                  {/* §6 header spec — 11px semibold uppercase muted; the
+                      sorted/filtered column reads foreground, not terracotta. */}
+                  <TableRow className="[&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground [&_th_button]:font-semibold [&_th_.text-primary]:text-foreground">
                     <TableHead className="w-[40px] px-2">
                       <Checkbox
                         data-testid="checkbox-select-all-properties"
@@ -6072,7 +6038,7 @@ function PropertiesList({
                                 const hasEnrichmentData = !!(item.proprietorName || item.landlordId || item.titleNumber);
                                 if (isRecent && !hasEnrichmentData && item.address) {
                                   return (
-                                    <span className="inline-flex items-center gap-1 text-[10px] text-purple-500 animate-pulse" data-testid={`enriching-${item.id}`}>
+                                    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground animate-pulse" data-testid={`enriching-${item.id}`}>
                                       <Loader2 className="w-2.5 h-2.5 animate-spin" />
                                       Enriching...
                                     </span>
@@ -6278,7 +6244,7 @@ function PropertiesList({
                   onClick={() => bulkUpdateMutation.mutate({ ids: Array.from(selectedIds), field: "bgpEngagement", value: [team] })}
                   data-testid={`bulk-team-option-${team.toLowerCase().replace(/[\s\/]/g, "-")}`}
                 >
-                  <Badge className={`text-[10px] px-1.5 py-0 text-white ${TEAM_COLORS[team] || "bg-gray-500"}`}>
+                  <Badge variant="outline" className={`border-transparent text-[10px] px-1.5 py-0 text-white ${TEAM_COLORS[team] || "bg-gray-500"}`}>
                     {team}
                   </Badge>
                 </DropdownMenuItem>
@@ -6472,7 +6438,7 @@ function LandlordHealthView({
       </div>
 
       {/* Explanation banner */}
-      <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+      <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
         <strong>How this works:</strong> Each property should have (1) a <strong>Landlord / Client</strong> — the real relationship brand (e.g. Landsec, AEW, Grosvenor),
         and (2) a <strong>Billing Entity</strong> — the SPV/shell company used for invoicing (e.g. LS Tottenham Court Road Limited).
         Contacts, emails and calendar invites should always be linked to the Parent Brand.
@@ -6495,7 +6461,7 @@ function LandlordHealthView({
           <ScrollableTable minWidth={900}>
             <Table>
               <TableHeader>
-                <TableRow>
+                <TableRow className="[&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground">
                   <TableHead className="min-w-[200px]">Property</TableHead>
                   <TableHead className="min-w-[160px]">Landlord / Client</TableHead>
                   <TableHead className="min-w-[160px]">Parent Brand</TableHead>

@@ -204,7 +204,7 @@ export function InteractionsBoard({ scope, contextId }: Props) {
             <div className="rounded-md border bg-muted/30 p-2 space-y-1.5">
               {nextInt && (
                 <div className="flex items-start gap-1.5 text-xs">
-                  <Calendar className="w-3 h-3 text-emerald-600 shrink-0 mt-0.5" />
+                  <Calendar className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" />
                   <div className="flex-1 min-w-0">
                     <span className="font-medium">Next interaction · </span>
                     <span className="text-muted-foreground">
@@ -290,7 +290,7 @@ export function InteractionsBoard({ scope, contextId }: Props) {
                         size and coloured so it pops out of the row. */}
                     <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                       {isMeeting ? <Calendar className="w-3 h-3 text-purple-600 shrink-0" /> : <Mail className="w-3 h-3 text-blue-600 shrink-0" />}
-                      <span className="text-sm font-semibold text-blue-700 dark:text-blue-300">{bgpUserDisplay(row.bgpUser, emailToName)}</span>
+                      <span className="text-sm font-semibold text-primary">{bgpUserDisplay(row.bgpUser, emailToName)}</span>
                       <span>· {relDate(row.interactionDate)}</span>
                       {row.direction && <span className="opacity-70">· {row.direction}</span>}
                       {canOpen && <ExternalLink className="w-2.5 h-2.5 ml-auto opacity-0 group-hover:opacity-60" />}

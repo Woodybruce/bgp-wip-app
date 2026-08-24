@@ -172,19 +172,17 @@ function SearchCard({
   onEdit,
   onDelete,
   onMoveStatus,
-  colConfig,
 }: {
   search: TenantRepSearch;
   onEdit: () => void;
   onDelete: () => void;
   onMoveStatus: (status: string) => void;
-  colConfig: typeof COLUMNS[number];
 }) {
   const overdue = isOverdue(search.next_action_date);
   const logoUrl = getBrandLogoUrl(search.company_domain, search.client_name);
 
   return (
-    <Card className={`mb-2 cursor-pointer hover:shadow-md transition-shadow border ${colConfig.border}`} onClick={onEdit}>
+    <Card className="mb-2 cursor-pointer hover:shadow-md transition-shadow border border-border" onClick={onEdit}>
       <CardContent className="p-3 space-y-2">
         {/* Header */}
         <div className="flex items-start justify-between gap-2">
@@ -621,15 +619,15 @@ export default function TenantRep() {
         </div>
       </div>
 
-      {/* Kanban board */}
-      <div className="flex-1 overflow-auto">
-        <div className="flex gap-3 p-4 min-h-full" style={{ minWidth: `${COLUMNS.length * 280 + (COLUMNS.length - 1) * 12 + 32}px` }}>
+      {/* Kanban board — scrolls horizontally inside its own container */}
+      <div className="flex-1 overflow-y-auto overflow-x-auto">
+        <div className="flex gap-3 p-4 min-h-full min-w-max">
           {COLUMNS.map(col => {
             const colSearches = columnSearches(col.key);
             return (
               <div key={col.key} className="flex flex-col w-[268px] shrink-0">
-                {/* Column header */}
-                <div className={`flex items-center justify-between px-3 py-2 rounded-t-lg ${col.light} border ${col.border} border-b-0`}>
+                {/* Column header — stage colour lives only on the dot */}
+                <div className="flex items-center justify-between px-3 py-2 rounded-t-lg bg-muted/40 border border-border border-b-0">
                   <div className="flex items-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${col.color}`} />
                     <span className="text-xs font-semibold">{col.label}</span>
@@ -648,7 +646,7 @@ export default function TenantRep() {
                 </div>
 
                 {/* Cards */}
-                <div className={`flex-1 rounded-b-lg border ${col.border} p-2 min-h-[400px] ${col.light}`}>
+                <div className="flex-1 rounded-b-lg border border-border p-2 min-h-[400px] bg-muted/40">
                   {isLoading ? (
                     <div className="space-y-2">
                       {[1, 2].map(i => (
@@ -664,7 +662,6 @@ export default function TenantRep() {
                       <SearchCard
                         key={s.id}
                         search={s}
-                        colConfig={col}
                         onEdit={() => openEdit(s)}
                         onDelete={() => setDeleteTarget(s)}
                         onMoveStatus={status => moveStatus(s.id, status)}

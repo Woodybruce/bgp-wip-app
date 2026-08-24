@@ -2,7 +2,7 @@
 // Also auto-maintains a Google News RSS feed per tracked brand.
 import { db, pool } from "./db";
 import { crmCompanies, newsSources, newsArticles, brandSignals } from "@shared/schema";
-import { eq, and, sql, desc, isNotNull } from "drizzle-orm";
+import { eq, and, sql, desc, isNotNull, ilike } from "drizzle-orm";
 import { googleNewsRssUrl, createRssAppFeed, rssappHealth } from "./rssapp";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 
@@ -271,17 +271,19 @@ export async function extractBrandSignalsFromNewsletter(opts: {
   bodyText: string;
   receivedAt?: string;
 }): Promise<number> {
-  // All live companies, not just tracked brands — an unmatched operator may
-  // exist in the CRM untracked (flip tracking on) or not at all (auto-add).
+  // All live companies, not just Tenant-typed brands — an unmatched operator
+  // may exist in the CRM as another type (adopt the Tenant type) or not at
+  // all (auto-add).
   const all = await db
-    .select({ id: crmCompanies.id, name: crmCompanies.name, isTrackedBrand: crmCompanies.isTrackedBrand })
+    .select({ id: crmCompanies.id, name: crmCompanies.name, companyType: crmCompanies.companyType })
     .from(crmCompanies)
     .where(sql`${crmCompanies.mergedIntoId} IS NULL`);
-  const byNorm = new Map<string, { id: string; name: string; isTrackedBrand: boolean | null }>();
+  const isBrandType = (t: string | null | undefined) => /^tenant/i.test(t || "");
+  const byNorm = new Map<string, { id: string; name: string; companyType: string | null }>();
   for (const c of all) {
     const k = normalizeBrandName(c.name);
     const prev = byNorm.get(k);
-    if (!prev || (!prev.isTrackedBrand && c.isTrackedBrand)) byNorm.set(k, c);
+    if (!prev || (!isBrandType(prev.companyType) && isBrandType(c.companyType))) byNorm.set(k, c);
   }
 
   let items: any[] = [];
@@ -316,12 +318,10 @@ export async function extractBrandSignalsFromNewsletter(opts: {
   const sourceKey = `newsletter:${(opts.receivedAt || "").slice(0, 10)}:${opts.subject.slice(0, 100)}`;
   // A material event about an operator we don't track is precisely the
   // intel Propel is for — operators surface here BEFORE they're on anyone's
-  // radar. Auto-add them (capped per email), stamped so the team can prune.
+  // radar. Auto-add them (capped per email).
   const materialFor = (it: any) =>
     ["opening", "closure", "funding", "exec_change", "sector_move"].includes(it.signalType) &&
     ["medium", "large"].includes(it.magnitude || "medium");
-  const autoReason = (it: any) =>
-    `Auto-added from newsletter (${opts.from}, ${(opts.receivedAt || "").slice(0, 10) || "today"}): ${String(it.headline).slice(0, 200)}`;
   let autoCreated = 0;
   const AUTO_CREATE_CAP = 5;
   let inserted = 0;
@@ -332,14 +332,19 @@ export async function extractBrandSignalsFromNewsletter(opts: {
     let brand = byNorm.get(norm);
     const isOperator = (it.brandKind || "operator") === "operator";
 
-    if (brand && !brand.isTrackedBrand && isOperator && materialFor(it)) {
-      // Known company, untracked — start tracking instead of duplicating.
-      await db.update(crmCompanies)
-        .set({ isTrackedBrand: true, trackingReason: autoReason(it) })
-        .where(eq(crmCompanies.id, brand.id))
-        .catch((e: any) => console.warn("[newsletter-signals] track flip failed:", e?.message));
-      brand.isTrackedBrand = true;
-      console.log(`[newsletter-signals] now tracking existing company "${brand.name}" (${it.signalType})`);
+    if (brand && !isBrandType(brand.companyType) && isOperator && materialFor(it)) {
+      // Known company without a Tenant type — adopt one instead of
+      // duplicating, but never reclassify a row that's deliberately
+      // something else (landlord/agent/client/investor).
+      if (!brand.companyType || !/landlord|agent|client|investor/i.test(brand.companyType)) {
+        const companyType = NEWSLETTER_CATEGORY_TO_TYPE[String(it.category || "").toLowerCase()] || "Tenant";
+        await db.update(crmCompanies)
+          .set({ companyType })
+          .where(eq(crmCompanies.id, brand.id))
+          .catch((e: any) => console.warn("[newsletter-signals] type adopt failed:", e?.message));
+        brand.companyType = companyType;
+        console.log(`[newsletter-signals] typed existing company "${brand.name}" as ${companyType} (${it.signalType})`);
+      }
     }
 
     if (!brand) {
@@ -350,12 +355,10 @@ export async function extractBrandSignalsFromNewsletter(opts: {
           .values({
             name: rawName,
             companyType,
-            isTrackedBrand: true,
-            trackingReason: autoReason(it),
           } as any)
           .returning({ id: crmCompanies.id, name: crmCompanies.name });
         if (!created) continue;
-        brand = { id: created.id, name: created.name, isTrackedBrand: true };
+        brand = { id: created.id, name: created.name, companyType };
         byNorm.set(norm, brand);
         autoCreated++;
         console.log(`[newsletter-signals] auto-added brand "${rawName}" (${companyType}) — ${it.signalType}: ${String(it.headline).slice(0, 120)}`);
@@ -364,7 +367,7 @@ export async function extractBrandSignalsFromNewsletter(opts: {
         continue;
       }
     }
-    if (!brand.isTrackedBrand) continue; // non-material mention of an untracked company — not signal-worthy
+    if (!isBrandType(brand.companyType)) continue; // non-material mention of a non-brand company — not signal-worthy
     const { rows: dupe } = await pool.query(
       `SELECT 1 FROM brand_signals WHERE brand_company_id = $1 AND source = $2 AND headline = $3 LIMIT 1`,
       [brand.id, sourceKey, String(it.headline).slice(0, 500)],
@@ -393,7 +396,7 @@ export async function ensureBrandGoogleNewsFeeds(): Promise<{ created: number; t
   const tracked = await db
     .select({ id: crmCompanies.id, name: crmCompanies.name, industry: crmCompanies.industry })
     .from(crmCompanies)
-    .where(and(eq(crmCompanies.isTrackedBrand, true), sql`${crmCompanies.mergedIntoId} IS NULL`));
+    .where(and(ilike(crmCompanies.companyType, "tenant%"), sql`${crmCompanies.mergedIntoId} IS NULL`));
 
   let created = 0;
   let refreshed = 0;
@@ -551,7 +554,7 @@ export async function previewBrandSocialFeeds(opts?: {
       linkedinUrl: crmCompanies.linkedinUrl,
     })
     .from(crmCompanies)
-    .where(and(eq(crmCompanies.isTrackedBrand, true), sql`${crmCompanies.mergedIntoId} IS NULL`));
+    .where(and(ilike(crmCompanies.companyType, "tenant%"), sql`${crmCompanies.mergedIntoId} IS NULL`));
 
   const existingRows = await db
     .select({ category: newsSources.category, type: newsSources.type })
@@ -673,18 +676,17 @@ const PINNED_IG_GROUPS: Record<string, string[]> = {
 };
 const PINNED_IG_BRANDS = new Set(Object.values(PINNED_IG_GROUPS).flat());
 
-// Self-heal + report for the pinned list. Flips tracking ON for any pinned
-// brand row that isn't tracked (untracked rows never reach the curated
-// plan), then says where each requested group stands. Logged at boot so
-// gaps — a group with no CRM row at all, or a row with no usable handle —
-// are visible in the deploy logs instead of silently unfed.
+// Self-heal + report for the pinned list. Ensures every pinned brand row
+// is Tenant-typed (non-brand rows never reach the curated plan), then says
+// where each requested group stands. Logged at boot so gaps — a group with
+// no CRM row at all, or a row with no usable handle — are visible in the
+// deploy logs instead of silently unfed.
 export async function ensurePinnedIgBrands(): Promise<{ group: string; status: string; detail?: string }[]> {
   const pinnedArr = [...PINNED_IG_BRANDS];
   await pool.query(
     `UPDATE crm_companies
-        SET is_tracked_brand = true,
-            tracking_reason = COALESCE(NULLIF(tracking_reason, ''), 'Pinned must-watch operator (Woody, 2026-08-18)')
-      WHERE merged_into_id IS NULL AND is_tracked_brand IS NOT TRUE
+        SET company_type = 'Tenant'
+      WHERE merged_into_id IS NULL AND (company_type IS NULL OR company_type NOT ILIKE 'tenant%')
         AND regexp_replace(lower(name), '[^a-z0-9]', '', 'g') = ANY($1::text[])`,
     [pinnedArr],
   );
@@ -732,7 +734,7 @@ export async function previewCuratedInstagramFeeds(limit = 100): Promise<Curated
       instagramHandle: crmCompanies.instagramHandle,
     })
     .from(crmCompanies)
-    .where(and(eq(crmCompanies.isTrackedBrand, true), sql`${crmCompanies.mergedIntoId} IS NULL`));
+    .where(and(ilike(crmCompanies.companyType, "tenant%"), sql`${crmCompanies.mergedIntoId} IS NULL`));
 
   const excluded = { junkHandle: 0, duplicateHandle: 0, alreadyFed: 0, failedRepeatedly: 0, overLimit: 0 };
 
@@ -951,7 +953,7 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
   const brands = await db
     .select({ id: crmCompanies.id, name: crmCompanies.name, industry: crmCompanies.industry })
     .from(crmCompanies)
-    .where(and(eq(crmCompanies.isTrackedBrand, true), sql`${crmCompanies.mergedIntoId} IS NULL`));
+    .where(and(ilike(crmCompanies.companyType, "tenant%"), sql`${crmCompanies.mergedIntoId} IS NULL`));
   const brandIndex = brands
     .map((b) => ({ id: b.id, name: b.name, industry: b.industry, normalized: normalizeBrandName(b.name) }))
     .filter((b) => b.normalized.length >= 3);

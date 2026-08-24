@@ -21,6 +21,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Utensils, MapPin, RefreshCw, Loader2, ExternalLink } from "lucide-react";
+import { Pill } from "@/components/ui/pill";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -56,6 +57,15 @@ const BUSINESS_TYPES = [
   { value: "Pub/bar/nightclub", label: "Pubs & bars" },
 ];
 
+// Display-only tidy-up: the FHRS feed ships many names as raw ALL CAPS.
+// Title-case those for display; mixed-case names pass through untouched.
+function displayName(name: string): string {
+  if (/[A-Z]/.test(name) && name === name.toUpperCase()) {
+    return name.toLowerCase().replace(/(^|[\s\-'(&/])([a-z])/g, (_, sep, ch) => sep + ch.toUpperCase());
+  }
+  return name;
+}
+
 function ratingBadgeColor(rating: string | null): string {
   if (!rating) return "bg-muted text-muted-foreground";
   if (rating === "5") return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
@@ -72,7 +82,7 @@ export default function WestminsterRestaurantsPage() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "prospects" | "in_crm">("prospects");
   const [refreshing, setRefreshing] = useState(false);
-  const [laId, setLaId] = useState<string>("197");
+  const [laId, setLaId] = useState<string>("120");
 
   const { data: boroughs = [] } = useQuery<Array<{ id: number; name: string }>>({
     queryKey: ["/api/westminster/boroughs"],
@@ -148,11 +158,13 @@ export default function WestminsterRestaurantsPage() {
     <div className="flex flex-col h-full min-h-screen">
       <div className="border-b bg-background sticky top-0 z-10 px-4 lg:px-6 py-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
+          {/* flex-wrap: on a phone the borough dropdown wraps under the
+              title instead of running off the right edge. */}
+          <div className="flex items-center gap-2 flex-wrap">
             <Utensils className="h-5 w-5 text-primary" />
             <h1 className="text-xl font-semibold">London Restaurants</h1>
             <Select value={laId} onValueChange={setLaId}>
-              <SelectTrigger className="h-8 w-56"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-8 w-56 max-w-full"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {boroughs.map((b) => (
                   <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
@@ -167,11 +179,22 @@ export default function WestminsterRestaurantsPage() {
           </Button>
         </div>
 
-        {/* Stats */}
+        {/* Status pills — tappable stats ARE the filter (§8); the old
+            "Prospects only" dropdown duplicated the highlighted tile. */}
+        <div className="flex flex-wrap items-center gap-1.5 mt-3">
+          <Pill active={statusFilter === "prospects"} onClick={() => setStatusFilter("prospects")} data-testid="pill-status-prospects">
+            Prospects <span className="font-mono tabular-nums">{stats.prospects.toLocaleString()}</span>
+          </Pill>
+          <Pill active={statusFilter === "in_crm"} onClick={() => setStatusFilter("in_crm")} data-testid="pill-status-in-crm">
+            Already in CRM <span className="font-mono tabular-nums">{stats.inCrm.toLocaleString()}</span>
+          </Pill>
+          <Pill active={statusFilter === "all"} onClick={() => setStatusFilter("all")} data-testid="pill-status-all">
+            All <span className="font-mono tabular-nums">{stats.total.toLocaleString()}</span>
+          </Pill>
+        </div>
+
+        {/* Informational (non-tappable) stat stays a plain tile per §8 */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-          <StatCard label="Total restaurants" value={stats.total} />
-          <StatCard label="Already in CRM" value={stats.inCrm} subtle />
-          <StatCard label="Prospects (gap)" value={stats.prospects} highlight />
           <StatCard label="5-star hygiene" value={stats.ratings["5"]} />
         </div>
 
@@ -183,14 +206,6 @@ export default function WestminsterRestaurantsPage() {
             placeholder="Search name / address / postcode…"
             className="max-w-xs"
           />
-          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as any)}>
-            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="prospects">Prospects only</SelectItem>
-              <SelectItem value="in_crm">Already in CRM</SelectItem>
-              <SelectItem value="all">All</SelectItem>
-            </SelectContent>
-          </Select>
           <Select value={typeFilter} onValueChange={setTypeFilter}>
             <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -216,10 +231,40 @@ export default function WestminsterRestaurantsPage() {
             <p>No restaurants match — try different filters or refresh the feed.</p>
           </CardContent></Card>
         ) : (
-          <Card>
+          <>
+          {/* Phone: card list (§7) — the table is desktop-only (§6). */}
+          <div className="md:hidden space-y-2">
+            {filtered.map((r) => (
+              <div key={r.fhrsid} className="rounded-2xl bg-card border border-border p-3" data-testid={`restaurant-card-${r.fhrsid}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-medium text-sm truncate">{displayName(r.name)}</span>
+                  <Badge className={`${ratingBadgeColor(r.fhrsRating)} shrink-0`} variant="secondary">
+                    {r.fhrsRating || "—"}
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+                  {r.address}{r.postcode ? ` · ${r.postcode}` : ""}
+                </p>
+                <div className="flex items-center gap-1.5 mt-2">
+                  {r.crmPropertyId ? (
+                    <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                      In CRM
+                    </Badge>
+                  ) : r.brandStoreId || r.brandCompanyId ? (
+                    <Badge variant="outline" className="bg-violet-50 text-violet-700 border-violet-200" title={r.brandCompanyName ? `Brand: ${r.brandCompanyName}` : undefined}>
+                      Brand{r.brandCompanyName ? `: ${r.brandCompanyName}` : ""}
+                    </Badge>
+                  ) : (
+                    <ResolveButton restaurant={r} onResolved={() => refetch()} />
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          <Card className="hidden md:block">
             <Table>
               <TableHeader>
-                <TableRow>
+                <TableRow className="[&_th]:text-[11px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-wider [&_th]:text-muted-foreground">
                   <TableHead>Name</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Address</TableHead>
@@ -233,7 +278,7 @@ export default function WestminsterRestaurantsPage() {
                   <TableRow key={r.fhrsid}>
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="truncate">{r.name}</span>
+                        <span className="truncate">{displayName(r.name)}</span>
                         <a
                           href={`https://ratings.food.gov.uk/business/${r.fhrsid}`}
                           target="_blank"
@@ -276,6 +321,7 @@ export default function WestminsterRestaurantsPage() {
               </TableBody>
             </Table>
           </Card>
+          </>
         )}
       </div>
     </div>

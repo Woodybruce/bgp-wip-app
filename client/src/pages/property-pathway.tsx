@@ -1922,7 +1922,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                                 )}
                                 {c.status && <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase">{c.status}</span>}
                                 {c.reusedFromClouseau && (
-                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 uppercase font-medium" title="Reused from a recent Clouseau investigation (within 30 days)">Cached · Clouseau</span>
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border uppercase font-medium" title="Reused from a recent Clouseau investigation (within 30 days)">Cached · Clouseau</span>
                                 )}
                               </div>
                               <p className="text-[10px] text-muted-foreground">
@@ -2960,7 +2960,7 @@ function PlanningRow({ p }: { p: any }) {
       >
         {expanded ? <ChevronDown className="w-3 h-3 mt-1 shrink-0 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 mt-1 shrink-0 text-muted-foreground" />}
         <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-0.5">{dateStr ? dateStr.slice(0, 10) : ""}</span>
-        {lpa && <span className="text-[8px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0 mt-0.5" title={p.lpa}>{lpa}</span>}
+        {lpa && <span className="text-[8px] px-1 py-0.5 rounded bg-muted text-muted-foreground uppercase font-medium shrink-0 mt-0.5" title={p.lpa}>{lpa}</span>}
         <span className="flex-1 min-w-0">
           <span className="font-medium break-all">{p.reference}</span>
           {p.status && <span className={`ml-1 text-[9px] px-1 py-0.5 rounded uppercase tracking-wide ${statusTone(p.status)}`}>{p.status}</span>}
@@ -3796,10 +3796,10 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
   };
 
   return (
-    <div className="mt-4 rounded-lg border bg-gradient-to-br from-violet-50/40 to-amber-50/40 dark:from-violet-950/20 dark:to-amber-950/20 p-3 space-y-3">
+    <div className="mt-4 rounded-lg border border-border bg-muted/40 p-3 space-y-3">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-violet-600" />
+          <Sparkles className="w-4 h-4 text-primary" />
           <span className="text-sm font-semibold">Claude design — in-app deck</span>
           <span className="text-[10px] text-muted-foreground">live HTML preview · iterate by prompt · print to PDF</span>
         </div>
@@ -4271,7 +4271,7 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
                           title="Select (then Delete above)"
                         />
                         {a.kind === "hero" && (
-                          <span className="absolute top-1 right-1 bg-amber-500 text-white text-[9px] px-1 rounded">⭐ HERO</span>
+                          <span className="absolute top-1 right-1 bg-foreground text-background text-[9px] px-1 rounded">⭐ HERO</span>
                         )}
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/45 transition-colors flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100">
                           <button
@@ -4285,7 +4285,7 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
                             <button
                               onClick={() => tagAsHero(a.id)}
                               disabled={busy}
-                              className="bg-amber-500 text-white text-[10px] px-1.5 py-1 rounded hover:opacity-90"
+                              className="bg-white/90 text-foreground text-[10px] px-1.5 py-1 rounded hover:opacity-90"
                               title="Tag as the hero shot"
                             >
                               ⭐
@@ -4798,9 +4798,9 @@ function PlanningDocsCard({
                   Full description + long refs are available via Expand. */}
               <div className="flex items-center gap-2 px-2 py-1.5 border-b bg-muted/30 text-[11px]">
                 <span className="text-[10px] text-muted-foreground shrink-0 w-16">{app.appDate ? app.appDate.slice(0, 10) : ""}</span>
-                {app.lpa && <span className="text-[8px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0" title={app.lpa}>{app.lpa.split(/[ &]/)[0]}</span>}
+                {app.lpa && <span className="text-[8px] px-1 py-0.5 rounded bg-muted text-muted-foreground uppercase font-medium shrink-0" title={app.lpa}>{app.lpa.split(/[ &]/)[0]}</span>}
                 <a href={app.docsUrl} target="_blank" rel="noreferrer" className="font-medium text-primary hover:underline truncate min-w-0 flex-1" title={app.ref + (app.description ? ` — ${app.description}` : "")}>{app.ref}</a>
-                <span className="text-[9px] px-1 py-0.5 rounded bg-sky-100 text-sky-800 shrink-0">{app.docs.length} PDF{app.docs.length === 1 ? "" : "s"}</span>
+                <span className="text-[9px] px-1 py-0.5 rounded bg-muted text-muted-foreground shrink-0">{app.docs.length} PDF{app.docs.length === 1 ? "" : "s"}</span>
               </div>
               <div className="divide-y">
                 {app.docs.slice(0, 40).map((d, di) => (
@@ -4939,12 +4939,12 @@ function PlanningDocsDialog({
             <div key={ai} className="border rounded bg-background">
               <div className="flex items-start gap-2 px-3 py-2 border-b bg-muted/30">
                 <span className="text-[11px] text-muted-foreground shrink-0 w-20 mt-0.5">{app.appDate ? app.appDate.slice(0, 10) : ""}</span>
-                {app.lpa && <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0 mt-0.5" title={app.lpa}>{app.lpa.split(/[ &]/)[0]}</span>}
+                {app.lpa && <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase font-medium shrink-0 mt-0.5" title={app.lpa}>{app.lpa.split(/[ &]/)[0]}</span>}
                 <span className="flex-1 min-w-0">
                   <a href={app.docsUrl} target="_blank" rel="noreferrer" className="font-medium break-all text-primary hover:underline text-[12px]">{app.ref}</a>
                   {app.description && <span className="block text-muted-foreground text-[11px]">{app.description}</span>}
                 </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 shrink-0 mt-0.5">{app.docs.length} PDF{app.docs.length === 1 ? "" : "s"}</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0 mt-0.5">{app.docs.length} PDF{app.docs.length === 1 ? "" : "s"}</span>
               </div>
               <div className="divide-y">
                 {app.docs.map((d, di) => (

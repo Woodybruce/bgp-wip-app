@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { Switch, Route, useLocation } from "wouter";
 import { queryClient, getQueryFn, apiRequest } from "./lib/queryClient";
+import { isEquityUser } from "./lib/utils";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { MessageSquare, ArrowLeft, Sparkles, Menu, Smartphone } from "lucide-react";
 import { Toaster } from "@/components/ui/toaster";
@@ -87,6 +88,7 @@ const TeamExpenses = lazy(() => import("@/pages/team-expenses"));
 const MobileExpenses = lazy(() => import("@/pages/mobile-expenses"));
 const MobileAdminExpenses = lazy(() => import("@/pages/mobile-admin-expenses"));
 const MobileImages = lazy(() => import("@/pages/mobile-images"));
+const MobileProfile = lazy(() => import("@/pages/mobile-profile"));
 const ExpensesApprovals = lazy(() => import("@/pages/expenses-approvals"));
 const ExpensesRevolut = lazy(() => import("@/pages/expenses-revolut"));
 const AvailableUnitsPage = lazy(() => import("@/pages/available-units"));
@@ -132,8 +134,8 @@ function PublicKycUploadRoute() {
 function PageLoader() {
   return (
     <div className="flex items-center justify-center h-full min-h-[200px]">
-      <div className="h-0.5 w-24 bg-neutral-200 dark:bg-neutral-800 rounded overflow-hidden">
-        <div className="h-full w-8 bg-neutral-400 dark:bg-neutral-600 rounded animate-pulse" />
+      <div className="h-0.5 w-24 bg-muted rounded overflow-hidden">
+        <div className="h-full w-8 bg-muted-foreground/50 rounded animate-pulse" />
       </div>
     </div>
   );
@@ -222,6 +224,17 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   const [, navigate] = useLocation();
   useEffect(() => { if (user && !user.isAdmin) navigate("/"); }, [user, navigate]);
   if (!user || !user.isAdmin) return <PageLoader />;
+  return <>{children}</>;
+}
+
+// Finance is admin OR equity director (Woody, Jack, Rupert, Charlotte —
+// Woody, 2026-08-22). Mirrors the server's requireEquityOrAdmin gate.
+function EquityRoute({ children }: { children: React.ReactNode }) {
+  const { data: user } = useQuery<User | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
+  const [, navigate] = useLocation();
+  const allowed = !!user && (user.isAdmin || isEquityUser(user as any));
+  useEffect(() => { if (user && !allowed) navigate("/"); }, [user, allowed, navigate]);
+  if (!allowed) return <PageLoader />;
   return <>{children}</>;
 }
 
@@ -364,7 +377,7 @@ function Router() {
       <Route path="/marketing-files" component={MarketingFilesPage} />
       <Route path="/addins" component={AddinsPage} />
       <Route path="/edozo" component={PropertiesHub} />
-      <Route path="/finance">{() => <AdminRoute><FinancePage /></AdminRoute>}</Route>
+      <Route path="/finance">{() => <EquityRoute><FinancePage /></EquityRoute>}</Route>
       <Route path="/expenses" component={ExpensesAdmin} />
       <Route path="/expenses/approvals" component={ExpensesApprovals} />
       <Route path="/expenses/revolut" component={ExpensesRevolut} />
@@ -375,6 +388,7 @@ function Router() {
       <Route path="/m/expenses" component={MobileExpenses} />
       <Route path="/m/team-expenses" component={MobileAdminExpenses} />
       <Route path="/m/images" component={MobileImages} />
+      <Route path="/m/profile" component={MobileProfile} />
       <Route path="/hr" component={HRPage} />
       <Route path="/hr/:userId">{(params) => <HrPersonRedirect params={params as { userId: string }} />}</Route>
       <Route component={NotFound} />
@@ -602,6 +616,20 @@ function AuthenticatedApp() {
                 contacts: "Contact", hr: "Profile", comps: "Comp",
               };
               if (hasId && DETAIL_LABELS[root]) return DETAIL_LABELS[root];
+              // Real page names — the slug title-caser below mangles
+              // acronyms and codenames ("Wip Report", "Pla", "Kyc
+              // Clouseau", "Hr", "Sharepoint"; design review 2026-08-23).
+              const ROUTE_TITLES: Record<string, string> = {
+                "wip-report": "WIP Report", pla: "PLA Matters",
+                "kyc-clouseau": "KYC Clouseau", hr: "People & HR",
+                sharepoint: "SharePoint", "aml-compliance": "AML Compliance",
+                "aml-training": "AML Training", "cad-measure": "Cann CAD",
+                edozo: "Properties", available: "Letting Tracker",
+                contacts: "CRM", companies: "CRM", chatbgp: "ChatBGP",
+                "map-bgp": "Map", "westminster-restaurants": "London Restaurants",
+                "property-intelligence": "Property Intelligence",
+              };
+              if (ROUTE_TITLES[root]) return ROUTE_TITLES[root];
               return root.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
             })()}
           </span>
@@ -820,8 +848,8 @@ function AppContent() {
         <div className="space-y-4 text-center">
           <img src={bgpLogoDark} alt="BGP" className="h-10 w-auto mx-auto dark:hidden" />
           <img src={bgpLogoLight} alt="BGP" className="h-10 w-auto mx-auto hidden dark:block" />
-          <div className="h-0.5 w-24 mx-auto bg-neutral-200 dark:bg-neutral-800 rounded overflow-hidden">
-            <div className="h-full w-8 bg-neutral-400 dark:bg-neutral-600 rounded animate-pulse" />
+          <div className="h-0.5 w-24 mx-auto bg-muted rounded overflow-hidden">
+            <div className="h-full w-8 bg-muted-foreground/50 rounded animate-pulse" />
           </div>
         </div>
       </div>

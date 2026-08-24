@@ -29,7 +29,6 @@ interface Pitch {
 interface BrandMatch {
   id: string;
   name: string;
-  is_tracked_brand: boolean;
   rollout_status: string | null;
 }
 
@@ -48,7 +47,7 @@ interface RecommendedCategory {
 interface MixResponse {
   headline: string;
   recommendations: RecommendedCategory[];
-  trackedBrandCount: number;
+  matchedBrandCount: number;
 }
 
 export function LeasingPitchPanel({ propertyId }: { propertyId: string }) {
@@ -92,7 +91,7 @@ export function LeasingPitchPanel({ propertyId }: { propertyId: string }) {
     onSuccess: (r) => {
       setMix(r);
       queryClient.invalidateQueries({ queryKey: ["/api/leasing-pitch", propertyId] });
-      toast({ title: "Tenant mix recommended", description: `${r.trackedBrandCount} matched tracked brands` });
+      toast({ title: "Tenant mix recommended", description: `${r.matchedBrandCount} matched CRM brands` });
     },
     onError: (e: any) => toast({ title: "Recommendation failed", description: e?.message, variant: "destructive" }),
   });
@@ -123,7 +122,7 @@ export function LeasingPitchPanel({ propertyId }: { propertyId: string }) {
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-base flex items-center gap-2">
-            <Target className="w-4 h-4 text-emerald-700" />
+            <Target className="w-4 h-4 text-muted-foreground" />
             Leasing pitch
           </CardTitle>
           <div className="flex items-center gap-2">
@@ -208,7 +207,7 @@ export function LeasingPitchPanel({ propertyId }: { propertyId: string }) {
           <div className="border-t pt-4 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-purple-600" />
+                <Sparkles className="w-4 h-4 text-muted-foreground" />
                 <span className="text-sm font-medium">Recommended tenant mix</span>
               </div>
               {lastMixAt && !mix && (
@@ -240,9 +239,6 @@ export function LeasingPitchPanel({ propertyId }: { propertyId: string }) {
                                 </Link>
                               ) : (
                                 <span className="font-medium">{b.name}</span>
-                              )}
-                              {b.match?.is_tracked_brand && (
-                                <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[9px] py-0 px-1.5">Tracked</Badge>
                               )}
                               {b.match?.rollout_status === "scaling" && (
                                 <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-[9px] py-0 px-1.5">Scaling</Badge>

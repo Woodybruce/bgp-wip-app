@@ -5,6 +5,8 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Pill } from "@/components/ui/pill";
+import { countLabel } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -229,10 +231,7 @@ export default function BrandsHub() {
       {/* ── Header ─────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Store className="w-6 h-6 text-pink-500" />
-            Brand Intelligence
-          </h1>
+          <h1 className="text-2xl font-bold tracking-tight">Brand Intelligence</h1>
           <p className="text-sm text-muted-foreground mt-0.5">{isClientHub ? "Brands across your portfolio and the wider hospitality market" : "Live view of every brand across the Hub"}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -250,20 +249,11 @@ export default function BrandsHub() {
           built); desktop keeps the full tab bar. Hidden tabs stay reachable
           via ?tab= for development. */}
       {VISIBLE_HUB_TABS.length > 1 && (
-      <div className="flex gap-1 border-b">
+      <div className="flex gap-1.5 flex-wrap">
         {(VISIBLE_HUB_TABS as { key: HubTab; label: string; icon: any }[]).map(t => (
-          <button
-            key={t.key}
-            onClick={() => setActiveTab(t.key)}
-            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
-              activeTab === t.key
-                ? "border-pink-500 text-pink-600"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <t.icon className="w-3.5 h-3.5" />
+          <Pill key={t.key} active={activeTab === t.key} onClick={() => setActiveTab(t.key)}>
             {t.label}
-          </button>
+          </Pill>
         ))}
       </div>
       )}
@@ -273,18 +263,15 @@ export default function BrandsHub() {
       {/* ── Stats bar ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
-          { label: "Total Brands", value: totalBrands, icon: Store, colour: "text-pink-500" },
-          { label: "Brands with Live Requirements", value: activeReqs, icon: FileText, colour: "text-blue-500" },
-          { label: "With Turnover Data", value: brandsWithTurnover, icon: BarChart3, colour: "text-emerald-500" },
-          { label: "Categories", value: BRAND_CATEGORIES.length, icon: Zap, colour: "text-purple-500" },
+          { label: "Total Brands", value: totalBrands },
+          { label: "Brands with Live Requirements", value: activeReqs },
+          { label: "With Turnover Data", value: brandsWithTurnover },
+          { label: "Categories", value: BRAND_CATEGORIES.length },
         ].map(s => (
           <Card key={s.label}>
-            <CardContent className="p-4 flex items-center gap-3">
-              <s.icon className={`w-8 h-8 ${s.colour} shrink-0`} />
-              <div>
-                <div className="text-2xl font-bold">{s.value}</div>
-                <div className="text-xs text-muted-foreground">{s.label}</div>
-              </div>
+            <CardContent className="p-4">
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{s.label}</div>
+              <div className="text-2xl font-bold font-mono tabular-nums mt-0.5">{s.value}</div>
             </CardContent>
           </Card>
         ))}
@@ -300,13 +287,13 @@ export default function BrandsHub() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
             <div className="flex items-center gap-2">
-              <Trophy className="w-4 h-4 text-yellow-500" />
+              <Trophy className="w-4 h-4 text-muted-foreground" />
               <CardTitle className="text-sm font-semibold">Turnover Leaders</CardTitle>
               <Badge variant="secondary" className="text-[10px]">{data?.topTurnover?.length || 0}</Badge>
             </div>
             <Link href="/brands?tab=turnover">
               <Button variant="ghost" size="sm" className="text-xs h-7">
-                Full <ChevronRight className="w-3 h-3 ml-0.5" />
+                Show all <ChevronRight className="w-3 h-3 ml-0.5" />
               </Button>
             </Link>
           </CardHeader>
@@ -320,7 +307,7 @@ export default function BrandsHub() {
               <div className="space-y-1.5 max-h-[460px] overflow-y-auto pr-1">
                 {data.topTurnover.slice(0, 10).map((t, i) => (
                   <div key={t.id} className="flex items-center gap-2 py-1.5 border-b last:border-0">
-                    <span className={`text-xs font-bold w-4 shrink-0 ${i < 3 ? "text-yellow-500" : "text-muted-foreground"}`}>
+                    <span className={`text-xs font-bold w-4 shrink-0 ${i < 3 ? "text-primary" : "text-muted-foreground"}`}>
                       {i + 1}
                     </span>
                     <BrandLogo name={t.company_name} domain={t.domain} size={22} />
@@ -371,7 +358,7 @@ export default function BrandsHub() {
                         <div className="text-right shrink-0">
                           <div className="flex items-center gap-1 justify-end">
                             {(parseInt(b.deal_count) || 0) > 0 && <Badge variant="secondary" className="text-[9px] px-1">{b.deal_count}d</Badge>}
-                            {(parseInt(b.req_count) || 0) > 0 && <Badge className="text-[9px] px-1 bg-pink-500">{b.req_count}r</Badge>}
+                            {(parseInt(b.req_count) || 0) > 0 && <Badge className="text-[9px] px-1">{b.req_count}r</Badge>}
                           </div>
                           <p className="text-[9px] text-muted-foreground mt-0.5">{daysAgo === 0 ? "today" : `${daysAgo}d`}</p>
                         </div>
@@ -390,13 +377,13 @@ export default function BrandsHub() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
             <div className="flex items-center gap-2">
-              <Star className="w-4 h-4 text-yellow-500" />
+              <Star className="w-4 h-4 text-muted-foreground" />
               <CardTitle className="text-sm font-semibold">Super Brands</CardTitle>
               <Badge variant="secondary" className="text-[10px]">{data?.superBrands?.length || 0}</Badge>
             </div>
             <Link href="/companies?tab=tenants&cat=luxury">
               <Button variant="ghost" size="sm" className="text-xs h-7">
-                All <ChevronRight className="w-3 h-3 ml-0.5" />
+                Show all <ChevronRight className="w-3 h-3 ml-0.5" />
               </Button>
             </Link>
           </CardHeader>
@@ -425,7 +412,7 @@ export default function BrandsHub() {
           <div className="flex items-center gap-2">
             <Maximize2 className="w-4 h-4 text-blue-500" />
             <CardTitle className="text-sm font-semibold">Active Requirements Radar</CardTitle>
-            <Badge className="text-[10px] bg-pink-500">{data?.activeRequirements?.length || 0} brands searching</Badge>
+            <Badge variant="secondary" className="text-[10px]">{data?.activeRequirements?.length || 0} brands searching</Badge>
           </div>
         </CardHeader>
         <CardContent className="px-5 pb-4">
@@ -548,6 +535,12 @@ const BRAND_CATEGORIES: TopCat[] = [
       { key: "books", label: "Books & Stationery", icon: BookOpen, match: ["Tenant - Books", "Tenant - Stationery", "Tenant - Books & Stationery"] },
       { key: "financial", label: "Financial Services", icon: Landmark, match: ["Tenant - Financial Services", "Tenant - Bank", "Tenant - Finance"] },
       { key: "services", label: "Services", icon: Briefcase, match: ["Tenant - Services", "Tenant - Optician", "Tenant - Travel", "Tenant - Other Services"] },
+      // "National & Regional" dissolved (Woody, 2026-08-24: "doesn't make
+      // any sense") — its sub-sectors live here so no brand loses a home.
+      { key: "grocery", label: "Grocery & Convenience", icon: ShoppingCart, match: ["Tenant - Grocery", "Tenant - Convenience", "Tenant - Supermarket"] },
+      { key: "value-retail", label: "Value & Discount", icon: Tag, match: ["Tenant - Value Retail", "Tenant - Discount", "Tenant - Pound Store"] },
+      { key: "trade-diy", label: "Trade & DIY", icon: Wrench, match: ["Tenant - Trade", "Tenant - DIY", "Tenant - Hardware", "Tenant - Builders Merchants"] },
+      { key: "national-other", label: "National Retail", icon: Building2, match: ["Tenant - National Retail", "Tenant - High Street"] },
       { key: "other-retail", label: "Other Retail", icon: Store, match: ["Tenant - Retail", "Tenant - General Retail"] },
     ],
   },
@@ -582,15 +575,9 @@ const BRAND_CATEGORIES: TopCat[] = [
       { key: "yoga", label: "Yoga & Pilates", icon: HeartPulse, match: ["Tenant - Yoga", "Tenant - Pilates"] },
     ],
   },
-  {
-    key: "national", label: "National & Regional", icon: MapPin, color: "bg-teal-900", gradient: "from-teal-900 to-emerald-950",
-    subs: [
-      { key: "grocery", label: "Grocery & Convenience", icon: ShoppingCart, match: ["Tenant - Grocery", "Tenant - Convenience", "Tenant - Supermarket"] },
-      { key: "value-retail", label: "Value & Discount", icon: Tag, match: ["Tenant - Value Retail", "Tenant - Discount", "Tenant - Pound Store"] },
-      { key: "trade-diy", label: "Trade & DIY", icon: Wrench, match: ["Tenant - Trade", "Tenant - DIY", "Tenant - Hardware", "Tenant - Builders Merchants"] },
-      { key: "national-other", label: "Other National", icon: Building2, match: ["Tenant - National Retail", "Tenant - High Street"] },
-    ],
-  },
+  // "National & Regional" was retired as a top category (Woody, 2026-08-24:
+  // "doesn't make any sense") — its sub-categories (grocery, value, trade &
+  // DIY, high street) live under Fashion & Retail above.
 ];
 
 function catMatch(companyType: string, cat: TopCat): boolean {
@@ -609,10 +596,18 @@ function BrandExplorer() {
   const { data: exUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientExplorer = exUser?.role === "Client" || !!exUser?.companyScopeId;
   const [activeCat, setActiveCat] = useState<string | null>(() => {
-    try { return localStorage.getItem("brand-explorer-cat") || null; } catch { return null; }
+    // Saved selections may reference a retired category (e.g. "national") —
+    // fall back to All rather than silently applying no filter.
+    try {
+      const saved = localStorage.getItem("brand-explorer-cat") || null;
+      return saved && BRAND_CATEGORIES.some(c => c.key === saved) ? saved : null;
+    } catch { return null; }
   });
   const [activeSub, setActiveSub] = useState<string | null>(() => {
-    try { return localStorage.getItem("brand-explorer-sub") || null; } catch { return null; }
+    try {
+      const saved = localStorage.getItem("brand-explorer-sub") || null;
+      return saved && BRAND_CATEGORIES.some(c => c.subs.some(s => s.key === saved)) ? saved : null;
+    } catch { return null; }
   });
   const [search, setSearch] = useState(() => {
     try { return localStorage.getItem("brand-explorer-search") || ""; } catch { return ""; }
@@ -636,7 +631,6 @@ function BrandExplorer() {
     targetedAt: { propertyId: string; propertyName: string; unitName: string | null }[];
     hasContacts: boolean;
     hunterFlag: boolean;
-    isTracked: boolean;
     liveRequirement: boolean;
   }>>({
     queryKey: ["/api/brands/explorer-flags"],
@@ -720,7 +714,6 @@ function BrandExplorer() {
         if (relFilter === "targeted") return (f.targetedAt || []).length > 0;
         if (relFilter === "contacts") return f.hasContacts;
         if (relFilter === "hunter") return f.hunterFlag;
-        if (relFilter === "tracked") return f.isTracked;
         if (relFilter === "requirement") return f.liveRequirement;
         return true;
       });
@@ -733,67 +726,58 @@ function BrandExplorer() {
 
   return (
     <div className="space-y-4">
-      {/* Category cards */}
+      {/* Category cards — the category browser (docs/DESIGN.md §1/§8):
+          standard token cards with a small category-coloured dot, no
+          gradients. Distinct from the relationship pills below (tiles
+          filter by category, pills by relationship status). */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
-        <div
-          className={`cursor-pointer rounded-xl p-4 text-white transition-all hover:scale-[1.02] active:scale-[0.98] bg-gradient-to-br from-slate-700 to-slate-900 ${
-            activeCat === null ? "shadow-lg ring-2 ring-slate-400 ring-offset-2" : "opacity-80 hover:opacity-100"
+        <button
+          type="button"
+          className={`text-left rounded-2xl border bg-card p-3.5 transition-colors ${
+            activeCat === null ? "border-foreground shadow-sm" : "border-border hover:bg-muted/50"
           }`}
           onClick={() => { setCat(null); setSub(null); }}
         >
-          <Store className="w-6 h-6 mb-2 opacity-90" />
-          <div className="text-2xl font-bold">{companies.length}</div>
-          <div className="text-xs font-medium opacity-90 mt-0.5">All Brands</div>
-        </div>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-2 h-2 rounded-full bg-muted-foreground shrink-0" />
+            <span className="text-sm font-semibold truncate">All Brands</span>
+          </div>
+          <div className="text-sm font-mono tabular-nums text-muted-foreground mt-1">{companies.length}</div>
+        </button>
         {BRAND_CATEGORIES.filter(cat => !isClientExplorer || (catCounts[cat.key] || 0) > 0).map(cat => {
           const isActive = activeCat === cat.key;
-          const Icon = cat.icon;
           return (
-            <div
+            <button
+              type="button"
               key={cat.key}
-              className={`cursor-pointer rounded-xl p-4 text-white transition-all hover:scale-[1.02] active:scale-[0.98] bg-gradient-to-br ${cat.gradient} ${
-                isActive ? "shadow-lg ring-2 ring-white/40 ring-offset-2" : "opacity-80 hover:opacity-100"
+              className={`text-left rounded-2xl border bg-card p-3.5 transition-colors ${
+                isActive ? "border-foreground shadow-sm" : "border-border hover:bg-muted/50"
               }`}
               onClick={() => { setCat(isActive ? null : cat.key); setSub(null); }}
             >
-              <Icon className="w-6 h-6 mb-2 opacity-90" />
-              <div className="text-2xl font-bold">{catCounts[cat.key] || 0}</div>
-              <div className="text-xs font-medium opacity-90 mt-0.5">{cat.label}</div>
-            </div>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${cat.color}`} />
+                <span className="text-sm font-semibold truncate">{cat.label}</span>
+              </div>
+              <div className="text-sm font-mono tabular-nums text-muted-foreground mt-1">{catCounts[cat.key] || 0}</div>
+            </button>
           );
         })}
       </div>
 
       {/* Subcategory pills */}
       {activeCatObj && (
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => setSub(null)}
-            className={`text-sm px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all border ${
-              activeSub === null
-                ? `${activeCatObj.color} text-white border-transparent shadow-sm`
-                : "bg-muted/50 hover:bg-muted border-border text-foreground"
-            }`}
-          >
-            All {activeCatObj.label} <span className="text-xs opacity-75">({catCounts[activeCatObj.key] || 0})</span>
-          </button>
+        <div className="flex flex-wrap gap-1.5">
+          <Pill active={activeSub === null} onClick={() => setSub(null)}>
+            All {activeCatObj.label} <span className="font-mono tabular-nums">{catCounts[activeCatObj.key] || 0}</span>
+          </Pill>
           {activeCatObj.subs.filter(sub => !isClientExplorer || (catCounts[sub.key] || 0) > 0).map(sub => {
             const count = catCounts[sub.key] || 0;
             const isActive = activeSub === sub.key;
-            const Icon = sub.icon;
             return (
-              <button
-                key={sub.key}
-                onClick={() => setSub(isActive ? null : sub.key)}
-                className={`text-sm px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all border ${
-                  isActive
-                    ? `${activeCatObj.color} text-white border-transparent shadow-sm`
-                    : "bg-muted/50 hover:bg-muted border-border text-foreground"
-                }`}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                {sub.label} <span className="text-xs opacity-75">({count})</span>
-              </button>
+              <Pill key={sub.key} active={isActive} onClick={() => setSub(isActive ? null : sub.key)}>
+                {sub.label} <span className="font-mono tabular-nums">{count}</span>
+              </Pill>
             );
           })}
         </div>
@@ -850,18 +834,15 @@ function BrandExplorer() {
                 ["contacts", "With contacts"],
                 ["requirement", "Live requirement"],
                 ["hunter", "Hunter-flagged"],
-                ["tracked", "Tracked"],
               ] as const).map(([key, label]) => (
-                <button
+                <Pill
                   key={key}
+                  active={relFilter === key}
                   onClick={() => setRelFilter(key)}
-                  className={`px-3 py-1 rounded-full text-xs border transition-colors ${
-                    relFilter === key ? "bg-teal-600 text-white border-teal-600" : "bg-background hover:bg-muted"
-                  }`}
                   data-testid={`explorer-rel-${key}`}
                 >
                   {label}
-                </button>
+                </Pill>
               ))}
             </div>
             {targetProperties.length > 0 && (
@@ -879,7 +860,7 @@ function BrandExplorer() {
             )}
           </>
         )}
-        <p className="text-sm text-muted-foreground ml-auto">{filtered.length} results</p>
+        <p className="text-sm text-muted-foreground ml-auto">{countLabel(filtered.length, "result")}</p>
       </div>
 
       {/* Brand cards */}
@@ -939,12 +920,12 @@ function BrandExplorer() {
       {brandNews.length > 0 && (
         <div>
           <div className="flex items-center gap-2 mb-3">
-            <Newspaper className="w-4 h-4 text-pink-500" />
+            <Newspaper className="w-4 h-4 text-muted-foreground" />
             <h3 className="text-sm font-semibold">Brand News</h3>
             <Badge variant="secondary" className="text-[10px]">{brandNews.length}</Badge>
             <Link href="/news" className="ml-auto">
               <Button variant="ghost" size="sm" className="text-xs h-7">
-                Full feed <ChevronRight className="w-3 h-3 ml-0.5" />
+                Show all <ChevronRight className="w-3 h-3 ml-0.5" />
               </Button>
             </Link>
           </div>

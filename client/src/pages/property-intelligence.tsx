@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import { Loader2, Map, ShieldCheck, Landmark, Receipt, Sparkles, ImageIcon, Globe } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
@@ -77,7 +78,7 @@ function MyPropertiesBar({ onPick }: { onPick: (p: { id: string; name: string; p
             setCtxProperty(rp);
             onPick(rp);
           }}
-          className="inline-flex items-center rounded-full border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-indigo-400 transition-colors"
+          className="inline-flex items-center rounded-full border px-2.5 py-[5px] leading-none text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground hover:border-indigo-400 transition-colors"
           data-testid={`pi-my-property-${p.id}`}
         >
           {p.name}
@@ -150,12 +151,15 @@ export default function PropertyIntelligence() {
 
   return (
     <PropertyProvider initial={resolvedProperty}>
-    <div className="flex flex-col h-full min-h-screen">
+    {/* UX #83: min-h-screen only from md up — on phones the mobile shell
+        already sizes this page to the space above the fixed bottom nav, and
+        forcing 100vh pushed the map (h-full chain) underneath it, half-hiding
+        the zoom controls. */}
+    <div className="flex flex-col h-full md:min-h-screen">
       <Tabs value={tab} onValueChange={handleTabChange} className="flex flex-col h-full">
         <div className="border-b bg-background sticky top-0 z-10">
           <div className="px-4 lg:px-6 pt-4">
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Globe className="w-6 h-6 text-indigo-500" />
+            <h1 className="text-2xl font-bold tracking-tight">
               Property Intelligence
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">
@@ -167,22 +171,18 @@ export default function PropertyIntelligence() {
               via onResolveProperty so every other tab still prefills via
               PropertyContext + the resolvedProperty state below. Saves a
               full bar of vertical real estate above the tab strip. */}
-          <div className="px-4 lg:px-6 pt-3">
-            <TabsList className="bg-transparent p-0 h-auto gap-x-1 gap-y-0.5 flex flex-wrap lg:flex-nowrap lg:w-max">
-              {visibleTabs.map((t) => {
-                const Icon = t.icon;
-                return (
-                  <TabsTrigger
-                    key={t.id}
-                    value={t.id}
-                    className="flex items-center gap-1.5 px-2.5 lg:px-4 py-2.5 text-sm font-medium rounded-none border-b-2 -mb-px border-transparent text-muted-foreground hover:text-foreground data-[state=active]:border-indigo-500 data-[state=active]:text-indigo-600 data-[state=active]:shadow-none shrink-0 whitespace-nowrap"
-                    data-testid={`pi-tab-${t.id}`}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                    {t.label}
-                  </TabsTrigger>
-                );
-              })}
+          <div className="px-4 lg:px-6 py-3">
+            <TabsList className={pillTabsList}>
+              {visibleTabs.map((t) => (
+                <TabsTrigger
+                  key={t.id}
+                  value={t.id}
+                  className={pillTabsTrigger}
+                  data-testid={`pi-tab-${t.id}`}
+                >
+                  {t.label}
+                </TabsTrigger>
+              ))}
             </TabsList>
           </div>
           {piIsClient && (

@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dialog";
 import { Plus, Scale, Calendar as CalendarIcon, MapPin, Loader2, X, FileText } from "lucide-react";
 import { getAuthHeaders, queryClient } from "@/lib/queryClient";
+import { countLabel } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
@@ -159,11 +160,13 @@ function MatterListView() {
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <Scale className="h-5 w-5 text-primary" />
-            <h1 className="text-xl font-semibold">Lease Advisory</h1>
-            <Badge variant="outline" className="text-xs">{filtered.length} instructions</Badge>
+            <div>
+              <h1 className="text-xl font-semibold">Lease Advisory</h1>
+              <p className="text-xs text-muted-foreground">{countLabel(filtered.length, "instruction")}</p>
+            </div>
           </div>
           <Button onClick={() => setCreateOpen(true)} size="sm" className="gap-1.5">
-            <Plus className="h-4 w-4" /> New Instruction
+            <Plus className="h-4 w-4" /> Add instruction
           </Button>
         </div>
         <div className="flex items-center gap-2 mt-3 flex-wrap">
@@ -176,7 +179,7 @@ function MatterListView() {
           <Select value={statusFilter} onValueChange={setStatusFilter}>
             <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="active">Active (default)</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
               <SelectItem value="all">All including closed</SelectItem>
               {STATUSES.map((s) => (
                 <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
@@ -203,8 +206,12 @@ function MatterListView() {
         ) : filtered.length === 0 ? (
           <Card><CardContent className="p-12 text-center text-muted-foreground">
             <Scale className="h-12 w-12 mx-auto mb-3 opacity-30" />
-            <p className="font-medium mb-1">No instructions {statusFilter !== "all" ? `with status "${statusFilter}"` : "yet"}</p>
-            <p className="text-sm">Click "New Instruction" to start one — anchor it to a property via the resolver.</p>
+            <p className="font-medium mb-1">
+              {statusFilter === "all"
+                ? "No instructions yet"
+                : `No ${(STATUSES.find((s) => s.value === statusFilter)?.label || "active").toLowerCase()} instructions yet`}
+            </p>
+            <p className="text-sm">Add one to get started — anchor it to a property via the resolver.</p>
           </CardContent></Card>
         ) : (
           <Card>
@@ -333,7 +340,7 @@ function NewMatterDialog({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-2xl w-[calc(100vw-2rem)] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>New Instruction</DialogTitle>
+          <DialogTitle>Add instruction</DialogTitle>
           <DialogDescription>
             Anchor this instruction to a canonical property — type any address, postcode, UPRN or title number and the resolver will pick it up.
           </DialogDescription>
@@ -568,7 +575,7 @@ function MatterDetailView({ id }: { id: string }) {
 
         {/* Negotiation positions */}
         <Card><CardContent className="p-4">
-          <div className="text-sm font-medium mb-3">Negotiation <span className="text-xs text-muted-foreground font-normal">(click any value to edit)</span></div>
+          <div className="text-sm font-medium mb-3">Negotiation <span className="text-xs text-muted-foreground font-normal">(tap any value to edit)</span></div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <MoneyField label="Current rent"   value={matter.currentRent}        onSave={(v) => updateField.mutate({ currentRent: v } as any)} />
             <MoneyField label="Our quoting"    value={matter.quotingRent}        onSave={(v) => updateField.mutate({ quotingRent: v } as any)} />
@@ -669,7 +676,7 @@ function MatterDetailView({ id }: { id: string }) {
           </div>
           {workbooks.length === 0 ? (
             <div className="text-sm text-muted-foreground">
-              No valuations run yet. Click "Run Net Effective" — straight-line amortisation
+              No valuations yet — run Net Effective: straight-line amortisation
               of rent free + capex over the assumed term, mirroring BGP's Net Effective Template.
             </div>
           ) : (
@@ -1791,7 +1798,7 @@ function DocumentBriefsDialog({
               </div>
               {!renderedHtml && (
                 <div className="text-[10px] text-muted-foreground italic">
-                  Brief built. Click "Render" on a brief to send to Claude design and produce a print-ready HTML document.
+                  Brief built. Render a brief to produce a print-ready HTML document.
                 </div>
               )}
             </CardContent>

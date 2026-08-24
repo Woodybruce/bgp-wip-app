@@ -7,7 +7,6 @@ import { ViewToggle } from "@/components/mobile-card-view";
 import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import { CrmEntityPicker } from "@/components/crm-entity-picker";
 import { BrandSearchInput } from "@/components/brand-search-input";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   DropdownMenu,
@@ -126,14 +125,14 @@ function InlineEditCell({ unitId, field, value, onSave, className = "", placehol
   if (editing) {
     if (multiline) {
       return <textarea ref={textareaRef} value={val} onChange={e => setVal(e.target.value)} onBlur={save} onKeyDown={e => { if (e.key === "Escape") { setVal(value); setEditing(false); } }}
-        className={`w-full bg-white dark:bg-gray-900 border rounded px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-teal-400 resize-none ${className}`} rows={2} data-testid={`inline-edit-${field}-${unitId}`} />;
+        className={`w-full bg-background border rounded px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-ring resize-none ${className}`} rows={2} data-testid={`inline-edit-${field}-${unitId}`} />;
     }
     return <input ref={inputRef} value={val} onChange={e => setVal(e.target.value)} onBlur={save} onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") { setVal(value); setEditing(false); } }}
-      className={`w-full bg-white dark:bg-gray-900 border rounded px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-teal-400 ${className}`} data-testid={`inline-edit-${field}-${unitId}`} />;
+      className={`w-full bg-background border rounded px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-ring ${className}`} data-testid={`inline-edit-${field}-${unitId}`} />;
   }
 
-  return <span onClick={() => setEditing(true)} className={`cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 rounded px-1 py-0.5 -mx-1 block min-h-[18px] ${className}`} data-testid={`inline-${field}-${unitId}`}>
-    {value || <span className="text-gray-300 italic">{placeholder || "—"}</span>}
+  return <span onClick={() => setEditing(true)} className={`cursor-pointer hover:bg-muted rounded px-1 py-0.5 -mx-1 block min-h-[18px] ${className}`} data-testid={`inline-${field}-${unitId}`}>
+    {value || <span className="text-muted-foreground/70 italic">{placeholder || "—"}</span>}
   </span>;
 }
 
@@ -354,7 +353,7 @@ function ExistingTenantCell({ unit, nameColour, onSave }: {
               onClick={(e: any) => e.stopPropagation()}
               data-testid={`existing-search-${unit.id}`}
             >
-              <ExternalLink className="w-2.5 h-2.5 text-indigo-500 hover:text-indigo-700" />
+              <ExternalLink className="w-2.5 h-2.5 text-primary" />
             </Link>
           )}
         </div>
@@ -395,7 +394,7 @@ function BrandPickerCell({ unitId, field, value, onSave, placeholder = "Type to 
   if (!editing) {
     return (
       <span
-        className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-1 rounded text-xs font-medium inline-block align-top leading-tight"
+        className="cursor-pointer hover:bg-muted px-1 rounded text-xs font-medium inline-block align-top leading-tight"
         onClick={() => { setText(value || ""); setEditing(true); }}
         data-testid={`brand-cell-${field}-${unitId}`}
       >
@@ -583,12 +582,12 @@ function MentionTextarea({ unitId, propertyId, value, onSave }: {
     const parts = (value || "").split(/(@[\w.-]+)/g);
     return (
       <div
-        className="cursor-text hover:bg-gray-100 dark:hover:bg-gray-700 px-1 rounded text-[11px] text-gray-700 dark:text-gray-300 leading-snug min-h-[24px] whitespace-pre-wrap"
+        className="cursor-text hover:bg-muted px-1 rounded text-[11px] text-muted-foreground leading-snug min-h-[24px] whitespace-pre-wrap"
         onClick={() => { setText(value || ""); setEditing(true); setTimeout(() => textareaRef.current?.focus(), 30); }}
         data-testid={`mention-display-${unitId}`}
       >
         {parts.map((p, i) => p.startsWith("@") ? (
-          <span key={i} className="text-blue-600 dark:text-blue-400 font-medium">{p}</span>
+          <span key={i} className="text-primary font-medium">{p}</span>
         ) : <span key={i}>{p}</span>)}
         {!value && <span className="italic text-muted-foreground">Update / agent input (use @ to tag)</span>}
       </div>
@@ -687,6 +686,19 @@ function StatusBandCell({ unitId, value, onSave }: { unitId: string; value: stri
   );
 }
 
+// Status chip colours — shared by the desktop InlineStatusCell dropdown and
+// the read-only chip on the phone unit cards.
+const STATUS_CHIP_COLORS: Record<string, string> = {
+  "Occupied": "border-emerald-300 text-emerald-700 bg-emerald-50",
+  "Trading": "border-emerald-300 text-emerald-700 bg-emerald-50",
+  "Lease Event": "border-orange-300 text-orange-700 bg-orange-50",
+  "Vacant": "border-gray-300 text-gray-500 bg-gray-50",
+  "Opportunity": "border-violet-300 text-violet-700 bg-violet-50",
+  "Under Offer": "border-blue-300 text-blue-700 bg-blue-50",
+  "In Negotiation": "border-amber-300 text-amber-700 bg-amber-50",
+  "Archived": "border-gray-300 text-gray-400 bg-gray-100 line-through",
+};
+
 function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: string; onSave: (id: string, field: string, value: string) => void }) {
   // Includes Landsec's operational states (Trading / Lease Event) that
   // arrive via the spine import, alongside the canonical letting states.
@@ -696,16 +708,7 @@ function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: st
   // unit onto the marketing tracker. Opportunity is a schedule-only flag
   // (a unit worth pursuing) — it shows on the schedule and doesn't mirror.
   const statuses = ["Occupied", "Trading", "Lease Event", "Vacant", "Opportunity", "Under Offer", "In Negotiation", "Archived"];
-  const colors: Record<string, string> = {
-    "Occupied": "border-emerald-300 text-emerald-700 bg-emerald-50",
-    "Trading": "border-emerald-300 text-emerald-700 bg-emerald-50",
-    "Lease Event": "border-orange-300 text-orange-700 bg-orange-50",
-    "Vacant": "border-gray-300 text-gray-500 bg-gray-50",
-    "Opportunity": "border-violet-300 text-violet-700 bg-violet-50",
-    "Under Offer": "border-blue-300 text-blue-700 bg-blue-50",
-    "In Negotiation": "border-amber-300 text-amber-700 bg-amber-50",
-    "Archived": "border-gray-300 text-gray-400 bg-gray-100 line-through",
-  };
+  const colors = STATUS_CHIP_COLORS;
   // Real <button> trigger — was previously a <Badge> (<div>) under
   // DropdownMenuTrigger asChild, which Radix doesn't reliably forward
   // click events to, so the dropdown never opened on Bluewater.
@@ -737,6 +740,61 @@ function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: st
   );
 }
 
+// Phone card for one leasing unit — the table's mobile twin (docs/DESIGN.md
+// §7). Read-only summary: unit + tenant top line, rent p.a. in mono top-right,
+// positioning/lease context line, then the status-band row-pill + status chip.
+// Taps through to the linked brand profile where the table row links there.
+function UnitPhoneCard({ unit }: { unit: any }) {
+  const band = statusBandFor(unit.status_band);
+  const tenantName = unit.live_trading_name || unit.live_tenant_name || unit.tenant_name || "";
+  const displayName = tenantName || unit.unit_name || "—";
+  const linkedCompanyId = unit.resolved_tenant_company_id || unit.tenant_company_id || null;
+  const expFmt = formatLandsecDate(unit.live_lease_expiry || unit.lease_expiry);
+  const positioning = [unit.positioning_group, unit.positioning].filter(Boolean).join(" · ");
+  const rentPa = Number(unit.live_rent_pa ?? unit.rent_pa);
+  const rent = rentPa > 0 ? `£${rentPa.toLocaleString()}` : null;
+
+  const body = (
+    <>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-bold leading-tight truncate">{displayName}</p>
+          {unit.unit_name && unit.unit_name !== displayName && (
+            <p className="text-[11px] text-muted-foreground truncate">{unit.unit_name}</p>
+          )}
+        </div>
+        {rent && <span className="shrink-0 text-sm font-mono tabular-nums font-semibold">{rent}</span>}
+      </div>
+      <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+        {positioning || "No positioning"}
+        {expFmt ? ` · Exp. ${expFmt}` : ""}
+      </p>
+      <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+        {band && (
+          <span className={`inline-flex items-center whitespace-nowrap rounded-md border px-2 py-0.5 text-[10px] font-semibold ${band.pillClass}`}>
+            {band.label}
+          </span>
+        )}
+        {unit.status && (
+          <span className={`inline-flex items-center text-[10px] px-2 py-0.5 rounded-full border font-medium ${STATUS_CHIP_COLORS[unit.status] || "border-gray-300 text-gray-700 bg-gray-50"}`}>
+            {unit.status}
+          </span>
+        )}
+      </div>
+    </>
+  );
+
+  const cardClass = `block rounded-2xl bg-card border border-border p-3 shadow-sm ${unit.status === "Archived" ? "opacity-50" : ""}`;
+  if (linkedCompanyId) {
+    return (
+      <Link href={`/companies/${linkedCompanyId}`} className={cardClass} data-testid={`unit-row-${unit.id}-card`}>
+        {body}
+      </Link>
+    );
+  }
+  return <div className={cardClass} data-testid={`unit-row-${unit.id}-card`}>{body}</div>;
+}
+
 function InlineDateCell({ unitId, field, value, onSave, className = "" }: {
   unitId: string; field: string; value: string | null; onSave: (id: string, field: string, value: string) => void; className?: string;
 }) {
@@ -747,11 +805,11 @@ function InlineDateCell({ unitId, field, value, onSave, className = "" }: {
 
   if (editing) {
     return <input ref={ref} type="date" defaultValue={value || ""} onBlur={e => { setEditing(false); if (e.target.value !== (value || "")) onSave(unitId, field, e.target.value); }}
-      className={`bg-white dark:bg-gray-900 border rounded px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-teal-400 w-[110px] ${className}`} data-testid={`inline-date-${field}-${unitId}`} />;
+      className={`bg-background border rounded px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-ring w-[110px] ${className}`} data-testid={`inline-date-${field}-${unitId}`} />;
   }
 
-  return <span onClick={() => setEditing(true)} className={`cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 rounded px-1 py-0.5 -mx-1 block min-h-[18px] ${className}`} data-testid={`inline-${field}-${unitId}`}>
-    {value ? formatDate(value) : <span className="text-gray-300">—</span>}
+  return <span onClick={() => setEditing(true)} className={`cursor-pointer hover:bg-muted rounded px-1 py-0.5 -mx-1 block min-h-[18px] ${className}`} data-testid={`inline-${field}-${unitId}`}>
+    {value ? formatDate(value) : <span className="text-muted-foreground/70">—</span>}
   </span>;
 }
 
@@ -811,7 +869,7 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
 
   // Multi-select via the shared picker — clicking an existing option
   // toggles it; the green "Create brand" row at the bottom creates a
-  // tracked brand inline and immediately adds it to the target list.
+  // brand inline and immediately adds it to the target list.
   const toggleId = (newId: string) => {
     const nextIds = ids.includes(newId) ? ids.filter(i => i !== newId) : [...ids, newId];
     onUpdate(unitId, "target_company_ids", JSON.stringify(nextIds));
@@ -840,21 +898,21 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
       <div ref={containerRef} className="relative">
         <div
           onClick={() => setOpen(true)}
-          className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 rounded px-1 py-0.5 -mx-1 min-h-[18px] flex flex-wrap gap-0.5"
+          className="cursor-pointer hover:bg-muted rounded px-1 py-0.5 -mx-1 min-h-[18px] flex flex-wrap gap-0.5"
           data-testid={`target-companies-${unitId}`}
         >
           {linkedCompanies.length > 0 ? (
             linkedCompanies.map(c => (
               <Link key={c.id} href={`/companies/${c.id}`} onClick={e => e.stopPropagation()}>
-                <Badge variant="outline" className="text-[10px] cursor-pointer border-teal-300 text-teal-700 bg-teal-50 hover:bg-teal-100 px-1.5 py-0">
+                <Badge variant="outline" className="text-[10px] cursor-pointer hover:bg-muted px-1.5 py-0">
                   {c.name}
                 </Badge>
               </Link>
             ))
           ) : targetBrands ? (
-            <span className="text-[11px] text-gray-500">{targetBrands}</span>
+            <span className="text-[11px] text-muted-foreground">{targetBrands}</span>
           ) : (
-            <span className="text-gray-300 italic text-[11px]">+ Target</span>
+            <span className="text-muted-foreground/70 italic text-[11px]">+ Target</span>
           )}
         </div>
       </div>
@@ -878,7 +936,6 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
           const r = await apiRequest("POST", "/api/crm/companies", {
             name: name.trim(),
             companyType: "Tenant",
-            isTrackedBrand: true,
           });
           const created = await r.json();
           queryClient.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });
@@ -944,7 +1001,7 @@ function TargetTenantRow({ target, onUpdate, onDelete }: {
           <button
             key={r}
             onClick={() => onUpdate(target.id, { quality_rating: r })}
-            className={`p-0.5 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${target.quality_rating === r ? "" : "opacity-20 hover:opacity-60"}`}
+            className={`p-0.5 rounded hover:bg-muted ${target.quality_rating === r ? "" : "opacity-20 hover:opacity-60"}`}
             data-testid={`rating-${r}-${target.id}`}
           >
             <TrafficLightDot rating={r} size="md" />
@@ -956,7 +1013,7 @@ function TargetTenantRow({ target, onUpdate, onDelete }: {
         <div className="flex items-center gap-1.5">
           {target.company_id ? (
             <Link href={`/companies/${target.company_id}`}>
-              <span className="font-medium text-blue-600 hover:underline cursor-pointer" data-testid={`target-link-${target.id}`}>
+              <span className="font-medium text-primary hover:underline cursor-pointer" data-testid={`target-link-${target.id}`}>
                 {target.company_name || target.brand_name}
               </span>
             </Link>
@@ -972,7 +1029,7 @@ function TargetTenantRow({ target, onUpdate, onDelete }: {
           )}
         </div>
         {target.rationale && (
-          <button onClick={() => setShowRationale(!showRationale)} className="text-[11px] text-gray-400 hover:text-gray-600 mt-0.5" data-testid={`rationale-toggle-${target.id}`}>
+          <button onClick={() => setShowRationale(!showRationale)} className="text-[11px] text-muted-foreground/70 hover:text-muted-foreground mt-0.5" data-testid={`rationale-toggle-${target.id}`}>
             {showRationale ? target.rationale : "View rationale..."}
           </button>
         )}
@@ -990,12 +1047,12 @@ function TargetTenantRow({ target, onUpdate, onDelete }: {
           </>
         )}
         {target.status === "rejected" && (
-          <button onClick={() => onUpdate(target.id, { status: "suggested" })} className="p-1 hover:bg-gray-100 rounded" title="Restore" data-testid={`restore-${target.id}`}>
-            <Check className="w-3 h-3 text-gray-400" />
+          <button onClick={() => onUpdate(target.id, { status: "suggested" })} className="p-1 hover:bg-muted rounded" title="Restore" data-testid={`restore-${target.id}`}>
+            <Check className="w-3 h-3 text-muted-foreground/70" />
           </button>
         )}
         <button onClick={() => onDelete(target.id)} className="p-1 hover:bg-red-100 rounded" title="Remove" data-testid={`delete-target-${target.id}`}>
-          <X className="w-3 h-3 text-gray-300" />
+          <X className="w-3 h-3 text-muted-foreground/70" />
         </button>
       </div>
     </div>
@@ -1077,7 +1134,7 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
         <button onClick={handleGenerate} className="flex items-center gap-1 text-[11px] text-violet-500 hover:text-violet-700 hover:bg-violet-50 rounded px-1.5 py-0.5" data-testid={`generate-targets-${unitId}`}>
           <Sparkles className="w-3 h-3" />AI Targets
         </button>
-        <button onClick={() => setShowAdd(true)} className="text-[11px] text-gray-400 hover:text-gray-600" data-testid={`manual-target-${unitId}`}>
+        <button onClick={() => setShowAdd(true)} className="text-[11px] text-muted-foreground/70 hover:text-muted-foreground" data-testid={`manual-target-${unitId}`}>
           <Plus className="w-3 h-3" />
         </button>
         {showAdd && (
@@ -1091,7 +1148,7 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
               testId={`new-target-input-${unitId}`}
             />
             <button onClick={handleAdd} className="text-emerald-500 p-0.5"><Check className="w-3 h-3" /></button>
-            <button onClick={() => setShowAdd(false)} className="text-gray-400 p-0.5"><X className="w-3 h-3" /></button>
+            <button onClick={() => setShowAdd(false)} className="text-muted-foreground/70 p-0.5"><X className="w-3 h-3" /></button>
           </div>
         )}
       </div>
@@ -1112,7 +1169,7 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
         <button onClick={handleGenerate} disabled={generating} className="flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-600 px-1 py-0.5 rounded hover:bg-violet-50" data-testid={`regenerate-${unitId}`}>
           <Sparkles className="w-2.5 h-2.5" />{generating ? "Generating..." : "More"}
         </button>
-        <button onClick={() => setShowAdd(!showAdd)} className="text-[10px] text-gray-400 hover:text-gray-600 px-1 py-0.5" data-testid={`add-manual-${unitId}`}>
+        <button onClick={() => setShowAdd(!showAdd)} className="text-[10px] text-muted-foreground/70 hover:text-muted-foreground px-1 py-0.5" data-testid={`add-manual-${unitId}`}>
           <Plus className="w-2.5 h-2.5 inline" />Add
         </button>
       </div>
@@ -1132,7 +1189,7 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
             <option value="red">Red</option>
           </select>
           <button onClick={handleAdd} className="text-emerald-500 p-0.5"><Check className="w-3 h-3" /></button>
-          <button onClick={() => setShowAdd(false)} className="text-gray-400 p-0.5"><X className="w-3 h-3" /></button>
+          <button onClick={() => setShowAdd(false)} className="text-muted-foreground/70 p-0.5"><X className="w-3 h-3" /></button>
         </div>
       )}
     </div>
@@ -1145,11 +1202,11 @@ function PropertyCard({ prop }: { prop: LeasingProperty }) {
   const occupancy = unitCount > 0 ? Math.round((occupiedCount / unitCount) * 100) : 0;
   return (
     <Link href={`/leasing-schedule/${prop.id}`}>
-      <div className="border rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer bg-white dark:bg-gray-900" data-testid={`property-card-${prop.id}`}>
+      <div className="border rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer bg-card" data-testid={`property-card-${prop.id}`}>
         <div className="flex items-start justify-between mb-2">
           <div>
             <h3 className="font-semibold text-sm">{prop.name}</h3>
-            {prop.landlord_name && <p className="text-xs text-gray-500">{prop.landlord_name}</p>}
+            {prop.landlord_name && <p className="text-xs text-muted-foreground">{prop.landlord_name}</p>}
           </div>
           <div className="flex gap-1.5 items-center">
             {prop.leasing_privacy_enabled && (
@@ -1164,19 +1221,19 @@ function PropertyCard({ prop }: { prop: LeasingProperty }) {
             )}
           </div>
         </div>
-        <div className="flex gap-3 text-xs text-gray-500 mb-3">
+        <div className="flex gap-3 text-xs text-muted-foreground mb-3">
           {prop.asset_class && <span className="flex items-center gap-1"><Building2 className="w-3 h-3" />{prop.asset_class}</span>}
           <span className="flex items-center gap-1"><Users className="w-3 h-3" />{prop.unit_count} units</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex-1 h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+          <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
             <div className="h-full bg-emerald-500 rounded-full transition-all" style={{ width: `${occupancy}%` }} />
           </div>
-          <span className="text-[11px] font-medium text-gray-600">{occupancy}%</span>
+          <span className="text-[11px] font-medium text-muted-foreground">{occupancy}%</span>
         </div>
         <div className="flex gap-3 mt-2 text-[11px]">
           <span className="text-emerald-600">{prop.occupied_count} occupied</span>
-          <span className="text-gray-400">{prop.vacant_count} vacant</span>
+          <span className="text-muted-foreground/70">{prop.vacant_count} vacant</span>
         </div>
       </div>
     </Link>
@@ -1203,23 +1260,23 @@ function UnitEditDialog({ unit, open, onClose, onSave }: {
         </DialogHeader>
         <div className="grid grid-cols-2 gap-3 text-sm">
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Unit / Tenant Name</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Unit / Tenant Name</label>
             <Input value={form.unit_name || ""} onChange={e => set("unit_name", e.target.value)} data-testid="edit-unit-name" />
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Agent</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Agent</label>
             <Input value={form.agent_initials || ""} onChange={e => set("agent_initials", e.target.value)} data-testid="edit-agent" />
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Zone</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Zone</label>
             <Input value={form.zone || ""} onChange={e => set("zone", e.target.value)} data-testid="edit-zone" />
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Positioning</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Positioning</label>
             <Input value={form.positioning || ""} onChange={e => set("positioning", e.target.value)} data-testid="edit-positioning" />
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Status</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Status</label>
             <Select value={form.status || "Occupied"} onValueChange={v => set("status", v)}>
               <SelectTrigger data-testid="edit-status"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -1233,47 +1290,47 @@ function UnitEditDialog({ unit, open, onClose, onSave }: {
             </Select>
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Priority</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Priority</label>
             <Input value={form.priority || ""} onChange={e => set("priority", e.target.value)} data-testid="edit-priority" />
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Lease Expiry</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Lease Expiry</label>
             <Input type="date" value={form.lease_expiry?.split("T")[0] || ""} onChange={e => set("lease_expiry", e.target.value)} data-testid="edit-expiry" />
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Tenant Break</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Tenant Break</label>
             <Input type="date" value={form.lease_break?.split("T")[0] || ""} onChange={e => set("lease_break", e.target.value)} data-testid="edit-break" />
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Rent Review</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Rent Review</label>
             <Input type="date" value={form.rent_review?.split("T")[0] || ""} onChange={e => set("rent_review", e.target.value)} data-testid="edit-rr" />
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Landlord Break</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Landlord Break</label>
             <Input type="date" value={form.landlord_break?.split("T")[0] || ""} onChange={e => set("landlord_break", e.target.value)} data-testid="edit-lb" />
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1 block">MAT/psqft</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">MAT/psqft</label>
             <Input value={form.mat_psqft || ""} onChange={e => set("mat_psqft", e.target.value)} data-testid="edit-mat" />
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1 block">LFL %</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">LFL %</label>
             <Input value={form.lfl_percent || ""} onChange={e => set("lfl_percent", e.target.value)} data-testid="edit-lfl" />
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Occ. Cost %</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Occ. Cost %</label>
             <Input value={form.occ_cost_percent || ""} onChange={e => set("occ_cost_percent", e.target.value)} data-testid="edit-occ" />
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Optimum Target</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Optimum Target</label>
             <Input value={form.optimum_target || ""} onChange={e => set("optimum_target", e.target.value)} data-testid="edit-optimum" />
           </div>
           <div className="col-span-2">
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Target Brands</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Target Brands</label>
             <Textarea value={form.target_brands || ""} onChange={e => set("target_brands", e.target.value)} rows={2} data-testid="edit-targets" />
           </div>
           <div className="col-span-2">
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Updates / Notes</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Updates / Notes</label>
             <Textarea value={form.updates || ""} onChange={e => set("updates", e.target.value)} rows={3} data-testid="edit-updates" />
           </div>
         </div>
@@ -1610,15 +1667,15 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
 
   if (isLoading) return (
     <div className="flex items-center justify-center h-64">
-      <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+      <Loader2 className="w-6 h-6 animate-spin text-muted-foreground/70" />
     </div>
   );
 
   if ((unitsError as Error)?.message === "ACCESS_DENIED") return (
     <div className="flex flex-col items-center justify-center h-64 gap-3">
-      <ShieldOff className="w-10 h-10 text-gray-300" />
-      <h3 className="text-lg font-semibold text-gray-600">Access Restricted</h3>
-      <p className="text-sm text-gray-400 text-center max-w-sm">This property's leasing schedule is in privacy mode. Only assigned team members can view it.</p>
+      <ShieldOff className="w-10 h-10 text-muted-foreground/70" />
+      <h3 className="text-lg font-semibold text-muted-foreground">Access Restricted</h3>
+      <p className="text-sm text-muted-foreground/70 text-center max-w-sm">This property's leasing schedule is in privacy mode. Only assigned team members can view it.</p>
       <Link href="/leasing-schedule">
         <Button variant="outline" size="sm" data-testid="btn-back-denied">
           <ChevronLeft className="w-4 h-4 mr-1" />Back to Properties
@@ -1641,7 +1698,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
         <div>
           <div className="flex items-center gap-2">
             <Link href={`/properties/${propertyId}`}>
-              <h2 className="text-lg font-bold hover:text-blue-600 hover:underline cursor-pointer transition-colors" data-testid="property-title">{propertyName}</h2>
+              <h2 className="text-lg font-bold hover:text-primary hover:underline cursor-pointer transition-colors" data-testid="property-title">{propertyName}</h2>
             </Link>
             {privacyInfo?.privacy_enabled && (
               <Badge variant="outline" className="text-[11px] border-violet-300 text-violet-700 bg-violet-50">
@@ -1874,17 +1931,17 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
       )}
 
       <div className="flex gap-3 flex-wrap">
-        <button onClick={() => { setStatFilter(null); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${!statFilter ? "ring-2 ring-gray-400 bg-gray-100 dark:bg-gray-700" : "bg-gray-50 dark:bg-gray-800 hover:bg-gray-100"}`} data-testid="stat-total">
+        <button onClick={() => { setStatFilter(null); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${!statFilter ? "ring-2 ring-ring bg-muted" : "bg-muted/50 hover:bg-muted"}`} data-testid="stat-total">
           <p className="text-lg font-bold">{stats.total}</p>
-          <p className="text-[11px] text-gray-500">Total Units</p>
+          <p className="text-[11px] text-muted-foreground">Total Units</p>
         </button>
         <button onClick={() => { setStatFilter(statFilter === "occupied" ? null : "occupied"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "occupied" ? "ring-2 ring-emerald-400 bg-emerald-100 dark:bg-emerald-900/40" : "bg-emerald-50 dark:bg-emerald-950/20 hover:bg-emerald-100"}`} data-testid="stat-occupied">
           <p className="text-lg font-bold text-emerald-700">{stats.occupied}</p>
           <p className="text-[11px] text-emerald-600">Occupied</p>
         </button>
-        <button onClick={() => { setStatFilter(statFilter === "vacant" ? null : "vacant"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "vacant" ? "ring-2 ring-gray-400 bg-gray-200 dark:bg-gray-600" : "bg-gray-50 dark:bg-gray-800 hover:bg-gray-100"}`} data-testid="stat-vacant">
-          <p className="text-lg font-bold text-gray-500">{stats.vacant}</p>
-          <p className="text-[11px] text-gray-500">Vacant</p>
+        <button onClick={() => { setStatFilter(statFilter === "vacant" ? null : "vacant"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "vacant" ? "ring-2 ring-ring bg-muted" : "bg-muted/50 hover:bg-muted"}`} data-testid="stat-vacant">
+          <p className="text-lg font-bold text-muted-foreground">{stats.vacant}</p>
+          <p className="text-[11px] text-muted-foreground">Vacant</p>
         </button>
         {stats.expiringSoon > 0 && (
           <button onClick={() => { setStatFilter(statFilter === "expiring" ? null : "expiring"); setStatusFilter("all"); }} className={`px-3 py-1.5 rounded-lg text-center transition-all ${statFilter === "expiring" ? "ring-2 ring-amber-400 bg-amber-100 dark:bg-amber-900/40" : "bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100"}`} data-testid="stat-expiring">
@@ -1902,7 +1959,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
 
       <div className="flex gap-2 items-center flex-wrap">
         <div className="relative flex-1 max-w-xs">
-          <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-gray-400" />
+          <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-muted-foreground/70" />
           <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search units..." className="pl-8 h-8 text-xs" data-testid="search-units" />
         </div>
         <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setStatFilter(null); }}>
@@ -1922,7 +1979,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
         {archivedCount > 0 && (
           <button
             onClick={() => setIncludeArchived(!includeArchived)}
-            className={`flex items-center gap-1.5 px-2.5 h-8 rounded-md border text-xs transition-colors ${includeArchived ? "border-gray-400 bg-gray-100 dark:bg-gray-700 text-foreground" : "border-gray-200 dark:border-gray-700 text-muted-foreground hover:bg-gray-50 dark:hover:bg-gray-800"}`}
+            className={`flex items-center gap-1.5 px-2.5 h-8 rounded-md border text-xs transition-colors ${includeArchived ? "border-border bg-muted text-foreground" : "border-border text-muted-foreground hover:bg-muted"}`}
             data-testid="toggle-include-archived"
           >
             <Eye className="w-3 h-3" />
@@ -1939,18 +1996,39 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           <div key={zone} className="border rounded-lg overflow-hidden" data-testid={`zone-${zone}`}>
             <button
               onClick={() => toggleZone(zone)}
-              className="w-full flex items-center gap-2 px-4 py-2.5 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-750 text-left"
+              className="w-full flex items-center gap-2 px-4 py-2.5 bg-muted/50 hover:bg-muted text-left"
               data-testid={`zone-toggle-${zone}`}
             >
-              {isZoneExpanded(zone) ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+              {isZoneExpanded(zone) ? <ChevronDown className="w-4 h-4 text-muted-foreground/70" /> : <ChevronRight className="w-4 h-4 text-muted-foreground/70" />}
               <span className="font-semibold text-sm">{cleanZoneLabel(zone)}</span>
               <Badge variant="secondary" className="text-[11px] ml-1">{zoneUnits.length}</Badge>
               {zoneUnits[0]?.positioning && (
-                <span className="text-[11px] text-gray-400 ml-2 truncate">{zoneUnits[0].positioning}</span>
+                <span className="text-[11px] text-muted-foreground/70 ml-2 truncate">{zoneUnits[0].positioning}</span>
               )}
             </button>
-            {isZoneExpanded(zone) && (
-              <div className="overflow-x-auto min-w-0">
+            {isZoneExpanded(zone) && (<>
+              {/* Phone: one card per unit (docs/DESIGN.md §7) — the zone
+                  header above stays as the section label. The desktop table
+                  never ships to the phone (§6/§13). */}
+              <div className="md:hidden p-3 space-y-2" data-testid={`zone-cards-${zone}`}>
+                {(() => {
+                  const showAll = expandedRowZones.has(zone);
+                  const visible = showAll ? zoneUnits : zoneUnits.slice(0, ZONE_ROW_LIMIT);
+                  const hasMore = zoneUnits.length > ZONE_ROW_LIMIT && !showAll;
+                  return (<>
+                    {visible.map(u => <UnitPhoneCard key={u.id} unit={u} />)}
+                    {hasMore && (
+                      <button
+                        onClick={() => setExpandedRowZones(prev => { const n = new Set(prev); n.add(zone); return n; })}
+                        className="w-full py-2 text-xs text-primary hover:underline font-medium"
+                      >
+                        Show all {zoneUnits.length} units ({zoneUnits.length - ZONE_ROW_LIMIT} more)
+                      </button>
+                    )}
+                  </>);
+                })()}
+              </div>
+              <div className="hidden md:block overflow-x-auto min-w-0">
                 {/* Width pinned to the colgroup total (not w-full) so the
                     columns stay at their declared sizes when the chat
                     dock opens/closes. With w-full, table-layout: fixed
@@ -1961,14 +2039,14 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                 <table className="text-xs" style={{ tableLayout: "fixed", width: `${LEASING_TABLE_MIN_WIDTH}px` }} data-testid={`zone-table-${zone}`}>
                   <LeasingColgroup />
                   <thead>
-                    <tr className="bg-gray-50/50 dark:bg-gray-800/50 border-b text-left text-sm">
-                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Existing</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Positioning</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Financial Performance</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Targets</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Optimum Target</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">Priority</th>
-                      <th className="px-3 py-1.5 font-medium text-gray-600 dark:text-gray-300">{updatesHeaderLabel(zoneUnits)}</th>
+                    <tr className="bg-muted/30 border-b text-left text-sm">
+                      <th className="px-3 py-1.5 font-medium text-muted-foreground">Existing</th>
+                      <th className="px-3 py-1.5 font-medium text-muted-foreground">Positioning</th>
+                      <th className="px-3 py-1.5 font-medium text-muted-foreground">Financial Performance</th>
+                      <th className="px-3 py-1.5 font-medium text-muted-foreground">Targets</th>
+                      <th className="px-3 py-1.5 font-medium text-muted-foreground">Optimum Target</th>
+                      <th className="px-3 py-1.5 font-medium text-muted-foreground">Priority</th>
+                      <th className="px-3 py-1.5 font-medium text-muted-foreground">{updatesHeaderLabel(zoneUnits)}</th>
                       <th className="px-3 py-1.5"></th>
                     </tr>
                   </thead>
@@ -1980,7 +2058,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                       return (<>
                         {visible.map(u => {
                           const band = statusBandFor((u as any).status_band);
-                          const rowTint = band?.rowClass || (u.status === "Vacant" ? "bg-gray-50/50 dark:bg-gray-800/20" : "");
+                          const rowTint = band?.rowClass || (u.status === "Vacant" ? "bg-muted/30" : "");
                           const nameColour = tenantNameColourFor((u as any).status_band);
                           const expFmt = formatLandsecDate((u as any).live_lease_expiry || u.lease_expiry);
                           const breakFmt = formatLandsecDate((u as any).live_lease_break || u.lease_break);
@@ -2032,14 +2110,14 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                                 <div className="flex items-center gap-0.5">
                                   <button
                                     onClick={() => { if (confirm(u.status === "Archived" ? "Restore this unit from archive?" : "Archive this unit?")) archiveMutation.mutate(u.id); }}
-                                    className={`p-1 rounded ${u.status === "Archived" ? "hover:bg-emerald-100 text-emerald-500" : "hover:bg-amber-100 text-gray-400"}`}
+                                    className={`p-1 rounded ${u.status === "Archived" ? "hover:bg-emerald-100 text-emerald-500" : "hover:bg-amber-100 text-muted-foreground/70"}`}
                                     title={u.status === "Archived" ? "Restore" : "Archive"}
                                     data-testid={`archive-${u.id}`}
                                   >
                                     {u.status === "Archived" ? <History className="w-3 h-3" /> : <ShieldOff className="w-3 h-3" />}
                                   </button>
                                   <button onClick={() => { if (confirm("Remove this unit permanently?")) deleteMutation.mutate(u.id); }} className="p-1 hover:bg-red-100 rounded" data-testid={`delete-${u.id}`}>
-                                    <Trash2 className="w-3 h-3 text-gray-400" />
+                                    <Trash2 className="w-3 h-3 text-muted-foreground/70" />
                                   </button>
                                 </div>
                               </td>
@@ -2063,7 +2141,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                   </tbody>
                 </table>
               </div>
-            )}
+            </>)}
           </div>
         ))}
       </div>
@@ -2103,16 +2181,16 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader><DialogTitle><History className="w-4 h-4 inline mr-2" />Audit Log — {propertyName}</DialogTitle></DialogHeader>
           {auditLog.length === 0 ? (
-            <p className="text-sm text-gray-400 text-center py-8">No changes recorded yet</p>
+            <p className="text-sm text-muted-foreground/70 text-center py-8">No changes recorded yet</p>
           ) : (
             <div className="space-y-1.5 max-h-[60vh] overflow-y-auto">
               {auditLog.map(entry => (
-                <div key={entry.id} className="flex items-start gap-3 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800/50 text-xs" data-testid={`audit-${entry.id}`}>
-                  <div className="shrink-0 w-[100px] text-gray-400">
+                <div key={entry.id} className="flex items-start gap-3 px-3 py-2 rounded-lg bg-muted/50 text-xs" data-testid={`audit-${entry.id}`}>
+                  <div className="shrink-0 w-[100px] text-muted-foreground/70">
                     {new Date(entry.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}{" "}
                     {new Date(entry.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
                   </div>
-                  <div className="shrink-0 font-medium text-gray-600 w-[80px]">{entry.user_name}</div>
+                  <div className="shrink-0 font-medium text-muted-foreground w-[80px]">{entry.user_name}</div>
                   <div className="flex-1">
                     <Badge variant="outline" className={`text-[10px] mr-1.5 ${
                       entry.action === "create" ? "border-emerald-300 text-emerald-700" :
@@ -2122,12 +2200,12 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                       entry.action === "import" ? "border-teal-300 text-teal-700" :
                       "border-gray-300 text-gray-600"
                     }`}>{entry.action}</Badge>
-                    {entry.field_name && <span className="text-gray-500">{entry.field_name}</span>}
+                    {entry.field_name && <span className="text-muted-foreground">{entry.field_name}</span>}
                     {entry.old_value && entry.new_value && (
-                      <span className="text-gray-400"> : <span className="line-through text-red-400">{entry.old_value}</span> → <span className="text-emerald-600">{entry.new_value}</span></span>
+                      <span className="text-muted-foreground/70"> : <span className="line-through text-red-400">{entry.old_value}</span> → <span className="text-emerald-600">{entry.new_value}</span></span>
                     )}
-                    {!entry.old_value && entry.new_value && <span className="text-gray-400"> : {entry.new_value}</span>}
-                    {entry.old_value && !entry.new_value && <span className="text-gray-400"> : <span className="line-through text-red-400">{entry.old_value}</span> removed</span>}
+                    {!entry.old_value && entry.new_value && <span className="text-muted-foreground/70"> : {entry.new_value}</span>}
+                    {entry.old_value && !entry.new_value && <span className="text-muted-foreground/70"> : <span className="line-through text-red-400">{entry.old_value}</span> removed</span>}
                   </div>
                 </div>
               ))}
@@ -2145,20 +2223,20 @@ function AddUnitForm({ propertyId, onSave }: { propertyId: string; onSave: (data
   return (
     <div className="space-y-3 text-sm">
       <div>
-        <label className="text-xs font-medium text-gray-500 mb-1 block">Unit / Tenant Name *</label>
+        <label className="text-xs font-medium text-muted-foreground mb-1 block">Unit / Tenant Name *</label>
         <Input value={form.unit_name || ""} onChange={e => set("unit_name", e.target.value)} data-testid="add-unit-name" />
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs font-medium text-gray-500 mb-1 block">Zone</label>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Zone</label>
           <Input value={form.zone || ""} onChange={e => set("zone", e.target.value)} data-testid="add-zone" />
         </div>
         <div>
-          <label className="text-xs font-medium text-gray-500 mb-1 block">Agent</label>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Agent</label>
           <Input value={form.agent_initials || ""} onChange={e => set("agent_initials", e.target.value)} data-testid="add-agent" />
         </div>
         <div>
-          <label className="text-xs font-medium text-gray-500 mb-1 block">Status</label>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Status</label>
           <Select value={form.status} onValueChange={v => set("status", v)}>
             <SelectTrigger data-testid="add-status"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -2170,12 +2248,12 @@ function AddUnitForm({ propertyId, onSave }: { propertyId: string; onSave: (data
           </Select>
         </div>
         <div>
-          <label className="text-xs font-medium text-gray-500 mb-1 block">Lease Expiry</label>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Lease Expiry</label>
           <Input type="date" value={form.lease_expiry || ""} onChange={e => set("lease_expiry", e.target.value)} data-testid="add-expiry" />
         </div>
       </div>
       <div>
-        <label className="text-xs font-medium text-gray-500 mb-1 block">Positioning</label>
+        <label className="text-xs font-medium text-muted-foreground mb-1 block">Positioning</label>
         <Input value={form.positioning || ""} onChange={e => set("positioning", e.target.value)} data-testid="add-positioning" />
       </div>
       <Button size="sm" onClick={() => { if (form.unit_name) onSave(form); }} disabled={!form.unit_name} data-testid="add-save">
@@ -2210,7 +2288,7 @@ function TargetCompanyNames({ targetCompanyIds, targetBrands }: { targetCompanyI
         onClick={(e) => e.stopPropagation()}
         className="inline-flex items-center hover:underline"
       >
-        <Badge variant="outline" className="text-[8px] border-teal-300 text-teal-700 bg-teal-50 px-1 py-0 cursor-pointer">
+        <Badge variant="outline" className="text-[8px] px-1 py-0 cursor-pointer">
           {r.name}
         </Badge>
       </Link>
@@ -2396,12 +2474,12 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
     } catch { toast({ title: "Export failed", variant: "destructive" }); }
   };
 
-  if (isLoading) return <div className="flex items-center gap-2 text-sm text-gray-400 py-4"><Loader2 className="w-4 h-4 animate-spin" />Loading leasing schedule...</div>;
+  if (isLoading) return <div className="flex items-center gap-2 text-sm text-muted-foreground/70 py-4"><Loader2 className="w-4 h-4 animate-spin" />Loading leasing schedule...</div>;
   if (unitsError) {
     const isAccessDenied = (unitsError as Error)?.message === "ACCESS_DENIED";
     return (
       <div className="space-y-3" data-testid="property-leasing-schedule">
-        <div className="text-center py-6 text-gray-400 border rounded-lg">
+        <div className="text-center py-6 text-muted-foreground/70 border rounded-lg">
           <Lock className="w-6 h-6 mx-auto mb-1 opacity-40" />
           <p className="text-xs">{isAccessDenied ? "You don't have access to this property's leasing schedule" : "Failed to load leasing schedule"}</p>
         </div>
@@ -2430,14 +2508,14 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
             <Plus className="w-3 h-3 mr-1" />Add Unit
           </Button>
           <Link href={`/leasing-schedule/${propertyId}`}>
-            <span className="text-[11px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer">
+            <span className="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer">
               <ExternalLink className="w-3 h-3" />Full Board
             </span>
           </Link>
         </div>
       </div>
       {showAddUnit && <PropAddUnitForm propertyId={propertyId} onSave={(data: any) => addMutation.mutate(data)} onCancel={() => setShowAddUnit(false)} isPending={addMutation.isPending} />}
-      <div className="text-center py-6 text-gray-400 border rounded-lg">
+      <div className="text-center py-6 text-muted-foreground/70 border rounded-lg">
         <Building2 className="w-6 h-6 mx-auto mb-1 opacity-40" />
         <p className="text-xs">No units in leasing schedule</p>
         <p className="text-[11px] mt-0.5">Add units or import a landlord Excel to track this property's leasing schedule</p>
@@ -2515,11 +2593,11 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
         <Badge variant="secondary" className="text-[11px]">{stats.total} units</Badge>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="relative">
-            <Search className="absolute left-2 top-1.5 w-3 h-3 text-gray-400" />
+            <Search className="absolute left-2 top-1.5 w-3 h-3 text-muted-foreground/70" />
             <input
               value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Search units..."
-              className="pl-6 pr-2 h-7 text-[11px] border rounded-md bg-background w-[140px] outline-none focus:ring-1 focus:ring-teal-400"
+              className="pl-6 pr-2 h-7 text-[11px] border rounded-md bg-background w-[140px] outline-none focus:ring-1 focus:ring-ring"
               data-testid="search-prop-units"
             />
           </div>
@@ -2544,7 +2622,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
             <Plus className="w-3 h-3" />Add
           </Button>
           <Link href={`/leasing-schedule/${propertyId}`}>
-            <span className="text-[11px] text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-full-board">
+            <span className="text-[11px] text-primary hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-full-board">
               <ExternalLink className="w-3 h-3" />Full Board
             </span>
           </Link>
@@ -2562,7 +2640,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
             <button
               key={s.key}
               onClick={() => setStatusFilter(statusFilter === s.key ? null : s.key)}
-              className={`rounded-lg border px-3 py-2 text-left transition-all ${statusFilter === s.key ? "ring-2 ring-teal-400 " + s.color : "border-gray-200 dark:border-gray-700 hover:border-gray-300"}`}
+              className={`rounded-lg border px-3 py-2 text-left transition-all ${statusFilter === s.key ? "ring-2 ring-ring " + s.color : "border-border hover:border-muted-foreground/40"}`}
               data-testid={`stat-${s.key}`}
             >
               <div className={`text-lg font-bold ${statusFilter === s.key ? "" : "text-foreground"}`}>{s.count}</div>
@@ -2573,7 +2651,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
         {archivedCount > 0 && (
           <button
             onClick={() => setIncludeArchived(!includeArchived)}
-            className={`flex items-center gap-1 px-2 py-1 rounded border text-[11px] transition-colors ${includeArchived ? "border-gray-400 bg-gray-100 dark:bg-gray-700 text-foreground" : "border-gray-200 dark:border-gray-700 text-muted-foreground hover:bg-gray-50"}`}
+            className={`flex items-center gap-1 px-2 py-1 rounded border text-[11px] transition-colors ${includeArchived ? "border-border bg-muted text-foreground" : "border-border text-muted-foreground hover:bg-muted"}`}
             data-testid="toggle-include-archived-prop"
           >
             <Eye className="w-3 h-3" />
@@ -2585,12 +2663,12 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
       {showAddUnit && <PropAddUnitForm propertyId={propertyId} onSave={(data: any) => addMutation.mutate(data)} onCancel={() => setShowAddUnit(false)} isPending={addMutation.isPending} />}
 
       <div className="border rounded-lg overflow-hidden">
-        <div className="flex items-center justify-between px-3 py-1.5 bg-gray-50 dark:bg-gray-800 border-b">
-          <button onClick={toggleAll} className="text-[11px] text-gray-500 hover:text-gray-700 flex items-center gap-1" data-testid="btn-toggle-all-zones">
+        <div className="flex items-center justify-between px-3 py-1.5 bg-muted/50 border-b">
+          <button onClick={toggleAll} className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1" data-testid="btn-toggle-all-zones">
             {allExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
             {allExpanded ? "Collapse all" : "Expand all"}
           </button>
-          <span className="text-[11px] text-gray-400">{filteredUnits.length} of {units.length} units</span>
+          <span className="text-[11px] text-muted-foreground/70">{filteredUnits.length} of {units.length} units</span>
         </div>
 
         {zoneGroups.map(([zone, zoneUnits]) => {
@@ -2600,34 +2678,39 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
             <div key={zone}>
               <button
                 onClick={() => toggleZone(zone)}
-                className="w-full flex items-center gap-2 px-3 py-1.5 bg-gray-50/50 dark:bg-gray-800/50 hover:bg-gray-100 border-b text-left"
+                className="w-full flex items-center gap-2 px-3 py-1.5 bg-muted/30 hover:bg-muted border-b text-left"
                 data-testid={`zone-header-${zone}`}
               >
-                {isExpanded ? <ChevronDown className="w-3 h-3 text-gray-400" /> : <ChevronRight className="w-3 h-3 text-gray-400" />}
+                {isExpanded ? <ChevronDown className="w-3 h-3 text-muted-foreground/70" /> : <ChevronRight className="w-3 h-3 text-muted-foreground/70" />}
                 <span className="font-medium text-xs">{cleanZoneLabel(zone)}</span>
                 <Badge variant="secondary" className="text-[10px]">{zoneUnits.length}</Badge>
                 <span className="text-[10px] text-emerald-600 ml-auto">{zoneOcc}/{zoneUnits.length} occ</span>
               </button>
-              {isExpanded && (
-                <div className="overflow-x-auto min-w-0">
+              {isExpanded && (<>
+                {/* Phone: card list per unit (docs/DESIGN.md §7); the table
+                    below is desktop-only. */}
+                <div className="md:hidden p-3 space-y-2 border-b" data-testid={`zone-cards-prop-${zone}`}>
+                  {zoneUnits.map(u => <UnitPhoneCard key={u.id} unit={u} />)}
+                </div>
+                <div className="hidden md:block overflow-x-auto min-w-0">
                   <table className="text-xs" style={{ tableLayout: "fixed", width: `${LEASING_TABLE_MIN_WIDTH}px` }}>
                     <LeasingColgroup />
                     <thead>
-                      <tr className="bg-gray-50/30 border-b text-left text-sm">
-                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Existing</th>
-                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Positioning</th>
-                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Financial Performance</th>
-                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Targets</th>
-                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Optimum Target</th>
-                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">Priority</th>
-                        <th className="px-2 py-1 font-medium text-gray-600 dark:text-gray-300">{updatesHeaderLabel(zoneUnits)}</th>
+                      <tr className="bg-muted/20 border-b text-left text-sm">
+                        <th className="px-2 py-1 font-medium text-muted-foreground">Existing</th>
+                        <th className="px-2 py-1 font-medium text-muted-foreground">Positioning</th>
+                        <th className="px-2 py-1 font-medium text-muted-foreground">Financial Performance</th>
+                        <th className="px-2 py-1 font-medium text-muted-foreground">Targets</th>
+                        <th className="px-2 py-1 font-medium text-muted-foreground">Optimum Target</th>
+                        <th className="px-2 py-1 font-medium text-muted-foreground">Priority</th>
+                        <th className="px-2 py-1 font-medium text-muted-foreground">{updatesHeaderLabel(zoneUnits)}</th>
                         <th className="px-2 py-1"></th>
                       </tr>
                     </thead>
                     <tbody className="text-[13px]">
                       {zoneUnits.map(u => {
                         const band = statusBandFor((u as any).status_band);
-                        const rowTint = band?.rowClass || (u.status === "Vacant" ? "bg-gray-50/50 dark:bg-gray-800/20" : "");
+                        const rowTint = band?.rowClass || (u.status === "Vacant" ? "bg-muted/30" : "");
                         const nameColour = tenantNameColourFor((u as any).status_band);
                         const expFmt = formatLandsecDate((u as any).live_lease_expiry || u.lease_expiry);
                         const breakFmt = formatLandsecDate((u as any).live_lease_break || u.lease_break);
@@ -2666,7 +2749,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                               <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <button
                                   onClick={() => { if (confirm(u.status === "Archived" ? "Restore this unit?" : "Archive this unit?")) archiveMutation.mutate(u.id); }}
-                                  className={u.status === "Archived" ? "text-emerald-500 hover:text-emerald-700" : "text-gray-400 hover:text-amber-600"}
+                                  className={u.status === "Archived" ? "text-emerald-500 hover:text-emerald-700" : "text-muted-foreground/70 hover:text-amber-600"}
                                   title={u.status === "Archived" ? "Restore" : "Archive"}
                                   data-testid={`btn-archive-unit-${u.id}`}
                                 >
@@ -2687,12 +2770,12 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                     </tbody>
                   </table>
                 </div>
-              )}
+              </>)}
             </div>
           );
         })}
         {filteredUnits.length === 0 && (
-          <div className="text-center py-4 text-gray-400 text-xs">No units match your filters</div>
+          <div className="text-center py-4 text-muted-foreground/70 text-xs">No units match your filters</div>
         )}
       </div>
 
@@ -2860,7 +2943,7 @@ function StrategicPrinciplesPanel({ propertyId }: { propertyId: string }) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-xs">
         {/* Five Priorities */}
         <div>
-          <div className="font-semibold text-emerald-700 dark:text-emerald-400 mb-1.5">5 Priorities</div>
+          <div className="font-semibold text-muted-foreground mb-1.5">5 Priorities</div>
           <div className="space-y-1">
             {view.fivePriorities.map((p, i) => (
               <div key={i} className="grid grid-cols-[100px_1fr] gap-2 items-start">
@@ -2877,7 +2960,7 @@ function StrategicPrinciplesPanel({ propertyId }: { propertyId: string }) {
 
         {/* Top Three Strategic Priorities */}
         <div>
-          <div className="font-semibold text-emerald-700 dark:text-emerald-400 mb-1.5">Top Three Strategic Priorities</div>
+          <div className="font-semibold text-muted-foreground mb-1.5">Top Three Strategic Priorities</div>
           <div className="space-y-1">
             {view.topThree.map((p, i) => (
               <div key={i} className="grid grid-cols-[100px_1fr] gap-2 items-start">
@@ -3069,20 +3152,20 @@ function PropAddUnitForm({ propertyId, onSave, onCancel, isPending }: {
   const [status, setStatus] = useState("Vacant");
 
   return (
-    <div className="border rounded-lg p-3 bg-gray-50 dark:bg-gray-800/50 space-y-2">
+    <div className="border rounded-lg p-3 bg-muted/50 space-y-2">
       <div className="grid grid-cols-3 gap-2">
         <div>
-          <label className="text-[11px] text-gray-500 block mb-0.5">Unit Name *</label>
+          <label className="text-[11px] text-muted-foreground block mb-0.5">Unit Name *</label>
           <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Unit 1A"
             className="w-full h-7 text-xs border rounded px-2 bg-background" data-testid="input-new-unit-name" />
         </div>
         <div>
-          <label className="text-[11px] text-gray-500 block mb-0.5">Zone</label>
+          <label className="text-[11px] text-muted-foreground block mb-0.5">Zone</label>
           <input value={zone} onChange={e => setZone(e.target.value)} placeholder="e.g. Ground Floor"
             className="w-full h-7 text-xs border rounded px-2 bg-background" data-testid="input-new-unit-zone" />
         </div>
         <div>
-          <label className="text-[11px] text-gray-500 block mb-0.5">Status</label>
+          <label className="text-[11px] text-muted-foreground block mb-0.5">Status</label>
           <select value={status} onChange={e => setStatus(e.target.value)}
             className="w-full h-7 text-xs border rounded px-2 bg-background" data-testid="select-new-unit-status">
             <option value="Occupied">Occupied</option>
@@ -3117,7 +3200,7 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
     enabled: !!companyId,
   });
 
-  if (isLoading) return <div className="flex items-center gap-2 text-sm text-gray-400 py-4"><Loader2 className="w-4 h-4 animate-spin" />Loading leasing schedule...</div>;
+  if (isLoading) return <div className="flex items-center gap-2 text-sm text-muted-foreground/70 py-4"><Loader2 className="w-4 h-4 animate-spin" />Loading leasing schedule...</div>;
   if (units.length === 0) return null;
 
   const byProperty = new Map<string, { name: string; units: LeasingUnit[] }>();
@@ -3152,7 +3235,7 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
           <span className="text-emerald-600">{occupied} occupied</span>
           {expiring > 0 && <span className="text-amber-600">{expiring} expiring</span>}
           <Link href="/leasing-schedule">
-            <span className="text-indigo-500 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-leasing-board">
+            <span className="text-primary hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-leasing-board">
               <ExternalLink className="w-3 h-3" />Open Board
             </span>
           </Link>
@@ -3168,52 +3251,52 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
           <div key={propId} className="border rounded-lg overflow-hidden">
             <button
               onClick={() => toggleProp(propId)}
-              className="w-full flex items-center gap-2 px-3 py-2 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 text-left"
+              className="w-full flex items-center gap-2 px-3 py-2 bg-muted/50 hover:bg-muted text-left"
               data-testid={`company-prop-${propId}`}
             >
-              {expanded ? <ChevronDown className="w-3.5 h-3.5 text-gray-400" /> : <ChevronRight className="w-3.5 h-3.5 text-gray-400" />}
+              {expanded ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground/70" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/70" />}
               <span className="font-medium text-sm">{name}</span>
               <Badge variant="secondary" className="text-[11px]">{propUnits.length}</Badge>
               <span className="text-[11px] text-emerald-600 ml-auto">{propOccupied} occ</span>
               {propExpiring > 0 && <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-600 ml-1">{propExpiring} exp</Badge>}
               <Link href={`/leasing-schedule/${propId}`}>
-                <span className="text-[11px] text-indigo-500 hover:underline ml-2" onClick={e => e.stopPropagation()}>View Full</span>
+                <span className="text-[11px] text-primary hover:underline ml-2" onClick={e => e.stopPropagation()}>View Full</span>
               </Link>
             </button>
             {expanded && (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
-                    <tr className="bg-gray-50/50 border-b text-left text-sm">
-                      <th className="px-3 py-1 font-medium text-gray-500">Zone</th>
-                      <th className="px-3 py-1 font-medium text-gray-500">Tenant</th>
-                      <th className="px-3 py-1 font-medium text-gray-500">Status</th>
-                      <th className="px-3 py-1 font-medium text-gray-500">Expiry</th>
-                      <th className="px-3 py-1 font-medium text-gray-500">Performance</th>
-                      <th className="px-3 py-1 font-medium text-gray-500">Targets</th>
+                    <tr className="bg-muted/30 border-b text-left text-sm">
+                      <th className="px-3 py-1 font-medium text-muted-foreground">Zone</th>
+                      <th className="px-3 py-1 font-medium text-muted-foreground">Tenant</th>
+                      <th className="px-3 py-1 font-medium text-muted-foreground">Status</th>
+                      <th className="px-3 py-1 font-medium text-muted-foreground">Expiry</th>
+                      <th className="px-3 py-1 font-medium text-muted-foreground">Performance</th>
+                      <th className="px-3 py-1 font-medium text-muted-foreground">Targets</th>
                     </tr>
                   </thead>
                   <tbody className="text-xs">
                     {propUnits.slice(0, 20).map(u => (
-                      <tr key={u.id} className="border-b hover:bg-gray-50">
-                        <td className="px-3 py-1.5 text-gray-500 max-w-[120px] truncate">{u.zone}</td>
+                      <tr key={u.id} className="border-b hover:bg-muted">
+                        <td className="px-3 py-1.5 text-muted-foreground max-w-[120px] truncate">{u.zone}</td>
                         <td className="px-3 py-1.5 font-medium">{u.unit_name}</td>
                         <td className="px-3 py-1.5">
                           <Badge variant="outline" className={`text-[10px] ${u.status === "Occupied" ? "border-emerald-300 text-emerald-700" : "border-gray-300 text-gray-500"}`}>{u.status}</Badge>
                         </td>
-                        <td className={`px-3 py-1.5 ${isExpired(u.lease_expiry) ? "text-red-600" : isExpiringSoon(u.lease_expiry) ? "text-amber-600" : "text-gray-600"}`}>
+                        <td className={`px-3 py-1.5 ${isExpired(u.lease_expiry) ? "text-red-600" : isExpiringSoon(u.lease_expiry) ? "text-amber-600" : "text-muted-foreground"}`}>
                           {u.lease_expiry ? formatDate(u.lease_expiry) : "—"}
                         </td>
                         <td className="px-3 py-1.5 text-[11px]">
                           {u.mat_psqft && <span>{u.mat_psqft}</span>}
                           {u.lfl_percent && <span className={`ml-1 ${u.lfl_percent.startsWith("-") ? "text-red-500" : "text-emerald-600"}`}>{u.lfl_percent}</span>}
                         </td>
-                        <td className="px-3 py-1.5 text-[11px] text-gray-500 max-w-[150px]">
+                        <td className="px-3 py-1.5 text-[11px] text-muted-foreground max-w-[150px]">
                           <TargetCompanyNames targetCompanyIds={u.target_company_ids || "[]"} targetBrands={u.target_brands || ""} />
                         </td>
                       </tr>
                     ))}
-                    {propUnits.length > 20 && <tr><td colSpan={6} className="px-3 py-1 text-center text-[11px] text-gray-400">+{propUnits.length - 20} more</td></tr>}
+                    {propUnits.length > 20 && <tr><td colSpan={6} className="px-3 py-1 text-center text-[11px] text-muted-foreground/70">+{propUnits.length - 20} more</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -3497,8 +3580,8 @@ export default function LeasingSchedulePage() {
       {archivedBanner}
       <div className="sticky top-0 z-10 bg-background -mx-4 sm:-mx-6 px-4 sm:px-6 -mt-4 sm:-mt-6 pt-4 sm:pt-6 pb-3 border-b flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2" data-testid="page-title">
-            <Building2 className="w-5 h-5" />Leasing Schedule Board
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="page-title">
+            Leasing Schedule Board
           </h1>
           <p className="text-sm text-muted-foreground">
             {filtered.length} {filtered.length === 1 ? "property" : "properties"} · {stats.totalUnits} units
@@ -3507,10 +3590,10 @@ export default function LeasingSchedulePage() {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <ViewToggle view={viewMode} onToggle={setViewMode} />
           <div className="relative">
-            <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-gray-400" />
+            <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-muted-foreground/70" />
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search properties..." className="pl-8 h-8 text-xs w-[200px]" data-testid="search-properties" />
           </div>
           {/* Import + firm-wide export are staff-only (the export endpoint is
@@ -3536,13 +3619,14 @@ export default function LeasingSchedulePage() {
         </div>
       </div>
 
-      {/* Stat cards — matching WIP / investment tracker style */}
-      <ScrollArea className="w-full shrink-0">
-        <div className="flex items-center gap-3 pb-1">
+      {/* Stat cards — matching WIP / investment tracker style.
+          2-up grid below md so tiles never clip at the phone edge. */}
+      <div className="w-full shrink-0">
+        <div className="grid grid-cols-2 gap-3 pb-1 md:flex md:flex-wrap md:items-center">
           <Card className="flex-shrink-0 min-w-[120px]">
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                <div className="w-2.5 h-2.5 rounded-full bg-primary/60" />
                 <div>
                   <p className="text-lg font-bold">{stats.totalProps}</p>
                   <p className="text-xs text-muted-foreground">Properties</p>
@@ -3597,7 +3681,7 @@ export default function LeasingSchedulePage() {
           <Card className="flex-shrink-0 min-w-[120px]">
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
-                <div className="w-2.5 h-2.5 rounded-full bg-purple-500" />
+                <div className="w-2.5 h-2.5 rounded-full bg-primary/60" />
                 <div>
                   <p className="text-lg font-bold">{stats.occupancy}%</p>
                   <p className="text-xs text-muted-foreground">Occupancy · board units only</p>
@@ -3606,12 +3690,11 @@ export default function LeasingSchedulePage() {
             </CardContent>
           </Card>
         </div>
-        <ScrollBar orientation="horizontal" />
-      </ScrollArea>
+      </div>
 
       {isLoading ? (
         <div className="flex items-center justify-center h-40">
-          <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+          <Loader2 className="w-6 h-6 animate-spin text-muted-foreground/70" />
         </div>
       ) : viewMode === "table" ? (
         <Card className="overflow-hidden">
@@ -3641,13 +3724,13 @@ export default function LeasingSchedulePage() {
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {p.landlord_id ? (
-                          <Link href={`/companies/${p.landlord_id}`} className="hover:underline text-blue-600 dark:text-blue-400" onClick={(e: any) => e.stopPropagation()}>{p.landlord_name}</Link>
+                          <Link href={`/companies/${p.landlord_id}`} className="hover:underline text-primary" onClick={(e: any) => e.stopPropagation()}>{p.landlord_name}</Link>
                         ) : p.landlord_name || "—"}
                       </TableCell>
                       <TableCell className="text-sm">{p.asset_class || "—"}</TableCell>
                       <TableCell className="text-center text-sm font-medium">{p.unit_count}</TableCell>
                       <TableCell className="text-center text-sm text-emerald-600">{p.occupied_count}</TableCell>
-                      <TableCell className="text-center text-sm text-gray-400">{p.vacant_count}</TableCell>
+                      <TableCell className="text-center text-sm text-muted-foreground/70">{p.vacant_count}</TableCell>
                       <TableCell className="text-center text-sm">
                         {p.expiring_soon > 0 ? (
                           <Badge variant="outline" className="text-[11px] border-amber-300 text-amber-700 bg-amber-50">{p.expiring_soon}</Badge>
@@ -3655,7 +3738,7 @@ export default function LeasingSchedulePage() {
                       </TableCell>
                       <TableCell className="text-center">
                         <div className="flex items-center gap-2 justify-center">
-                          <div className="w-16 h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                          <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
                             <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${occ}%` }} />
                           </div>
                           <span className="text-xs font-medium">{occ}%</span>
@@ -3681,7 +3764,7 @@ export default function LeasingSchedulePage() {
                 <MapPin className="w-3.5 h-3.5" />
                 {landlordId ? (
                   <Link href={`/companies/${landlordId}`}>
-                    <span className="hover:underline cursor-pointer text-blue-600 dark:text-blue-400" data-testid={`link-landlord-${landlordId}`}>{landlord}</span>
+                    <span className="hover:underline cursor-pointer text-primary" data-testid={`link-landlord-${landlordId}`}>{landlord}</span>
                   </Link>
                 ) : landlord}
                 <Badge variant="secondary" className="text-[11px]">{props.reduce((s, p) => s + p.unit_count, 0)} units</Badge>
@@ -3926,8 +4009,8 @@ export default function LeasingSchedulePage() {
 function EmptyBoardImport({ onImportClick }: { onImportClick: () => void }) {
   return (
     <div className="text-center py-14 px-4">
-      <div className="mx-auto w-14 h-14 rounded-full bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center mb-3">
-        <Building2 className="w-7 h-7 text-blue-500" />
+      <div className="mx-auto w-14 h-14 rounded-full bg-muted/40 flex items-center justify-center mb-3">
+        <Building2 className="w-7 h-7 text-muted-foreground" />
       </div>
       <h3 className="text-base font-semibold mb-1">No leasing schedules yet</h3>
       <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">

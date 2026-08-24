@@ -192,8 +192,8 @@ export default function ExpensesRevolut() {
       <ExpensesNavTabs />
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <CreditCard className="w-6 h-6" /> Cards & Revolut
+          <h1 className="text-2xl font-bold tracking-tight">
+            Cards & Revolut
           </h1>
           <p className="text-sm text-muted-foreground">Connect Revolut Business so card spend lands in BGP Expenses automatically.</p>
         </div>
@@ -210,13 +210,19 @@ export default function ExpensesRevolut() {
             <div className="flex items-start gap-2 text-sm">
               <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
               <div>
-                <div className="font-medium">Env vars missing</div>
-                <div className="text-xs text-muted-foreground mt-0.5">
-                  Set these on Railway then refresh:
-                  <ul className="mt-1 ml-4 list-disc font-mono text-[11px]">
-                    {(status?.missing || []).map((m: string) => <li key={m}>{m}</li>)}
-                  </ul>
-                </div>
+                <div className="font-medium">Connection not configured</div>
+                {(status?.missing || []).length > 0 ? (
+                  <div className="text-xs text-muted-foreground mt-0.5" title="Set these environment variables on Railway, then refresh">
+                    Set these on Railway, then refresh:
+                    <ul className="mt-1 ml-4 list-disc font-mono text-[11px]">
+                      {(status?.missing || []).map((m: string) => <li key={m}>{m}</li>)}
+                    </ul>
+                  </div>
+                ) : (
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    Ask an admin to finish Revolut setup.
+                  </div>
+                )}
               </div>
             </div>
           ) : (
@@ -300,7 +306,7 @@ export default function ExpensesRevolut() {
                 </div>
                 {lastWebhookResult.signingSecret ? (
                   <>
-                    <p className="text-[11px] text-amber-800 mb-1.5">Set as <code>REVOLUT_WEBHOOK_SECRET</code> in Railway. Click the secret to select it for copying.</p>
+                    <p className="text-[11px] text-amber-800 mb-1.5">Set as <code>REVOLUT_WEBHOOK_SECRET</code> in Railway. Tap the secret to select it for copying.</p>
                     <code
                       className="block bg-white border border-amber-200 rounded p-2 text-[11px] font-mono break-all cursor-pointer select-all"
                       onClick={(e) => { const r = document.createRange(); r.selectNodeContents(e.currentTarget); const sel = window.getSelection(); sel?.removeAllRanges(); sel?.addRange(r); }}
@@ -431,10 +437,10 @@ export default function ExpensesRevolut() {
         </Card>
       )}
 
-      <Card className="bg-blue-50/50 border-blue-200/50 dark:bg-blue-950/20 dark:border-blue-900/30">
+      <Card className="bg-muted/40 border-border">
         <CardContent className="p-4 text-sm">
           <strong>Useful links:</strong>{" "}
-          <a className="text-blue-600 hover:underline inline-flex items-center gap-1" href="https://developer.revolut.com/docs/business/business-api" target="_blank" rel="noopener noreferrer">
+          <a className="text-primary hover:underline inline-flex items-center gap-1" href="https://developer.revolut.com/docs/business/business-api" target="_blank" rel="noopener noreferrer">
             Revolut Business API docs <ExternalLink className="w-3 h-3" />
           </a>
         </CardContent>

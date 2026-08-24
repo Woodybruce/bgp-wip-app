@@ -51,7 +51,7 @@ function PortfolioList() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6">
-      <h1 className="text-2xl font-semibold mb-1 flex items-center gap-2"><FolderOpen className="w-6 h-6" /> Portfolios</h1>
+      <h1 className="text-2xl font-semibold mb-1">Portfolios</h1>
       <p className="text-sm text-muted-foreground mb-5">Bundle several Property Pathway runs and review them as one opportunity.</p>
 
       <div className="flex gap-2 mb-6">

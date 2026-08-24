@@ -26,17 +26,6 @@ const INSIGHT_ICONS: Record<string, typeof Building2> = {
   busiestDay: BarChart3,
 };
 
-const INSIGHT_COLORS: Record<string, string> = {
-  todaySummary: "text-blue-500",
-  hotProperty: "text-rose-500",
-  viewingTrend: "text-emerald-500",
-  activeTenant: "text-amber-500",
-  busiestAgent: "text-violet-500",
-  pipeline: "text-green-500",
-  coldProperty: "text-orange-500",
-  busiestDay: "text-sky-500",
-};
-
 export function IntelligenceFooter({ connected = false }: { connected?: boolean }) {
   const { data: insightsData, isLoading } = useQuery<{ insights: BackendInsight[] }>({
     queryKey: ["/api/microsoft/calendar/insights"],
@@ -69,16 +58,13 @@ export function IntelligenceFooter({ connected = false }: { connected?: boolean 
           ) : (
             insights.map((insight, i) => {
               const Icon = INSIGHT_ICONS[insight.type] || Brain;
-              const color = INSIGHT_COLORS[insight.type] || "text-muted-foreground";
               return (
                 <div
                   key={`${insight.type}-${i}`}
                   className="flex items-center gap-2.5 shrink-0 rounded-lg px-2.5 py-1.5 hover:bg-muted/40 transition-colors group"
                   data-testid={`insight-${insight.type}`}
                 >
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${color.replace("text-", "bg-")}/10`}>
-                    <Icon className={`w-4 h-4 ${color} shrink-0`} />
-                  </div>
+                  <Icon className="w-4 h-4 text-muted-foreground shrink-0" />
                   <div className="flex flex-col text-left">
                     <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider leading-tight whitespace-nowrap">{insight.title}</span>
                     <span className="text-[13px] font-medium leading-tight whitespace-nowrap max-w-[58vw] truncate sm:max-w-none">{insight.detail}</span>

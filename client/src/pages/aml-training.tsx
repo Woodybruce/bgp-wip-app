@@ -4,6 +4,8 @@ import { Link, useRoute, useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { pillMetrics, pillInactive } from "@/components/ui/pill";
+import { cn } from "@/lib/utils";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -135,7 +137,7 @@ interface TrainingAttempt {
 }
 
 function StatusBadge({ attempts }: { attempts: TrainingAttempt[] }) {
-  if (attempts.length === 0) return <Badge variant="secondary">Not started</Badge>;
+  if (attempts.length === 0) return <span className={cn(pillMetrics, pillInactive)}>Not started</span>;
   const passed = attempts.find(a => a.passed);
   if (passed) return <Badge className="bg-emerald-600"><CheckCircle2 className="w-3 h-3 mr-1" />Passed · {passed.score}%</Badge>;
   const latest = attempts[0];
@@ -179,8 +181,7 @@ function ModuleList() {
     <div className="p-4 lg:p-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <GraduationCap className="w-6 h-6 text-primary" />
+          <h1 className="text-2xl font-bold tracking-tight">
             AML Training
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
@@ -188,7 +189,7 @@ function ModuleList() {
           </p>
         </div>
         <div className="text-right">
-          <div className="text-2xl font-bold">{passedCount} / {modules.length}</div>
+          <div className="text-2xl font-bold font-mono tabular-nums whitespace-nowrap">{passedCount} / {modules.length}</div>
           <div className="text-xs text-muted-foreground uppercase tracking-wide">passed</div>
         </div>
       </div>
@@ -220,7 +221,7 @@ function ModuleList() {
                   <span>Pass at {m.pass_score}%</span>
                 </div>
                 <Link href={`/aml-training/${m.id}`} data-testid={`module-start-${m.id}`}>
-                  <Button size="sm" className="w-full" variant={passed ? "outline" : "default"}>
+                  <Button size="sm" className="w-full" variant="outline">
                     <Play className="w-3.5 h-3.5 mr-1.5" />
                     {passed ? "Re-take" : attempts.length > 0 ? "Continue" : "Start module"}
                   </Button>

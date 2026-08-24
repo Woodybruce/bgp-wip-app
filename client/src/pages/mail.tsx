@@ -266,8 +266,8 @@ function ConnectPrompt() {
   return (
     <div className="h-full flex items-center justify-center" data-testid="mail-connect-prompt">
       <div className="text-center space-y-4 max-w-sm px-6">
-        <div className="w-20 h-20 rounded-2xl bg-blue-500/10 flex items-center justify-center mx-auto">
-          <MailIcon className="w-10 h-10 text-blue-500" />
+        <div className="w-20 h-20 rounded-2xl bg-muted/40 flex items-center justify-center mx-auto">
+          <MailIcon className="w-10 h-10 text-primary" />
         </div>
         <div>
           <h2 className="text-xl font-semibold">Outlook Mail</h2>
@@ -536,15 +536,15 @@ function MessageRow({
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline justify-between gap-2">
-          <p className={`text-[15px] truncate ${!message.isRead ? "font-bold text-gray-900" : "font-semibold text-gray-800"}`}>
+          <p className={`text-[15px] truncate ${!message.isRead ? "font-bold text-foreground" : "font-semibold text-foreground"}`}>
             {senderName}
           </p>
-          <span className="text-[12px] text-gray-500 shrink-0">
+          <span className="text-[12px] text-muted-foreground shrink-0">
             {formatMailDate(message.receivedDateTime)}
           </span>
         </div>
         <div className="flex items-center gap-1.5">
-          <p className={`text-[14px] truncate flex-1 ${!message.isRead ? "font-semibold text-gray-900" : "text-gray-800"}`}>
+          <p className={`text-[14px] truncate flex-1 ${!message.isRead ? "font-semibold text-foreground" : "text-foreground"}`}>
             {message.subject || "(No subject)"}
           </p>
           {message.meetingMessageType && (
@@ -554,7 +554,7 @@ function MessageRow({
             <Paperclip className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           )}
         </div>
-        <p className="text-[13px] text-gray-500 line-clamp-2 mt-0.5 leading-snug">
+        <p className="text-[13px] text-muted-foreground line-clamp-2 mt-0.5 leading-snug">
           {message.bodyPreview}
         </p>
       </div>

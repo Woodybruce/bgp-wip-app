@@ -130,7 +130,7 @@ export default function TodayPage() {
           >
             <BarChart3 className="w-5 h-5 text-muted-foreground mb-2" />
             <div className="text-[22px] font-bold text-foreground tracking-tight">
-              {stats?.activeDeals ?? "—"}
+              {stats?.activeDeals ?? 0}
             </div>
             <div className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wide">Active Deals</div>
           </button>
@@ -220,7 +220,7 @@ export default function TodayPage() {
           <div className="text-center py-12">
             <CheckCircle2 className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
             <p className="text-[15px] text-muted-foreground/70 font-medium">No tasks yet</p>
-            <p className="text-[13px] text-muted-foreground/40 mt-1">Tap + to add your first task</p>
+            <p className="text-[13px] text-muted-foreground/40 mt-1">Add your first task</p>
           </div>
         ) : (
           <div className="space-y-2">
@@ -253,7 +253,7 @@ export default function TodayPage() {
                 onClick={() => navigate("/tasks")}
                 className="w-full py-2.5 text-[13px] font-medium text-muted-foreground active:text-foreground"
               >
-                View all {upcomingTasks.length} tasks
+                Show all {upcomingTasks.length} tasks
               </button>
             )}
           </div>
@@ -272,7 +272,7 @@ export default function TodayPage() {
               onClick={() => navigate("/deals")}
               className="text-[13px] font-medium text-muted-foreground active:text-foreground"
             >
-              See all
+              Show all
             </button>
           </div>
           <div className="space-y-2">
@@ -286,9 +286,11 @@ export default function TodayPage() {
                   <div className="text-[14px] font-semibold text-foreground truncate tracking-tight">
                     {deal.name}
                   </div>
-                  <div className="text-[12px] text-muted-foreground/70 truncate mt-0.5">
-                    {deal.property_name || deal.propertyName || deal.status || ""}
-                  </div>
+                  {(deal.property_name || deal.propertyName) && (
+                    <div className="text-[12px] text-muted-foreground/70 truncate mt-0.5">
+                      {deal.property_name || deal.propertyName}
+                    </div>
+                  )}
                 </div>
                 <span className={`text-[11px] font-medium px-2.5 py-1 rounded-full shrink-0 ${
                   deal.status === "Active" || deal.status === "active" ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400" :

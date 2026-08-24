@@ -168,7 +168,7 @@ export function LenderPanel({ companyId, company }: { companyId: string; company
     <Card data-testid="lender-panel">
       <CardHeader className="p-3 pb-2 flex flex-row items-start justify-between">
         <CardTitle className="text-sm flex items-center gap-2">
-          <Landmark className="w-4 h-4 text-blue-600" />
+          <Landmark className="w-4 h-4 text-muted-foreground" />
           Lender Profile
         </CardTitle>
         <Button variant="ghost" size="sm" onClick={editing ? () => setEditing(false) : startEdit}>
@@ -414,7 +414,7 @@ export function LenderPanel({ companyId, company }: { companyId: string; company
                 {securedProperties.map((p) => (
                   <div key={p.propertyId} className="flex items-start justify-between gap-2 border-b border-border/40 pb-1.5">
                     <div className="flex-1 min-w-0">
-                      <Link href={`/properties/${p.propertyId}`} className="text-xs font-medium text-blue-600 hover:underline truncate block">
+                      <Link href={`/properties/${p.propertyId}`} className="text-xs font-medium text-primary hover:underline truncate block">
                         {p.propertyName}
                       </Link>
                       <div className="text-[10px] text-muted-foreground truncate">{p.propertyAddress}</div>
@@ -452,7 +452,7 @@ export function LenderPanel({ companyId, company }: { companyId: string; company
                         <td className="py-1 pr-2 font-mono text-[10px]">{ch.titleNumber}</td>
                         <td className="py-1 pr-2">
                           {ch.propertyId ? (
-                            <Link href={`/properties/${ch.propertyId}`} className="text-blue-600 hover:underline">
+                            <Link href={`/properties/${ch.propertyId}`} className="text-primary hover:underline">
                               {ch.propertyName || ch.titleNumber}
                             </Link>
                           ) : (

@@ -34,6 +34,7 @@ import {
   Palette, ChevronRight, Sun, CalendarDays, Bell,
 } from "lucide-react";
 import { MobileBottomNav } from "@/components/mobile-bottom-nav";
+import { useKeyboardOpen } from "@/hooks/use-mobile";
 import { ThreadMediaDialog } from "@/components/chat-panel";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { legacyToCode } from "@shared/deal-status";
@@ -133,7 +134,7 @@ function ActionCard({ action }: { action: ChatAction }) {
 
   const cardBg = "bg-white";
   const textPrimary = "text-black";
-  const textMuted = "text-gray-500";
+  const textMuted = "text-muted-foreground";
   const btnClass = "";
 
   if (action.type === "model_run") {
@@ -280,7 +281,7 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
         result.push(match[0]);
       }
     } else if (match[3] && match[4]) {
-      const linkColor = isUserBubble ? "text-blue-300" : "text-blue-600";
+      const linkColor = isUserBubble ? "text-[#9A3412]" : "text-primary";
       result.push(
         <a key={key++} href={match[4]} target="_blank" rel="noopener noreferrer"
           className={`underline ${linkColor}`}
@@ -296,7 +297,7 @@ function renderFormattedText(text: string, isUserBubble?: boolean): (string | JS
     } else if (match[8]) {
       const url = match[8].replace(/[.,;:!?]+$/, "");
       const trailing = match[8].slice(url.length);
-      const linkColor = isUserBubble ? "text-blue-300" : "text-blue-600";
+      const linkColor = isUserBubble ? "text-[#9A3412]" : "text-primary";
       result.push(
         <a key={key++} href={url} target="_blank" rel="noopener noreferrer"
           className={`underline break-all ${linkColor}`}
@@ -374,7 +375,7 @@ function RenderMessageContent({ content, onCheckboxClick, isUserBubble, selected
             <button
               key={i}
               onClick={handleTap}
-              className={`flex items-center gap-2 w-full text-left py-2.5 px-3 my-1 rounded-xl shadow-sm active:scale-[0.98] transition-all cursor-pointer touch-manipulation ${isSelected ? "bg-black/5 border-2 border-black" : "bg-white/80 border border-gray-200"}`}
+              className={`flex items-center gap-2 w-full text-left py-2.5 px-3 my-1 rounded-xl shadow-sm active:scale-[0.98] transition-all cursor-pointer touch-manipulation ${isSelected ? "bg-black/5 border-2 border-black" : "bg-white/80 border border-border"}`}
               style={{ WebkitTapHighlightColor: "transparent", WebkitTouchCallout: "none", userSelect: "none" }}
               data-testid={`checkbox-action-${i}`}
             >
@@ -405,7 +406,7 @@ function formatMsgTime(dateStr?: string) {
   return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} ${time}`;
 }
 
-function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick, selectedCheckboxes, isAiThread }: {
+function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, onDelete, onCheckboxClick, selectedCheckboxes, isAiThread, othersAllSeen }: {
   message: LocalChatMessage;
   currentUserId?: string;
   threadId?: string | null;
@@ -415,6 +416,8 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
   onCheckboxClick?: (text: string) => void;
   selectedCheckboxes?: string[];
   isAiThread?: boolean;
+  /** Thread-level read state: every other member has seen the thread. */
+  othersAllSeen?: boolean;
 }) {
   const isUser = message.role === "user";
   const isOwn = isUser && currentUserId && message.userId === currentUserId;
@@ -478,7 +481,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
           if (parsed && parsed.url) {
             if (isAudioFile(parsed.type || parsed.name || "")) {
               return (
-                <div key={i} className="flex items-center gap-2.5 px-3.5 py-2.5 bg-gray-100 rounded-2xl">
+                <div key={i} className="flex items-center gap-2.5 px-3.5 py-2.5 bg-muted rounded-2xl">
                   <Mic className="w-4 h-4 text-primary shrink-0" />
                   <audio controls preload="none" className="h-8 max-w-[220px]">
                     <source src={parsed.url} />
@@ -494,13 +497,13 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
               );
             }
             return (
-              <a key={i} href={parsed.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 rounded-2xl px-4 py-3 bg-white border border-gray-100 shadow-sm">
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-gray-50">
-                  <FileIcon className="w-5 h-5 text-gray-400" />
+              <a key={i} href={parsed.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 rounded-2xl px-4 py-3 bg-white border border-border shadow-sm">
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-muted/50">
+                  <FileIcon className="w-5 h-5 text-muted-foreground/70" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-[14px] font-medium truncate text-gray-900">{parsed.name}</div>
-                  {parsed.size && <div className="text-[12px] text-gray-400">{formatFileSize(parsed.size)}</div>}
+                  <div className="text-[14px] font-medium truncate text-foreground">{parsed.name}</div>
+                  {parsed.size && <div className="text-[12px] text-muted-foreground/70">{formatFileSize(parsed.size)}</div>}
                 </div>
               </a>
             );
@@ -513,8 +516,8 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
             );
           }
           return (
-            <span key={i} className="inline-flex items-center gap-2 text-[13px] rounded-xl px-3 py-1.5 bg-gray-100">
-              <FileIcon className="w-4 h-4 text-gray-400" /> {att}
+            <span key={i} className="inline-flex items-center gap-2 text-[13px] rounded-xl px-3 py-1.5 bg-muted">
+              <FileIcon className="w-4 h-4 text-muted-foreground/70" /> {att}
             </span>
           );
         })}
@@ -535,7 +538,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
               <Textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} className="min-h-[44px] text-[15px] resize-none rounded-xl" rows={2} autoFocus />
               <div className="flex gap-2 justify-end">
                 <Button size="sm" variant="ghost" className="h-8 text-sm px-3 rounded-xl" onClick={() => setEditing(false)}>Cancel</Button>
-                <Button size="sm" className="h-8 text-sm px-3 rounded-xl bg-[#1C1917] text-white hover:bg-gray-800" onClick={() => { if (message.id && onEdit && editContent.trim()) { onEdit(message.id, editContent.trim()); setEditing(false); } }}>Save</Button>
+                <Button size="sm" className="h-8 text-sm px-3 rounded-xl bg-[hsl(var(--mobile-chrome))] text-white hover:bg-gray-800" onClick={() => { if (message.id && onEdit && editContent.trim()) { onEdit(message.id, editContent.trim()); setEditing(false); } }}>Save</Button>
               </div>
             </div>
           ) : (
@@ -546,14 +549,14 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
               onTouchEnd={handleTouchEnd}
               onTouchCancel={handleTouchEnd}
             >
-              <div className="text-[15px] leading-[1.7] text-gray-900 whitespace-pre-wrap break-words">
+              <div className="text-[15px] leading-[1.7] text-foreground whitespace-pre-wrap break-words">
                 <RenderMessageContent content={message.content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} />
               </div>
             </div>
           )}
           {message.action && <ActionCard action={message.action} />}
           {message.createdAt && (
-            <div className="text-[11px] text-gray-400 mt-1.5">{formatMsgTime(message.createdAt)}</div>
+            <div className="text-[11px] text-muted-foreground/70 mt-1.5">{formatMsgTime(message.createdAt)}</div>
           )}
         </div>
       </div>
@@ -572,7 +575,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
             <Textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} className="min-h-[44px] text-[15px] resize-none rounded-xl" rows={2} autoFocus />
             <div className="flex gap-2 justify-end">
               <Button size="sm" variant="ghost" className="h-8 text-sm px-3 rounded-xl" onClick={() => setEditing(false)}>Cancel</Button>
-              <Button size="sm" className="h-8 text-sm px-3 rounded-xl bg-[#1C1917] text-white hover:bg-gray-800" onClick={() => { if (message.id && onEdit && editContent.trim()) { onEdit(message.id, editContent.trim()); setEditing(false); } }}>Save</Button>
+              <Button size="sm" className="h-8 text-sm px-3 rounded-xl bg-[hsl(var(--mobile-chrome))] text-white hover:bg-gray-800" onClick={() => { if (message.id && onEdit && editContent.trim()) { onEdit(message.id, editContent.trim()); setEditing(false); } }}>Save</Button>
             </div>
           </div>
         ) : (
@@ -583,42 +586,49 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
             onTouchEnd={handleTouchEnd}
             onTouchCancel={handleTouchEnd}
           >
-            <div className={`rounded-2xl px-4 py-2.5 text-[15px] leading-[1.6] whitespace-pre-wrap break-words ${
+            {/* WhatsApp anatomy (Woody, 2026-08-22): mine = soft green with
+                time + ticks INSIDE the bubble, theirs = white. */}
+            <div className={`rounded-2xl px-3.5 py-2 text-[15px] leading-[1.55] whitespace-pre-wrap break-words shadow-sm ${
               isOwn
-                ? "bg-[#292524] text-white rounded-br-md"
-                : "bg-white text-[#1C1917] rounded-bl-md border border-[#E7E5E4]"
+                ? "bg-[#F6E3DA] text-[#292524] rounded-br-md"
+                : "bg-white text-[#292524] rounded-bl-md"
             }`}>
-              <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} isUserBubble={isOwn ? true : false} selectedCheckboxes={!isUser ? selectedCheckboxes : undefined} />
+              <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} isUserBubble={false} selectedCheckboxes={!isUser ? selectedCheckboxes : undefined} />
+              {message.createdAt && (
+                <span className="float-right flex items-center gap-0.5 ml-2 mt-2 -mb-0.5 translate-y-1">
+                  <span className="text-[10.5px] text-[#8A8177] leading-none">{formatMsgTime(message.createdAt)}</span>
+                  {isOwn && (
+                    <CheckCheck className="w-[15px] h-[15px]" style={{ color: othersAllSeen ? "#C2410C" : "#A8A29E" }} />
+                  )}
+                </span>
+              )}
             </div>
             {showActions && (
-              <div className={`absolute -top-11 ${isOwn ? "right-0" : "left-0"} flex items-center gap-1 bg-white rounded-xl shadow-lg border border-gray-200 px-1 py-1 z-20 animate-in fade-in zoom-in-95 duration-150`}>
-                <button onClick={handleCopy} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-gray-700 active:bg-gray-100" data-testid="button-copy-message">
+              <div className={`absolute -top-11 ${isOwn ? "right-0" : "left-0"} flex items-center gap-1 bg-white rounded-xl shadow-lg border border-border px-1 py-1 z-20 animate-in fade-in zoom-in-95 duration-150`}>
+                <button onClick={handleCopy} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-muted-foreground active:bg-muted" data-testid="button-copy-message">
                   <Copy className="w-3.5 h-3.5" /> Copy
                 </button>
                 {isOwn && message.id && (
                   <>
-                    <div className="w-px h-4 bg-gray-200" />
-                    <button onClick={() => { setEditContent(message.content); setEditing(true); setShowActions(false); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-gray-700 active:bg-gray-100">
+                    <div className="w-px h-4 bg-border" />
+                    <button onClick={() => { setEditContent(message.content); setEditing(true); setShowActions(false); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-muted-foreground active:bg-muted">
                       <Pencil className="w-3.5 h-3.5" /> Edit
                     </button>
-                    <div className="w-px h-4 bg-gray-200" />
+                    <div className="w-px h-4 bg-border" />
                     <button onClick={() => { onDelete?.(message.id!); setShowActions(false); }} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-red-500 active:bg-red-50">
                       <Trash2 className="w-3.5 h-3.5" /> Delete
                     </button>
                   </>
                 )}
-                <div className="w-px h-4 bg-gray-200" />
-                <button onClick={() => setShowActions(false)} className="px-2 py-1.5 rounded-lg active:bg-gray-100">
-                  <X className="w-3.5 h-3.5 text-gray-400" />
+                <div className="w-px h-4 bg-border" />
+                <button onClick={() => setShowActions(false)} className="px-2 py-1.5 rounded-lg active:bg-muted">
+                  <X className="w-3.5 h-3.5 text-muted-foreground/70" />
                 </button>
               </div>
             )}
           </div>
         )}
         {message.action && <ActionCard action={message.action} />}
-        {message.createdAt && (
-          <div className={`text-[11px] text-gray-400 mt-1 px-1 ${isOwn ? "text-right" : ""}`}>{formatMsgTime(message.createdAt)}</div>
-        )}
       </div>
     </div>
   );
@@ -662,9 +672,9 @@ function PullToRefresh({ onRefresh, children }: { onRefresh: () => Promise<void>
       {(pullY > 0 || refreshing) && (
         <div className="flex items-center justify-center py-3 transition-all" style={{ height: pullY || (refreshing ? 50 : 0) }}>
           {refreshing ? (
-            <div className="w-5 h-5 border-2 border-gray-300 border-t-black rounded-full animate-spin" />
+            <div className="w-5 h-5 border-2 border-border border-t-black rounded-full animate-spin" />
           ) : (
-            <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${pullY > 50 ? "rotate-180" : ""}`} />
+            <ChevronDown className={`w-5 h-5 text-muted-foreground/70 transition-transform ${pullY > 50 ? "rotate-180" : ""}`} />
           )}
         </div>
       )}
@@ -697,7 +707,7 @@ function ProjectItemRow({ project, isExpanded, singleThread, onToggle, openThrea
         data-testid={`mobile-project-${project.id}`}
       >
         <Building2 className="w-4 h-4 text-[#78716C] shrink-0" />
-        <span className="flex-1 text-[15px] font-semibold text-[#1C1917] text-left truncate tracking-tight">{project.name}</span>
+        <span className="flex-1 text-[15px] font-semibold text-[hsl(var(--mobile-chrome))] text-left truncate tracking-tight">{project.name}</span>
         {project.threads.length > 1 && (
           <span className="text-[11px] font-medium text-[#A8A29E] shrink-0">
             {project.threads.length} chats
@@ -796,7 +806,7 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, onArchive,
     }
     return (
       <div className="w-[52px] h-[52px] rounded-full bg-gradient-to-br from-gray-200 to-gray-300 flex items-center justify-center shrink-0">
-        <Users className="w-6 h-6 text-gray-500" />
+        <Users className="w-6 h-6 text-muted-foreground" />
       </div>
     );
   };
@@ -851,7 +861,7 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, onArchive,
         )}
         <div className="flex-1 min-w-0 text-left">
           <div className="flex items-center justify-between gap-2">
-            <span className={`text-[15px] tracking-tight truncate ${hasUnseen ? "font-semibold text-[#1C1917]" : "font-medium text-[#1C1917]"}`}>{displayTitle}</span>
+            <span className={`text-[15px] tracking-tight truncate ${hasUnseen ? "font-semibold text-[hsl(var(--mobile-chrome))]" : "font-medium text-[hsl(var(--mobile-chrome))]"}`}>{displayTitle}</span>
             <span className="text-[11px] shrink-0" style={hasUnseen ? { color: "hsl(var(--primary))", fontWeight: 500 } : { color: "#A8A29E" }}>
               {timeStr}
             </span>
@@ -941,7 +951,7 @@ function MobileNewGroup({ allUsers, currentUser, onBack, onCreate }: {
 
   return (
     <div className="flex flex-col w-screen bg-white overflow-x-hidden fixed inset-0">
-      <div className="bg-[#1C1917] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 px-4 shrink-0">
+      <div className="bg-[hsl(var(--mobile-chrome))] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 px-4 shrink-0">
         <div className="flex items-center gap-4">
           <button onClick={onBack} className="p-1" data-testid="button-mobile-back-newgroup"><ArrowLeft className="w-6 h-6" /></button>
           <span className="font-semibold text-lg">New Group</span>
@@ -949,10 +959,10 @@ function MobileNewGroup({ allUsers, currentUser, onBack, onCreate }: {
       </div>
 
       <div className="px-4 py-4 border-b">
-        <Input value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group name" className="h-12 text-base mb-3 rounded-xl border-gray-200" data-testid="input-mobile-group-name" />
+        <Input value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group name" className="h-12 text-base mb-3 rounded-xl border-border" data-testid="input-mobile-group-name" />
         <div className="flex flex-wrap gap-2">
           {TEAMS.map(t => (
-            <button key={t} onClick={() => selectTeam(t)} className="px-3 py-1.5 text-sm rounded-full border border-gray-300 bg-white active:bg-gray-100 font-medium" data-testid={`button-mobile-team-${t}`}>
+            <button key={t} onClick={() => selectTeam(t)} className="px-3 py-1.5 text-sm rounded-full border border-border bg-white active:bg-muted font-medium" data-testid={`button-mobile-team-${t}`}>
               {t}
             </button>
           ))}
@@ -961,38 +971,38 @@ function MobileNewGroup({ allUsers, currentUser, onBack, onCreate }: {
 
       <div className="px-4 py-3 border-b">
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search people..." className="h-11 pl-10 text-base rounded-xl border-gray-200" data-testid="input-mobile-search-members" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground/70" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search people..." className="h-11 pl-10 text-base rounded-xl border-border" data-testid="input-mobile-search-members" />
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {(!search.trim() || "chatbgp".includes(search.toLowerCase())) && (
-          <button onClick={() => toggleUser("__chatbgp__")} className="w-full flex items-center gap-4 px-5 py-3.5 active:bg-gray-50 border-b border-gray-100" data-testid="button-mobile-select-chatbgp">
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${selectedIds.has("__chatbgp__") ? "bg-[#1C1917] text-white" : "bg-gradient-to-br from-gray-800 to-black text-white"}`}>
+          <button onClick={() => toggleUser("__chatbgp__")} className="w-full flex items-center gap-4 px-5 py-3.5 active:bg-muted border-b border-border" data-testid="button-mobile-select-chatbgp">
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${selectedIds.has("__chatbgp__") ? "bg-[hsl(var(--mobile-chrome))] text-white" : "bg-gradient-to-br from-gray-800 to-black text-white"}`}>
               {selectedIds.has("__chatbgp__") ? <Check className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
             </div>
             <div className="text-left">
               <div className="text-[16px] font-medium">ChatBGP</div>
-              <div className="text-sm text-gray-400">AI Assistant</div>
+              <div className="text-sm text-muted-foreground/70">AI Assistant</div>
             </div>
           </button>
         )}
         {filteredUsers.map(user => (
-          <button key={user.id} onClick={() => toggleUser(user.id)} className="w-full flex items-center gap-4 px-5 py-3.5 active:bg-gray-50 border-b border-gray-100" data-testid={`button-mobile-select-user-${user.id}`}>
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${selectedIds.has(user.id) ? "bg-[#1C1917] text-white" : "bg-gray-200"}`}>
-              {selectedIds.has(user.id) ? <Check className="w-5 h-5" /> : <span className="text-sm font-semibold text-gray-600">{user.name.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>}
+          <button key={user.id} onClick={() => toggleUser(user.id)} className="w-full flex items-center gap-4 px-5 py-3.5 active:bg-muted border-b border-border" data-testid={`button-mobile-select-user-${user.id}`}>
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${selectedIds.has(user.id) ? "bg-[hsl(var(--mobile-chrome))] text-white" : "bg-muted"}`}>
+              {selectedIds.has(user.id) ? <Check className="w-5 h-5" /> : <span className="text-sm font-semibold text-muted-foreground">{user.name.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>}
             </div>
             <div className="text-left">
               <div className="text-[16px] font-medium">{user.name}</div>
-              {user.team && <div className="text-sm text-gray-400">{user.team}</div>}
+              {user.team && <div className="text-sm text-muted-foreground/70">{user.team}</div>}
             </div>
           </button>
         ))}
       </div>
 
       <div className="p-4 border-t pb-[calc(1rem+env(safe-area-inset-bottom))] shrink-0">
-        <Button className="w-full h-12 text-base font-semibold bg-[#1C1917] text-white hover:bg-gray-800 rounded-xl" disabled={selectedIds.size === 0} onClick={() => onCreate(groupName || (selectedIds.size === 1 ? "" : "Group Chat"), Array.from(selectedIds))} data-testid="button-mobile-create-group">
+        <Button className="w-full h-12 text-base font-semibold bg-[hsl(var(--mobile-chrome))] text-white hover:bg-gray-800 rounded-xl" disabled={selectedIds.size === 0} onClick={() => onCreate(groupName || "Group Chat", Array.from(selectedIds))} data-testid="button-mobile-create-group">
           Create Group ({selectedIds.size})
         </Button>
       </div>
@@ -1067,7 +1077,7 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
 
   return (
     <div className="flex flex-col w-screen bg-white overflow-x-hidden fixed inset-0">
-      <div className="bg-[#1C1917] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 px-4 shrink-0">
+      <div className="bg-[hsl(var(--mobile-chrome))] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] pb-3 px-4 shrink-0">
         <div className="flex items-center gap-4">
           <button onClick={onBack} className="p-1" data-testid="button-mobile-back-groupedit"><ArrowLeft className="w-6 h-6" /></button>
           <span className="font-semibold text-lg">{isAiThread ? "Chat Settings" : "Group Settings"}</span>
@@ -1075,19 +1085,19 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="px-5 pt-5 pb-4 border-b border-gray-100">
-          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{isAiThread ? "Chat Name" : "Group Name"}</label>
+        <div className="px-5 pt-5 pb-4 border-b border-border">
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{isAiThread ? "Chat Name" : "Group Name"}</label>
           <div className="flex items-center gap-2 mt-2">
             <Input
               value={groupName}
               onChange={(e) => setGroupName(e.target.value)}
               placeholder={isAiThread ? "Chat name" : "Group name"}
-              className="h-11 text-base rounded-xl border-gray-200 flex-1"
+              className="h-11 text-base rounded-xl border-border flex-1"
               data-testid="input-mobile-edit-group-name"
             />
             <Button
               size="sm"
-              className="h-11 px-4 rounded-xl bg-[#1C1917] text-white hover:bg-gray-800"
+              className="h-11 px-4 rounded-xl bg-[hsl(var(--mobile-chrome))] text-white hover:bg-gray-800"
               disabled={!groupName.trim() || groupName === thread.title || renameMutation.isPending}
               onClick={() => renameMutation.mutate(groupName.trim())}
               data-testid="button-mobile-save-group-name"
@@ -1097,14 +1107,14 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
           </div>
           {isAiThread && thread.linkedName && (
             <div className="flex items-center gap-1.5 mt-2">
-              <Link2 className="w-3 h-3 text-gray-400" />
-              <span className="text-xs text-gray-400">Linked to {thread.linkedName}</span>
+              <Link2 className="w-3 h-3 text-muted-foreground/70" />
+              <span className="text-xs text-muted-foreground/70">Linked to {thread.linkedName}</span>
             </div>
           )}
         </div>
 
         {!isAiThread && (
-          <div className="px-5 pt-4 pb-3 border-b border-gray-100">
+          <div className="px-5 pt-4 pb-3 border-b border-border">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full text-white flex items-center justify-center" style={{ backgroundColor: "hsl(var(--primary))" }}>
@@ -1112,7 +1122,7 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
                 </div>
                 <div>
                   <div className="text-[15px] font-medium">ChatBGP</div>
-                  <div className="text-xs text-gray-400">AI Assistant</div>
+                  <div className="text-xs text-muted-foreground/70">AI Assistant</div>
                 </div>
               </div>
               <button
@@ -1128,22 +1138,22 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
         )}
 
         <div className="px-5 pt-4">
-          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Members ({thread.members.length})</label>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Members ({thread.members.length})</label>
         </div>
 
         {thread.members.map(m => {
           const isCreator = m.id === thread.createdBy;
           const isSelf = m.id === currentUser?.id;
           return (
-            <div key={m.id} className="flex items-center gap-4 px-5 py-3 border-b border-gray-100">
-              <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
-                <span className="text-sm font-semibold text-gray-600">{m.name.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>
+            <div key={m.id} className="flex items-center gap-4 px-5 py-3 border-b border-border">
+              <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                <span className="text-sm font-semibold text-muted-foreground">{m.name.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-[15px] font-medium truncate">
                   {m.name}{isSelf ? " (You)" : ""}{isCreator ? " (Admin)" : ""}
                 </div>
-                <div className="text-xs text-gray-400">{allUsers.find(u => u.id === m.id)?.team || ""}</div>
+                <div className="text-xs text-muted-foreground/70">{allUsers.find(u => u.id === m.id)?.team || ""}</div>
               </div>
               {!isSelf && !isCreator && (
                 <button
@@ -1160,9 +1170,9 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
         })}
 
         <div className="px-5 pt-5 pb-3">
-          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Add Members</label>
+          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Add Members</label>
           <div className="relative mt-2">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -1178,17 +1188,17 @@ function MobileGroupEdit({ thread, currentUser, allUsers, onBack }: {
             key={user.id}
             onClick={() => addMemberMutation.mutate(user.id)}
             disabled={addMemberMutation.isPending}
-            className="w-full flex items-center gap-4 px-5 py-3 active:bg-gray-50 border-b border-gray-100"
+            className="w-full flex items-center gap-4 px-5 py-3 active:bg-muted border-b border-border"
             data-testid={`button-add-member-${user.id}`}
           >
-            <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center">
-              <UserPlus className="w-4 h-4 text-gray-500" />
+            <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+              <UserPlus className="w-4 h-4 text-muted-foreground" />
             </div>
             <div className="text-left flex-1">
               <div className="text-[15px] font-medium">{user.name}</div>
-              {user.team && <div className="text-xs text-gray-400">{user.team}</div>}
+              {user.team && <div className="text-xs text-muted-foreground/70">{user.team}</div>}
             </div>
-            <Plus className="w-5 h-5 text-gray-400" />
+            <Plus className="w-5 h-5 text-muted-foreground/70" />
           </button>
         ))}
       </div>
@@ -1257,6 +1267,26 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const [, navigate] = useLocation();
 
   const { typingUsers, sendTyping, stopTyping } = useTypingIndicator(threadId);
+  // Keyboard up → the fixed bottom nav hides itself, so drop the padding
+  // that clears it or the composer floats above a dead band (Woody, 2026-08-22).
+  const keyboardOpen = useKeyboardOpen();
+  // iOS scrolls the layout viewport when the keyboard opens, dragging the
+  // fixed shell up so the header slides under the status bar and message
+  // text collides with the clock (Woody's screenshot, 2026-08-22). Snap the
+  // window back to the top whenever that happens while the keyboard is up.
+  useEffect(() => {
+    if (!keyboardOpen) return;
+    const snap = () => {
+      if (window.scrollY !== 0) window.scrollTo(0, 0);
+    };
+    snap();
+    window.visualViewport?.addEventListener("scroll", snap);
+    window.addEventListener("scroll", snap, { passive: true });
+    return () => {
+      window.visualViewport?.removeEventListener("scroll", snap);
+      window.removeEventListener("scroll", snap);
+    };
+  }, [keyboardOpen]);
 
   const { data: activeThread } = useQuery<ThreadData>({
     queryKey: ["/api/chat/threads", threadId],
@@ -2174,6 +2204,11 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
   const headerInitials = isDm && dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
   const isGroup = !isActiveThreadAi && !isDm;
   const groupPicFileRef = useRef<HTMLInputElement>(null);
+  // NOTE: the "Search the web" photo chooser (ImageSourceSheet + the
+  // /api/image-search + *-from-url endpoints) is PARKED — Google kept
+  // refusing the project Custom Search access despite the API, key and
+  // billing all being enabled (Woody, 2026-08-23: "rewind and try again in
+  // 3 months"). To revive, re-wire per commit 0cb332b7.
 
   const handleGroupPicUpload = async (file: File) => {
     if (!threadId) return;
@@ -2218,25 +2253,23 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     }
     if (activeThread?.groupPicUrl) {
       return (
-        <label className="relative cursor-pointer">
+        <button type="button" className="relative" onClick={() => groupPicFileRef.current?.click()} data-testid="button-group-pic">
           <img src={activeThread.groupPicUrl} alt="" className="w-10 h-10 rounded-full object-cover" />
           <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white/90 flex items-center justify-center">
             <Camera className="w-2.5 h-2.5 text-black" />
           </div>
-          <input type="file" accept="image/*" className="hidden" ref={groupPicFileRef} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGroupPicUpload(f); e.target.value = ""; }} />
-        </label>
+        </button>
       );
     }
     return (
-      <label className="relative cursor-pointer">
+      <button type="button" className="relative" onClick={() => groupPicFileRef.current?.click()} data-testid="button-group-pic">
         <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
           <Users className="w-5 h-5" />
         </div>
         <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-white/90 flex items-center justify-center">
           <Camera className="w-2.5 h-2.5 text-black" />
         </div>
-        <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGroupPicUpload(f); e.target.value = ""; }} />
-      </label>
+      </button>
     );
   };
 
@@ -2256,46 +2289,47 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
     // menu on the greeting felt like a dead end) — padding clears the fixed
     // nav so the composer sits above it. Team chats stay full-screen.
     <div
-      className={`flex flex-col w-screen overflow-x-hidden fixed inset-0 bg-gray-50`}
-      style={isActiveThreadAi ? { paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom))" } : undefined}
+      className={`flex flex-col w-screen overflow-x-hidden fixed inset-0 bg-muted/50`}
+      style={isActiveThreadAi && !keyboardOpen ? { paddingBottom: "calc(3.5rem + env(safe-area-inset-bottom))" } : undefined}
     >
+      <input type="file" accept="image/*" className="hidden" ref={groupPicFileRef} onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGroupPicUpload(f); e.target.value = ""; }} />
       {isActiveThreadAi && <MobileBottomNav />}
       {isActiveThreadAi ? (
-        <div className="bg-white text-gray-900 pt-[calc(0.75rem+env(safe-area-inset-top))] pb-2.5 px-4 shrink-0 border-b border-gray-100">
+        <div className="bg-white text-foreground pt-[calc(0.75rem+env(safe-area-inset-top))] pb-2.5 px-4 shrink-0 border-b border-border">
           <div className="flex items-center justify-between">
-            <button onClick={onBack} className="w-9 h-9 rounded-full flex items-center justify-center active:bg-gray-100" data-testid="button-mobile-chat-back">
-              <ArrowLeft className="w-5 h-5 text-gray-600" />
+            <button onClick={onBack} className="w-9 h-9 rounded-full flex items-center justify-center active:bg-muted" data-testid="button-mobile-chat-back">
+              <ArrowLeft className="w-5 h-5 text-muted-foreground" />
             </button>
             <button onClick={() => setShowGroupEdit(true)} className="flex items-center gap-2.5" data-testid="button-mobile-group-settings">
               <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: "hsl(var(--primary))" }}>
                 <Sparkles className="w-4 h-4 text-white" />
               </div>
               <div className="text-left">
-                <span className="text-[15px] font-semibold text-gray-900 block leading-tight">ChatBGP</span>
-                <span className="text-[11px] text-gray-400 leading-tight">AI Assistant</span>
+                <span className="text-[15px] font-semibold text-foreground block leading-tight">ChatBGP</span>
+                <span className="text-[11px] text-muted-foreground/70 leading-tight">AI Assistant</span>
               </div>
             </button>
             <div className="flex items-center gap-0.5">
               {onTeamChats && (
                 <button
                   onClick={onTeamChats}
-                  className="w-9 h-9 rounded-full flex items-center justify-center active:bg-gray-100"
+                  className="w-9 h-9 rounded-full flex items-center justify-center active:bg-muted"
                   data-testid="button-mobile-team-chats"
                   aria-label="Internal team chats"
                 >
-                  <Users className="w-[18px] h-[18px] text-gray-400" />
+                  <Users className="w-[18px] h-[18px] text-muted-foreground/70" />
                 </button>
               )}
               <button
                 onClick={() => setSearchInChat(!searchInChat)}
-                className="w-9 h-9 rounded-full flex items-center justify-center active:bg-gray-100"
+                className="w-9 h-9 rounded-full flex items-center justify-center active:bg-muted"
                 data-testid="button-search-in-chat"
               >
-                <Search className="w-[18px] h-[18px] text-gray-400" />
+                <Search className="w-[18px] h-[18px] text-muted-foreground/70" />
               </button>
               <button
                 onClick={startNewChat}
-                className="w-9 h-9 rounded-full flex items-center justify-center active:bg-gray-100"
+                className="w-9 h-9 rounded-full flex items-center justify-center active:bg-muted"
                 data-testid="button-mobile-new-chat"
               >
                 <Plus className="w-5 h-5" style={{ color: "hsl(var(--primary))" }} />
@@ -2304,7 +2338,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           </div>
         </div>
       ) : (
-        <div className="bg-[#1C1917] text-white pt-[calc(0.5rem+env(safe-area-inset-top))] pb-3 px-4 shrink-0">
+        <div className="bg-[hsl(var(--mobile-chrome))] text-white pt-[calc(0.5rem+env(safe-area-inset-top))] pb-3 px-4 shrink-0">
           <div className="flex items-center gap-3">
             <button onClick={onBack} className="p-1" data-testid="button-mobile-chat-back"><ArrowLeft className="w-6 h-6" /></button>
             {threadId && (
@@ -2370,22 +2404,22 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
 
       {searchInChat && (
         <div className="px-3 py-2 border-b bg-white flex items-center gap-2">
-          <Search className="w-4 h-4 text-gray-400 shrink-0" />
+          <Search className="w-4 h-4 text-muted-foreground/70 shrink-0" />
           <Input
             value={chatSearchQuery}
             onChange={(e) => setChatSearchQuery(e.target.value)}
             placeholder="Search in conversation..."
-            className="h-8 text-sm border-0 bg-gray-100 rounded-lg flex-1"
+            className="h-8 text-sm border-0 bg-muted rounded-lg flex-1"
             autoFocus
             data-testid="input-search-in-chat"
           />
           <button onClick={() => { setSearchInChat(false); setChatSearchQuery(""); }} className="p-1" data-testid="button-close-chat-search">
-            <X className="w-4 h-4 text-gray-400" />
+            <X className="w-4 h-4 text-muted-foreground/70" />
           </button>
         </div>
       )}
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 relative" onScroll={(e) => {
+      <div ref={scrollRef} className={`flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 relative ${!isActiveThreadAi ? "bg-[#F4F1EA]" : ""}`} onScroll={(e) => {
         const el = e.currentTarget;
         const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
         setShowScrollBottom(distFromBottom > 200);
@@ -2397,7 +2431,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
               <Sparkles className="w-6 h-6 text-white" />
             </div>
             <div className="text-center space-y-1.5">
-              <h3 className="text-[30px] text-[#1C1917] tracking-tight leading-none" style={{ fontFamily: "var(--font-serif)" }}>
+              <h3 className="text-[30px] text-[hsl(var(--mobile-chrome))] tracking-tight leading-none" style={{ fontFamily: "var(--font-serif)" }}>
                 {(() => {
                   const hour = new Date().getHours();
                   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
@@ -2434,13 +2468,30 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           const matchesSearch = !chatSearchQuery || msg.content.toLowerCase().includes(chatSearchQuery.toLowerCase());
           if (searchInChat && chatSearchQuery && !matchesSearch) return null;
           const showNewDivider = initialMsgCountRef.current !== null && i === initialMsgCountRef.current && i > 0 && i < messages.length;
+          // WhatsApp-style date chips between days (team chats only).
+          const dayLabel = (() => {
+            if (isActiveThreadAi || !msg.createdAt) return null;
+            const d = new Date(msg.createdAt);
+            const prev = i > 0 ? messages[i - 1]?.createdAt : null;
+            if (prev && new Date(prev).toDateString() === d.toDateString()) return null;
+            const today = new Date();
+            const yesterday = new Date(Date.now() - 86400000);
+            if (d.toDateString() === today.toDateString()) return "Today";
+            if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+            return d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+          })();
           return (
             <div key={msg.id || i}>
+              {dayLabel && (
+                <div className="flex justify-center my-3">
+                  <span className="text-[12px] font-medium text-[#6B6259] bg-white/90 rounded-lg px-3 py-1 shadow-sm">{dayLabel}</span>
+                </div>
+              )}
               {showNewDivider && (
                 <div className="flex items-center gap-3 my-3 px-2" data-testid="new-messages-divider">
-                  <div className="flex-1 h-px bg-blue-400" />
-                  <span className="text-xs font-semibold text-blue-500 whitespace-nowrap">New Messages</span>
-                  <div className="flex-1 h-px bg-blue-400" />
+                  <div className="flex-1 h-px bg-primary/50" />
+                  <span className="text-xs font-semibold text-primary whitespace-nowrap">New Messages</span>
+                  <div className="flex-1 h-px bg-primary/50" />
                 </div>
               )}
               <MobileMessageBubble
@@ -2453,6 +2504,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 onCheckboxClick={handleCheckboxClick}
                 selectedCheckboxes={selectedCheckboxes}
                 isAiThread={isActiveThreadAi}
+                othersAllSeen={threadMembers.filter(m => m.id !== currentUser?.id).length > 0 && threadMembers.filter(m => m.id !== currentUser?.id).every(m => m.seen)}
               />
             </div>
           );
@@ -2464,20 +2516,22 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
               <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }}>
                 <Sparkles className="w-4 h-4 text-white" />
               </div>
-              <div className="flex-1 min-w-0 pt-2 space-y-1.5">
+              {/* Bubble like every other message — flat text read as a
+                  detached strip above the composer (Woody, 2026-08-22). */}
+              <div className="flex-1 min-w-0 max-w-[85%] bg-white border border-border shadow-sm rounded-2xl rounded-tl-md px-4 py-3 space-y-1.5">
                 <div className="flex items-center gap-2.5">
                   <div className="flex gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "0ms" }} />
                     <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "150ms" }} />
                     <span className="w-1.5 h-1.5 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: "300ms" }} />
                   </div>
-                  <span className="text-[14px] text-gray-400 italic">{streamingProgress || activeRun?.progress || "Thinking..."}</span>
+                  <span className="text-[14px] text-muted-foreground/70 italic">{streamingProgress || activeRun?.progress || "Thinking..."}</span>
                 </div>
                 {/* Reply writes itself in live — deltas while connected, the
                     server's partial when re-attaching mid-composition. The
                     saved message re-renders it with full markdown at the end. */}
                 {(isSending ? streamingText : activeRun?.partial) && (
-                  <p className="text-[15px] text-gray-800 dark:text-gray-200 whitespace-pre-wrap leading-relaxed">
+                  <p className="text-[15px] text-foreground whitespace-pre-wrap leading-relaxed">
                     {isSending ? streamingText : activeRun?.partial}
                   </p>
                 )}
@@ -2485,7 +2539,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
             </div>
           ) : (
             <div className="flex justify-start">
-              <div className="bg-white border border-gray-100 shadow-sm rounded-2xl rounded-bl-md px-5 py-4">
+              <div className="bg-white border border-border shadow-sm rounded-2xl rounded-bl-md px-5 py-4">
                 <div className="flex gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-gray-300 animate-bounce" style={{ animationDelay: "0ms" }} />
                   <span className="w-2 h-2 rounded-full bg-gray-300 animate-bounce" style={{ animationDelay: "150ms" }} />
@@ -2498,7 +2552,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
 
         {queuedMessages.map((q, i) => (
           <div key={i} className="flex justify-end">
-            <div className="rounded-2xl px-4 py-3 text-[15px] leading-relaxed max-w-[80%] opacity-60 bg-[#1C1917] text-white rounded-br-md">
+            <div className="rounded-2xl px-4 py-3 text-[15px] leading-relaxed max-w-[80%] opacity-60 bg-[hsl(var(--mobile-chrome))] text-white rounded-br-md">
               <div className="whitespace-pre-wrap break-words">{q.text}</div>
               <div className="text-[11px] mt-1 text-white/60">
                 {i === 0 ? "Queued — will send next" : `Queued — position ${i + 1}`}
@@ -2508,7 +2562,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         ))}
 
         {typingUsers.length > 0 && !isSending && (
-          <div className="text-sm italic px-2 text-gray-400">
+          <div className="text-sm italic px-2 text-muted-foreground/70">
             {typingUsers.length === 1
               ? `${(typingUsers[0] as any)?.userId === "__chatbgp__" ? "ChatBGP" : allUsers?.find(u => u.id === (typingUsers[0] as any)?.userId)?.name?.split(" ")[0] || "Someone"} is typing...`
               : `${typingUsers.length} people typing...`}
@@ -2519,10 +2573,10 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
         {showScrollBottom && (
           <button
             onClick={() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })}
-            className="absolute bottom-4 right-4 w-10 h-10 rounded-full bg-white border border-gray-200 shadow-lg flex items-center justify-center z-10 active:bg-gray-50"
+            className="absolute bottom-4 right-4 w-10 h-10 rounded-full bg-white border border-border shadow-lg flex items-center justify-center z-10 active:bg-muted"
             data-testid="button-scroll-to-bottom"
           >
-            <ChevronDown className="w-5 h-5 text-gray-600" />
+            <ChevronDown className="w-5 h-5 text-muted-foreground" />
           </button>
         )}
       </div>
@@ -2544,11 +2598,11 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
             return (
               <div key={optKey}>
                 {showHeader && (
-                  <p className="px-4 pt-2 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider bg-gray-50">{group}</p>
+                  <p className="px-4 pt-2 pb-1 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-wider bg-muted/50">{group}</p>
                 )}
                 <button
                   onClick={() => handleOptionSelect(opt)}
-                  className={`w-full flex items-center gap-2.5 text-left px-4 py-3 text-[15px] ${i === mentionIndex ? "bg-gray-100" : ""}`}
+                  className={`w-full flex items-center gap-2.5 text-left px-4 py-3 text-[15px] ${i === mentionIndex ? "bg-muted" : ""}`}
                   data-testid={`mobile-mention-${optKey}`}
                 >
                   {opt.kind === "chatbgp" ? (
@@ -2559,19 +2613,19 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                     (() => {
                       const Icon = TAG_META[opt.type]?.icon || Building2;
                       return (
-                        <span className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${TAG_META[opt.type]?.chip || "bg-gray-100"}`}>
+                        <span className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${TAG_META[opt.type]?.chip || "bg-muted"}`}>
                           <Icon className="w-3.5 h-3.5" />
                         </span>
                       );
                     })()
                   ) : (
-                    <span className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center shrink-0 text-[11px] font-semibold">
+                    <span className="w-7 h-7 rounded-full bg-muted flex items-center justify-center shrink-0 text-[11px] font-semibold">
                       {opt.name.split(" ").map(n => n[0]).join("").slice(0, 2)}
                     </span>
                   )}
                   <span className="flex-1 min-w-0">
                     <span className="block truncate">{opt.kind === "chatbgp" ? "ChatBGP" : opt.name}</span>
-                    {opt.kind === "entity" && opt.subtitle && <span className="block text-[12px] text-gray-500 truncate">{opt.subtitle}</span>}
+                    {opt.kind === "entity" && opt.subtitle && <span className="block text-[12px] text-muted-foreground truncate">{opt.subtitle}</span>}
                   </span>
                 </button>
               </div>
@@ -2582,11 +2636,11 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
 
       {selectedCheckboxes.length > 0 && (
         <div className="border-t px-4 py-2.5 flex items-center justify-between shrink-0 bg-white">
-          <span className="text-[14px] text-gray-600">{selectedCheckboxes.length} selected</span>
+          <span className="text-[14px] text-muted-foreground">{selectedCheckboxes.length} selected</span>
           <div className="flex gap-2">
             <button
               onClick={() => setSelectedCheckboxes([])}
-              className="px-4 py-2 text-[14px] rounded-xl border border-gray-200 text-gray-600 active:bg-gray-100"
+              className="px-4 py-2 text-[14px] rounded-xl border border-border text-muted-foreground active:bg-muted"
               data-testid="button-clear-checkboxes"
             >
               Clear
@@ -2594,7 +2648,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
             <button
               onClick={handleSendCheckboxes}
               disabled={isSending}
-              className="px-4 py-2 text-[14px] rounded-xl flex items-center gap-1.5 bg-[#1C1917] text-white active:bg-gray-800 disabled:bg-gray-300"
+              className="px-4 py-2 text-[14px] rounded-xl flex items-center gap-1.5 bg-[hsl(var(--mobile-chrome))] text-white active:bg-gray-800 disabled:bg-gray-300"
               data-testid="button-send-checkboxes"
             >
               <Send className="w-3.5 h-3.5" />
@@ -2612,18 +2666,18 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
               return preview ? (
                 <div key={i} className="relative shrink-0">
                   <img src={preview} alt={f.name} className="w-16 h-16 rounded-xl object-cover" />
-                  <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-[#1C1917] text-white">
+                  <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-[hsl(var(--mobile-chrome))] text-white">
                     <X className="w-3 h-3" />
                   </button>
                 </div>
               ) : (
-                <div key={i} className="relative shrink-0 flex items-center gap-1.5 rounded-xl px-3 py-2 h-16 bg-gray-100">
-                  <FileIcon className="w-4 h-4 text-gray-500" />
+                <div key={i} className="relative shrink-0 flex items-center gap-1.5 rounded-xl px-3 py-2 h-16 bg-muted">
+                  <FileIcon className="w-4 h-4 text-muted-foreground" />
                   <div className="max-w-[100px]">
                     <div className="text-xs font-medium truncate">{f.name}</div>
-                    <div className="text-[10px] text-gray-400">{formatFileSize(f.size)}</div>
+                    <div className="text-[10px] text-muted-foreground/70">{formatFileSize(f.size)}</div>
                   </div>
-                  <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-[#1C1917] text-white">
+                  <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center bg-[hsl(var(--mobile-chrome))] text-white">
                     <X className="w-3 h-3" />
                   </button>
                 </div>
@@ -2632,19 +2686,19 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           </div>
         )}
         {uploading && (
-          <div className="flex items-center gap-2 mb-2 px-2 text-sm text-gray-500">
-            <div className="w-4 h-4 border-2 rounded-full animate-spin border-gray-300 border-t-black" />
+          <div className="flex items-center gap-2 mb-2 px-2 text-sm text-muted-foreground">
+            <div className="w-4 h-4 border-2 rounded-full animate-spin border-border border-t-black" />
             Uploading...
           </div>
         )}
         {showLinkSearch && (
-          <div className="bg-white border-t border-gray-200 p-3">
+          <div className="bg-white border-t border-border p-3">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-semibold text-gray-700">
+              <span className="text-sm font-semibold text-muted-foreground">
                 Link {showLinkSearch === "property" ? "Property" : "Deal"}
               </span>
               <button onClick={() => { setShowLinkSearch(null); setLinkSearchQuery(""); }} className="p-1">
-                <X className="w-4 h-4 text-gray-400" />
+                <X className="w-4 h-4 text-muted-foreground/70" />
               </button>
             </div>
             <Input
@@ -2666,23 +2720,23 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                       id: String(item.id),
                       name: displayName,
                     })}
-                    className="flex items-center gap-2 w-full px-3 py-2.5 text-left text-sm hover:bg-gray-50 active:bg-gray-100 rounded-lg"
+                    className="flex items-center gap-2 w-full px-3 py-2.5 text-left text-sm hover:bg-muted active:bg-muted rounded-lg"
                     data-testid={`link-result-${item.id}`}
                   >
                     {showLinkSearch === "property" ? (
-                      <Building className="w-4 h-4 text-gray-400 shrink-0" />
+                      <Building className="w-4 h-4 text-muted-foreground/70 shrink-0" />
                     ) : (
-                      <Handshake className="w-4 h-4 text-gray-400 shrink-0" />
+                      <Handshake className="w-4 h-4 text-muted-foreground/70 shrink-0" />
                     )}
                     <span className="truncate">{displayName}</span>
                   </button>
                 );
               })}
               {linkSearchQuery.length >= 1 && (!linkSearchResults || linkSearchResults.length === 0) && (
-                <div className="text-sm text-gray-400 text-center py-3">No results found</div>
+                <div className="text-sm text-muted-foreground/70 text-center py-3">No results found</div>
               )}
               {linkSearchQuery.length < 1 && (
-                <div className="text-sm text-gray-400 text-center py-3">Type to search</div>
+                <div className="text-sm text-muted-foreground/70 text-center py-3">Type to search</div>
               )}
             </div>
           </div>
@@ -2701,8 +2755,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           </div>
         ) : isActiveThreadAi ? (
           <div className="flex items-end gap-2">
-            <div className="flex-1 flex items-end rounded-[22px] border border-gray-200/80 bg-white shadow-sm overflow-hidden">
-              <div className="p-2.5 text-gray-400 active:text-gray-600 cursor-pointer relative overflow-hidden shrink-0" data-testid="button-mobile-photo" style={{ minWidth: 36, minHeight: 36 }}>
+            <div className="flex-1 flex items-end rounded-[22px] border border-border/80 bg-white shadow-sm overflow-hidden">
+              <div className="p-2.5 text-muted-foreground/70 active:text-muted-foreground cursor-pointer relative overflow-hidden shrink-0" data-testid="button-mobile-photo" style={{ minWidth: 36, minHeight: 36 }}>
                 <Plus className="w-5 h-5 pointer-events-none" />
                 <input
                   ref={imageInputRef}
@@ -2724,7 +2778,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 placeholder="Reply to ChatBGP..."
-                className="flex-1 min-h-[44px] max-h-[120px] resize-none border-0 bg-transparent text-[16px] py-3 pr-3 pl-0 text-gray-900 placeholder:text-gray-400 focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none"
+                className="flex-1 min-h-[44px] max-h-[120px] resize-none border-0 bg-transparent text-[16px] py-3 pr-3 pl-0 text-foreground placeholder:text-muted-foreground/70 focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none"
                 rows={1}
                 data-testid="input-mobile-chat"
               />
@@ -2743,8 +2797,8 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
           </div>
         ) : (
           <div className="flex items-end gap-2">
-            <div className="flex-1 flex items-end rounded-[22px] border border-gray-200/80 bg-white shadow-sm overflow-hidden">
-              <div className="p-2.5 text-gray-400 active:text-gray-600 cursor-pointer relative overflow-hidden shrink-0" data-testid="button-mobile-photo" style={{ minWidth: 36, minHeight: 36 }}>
+            <div className="flex-1 flex items-end rounded-[22px] border border-border/80 bg-white shadow-sm overflow-hidden">
+              <div className="p-2.5 text-muted-foreground/70 active:text-muted-foreground cursor-pointer relative overflow-hidden shrink-0" data-testid="button-mobile-photo" style={{ minWidth: 36, minHeight: 36 }}>
                 <Image className="w-5 h-5 pointer-events-none" />
                 <input
                   ref={imageInputRef}
@@ -2763,7 +2817,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
               <div className="relative shrink-0">
                 <button
                   onClick={() => setShowLinkMenu(prev => !prev)}
-                  className="p-2.5 text-gray-400 active:text-gray-600 cursor-pointer"
+                  className="p-2.5 text-muted-foreground/70 active:text-muted-foreground cursor-pointer"
                   data-testid="button-mobile-attach"
                   style={{ minWidth: 36, minHeight: 36 }}
                 >
@@ -2772,26 +2826,26 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 {showLinkMenu && (
                   <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowLinkMenu(false)} />
-                  <div className="absolute bottom-12 left-0 bg-white rounded-xl shadow-lg border border-gray-200 py-1 w-52 z-50">
+                  <div className="absolute bottom-12 left-0 bg-white rounded-xl shadow-lg border border-border py-1 w-52 z-50">
                     <button
                       onClick={() => { setShowLinkSearch("property"); setShowLinkMenu(false); setLinkSearchQuery(""); }}
-                      className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100"
+                      className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-muted active:bg-muted"
                       data-testid="button-link-property"
                     >
-                      <Building className="w-5 h-5 text-gray-600" />
+                      <Building className="w-5 h-5 text-muted-foreground" />
                       <span>Link Property</span>
                     </button>
                     <button
                       onClick={() => { setShowLinkSearch("deal"); setShowLinkMenu(false); setLinkSearchQuery(""); }}
-                      className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100"
+                      className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-muted active:bg-muted"
                       data-testid="button-link-deal"
                     >
-                      <Handshake className="w-5 h-5 text-gray-600" />
+                      <Handshake className="w-5 h-5 text-muted-foreground" />
                       <span>Link Deal</span>
                     </button>
-                    <div className="border-t border-gray-100 my-1" />
-                    <label className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100 cursor-pointer">
-                      <FileIcon className="w-5 h-5 text-gray-600" />
+                    <div className="border-t border-border my-1" />
+                    <label className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-muted active:bg-muted cursor-pointer">
+                      <FileIcon className="w-5 h-5 text-muted-foreground" />
                       <span>Attach File</span>
                       <input
                         ref={fileInputRef}
@@ -2816,7 +2870,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 placeholder="Message..."
-                className="flex-1 min-h-[44px] max-h-[120px] resize-none border-0 bg-transparent text-[16px] py-3 pr-3 pl-0 text-gray-900 placeholder:text-gray-400 focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none"
+                className="flex-1 min-h-[44px] max-h-[120px] resize-none border-0 bg-transparent text-[16px] py-3 pr-3 pl-0 text-foreground placeholder:text-muted-foreground/70 focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none"
                 rows={1}
                 data-testid="input-mobile-chat"
               />
@@ -2828,7 +2882,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, o
                 </button>
               )
             ) : (
-              <button onClick={handleSend} disabled={uploading} className="w-11 h-11 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0 bg-[#1C1917]" data-testid="button-mobile-send" aria-label="Send message">
+              <button onClick={handleSend} disabled={uploading} className="w-11 h-11 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0 bg-[hsl(var(--mobile-chrome))]" data-testid="button-mobile-send" aria-label="Send message">
                 <Send className="w-[18px] h-[18px] text-white" />
               </button>
             )}
@@ -2927,30 +2981,30 @@ function MobileDocumentStudio() {
   return (
     <div className="flex-1 overflow-y-auto px-4">
       <div className="flex items-center gap-3 mb-5">
-        <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center shrink-0">
-          <Sparkles className="w-5 h-5 text-blue-600" />
+        <div className="w-10 h-10 rounded-2xl bg-primary/10 flex items-center justify-center shrink-0">
+          <Sparkles className="w-5 h-5 text-primary" />
         </div>
         <div>
-          <h2 className="text-[18px] font-semibold text-gray-900 tracking-tight">Document Studio</h2>
-          <p className="text-[13px] text-gray-500">Tap a template to generate on desktop</p>
+          <h2 className="text-[18px] font-semibold text-foreground tracking-tight">Document Studio</h2>
+          <p className="text-[13px] text-muted-foreground">Tap a template to generate on desktop</p>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3">
         {docTypes.map((doc, i) => (
           <div
             key={i}
-            className="rounded-2xl border border-gray-100 shadow-sm overflow-hidden bg-white active:bg-gray-50 transition-colors"
+            className="rounded-2xl border border-border shadow-sm overflow-hidden bg-white active:bg-muted transition-colors"
             onClick={() => {
               navigate("/templates");
               toast({ title: "Opening Document Studio", description: `Open "${doc.label}" on desktop for full editing` });
             }}
             data-testid={`mobile-doc-${i}`}
           >
-            <div className="flex items-center justify-center py-3.5 bg-[#f8f7f4] border-b border-gray-100">
+            <div className="flex items-center justify-center py-3.5 bg-[#f8f7f4] border-b border-border">
               <MobileDocPreview design={doc.preview} scale={0.1} />
             </div>
             <div className="px-3.5 py-3">
-              <div className="text-[14px] font-semibold text-gray-900 leading-tight tracking-tight">{doc.label}</div>
+              <div className="text-[14px] font-semibold text-foreground leading-tight tracking-tight">{doc.label}</div>
             </div>
           </div>
         ))}
@@ -2961,7 +3015,6 @@ function MobileDocumentStudio() {
 
 export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" | "ai" | "today" | "menu" }) {
   const { theme, toggleTheme, colorScheme, setColorScheme } = useTheme();
-  const [tab, setTab] = useState<"chats" | "ai" | "today" | "menu">(initialTab);
   // Restore the open thread across remounts — tapping out to a brand page
   // and back to ChatBGP was landing on a fresh chat, losing the thread.
   // sessionStorage (not local) so a new browser session starts clean.
@@ -2969,13 +3022,26 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     if (initialTab !== "ai") return null;
     try { return sessionStorage.getItem("mobile-chat-thread"); } catch { return null; }
   })();
+  // A BARE open of /chatbgp (cold start / iOS relaunch state-restore) lands
+  // on the Messages LIST, not inside a conversation (Woody, 2026-08-23:
+  // "the messages page rather than last message"). Deliberate entries still
+  // open the chat: the home "Ask ChatBGP…" button passes ?ask=1, push
+  // notifications pass ?thread=, and in-session restores carry the marker.
+  const bareAiOpen = (() => {
+    if (initialTab !== "ai" || restored) return false;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("ask") !== "1" && !params.get("thread");
+    } catch { return true; }
+  })();
+  const [tab, setTab] = useState<"chats" | "ai" | "today" | "menu">(bareAiOpen ? "chats" : initialTab);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(restored);
   const [activeThreadAi, setActiveThreadAi] = useState(() => {
     if (restored) { try { return sessionStorage.getItem("mobile-chat-thread-ai") !== "0"; } catch { return true; } }
     return initialTab === "ai";
   });
   const [showNewGroup, setShowNewGroup] = useState(false);
-  const [showChat, setShowChat] = useState(initialTab === "ai");
+  const [showChat, setShowChat] = useState(initialTab === "ai" && !bareAiOpen);
   // True only when the chat was opened from MobileApp's own conversation
   // list. When entered directly (ChatBGP nav → chat), back leaves the old
   // shell and returns to the new app instead of exposing the list.
@@ -3008,6 +3074,16 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
   // Client logins (Landsec) have no internal team chats — hide the
   // switch-to-chats affordances, matching the desktop shell.
   const isClientUser = currentUser?.role === "Client" || !!(currentUser as any)?.companyScopeId;
+
+  // Strip ?ask=1 once consumed so an iOS relaunch of the saved URL doesn't
+  // re-open the chat after the user has backed out to the list.
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get("ask") === "1") {
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    } catch {}
+  }, []);
 
   // Keep the open-thread marker current so back-from-a-brand restores it.
   // Backing out to the list (showChat false) is an explicit exit — clear.
@@ -3074,6 +3150,29 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
         window.history.replaceState({}, "", window.location.pathname);
       }
     } catch {}
+  }, [threads]);
+
+  // Opening ChatBGP lands on the MAIN (most recent) conversation, not a
+  // fresh greeting (Woody, 2026-08-23). Runs once when the thread list
+  // arrives, and only if nothing else has picked a thread — a session
+  // restore, a push deep link (?thread=), or the user tapping "+" all win.
+  const adoptedLastAiRef = useRef(false);
+  useEffect(() => {
+    if (adoptedLastAiRef.current) return;
+    if (initialTab !== "ai" || restored || activeThreadId || !showChat) { adoptedLastAiRef.current = true; return; }
+    try {
+      if (new URLSearchParams(window.location.search).get("thread")) { adoptedLastAiRef.current = true; return; }
+    } catch {}
+    if (!threads?.length) return;
+    adoptedLastAiRef.current = true;
+    const lastAi = threads
+      .filter(t => t.isAiChat)
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+    if (lastAi) {
+      setActiveThreadId(lastAi.id);
+      setActiveThreadAi(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threads]);
 
   const { data: allUsers } = useQuery<Array<{ id: string; name: string; username: string; team?: string | null }>>({
@@ -3642,7 +3741,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
 
   return (
     <div className="flex flex-col w-screen bg-[#FAF9F7] overflow-x-hidden fixed inset-0">
-      <div className="bg-[#1C1917] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] shrink-0">
+      <div className="bg-[hsl(var(--mobile-chrome))] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] shrink-0">
         <div className="flex items-center justify-between px-5 pb-3">
           <div className="flex items-center gap-2 min-w-0">
             {tab === "ai" && (
@@ -3663,6 +3762,22 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             {tab === "ai" && (
               <button onClick={() => { setTab("chats"); setChatSearch(""); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-switch-team-chats" aria-label="Messages">
                 <MessageCircle className="w-5 h-5" />
+              </button>
+            )}
+            {tab === "chats" && (
+              <button
+                onClick={() => navigate("/m/profile")}
+                className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:opacity-80 overflow-hidden"
+                data-testid="button-mobile-my-profile"
+                aria-label="My profile"
+              >
+                {(currentUser as any)?.profilePicUrl ? (
+                  <img src={(currentUser as any).profilePicUrl} alt="Me" className="w-10 h-10 rounded-full object-cover" />
+                ) : (
+                  <span className="text-[13px] font-semibold">
+                    {(currentUser?.name || "?").split(/\s+/).map(p => p[0]).slice(0, 2).join("").toUpperCase()}
+                  </span>
+                )}
               </button>
             )}
             {tab === "chats" && (
@@ -3693,14 +3808,14 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                     onClick={() => { setShowMobileNewProperty(true); setMobileNewPropSelectedId(""); setMobileNewPropSearch(""); setMobileNewPropLinkType("property"); }}
                     data-testid="menu-new-property-chat"
                   >
-                    <Building2 className="w-4 h-4 mr-2 text-gray-600" />
+                    <Building2 className="w-4 h-4 mr-2 text-muted-foreground" />
                     New chat about a property
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() => { setShowMobileNewProperty(true); setMobileNewPropSelectedId(""); setMobileNewPropSearch(""); setMobileNewPropLinkType("deal"); }}
                     data-testid="menu-new-deal-chat"
                   >
-                    <Handshake className="w-4 h-4 mr-2 text-gray-600" />
+                    <Handshake className="w-4 h-4 mr-2 text-muted-foreground" />
                     New chat about a deal
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -3745,17 +3860,17 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
         {tab === "chats" && (
           <div className="px-4 pt-3 pb-2">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
               <Input
                 value={chatSearch}
                 onChange={(e) => setChatSearch(e.target.value)}
                 placeholder="Search chats..."
-                className="h-10 pl-9 pr-9 text-sm rounded-xl bg-[#F5F5F4] border-0 placeholder:text-gray-400"
+                className="h-10 pl-9 pr-9 text-sm rounded-xl bg-[#F5F5F4] border-0 placeholder:text-muted-foreground/70"
                 data-testid="input-mobile-chat-search"
               />
               {chatSearch && (
                 <button onClick={() => setChatSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2">
-                  <X className="w-4 h-4 text-gray-400" />
+                  <X className="w-4 h-4 text-muted-foreground/70" />
                 </button>
               )}
             </div>
@@ -3791,10 +3906,11 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 <button
                   key={key}
                   onClick={() => setChatChip(key)}
-                  className={`px-3.5 py-1.5 rounded-full text-[12.5px] font-medium transition-colors border ${
+                  data-no-min-touch
+                  className={`px-2.5 py-[5px] rounded-full text-[11px] leading-none font-semibold uppercase tracking-wide transition-colors border ${
                     chatChip === key
-                      ? "bg-[#1C1917] text-white border-transparent"
-                      : "bg-white text-gray-500 border-gray-200"
+                      ? "bg-[hsl(var(--mobile-chrome))] text-white border-transparent"
+                      : "bg-white text-muted-foreground border-border"
                   }`}
                   data-testid={`chip-mobile-threads-${key}`}
                 >
@@ -3807,22 +3923,22 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             {!chatSearch && chatChip === "all" && (
               <div
                 onClick={openChatBgpPinned}
-                className="flex items-center gap-3 px-4 py-3 active:bg-gray-100 border-b border-gray-100 cursor-pointer"
+                className="flex items-center gap-3 px-4 py-3 active:bg-muted border-b border-border cursor-pointer"
                 data-testid="mobile-pinned-chatbgp"
               >
-                <span className="w-12 h-12 rounded-full bg-[#1C1917] flex items-center justify-center shrink-0">
+                <span className="w-12 h-12 rounded-full bg-[hsl(var(--mobile-chrome))] flex items-center justify-center shrink-0">
                   <Sparkles className="w-5 h-5 text-white" />
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
                     <p className="text-[15px] font-semibold">ChatBGP</p>
-                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-semibold uppercase tracking-wide">Pinned</span>
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-semibold uppercase tracking-wide">Pinned</span>
                   </div>
-                  <p className="text-[13px] text-gray-500 truncate">Ask anything — deals, brands, your portfolio</p>
+                  <p className="text-[13px] text-muted-foreground truncate">Ask anything — deals, brands, your portfolio</p>
                 </div>
                 <button
                   onClick={(e) => { e.stopPropagation(); setTab("ai"); setChatSearch(""); }}
-                  className="text-[11px] font-medium text-gray-400 px-2 py-1.5 rounded-lg active:bg-gray-100 shrink-0"
+                  className="text-[11px] font-medium text-muted-foreground/70 px-2 py-1.5 rounded-lg active:bg-muted shrink-0"
                   data-testid="button-chatbgp-history"
                 >
                   History
@@ -3842,20 +3958,20 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   {archivedList.length > 0 && !chatSearch && (
                     <button
                       onClick={() => setShowArchived(v => !v)}
-                      className={`w-full flex items-center gap-3 px-5 py-2.5 border-b border-gray-100 active:bg-gray-50 ${showArchived ? "bg-gray-50" : ""}`}
+                      className={`w-full flex items-center gap-3 px-5 py-2.5 border-b border-border active:bg-muted ${showArchived ? "bg-muted" : ""}`}
                       data-testid="button-mobile-archived-row"
                     >
-                      <Archive className="w-4 h-4 text-gray-400 ml-1" />
-                      <span className="text-[14px] font-medium text-gray-600 flex-1 text-left">Archived</span>
-                      <span className="text-[12px] text-gray-400">{showArchived ? "Back to chats" : archivedList.length}</span>
+                      <Archive className="w-4 h-4 text-muted-foreground/70 ml-1" />
+                      <span className="text-[14px] font-medium text-muted-foreground flex-1 text-left">Archived</span>
+                      <span className="text-[12px] text-muted-foreground/70">{showArchived ? "Back to chats" : archivedList.length}</span>
                     </button>
                   )}
                   {shown.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-20 gap-4">
-                      <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
-                        <MessageCircle className="w-10 h-10 text-gray-300" />
+                      <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
+                        <MessageCircle className="w-10 h-10 text-muted-foreground/70" />
                       </div>
-                      <p className="text-lg text-gray-400">
+                      <p className="text-lg text-muted-foreground/70">
                         {chatSearch ? "No chats found"
                           : showArchived ? "Nothing archived"
                           : chatChip === "unread" ? "You're all caught up"
@@ -3864,7 +3980,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           : "No conversations yet"}
                       </p>
                       {!chatSearch && !showArchived && chatChip === "all" && (
-                        <Button variant="outline" size="lg" className="h-12 text-base rounded-xl border-gray-200" onClick={() => setShowNewGroup(true)} data-testid="button-mobile-empty-new-group">
+                        <Button variant="outline" size="lg" className="h-12 text-base rounded-xl border-border" onClick={() => setShowNewGroup(true)} data-testid="button-mobile-empty-new-group">
                           <Users className="w-5 h-5 mr-2" /> New Chat
                         </Button>
                       )}
@@ -3897,17 +4013,17 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
           <div>
             <div className="px-4 pt-3 pb-2">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
                 <Input
                   value={chatSearch}
                   onChange={(e) => setChatSearch(e.target.value)}
                   placeholder="Search conversations..."
-                  className="h-10 pl-9 pr-9 text-sm rounded-xl bg-[#F5F5F4] border-0 placeholder:text-gray-400"
+                  className="h-10 pl-9 pr-9 text-sm rounded-xl bg-[#F5F5F4] border-0 placeholder:text-muted-foreground/70"
                   data-testid="input-mobile-ai-search"
                 />
                 {chatSearch && (
                   <button onClick={() => setChatSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2">
-                    <X className="w-4 h-4 text-gray-400" />
+                    <X className="w-4 h-4 text-muted-foreground/70" />
                   </button>
                 )}
               </div>
@@ -3915,8 +4031,8 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
 
             {filteredAiThreads.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 gap-3">
-                <MessageSquare className="w-8 h-8 text-gray-300" />
-                <p className="text-[14px] text-gray-400">{chatSearch ? "No matching chats" : "No conversations yet"}</p>
+                <MessageSquare className="w-8 h-8 text-muted-foreground/70" />
+                <p className="text-[14px] text-muted-foreground/70">{chatSearch ? "No matching chats" : "No conversations yet"}</p>
               </div>
             ) : (
               <div>
@@ -3947,13 +4063,13 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                         />
                       );
                     })}
-                    <div className="h-px bg-gray-200 mx-4 my-1" />
+                    <div className="h-px bg-border mx-4 my-1" />
                   </div>
                 )}
 
                 {aiDateGroups.map(group => (
                   <div key={group.label}>
-                    <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider px-4 pt-3 pb-1">{group.label}</p>
+                    <p className="text-[11px] font-semibold text-muted-foreground/70 uppercase tracking-wider px-4 pt-3 pb-1">{group.label}</p>
                     {group.threads.map(t => (
                       <MobileThreadCard key={t.id} thread={t} onClick={() => openThread(t)} currentUserId={currentUser?.id} onDelete={handleDeleteThread} userPics={userPics} />
                     ))}
@@ -3969,19 +4085,19 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             <div className="flex items-center gap-3 mb-3">
               <button
                 onClick={() => setShowMobileMarketingFiles(false)}
-                className="w-9 h-9 flex items-center justify-center rounded-xl active:bg-gray-100"
+                className="w-9 h-9 flex items-center justify-center rounded-xl active:bg-muted"
                 data-testid="button-mobile-back-marketing"
               >
                 <ArrowLeft className="w-5 h-5" />
               </button>
               <div className="flex-1 min-w-0">
                 <h2 className="text-[17px] font-bold">Marketing Details</h2>
-                <p className="text-[12px] text-gray-400">{allMobileMarketingFiles.length} file{allMobileMarketingFiles.length !== 1 ? "s" : ""} across all properties</p>
+                <p className="text-[12px] text-muted-foreground/70">{allMobileMarketingFiles.length} file{allMobileMarketingFiles.length !== 1 ? "s" : ""} across all properties</p>
               </div>
             </div>
 
             <div className="relative mb-3">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
               <Input
                 placeholder="Search files, units, properties..."
                 value={marketingFileSearch}
@@ -3991,7 +4107,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               />
               {marketingFileSearch && (
                 <button onClick={() => setMarketingFileSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2">
-                  <X className="w-4 h-4 text-gray-400" />
+                  <X className="w-4 h-4 text-muted-foreground/70" />
                 </button>
               )}
             </div>
@@ -3999,19 +4115,19 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             {mobileMarketingLoading ? (
               <div className="grid grid-cols-2 gap-3">
                 {[1, 2, 3, 4].map(i => (
-                  <div key={i} className="h-36 rounded-xl bg-gray-100 animate-pulse" />
+                  <div key={i} className="h-36 rounded-xl bg-muted animate-pulse" />
                 ))}
               </div>
             ) : mobileMarketingError ? (
               <div className="text-center py-16">
-                <AlertCircle className="w-10 h-10 mx-auto mb-3 text-gray-300" />
-                <p className="text-[14px] font-medium text-gray-400 mb-3">Failed to load files</p>
+                <AlertCircle className="w-10 h-10 mx-auto mb-3 text-muted-foreground/70" />
+                <p className="text-[14px] font-medium text-muted-foreground/70 mb-3">Failed to load files</p>
                 <Button variant="outline" size="sm" onClick={() => refetchMobileMarketing()} className="rounded-lg" data-testid="button-mobile-retry-marketing">Try again</Button>
               </div>
             ) : filteredMobileMarketingFiles.length === 0 ? (
               <div className="text-center py-16">
-                <FileText className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                <p className="text-[14px] font-medium text-gray-400">
+                <FileText className="w-12 h-12 mx-auto mb-3 text-muted-foreground/70" />
+                <p className="text-[14px] font-medium text-muted-foreground/70">
                   {marketingFileSearch ? "No files match your search" : "No marketing files yet"}
                 </p>
               </div>
@@ -4020,8 +4136,8 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 {groupedMobileMarketingFiles.map(group => (
                   <div key={group.propertyName}>
                     <div className="flex items-center gap-2 mb-2">
-                      <Building2 className="w-3.5 h-3.5 text-gray-400" />
-                      <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{group.propertyName}</p>
+                      <Building2 className="w-3.5 h-3.5 text-muted-foreground/70" />
+                      <p className="text-[11px] font-semibold text-muted-foreground/70 uppercase tracking-wider">{group.propertyName}</p>
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       {group.files.map(f => {
@@ -4030,11 +4146,11 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                         return (
                           <div
                             key={f.id}
-                            className="rounded-xl border border-gray-200 bg-white overflow-hidden active:opacity-70"
+                            className="rounded-xl border border-border bg-white overflow-hidden active:opacity-70"
                             onClick={() => window.open(`${f.filePath}?view=1`, "_blank")}
                             data-testid={`mobile-marketing-tile-${f.id}`}
                           >
-                            <div className="relative w-full aspect-[4/3] bg-gray-50 overflow-hidden">
+                            <div className="relative w-full aspect-[4/3] bg-muted/50 overflow-hidden">
                               {isImage ? (
                                 <img src={`${f.filePath}?view=1`} alt={f.fileName} className="w-full h-full object-cover" loading="lazy" />
                               ) : isPdf ? (
@@ -4044,28 +4160,28 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                                 </div>
                               ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center">
-                                  <FileIcon className="w-8 h-8 text-gray-400" />
-                                  <span className="text-[10px] font-medium text-gray-400 mt-1 uppercase">{f.fileName.split('.').pop()}</span>
+                                  <FileIcon className="w-8 h-8 text-muted-foreground/70" />
+                                  <span className="text-[10px] font-medium text-muted-foreground/70 mt-1 uppercase">{f.fileName.split('.').pop()}</span>
                                 </div>
                               )}
                             </div>
                             <div className="p-2.5">
                               <p className="text-[12px] font-medium leading-snug line-clamp-2 mb-1">{f.fileName}</p>
-                              <p className="text-[10px] text-gray-400">
+                              <p className="text-[10px] text-muted-foreground/70">
                                 {f.unitName && <span>{f.unitName} · </span>}
                                 {f.fileSize ? (f.fileSize < 1024 * 1024 ? `${(f.fileSize / 1024).toFixed(0)} KB` : `${(f.fileSize / (1024 * 1024)).toFixed(1)} MB`) : ""}
                               </p>
                               <div className="flex gap-1.5 mt-2">
                                 <button
                                   onClick={(e) => { e.stopPropagation(); handleMobileShareFile(f); }}
-                                  className="flex-1 h-7 flex items-center justify-center gap-1 rounded-lg bg-gray-100 active:bg-gray-200 text-[11px] font-medium"
+                                  className="flex-1 h-7 flex items-center justify-center gap-1 rounded-lg bg-muted active:bg-border text-[11px] font-medium"
                                   data-testid={`button-mobile-share-tile-${f.id}`}
                                 >
                                   <Mail className="w-3 h-3" /> Share
                                 </button>
                                 <button
                                   onClick={(e) => { e.stopPropagation(); window.open(f.filePath, "_blank"); }}
-                                  className="h-7 w-7 flex items-center justify-center rounded-lg bg-gray-100 active:bg-gray-200 shrink-0"
+                                  className="h-7 w-7 flex items-center justify-center rounded-lg bg-muted active:bg-border shrink-0"
                                   data-testid={`button-mobile-download-tile-${f.id}`}
                                 >
                                   <Download className="w-3 h-3" />
@@ -4091,7 +4207,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   <button
                     key={st}
                     onClick={() => { setMoreSubTab(st); if (st !== "tracker") { setTrackerStatusFilter(null); setTrackerSearch(""); setShowStatusDropdown(false); } }}
-                    className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${moreSubTab === st ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
+                    className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${moreSubTab === st ? "bg-white text-foreground shadow-sm" : "text-muted-foreground"}`}
                     data-testid={`more-tab-${st}`}
                   >
                     {st === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : st === "reqs" ? "Reqs" : st === "news" ? "News" : "Docs"}
@@ -4192,14 +4308,14 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                     <div className="flex bg-[#F5F5F4] rounded-xl p-1 mb-3">
                       <button
                         onClick={() => { setTrackerBoardType("Purchases"); setTrackerStatusFilter(null); }}
-                        className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${trackerBoardType === "Purchases" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
+                        className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${trackerBoardType === "Purchases" ? "bg-white text-foreground shadow-sm" : "text-muted-foreground"}`}
                         data-testid="board-toggle-purchases"
                       >
                         Purchases ({investmentItems?.filter(i => (i.boardType || "Purchases") === "Purchases").length || 0})
                       </button>
                       <button
                         onClick={() => { setTrackerBoardType("Sales"); setTrackerStatusFilter(null); }}
-                        className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${trackerBoardType === "Sales" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
+                        className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${trackerBoardType === "Sales" ? "bg-white text-foreground shadow-sm" : "text-muted-foreground"}`}
                         data-testid="board-toggle-sales"
                       >
                         Sales ({investmentItems?.filter(i => i.boardType === "Sales").length || 0})
@@ -4211,7 +4327,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                     <button
                       onClick={() => { setTrackerStatusFilter(null); }}
                       className={`shrink-0 px-3.5 py-2 rounded-full text-[13px] font-medium transition-all ${
-                        !trackerStatusFilter ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600"
+                        !trackerStatusFilter ? "bg-gray-900 text-white" : "bg-muted text-muted-foreground"
                       }`}
                       data-testid="status-filter-all"
                     >
@@ -4224,7 +4340,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           key={status}
                           onClick={() => setTrackerStatusFilter(isActive ? null : status)}
                           className={`shrink-0 px-3.5 py-2 rounded-full text-[13px] font-medium transition-all ${
-                            isActive ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-700"
+                            isActive ? "bg-gray-900 text-white" : "bg-muted text-muted-foreground"
                           }`}
                           data-testid={`status-filter-${status.toLowerCase().replace(/\s+/g, "-")}`}
                         >
@@ -4235,18 +4351,18 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   </div>
 
                   <div className="relative mt-1">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
                     <Input
                       value={trackerSearch}
                       onChange={(e) => setTrackerSearch(e.target.value)}
                       placeholder={isInvestmentTeam ? "Search investments..." : "Search units..."}
-                      className="h-10 pl-9 pr-20 text-sm rounded-xl bg-[#F5F5F4] border-0 placeholder:text-gray-400"
+                      className="h-10 pl-9 pr-20 text-sm rounded-xl bg-[#F5F5F4] border-0 placeholder:text-muted-foreground/70"
                       data-testid="input-tracker-search"
                     />
                     <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
                       {trackerSearch && (
                         <button onClick={() => setTrackerSearch("")} className="p-1">
-                          <X className="w-4 h-4 text-gray-400" />
+                          <X className="w-4 h-4 text-muted-foreground/70" />
                         </button>
                       )}
                       <div className="relative">
@@ -4255,7 +4371,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold transition-all ${
                             trackerStatusFilter
                               ? "bg-gray-900 text-white"
-                              : "bg-gray-200 text-gray-600"
+                              : "bg-muted text-muted-foreground"
                           }`}
                           data-testid="button-status-dropdown"
                         >
@@ -4263,10 +4379,10 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           {trackerStatusFilter || "Status"}
                         </button>
                         {showStatusDropdown && (
-                          <div className="absolute right-0 top-full mt-1 bg-white rounded-xl shadow-lg border border-gray-200 py-1 z-50 min-w-[140px]">
+                          <div className="absolute right-0 top-full mt-1 bg-white rounded-xl shadow-lg border border-border py-1 z-50 min-w-[140px]">
                             <button
                               onClick={() => { setTrackerStatusFilter(null); setShowStatusDropdown(false); }}
-                              className={`w-full text-left px-3 py-2 text-[13px] flex items-center gap-2 ${!trackerStatusFilter ? "bg-gray-50 font-semibold" : "hover:bg-gray-50"}`}
+                              className={`w-full text-left px-3 py-2 text-[13px] flex items-center gap-2 ${!trackerStatusFilter ? "bg-muted font-semibold" : "hover:bg-muted"}`}
                               data-testid="dropdown-status-all"
                             >
                               <span className="w-3 h-3 rounded-sm bg-gray-300" /> All
@@ -4278,7 +4394,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                                 <button
                                   key={status}
                                   onClick={() => { setTrackerStatusFilter(status); setShowStatusDropdown(false); }}
-                                  className={`w-full text-left px-3 py-2 text-[13px] flex items-center gap-2 ${trackerStatusFilter === status ? "bg-gray-50 font-semibold" : "hover:bg-gray-50"}`}
+                                  className={`w-full text-left px-3 py-2 text-[13px] flex items-center gap-2 ${trackerStatusFilter === status ? "bg-muted font-semibold" : "hover:bg-muted"}`}
                                   data-testid={`dropdown-status-${status.toLowerCase().replace(/\s+/g, "-")}`}
                                 >
                                   <span className={`w-3 h-3 rounded-sm ${color.bg}`} /> {status} ({trackerStatusCounts[status]})
@@ -4294,13 +4410,13 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 <div className="flex-1 overflow-y-auto px-4" onClick={() => showStatusDropdown && setShowStatusDropdown(false)}>
                   {(investmentLoading || lettingLoading) && (
                     <div className="flex items-center justify-center py-16">
-                      <div className="w-8 h-8 border-2 border-gray-300 border-t-black rounded-full animate-spin" />
+                      <div className="w-8 h-8 border-2 border-border border-t-black rounded-full animate-spin" />
                     </div>
                   )}
                   {isInvestmentTeam && !investmentLoading && (
                     <div className="space-y-2">
                       {(filteredTrackerItems as typeof investmentItems)?.length === 0 ? (
-                        <div className="text-center py-16 text-gray-400 text-[15px]">
+                        <div className="text-center py-16 text-muted-foreground/70 text-[15px]">
                           {trackerStatusFilter || trackerSearch ? "No matching investments" : "No investments found"}
                         </div>
                       ) : (filteredTrackerItems as NonNullable<typeof investmentItems>).map(item => {
@@ -4309,24 +4425,24 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           <button
                             key={item.id}
                             onClick={() => setSelectedDealId(item.id)}
-                            className={`w-full p-4 rounded-2xl active:bg-gray-50 text-left bg-white border border-gray-100`}
+                            className={`w-full p-4 rounded-2xl active:bg-muted text-left bg-white border border-border`}
                             data-testid={`inv-card-${item.id}`}
                           >
                             <div className="flex items-start justify-between gap-2 mb-1.5">
-                              <div className="text-[16px] font-semibold text-gray-900 truncate flex-1 tracking-tight">{item.assetName}</div>
+                              <div className="text-[16px] font-semibold text-foreground truncate flex-1 tracking-tight">{item.assetName}</div>
                               {item.status && (
                                 <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0 ${statusColor.bg} ${statusColor.text}`}>
                                   {item.status}
                                 </span>
                               )}
                             </div>
-                            <div className="flex items-center gap-3 text-[13px] text-gray-500 tabular-nums">
-                              {item.guidePrice && <span className="font-semibold text-gray-800">£{item.guidePrice.toLocaleString()}</span>}
+                            <div className="flex items-center gap-3 text-[13px] text-muted-foreground tabular-nums">
+                              {item.guidePrice && <span className="font-semibold text-foreground">£{item.guidePrice.toLocaleString()}</span>}
                               {item.niy && <span>{item.niy}% NIY</span>}
                               {item.tenure && <span>{item.tenure}</span>}
                               {item.boardType && <span className={item.boardType === "Sales" ? "text-blue-600" : "text-emerald-600"}>{item.boardType}</span>}
                             </div>
-                            {item.client && <div className="text-[12px] text-gray-400 mt-1.5 truncate">{item.client}</div>}
+                            {item.client && <div className="text-[12px] text-muted-foreground/70 mt-1.5 truncate">{item.client}</div>}
                           </button>
                         );
                       })}
@@ -4335,7 +4451,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   {!isInvestmentTeam && !lettingLoading && (
                     <div className="space-y-2">
                       {(filteredTrackerItems as typeof lettingItems)?.length === 0 ? (
-                        <div className="text-center py-16 text-gray-400 text-[15px]">
+                        <div className="text-center py-16 text-muted-foreground/70 text-[15px]">
                           {trackerStatusFilter || trackerSearch ? "No matching units" : "No units found"}
                         </div>
                       ) : (filteredTrackerItems as NonNullable<typeof lettingItems>).map(item => {
@@ -4344,14 +4460,14 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           <button
                             key={item.id}
                             onClick={() => setSelectedUnitId(item.id)}
-                            className={`w-full p-4 rounded-2xl active:bg-gray-50 text-left bg-white border border-gray-100`}
+                            className={`w-full p-4 rounded-2xl active:bg-muted text-left bg-white border border-border`}
                             data-testid={`let-card-${item.id}`}
                           >
                             <div className="flex items-start justify-between gap-2 mb-1.5">
                               <div className="flex-1 min-w-0">
-                                <div className="text-[16px] font-semibold text-gray-900 truncate tracking-tight">{item.unitName}</div>
+                                <div className="text-[16px] font-semibold text-foreground truncate tracking-tight">{item.unitName}</div>
                                 {item.propertyName && (
-                                  <div className="text-[12px] text-gray-400 truncate mt-0.5">{item.propertyName}</div>
+                                  <div className="text-[12px] text-muted-foreground/70 truncate mt-0.5">{item.propertyName}</div>
                                 )}
                               </div>
                               {item.marketingStatus && (
@@ -4360,14 +4476,14 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                                 </span>
                               )}
                             </div>
-                            <div className="flex items-center gap-3 text-[13px] text-gray-500 tabular-nums">
+                            <div className="flex items-center gap-3 text-[13px] text-muted-foreground tabular-nums">
                               {item.sqft && <span>{item.sqft.toLocaleString()} sq ft</span>}
-                              {item.askingRent && <span className="font-semibold text-gray-800">£{item.askingRent.toLocaleString()} pa</span>}
+                              {item.askingRent && <span className="font-semibold text-foreground">£{item.askingRent.toLocaleString()} pa</span>}
                               {item.floor && <span>{item.floor}</span>}
-                              {item.useClass && <span className="text-blue-600">{item.useClass}</span>}
+                              {item.useClass && <span className="text-muted-foreground">{item.useClass}</span>}
                             </div>
                             {(item.viewingsCount > 0 || item.condition) && (
-                              <div className="flex items-center gap-3 text-[12px] text-gray-400 mt-1.5">
+                              <div className="flex items-center gap-3 text-[12px] text-muted-foreground/70 mt-1.5">
                                 {item.viewingsCount > 0 && <span>{item.viewingsCount} viewing{item.viewingsCount > 1 ? "s" : ""}</span>}
                                 {item.condition && <span>{item.condition}</span>}
                               </div>
@@ -4386,15 +4502,15 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               <div className="flex-1 overflow-y-auto px-4">
                 {newsLoading && (
                   <div className="flex items-center justify-center py-16">
-                    <div className="w-8 h-8 border-2 border-gray-300 border-t-black rounded-full animate-spin" />
+                    <div className="w-8 h-8 border-2 border-border border-t-black rounded-full animate-spin" />
                   </div>
                 )}
                 {!newsLoading && (!newsArticles || newsArticles.length === 0) && (
                   <div className="flex flex-col items-center justify-center py-16 gap-3">
-                    <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center">
-                      <Newspaper className="w-8 h-8 text-gray-300" />
+                    <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+                      <Newspaper className="w-8 h-8 text-muted-foreground/70" />
                     </div>
-                    <p className="text-[15px] text-gray-400">No news articles yet</p>
+                    <p className="text-[15px] text-muted-foreground/70">No news articles yet</p>
                   </div>
                 )}
                 {!newsLoading && newsArticles && newsArticles.length > 0 && (
@@ -4405,21 +4521,21 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           href={article.url || "#"}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="block bg-white rounded-2xl overflow-hidden border border-gray-100 shadow-sm active:bg-gray-50 transition-colors"
+                          className="block bg-white rounded-2xl overflow-hidden border border-border shadow-sm active:bg-muted transition-colors"
                           data-testid={`news-card-${article.id}`}
                         >
                           {article.imageUrl && (
-                            <div className="aspect-[16/9] w-full overflow-hidden bg-gray-50">
+                            <div className="aspect-[16/9] w-full overflow-hidden bg-muted/50">
                               <img src={article.imageUrl} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                             </div>
                           )}
                           <div className="p-4">
                             <div className="flex items-center gap-2 mb-2 flex-wrap">
-                              {article.sourceName && <span className="text-[11px] font-medium text-gray-500">{article.sourceName}</span>}
+                              {article.sourceName && <span className="text-[11px] font-medium text-muted-foreground">{article.sourceName}</span>}
                               {article.publishedAt && (
                                 <>
-                                  <span className="text-gray-300">·</span>
-                                  <span className="text-[11px] text-gray-400">
+                                  <span className="text-muted-foreground/70">·</span>
+                                  <span className="text-[11px] text-muted-foreground/70">
                                     {new Date(article.publishedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
                                   </span>
                                 </>
@@ -4428,9 +4544,9 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                                 <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">{article.category}</span>
                               )}
                             </div>
-                            <div className="text-[16px] font-semibold text-gray-900 leading-snug mb-1.5 tracking-tight">{article.title}</div>
+                            <div className="text-[16px] font-semibold text-foreground leading-snug mb-1.5 tracking-tight">{article.title}</div>
                             {(article.aiSummary || article.summary) && (
-                              <div className="text-[13px] text-gray-500 leading-relaxed line-clamp-3">{article.aiSummary || article.summary}</div>
+                              <div className="text-[13px] text-muted-foreground leading-relaxed line-clamp-3">{article.aiSummary || article.summary}</div>
                             )}
                           </div>
                         </a>
@@ -4462,7 +4578,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               <div className="flex-1 flex flex-col min-h-0">
                 <div className="px-4 pb-2 shrink-0">
                   <div className="flex bg-[#F5F5F4] rounded-xl p-1 mb-3">
-                    <button className="flex-1 py-2 text-[13px] font-medium rounded-lg bg-white text-gray-900 shadow-sm">
+                    <button className="flex-1 py-2 text-[13px] font-medium rounded-lg bg-white text-foreground shadow-sm">
                       Leasing {reqsLeasing ? `(${reqsLeasing.length})` : ""}
                     </button>
                   </div>
@@ -4470,7 +4586,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 <div className="flex-1 overflow-y-auto px-4">
                   {(reqsLeasingLoading || reqsInvestmentLoading) && (
                     <div className="flex items-center justify-center py-16">
-                      <div className="w-8 h-8 border-2 border-gray-300 border-t-black rounded-full animate-spin" />
+                      <div className="w-8 h-8 border-2 border-border border-t-black rounded-full animate-spin" />
                     </div>
                   )}
                   {!reqsLeasingLoading && (
@@ -4484,7 +4600,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           className="w-full flex items-center gap-3 p-3.5 bg-white dark:bg-card border border-[#E7E5E4]/60 rounded-2xl text-left active:bg-[#F5F5F4]"
                         >
                           <div className="flex-1 min-w-0">
-                            <div className="text-[14px] font-semibold text-[#1C1917] dark:text-white truncate tracking-tight">{r.name}</div>
+                            <div className="text-[14px] font-semibold text-[hsl(var(--mobile-chrome))] dark:text-white truncate tracking-tight">{r.name}</div>
                             <div className="text-[12px] text-[#A8A29E] truncate mt-0.5">
                               {[r.groupName, r.use?.join(", "), r.size?.join(", ")].filter(Boolean).join(" · ") || "No details"}
                             </div>
@@ -4513,7 +4629,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                             className="w-full flex items-center gap-3 p-3.5 bg-white dark:bg-card border border-[#E7E5E4]/60 rounded-2xl text-left active:bg-[#F5F5F4]"
                           >
                             <div className="flex-1 min-w-0">
-                              <div className="text-[14px] font-semibold text-[#1C1917] dark:text-white truncate tracking-tight">{r.name}</div>
+                              <div className="text-[14px] font-semibold text-[hsl(var(--mobile-chrome))] dark:text-white truncate tracking-tight">{r.name}</div>
                               <div className="text-[12px] text-[#A8A29E] truncate mt-0.5">
                                 {[r.groupName, r.targetSectors?.join(", ")].filter(Boolean).join(" · ") || "No details"}
                               </div>
@@ -4555,27 +4671,27 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             className="relative bg-white rounded-t-2xl w-full max-h-[85dvh] flex flex-col animate-in slide-in-from-bottom duration-200"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100 shrink-0">
+            <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-border shrink-0">
               <div className="flex items-center gap-2">
                 <Building2 className="w-5 h-5" />
                 <h2 className="text-[18px] font-bold">New Property Chat</h2>
               </div>
-              <button onClick={() => setShowMobileNewProperty(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center" data-testid="button-close-new-property">
-                <X className="w-4 h-4 text-gray-600" />
+              <button onClick={() => setShowMobileNewProperty(false)} className="w-8 h-8 rounded-full bg-muted flex items-center justify-center" data-testid="button-close-new-property">
+                <X className="w-4 h-4 text-muted-foreground" />
               </button>
             </div>
             <div className="px-5 py-3 shrink-0">
-              <p className="text-[13px] text-gray-500 mb-3">Create an AI conversation linked to a property or deal.</p>
+              <p className="text-[13px] text-muted-foreground mb-3">Create an AI conversation linked to a property or deal.</p>
               <div className="flex gap-2 mb-3">
                 <button
-                  className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${mobileNewPropLinkType === "property" ? "bg-[#1C1917] text-white" : "bg-gray-100 text-gray-600"}`}
+                  className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${mobileNewPropLinkType === "property" ? "bg-[hsl(var(--mobile-chrome))] text-white" : "bg-muted text-muted-foreground"}`}
                   onClick={() => { setMobileNewPropLinkType("property"); setMobileNewPropSelectedId(""); }}
                   data-testid="button-mobile-link-property"
                 >
                   <Building2 className="w-3.5 h-3.5 inline mr-1.5" /> Property
                 </button>
                 <button
-                  className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${mobileNewPropLinkType === "deal" ? "bg-[#1C1917] text-white" : "bg-gray-100 text-gray-600"}`}
+                  className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${mobileNewPropLinkType === "deal" ? "bg-[hsl(var(--mobile-chrome))] text-white" : "bg-muted text-muted-foreground"}`}
                   onClick={() => { setMobileNewPropLinkType("deal"); setMobileNewPropSelectedId(""); }}
                   data-testid="button-mobile-link-deal"
                 >
@@ -4583,7 +4699,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 </button>
               </div>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
                 <Input
                   placeholder={`Search ${mobileNewPropLinkType === "property" ? "properties" : "deals"}...`}
                   value={mobileNewPropSearch}
@@ -4598,7 +4714,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 const isLoading = mobileNewPropLinkType === "property" ? crmPropsLoading : crmDealsLoading;
                 if (isLoading) return (
                   <div className="space-y-2 py-3">
-                    {[1, 2, 3, 4, 5].map(i => <div key={i} className="h-12 rounded-xl bg-gray-100 animate-pulse" />)}
+                    {[1, 2, 3, 4, 5].map(i => <div key={i} className="h-12 rounded-xl bg-muted animate-pulse" />)}
                   </div>
                 );
                 const items = mobileNewPropLinkType === "property" ? crmProperties : crmDeals;
@@ -4606,29 +4722,29 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   ? items.filter((i: any) => i.name?.toLowerCase().includes(mobileNewPropSearch.toLowerCase()))
                   : items;
                 return filtered.length === 0 ? (
-                  <p className="text-center text-[13px] text-gray-400 py-8">No {mobileNewPropLinkType === "property" ? "properties" : "deals"} found</p>
+                  <p className="text-center text-[13px] text-muted-foreground/70 py-8">No {mobileNewPropLinkType === "property" ? "properties" : "deals"} found</p>
                 ) : (
                   <div className="space-y-1">
                     {filtered.slice(0, 50).map((item: any) => (
                       <button
                         key={item.id}
                         className={`w-full text-left px-3 py-2.5 rounded-xl text-[14px] transition-colors ${
-                          mobileNewPropSelectedId === item.id ? "bg-[#1C1917] text-white font-medium" : "active:bg-gray-50"
+                          mobileNewPropSelectedId === item.id ? "bg-[hsl(var(--mobile-chrome))] text-white font-medium" : "active:bg-muted"
                         }`}
                         onClick={() => setMobileNewPropSelectedId(item.id)}
                         data-testid={`mobile-link-item-${item.id}`}
                       >
                         <p className="truncate">{item.name || "Untitled"}</p>
-                        {item.status && <p className={`text-[12px] mt-0.5 ${mobileNewPropSelectedId === item.id ? "text-white/70" : "text-gray-400"}`}>{item.status}</p>}
+                        {item.status && <p className={`text-[12px] mt-0.5 ${mobileNewPropSelectedId === item.id ? "text-white/70" : "text-muted-foreground/70"}`}>{item.status}</p>}
                       </button>
                     ))}
                   </div>
                 );
               })()}
             </div>
-            <div className="px-5 py-4 border-t border-gray-100 shrink-0">
+            <div className="px-5 py-4 border-t border-border shrink-0">
               <Button
-                className="w-full h-12 text-[15px] font-semibold rounded-xl bg-[#1C1917] text-white"
+                className="w-full h-12 text-[15px] font-semibold rounded-xl bg-[hsl(var(--mobile-chrome))] text-white"
                 disabled={!mobileNewPropSelectedId}
                 onClick={() => {
                   const items = mobileNewPropLinkType === "property" ? crmProperties : crmDeals;
@@ -4657,9 +4773,9 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             className="relative bg-white rounded-t-2xl w-full max-h-[85dvh] flex flex-col animate-in slide-in-from-bottom duration-200"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100 shrink-0">
+            <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-border shrink-0">
               <div className="flex-1 min-w-0 pr-3">
-                <h2 className="text-[18px] font-bold text-gray-900 truncate">{selectedDeal.assetName}</h2>
+                <h2 className="text-[18px] font-bold text-foreground truncate">{selectedDeal.assetName}</h2>
                 <div className="flex items-center gap-2 mt-0.5">
                   {selectedDeal.status && (
                     <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${(investmentStatusColors[selectedDeal.status] || { bg: "bg-stone-100", text: "text-stone-600" }).bg} ${(investmentStatusColors[selectedDeal.status] || { bg: "bg-stone-100", text: "text-stone-600" }).text}`}>
@@ -4667,44 +4783,44 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                     </span>
                   )}
                   {selectedDeal.boardType && (
-                    <span className="text-[12px] text-gray-500">{selectedDeal.boardType}</span>
+                    <span className="text-[12px] text-muted-foreground">{selectedDeal.boardType}</span>
                   )}
                 </div>
               </div>
               <button
                 onClick={() => setSelectedDealId(null)}
-                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center shrink-0"
+                className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0"
                 data-testid="button-close-deal-popup"
               >
-                <X className="w-4 h-4 text-gray-600" />
+                <X className="w-4 h-4 text-muted-foreground" />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto px-5 py-4">
               {selectedDeal.guidePrice && (
-                <div className="bg-gray-50 rounded-xl p-4 mb-3">
-                  <div className="text-[24px] font-bold text-gray-900">£{selectedDeal.guidePrice.toLocaleString()}</div>
-                  <div className="text-[12px] text-gray-500 uppercase tracking-wide font-medium">Guide Price</div>
+                <div className="bg-muted/50 rounded-xl p-4 mb-3">
+                  <div className="text-[24px] font-bold text-foreground">£{selectedDeal.guidePrice.toLocaleString()}</div>
+                  <div className="text-[12px] text-muted-foreground uppercase tracking-wide font-medium">Guide Price</div>
                 </div>
               )}
 
               <div className="grid grid-cols-2 gap-2 mb-4">
                 {selectedDeal.niy != null && (
-                  <div className="bg-blue-50 rounded-xl p-3 border border-blue-100">
-                    <div className="text-[16px] font-bold text-blue-700">{selectedDeal.niy}%</div>
-                    <div className="text-[11px] text-blue-500 font-medium">NIY</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">{selectedDeal.niy}%</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">NIY</div>
                   </div>
                 )}
                 {selectedDeal.eqy != null && (
-                  <div className="bg-indigo-50 rounded-xl p-3 border border-indigo-100">
-                    <div className="text-[16px] font-bold text-indigo-700">{selectedDeal.eqy}%</div>
-                    <div className="text-[11px] text-indigo-500 font-medium">EQY</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">{selectedDeal.eqy}%</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">EQY</div>
                   </div>
                 )}
                 {selectedDeal.sqft != null && (
-                  <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
-                    <div className="text-[16px] font-bold text-gray-800">{selectedDeal.sqft.toLocaleString()}</div>
-                    <div className="text-[11px] text-gray-500 font-medium">Sq Ft</div>
+                  <div className="bg-muted/50 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold text-foreground">{selectedDeal.sqft.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">Sq Ft</div>
                   </div>
                 )}
                 {selectedDeal.currentRent != null && (
@@ -4714,15 +4830,15 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   </div>
                 )}
                 {selectedDeal.ervPa != null && (
-                  <div className="bg-teal-50 rounded-xl p-3 border border-teal-100">
-                    <div className="text-[16px] font-bold text-teal-700">£{selectedDeal.ervPa.toLocaleString()}</div>
-                    <div className="text-[11px] text-teal-500 font-medium">ERV pa</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">£{selectedDeal.ervPa.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">ERV pa</div>
                   </div>
                 )}
                 {selectedDeal.fee != null && (
-                  <div className="bg-purple-50 rounded-xl p-3 border border-purple-100">
-                    <div className="text-[16px] font-bold text-purple-700">£{selectedDeal.fee.toLocaleString()}</div>
-                    <div className="text-[11px] text-purple-500 font-medium">Fee{selectedDeal.feeType ? ` (${selectedDeal.feeType})` : ""}</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">£{selectedDeal.fee.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">Fee{selectedDeal.feeType ? ` (${selectedDeal.feeType})` : ""}</div>
                   </div>
                 )}
               </div>
@@ -4739,32 +4855,32 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   { label: "Marketing Date", value: selectedDeal.marketingDate ? new Date(selectedDeal.marketingDate).toLocaleDateString("en-GB") : null },
                   { label: "Bid Deadline", value: selectedDeal.bidDeadline ? new Date(selectedDeal.bidDeadline).toLocaleDateString("en-GB") : null },
                 ].filter(r => r.value).map(r => (
-                  <div key={r.label} className="flex justify-between items-center py-2.5 border-b border-gray-100 last:border-0">
-                    <span className="text-[13px] text-gray-500">{r.label}</span>
-                    <span className="text-[14px] font-medium text-gray-900 text-right max-w-[60%] truncate">{r.value}</span>
+                  <div key={r.label} className="flex justify-between items-center py-2.5 border-b border-border last:border-0">
+                    <span className="text-[13px] text-muted-foreground">{r.label}</span>
+                    <span className="text-[14px] font-medium text-foreground text-right max-w-[60%] truncate">{r.value}</span>
                   </div>
                 ))}
               </div>
 
               {(selectedDeal.client || selectedDeal.clientContact || selectedDeal.vendor || selectedDeal.vendorAgent || selectedDeal.buyer || (selectedDeal.agentUserIds && selectedDeal.agentUserIds.length > 0)) && (
                 <div className="mb-4">
-                  <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">People & Companies</div>
+                  <div className="text-[11px] font-bold text-muted-foreground/70 uppercase tracking-widest mb-2">People & Companies</div>
                   <div className="space-y-2">
                     {selectedDeal.agentUserIds && selectedDeal.agentUserIds.length > 0 && (() => {
                       const agents = selectedDeal.agentUserIds!.map(uid => allUsers?.find(u => u.id === uid)).filter(Boolean);
                       if (agents.length === 0) return null;
                       return (
-                        <div className="bg-gray-50 rounded-xl p-3">
-                          <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-2">BGP Agents</div>
+                        <div className="bg-muted/50 rounded-xl p-3">
+                          <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">BGP Agents</div>
                           <div className="space-y-2">
                             {agents.map(agent => (
                               <div key={agent!.id} className="flex items-center gap-3">
-                                <div className="w-8 h-8 rounded-full bg-[#1C1917] text-white flex items-center justify-center shrink-0">
+                                <div className="w-8 h-8 rounded-full bg-[hsl(var(--mobile-chrome))] text-white flex items-center justify-center shrink-0">
                                   <span className="text-[11px] font-bold">{agent!.name.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                  <div className="text-[14px] font-medium text-gray-900 truncate">{agent!.name}</div>
-                                  <div className="text-[12px] text-gray-400">{(agent as any)?.team || "BGP"}</div>
+                                  <div className="text-[14px] font-medium text-foreground truncate">{agent!.name}</div>
+                                  <div className="text-[12px] text-muted-foreground/70">{(agent as any)?.team || "BGP"}</div>
                                 </div>
                               </div>
                             ))}
@@ -4788,25 +4904,25 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                       const bgColor = r.icon === "client" ? "bg-blue-100 text-blue-600" :
                                       r.icon === "vendor" ? "bg-orange-100 text-orange-600" :
                                       r.icon === "buyer" ? "bg-emerald-100 text-emerald-600" :
-                                      "bg-gray-100 text-gray-600";
+                                      "bg-muted text-muted-foreground";
                       return (
                         <button
                           key={r.label}
                           onClick={() => { if (linkPath) { setSelectedDealId(null); navigate(linkPath); } }}
-                          className={`w-full flex items-center gap-3 p-3 bg-gray-50 rounded-xl text-left ${hasLink ? "active:bg-gray-100" : "cursor-default"}`}
+                          className={`w-full flex items-center gap-3 p-3 bg-muted/50 rounded-xl text-left ${hasLink ? "active:bg-muted" : "cursor-default"}`}
                           data-testid={`deal-link-${r.label.toLowerCase().replace(/\s+/g, "-")}`}
                         >
                           <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${bgColor}`}>
                             {matchType === "company" ? <Building2 className="w-4 h-4" /> : <Users className="w-4 h-4" />}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{r.label}</div>
-                            <div className={`text-[14px] font-medium truncate ${hasLink ? "text-blue-600" : "text-gray-900"}`}>{r.name}</div>
+                            <div className="text-[11px] font-semibold text-muted-foreground/70 uppercase tracking-wide">{r.label}</div>
+                            <div className={`text-[14px] font-medium truncate ${hasLink ? "text-primary" : "text-foreground"}`}>{r.name}</div>
                             {matchType && (
-                              <div className="text-[11px] text-gray-400">{matchType === "company" ? "View company" : "View contact"} →</div>
+                              <div className="text-[11px] text-muted-foreground/70">{matchType === "company" ? "View company" : "View contact"} →</div>
                             )}
                           </div>
-                          {hasLink && <ChevronDown className="w-4 h-4 text-gray-300 -rotate-90 shrink-0" />}
+                          {hasLink && <ChevronDown className="w-4 h-4 text-muted-foreground/70 -rotate-90 shrink-0" />}
                         </button>
                       );
                     })}
@@ -4815,18 +4931,18 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               )}
 
               {selectedDeal.notes && (
-                <div className="bg-yellow-50 rounded-xl p-3.5 mb-4 border border-yellow-100">
-                  <div className="text-[11px] font-semibold text-yellow-600 uppercase tracking-wide mb-1">Notes</div>
-                  <div className="text-[14px] text-gray-800 leading-relaxed whitespace-pre-wrap">{selectedDeal.notes}</div>
+                <div className="bg-muted/40 rounded-xl p-3.5 mb-4 border border-border">
+                  <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Notes</div>
+                  <div className="text-[14px] text-foreground leading-relaxed whitespace-pre-wrap">{selectedDeal.notes}</div>
                 </div>
               )}
 
               <div className="mb-4">
-                <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Marketing Files</div>
+                <div className="text-[11px] font-bold text-muted-foreground/70 uppercase tracking-widest mb-2">Marketing Files</div>
                 {(!dealMarketingFiles || dealMarketingFiles.length === 0) ? (
-                  <div className="bg-gray-50 rounded-xl p-4 text-center">
-                    <FileText className="w-6 h-6 text-gray-300 mx-auto mb-1" />
-                    <div className="text-[13px] text-gray-400">No marketing files uploaded</div>
+                  <div className="bg-muted/50 rounded-xl p-4 text-center">
+                    <FileText className="w-6 h-6 text-muted-foreground/70 mx-auto mb-1" />
+                    <div className="text-[13px] text-muted-foreground/70">No marketing files uploaded</div>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -4837,19 +4953,19 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                         target="_blank"
                         rel="noopener noreferrer"
                         download
-                        className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl active:bg-gray-100"
+                        className="flex items-center gap-3 p-3 bg-muted/50 rounded-xl active:bg-muted"
                         data-testid={`marketing-file-${file.id}`}
                       >
-                        <div className="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
-                          <FileText className="w-5 h-5 text-blue-600" />
+                        <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
+                          <FileText className="w-5 h-5 text-muted-foreground" />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="text-[14px] font-medium text-gray-900 truncate">{file.fileName}</div>
-                          <div className="text-[12px] text-gray-400">
+                          <div className="text-[14px] font-medium text-foreground truncate">{file.fileName}</div>
+                          <div className="text-[12px] text-muted-foreground/70">
                             {file.fileSize ? formatFileSize(file.fileSize) : ""} · {new Date(file.uploadedAt).toLocaleDateString("en-GB")}
                           </div>
                         </div>
-                        <Download className="w-5 h-5 text-gray-400 shrink-0" />
+                        <Download className="w-5 h-5 text-muted-foreground/70 shrink-0" />
                       </a>
                     ))}
                   </div>
@@ -4857,10 +4973,10 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               </div>
             </div>
 
-            <div className="px-5 py-3 border-t border-gray-100 shrink-0 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+            <div className="px-5 py-3 border-t border-border shrink-0 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
               <button
                 onClick={() => { setSelectedDealId(null); navigate("/investment-tracker"); }}
-                className="w-full py-3 bg-[#1C1917] text-white text-[15px] font-semibold rounded-xl active:bg-gray-800"
+                className="w-full py-3 bg-[hsl(var(--mobile-chrome))] text-white text-[15px] font-semibold rounded-xl active:bg-gray-800"
                 data-testid="button-open-full-tracker"
               >
                 Open in Full Tracker
@@ -4879,11 +4995,11 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
           >
             <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0">
               <div className="flex-1 min-w-0">
-                <h3 className="text-[20px] font-bold text-gray-900 truncate">{selectedUnit.unitName}</h3>
+                <h3 className="text-[20px] font-bold text-foreground truncate">{selectedUnit.unitName}</h3>
                 {selectedUnit.propertyName && (
                   <button
                     onClick={() => { if (selectedUnit.propertyId) { setSelectedUnitId(null); navigate(`/properties/${selectedUnit.propertyId}`); } }}
-                    className="text-[14px] text-blue-600 truncate block"
+                    className="text-[14px] text-primary truncate block"
                     data-testid="unit-property-link"
                   >
                     {selectedUnit.propertyName} →
@@ -4892,10 +5008,10 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               </div>
               <button
                 onClick={() => setSelectedUnitId(null)}
-                className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 ml-3 shrink-0"
+                className="w-8 h-8 flex items-center justify-center rounded-full bg-muted ml-3 shrink-0"
                 data-testid="button-close-unit-popup"
               >
-                <X className="w-4 h-4 text-gray-500" />
+                <X className="w-4 h-4 text-muted-foreground" />
               </button>
             </div>
 
@@ -4919,27 +5035,27 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   </div>
                 )}
                 {selectedUnit.sqft && (
-                  <div className="bg-blue-50 rounded-xl p-3 border border-blue-100">
-                    <div className="text-[16px] font-bold text-blue-700">{selectedUnit.sqft.toLocaleString()}</div>
-                    <div className="text-[11px] text-blue-500 font-medium">Sq Ft</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">{selectedUnit.sqft.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">Sq Ft</div>
                   </div>
                 )}
                 {selectedUnit.ratesPa && (
-                  <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
-                    <div className="text-[16px] font-bold text-gray-700">£{selectedUnit.ratesPa.toLocaleString()}</div>
-                    <div className="text-[11px] text-gray-500 font-medium">Rates pa</div>
+                  <div className="bg-muted/50 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold text-muted-foreground">£{selectedUnit.ratesPa.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">Rates pa</div>
                   </div>
                 )}
                 {selectedUnit.serviceChargePa && (
-                  <div className="bg-gray-50 rounded-xl p-3 border border-gray-200">
-                    <div className="text-[16px] font-bold text-gray-700">£{selectedUnit.serviceChargePa.toLocaleString()}</div>
-                    <div className="text-[11px] text-gray-500 font-medium">Service Charge pa</div>
+                  <div className="bg-muted/50 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold text-muted-foreground">£{selectedUnit.serviceChargePa.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">Service Charge pa</div>
                   </div>
                 )}
                 {selectedUnit.fee && (
-                  <div className="bg-purple-50 rounded-xl p-3 border border-purple-100">
-                    <div className="text-[16px] font-bold text-purple-700">£{selectedUnit.fee.toLocaleString()}</div>
-                    <div className="text-[11px] text-purple-500 font-medium">Fee</div>
+                  <div className="bg-muted/40 rounded-xl p-3 border border-border">
+                    <div className="text-[16px] font-bold font-mono tabular-nums">£{selectedUnit.fee.toLocaleString()}</div>
+                    <div className="text-[11px] text-muted-foreground font-medium">Fee</div>
                   </div>
                 )}
               </div>
@@ -4954,9 +5070,9 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   { label: "Marketing Start", value: selectedUnit.marketingStartDate ? new Date(selectedUnit.marketingStartDate).toLocaleDateString("en-GB") : null },
                   { label: "Restrictions", value: selectedUnit.restrictions },
                 ].filter(r => r.value).map(r => (
-                  <div key={r.label} className="flex justify-between items-center py-2.5 border-b border-gray-100 last:border-0">
-                    <span className="text-[13px] text-gray-500">{r.label}</span>
-                    <span className="text-[14px] font-medium text-gray-900 text-right max-w-[60%] truncate">{r.value}</span>
+                  <div key={r.label} className="flex justify-between items-center py-2.5 border-b border-border last:border-0">
+                    <span className="text-[13px] text-muted-foreground">{r.label}</span>
+                    <span className="text-[14px] font-medium text-foreground text-right max-w-[60%] truncate">{r.value}</span>
                   </div>
                 ))}
               </div>
@@ -4966,15 +5082,15 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 if (agents.length === 0) return null;
                 return (
                   <div className="mb-4">
-                    <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">BGP Agents</div>
-                    <div className="bg-gray-50 rounded-xl p-3 space-y-2">
+                    <div className="text-[11px] font-bold text-muted-foreground/70 uppercase tracking-widest mb-2">BGP Agents</div>
+                    <div className="bg-muted/50 rounded-xl p-3 space-y-2">
                       {agents.map(agent => (
                         <div key={agent!.id} className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-full bg-[#1C1917] text-white flex items-center justify-center shrink-0">
+                          <div className="w-8 h-8 rounded-full bg-[hsl(var(--mobile-chrome))] text-white flex items-center justify-center shrink-0">
                             <span className="text-[11px] font-bold">{agent!.name.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="text-[14px] font-medium text-gray-900 truncate">{agent!.name}</div>
+                            <div className="text-[14px] font-medium text-foreground truncate">{agent!.name}</div>
                           </div>
                         </div>
                       ))}
@@ -4985,20 +5101,20 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
 
               {unitViewings && unitViewings.length > 0 && (
                 <div className="mb-4">
-                  <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">
+                  <div className="text-[11px] font-bold text-muted-foreground/70 uppercase tracking-widest mb-2">
                     Viewings ({unitViewings.length})
                   </div>
                   <div className="space-y-2">
                     {unitViewings.map(v => (
-                      <div key={v.id} className="bg-gray-50 rounded-xl p-3">
+                      <div key={v.id} className="bg-muted/50 rounded-xl p-3">
                         <div className="flex items-center justify-between mb-1">
-                          <div className="text-[14px] font-medium text-gray-900">{v.companyName || "Unknown"}</div>
+                          <div className="text-[14px] font-medium text-foreground">{v.companyName || "Unknown"}</div>
                           {v.viewingDate && (
-                            <div className="text-[12px] text-gray-400">{new Date(v.viewingDate).toLocaleDateString("en-GB")}</div>
+                            <div className="text-[12px] text-muted-foreground/70">{new Date(v.viewingDate).toLocaleDateString("en-GB")}</div>
                           )}
                         </div>
-                        {v.outcome && <div className="text-[12px] text-blue-600 font-medium">{v.outcome}</div>}
-                        {v.notes && <div className="text-[12px] text-gray-500 mt-1">{v.notes}</div>}
+                        {v.outcome && <div className="text-[12px] text-foreground font-medium">{v.outcome}</div>}
+                        {v.notes && <div className="text-[12px] text-muted-foreground mt-1">{v.notes}</div>}
                       </div>
                     ))}
                   </div>
@@ -5007,26 +5123,26 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
 
               {unitOffers && unitOffers.length > 0 && (
                 <div className="mb-4">
-                  <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">
+                  <div className="text-[11px] font-bold text-muted-foreground/70 uppercase tracking-widest mb-2">
                     Offers ({unitOffers.length})
                   </div>
                   <div className="space-y-2">
                     {unitOffers.map(o => (
                       <div key={o.id} className="bg-amber-50 rounded-xl p-3 border border-amber-100">
                         <div className="flex items-center justify-between mb-1">
-                          <div className="text-[14px] font-medium text-gray-900">{o.companyName || "Unknown"}</div>
+                          <div className="text-[14px] font-medium text-foreground">{o.companyName || "Unknown"}</div>
                           {o.status && (
                             <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${o.status === "Accepted" ? "bg-emerald-100 text-emerald-700" : o.status === "Rejected" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
                               {o.status}
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-3 text-[13px] text-gray-600">
+                        <div className="flex items-center gap-3 text-[13px] text-muted-foreground">
                           {o.rentPa && <span>£{o.rentPa.toLocaleString()} pa</span>}
                           {o.termYears && <span>{o.termYears} yrs</span>}
                           {o.rentFreeMonths && <span>{o.rentFreeMonths}m rent free</span>}
                         </div>
-                        {o.incentives && <div className="text-[12px] text-gray-500 mt-1">{o.incentives}</div>}
+                        {o.incentives && <div className="text-[12px] text-muted-foreground mt-1">{o.incentives}</div>}
                       </div>
                     ))}
                   </div>
@@ -5035,18 +5151,18 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
 
               {selectedUnit.notes && (
                 <div className="mb-4">
-                  <div className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-2">Notes</div>
-                  <div className="bg-gray-50 rounded-xl p-3">
-                    <div className="text-[14px] text-gray-700 whitespace-pre-wrap">{selectedUnit.notes}</div>
+                  <div className="text-[11px] font-bold text-muted-foreground/70 uppercase tracking-widest mb-2">Notes</div>
+                  <div className="bg-muted/50 rounded-xl p-3">
+                    <div className="text-[14px] text-muted-foreground whitespace-pre-wrap">{selectedUnit.notes}</div>
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="px-5 py-3 border-t border-gray-100 shrink-0 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+            <div className="px-5 py-3 border-t border-border shrink-0 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
               <button
                 onClick={() => { setSelectedUnitId(null); navigate("/available"); }}
-                className="w-full py-3 bg-[#1C1917] text-white text-[15px] font-semibold rounded-xl active:bg-gray-800"
+                className="w-full py-3 bg-[hsl(var(--mobile-chrome))] text-white text-[15px] font-semibold rounded-xl active:bg-gray-800"
                 data-testid="button-open-full-leasing"
               >
                 Open in Full Tracker

@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Button } from "@/components/ui/button";
 import { Eye, Pencil, Inbox, Trash2 } from "lucide-react";
 import { Link } from "wouter";
@@ -184,20 +185,16 @@ export function ViewToggle({
   ];
 
   return (
-    <div className="inline-flex items-center rounded-lg border bg-card p-0.5 gap-0.5">
+    <div className="inline-flex items-center gap-1.5">
       {options.map((opt) => (
-        <button
+        <Pill
           key={opt.key}
+          active={view === opt.key}
           onClick={() => onToggle(opt.key)}
-          className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-            view === opt.key
-              ? "bg-primary text-primary-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
           data-testid={`button-view-${opt.key}`}
         >
           {opt.label}
-        </button>
+        </Pill>
       ))}
     </div>
   );

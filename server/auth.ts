@@ -888,6 +888,36 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   next();
 }
 
+// The equity directors — Woody's list (2026-08-22): Woody, Jack, Rupert,
+// Charlotte. Gates the company-finance views (Finance page + dashboard
+// widget); admins (Wendy) keep access for the commission statements.
+const EQUITY_EMAILS = new Set([
+  "woody@brucegillinghampollard.com",
+  "jack@brucegillinghampollard.com",
+  "rupert@brucegillinghampollard.com",
+  "charlotte@brucegillinghampollard.com",
+]);
+
+export async function requireEquityOrAdmin(req: Request, res: Response, next: NextFunction) {
+  const userId = req.session.userId || req.tokenUserId;
+  if (!userId) return res.status(401).json({ message: "Not authenticated" });
+  if (!req.session.userId && req.tokenUserId) req.session.userId = req.tokenUserId;
+  try {
+    const result = await pool.query("SELECT is_active, is_admin, email FROM users WHERE id = $1", [userId]);
+    if (result.rows.length === 0) return res.status(401).json({ message: "Not authenticated" });
+    const row = result.rows[0];
+    if (row.is_active === false) return res.status(403).json({ message: "Account deactivated" });
+    const email = String(row.email || "").toLowerCase().trim();
+    if (!row.is_admin && !ADMIN_EMAILS.has(email) && !EQUITY_EMAILS.has(email)) {
+      return res.status(403).json({ message: "Equity access required" });
+    }
+  } catch (e: any) {
+    console.error("[requireEquityOrAdmin] DB check failed:", e?.message);
+    return res.status(500).json({ message: "Auth check failed", detail: e?.message });
+  }
+  next();
+}
+
 export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   const userId = req.session.userId || req.tokenUserId;
   if (!userId) return res.status(401).json({ message: "Not authenticated" });

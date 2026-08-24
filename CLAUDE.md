@@ -94,6 +94,28 @@ prefs in the generation path, prepend to prompt.
 Helper: `server/document-preferences.ts` (`preferencesPromptFor(scope)`).
 UI: inline `HouseStylePanel` on Pathway → Why Buy section.
 
+## Design guidelines (Woody, 2026-08-23) — docs/DESIGN.md
+
+The app-wide design standard lives in `docs/DESIGN.md` (v1 draft, pending
+Woody's sign-off): token-only colours, typography scale, the pill standard
+(`client/src/components/ui/pill.tsx`), pill-row tabs, page header anatomy,
+desktop-table/phone-card-list, phone shell rules, and the deviation
+hit-list. **Convert on touch**: any commit touching a screen brings its
+chips, tabs, header and colours to that standard in the same commit. Don't
+invent new chip/tab styles. `rounded-full` buttons are exempt from the
+mobile 44px tap-target rule — that rule was the cause of the historic
+"massive pills".
+
+## ChatBGP's app map (KEEP CURRENT)
+
+`server/chatbgp-app-map.ts` is ChatBGP's description of the app itself —
+every screen and how to reach it on desktop vs the phone shell. ChatBGP
+gives users in-app directions from this file, so **whenever you change
+navigation, add/remove a page, or move a control, update the relevant
+lines there in the same commit**. Stale lines become confident wrong
+answers to the team (that's how this file came to exist — ChatBGP sent
+Woody to a Settings page the phone app can't reach, 2026-08-23).
+
 ## Key files
 
 | Area | Path |

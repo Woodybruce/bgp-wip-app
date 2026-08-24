@@ -4,9 +4,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { TrendingUp, TrendingDown, AlertTriangle, Search, ArrowUpDown } from "lucide-react";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
+import { TrendingUp, AlertTriangle, Search, ArrowUpDown } from "lucide-react";
 import { Link } from "wouter";
 import { AIActivityTrigger } from "@/components/ai-activity-card";
+import { MobileCardView } from "@/components/mobile-card-view";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 type Row = {
   id: string;
@@ -41,6 +44,7 @@ type Row = {
 };
 
 export default function HuntersInvestment() {
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
 
   const { data: rows = [], isLoading } = useQuery<Row[]>({
@@ -58,8 +62,7 @@ export default function HuntersInvestment() {
   return (
     <div className="p-4 sm:p-6 space-y-4 max-w-[1400px] mx-auto">
       <div>
-        <h1 className="text-xl font-semibold flex items-center gap-2">
-          <TrendingUp className="w-5 h-5 text-emerald-600" />
+        <h1 className="text-xl font-semibold tracking-tight">
           Investment Hunter
         </h1>
         <p className="text-xs text-muted-foreground mt-0.5">
@@ -73,14 +76,12 @@ export default function HuntersInvestment() {
       </div>
 
       <Tabs defaultValue="buyers" className="w-full">
-        <TabsList>
-          <TabsTrigger value="buyers" className="text-xs">
-            <TrendingUp className="w-3.5 h-3.5 mr-1 text-emerald-600" />
-            Buyers ({buyers.length})
+        <TabsList className={pillTabsList}>
+          <TabsTrigger value="buyers" className={pillTabsTrigger}>
+            Buyers <span className="font-mono normal-case opacity-70">{buyers.length}</span>
           </TabsTrigger>
-          <TabsTrigger value="distressed" className="text-xs">
-            <TrendingDown className="w-3.5 h-3.5 mr-1 text-red-600" />
-            Distressed / Sellers ({distressed.length})
+          <TabsTrigger value="distressed" className={pillTabsTrigger}>
+            Distressed / Sellers <span className="font-mono normal-case opacity-70">{distressed.length}</span>
           </TabsTrigger>
         </TabsList>
 
@@ -91,6 +92,22 @@ export default function HuntersInvestment() {
                 <div className="p-6 text-center text-sm text-muted-foreground">Loading…</div>
               ) : buyers.length === 0 ? (
                 <div className="p-6 text-center text-sm text-muted-foreground">No buyers identified. Mark companies as "Buying Now" on their profile.</div>
+              ) : isMobile ? (
+                <MobileCardView
+                  items={buyers.map((r) => ({
+                    id: r.id,
+                    title: r.name,
+                    subtitle: r.capitalSource?.replace(/_/g, " ") || undefined,
+                    status: r.acquiringNow ? "Buying" : undefined,
+                    href: `/companies/${r.id}`,
+                    fields: [
+                      { label: "Score", value: r.buyerScore },
+                      { label: "AUM", value: r.aum ? `£${r.aum}m` : null },
+                      { label: "Lot size", value: r.mandateLotSizeMin || r.mandateLotSizeMax ? `£${r.mandateLotSizeMin || "?"}–${r.mandateLotSizeMax || "?"}m` : null },
+                      { label: "Acq 12mo", value: r.acq12mo || null },
+                    ],
+                  }))}
+                />
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
@@ -146,6 +163,21 @@ export default function HuntersInvestment() {
                 <div className="p-6 text-center text-sm text-muted-foreground">Loading…</div>
               ) : distressed.length === 0 ? (
                 <div className="p-6 text-center text-sm text-muted-foreground">No distress signals. Add debt events and flag distressed landlords on their profile.</div>
+              ) : isMobile ? (
+                <MobileCardView
+                  items={distressed.map((r) => ({
+                    id: r.id,
+                    title: r.name,
+                    status: r.distressFlag ? "Distress" : r.disposingNow ? "Selling" : undefined,
+                    href: `/companies/${r.id}`,
+                    fields: [
+                      { label: "Score", value: r.distressScore },
+                      { label: "Maturities 12mo", value: r.upcomingMaturities || null },
+                      { label: "Signals 12mo", value: r.distressSignals12mo || null },
+                      { label: "Yrs to fund end", value: r.yrsToFundEnd != null ? `${r.yrsToFundEnd}y` : null },
+                    ],
+                  }))}
+                />
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
@@ -193,9 +225,19 @@ export default function HuntersInvestment() {
         </TabsContent>
       </Tabs>
 
-      <div className="text-[10px] text-muted-foreground space-y-1">
-        <div><strong>Buyer score</strong> = Buying Now × 60 + acq 12mo × 8 + fundraises × 25 + early-vintage fund (≤3y) × 20.</div>
-        <div><strong>Distress score</strong> = Distress flag × 80 + upcoming maturities × 30 + breach/writedown × 20 + Selling Now × 30 + disposals × 5 + fund-life ending (≤2y) × 25.</div>
+      <div className="flex items-center gap-4 flex-wrap text-[10px] text-muted-foreground">
+        <span
+          className="underline decoration-dotted cursor-help"
+          title="Buyer score = Buying Now × 60 + acq 12mo × 8 + fundraises × 25 + early-vintage fund (≤3y) × 20."
+        >
+          How buyers are scored
+        </span>
+        <span
+          className="underline decoration-dotted cursor-help"
+          title="Distress score = Distress flag × 80 + upcoming maturities × 30 + breach/writedown × 20 + Selling Now × 30 + disposals × 5 + fund-life ending (≤2y) × 25."
+        >
+          How distress is scored
+        </span>
       </div>
     </div>
   );

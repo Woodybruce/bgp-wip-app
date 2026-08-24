@@ -3,6 +3,7 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { XeroContactPicker, type XeroContact } from "@/components/xero-contact-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -124,13 +125,14 @@ import { useTableSort } from "@/hooks/use-table-sort";
 import { NumericStackedCell, type NumericRow } from "@/components/numeric-stacked-cell";
 import { FeeAllocationEditor, type FeeAllocationRow as FeeAllocationEditorRow } from "@/components/fee-allocation-editor";
 import { DealDetail } from "@/components/deal-detail";
-import { DEAL_STATUS_LABELS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
+import { DEAL_STATUS_LABELS, DEAL_STATUS_COLORS as SHARED_STATUS_CHIP_COLORS, DEAL_STATUS_DOT_COLORS, legacyToCode, WIP_STATUSES, type DealStatusCode } from "@shared/deal-status";
 
-// Canonical 10-code colour map — now sourced from the shared module so the
-// Letting Tracker / property summary use identical hues. Re-exported here
-// because many files historically import it from @/pages/deals.
-import { DEAL_STATUS_DOT_COLORS } from "@/lib/deal-status-colors";
-export const DEAL_STATUS_COLORS: Record<string, string> = DEAL_STATUS_DOT_COLORS;
+// Canonical status colours live in @shared/deal-status — chip map for soft
+// badges, dot map for solid swatches — so every board shares one hue per
+// status. Re-exported here because many files historically import from
+// @/pages/deals.
+export { DEAL_STATUS_DOT_COLORS };
+export const DEAL_STATUS_COLORS: Record<string, string> = SHARED_STATUS_CHIP_COLORS;
 
 export const DEAL_TYPE_COLORS: Record<string, string> = {
   // Legacy — still exist in older deals
@@ -278,7 +280,10 @@ export function formatNumber(val: number | string | null | undefined): string {
 export function formatDate(val: string | Date | null | undefined): string {
   if (!val) return "—";
   try {
-    return new Date(val).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    const d = new Date(val);
+    // Year only when it isn't this year (docs/DESIGN.md §15).
+    const sameYear = d.getFullYear() === new Date().getFullYear();
+    return d.toLocaleDateString("en-GB", sameYear ? { day: "numeric", month: "short" } : { day: "numeric", month: "short", year: "numeric" });
   } catch {
     return typeof val === "string" ? val : "—";
   }
@@ -1626,7 +1631,6 @@ function SimplifiedCreateBody({
       const r = await apiRequest("POST", "/api/crm/companies", {
         name: name.trim(),
         companyType,
-        isTrackedBrand: companyType.startsWith("Tenant"),
       });
       const created = await r.json();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
@@ -3714,11 +3718,11 @@ function HotsChecklistDialog({
         {(step === "form" || step === "saving") && (
           <div className="space-y-4 py-2">
             {aiSummary && (
-              <div className="rounded-md border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800 p-3">
-                <p className="text-xs font-medium text-blue-800 dark:text-blue-300 mb-1 flex items-center gap-1">
-                  <Sparkles className="w-3 h-3" /> AI Summary from HOTs
+              <div className="rounded-md border border-border bg-muted/40 p-3">
+                <p className="text-xs font-medium mb-1 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-primary" /> AI Summary from HOTs
                 </p>
-                <p className="text-xs text-blue-700 dark:text-blue-400">{aiSummary}</p>
+                <p className="text-xs text-muted-foreground">{aiSummary}</p>
                 {missingFields.length > 0 && (
                   <p className="text-xs text-amber-600 dark:text-amber-400 mt-2 font-medium">
                     Missing: {missingFields.join(", ")}
@@ -4204,7 +4208,7 @@ export function XeroInvoiceSection({ dealId, deal }: { dealId: string; deal: Crm
             {invoices.map((inv: any) => (
               <div key={inv.id} className="flex items-center justify-between p-2 rounded-md border text-sm">
                 <div className="flex items-center gap-2 min-w-0">
-                  <Badge className={`text-[10px] text-white ${XERO_STATUS_COLORS[inv.status] || "bg-zinc-500"}`}>
+                  <Badge variant="outline" className={`border-transparent text-[10px] text-white ${XERO_STATUS_COLORS[inv.status] || "bg-zinc-500"}`}>
                     {inv.status}
                   </Badge>
                   <span className="truncate">
@@ -5700,7 +5704,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       const r = await apiRequest("POST", "/api/crm/companies", {
         name: name.trim(),
         companyType,
-        isTrackedBrand: companyType.startsWith("Tenant"),
       });
       const created = await r.json();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
@@ -6136,25 +6139,19 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
       {isMobile ? (
         <div className="flex flex-wrap gap-1.5 shrink-0">
-          <button
-            onClick={() => setActiveGroup("all")}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${activeGroup === "all" ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
-            data-testid="chip-group-all"
-          >
-            {isCompsMode ? "All Comps" : "All"}
-            <span className="font-bold tabular-nums">{searchedDeals.length}</span>
-          </button>
+          <Pill active={activeGroup === "all"} onClick={() => setActiveGroup("all")} data-testid="chip-group-all">
+            {isCompsMode ? "All Comps" : "All"} <span className="opacity-70 font-mono tabular-nums">{searchedDeals.length}</span>
+          </Pill>
           {statusCounts.map((s) => (
-            <button
+            <Pill
               key={s.name}
+              active={activeGroup === s.name}
               onClick={() => setActiveGroup(activeGroup === s.name ? "all" : s.name)}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${activeGroup === s.name ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
               data-testid={`chip-status-${s.name}`}
             >
-              <span className={`w-2 h-2 rounded-full ${DEAL_STATUS_COLORS[s.name] || "bg-primary/60"}`} />
-              {s.name}
-              <span className="font-bold tabular-nums">{s.count}</span>
-            </button>
+              <span className={`w-1.5 h-1.5 rounded-full ${DEAL_STATUS_DOT_COLORS[s.name as DealStatusCode] || "bg-primary/60"}`} />
+              {DEAL_STATUS_LABELS[s.name as DealStatusCode] ?? s.name} <span className="opacity-70 font-mono tabular-nums">{s.count}</span>
+            </Pill>
           ))}
         </div>
       ) : (
@@ -6189,10 +6186,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             >
               <CardContent className="p-3">
                 <div className="flex items-center gap-2">
-                  <div className={`w-2.5 h-2.5 rounded-full ${DEAL_STATUS_COLORS[s.name] || "bg-primary/60"}`} />
+                  <div className={`w-2.5 h-2.5 rounded-full ${DEAL_STATUS_DOT_COLORS[s.name as DealStatusCode] || "bg-primary/60"}`} />
                   <div>
                     <p className="text-lg font-bold">{s.count}</p>
-                    <p className="text-xs text-muted-foreground truncate max-w-[100px]">{s.name}</p>
+                    <p className="text-xs text-muted-foreground truncate max-w-[100px]">{DEAL_STATUS_LABELS[s.name as DealStatusCode] ?? s.name}</p>
                     <p className="text-[11px] font-semibold text-muted-foreground tabular-nums">{formatCurrency(s.feeTotal)}</p>
                   </div>
                 </div>
@@ -6383,16 +6380,17 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   const statusDays = statusChangedAt
                     ? Math.max(0, Math.floor((Date.now() - new Date(statusChangedAt).getTime()) / 86400000))
                     : null;
+                  const statusCode = legacyToCode(deal.status);
                   const statusAge = statusDays == null ? null
                     : statusDays === 0 ? "today"
-                    : `${statusDays}d in ${deal.status || "status"}`;
+                    : `${statusDays}d in ${(statusCode && DEAL_STATUS_LABELS[statusCode]) || deal.status || "status"}`;
                   return {
                     id: deal.id,
                     title: customDealName || propName || deal.name,
                     subtitle: customDealName && propName ? propName : undefined,
                     href: `/deals/${deal.id}`,
-                    status: deal.status || undefined,
-                    statusColor: DEAL_STATUS_COLORS[deal.status || ""] || "bg-muted-foreground",
+                    status: (statusCode && DEAL_STATUS_LABELS[statusCode]) || deal.status || undefined,
+                    statusColor: (statusCode && DEAL_STATUS_DOT_COLORS[statusCode]) || "bg-muted-foreground",
                     // Billing leads \u2014 fee first, then rent. Type/agent follow.
                     fields: [
                       { label: "Fee", value: deal.fee ? `\u00A3${Number(deal.fee).toLocaleString()}` : null },
@@ -6571,7 +6569,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           {deal.dealRef ? (
                             <Link
                               href={`/deals/${deal.id}`}
-                              className="text-blue-600 hover:underline"
+                              className="text-primary hover:underline"
                               data-testid={`link-deal-${deal.id}`}
                             >
                               #{deal.dealRef}
@@ -6654,7 +6652,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           <InlineLabelSelect
                             value={legacyToCode(deal.status) || deal.status}
                             options={mode === "wip" ? WIP_STATUSES : CRM_OPTIONS.dealStatus}
-                            colorMap={DEAL_STATUS_COLORS}
+                            colorMap={DEAL_STATUS_DOT_COLORS}
                             labelMap={DEAL_STATUS_LABELS}
                             onSave={(v) => handleInlineSave(deal.id, "status", v || null)}
                             data-testid={`inline-deal-status-${deal.id}`}

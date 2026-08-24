@@ -137,6 +137,16 @@ below stay parked, not built. Rounds shouldn't re-log them.)
 
 ## Confirmed / done
 
+Confirmed by Woody 2026-08-22 ("83"); built + visually verified same day
+by the parent session (390px iPhone UA):
+83. Mobile PI map no longer runs under the bottom nav: the Property
+   Intelligence page drops its min-h-screen below md (the mobile shell
+   already sizes the page to the space above the fixed nav), so the map's
+   zoom +/- controls sit fully above the Portfolio/…/News bar; the map
+   search row also gets a wider right inset at 390px (w-[calc(100%-32px)])
+   so the Resolve button clears the screen edge. (Logged by QA r361 on
+   staging; entry recorded here on the working branch.)
+
 Confirmed by Woody 2026-08-20 ("71 should be automated too fro diaries?
 72 65 68 73 67 66 69"); built same day by the parent session. Not yet
 browser-verified unless a round has since covered them:

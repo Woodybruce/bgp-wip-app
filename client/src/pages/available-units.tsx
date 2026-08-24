@@ -3,6 +3,7 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { PropertyPlanningCard } from "@/components/property-planning-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import {
@@ -20,7 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2, Mail,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins, Flame,
-  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2, Layers } from "lucide-react";
+  ChevronDown, ChevronRight, ChevronUp, ExternalLink, AlertTriangle, FileBadge, Target, MessageSquare, Loader2 } from "lucide-react";
 import { UnitBriefDialog } from "@/components/unit-brief-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -82,7 +83,8 @@ const LOCATION_COLORS: Record<string, string> = {
 // Status colours come from the shared module so the tracker, Deals board
 // and property summary all paint the same code the same hue (these used
 // to be three diverging local palettes).
-import { DEAL_STATUS_BADGE_COLORS as STATUS_COLORS, DEAL_STATUS_DOT_COLORS as STATUS_LABEL_COLORS } from "@/lib/deal-status-colors";
+import { DEAL_STATUS_BADGE_COLORS as STATUS_COLORS } from "@/lib/deal-status-colors";
+import { DEAL_STATUS_DOT_COLORS as STATUS_LABEL_COLORS } from "@/lib/deal-status-colors";
 
 const ASSET_CLASS_COLORS: Record<string, string> = {
   "E": "bg-blue-500",
@@ -1394,7 +1396,7 @@ export default function AvailableUnitsPage() {
           }}
           data-testid="button-add-unit"
         >
-          <Plus className="h-4 w-4 mr-1" /> Add Unit
+          <Plus className="h-4 w-4 mr-1" /> Add unit
         </Button>
         {!isMobile && (
           <Button
@@ -1463,8 +1465,8 @@ export default function AvailableUnitsPage() {
       )}
 
       {pitchBrand && (
-        <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-900 px-3 py-2 text-xs" data-testid="pitch-brand-banner">
-          <Building2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs" data-testid="pitch-brand-banner">
+          <Building2 className="w-3.5 h-3.5 text-primary shrink-0" />
           <span>Pitching <span className="font-semibold">{pitchBrand.name}</span> — use the "+ {pitchBrand.name}" button on a unit to add them as a target operator.</span>
           <button
             type="button"
@@ -1605,68 +1607,50 @@ export default function AvailableUnitsPage() {
           renders the thin chip row (same filters, ~1/3 the height). */}
       {(isMobile || compactHeader) ? (
         <div className="flex flex-wrap gap-1.5">
-          <button
+          <Pill
+            active={viewAll}
             onClick={() => { setViewAll(!viewAll); setStatusFilter("all"); }}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${viewAll ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
             data-testid="stat-chip-all"
           >
-            <Layers className="w-3 h-3" />
-            All statuses
-            <span className="font-bold tabular-nums">{toolbarFiltered.length}</span>
-          </button>
+            All <span className="opacity-70 font-mono tabular-nums">{toolbarFiltered.length}</span>
+          </Pill>
           {MARKETING_STATUSES.map(s => {
             const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
             return (
-              <button
+              <Pill
                 key={s}
+                active={statusFilter === s}
                 onClick={() => { setViewAll(false); setStatusFilter(statusFilter === s ? "all" : s); }}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${statusFilter === s ? "border-primary bg-primary/5 font-semibold" : "text-muted-foreground"}`}
                 data-testid={`stat-chip-${s.toLowerCase()}`}
               >
-                <span className={`w-2 h-2 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
-                {DEAL_STATUS_LABELS[s]}
-                <span className="font-bold tabular-nums">{count}</span>
-              </button>
+                <span className={`w-1.5 h-1.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
+                {DEAL_STATUS_LABELS[s]} <span className="opacity-70 font-mono tabular-nums">{count}</span>
+              </Pill>
             );
           })}
         </div>
       ) : (
       <ScrollArea className="w-full">
-        <div className="flex items-center gap-3 pb-1">
-          <Card
-            className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${viewAll ? "border-primary" : ""}`}
+        <div className="flex items-center gap-1.5 pb-1">
+          <Pill
+            active={viewAll}
             onClick={() => { setViewAll(!viewAll); setStatusFilter("all"); }}
             data-testid="stat-card-all"
           >
-            <CardContent className="p-3">
-              <div className="flex items-center gap-2">
-                <Layers className="w-3.5 h-3.5 text-muted-foreground" />
-                <div>
-                  <p className="text-lg font-bold">{toolbarFiltered.length}</p>
-                  <p className="text-xs text-muted-foreground">All statuses</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+            All statuses <span className="font-mono normal-case opacity-60 tabular-nums">{toolbarFiltered.length}</span>
+          </Pill>
           {MARKETING_STATUSES.map(s => {
             const count = toolbarFiltered.filter(u => (effByUnit[u.id] || "AVA") === s).length;
             return (
-              <Card
+              <Pill
                 key={s}
-                className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${statusFilter === s ? "border-primary" : ""}`}
+                active={statusFilter === s}
                 onClick={() => { setViewAll(false); setStatusFilter(statusFilter === s ? "all" : s); }}
                 data-testid={`stat-card-${s.toLowerCase()}`}
               >
-                <CardContent className="p-3">
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2.5 h-2.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
-                    <div>
-                      <p className="text-lg font-bold">{count}</p>
-                      <p className="text-xs text-muted-foreground">{DEAL_STATUS_LABELS[s]}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                <span className={`w-1.5 h-1.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
+                {DEAL_STATUS_LABELS[s]} <span className="font-mono normal-case opacity-60 tabular-nums">{count}</span>
+              </Pill>
             );
           })}
         </div>
@@ -1899,7 +1883,7 @@ export default function AvailableUnitsPage() {
                           <div className="flex items-center gap-1.5">
                             <a
                               href={`/deals/${deal.id}`}
-                              className="text-blue-600 hover:underline"
+                              className="text-primary hover:underline"
                               title={`Open deal ${deal.dealRef}`}
                               data-testid={`link-deal-ref-${u.id}`}
                             >
@@ -2078,7 +2062,7 @@ export default function AvailableUnitsPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                className="h-7 px-2 text-[11px] border-blue-300 text-blue-700"
+                                className="h-7 px-2 text-[11px] text-primary"
                                 onClick={() => addUnitTarget(u, { name: pitchBrand.name, companyId: pitchBrand.id } as any)}
                                 data-testid={`pitch-here-${u.id}`}
                               >
@@ -2088,9 +2072,9 @@ export default function AvailableUnitsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-7 px-2 text-[11px] text-purple-600 hover:text-purple-700"
+                              className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
                               onClick={() => setSuggestUnit(u)}
-                              title="AI-suggest target brands: live requirements that fit this unit + tracked brands in matching categories, ranked by Fable"
+                              title="AI-suggest target brands: live requirements that fit this unit + brands in matching categories, ranked by AI"
                               data-testid={`button-suggest-targets-${u.id}`}
                             >
                               <Sparkles className="w-3.5 h-3.5 mr-0.5" /> AI
@@ -2364,7 +2348,7 @@ export default function AvailableUnitsPage() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-7 w-7 p-0 text-purple-500 hover:text-purple-700"
+                            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
                             onClick={() => setMatchItem(u)}
                             data-testid={`button-match-${u.id}`}
                             title="Find matching requirements"
@@ -2679,7 +2663,6 @@ export default function AvailableUnitsPage() {
                 const r = await apiRequest("POST", "/api/crm/companies", {
                   name: name.trim(),
                   companyType: "Tenant",
-                  isTrackedBrand: true,
                 });
                 const created = await r.json();
                 queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
@@ -3033,9 +3016,9 @@ export default function AvailableUnitsPage() {
                 <div key={v.id} className="border rounded-lg p-3 text-sm space-y-1">
                   <div className="flex items-center justify-between">
                     <div className="font-medium flex items-center gap-2">
-                      {v.companyId ? <a href={`/contacts?company=${v.companyId}`} className="text-blue-600 hover:underline dark:text-blue-400">{v.companyName}</a> : (v.companyName || v.contactName || v.attendees || "No company")}
+                      {v.companyId ? <a href={`/contacts?company=${v.companyId}`} className="text-primary hover:underline">{v.companyName}</a> : (v.companyName || v.contactName || v.attendees || "No company")}
                       {v.source === "diary" && (
-                        <Badge variant="outline" className="text-[10px] gap-1 border-sky-400 text-sky-700 dark:text-sky-400">
+                        <Badge variant="outline" className="text-[10px] gap-1">
                           <CalendarDays className="w-2.5 h-2.5" /> Diary
                         </Badge>
                       )}
@@ -3054,7 +3037,7 @@ export default function AvailableUnitsPage() {
                       </Button>
                     </div>
                   </div>
-                  {v.contactName && <div className="text-xs text-muted-foreground">Contact: {v.contactId ? <a href={`/contacts?contact=${v.contactId}`} className="text-blue-600 hover:underline dark:text-blue-400">{v.contactName}</a> : v.contactName}</div>}
+                  {v.contactName && <div className="text-xs text-muted-foreground">Contact: {v.contactId ? <a href={`/contacts?contact=${v.contactId}`} className="text-primary hover:underline">{v.contactName}</a> : v.contactName}</div>}
                   {/* When the attendees string already headlines the card
                       (no company/contact), repeating it here read every
                       quick-logged viewing twice. */}
@@ -3157,8 +3140,8 @@ export default function AvailableUnitsPage() {
                 <div key={o.id} className="border rounded-lg p-3 text-sm space-y-1">
                   <div className="flex items-center justify-between">
                     <div className="font-medium">
-                      {o.companyId ? <a href={`/contacts?company=${o.companyId}`} className="text-blue-600 hover:underline dark:text-blue-400">{o.companyName}</a> : (o.companyName || o.contactName || "No company")}
-                      {o.contactName && <span className="text-xs text-muted-foreground ml-2">({o.contactId ? <a href={`/contacts?contact=${o.contactId}`} className="text-blue-600 hover:underline dark:text-blue-400">{o.contactName}</a> : o.contactName})</span>}
+                      {o.companyId ? <a href={`/contacts?company=${o.companyId}`} className="text-primary hover:underline">{o.companyName}</a> : (o.companyName || o.contactName || "No company")}
+                      {o.contactName && <span className="text-xs text-muted-foreground ml-2">({o.contactId ? <a href={`/contacts?contact=${o.contactId}`} className="text-primary hover:underline">{o.contactName}</a> : o.contactName})</span>}
                     </div>
                     <div className="flex items-center gap-2">
                       {o.source === "email" && (
@@ -3399,7 +3382,7 @@ function HotsDialog({ unit, propertyName, isClient, onClose }: {
           {/* Word-document flow: the standard set uploaded once per property,
               populated per unit from the best offer, edited in Word Online. */}
           <div className="flex items-center gap-2 flex-wrap rounded-md border border-dashed px-3 py-2">
-            <FileText className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
             {data?.templateDocx ? (
               <>
                 <span className="text-xs text-muted-foreground truncate max-w-[220px]" title={data.templateDocxName || ""}>
@@ -3418,7 +3401,7 @@ function HotsDialog({ unit, propertyName, isClient, onClose }: {
             )}
             {!isClient && (
               <>
-                <button type="button" className="text-[11px] text-blue-600 hover:underline ml-auto" onClick={() => docxInputRef.current?.click()} data-testid="hots-docx-upload">
+                <button type="button" className="text-[11px] text-primary hover:underline ml-auto" onClick={() => docxInputRef.current?.click()} data-testid="hots-docx-upload">
                   {data?.templateDocx ? "Replace document" : "Upload standard HOTs (.docx)"}
                 </button>
                 <input ref={docxInputRef} type="file" accept=".docx" className="hidden"

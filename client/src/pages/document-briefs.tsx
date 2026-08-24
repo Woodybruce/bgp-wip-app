@@ -19,6 +19,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Pill, pillMetrics, pillInactive } from "@/components/ui/pill";
+import { cn } from "@/lib/utils";
 import { FileText, Loader2, Filter, Sparkles, Download, ExternalLink, Printer, Wand2 } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -227,27 +229,27 @@ export default function DocumentBriefsPage() {
       <div className="border-b bg-background sticky top-0 z-10 px-4 lg:px-6 py-3">
         <div className="flex items-center gap-2 mb-3">
           <FileText className="h-5 w-5 text-primary" />
-          <h1 className="text-xl font-semibold">Document Studio</h1>
+          <h1 className="text-xl font-semibold">Document Briefs</h1>
           <Badge variant="outline" className="text-xs gap-1">
-            <Sparkles className="h-3 w-3" /> Claude design
+            <Sparkles className="h-3 w-3" /> AI design
           </Badge>
         </div>
         {/* One cockpit, three tools — ready briefs, the original template
             generator, and the card-deck builder, all in one place. */}
-        <div className="flex items-center gap-1 border-b border-border -mb-px">
+        <div className="flex flex-wrap gap-1.5">
           {([
             { v: "ready", label: "Ready documents" },
             { v: "templates", label: "Your templates" },
             { v: "decks", label: "Decks" },
           ] as { v: StudioTab; label: string }[]).map((t) => (
-            <button
+            <Pill
               key={t.v}
+              active={tab === t.v}
               onClick={() => setTab(t.v)}
-              className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === t.v ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}
               data-testid={`studio-tab-${t.v}`}
             >
               {t.label}
-            </button>
+            </Pill>
           ))}
         </div>
         {tab === "ready" && (
@@ -270,15 +272,13 @@ export default function DocumentBriefsPage() {
               { v: "all", label: "All" },
               ...categories.map((c) => ({ v: c, label: c.replace("-", " ") })),
             ].map((c) => (
-              <Button
+              <Pill
                 key={c.v}
-                variant={categoryFilter === c.v ? "default" : "ghost"}
-                size="sm"
+                active={categoryFilter === c.v}
                 onClick={() => setCategoryFilter(c.v)}
-                className="h-7 text-xs capitalize"
               >
                 {c.label}
-              </Button>
+              </Pill>
             ))}
           </div>
         </div>
@@ -306,8 +306,8 @@ export default function DocumentBriefsPage() {
                     <div className="flex-1 min-w-0">
                       <div className="font-medium">{b.name}</div>
                       <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                        <Badge className={CATEGORY_COLOR[b.category] || "bg-muted"} variant="secondary">{b.category.replace("-", " ")}</Badge>
-                        <Badge variant="outline" className="text-[10px]">scope: {b.scope}</Badge>
+                        <span className={cn(pillMetrics, "border border-transparent", CATEGORY_COLOR[b.category] || "bg-muted text-muted-foreground")}>{b.category.replace("-", " ")}</span>
+                        <span className={cn(pillMetrics, pillInactive)}>{b.scope}</span>
                       </div>
                     </div>
                   </div>
@@ -328,6 +328,7 @@ export default function DocumentBriefsPage() {
                     </Button>
                     <Button
                       size="sm"
+                      variant="outline"
                       onClick={() => run(b.id, true)}
                       disabled={!property || running !== null}
                       className="gap-1"
@@ -370,7 +371,7 @@ export default function DocumentBriefsPage() {
             <CardContent className="p-2">
               <div className="flex items-center justify-between px-2 py-1 gap-2 flex-wrap">
                 <div className="text-xs font-medium">
-                  Claude design preview · {output?.briefName}
+                  AI design preview · {output?.briefName}
                 </div>
                 <div className="flex items-center gap-2 flex-wrap">
                   {savedUrl && (

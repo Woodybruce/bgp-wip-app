@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest, getQueryFn, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -362,29 +363,29 @@ function CrmLinkBadges({ links }: { links: CrmLinks }) {
     <div className="flex flex-wrap gap-1 mt-1.5" data-testid="crm-links">
       {links.properties.map(p => (
         <Link key={p.id} href={`/properties/${p.id}`}>
-          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted border-blue-300 dark:border-blue-700">
-            <Home className="w-2.5 h-2.5 text-blue-500" />{p.name}
+          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted">
+            <Home className="w-2.5 h-2.5 text-muted-foreground" />{p.name}
           </Badge>
         </Link>
       ))}
       {links.deals.map(d => (
         <Link key={d.id} href={`/deals/${d.id}`}>
-          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted border-green-300 dark:border-green-700">
-            <Handshake className="w-2.5 h-2.5 text-green-500" />{d.name}
+          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted">
+            <Handshake className="w-2.5 h-2.5 text-muted-foreground" />{d.name}
           </Badge>
         </Link>
       ))}
       {links.contacts.map(c => (
         <Link key={c.id} href={`/contacts/${c.id}`}>
-          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted border-violet-300 dark:border-violet-700">
-            <UserCheck className="w-2.5 h-2.5 text-violet-500" />{c.name}
+          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted">
+            <UserCheck className="w-2.5 h-2.5 text-muted-foreground" />{c.name}
           </Badge>
         </Link>
       ))}
       {links.companies.map(co => (
         <Link key={co.id} href={`/companies/${co.id}`}>
-          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted border-amber-300 dark:border-amber-700">
-            <Building2 className="w-2.5 h-2.5 text-amber-500" />{co.name}
+          <Badge variant="outline" className="text-[9px] gap-0.5 cursor-pointer hover:bg-muted">
+            <Building2 className="w-2.5 h-2.5 text-muted-foreground" />{co.name}
           </Badge>
         </Link>
       ))}
@@ -409,8 +410,8 @@ function ConnectPrompt() {
   return (
     <div className="h-full flex items-center justify-center" data-testid="calendar-connect-prompt">
       <div className="text-center space-y-4 max-w-sm px-6">
-        <div className="w-20 h-20 rounded-2xl bg-blue-500/10 flex items-center justify-center mx-auto">
-          <CalendarIcon className="w-10 h-10 text-blue-500" />
+        <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto">
+          <CalendarIcon className="w-10 h-10 text-primary" />
         </div>
         <div>
           <h2 className="text-xl font-semibold">Outlook Calendar</h2>
@@ -505,7 +506,7 @@ function DayColumn({ date, events, hours, today, nowTop, onSelectEvent, selected
   const eventLayout = computeEventLayout(events);
 
   return (
-    <div className={`flex-1 relative border-l ${isColumnToday && !isTeamMember ? "bg-blue-500/[0.03]" : ""} min-w-0`}>
+    <div className={`flex-1 relative border-l ${isColumnToday && !isTeamMember ? "bg-primary/[0.03]" : ""} min-w-0`}>
       {hours.map(hour => (
         <div key={hour} className="absolute w-full border-t border-border/40" style={{ top: `${(hour - START_HOUR) * HOUR_HEIGHT}px`, height: `${HOUR_HEIGHT}px` }}>
           <div className="absolute w-full border-t border-border/20 border-dashed" style={{ top: `${HOUR_HEIGHT / 2}px` }} />
@@ -693,21 +694,26 @@ function TimeGrid({
         <div className="w-[52px] shrink-0" />
         {dates.map(date => {
           const isToday = isSameDay(date, today);
+          // Today's header takes the primary accent on weekdays only — a
+          // weekend "SUN 23" in the red-leaning terracotta read as negative
+          // (design review 2026-08-23). Weekend today stays bold but muted.
+          const isWeekendDay = [0, 6].includes(date.getDay());
+          const todayAccent = isToday && !isWeekendDay;
           const teamCols = teamColumnsByDay.get(date.toDateString()) || [];
           const totalCols = showTeamColumns ? 1 + teamCols.length : 1;
           return (
             <div key={date.toDateString()} className="flex-1 border-l min-w-0">
               {!showTeamColumns ? (
-                <div className={`text-center py-2 ${isToday ? "bg-blue-500/5" : ""}`}>
-                  <p className={`text-[10px] uppercase tracking-wider ${isToday ? "text-blue-600 dark:text-blue-400 font-bold" : "text-muted-foreground font-medium"}`}>
+                <div className={`text-center py-2 ${isToday ? "bg-primary/5" : ""}`}>
+                  <p className={`text-[10px] uppercase tracking-wider ${todayAccent ? "text-primary font-bold" : isToday ? "text-muted-foreground font-bold" : "text-muted-foreground font-medium"}`}>
                     {date.toLocaleDateString("en-GB", { weekday: "short" })}
                   </p>
-                  <p className={`text-lg leading-tight ${isToday ? "text-blue-600 dark:text-blue-400 font-bold" : "font-semibold"}`}>{date.getDate()}</p>
+                  <p className={`text-lg leading-tight ${todayAccent ? "text-primary font-bold" : isToday ? "font-bold" : "font-semibold"}`}>{date.getDate()}</p>
                 </div>
               ) : (
                 <div className="flex">
-                  <div className={`flex-1 text-center py-1.5 border-r border-border/30 ${isToday ? "bg-blue-500/5" : ""}`}>
-                    <p className={`text-[10px] uppercase tracking-wider font-bold ${isToday ? "text-blue-600 dark:text-blue-400" : ""}`}>
+                  <div className={`flex-1 text-center py-1.5 border-r border-border/30 ${isToday ? "bg-primary/5" : ""}`}>
+                    <p className={`text-[10px] uppercase tracking-wider font-bold ${todayAccent ? "text-primary" : isToday ? "text-muted-foreground" : ""}`}>
                       {date.toLocaleDateString("en-GB", { weekday: "short" })} {date.getDate()}
                     </p>
                     <p className="text-[9px] text-muted-foreground font-semibold">You</p>
@@ -857,7 +863,7 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
     return (
       <div className="space-y-3 py-2">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-500" />
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
           <span>Preparing meeting briefing...</span>
         </div>
         <div className="space-y-2">
@@ -887,12 +893,12 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
         <Button
           variant="outline"
           size="sm"
-          className="w-full gap-2 bg-gradient-to-r from-violet-500/5 to-blue-500/5 border-violet-200 dark:border-violet-800 hover:from-violet-500/10 hover:to-blue-500/10"
+          className="w-full gap-2"
           onClick={() => briefingMutation.mutate()}
           data-testid="button-generate-briefing"
         >
-          <Sparkles className="w-3.5 h-3.5 text-violet-500" />
-          <span className="text-violet-700 dark:text-violet-300 font-medium">AI Meeting Prep</span>
+          <Sparkles className="w-3.5 h-3.5 text-primary" />
+          <span className="font-medium">AI Meeting Prep</span>
         </Button>
       </div>
     );
@@ -904,8 +910,8 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
     <div className="space-y-3" data-testid="meeting-briefing">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <Sparkles className="w-3.5 h-3.5 text-violet-500" />
-          <p className="text-xs font-semibold text-violet-700 dark:text-violet-300 uppercase tracking-wider">AI Briefing</p>
+          <Sparkles className="w-3.5 h-3.5 text-primary" />
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">AI Briefing</p>
         </div>
         <Button variant="ghost" size="sm" className="h-5 px-1.5 text-[10px]" onClick={() => briefingMutation.mutate()} data-testid="button-refresh-briefing">
           Refresh
@@ -918,7 +924,7 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
         </p>
       )}
       {briefing.summary && (
-        <div className="rounded-lg bg-violet-500/5 border border-violet-200 dark:border-violet-800/50 px-3 py-2">
+        <div className="rounded-lg bg-muted/40 border border-border px-3 py-2">
           <p className="text-[12px] leading-relaxed text-foreground/80">{briefing.summary}</p>
         </div>
       )}
@@ -926,13 +932,13 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
       {briefing.talkingPoints.length > 0 && (
         <div className="space-y-1.5">
           <div className="flex items-center gap-1.5">
-            <MessageSquare className="w-3 h-3 text-blue-500" />
+            <MessageSquare className="w-3 h-3 text-muted-foreground" />
             <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Talking Points</p>
           </div>
           <div className="space-y-1">
             {briefing.talkingPoints.map((point, i) => (
               <div key={i} className="flex items-start gap-2 text-[11px] leading-relaxed">
-                <span className="text-blue-500 font-bold mt-0.5 shrink-0">{i + 1}.</span>
+                <span className="text-primary font-bold mt-0.5 shrink-0">{i + 1}.</span>
                 <span className="text-foreground/80">{point}</span>
               </div>
             ))}
@@ -962,7 +968,7 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
           {briefing.dealContext && (
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
-                <Handshake className="w-3 h-3 text-green-500" />
+                <Handshake className="w-3 h-3 text-muted-foreground" />
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Deal Context</p>
               </div>
               <p className="text-[11px] text-foreground/80 leading-relaxed">{briefing.dealContext}</p>
@@ -982,13 +988,13 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
           {briefing.preparation.length > 0 && (
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
-                <FileText className="w-3 h-3 text-sky-500" />
+                <FileText className="w-3 h-3 text-muted-foreground" />
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Preparation</p>
               </div>
               <div className="space-y-1">
                 {briefing.preparation.map((item, i) => (
                   <div key={i} className="flex items-start gap-1.5 text-[11px]">
-                    <span className="text-sky-500 mt-0.5 shrink-0">•</span>
+                    <span className="text-primary mt-0.5 shrink-0">•</span>
                     <span className="text-foreground/80">{item}</span>
                   </div>
                 ))}
@@ -1016,13 +1022,13 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
           {briefing.followUpSuggestions.length > 0 && (
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
-                <ArrowRight className="w-3 h-3 text-violet-500" />
+                <ArrowRight className="w-3 h-3 text-muted-foreground" />
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Follow-up</p>
               </div>
               <div className="space-y-1">
                 {briefing.followUpSuggestions.map((s, i) => (
                   <div key={i} className="flex items-start gap-1.5 text-[11px]">
-                    <span className="text-violet-500 mt-0.5 shrink-0">→</span>
+                    <span className="text-primary mt-0.5 shrink-0">→</span>
                     <span className="text-foreground/80">{s}</span>
                   </div>
                 ))}
@@ -1033,7 +1039,7 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
           {crmContext && crmContext.recentHistory.length > 0 && (
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
-                <Clock className="w-3 h-3 text-gray-500" />
+                <Clock className="w-3 h-3 text-muted-foreground" />
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Recent History</p>
               </div>
               <div className="space-y-1">
@@ -1054,7 +1060,7 @@ function EventBriefing({ event }: { event: CalendarEvent }) {
         briefing.riskFlags.length > 0 || briefing.followUpSuggestions.length > 0 ||
         (crmContext && crmContext.recentHistory.length > 0)) && (
         <button
-          className="flex items-center gap-1 text-[10px] text-violet-500 hover:text-violet-700 dark:hover:text-violet-300 font-medium"
+          className="flex items-center gap-1 text-[10px] text-primary hover:underline font-medium"
           onClick={() => setExpanded(!expanded)}
           data-testid="button-toggle-briefing-details"
         >
@@ -1111,8 +1117,8 @@ function EventDetailPanel({ event, onClose, crmLinks }: { event: CalendarEvent; 
           )}
           {event.isOnlineMeeting && joinUrl && (
             <div className="flex items-start gap-3">
-              <Video className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
-              <a href={joinUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-500 hover:underline" data-testid="link-join-meeting">Join online meeting</a>
+              <Video className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />
+              <a href={joinUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline" data-testid="link-join-meeting">Join online meeting</a>
             </div>
           )}
           {event.organizer && (
@@ -1199,9 +1205,9 @@ function MiniCalendar({ selectedDate, onSelectDate, events }: { selectedDate: Da
           const isToday = isSameDay(date, today);
           const hasEvents = eventDates.has(`${year}-${month}-${day}`);
           return (
-            <button key={day} className={`relative w-full aspect-square flex items-center justify-center text-[11px] rounded-full transition-colors ${isSelected ? "bg-blue-600 text-white font-bold" : isToday ? "font-bold text-blue-600 dark:text-blue-400" : "hover:bg-muted"}`} onClick={() => onSelectDate(date)} data-testid={`cal-day-${day}`}>
+            <button key={day} className={`relative w-full aspect-square flex items-center justify-center text-[11px] rounded-full transition-colors ${isSelected ? "bg-primary text-primary-foreground font-bold" : isToday ? "font-bold text-primary" : "hover:bg-muted"}`} onClick={() => onSelectDate(date)} data-testid={`cal-day-${day}`}>
               {day}
-              {hasEvents && !isSelected && <div className="absolute bottom-0.5 w-1 h-1 rounded-full bg-blue-500" />}
+              {hasEvents && !isSelected && <div className="absolute bottom-0.5 w-1 h-1 rounded-full bg-primary" />}
             </button>
           );
         })}
@@ -1263,7 +1269,7 @@ function UpcomingList({ events, selectedDate, onSelectEvent }: { events: Calenda
                 </div>
                 <div className="shrink-0 pt-0.5">
                   {TypeIcon && <TypeIcon className={`w-3.5 h-3.5 ${color.text} opacity-60 group-hover:opacity-100 transition-opacity`} />}
-                  {!TypeIcon && event.isOnlineMeeting && <Video className="w-3.5 h-3.5 text-blue-400 opacity-60 group-hover:opacity-100 transition-opacity" />}
+                  {!TypeIcon && event.isOnlineMeeting && <Video className="w-3.5 h-3.5 text-muted-foreground opacity-60 group-hover:opacity-100 transition-opacity" />}
                 </div>
               </button>
             );
@@ -1563,35 +1569,30 @@ export default function Calendar() {
         </div>
 
         <div className="flex items-center gap-1">
-          <div className="flex bg-muted rounded-md p-0.5">
+          <div className="flex gap-1">
             {(["day", "workWeek", "week"] as ViewMode[]).map(mode => (
-              <button
-                key={mode}
-                className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${viewMode === mode ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                onClick={() => setViewMode(mode)}
-                data-testid={`view-${mode}`}
-              >
+              <Pill key={mode} active={viewMode === mode} onClick={() => setViewMode(mode)} data-testid={`view-${mode}`}>
                 {mode === "day" ? "Day" : mode === "workWeek" ? "Work week" : "Week"}
-              </button>
+              </Pill>
             ))}
           </div>
-          <div className="flex items-center gap-1.5 ml-2">
-            <button className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${showCrmEvents ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`} onClick={() => setShowCrmEvents(!showCrmEvents)} data-testid="toggle-crm-events">
+          <div className="flex items-center gap-1 ml-2">
+            <Pill active={showCrmEvents} onClick={() => setShowCrmEvents(!showCrmEvents)} data-testid="toggle-crm-events">
               <Building2 className="w-3 h-3" />CRM
-            </button>
+            </Pill>
             {status?.connected && (
-              <button className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${showOutlookEvents ? "bg-blue-500/15 text-blue-700 dark:text-blue-300" : "bg-muted text-muted-foreground"}`} onClick={() => setShowOutlookEvents(!showOutlookEvents)} data-testid="toggle-outlook-events">
+              <Pill active={showOutlookEvents} onClick={() => setShowOutlookEvents(!showOutlookEvents)} data-testid="toggle-outlook-events">
                 <Cloud className="w-3 h-3" />Outlook
-              </button>
+              </Pill>
             )}
             {status?.connected && (
-              <button
-                className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium transition-colors ${showTeam ? "bg-violet-500/15 text-violet-700 dark:text-violet-300" : "bg-muted text-muted-foreground"}`}
+              <Pill
+                active={showTeam}
                 onClick={() => { setShowTeam(!showTeam); if (!showTeam && viewMode !== "day") setViewMode("day"); }}
                 data-testid="toggle-team"
               >
                 <Users className="w-3 h-3" />Team
-              </button>
+              </Pill>
             )}
           </div>
         </div>
@@ -1603,7 +1604,7 @@ export default function Calendar() {
             <button
               key={t}
               onClick={() => setTeamFilter(t)}
-              className={`text-[10px] px-2.5 py-0.5 rounded-full border transition-colors ${effectiveTeamFilter === t ? "bg-black text-white dark:bg-white dark:text-black border-transparent" : "bg-background hover:bg-muted border-border text-foreground"}`}
+              className={`text-[11px] leading-none font-semibold uppercase tracking-wide whitespace-nowrap px-2.5 py-[5px] rounded-full border transition-colors ${effectiveTeamFilter === t ? "bg-foreground text-background border-transparent" : "bg-background hover:bg-muted border-border text-muted-foreground"}`}
               data-testid={`team-pill-${t.toLowerCase().replace(/[\s/]+/g, "-")}`}
             >
               {t}
@@ -1624,7 +1625,7 @@ export default function Calendar() {
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Event Types</p>
                 {activeEventType && (
                   <button
-                    className="text-[9px] text-blue-500 hover:text-blue-700 font-medium"
+                    className="text-[9px] text-primary hover:underline font-medium"
                     onClick={() => setActiveEventType(null)}
                     data-testid="clear-event-type-filter"
                   >

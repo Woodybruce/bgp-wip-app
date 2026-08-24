@@ -23,6 +23,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import { ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -466,7 +467,7 @@ function CvTab({ userId, canEdit }: { userId: string; canEdit: boolean }) {
             )}
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-2xl font-serif font-bold text-slate-900">{data.name}</h2>
+            <h2 className="text-2xl font-serif font-bold text-foreground">{data.name}</h2>
             {data.title && <div className="text-base text-[#0F4C75] mt-0.5">{data.title}</div>}
             <div className="text-xs text-muted-foreground mt-2 space-x-2">
               {data.email && <span>{data.email}</span>}
@@ -2301,15 +2302,15 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
             if (["holiday", "pension", "kit", "files"].includes(t)) return "mystuff";
             return t;
           })()} className="mt-2">
-          <TabsList className="w-full overflow-x-auto flex-nowrap justify-start h-9">
-            {!isAdmin && !isOwn && <TabsTrigger value="about" className="text-xs">About</TabsTrigger>}
-            {(isAdmin || isOwn) && <TabsTrigger value="personal" className="text-xs">Personal</TabsTrigger>}
-            {isAdmin && !isOfficeStaff && <TabsTrigger value="commission" className="text-xs">Commission</TabsTrigger>}
-            {(isAdmin || isOwn) && <TabsTrigger value="mystuff" className="text-xs">My stuff</TabsTrigger>}
-            {(isAdmin || isOwn) && <TabsTrigger value="reviews" className="text-xs">Reviews</TabsTrigger>}
-            {(isAdmin || isOwn) && !isSecretary(person.title) && <TabsTrigger value="career" className="text-xs">Career</TabsTrigger>}
-            {(isAdmin || isOwn) && <TabsTrigger value="expenses" className="text-xs">Expenses</TabsTrigger>}
-            <TabsTrigger value="cv" className="text-xs">CV</TabsTrigger>
+          <TabsList className={pillTabsList}>
+            {!isAdmin && !isOwn && <TabsTrigger value="about" className={pillTabsTrigger}>About</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="personal" className={pillTabsTrigger}>Personal</TabsTrigger>}
+            {isAdmin && !isOfficeStaff && <TabsTrigger value="commission" className={pillTabsTrigger}>Commission</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="mystuff" className={pillTabsTrigger}>My stuff</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="reviews" className={pillTabsTrigger}>Reviews</TabsTrigger>}
+            {(isAdmin || isOwn) && !isSecretary(person.title) && <TabsTrigger value="career" className={pillTabsTrigger}>Career</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="expenses" className={pillTabsTrigger}>Expenses</TabsTrigger>}
+            <TabsTrigger value="cv" className={pillTabsTrigger}>CV</TabsTrigger>
           </TabsList>
 
           {!isAdmin && !isOwn && (
@@ -6192,8 +6193,8 @@ export default function HRPage() {
       <div className="p-4 border-b sticky top-0 bg-background z-10">
         <div className="flex items-center gap-2 mb-3">
           <div>
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Users className="w-6 h-6 text-emerald-500" /> People & HR
+            <h1 className="text-2xl font-bold tracking-tight">
+              People & HR
             </h1>
             <p className="text-sm text-muted-foreground mt-0.5">Team directory, benefits, holidays and policies</p>
           </div>
@@ -6232,7 +6233,7 @@ export default function HRPage() {
       </div>
 
       <Tabs defaultValue="overview" className="px-4">
-        <TabsList className="flex gap-1 border-b bg-transparent p-0 h-auto rounded-none justify-start w-full mt-3 mb-3">
+        <TabsList className={`${pillTabsList} mt-3 mb-3`}>
           {[
             { value: "overview", label: "Overview" },
             { value: "my-tasks", label: "My Tasks" },
@@ -6250,7 +6251,7 @@ export default function HRPage() {
             <TabsTrigger
               key={t.value}
               value={t.value}
-              className="px-4 py-2.5 text-sm font-medium border-b-2 -mb-px rounded-none bg-transparent shadow-none data-[state=active]:shadow-none border-transparent text-muted-foreground hover:text-foreground data-[state=active]:border-emerald-500 data-[state=active]:text-emerald-600 data-[state=active]:bg-transparent"
+              className={pillTabsTrigger}
             >
               {t.label}
             </TabsTrigger>

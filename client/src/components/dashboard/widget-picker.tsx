@@ -53,6 +53,9 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
   { id: "my-portfolio", name: "My Portfolio", description: "Properties and deals assigned to you", icon: Briefcase, category: "crm" },
   { id: "landsec-analytics", name: "Landsec Analytics", description: "Deep analytics for the Landsec portfolio: overview, agents, pipeline & activity", icon: Landmark, category: "crm" },
   { id: "kpi-overview", name: "KPI Overview", description: "Key metrics with sparkline trends and month-over-month changes", icon: TrendingUp, category: "overview" },
+  // Equity directors only — filtered out for everyone else in dashboard.tsx,
+  // and the API behind it is server-gated (requireEquityOrAdmin).
+  { id: "equity-finance", name: "Equity Finance", description: "Company P&L, cash, cost run rate and projected FY net — equity directors only", icon: Landmark, category: "overview" },
 ];
 
 export const DEFAULT_WIDGETS = WIDGET_REGISTRY.map(w => w.id);
@@ -74,6 +77,7 @@ export const BOARD_REGISTRY: BoardDefinition[] = [
   { id: "my-portfolio-board", name: "My Portfolio", description: "Properties and deals assigned to you", icon: Briefcase, widgetIds: ["my-portfolio"] },
   { id: "landsec-analytics-board", name: "Landsec Analytics", description: "Portfolio overview, agent performance, pipeline & activity for Landsec", icon: Landmark, widgetIds: ["landsec-analytics"] },
   { id: "kpi-overview-board", name: "KPI Overview", description: "Key metrics with sparkline trends", icon: TrendingUp, widgetIds: ["kpi-overview"] },
+  { id: "equity-finance-board", name: "Equity Finance", description: "Company financial position and FY projection (equity directors only)", icon: Landmark, widgetIds: ["equity-finance"] },
 ];
 
 export const DEFAULT_BOARDS = BOARD_REGISTRY.map(b => b.id);

@@ -45,6 +45,7 @@ function extractSources(checklist: any): string[] {
 import { KycPanel } from "@/components/kyc-panel";
 import { AmlAiPanel } from "@/components/deal-aml-status";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 
 interface BoardRow {
   id: string;
@@ -276,15 +277,12 @@ export default function ComplianceBoard() {
     <div className="p-4 lg:p-6 max-w-[1600px] mx-auto">
       <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2 tracking-tight">
-            <ShieldCheck className="w-6 h-6 text-primary" />
-            Compliance Board
-          </h1>
+          <h1 className="text-2xl font-bold tracking-tight">Compliance Board</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             AML status for every counterparty on a live deal · {data?.counts?.total || 0} total
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button
             size="sm"
             variant="outline"
@@ -326,19 +324,19 @@ export default function ComplianceBoard() {
       </div>
 
       <Tabs defaultValue="counterparties">
-        <TabsList>
-          <TabsTrigger value="counterparties" data-testid="tab-counterparties">
-            <Building2 className="w-3.5 h-3.5 mr-1.5" />
-            Counterparties ({data?.counts.total || 0})
+        <TabsList className={pillTabsList}>
+          <TabsTrigger value="counterparties" className={pillTabsTrigger} data-testid="tab-counterparties">
+            Counterparties <span className="font-mono normal-case opacity-70">{data?.counts.total || 0}</span>
           </TabsTrigger>
-          <TabsTrigger value="deals" data-testid="tab-deals">
-            <Handshake className="w-3.5 h-3.5 mr-1.5" />
-            Live deals ({dealsData?.counts.total || 0})
+          <TabsTrigger value="deals" className={pillTabsTrigger} data-testid="tab-deals">
+            Live deals <span className="font-mono normal-case opacity-70">{dealsData?.counts.total || 0}</span>
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="counterparties" className="mt-4">
-          {/* Summary cards */}
+          {/* Summary cards — table/card views only; on the board they exactly
+              duplicated the kanban column headers + counts beneath them. */}
+          {viewMode !== "board" && (
           <div className="grid grid-cols-3 gap-3 mb-5">
             {COLUMNS.map(col => {
               const count = data?.counts[col.key] || 0;
@@ -357,6 +355,7 @@ export default function ComplianceBoard() {
               );
             })}
           </div>
+          )}
 
           {viewMode === "board" && (
             <>
@@ -519,25 +518,6 @@ function DealsKanban({ data, loading }: { data: DealBoardData | undefined; loadi
 
   return (
     <div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
-        {DEAL_COLUMNS.map(col => {
-          const count = (data.counts as any)[col.key] || 0;
-          const Icon = col.icon;
-          return (
-            <Card key={col.key} className={`border-l-4 ${col.tone}`}>
-              <CardContent className="p-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <Icon className="w-4 h-4 text-muted-foreground" />
-                  <span className="text-[11px] uppercase font-semibold text-muted-foreground tracking-wide">{col.label}</span>
-                </div>
-                <div className="text-2xl font-bold">{count}</div>
-                <div className="text-[10px] text-muted-foreground">{col.description}</div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {DEAL_COLUMNS.map(col => {
           const items = data.rows.filter(r => r.column === col.key);

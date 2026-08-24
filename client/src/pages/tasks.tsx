@@ -6,7 +6,7 @@ import { TaskNotesCanvas } from "@/components/task-notes-canvas";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import {
-  ListTodo, Plus, Check, Circle, Clock, AlertTriangle, Flame, ArrowRight,
+  Plus, Check, Circle, Clock, AlertTriangle, Flame, ArrowRight,
   Trash2, Pencil, Calendar as CalendarIcon, Building2, BarChart3, User,
   Sparkles, Brain, ChevronDown, ChevronRight, GripVertical, X, RefreshCw,
   CheckCircle2, CircleDot, Filter, SlidersHorizontal, Loader2, Star,
@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Pill } from "@/components/ui/pill";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -154,7 +155,7 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
             ? "bg-emerald-500 border-emerald-500 text-white"
             : isOverdue
               ? "border-red-400 hover:border-red-500 hover:bg-red-50"
-              : "border-gray-300 hover:border-primary hover:bg-primary/5"
+              : "border-border hover:border-primary hover:bg-primary/5"
         }`}
         data-testid={`task-toggle-${task.id}`}
       >
@@ -290,7 +291,7 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
             <button
               onClick={() => onToggleSubtask(sub.id)}
               className={`flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-all ${
-                sub.status === "done" ? "bg-emerald-500 border-emerald-500 text-white" : "border-gray-300 hover:border-primary"
+                sub.status === "done" ? "bg-emerald-500 border-emerald-500 text-white" : "border-border hover:border-primary"
               }`}
             >
               {sub.status === "done" && <Check className="w-2.5 h-2.5" />}
@@ -677,17 +678,12 @@ export default function TasksPage() {
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-[1600px] mx-auto px-4 sm:px-6 py-6 space-y-6">
 
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                  <ListTodo className="w-5 h-5 text-primary" />
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold tracking-tight">My Tasks</h1>
-                  <p className="text-sm text-muted-foreground mt-0.5">
-                    {activeTasks.length} open{overdueTasks.length > 0 ? ` · ${overdueTasks.length} overdue` : ""}{todayTasks.length > 0 ? ` · ${todayTasks.length} due today` : ""}
-                  </p>
-                </div>
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">My Tasks</h1>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  {activeTasks.length} open{overdueTasks.length > 0 ? ` · ${overdueTasks.length} overdue` : ""}{todayTasks.length > 0 ? ` · ${todayTasks.length} due today` : ""}
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 <Button
@@ -714,7 +710,7 @@ export default function TasksPage() {
                   data-testid="button-new-task"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  New Task
+                  Add task
                 </Button>
               </div>
             </div>
@@ -836,33 +832,24 @@ export default function TasksPage() {
                     <CircleDot className="w-4 h-4 text-primary" />
                     Tasks
                   </CardTitle>
-                  <div className="flex flex-wrap gap-1 border-b">
-                    <button
-                      className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px flex items-center gap-1 ${
-                        viewAssigned
-                          ? "border-primary text-primary"
-                          : "border-transparent text-muted-foreground hover:text-foreground"
-                      }`}
+                  <div className="flex flex-wrap gap-1.5">
+                    <Pill
+                      active={viewAssigned}
                       onClick={() => setViewAssigned(v => !v)}
                       title="Tasks you assigned to other people"
                       data-testid="filter-assigned-by-me"
                     >
-                      <User className="w-3.5 h-3.5" />
                       Assigned by me
-                    </button>
+                    </Pill>
                     {(["all", "todo", "in_progress", "done"] as const).map(f => (
-                      <button
+                      <Pill
                         key={f}
-                        className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${
-                          filter === f
-                            ? "border-primary text-primary"
-                            : "border-transparent text-muted-foreground hover:text-foreground"
-                        }`}
+                        active={filter === f}
                         onClick={() => setFilter(f)}
                         data-testid={`filter-${f}`}
                       >
                         {f === "all" ? "All" : f === "todo" ? "To Do" : f === "in_progress" ? "In Progress" : "Done"}
-                      </button>
+                      </Pill>
                     ))}
                   </div>
                 </div>

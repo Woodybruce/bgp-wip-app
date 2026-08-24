@@ -66,8 +66,7 @@ export default function DecksPage() {
     <div className="p-4 md:p-6 space-y-6 max-w-[1400px] mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Layers className="w-6 h-6 text-primary" />
+          <h1 className="text-2xl font-bold tracking-tight">
             Decks
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
@@ -76,7 +75,7 @@ export default function DecksPage() {
           </p>
         </div>
         <Button onClick={() => setCreateOpen(true)} data-testid="button-new-deck">
-          <Plus className="w-4 h-4 mr-1" /> New deck
+          <Plus className="w-4 h-4 mr-1" /> Add deck
         </Button>
       </div>
 
@@ -118,7 +117,7 @@ export default function DecksPage() {
               Start one from a template, or have Pathway / ChatBGP populate one for you.
             </p>
             <Button size="sm" variant="outline" className="mt-4" onClick={() => setCreateOpen(true)}>
-              <Plus className="w-3 h-3 mr-1" /> Create your first deck
+              <Plus className="w-3 h-3 mr-1" /> Add deck
             </Button>
           </CardContent>
         </Card>
@@ -216,7 +215,7 @@ function NewDeckDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>New deck</DialogTitle>
+          <DialogTitle>Add deck</DialogTitle>
         </DialogHeader>
         <div className="space-y-3 py-2">
           <div>

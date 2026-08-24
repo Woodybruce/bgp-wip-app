@@ -1740,7 +1740,7 @@ export function setupCrmRoutes(app: Express) {
           kycStatus, kycCheckedAt, kycApprovedBy, kycExpiresAt,
           amlChecklist, amlRiskLevel, amlPepStatus, amlSourceOfWealth,
           amlSourceOfWealthNotes, amlEddRequired, amlEddReason, amlNotes,
-          companiesHouseOfficers, companiesHouseData, hunterFlag, trackingReason,
+          companiesHouseOfficers, companiesHouseData, hunterFlag,
           lettingHunterFlag, lettingHunterNotes, investmentHunterFlag, investmentHunterNotes,
           distressFlag, distressNotes, acquiringNow, acquiringNowNotes,
           disposingNow, disposingNowNotes, lendingAppetiteNotes, lastInteraction,
@@ -1768,7 +1768,6 @@ export function setupCrmRoutes(app: Express) {
         } else if (!/^tenant\b/i.test(ct)) {
           return res.status(403).json({ error: "Client accounts can only create tenant brands" });
         }
-        (parsed as any).isTrackedBrand = true;
       }
       const company = await storage.createCrmCompany(parsed);
       if (createScope && (company as any)?.id) {
@@ -4744,7 +4743,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
         const seen = new Set(candidates.map((c) => c.companyId).filter(Boolean));
         const brandRows = await pool.query(
           `SELECT id, name, company_type FROM crm_companies
-            WHERE is_tracked_brand = true AND merged_into_id IS NULL
+            WHERE company_type ILIKE 'tenant%' AND merged_into_id IS NULL
               AND company_type ILIKE ANY($1)
             ORDER BY last_enriched_at DESC NULLS LAST LIMIT 12`,
           [catPatterns]
@@ -7126,6 +7125,24 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           lookup((deal as any).purchaserId) ||
           lookup(propLandlordId) ||
           null;
+        // The company id behind clientName, so the report can link the
+        // Client cell. Mirrors the name chain: role pick first, then the
+        // same fallbacks, keeping id and name pointing at the same company.
+        const clientIdByRole =
+          dt === "Sale"              ? (deal as any).vendorId :
+          dt === "Purchase"          ? (deal as any).purchaserId :
+          dt === "Lease Acquisition" ? deal.tenantId :
+          dt === "Lease Disposal"    ? deal.tenantId :
+          isTenantRepTeam            ? deal.tenantId :
+                                       deal.landlordId;
+        const clientId =
+          (clientIdByRole && compMap.has(clientIdByRole) ? clientIdByRole : null) ||
+          (deal.landlordId && compMap.has(deal.landlordId) ? deal.landlordId : null) ||
+          (deal.tenantId && compMap.has(deal.tenantId) ? deal.tenantId : null) ||
+          ((deal as any).vendorId && compMap.has((deal as any).vendorId) ? (deal as any).vendorId : null) ||
+          ((deal as any).purchaserId && compMap.has((deal as any).purchaserId) ? (deal as any).purchaserId : null) ||
+          (propLandlordId && compMap.has(propLandlordId) ? propLandlordId : null) ||
+          null;
         const billingEntityName = deal.xeroContactName || null;
         const invoice = invoicesByDeal.get(deal.id);
         const stage = deriveStage(deal.status);
@@ -7168,8 +7185,11 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               ref: deal.name,
               groupName: deal.groupName || null,
               client: clientName,
+              clientId,
               project: propertyName,
+              propertyId: deal.propertyId || null,
               tenant: tenantName,
+              tenantId: deal.tenantId || null,
               billingEntity: billingEntityName,
               team: teamStr,
               agent: alloc.agentName,
@@ -7203,8 +7223,11 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               ref: deal.name,
               groupName: deal.groupName || null,
               client: clientName,
+              clientId,
               project: propertyName,
+              propertyId: deal.propertyId || null,
               tenant: tenantName,
+              tenantId: deal.tenantId || null,
               billingEntity: billingEntityName,
               team: teamStr,
               agent: null,
@@ -7232,11 +7255,18 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 id: `${deal.id}_${agentName}`,
                 dealId: deal.id,
                 dealRef: deal.dealRef ?? null,
-                dealType: deal.dealType || null,
+                dealType: normaliseDealType(deal.dealType),
                 ref: deal.name,
                 groupName: deal.groupName || null,
+                // This branch (equal split across internal_agent, no fee
+                // allocations) never set client — those deals showed "—" in
+                // the Client column and slipped past the Client filter.
+                client: clientName,
+                clientId,
                 project: propertyName,
+                propertyId: deal.propertyId || null,
                 tenant: tenantName,
+                tenantId: deal.tenantId || null,
                 billingEntity: billingEntityName,
                 team: teamStr,
                 agent: agentName,
@@ -7334,6 +7364,19 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       res.json(out);
     } catch (e: any) {
       console.error("[wip/fee-reconciliation]", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Needs Attention — the unlinked-entries audit behind the WIP report tab.
+  app.get("/api/wip/health", requireAuth, async (req, res) => {
+    try {
+      const senior = await isWipSenior(req);
+      const fullView = await hasWipFullView(req);
+      if (!senior && !fullView) return res.status(403).json({ error: "Not authorised" });
+      res.json(await computeWipHealth());
+    } catch (e: any) {
+      console.error("[wip/health]", e?.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -8011,7 +8054,6 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 ) AS "targetedAt",
                 EXISTS (SELECT 1 FROM crm_contacts ct WHERE ct.company_id = c.id) AS "hasContacts",
                 (COALESCE(c.hunter_flag, false) OR COALESCE(c.letting_hunter_flag, false) OR COALESCE(c.investment_hunter_flag, false)) AS "hunterFlag",
-                COALESCE(c.is_tracked_brand, false) AS "isTracked",
                 EXISTS (SELECT 1 FROM crm_requirements_leasing rl
                          WHERE rl.company_id = c.id AND LOWER(COALESCE(rl.status, '')) = 'active') AS "liveRequirement"
            FROM crm_companies c
@@ -8163,7 +8205,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           c.brand_analysis,
           c.created_at
         FROM crm_companies c
-        WHERE (c.is_tracked_brand = true OR c.hunter_flag = true)
+        WHERE (c.company_type ILIKE 'tenant%' OR c.hunter_flag = true)
           AND c.merged_into_id IS NULL${hunterSliceFilter}
         ORDER BY c.name
       `).then(r => r.rows);
@@ -9671,7 +9713,7 @@ async function runAutoEnrichmentCycle() {
             WHERE source_type = 'google_places'
             GROUP BY brand_company_id
           ) s ON s.brand_company_id = c.id
-          WHERE c.is_tracked_brand = true
+          WHERE c.company_type ILIKE 'tenant%'
             AND (c.ai_disabled IS NULL OR c.ai_disabled = FALSE)
             AND c.merged_into_id IS NULL
             AND (s.last_researched IS NULL OR s.last_researched < NOW() - INTERVAL '30 days')
@@ -9712,6 +9754,87 @@ async function runAutoEnrichmentCycle() {
   } finally {
     autoEnrichRunning = false;
   }
+}
+
+// ── WIP data health — the "entries that aren't linked" audit ─────────────
+// (Woody, 2026-08-23: the WIP report is the firm's money list; rows missing
+// a client / agent / date silently corrupt every roll-up downstream,
+// including the equity Finance projections.) Buckets every WIP-status deal
+// by what's missing. Consumed by GET /api/wip/health (Needs Attention tab)
+// and folded into /api/xero/financials for the equity view.
+export async function computeWipHealth(): Promise<any> {
+  const { rows } = await pool.query(`
+    SELECT d.id, d.deal_ref AS "dealRef", d.name, d.status, d.fee::float AS fee,
+           d.team, d.deal_type AS "dealType",
+           d.property_id AS "propertyId", d.landlord_id AS "landlordId",
+           d.tenant_id AS "tenantId", d.vendor_id AS "vendorId", d.purchaser_id AS "purchaserId",
+           d.internal_agent AS "internalAgent",
+           d.target_date AS "targetDate", d.exchanged_at AS "exchangedAt",
+           d.completed_at AS "completedAt", d.invoiced_at AS "invoicedAt",
+           (SELECT COUNT(*) FROM deal_fee_allocations a WHERE a.deal_id = d.id)::int AS "allocCount",
+           (SELECT COUNT(*) FROM xero_invoices xi WHERE xi.deal_id = d.id AND COALESCE(xi.status,'') <> 'ERROR')::int AS "invoiceCount",
+           (SELECT p.landlord_id FROM crm_properties p WHERE p.id = d.property_id) AS "propLandlordId"
+      FROM crm_deals d
+  `);
+  const wipDeals = rows.filter((r: any) => {
+    const c = legacyToCode(r.status);
+    return c !== null && WIP_STATUSES.includes(c);
+  });
+  const slim = (r: any) => ({
+    dealId: r.id,
+    dealRef: r.dealRef ?? null,
+    name: r.name,
+    fee: r.fee || 0,
+    team: Array.isArray(r.team) ? r.team.join(", ") : (r.team || null),
+    status: r.status,
+    dealType: r.dealType || null,
+  });
+  const hasAgent = (r: any) => r.allocCount > 0 || (Array.isArray(r.internalAgent) && r.internalAgent.length > 0);
+  const hasClient = (r: any) => !!(r.landlordId || r.tenantId || r.vendorId || r.purchaserId || r.propLandlordId);
+  const hasDate = (r: any) => !!(r.targetDate || r.exchangedAt || r.completedAt || r.invoicedAt);
+  const feeBearing = wipDeals.filter((r: any) => (r.fee || 0) > 0);
+
+  const noClient = feeBearing.filter((r: any) => !hasClient(r));
+  const noAgent = feeBearing.filter((r: any) => !hasAgent(r));
+  const noProperty = feeBearing.filter((r: any) => !r.propertyId);
+  const noDate = feeBearing.filter((r: any) => !hasDate(r));
+  const invNoXero = feeBearing.filter((r: any) => legacyToCode(r.status) === "INV" && r.invoiceCount === 0);
+  // Live pipeline deals with NO fee at all — they're excluded from the WIP
+  // report entirely, so this is invisible money rather than a broken row.
+  const noFee = wipDeals.filter((r: any) => {
+    if ((r.fee || 0) > 0) return false;
+    const c = legacyToCode(r.status);
+    return ["NEG", "SOL", "EXC", "COM", "INV"].includes(c as string);
+  });
+
+  const bucket = (list: any[]) => ({
+    count: list.length,
+    fee: Math.round(list.reduce((s, r) => s + (r.fee || 0), 0)),
+    deals: list.slice(0, 100).map(slim),
+  });
+  // Headline "affected" = fee-bearing deals with at least one link problem
+  // that distorts the numbers (client / agent / date / missing Xero link).
+  // noProperty is listed but not counted — consultancy mandates legitimately
+  // have no property; noFee is counted separately (no fee to sum).
+  const affectedIds = new Set<string>();
+  for (const list of [noClient, noAgent, noDate, invNoXero]) for (const r of list) affectedIds.add(r.id);
+  const affectedFee = Math.round(
+    feeBearing.filter((r: any) => affectedIds.has(r.id)).reduce((s: number, r: any) => s + (r.fee || 0), 0),
+  );
+
+  return {
+    buckets: {
+      noClient: bucket(noClient),
+      noAgent: bucket(noAgent),
+      noProperty: bucket(noProperty),
+      noDate: bucket(noDate),
+      invNoXero: bucket(invNoXero),
+      noFee: bucket(noFee),
+    },
+    affected: { count: affectedIds.size, fee: affectedFee },
+    totalWipDeals: wipDeals.length,
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 export function startAutoEnrichment() {

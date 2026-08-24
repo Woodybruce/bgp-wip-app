@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Pill } from "@/components/ui/pill";
 import {
   Select,
   SelectContent,
@@ -63,8 +64,6 @@ import {
   Link2,
   Check,
 } from "lucide-react";
-import { PageLayout } from "@/components/page-layout";
-import { EmptyState } from "@/components/empty-state";
 
 interface Transaction {
   id: string;
@@ -856,7 +855,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
         <div className="relative flex items-center">
           <Search className="absolute left-3 w-4 h-4 text-muted-foreground pointer-events-none" />
           <Input
-            placeholder="Search by address, building name, or postcode..."
+            placeholder="Search address or postcode…"
             value={query}
             onChange={(e) => handleQueryChange(e.target.value)}
             className="pl-9 pr-9"
@@ -941,7 +940,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                             <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                             <p className="text-sm font-medium truncate">{s.address}</p>
                           </div>
-                          <Badge className={`text-[9px] shrink-0 ${statusColor(s.status)}`}>
+                          <Badge variant="outline" className={`border-transparent text-[9px] shrink-0 ${statusColor(s.status)}`}>
                             {s.status || "New"}
                           </Badge>
                         </div>
@@ -1053,13 +1052,8 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
               ))}
             </div>
           )}
-          {!searchesLoading && savedSearches.length === 0 && (
-            <EmptyState
-              icon={MapPin}
-              title="No searches yet"
-              description="Search for a property to get started"
-            />
-          )}
+          {/* The "Search for any UK property" hero above is the single empty
+              state — no second "No searches yet" block stacked under it. */}
         </div>
       )}
 
@@ -1326,21 +1320,21 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
           )}
 
           {(freeholds || leaseholds || Object.keys(intelligence).length > 0) && !freeholdsLoading && (
-            <div className="flex gap-1 border-b pb-2">
+            <div className="flex flex-wrap gap-1.5">
               {[
-                { id: "overview", label: "Market Data", icon: BarChart3 },
-                { id: "titles", label: `Titles (${(freeholds?.length || 0) + (leaseholds?.length || 0)})`, icon: Landmark },
-                { id: "sold", label: "Sales", icon: PoundSterling },
+                { id: "overview", label: "Market Data" },
+                { id: "titles", label: "Titles", count: (freeholds?.length || 0) + (leaseholds?.length || 0) },
+                { id: "sold", label: "Sales" },
               ].map(tab => (
-                <button
+                <Pill
                   key={tab.id}
+                  active={activeSection === tab.id}
                   onClick={() => setActiveSection(tab.id)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors ${activeSection === tab.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
                   data-testid={`tab-section-${tab.id}`}
                 >
-                  <tab.icon className="w-3.5 h-3.5" />
                   {tab.label}
-                </button>
+                  {tab.count !== undefined && <span className="font-mono normal-case opacity-70">{tab.count}</span>}
+                </Pill>
               ))}
             </div>
           )}
@@ -2147,34 +2141,44 @@ function HousePriceIndex() {
 export default function LandRegistry() {
   const [activeTab, setActiveTab] = useState("property-search");
 
+  // This page renders inside the Property Intelligence wrapper, which owns
+  // the page title + top-level tab row — one 2xl title per view (§5), so
+  // this page carries only its own pill row.
   return (
-    <PageLayout
-      title="Land Registry & Property Intelligence"
-      icon={Landmark}
-      fullHeight
-      subtitle="Address search, free market intelligence, title documents, yields, rents, planning & KYC investigation"
-      tabs={[
-        { label: "Property Search", value: "property-search" },
-        { label: "Price Paid", value: "price-paid" },
-        { label: "House Price Index", value: "hpi" },
-      ]}
-      activeTab={activeTab}
-      onTabChange={setActiveTab}
-      className="space-y-6"
-    >
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsContent value="property-search">
-          <PropertySearch onSelectPostcode={() => {}} />
-        </TabsContent>
+    <div className="h-full flex flex-col">
+      <div className="px-4 sm:px-6 pt-4 sm:pt-6 flex-shrink-0">
+        <div className="flex items-center flex-wrap gap-1.5">
+          {[
+            { label: "Property Search", value: "property-search" },
+            { label: "Price Paid", value: "price-paid" },
+            { label: "House Price Index", value: "hpi" },
+          ].map((tab) => (
+            <Pill
+              key={tab.value}
+              active={activeTab === tab.value}
+              onClick={() => setActiveTab(tab.value)}
+            >
+              {tab.label}
+            </Pill>
+          ))}
+        </div>
+      </div>
 
-        <TabsContent value="price-paid">
-          <PricePaidSearch />
-        </TabsContent>
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col px-4 sm:px-6 pb-4 sm:pb-6 pt-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+          <TabsContent value="property-search">
+            <PropertySearch onSelectPostcode={() => {}} />
+          </TabsContent>
 
-        <TabsContent value="hpi">
-          <HousePriceIndex />
-        </TabsContent>
-      </Tabs>
-    </PageLayout>
+          <TabsContent value="price-paid">
+            <PricePaidSearch />
+          </TabsContent>
+
+          <TabsContent value="hpi">
+            <HousePriceIndex />
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
   );
 }

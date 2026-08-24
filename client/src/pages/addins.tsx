@@ -1,6 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Download, ExternalLink, Mail, FileSpreadsheet, FileText, Presentation, Users, Palette } from "lucide-react";
 
 const addins = [
@@ -80,12 +79,12 @@ function AddinsPage() {
         </p>
       </div>
 
-      <Card className="mb-6 border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/30">
+      <Card className="mb-6 border-border bg-muted/40">
         <CardContent className="p-4">
           <h3 className="text-sm font-semibold mb-2">How to install (for admins)</h3>
           <ol className="text-xs text-muted-foreground space-y-1.5 list-decimal list-inside">
             <li>Download the manifest file for the add-in you want</li>
-            <li>Go to <a href="https://admin.microsoft.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 underline">admin.microsoft.com</a></li>
+            <li>Go to <a href="https://admin.microsoft.com" target="_blank" rel="noopener noreferrer" className="text-primary underline">admin.microsoft.com</a></li>
             <li>Navigate to <strong>Settings → Integrated Apps → Upload custom apps</strong></li>
             <li>Choose <strong>"Upload manifest file"</strong> and select the downloaded XML file</li>
             <li>Deploy to your entire organisation or specific users</li>
@@ -114,7 +113,7 @@ function AddinsPage() {
                     onClick={() => handleDownload(addin.manifest!, `bgp-${addin.name.toLowerCase()}-addin${addin.manifest!.endsWith('.json') ? '.json' : '.xml'}`)}
                     data-testid={`button-download-${addin.name.toLowerCase()}`}
                   >
-                    <Download className="h-3 w-3 mr-1" /> Download Manifest
+                    <Download className="h-3 w-3 mr-1" /> Download manifest
                   </Button>
                 )}
                 <a href={addin.preview} target="_blank" rel="noopener noreferrer">

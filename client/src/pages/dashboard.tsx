@@ -9,6 +9,7 @@ import { Link } from "wouter";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useTeam } from "@/lib/team-context";
+import { isEquityUser } from "@/lib/utils";
 import { useBrand } from "@/lib/brand-context";
 import { DraggableGrid } from "@/components/draggable-grid";
 import { ClientTeamOrgChart } from "@/components/ClientTeamOrgChart";
@@ -84,6 +85,7 @@ import {
   StudiosWidget,
   MyPortfolioWidget,
   KpiOverviewWidget,
+  EquityFinanceWidget,
   LandsecAnalyticsWidget,
   LandsecOverviewCard,
   LandsecAgentPerformanceCard,
@@ -91,6 +93,7 @@ import {
   LandsecRecentActivity,
   WidgetPickerDialog,
   WIDGET_REGISTRY,
+  BOARD_REGISTRY,
   DEFAULT_WIDGETS,
   DEFAULT_BOARDS,
   CLIENT_BOARD_REGISTRY,
@@ -121,12 +124,12 @@ function ActivityFeedWidget() {
     cooling_contact: Users,
   };
   const sourceIcons: Record<string, { icon: React.ElementType; color: string }> = {
-    "email-processor": { icon: MailIcon, color: "text-blue-500" },
-    "auto-enrich": { icon: Sparkles, color: "text-purple-500" },
-    "news-feed": { icon: Newspaper, color: "text-orange-500" },
-    "comp-extract": { icon: BarChart3, color: "text-green-500" },
-    "archivist": { icon: FolderOpen, color: "text-amber-500" },
-    "interaction-sync": { icon: Users, color: "text-cyan-500" },
+    "email-processor": { icon: MailIcon, color: "text-muted-foreground" },
+    "auto-enrich": { icon: Sparkles, color: "text-muted-foreground" },
+    "news-feed": { icon: Newspaper, color: "text-muted-foreground" },
+    "comp-extract": { icon: BarChart3, color: "text-muted-foreground" },
+    "archivist": { icon: FolderOpen, color: "text-muted-foreground" },
+    "interaction-sync": { icon: Users, color: "text-muted-foreground" },
   };
 
   const digestHref = (alert: any): string | null =>
@@ -243,7 +246,7 @@ function MyTasksWidget() {
     const diff = Math.floor((due.getTime() - startOfToday().getTime()) / 86400000);
     if (diff < 0) return <span className="text-xs text-red-600 font-medium">{Math.abs(diff)}d overdue</span>;
     if (diff === 0) return <span className="text-xs text-orange-600 font-medium">Today</span>;
-    if (diff === 1) return <span className="text-xs text-blue-600">Tomorrow</span>;
+    if (diff === 1) return <span className="text-xs text-foreground">Tomorrow</span>;
     return <span className="text-xs text-muted-foreground">{new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>;
   };
   const renderBriefingLine = (line: string, i: number) => {
@@ -746,14 +749,14 @@ function PortfolioContactsBoard({ companyId }: { companyId: string }) {
   const groups: Array<{ key: string; title: string; tint: string; count: number; body: React.ReactNode }> = [];
   const personRow = (c: Row) => (
     <Link key={c.id} href={c.id.startsWith("u-") ? "/hr" : c.id.startsWith("co-") ? `/companies/${c.company_id}` : `/contacts/${c.id}`} className="flex items-center gap-2 px-1.5 py-1 rounded-md hover:bg-muted/50 min-w-0">
-      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-semibold shrink-0 ${c.side === "bgp" ? "bg-foreground text-background" : c.side === "client" ? "bg-blue-100 text-blue-700" : "bg-muted text-muted-foreground"}`}>
+      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-semibold shrink-0 ${c.side === "bgp" ? "bg-foreground text-background" : c.side === "client" ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground"}`}>
         {(c.name || "?").split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
       </span>
       <div className="flex-1 min-w-0">
         <span className="text-xs font-medium truncate block">{c.name}</span>
         <span className="text-[10px] text-muted-foreground truncate block">{[c.role, c.side === "bgp" ? "BGP" : c.company_name !== c.name ? c.company_name : null].filter(Boolean).join(" · ")}</span>
       </div>
-      {c.side === "client" && <Badge variant="outline" className="text-[9px] shrink-0 text-blue-700 border-blue-200">Client</Badge>}
+      {c.side === "client" && <Badge variant="outline" className="text-[9px] shrink-0 text-primary border-primary/30">Client</Badge>}
       {c.via && c.side !== "client" && c.side !== "bgp" && <Badge variant="outline" className="text-[9px] shrink-0 max-w-[130px] truncate" title={c.via}>{c.via}</Badge>}
     </Link>
   );
@@ -764,7 +767,7 @@ function PortfolioContactsBoard({ companyId }: { companyId: string }) {
   const consultants = data?.consultants || [];
   groups.push({ key: "internal", title: "Internal team", tint: "text-foreground", count: internal.length, body: internal.map(personRow) });
   groups.push({
-    key: "deals", title: "On deals & tracker", tint: "text-emerald-700", count: dealsRows.length + unlinked.length,
+    key: "deals", title: "On deals & tracker", tint: "text-foreground", count: dealsRows.length + unlinked.length,
     body: (<>
       {dealsRows.map(personRow)}
       {unlinked.map(u => (
@@ -791,7 +794,7 @@ function PortfolioContactsBoard({ companyId }: { companyId: string }) {
       </div>
     )),
   });
-  groups.push({ key: "consultants", title: "Consultants", tint: "text-violet-700", count: consultants.length, body: consultants.map(personRow) });
+  groups.push({ key: "consultants", title: "Consultants", tint: "text-foreground", count: consultants.length, body: consultants.map(personRow) });
 
   return (
     <Card className="h-full flex flex-col">
@@ -1268,6 +1271,7 @@ export default function Dashboard() {
   const knownIds = WIDGET_REGISTRY.map(w => w.id);
   // Preferred display order; any known widget not listed here falls to the end.
   const WIDGET_ORDER = [
+    "equity-finance",
     "my-leads", "news-summary", "kpi-overview",
     "today-diary", "key-instructions", "active-contacts",
   ];
@@ -1280,6 +1284,10 @@ export default function Dashboard() {
   // widget is BGP-ops (inbox, WIP, SharePoint, KPI fees, org alerts) and is
   // filtered out even if it somehow ends up saved.
   const isClientUser = user?.role === "Client" || !!(user as any)?.companyScopeId;
+  // Equity directors get the Equity Finance widget (default-on for them);
+  // everyone else has it silently filtered out — the API behind it is
+  // server-gated anyway, this just avoids offering a dead card.
+  const isEquity = isEquityUser(user as any) && !isClientUser;
   // Migrate one renamed legacy id, then ensure the three always-on widgets are
   // present (staff only — clients fully control their own safe widget set).
   // Clients DEFAULT to the Letting Tracker + Tasks widgets (Woody,
@@ -1293,6 +1301,7 @@ export default function Dashboard() {
   const activeWidgets = withDefaults
     .filter((id: string) => knownIds.includes(id)) // single filter: drop unknown ids
     .filter((id: string) => !isClientUser || CLIENT_SAFE_WIDGET_IDS.includes(id)) // clients: safe set only
+    .filter((id: string) => id !== "equity-finance" || isEquity) // equity directors only
     .sort((a: string, b: string) => orderIndex(a) - orderIndex(b)); // single sort
 
   const widgetLabelMap = useMemo(() => {
@@ -1359,22 +1368,17 @@ export default function Dashboard() {
   return (
     <div className="p-4 sm:p-6 space-y-6" data-testid="dashboard-page">
       <div className="flex items-start justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-            <Home className="w-5 h-5 text-primary" />
-          </div>
-          <div className="space-y-1">
-            <h1 className="text-2xl font-bold tracking-tight">
-              {isBrandLandsec ? "Landsec Portfolio Dashboard" : `Welcome back, ${user?.name?.split(" ")[0] || "there"}`}
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              {isBrandLandsec ? (
-                <>{brand.footerText}{!isClientUser && <> · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>}</>
-              ) : (
-                <>{currentTeam} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>
-              )}
-            </p>
-          </div>
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold tracking-tight">
+            {isBrandLandsec ? "Landsec Portfolio Dashboard" : `Welcome back, ${user?.name?.split(" ")[0] || "there"}`}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            {isBrandLandsec ? (
+              <>{brand.footerText}{!isClientUser && <> · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>}</>
+            ) : (
+              <>{currentTeam} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>
+            )}
+          </p>
         </div>
         <div className="flex items-center gap-1.5">
           {dashboardEditing && (
@@ -1413,7 +1417,7 @@ export default function Dashboard() {
                 saving={saveMutation.isPending}
                 viewMode={dashboardViewMode}
                 onViewModeChange={handleViewModeChange}
-                boards={isClientUser ? CLIENT_BOARD_REGISTRY : undefined}
+                boards={isClientUser ? CLIENT_BOARD_REGISTRY : (isEquity ? undefined : BOARD_REGISTRY.filter(b => b.id !== "equity-finance-board"))}
                 showViewMode={!isClientUser}
               />
             </>
@@ -2394,6 +2398,7 @@ export default function Dashboard() {
           "my-portfolio": { w: 6, h: 10, minW: 4, minH: 6 },
           "landsec-analytics": { w: 12, h: 20, minW: 8, minH: 12 },
           "kpi-overview": { w: 12, h: 5, minW: 6, minH: 4 },
+          "equity-finance": { w: 12, h: 6, minW: 6, minH: 5 },
         };
 
         const renderWidget = (widgetId: string) => {
@@ -2988,6 +2993,7 @@ export default function Dashboard() {
         if (widgetId === "landsec-analytics") return <LandsecAnalyticsWidget key="landsec-analytics" />;
 
         if (widgetId === "kpi-overview") return <KpiOverviewWidget key="kpi-overview" />;
+        if (widgetId === "equity-finance") return <EquityFinanceWidget key="equity-finance" />;
 
         return null;
         };

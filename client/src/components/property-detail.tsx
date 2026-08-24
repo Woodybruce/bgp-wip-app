@@ -1,6 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pill } from "@/components/ui/pill";
 import PathwayIntelStrip from "@/components/pathway-intel-strip";
 import { PropertyBrochuresPanel } from "@/components/property-brochures-panel";
 import { PropertyDecksPanel } from "@/components/decks/property-decks-panel";
@@ -327,6 +328,12 @@ export function PropertyDetail({ id }: { id: string }) {
   });
   const toggleSection = (key: string) => setSidebarSections(prev => ({ ...prev, [key]: !prev[key] }));
 
+  // Phone section switcher (docs/DESIGN.md §9) — below lg the aside stacks
+  // under the main column and the page ran 20 boards deep in one scroll.
+  // One section at a time on the phone; lg+ layout unchanged.
+  const [phoneSection, setPhoneSection] = useState<"overview" | "boards" | "deals" | "files" | "kyc" | "activity">("overview");
+  const sec = (k: typeof phoneSection) => (phoneSection === k ? "space-y-3" : "hidden lg:block lg:space-y-3");
+
   const [mainSections, setMainSections] = useState<Record<string, boolean>>({
     plans: true,
     leasingSchedule: true,
@@ -515,7 +522,7 @@ export function PropertyDetail({ id }: { id: string }) {
                     const hasEnrichmentData = !!(property.proprietorName || property.landlordId || property.titleNumber);
                     if (isRecent && !hasEnrichmentData && property.address && !isClientViewer) {
                       return (
-                        <Badge variant="outline" className="text-[10px] border-purple-300 text-purple-600 bg-purple-50 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800 animate-pulse gap-1" data-testid="badge-enriching">
+                        <Badge variant="outline" className="text-[10px] text-muted-foreground animate-pulse gap-1" data-testid="badge-enriching">
                           <Loader2 className="w-2.5 h-2.5 animate-spin" />
                           Auto-enriching...
                         </Badge>
@@ -569,6 +576,16 @@ export function PropertyDetail({ id }: { id: string }) {
               </div>
             </div>
 
+            <div className="flex flex-wrap gap-1.5 lg:hidden" data-testid="property-phone-sections">
+              <Pill active={phoneSection === "overview"} onClick={() => setPhoneSection("overview")} data-testid="property-section-overview">Overview</Pill>
+              <Pill active={phoneSection === "boards"} onClick={() => setPhoneSection("boards")} data-testid="property-section-boards">Boards</Pill>
+              <Pill active={phoneSection === "deals"} onClick={() => setPhoneSection("deals")} data-testid="property-section-deals">Deals &amp; units</Pill>
+              <Pill active={phoneSection === "files"} onClick={() => setPhoneSection("files")} data-testid="property-section-files">Files &amp; contacts</Pill>
+              <Pill active={phoneSection === "kyc"} onClick={() => setPhoneSection("kyc")} data-testid="property-section-kyc">KYC</Pill>
+              <Pill active={phoneSection === "activity"} onClick={() => setPhoneSection("activity")} data-testid="property-section-activity">Activity</Pill>
+            </div>
+
+            <div className={sec("overview")}>
             {/* Top-row strip: property summary card on the left,
                 latest property news on the right (lg+). News gets
                 more breathing room than 50/50 — typical news
@@ -772,6 +789,9 @@ export function PropertyDetail({ id }: { id: string }) {
               </div>
             </div>
 
+            </div>
+
+            <div className={sec("boards")}>
             {/* Brochures row. Property Decks panel hidden for the Monday
                 demo — feature not yet ready for the firm. See
                 PRESENTATION_BACKLOG.md. */}
@@ -826,6 +846,9 @@ export function PropertyDetail({ id }: { id: string }) {
                 + last-generated timestamp from the asset-brief
                 payload and renders the same purple treatment used
                 on the brand profile's brand_analysis. */}
+            </div>
+
+            <div className={sec("overview")}>
             <BgpCommentaryWrapper propertyId={property.id} />
 
             {isClientViewer ? null : streetViewExpanded ? (
@@ -855,6 +878,9 @@ export function PropertyDetail({ id }: { id: string }) {
               </Button>
             )}
 
+            </div>
+
+            <div className={sec("boards")}>
             {/* LeasingTrackerSummary removed — its counts (available /
                 under-offer / let / viewings / offers) duplicate what's
                 already visible per unit on the Leasing Schedule below.
@@ -927,6 +953,7 @@ export function PropertyDetail({ id }: { id: string }) {
             {/* Linked Contacts moved into the right sidebar under
                 Client Board so the main column reads property → deals
                 → marketing rather than "client people" twice. */}
+            </div>
           </div>
 
           {/* Right column = reference stack. Single-column on the right
@@ -944,6 +971,7 @@ export function PropertyDetail({ id }: { id: string }) {
               {/* Clients get the read-only jailed browser (their own
                   SharePoint area, no internal team names) instead of the
                   staff panel — restored per Woody, 2026-08-03. */}
+              <div className={sec("files")}>
               <ReferenceSection
                 title="Files"
                 icon={FolderOpen}
@@ -964,7 +992,9 @@ export function PropertyDetail({ id }: { id: string }) {
                   </>
                 )}
               </ReferenceSection>
+              </div>
 
+              <div className={sec("files")}>
               <ReferenceSection
                 title="Linked Contacts"
                 icon={UserCheck}
@@ -974,9 +1004,11 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <LinkedContactsPanel propertyId={property.id} />
               </ReferenceSection>
+              </div>
 
               {/* Visible to clients — same decision as the brand-profile
                   KYC panel (landlords need tenant AML/financial standing). */}
+              <div className={sec("kyc")}>
               <ReferenceSection
                 title="Compliance & KYC"
                 icon={ShieldCheck}
@@ -988,7 +1020,9 @@ export function PropertyDetail({ id }: { id: string }) {
                   <PropertyComplianceBoardWrapper property={property} allCompanies={allCompanies} embedded />
                 </ErrorBoundary>
               </ReferenceSection>
+              </div>
 
+              <div className={sec("activity")}>
               <ReferenceSection
                 title="Activity"
                 icon={Activity}
@@ -1002,7 +1036,9 @@ export function PropertyDetail({ id }: { id: string }) {
                   <ActivitySummary propertyId={property.id} />
                 </ErrorBoundary>
               </ReferenceSection>
+              </div>
 
+              <div className={sec("files")}>
               <ReferenceSection
                 title="BGP Contacts"
                 icon={UserCheck}
@@ -1012,10 +1048,12 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <InlineAgents propertyId={id} agentLinks={agentLinks} allUsers={allUsers} colorMap={userColorMap} landlordId={property.landlordId} readOnly={isClientViewer} />
               </ReferenceSection>
+              </div>
 
               {/* Client Board retired (Woody, 2026-08-05) — Linked Contacts'
                   Internal team group now carries the client-side people. */}
 
+              <div className={sec("deals")}>
               <ReferenceSection
                 title="Deals"
                 icon={Handshake}
@@ -1026,7 +1064,9 @@ export function PropertyDetail({ id }: { id: string }) {
                 <LinkedDealsPanel propertyId={property.id} />
                 <TaggedConversationsPanel entityType="property" entityId={property.id} />
               </ReferenceSection>
+              </div>
 
+              <div className={sec("deals")}>
               <ReferenceSection
                 title="Available Units"
                 icon={Store}
@@ -1036,12 +1076,14 @@ export function PropertyDetail({ id }: { id: string }) {
               >
                 <AvailableUnitsPanel propertyId={property.id} />
               </ReferenceSection>
+              </div>
 
               {/* Land Registry retired from the property page entirely
                   (Woody, 2026-08-03) — title data lives in Property
                   Intelligence when needed. */}
 
               {!isClientViewer && (
+              <div className={sec("activity")}>
               <ReferenceSection
                 title="Data linkage"
                 icon={Activity}
@@ -1053,6 +1095,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   <PropertyLinkageCard propertyId={property.id} />
                 </ErrorBoundary>
               </ReferenceSection>
+              </div>
               )}
           </aside>
         </div>
@@ -1302,7 +1345,7 @@ function EntityImagesPanel({ entityType, entityId }: { entityType: "property" | 
       <Dialog open={!!aiEditFor} onOpenChange={(o) => { if (!o) { setAiEditFor(null); setCanRevert(false); setImageVersion(0); } }}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-purple-500" /> {aiEditFor?.title || "Image"}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-primary" /> {aiEditFor?.title || "Image"}</DialogTitle>
             <DialogDescription>Preview and AI-edit. Edits write back to this image (and into Image Studio).</DialogDescription>
           </DialogHeader>
           {aiEditFor && (

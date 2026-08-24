@@ -634,7 +634,7 @@ function CoverToggle() {
         data-testid="button-cry-for-help"
       >
         {toggle.isPending && <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />}
-        {active ? "Take approvals back" : "Cry for help"}
+        {active ? "Take approvals back" : "Ask for help"}
       </Button>
     </div>
   );

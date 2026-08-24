@@ -26,20 +26,24 @@ import { sql } from "drizzle-orm";
 
 // London local authority IDs on the FSA API — the commercial boroughs
 // BGP works in. Westminster (197) is the default.
+// FHRS LocalAuthorityIds verified against api.ratings.food.gov.uk/Authorities
+// on 2026-08-23 — the previous ids were from a different numbering and
+// pointed at Scottish/NW-England councils (197 = Aberdeen City), so
+// "Westminster" listed Aberdeen restaurants.
 const LONDON_BOROUGHS: Array<{ id: number; name: string }> = [
-  { id: 197, name: "City of Westminster" },
-  { id: 195, name: "City of London" },
-  { id: 188, name: "Camden" },
-  { id: 192, name: "Hackney" },
-  { id: 194, name: "Kensington & Chelsea" },
-  { id: 191, name: "Islington" },
-  { id: 196, name: "Tower Hamlets" },
-  { id: 189, name: "Hammersmith & Fulham" },
-  { id: 198, name: "Wandsworth" },
-  { id: 200, name: "Lambeth" },
-  { id: 199, name: "Southwark" },
+  { id: 120, name: "City of Westminster" },
+  { id: 95, name: "City of London" },
+  { id: 93, name: "Camden" },
+  { id: 99, name: "Hackney" },
+  { id: 107, name: "Kensington & Chelsea" },
+  { id: 106, name: "Islington" },
+  { id: 117, name: "Tower Hamlets" },
+  { id: 100, name: "Hammersmith & Fulham" },
+  { id: 119, name: "Wandsworth" },
+  { id: 109, name: "Lambeth" },
+  { id: 115, name: "Southwark" },
 ];
-const DEFAULT_LA_ID = 197;
+const DEFAULT_LA_ID = 120;
 // FHRS business types we care about
 const RESTAURANT_TYPES = new Set([1, 7846, 7843]);
 

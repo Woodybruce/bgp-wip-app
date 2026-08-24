@@ -118,7 +118,7 @@ function StatusBadge({ status }: { status: string }) {
   if (status === "approved") return <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">Approved</span>;
   if (status === "synced_to_xero") return <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium">In Xero</span>;
   if (status === "rejected") return <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium">Rejected</span>;
-  return <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">{status}</span>;
+  return <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{status}</span>;
 }
 
 // ─── Edit sheet ─────────────────────────────────────────────────────────
@@ -473,7 +473,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
             <SheetTitle className="text-base text-left">
               {expense.merchant || "Edit expense"}
             </SheetTitle>
-            <button onClick={onClose} className="p-1.5 -mr-1.5 rounded-full active:bg-gray-100">
+            <button onClick={onClose} className="p-1.5 -mr-1.5 rounded-full active:bg-muted">
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -499,7 +499,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
             <button
               type="button"
               onClick={() => setShowReceipt(true)}
-              className="w-full flex items-center justify-center gap-2 h-11 rounded-xl border border-emerald-200 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-900 text-emerald-700 dark:text-emerald-400 text-sm font-medium active:opacity-80"
+              className="w-full flex items-center justify-center gap-2 h-11 rounded-xl border border-border bg-muted/40 text-foreground text-sm font-medium active:opacity-80"
               data-testid="m-view-receipt"
             >
               <Receipt className="w-4 h-4" /> View receipt
@@ -548,22 +548,22 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
               fields. High-confidence suggestions auto-apply; medium /
               low need user confirmation. */}
           {(aiLoading || aiSuggestion || aiError) && !isPersonal && (
-            <div className="rounded-2xl border border-violet-200 bg-violet-50 dark:bg-violet-950/30 dark:border-violet-900 p-3 space-y-2">
+            <div className="rounded-2xl border border-border bg-muted/40 p-3 space-y-2">
               <div className="flex items-center gap-2">
-                <div className="w-7 h-7 rounded-full bg-violet-100 dark:bg-violet-900 flex items-center justify-center shrink-0">
-                  {aiLoading ? <Loader2 className="w-4 h-4 text-violet-600 animate-spin" /> : <Sparkles className="w-4 h-4 text-violet-600" />}
+                <div className="w-7 h-7 rounded-full bg-muted flex items-center justify-center shrink-0">
+                  {aiLoading ? <Loader2 className="w-4 h-4 text-primary animate-spin" /> : <Sparkles className="w-4 h-4 text-primary" />}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-violet-900 dark:text-violet-100">
+                  <div className="text-sm font-semibold text-foreground">
                     {aiLoading ? "AI is checking your diary…" : aiError ? "AI couldn't classify" : aiApplied ? "AI suggestions applied" : "AI suggestion ready"}
                   </div>
                   {aiSuggestion?.matchedCalendarEvent && (
-                    <div className="text-[11px] text-violet-700 dark:text-violet-300 truncate">
+                    <div className="text-[11px] text-muted-foreground truncate">
                       Matched to: {aiSuggestion.matchedCalendarEvent.subject}
                     </div>
                   )}
                   {aiSuggestion && aiSuggestion.proposedAttendees.length > 0 && (
-                    <div className="text-[11px] text-violet-700 dark:text-violet-300 truncate">
+                    <div className="text-[11px] text-muted-foreground truncate">
                       Attendees from diary: {aiSuggestion.proposedAttendees.map((p) => p.name).join(", ")}
                     </div>
                   )}
@@ -581,16 +581,16 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
                   <button
                     type="button"
                     onClick={() => runClassify(expense.id)}
-                    className="text-[11px] px-2 py-1 rounded-full bg-violet-600 text-white font-semibold active:scale-95 transition-transform"
+                    className="text-[11px] px-2 py-1 rounded-full bg-primary text-primary-foreground font-semibold active:scale-95 transition-transform"
                     data-testid="m-ai-rerun"
                   >
-                    Re-run
+                    Refresh
                   </button>
                 )}
               </div>
 
               {aiSuggestion?.reasoning && (
-                <p className="text-[12px] text-violet-800 dark:text-violet-200 leading-relaxed">
+                <p className="text-[12px] text-muted-foreground leading-relaxed">
                   {aiSuggestion.reasoning}
                 </p>
               )}
@@ -602,9 +602,9 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
               )}
 
               {aiSuggestion?.followUpQuestion && (
-                <div className="rounded-lg bg-white dark:bg-violet-950 border border-violet-200 dark:border-violet-800 p-2.5 space-y-2">
+                <div className="rounded-lg bg-card border border-border p-2.5 space-y-2">
                   <div>
-                    <div className="text-[10px] uppercase tracking-wider font-semibold text-violet-600 mb-0.5">Question</div>
+                    <div className="text-[10px] uppercase tracking-wider font-semibold text-muted-foreground mb-0.5">Question</div>
                     <p className="text-[12px] text-foreground">{aiSuggestion.followUpQuestion}</p>
                   </div>
                   {/* Reply box — free text. On send, re-runs auto-classify
@@ -629,7 +629,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
                         runClassify(expense.id, reply);
                         setAiUserReply("");
                       }}
-                      className="shrink-0 self-end px-3 h-9 rounded-md bg-violet-600 text-white text-xs font-medium active:bg-violet-700 disabled:opacity-50"
+                      className="shrink-0 self-end px-3 h-9 rounded-md bg-primary text-primary-foreground text-xs font-medium active:opacity-90 disabled:opacity-50"
                       data-testid="m-ai-reply-send"
                     >
                       {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Send"}
@@ -642,7 +642,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
                 <button
                   type="button"
                   onClick={applySuggestion}
-                  className="w-full py-2 rounded-lg bg-violet-600 text-white text-sm font-medium active:bg-violet-700"
+                  className="w-full py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium active:opacity-90"
                   data-testid="m-apply-ai"
                 >
                   Apply AI suggestion
@@ -650,7 +650,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
               )}
 
               {aiError && (
-                <p className="text-[11px] text-violet-700 italic">{aiError}</p>
+                <p className="text-[11px] text-muted-foreground italic">{aiError}</p>
               )}
             </div>
           )}
@@ -803,8 +803,8 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
               {aiSuggestion?.proposedAttendees && aiSuggestion.proposedAttendees
                 .filter((a) => !addedEmails.has(a.email))
                 .length > 0 && (
-                <div className="space-y-1.5 rounded-lg bg-violet-50/60 border border-violet-100 p-2">
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-violet-700">
+                <div className="space-y-1.5 rounded-lg bg-muted/40 border border-border p-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     From your diary — not in CRM
                   </div>
                   {aiSuggestion.proposedAttendees
@@ -819,7 +819,7 @@ function EditExpenseSheet({ expense, onClose }: { expense: Expense | null; onClo
                           type="button"
                           onClick={() => addAttendee(a)}
                           disabled={addingEmail === a.email || isPosted}
-                          className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-full bg-violet-600 text-white text-[11px] font-semibold disabled:opacity-60 active:scale-95 transition-transform"
+                          className="shrink-0 inline-flex items-center gap-1 h-8 px-2.5 rounded-full bg-primary text-primary-foreground text-[11px] font-semibold disabled:opacity-60 active:scale-95 transition-transform"
                           data-testid={`m-attendee-add-${a.email}`}
                         >
                           {addingEmail === a.email ? (
@@ -1278,7 +1278,7 @@ export default function MobileExpenses() {
         className="px-4 pb-3 flex items-center gap-3 border-b border-border/40 bg-background/95 backdrop-blur sticky top-0 z-10"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
       >
-        <Link href="/" className="p-2 -ml-2 rounded-full active:bg-gray-100">
+        <Link href="/" className="p-2 -ml-2 rounded-full active:bg-muted">
           <ChevronLeft className="w-6 h-6" />
         </Link>
         <h1 className="text-2xl font-semibold flex-1">Expenses</h1>
@@ -1400,7 +1400,7 @@ export default function MobileExpenses() {
         <div className="px-4 mb-3 flex gap-1.5 overflow-x-auto" data-testid="m-expenses-status-filter">
           <button
             onClick={() => setStatusFilter("all")}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${statusFilter === "all" ? "bg-[#1C1917] text-white border-[#1C1917]" : "bg-white dark:bg-card text-muted-foreground border-border active:bg-gray-50"}`}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${statusFilter === "all" ? "bg-[hsl(var(--mobile-chrome))] text-white border-[hsl(var(--mobile-chrome))]" : "bg-white dark:bg-card text-muted-foreground border-border active:bg-muted"}`}
             data-testid="m-expenses-filter-all"
           >
             All {expenses.length}
@@ -1409,7 +1409,7 @@ export default function MobileExpenses() {
             <button
               key={s.key}
               onClick={() => setStatusFilter(statusFilter === s.key ? "all" : s.key)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${statusFilter === s.key ? "bg-[#1C1917] text-white border-[#1C1917]" : "bg-white dark:bg-card text-muted-foreground border-border active:bg-gray-50"}`}
+              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border ${statusFilter === s.key ? "bg-[hsl(var(--mobile-chrome))] text-white border-[hsl(var(--mobile-chrome))]" : "bg-white dark:bg-card text-muted-foreground border-border active:bg-muted"}`}
               data-testid={`m-expenses-filter-${s.key}`}
             >
               {s.label} {s.count}
@@ -1514,8 +1514,8 @@ export default function MobileExpenses() {
                   onClick={() => setEditing(e)}
                   className="flex-1 min-w-0 text-left p-2.5 flex items-center gap-3 active:bg-muted/40 rounded-l-xl"
                 >
-                  <div className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center shrink-0">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center shrink-0">
+                    <CheckCircle2 className="w-4 h-4 text-muted-foreground" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
@@ -1555,7 +1555,7 @@ export default function MobileExpenses() {
                     type="button"
                     onClick={() => resubmitMutation.mutate(e.id)}
                     disabled={resubmitMutation.isPending && resubmitMutation.variables === e.id}
-                    className="shrink-0 px-2.5 py-1.5 text-[11px] rounded-full border border-blue-200 text-blue-600 active:bg-blue-50 disabled:opacity-50 flex items-center gap-1"
+                    className="shrink-0 px-2.5 py-1.5 text-[11px] rounded-full border border-border text-primary active:bg-muted disabled:opacity-50 flex items-center gap-1"
                     data-testid={`mobile-expense-resubmit-${e.id}`}
                   >
                     {resubmitMutation.isPending && resubmitMutation.variables === e.id ? (
@@ -1574,7 +1574,7 @@ export default function MobileExpenses() {
                     type="button"
                     onClick={() => submitForApprovalMutation.mutate(e.id)}
                     disabled={submitForApprovalMutation.isPending && submitForApprovalMutation.variables === e.id}
-                    className="shrink-0 px-2.5 py-1.5 text-[11px] rounded-full border border-blue-200 text-blue-600 active:bg-blue-50 disabled:opacity-50 flex items-center gap-1"
+                    className="shrink-0 px-2.5 py-1.5 text-[11px] rounded-full border border-border text-primary active:bg-muted disabled:opacity-50 flex items-center gap-1"
                     data-testid={`mobile-expense-submit-${e.id}`}
                   >
                     {submitForApprovalMutation.isPending && submitForApprovalMutation.variables === e.id ? (

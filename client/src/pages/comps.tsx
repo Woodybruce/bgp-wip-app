@@ -27,6 +27,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
@@ -34,9 +35,8 @@ import {
   Search, Plus, Trash2, ChevronUp, ChevronDown, FilterX, Download,
   Calculator, Building2, MapPin, Scale, CheckCircle2,
   MoreHorizontal, Ruler, Loader2, Newspaper, Sparkles,
-  FileText, Upload, X, Paperclip, FileDown, Info, Presentation,
+  FileText, Upload, X, Paperclip, FileDown, Info,
   TrendingUp, Inbox, ArrowRight, Eye, ExternalLink, Phone, Mail, User,
-  Bell,
 } from "lucide-react";
 import type { CrmComp } from "@shared/schema";
 import jsPDF from "jspdf";
@@ -1282,10 +1282,10 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
 
   return (
     <Tabs value={calcTab} onValueChange={v => setCalcTab(v as "ner" | "itza" | "gia")}>
-      <TabsList className="w-full grid grid-cols-3 mb-4">
-        <TabsTrigger value="ner" className="text-xs">Net Effective Rent</TabsTrigger>
-        <TabsTrigger value="itza" className="text-xs">ITZA (Retail)</TabsTrigger>
-        <TabsTrigger value="gia" className="text-xs">GIA (Restaurant / Gym)</TabsTrigger>
+      <TabsList className={`${pillTabsList} mb-4`}>
+        <TabsTrigger value="ner" className={pillTabsTrigger}>Net Effective Rent</TabsTrigger>
+        <TabsTrigger value="itza" className={pillTabsTrigger}>ITZA (Retail)</TabsTrigger>
+        <TabsTrigger value="gia" className={pillTabsTrigger}>GIA (Restaurant / Gym)</TabsTrigger>
       </TabsList>
 
       {/* ── NER tab ── */}
@@ -2365,10 +2365,6 @@ export default function Comps() {
             buttons onto their own line instead. */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-              <Scale className="w-5 h-5 text-primary" />
-            </div>
             <div className="min-w-0">
               <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-comps-title">
                 {activeTab === "investment" ? "Investment Comps"
@@ -2384,7 +2380,6 @@ export default function Comps() {
                   : activeTab === "pdf-template" ? "Customise the PDF export template"
                   : "Rent review evidence & comparable transactions"}
               </p>
-            </div>
             </div>
           </div>
           {activeTab === "table" && (
@@ -2417,12 +2412,12 @@ export default function Comps() {
               data-testid="button-scan-news-comps"
             >
               {scanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-              Scan All
+              Scan all
             </Button>
             )}
             <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={() => setCalcOpen(true)} data-testid="button-open-calculator">
               <Calculator className="w-3.5 h-3.5" />
-              Net Rent Calc
+              Net rent calc
             </Button>
             <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={() => setRpiOpen(true)} data-testid="button-open-rpi-calc">
               <TrendingUp className="w-3.5 h-3.5" />
@@ -2465,14 +2460,14 @@ export default function Comps() {
                 }}
               />
               <Button size="sm" variant="outline" className="gap-1.5 h-8" asChild data-testid="button-import-dataset">
-                <span><Download className="w-3.5 h-3.5 rotate-180" /> Import Dataset</span>
+                <span><Download className="w-3.5 h-3.5 rotate-180" /> Import dataset</span>
               </Button>
             </label>
             )}
             {!isClientComps && (
             <Button size="sm" className="gap-1.5 h-8" onClick={() => { resetCreateForm(); setCreateOpen(true); }} data-testid="button-create-comp">
               <Plus className="w-3.5 h-3.5" />
-              Add Comp
+              Add comp
             </Button>
             )}
           </div>
@@ -2481,33 +2476,28 @@ export default function Comps() {
 
         {/* Mode tabs live on their own row — inlined next to the title they
             overlapped the heading/subtitle at mid widths. */}
-        <TabsList className="mb-3 max-w-full overflow-x-auto">
-          <TabsTrigger value="table" data-testid="tab-comps-table">
-            <Scale className="w-3.5 h-3.5 mr-1.5" />
+        <TabsList className={`${pillTabsList} mb-3`}>
+          <TabsTrigger value="table" className={pillTabsTrigger} data-testid="tab-comps-table">
             Leasing
           </TabsTrigger>
-          <TabsTrigger value="investment" data-testid="tab-comps-investment">
-            <TrendingUp className="w-3.5 h-3.5 mr-1.5" />
+          <TabsTrigger value="investment" className={pillTabsTrigger} data-testid="tab-comps-investment">
             Investment
           </TabsTrigger>
           {activeTab === "leads" && (
-          <TabsTrigger value="leads" data-testid="tab-comps-leads">
-            <Inbox className="w-3.5 h-3.5 mr-1.5" />
+          <TabsTrigger value="leads" className={pillTabsTrigger} data-testid="tab-comps-leads">
             Leads
             {leadComps.length > 0 && (
-              <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+              <span className="font-mono normal-case opacity-70">
                 {leadComps.length}
               </span>
             )}
           </TabsTrigger>
           )}
           {!isMobile && !isClientComps && (<>
-          <TabsTrigger value="lease-events" data-testid="tab-comps-lease-events">
-            <Bell className="w-3.5 h-3.5 mr-1.5" />
+          <TabsTrigger value="lease-events" className={pillTabsTrigger} data-testid="tab-comps-lease-events">
             Lease Events
           </TabsTrigger>
-          <TabsTrigger value="pdf-template" data-testid="tab-comps-pdf-template">
-            <Presentation className="w-3.5 h-3.5 mr-1.5" />
+          <TabsTrigger value="pdf-template" className={pillTabsTrigger} data-testid="tab-comps-pdf-template">
             PDF Template
           </TabsTrigger>
           </>)}
@@ -3355,7 +3345,7 @@ export default function Comps() {
             }}
           >
             {scanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            Scan All Sources
+            Scan all sources
           </Button>
         </div>
 
@@ -3363,7 +3353,7 @@ export default function Comps() {
           <div className="flex flex-col items-center justify-center h-64 text-center">
             <Inbox className="w-12 h-12 text-muted-foreground/20 mb-3" />
             <h3 className="text-sm font-semibold mb-1">No leads waiting</h3>
-            <p className="text-xs text-muted-foreground">Run "Scan All Sources" to extract new comps from news, team emails and SharePoint files.</p>
+            <p className="text-xs text-muted-foreground">Scan all sources to extract new comps from news, team emails and SharePoint files.</p>
           </div>
         ) : (
           <div className="border rounded-lg overflow-hidden">
@@ -3529,13 +3519,11 @@ export default function Comps() {
           }}
         />
         <Tabs defaultValue="leasing-template" className="space-y-4">
-          <TabsList>
-            <TabsTrigger value="leasing-template" data-testid="tab-pdf-scope-leasing">
-              <Scale className="w-3.5 h-3.5 mr-1.5" />
+          <TabsList className={pillTabsList}>
+            <TabsTrigger value="leasing-template" className={pillTabsTrigger} data-testid="tab-pdf-scope-leasing">
               Leasing Template
             </TabsTrigger>
-            <TabsTrigger value="investment-template" data-testid="tab-pdf-scope-investment">
-              <TrendingUp className="w-3.5 h-3.5 mr-1.5" />
+            <TabsTrigger value="investment-template" className={pillTabsTrigger} data-testid="tab-pdf-scope-investment">
               Investment Template
             </TabsTrigger>
           </TabsList>

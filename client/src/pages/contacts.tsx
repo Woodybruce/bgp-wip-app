@@ -51,7 +51,7 @@ import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineSelect, InlineLabelSelect, InlineMultiLabelSelect } from "@/components/inline-edit";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import type { CrmContact, CrmCompany, CrmDeal, CrmProperty, CrmRequirementsLeasing, CrmRequirementsInvestment, CrmInteraction } from "@shared/schema";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Pill } from "@/components/ui/pill";
 import { EntityPicker } from "@/components/entity-picker";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 
@@ -780,7 +780,7 @@ function ContactDetail({ id }: { id: string }) {
           <h1 className="text-xl font-bold" data-testid="text-contact-detail-name">{contact.name}</h1>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             {contact.groupName && (
-              <Badge className={`${getGroupColor(contact.groupName)} text-white text-xs`}>
+              <Badge variant="outline" className={`border-transparent ${getGroupColor(contact.groupName)} text-white text-xs`}>
                 {contact.groupName}
               </Badge>
             )}
@@ -791,7 +791,7 @@ function ContactDetail({ id }: { id: string }) {
               return <Badge className={`${colorClass} text-white text-xs`}>{derivedType}</Badge>;
             })()}
             {contact.agentSpecialty && (
-              <Badge className={`${CRM_OPTIONS.agentSpecialtyColors[contact.agentSpecialty] || "bg-gray-500"} text-white text-xs`}>{contact.agentSpecialty}</Badge>
+              <Badge variant="outline" className={`border-transparent ${CRM_OPTIONS.agentSpecialtyColors[contact.agentSpecialty] || "bg-gray-500"} text-white text-xs`}>{contact.agentSpecialty}</Badge>
             )}
             {contact.bgpClient && <Badge className="bg-black text-white dark:bg-white dark:text-black text-xs">BGP Client</Badge>}
             {parseAlloc(contact.bgpAllocation).length > 0 && parseAlloc(contact.bgpAllocation).map(alloc => (
@@ -962,21 +962,21 @@ function ContactDetail({ id }: { id: string }) {
                   <Card>
                     <CardContent className="p-4 space-y-3">
                       <h3 className="font-semibold text-sm flex items-center gap-2">
-                        <Briefcase className="w-4 h-4 text-emerald-500" />
+                        <Briefcase className="w-4 h-4 text-muted-foreground" />
                         Agent — Deals
-                        <Badge variant="secondary" className="text-[10px] ml-1 bg-emerald-100 text-emerald-700">{agentDeals.length}</Badge>
+                        <Badge variant="secondary" className="text-[10px] ml-1">{agentDeals.length}</Badge>
                       </h3>
                       <p className="text-xs text-muted-foreground">Deals where this contact is an agent or key contact</p>
                       <div className="space-y-1">
                         {agentDeals.map((deal: any) => (
                           <Link key={deal.id} href={`/deals/${deal.id}`}>
                             <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted cursor-pointer transition-colors" data-testid={`link-agent-deal-${deal.id}`}>
-                              <Handshake className="w-4 h-4 text-emerald-400 shrink-0" />
+                              <Handshake className="w-4 h-4 text-muted-foreground shrink-0" />
                               <div className="min-w-0 flex-1">
                                 <p className="text-sm font-medium truncate">{deal.name}</p>
                                 <div className="flex items-center gap-2 flex-wrap">
                                   {deal.agentRoles?.map((role: string) => (
-                                    <Badge key={role} className="text-[9px] px-1 py-0 bg-emerald-100 text-emerald-700">{role}</Badge>
+                                    <Badge key={role} variant="secondary" className="text-[9px] px-1 py-0">{role}</Badge>
                                   ))}
                                   {deal.status && <Badge variant="outline" className="text-[10px] px-1 py-0">{deal.status}</Badge>}
                                   {deal.dealType && <Badge variant="outline" className="text-[10px] px-1 py-0">{deal.dealType}</Badge>}
@@ -1024,21 +1024,21 @@ function ContactDetail({ id }: { id: string }) {
             <Card>
               <CardContent className="p-4 space-y-3">
                 <h3 className="font-semibold text-sm flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4 text-blue-500" />
+                  <TrendingUp className="w-4 h-4 text-muted-foreground" />
                   Investment Tracker
-                  <Badge variant="secondary" className="text-[10px] ml-1 bg-blue-100 text-blue-700">{contactInvestmentItems.length}</Badge>
+                  <Badge variant="secondary" className="text-[10px] ml-1">{contactInvestmentItems.length}</Badge>
                 </h3>
                 <p className="text-xs text-muted-foreground">Properties on the investment tracker linked to this contact</p>
                 <div className="space-y-1">
                   {contactInvestmentItems.map((item: any) => (
                     <Link key={item.id} href={`/investment-tracker?highlight=${item.id}`}>
                       <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted cursor-pointer transition-colors" data-testid={`link-investment-${item.id}`}>
-                        <Building className="w-4 h-4 text-blue-400 shrink-0" />
+                        <Building className="w-4 h-4 text-muted-foreground shrink-0" />
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium truncate">{item.assetName}</p>
                           <div className="flex items-center gap-2 flex-wrap">
                             {item.agentRoles?.map((role: string) => (
-                              <Badge key={role} className="text-[9px] px-1 py-0 bg-blue-100 text-blue-700">{role}</Badge>
+                              <Badge key={role} variant="secondary" className="text-[9px] px-1 py-0">{role}</Badge>
                             ))}
                             {item.status && <Badge variant="outline" className="text-[10px] px-1 py-0">{item.status}</Badge>}
                             {item.guidePrice && <span className="text-[10px] text-muted-foreground">£{Number(item.guidePrice).toLocaleString()}</span>}
@@ -1061,16 +1061,16 @@ function ContactDetail({ id }: { id: string }) {
                   <Card>
                     <CardContent className="p-4 space-y-3">
                       <h3 className="font-semibold text-sm flex items-center gap-2">
-                        <Handshake className="w-4 h-4 text-purple-500" />
+                        <Handshake className="w-4 h-4 text-muted-foreground" />
                         Tenant Rep — Client Requirements
-                        <Badge variant="secondary" className="text-[10px] ml-1 bg-purple-100 text-purple-700">{agentReqs.length}</Badge>
+                        <Badge variant="secondary" className="text-[10px] ml-1">{agentReqs.length}</Badge>
                       </h3>
                       <p className="text-xs text-muted-foreground">Requirements where this contact is the tenant rep agent</p>
                       <div className="space-y-1">
                         {agentReqs.map((req: any) => (
                           <Link key={req.id} href={`/requirements?highlight=${req.id}`}>
                             <div className="flex items-center gap-2 p-2 rounded-md hover:bg-muted cursor-pointer transition-colors" data-testid={`link-agent-requirement-${req.id}`}>
-                              <ClipboardList className="w-4 h-4 text-purple-400 shrink-0" />
+                              <ClipboardList className="w-4 h-4 text-muted-foreground shrink-0" />
                               <div className="min-w-0 flex-1">
                                 <p className="text-sm font-medium truncate">{req.name}</p>
                                 <div className="flex items-center gap-2 flex-wrap">
@@ -1168,7 +1168,7 @@ function ContactDetail({ id }: { id: string }) {
                       <div>
                         <p className="text-sm font-medium">{company?.name || contact.companyName}</p>
                         {company?.companyType && (
-                          <Badge className={`${CRM_OPTIONS.companyTypeColors[company.companyType] || "bg-gray-500"} text-white text-[10px] mt-0.5`}>
+                          <Badge variant="outline" className={`border-transparent ${CRM_OPTIONS.companyTypeColors[company.companyType] || "bg-gray-500"} text-white text-[10px] mt-0.5`}>
                             {company.companyType}
                           </Badge>
                         )}
@@ -1650,13 +1650,15 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
     return counts;
   }, [contacts, companyTypeMap]);
 
-  const CONTACT_STAT_CARDS: { label: string; filter: { field: "group" | "type" | null; value: string | null }; icon: any; color: string; activeColor: string }[] = [
-    { label: "All Contacts", filter: { field: null, value: null }, icon: Users, color: "bg-blue-600", activeColor: "bg-blue-800 ring-2 ring-blue-400" },
-    { label: "Active Clients", filter: { field: "group", value: "Active Client" }, icon: CheckCircle2, color: "bg-emerald-600", activeColor: "bg-emerald-800 ring-2 ring-emerald-400" },
-    { label: "Client Targeting", filter: { field: "group", value: "Client Targeting" }, icon: UserPlus, color: "bg-sky-600", activeColor: "bg-sky-800 ring-2 ring-sky-400" },
-    { label: "Occupiers", filter: { field: "group", value: "Occupier" }, icon: Building, color: "bg-purple-600", activeColor: "bg-purple-800 ring-2 ring-purple-400" },
-    { label: "Agents", filter: { field: "type", value: "Agent" }, icon: Handshake, color: "bg-indigo-600", activeColor: "bg-indigo-800 ring-2 ring-indigo-400" },
-    { label: "Landlords", filter: { field: "type", value: "Landlord" }, icon: Crown, color: "bg-amber-600", activeColor: "bg-amber-800 ring-2 ring-amber-400" },
+  // Filter pills per the design standard (docs/DESIGN.md §5): the pills ARE
+  // the stats — no separate stat-card strip.
+  const CONTACT_STAT_PILLS: { label: string; filter: { field: "group" | "type" | null; value: string | null } }[] = [
+    { label: "All Contacts", filter: { field: null, value: null } },
+    { label: "Active Clients", filter: { field: "group", value: "Active Client" } },
+    { label: "Client Targeting", filter: { field: "group", value: "Client Targeting" } },
+    { label: "Occupiers", filter: { field: "group", value: "Occupier" } },
+    { label: "Agents", filter: { field: "type", value: "Agent" } },
+    { label: "Landlords", filter: { field: "type", value: "Landlord" } },
   ];
 
   const handleContactStatClick = (filter: { field: "group" | "type" | null; value: string | null }) => {
@@ -1698,16 +1700,11 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
       <ContactFormDialog open={!!editingContact} onOpenChange={(open) => { if (!open) setEditingContact(null); }} contact={editingContact} companies={companies} />
 
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-            <Users className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">CRM</h1>
-            <p className="text-sm text-muted-foreground">
-              {contacts?.length || 0} contacts in CRM{teamFilter ? ` · Filtered by ${teamFilter} team` : ""}
-            </p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">CRM</h1>
+          <p className="text-sm text-muted-foreground">
+            {contacts?.length || 0} contacts{teamFilter ? ` · Filtered by ${teamFilter} team` : ""}
+          </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Link href="/contacts?tab=archive">
@@ -1768,9 +1765,9 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
 
       {isLoading ? (
         <div className="space-y-3">
-          <div className="flex gap-3 flex-wrap">
-            {[1, 2, 3, 4].map((i) => (
-              <Skeleton key={i} className="h-16 flex-1 min-w-[130px]" />
+          <div className="flex gap-1.5 flex-wrap">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <Skeleton key={i} className="h-6 w-24 rounded-full" />
             ))}
           </div>
           <Skeleton className="h-10" />
@@ -1778,8 +1775,8 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            {CONTACT_STAT_CARDS.filter((card) => {
+          <div className="flex flex-wrap gap-1.5">
+            {CONTACT_STAT_PILLS.filter((card) => {
               if (isClientTeam && card.label === "Landlords") return false;
               return true;
             }).map((card) => {
@@ -1790,26 +1787,15 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
                   ? (statusCounts[card.filter.value!] || 0)
                   : (contactTypeCounts[card.filter.value!] || 0);
               return (
-                <div
+                <Pill
                   key={card.label}
-                  className="cursor-pointer"
+                  active={isActive}
                   onClick={() => handleContactStatClick(card.filter)}
                   data-testid={`stat-${card.label.toLowerCase().replace(/\s+/g, "-")}`}
                 >
-                  <Card className={`overflow-hidden transition-all ${isActive ? "ring-2 ring-primary" : "hover:shadow-md"}`}>
-                    <CardContent className="p-3">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-8 h-8 rounded-lg ${isActive ? card.activeColor : card.color} flex items-center justify-center`}>
-                          <card.icon className="w-4 h-4 text-white" />
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-lg font-bold leading-tight">{count}</p>
-                          <p className="text-[10px] text-muted-foreground truncate leading-tight">{card.label}</p>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
+                  {card.label}
+                  <span className={`font-mono normal-case ${isActive ? "opacity-80" : "opacity-60"}`}>{count}</span>
+                </Pill>
               );
             })}
           </div>
@@ -1838,16 +1824,13 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
                 </SelectContent>
               </Select>
             )}
-            <Button
-              variant={bgpClientFilter ? "default" : "outline"}
-              size="sm"
+            <Pill
+              active={bgpClientFilter}
               onClick={() => setBgpClientFilter(!bgpClientFilter)}
-              className={bgpClientFilter ? "bg-black text-white hover:bg-black/90 dark:bg-white dark:text-black dark:hover:bg-white/90" : ""}
               data-testid="button-bgp-client-filter"
             >
-              <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
               BGP Clients
-            </Button>
+            </Pill>
             {hasActiveFilters && (
               <Button variant="outline" size="sm" onClick={clearAllFilters} data-testid="button-clear-filters">
                 <X className="w-3.5 h-3.5 mr-1" />

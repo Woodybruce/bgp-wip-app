@@ -1291,6 +1291,89 @@ export async function registerRoutes(
     }
   });
 
+  // ── Web image search + set-photo-from-URL ──────────────────────────────
+  // iOS's native file menu (Photo Library / Take Photo / Choose File) can't
+  // be extended, so the app shows its own chooser first with a "Search the
+  // web" option (Woody, 2026-08-23). Search uses the same Google CSE creds
+  // as brand-images; the chosen image is fetched server-side and stored like
+  // any uploaded photo.
+  app.get("/api/image-search", requireAuth, async (req, res) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      if (!q) return res.status(400).json({ message: "q required" });
+      const key = process.env.GOOGLE_CSE_KEY || process.env.GOOGLE_API_KEY;
+      const cx = process.env.GOOGLE_CSE_ID;
+      if (!key || !cx) return res.status(503).json({ message: "Image search isn't configured on the server" });
+      const url = `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(key)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(q)}&searchType=image&num=10&safe=active`;
+      const r = await fetch(url);
+      const j: any = await r.json().catch(() => ({}));
+      if (!r.ok) return res.status(502).json({ message: j?.error?.message || `Image search failed (${r.status})` });
+      res.json({
+        results: (j.items || []).map((i: any) => ({
+          url: i.link,
+          thumb: i.image?.thumbnailLink || i.link,
+          title: i.title || "",
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Image search failed" });
+    }
+  });
+
+  const MIME_EXT: Record<string, string> = {
+    "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+    "image/gif": ".gif", "image/heic": ".heic", "image/heif": ".heif",
+  };
+  async function fetchWebImage(rawUrl: string): Promise<{ buffer: Buffer; mime: string; ext: string }> {
+    let parsed: URL;
+    try { parsed = new URL(rawUrl); } catch { throw new Error("Invalid image URL"); }
+    if (!/^https?:$/.test(parsed.protocol)) throw new Error("Invalid image URL");
+    // No fetching into our own network — public web images only.
+    const host = parsed.hostname.toLowerCase();
+    if (
+      host === "localhost" || host === "::1" || host.endsWith(".internal") || host.endsWith(".local") ||
+      /^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)
+    ) throw new Error("URL not allowed");
+    const r = await fetch(parsed.toString(), {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; BGP-Dashboard)" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) throw new Error(`Couldn't fetch that image (${r.status})`);
+    const mime = (r.headers.get("content-type") || "").split(";")[0].trim() || "image/jpeg";
+    if (!mime.startsWith("image/")) throw new Error("That URL isn't an image");
+    const buffer = Buffer.from(await r.arrayBuffer());
+    if (buffer.length > 8 * 1024 * 1024) throw new Error("Image too large (max 8MB)");
+    return { buffer, mime, ext: MIME_EXT[mime] || ".jpg" };
+  }
+
+  app.post("/api/users/profile-pic-from-url", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session.userId || req.tokenUserId;
+      const { buffer, mime, ext } = await fetchWebImage(String(req.body?.url || ""));
+      const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
+      await saveFile(`profile-pics/${uniqueName}`, buffer, mime, uniqueName);
+      const url = `/uploads/profile-pics/${uniqueName}`;
+      await pool.query("UPDATE users SET profile_pic_url = $1 WHERE id = $2", [url, userId]);
+      res.json({ profilePicUrl: url });
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message || "Failed to set photo" });
+    }
+  });
+
+  app.post("/api/chat/threads/:id/group-pic-from-url", requireAuth, async (req: any, res) => {
+    try {
+      const { buffer, mime, ext } = await fetchWebImage(String(req.body?.url || ""));
+      const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
+      await saveFile(`profile-pics/${uniqueName}`, buffer, mime, uniqueName);
+      const url = `/uploads/profile-pics/${uniqueName}`;
+      await pool.query("UPDATE chat_threads SET group_pic_url = $1 WHERE id = $2", [url, req.params.id]);
+      res.json({ groupPicUrl: url });
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message || "Failed to set photo" });
+    }
+  });
+
   app.get("/uploads/profile-pics/:filename", requireAuth, async (req, res) => {
     try {
       const filename = req.params.filename as string;
@@ -5350,7 +5433,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         `SELECT id, name, company_type FROM crm_companies
           WHERE merged_into_id IS NULL AND company_type ILIKE 'Tenant -%'
             AND name ILIKE $1
-          ORDER BY is_tracked_brand DESC NULLS LAST, name LIMIT 25`,
+          ORDER BY (company_type ILIKE 'tenant%') DESC, name LIMIT 25`,
         [`%${search}%`]
       );
       res.json(q.rows.map((r: any) => ({

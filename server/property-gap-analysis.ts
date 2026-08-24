@@ -76,7 +76,7 @@ async function sweepSectorClassification() {
   try {
     const { rows } = await pool.query(
       `SELECT id, name, industry, company_type, description FROM crm_companies
-        WHERE fnb_sector IS NULL AND merged_into_id IS NULL AND is_tracked_brand = true
+        WHERE fnb_sector IS NULL AND merged_into_id IS NULL AND company_type ILIKE 'tenant%'
         LIMIT 50`
     );
     const candidates = rows.filter((r: any) => isClientCrmCategory(r.company_type));
@@ -263,7 +263,7 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
     const stores: any[] = await pool.query(
       `SELECT s.brand_company_id, s.name AS store_name, s.address, s.lat, s.lng, s.status,
               c.name AS brand_name, c.domain, c.rollout_status, c.company_type,
-              c.is_tracked_brand, c.store_count, c.brand_group_id, c.industry, c.fnb_sector
+              c.store_count, c.brand_group_id, c.industry, c.fnb_sector
          FROM brand_stores s
          JOIN crm_companies c ON c.id = s.brand_company_id
         WHERE s.lat IS NOT NULL AND s.lng IS NOT NULL
@@ -293,7 +293,6 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
       domain: string | null;
       rollout_status: string | null;
       company_type: string | null;
-      is_tracked_brand: boolean;
       total_stores: number;
       nearest_distance_km: number;
       nearest_store: { name: string; address: string | null; lat: number; lng: number };
@@ -312,7 +311,6 @@ router.get("/api/property/:propertyId/brand-gaps", requireAuth, async (req: Requ
           domain: s.domain,
           rollout_status: s.rollout_status,
           company_type: s.company_type,
-          is_tracked_brand: s.is_tracked_brand,
           total_stores: 1,
           nearest_distance_km: dist,
           nearest_store: { name: s.store_name, address: s.address, lat: s.lat, lng: s.lng },

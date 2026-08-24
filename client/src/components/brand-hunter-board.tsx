@@ -140,7 +140,7 @@ function BrandLogo({ name, domain, size = 28 }: { name: string; domain?: string 
   }
   return (
     <div
-      className="rounded bg-gradient-to-br from-pink-400 to-rose-500 flex items-center justify-center text-white font-bold shrink-0"
+      className="rounded bg-muted flex items-center justify-center text-muted-foreground font-bold shrink-0"
       style={{ width: size, height: size, fontSize: Math.round(size * 0.4) }}
     >
       {name.charAt(0).toUpperCase()}
@@ -246,8 +246,8 @@ export default function BrandHunterBoard() {
               onClick={() => setFilterFlag(f)}
               className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
                 filterFlag === f
-                  ? "bg-pink-500 text-white border-pink-500"
-                  : "border-gray-200 text-muted-foreground hover:border-pink-300 hover:text-pink-600"
+                  ? "bg-foreground text-background border-foreground"
+                  : "border-border text-muted-foreground hover:text-foreground"
               }`}
             >
               {f}
@@ -262,7 +262,7 @@ export default function BrandHunterBoard() {
           <Crosshair className="w-10 h-10 mx-auto mb-3 opacity-30" />
           <p className="text-sm">
             {brands.length === 0
-              ? "No tracked brands yet — mark brands as tracked in the brand profile to start scoring."
+              ? "No brands yet — add tenant companies to the CRM to start scoring."
               : "No brands match this filter."}
           </p>
         </div>
@@ -288,7 +288,7 @@ export default function BrandHunterBoard() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <Link href={`/companies/${brand.id}`}>
-                            <span className="font-semibold text-sm hover:text-pink-600 cursor-pointer truncate block">
+                            <span className="font-semibold text-sm hover:text-primary cursor-pointer truncate block">
                               {brand.name}
                             </span>
                           </Link>
@@ -398,7 +398,7 @@ export default function BrandHunterBoard() {
                         <div className="mt-2 space-y-0.5">
                           {brand.recentSignals.map((sig, i) => (
                             <div key={i} className="text-xs text-muted-foreground flex items-start gap-1">
-                              <Zap className="w-2.5 h-2.5 mt-0.5 shrink-0 text-yellow-500" />
+                              <Zap className="w-2.5 h-2.5 mt-0.5 shrink-0 text-muted-foreground" />
                               <span className="line-clamp-1">{sig.headline}</span>
                             </div>
                           ))}

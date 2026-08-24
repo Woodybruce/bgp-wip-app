@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Pill } from "@/components/ui/pill";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PropertyCombobox } from "@/components/property-combobox";
@@ -1063,7 +1064,7 @@ export default function ImageStudio() {
             data-testid="button-street-view"
           >
             <MapPin className="h-4 w-4 mr-1" />
-            Street View
+            Capture Street View
           </Button>
           <Button
             variant="outline"
@@ -1104,28 +1105,28 @@ export default function ImageStudio() {
           </div>
         )}
       {/* Section tabs */}
-      <div className="flex gap-1 px-4 border-b bg-background flex-shrink-0">
-        <button
+      <div className="flex flex-wrap gap-1.5 px-4 py-2 flex-shrink-0">
+        <Pill
+          active={activeSection === "library" && collectionsTab === "grid"}
           onClick={() => { setActiveSection("library"); setCollectionsTab("grid"); setSelectMode(false); setSelectedIds(new Set()); }}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${activeSection === "library" && collectionsTab === "grid" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-library"
         >
-          Library ({images.filter(i => i.category !== "Brands").length})
-        </button>
-        <button
+          Library <span className="font-mono normal-case opacity-70">{images.filter(i => i.category !== "Brands").length}</span>
+        </Pill>
+        <Pill
+          active={activeSection === "brands"}
           onClick={() => { setActiveSection("brands"); setCollectionsTab("grid"); setSelectMode(false); setSelectedIds(new Set()); }}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${activeSection === "brands" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-brands"
         >
-          Brand Library ({images.filter(i => i.category === "Brands").length})
-        </button>
-        <button
+          Brand Library <span className="font-mono normal-case opacity-70">{images.filter(i => i.category === "Brands").length}</span>
+        </Pill>
+        <Pill
+          active={collectionsTab === "collections" && activeSection === "library"}
           onClick={() => { setActiveSection("library"); setCollectionsTab("collections"); setSelectMode(false); setSelectedIds(new Set()); }}
-          className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px ${collectionsTab === "collections" && activeSection === "library" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-collections"
         >
-          Collections ({collections.length})
-        </button>
+          Collections <span className="font-mono normal-case opacity-70">{collections.length}</span>
+        </Pill>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
@@ -1139,7 +1140,7 @@ export default function ImageStudio() {
                 onClick={() => { setSelectedCategory(cat); setSelectedPerson(null); }}
                 className={`w-full text-left px-2 py-1.5 rounded text-sm flex items-center justify-between transition-colors ${
                   selectedCategory === cat
-                    ? "bg-primary text-primary-foreground"
+                    ? "bg-foreground text-background"
                     : "hover:bg-muted"
                 }`}
                 data-testid={`button-category-${cat.toLowerCase().replace(/\s/g, "-")}`}
@@ -1382,35 +1383,29 @@ export default function ImageStudio() {
               {selectMode ? <X className="h-4 w-4 mr-1" /> : <StretchHorizontal className="h-4 w-4 mr-1" />}
               {selectMode ? "Cancel" : "Select"}
             </Button>
-            <div className="flex border rounded-md">
-              <Button
-                variant={libraryView === "albums" ? "default" : "ghost"}
-                size="sm"
-                className="h-9 px-2.5 rounded-r-none text-xs"
+            <div className="flex items-center gap-1.5">
+              <Pill
+                active={libraryView === "albums"}
                 onClick={() => { setLibraryView("albums"); setPropertyFilter(""); }}
                 title="Group photos into one folder per property"
                 data-testid="button-view-albums"
               >
                 Albums
-              </Button>
-              <Button
-                variant={libraryView === "all" && viewMode === "grid" ? "default" : "ghost"}
-                size="sm"
-                className="h-9 px-2 rounded-none"
+              </Pill>
+              <Pill
+                active={libraryView === "all" && viewMode === "grid"}
                 onClick={() => { setLibraryView("all"); setViewMode("grid"); }}
                 data-testid="button-view-grid"
               >
-                <Grid3X3 className="h-4 w-4" />
-              </Button>
-              <Button
-                variant={libraryView === "all" && viewMode === "list" ? "default" : "ghost"}
-                size="sm"
-                className="h-9 px-2 rounded-l-none"
+                <Grid3X3 className="h-3 w-3" />
+              </Pill>
+              <Pill
+                active={libraryView === "all" && viewMode === "list"}
                 onClick={() => { setLibraryView("all"); setViewMode("list"); }}
                 data-testid="button-view-list"
               >
-                <List className="h-4 w-4" />
-              </Button>
+                <List className="h-3 w-3" />
+              </Pill>
             </div>
           </div>
 
@@ -1882,8 +1877,8 @@ export default function ImageStudio() {
                   <div className="flex flex-col items-center justify-center py-20 text-center">
                     <Camera className="h-12 w-12 text-muted-foreground/30 mb-3" />
                     <p className="text-muted-foreground text-sm">No headshots yet. Upload portrait photos to get started.</p>
-                    <Button size="sm" className="mt-4" onClick={() => { setUploadCategory("Headshots"); setUploadDialogOpen(true); }} data-testid="button-upload-headshots">
-                      <Upload className="h-4 w-4 mr-1" /> Upload Headshots
+                    <Button size="sm" variant="outline" className="mt-4" onClick={() => { setUploadCategory("Headshots"); setUploadDialogOpen(true); }} data-testid="button-upload-headshots">
+                      <Upload className="h-4 w-4 mr-1" /> Upload headshots
                     </Button>
                   </div>
                 ) : (
@@ -1895,7 +1890,7 @@ export default function ImageStudio() {
                         className="flex flex-col items-center gap-2.5 group cursor-pointer"
                         data-testid={`button-person-${person.name.toLowerCase().replace(/\s/g, "-")}`}
                       >
-                        <div className="w-[100px] h-[100px] sm:w-[110px] sm:h-[110px] md:w-[120px] md:h-[120px] rounded-full overflow-hidden ring-[3px] ring-white dark:ring-gray-800 shadow-[0_1px_4px_rgba(0,0,0,0.12)] group-hover:shadow-[0_2px_12px_rgba(0,0,0,0.18)] group-hover:scale-[1.04] transition-all duration-200">
+                        <div className="w-[100px] h-[100px] sm:w-[110px] sm:h-[110px] md:w-[120px] md:h-[120px] rounded-full overflow-hidden ring-[3px] ring-background shadow-[0_1px_4px_rgba(0,0,0,0.12)] group-hover:shadow-[0_2px_12px_rgba(0,0,0,0.18)] group-hover:scale-[1.04] transition-all duration-200">
                           <img
                             src={person.coverImage.thumbnailData || ((person.coverImage as any).hasThumbnail ? `/api/image-studio/${person.coverImage.id}/thumb` : `/api/image-studio/${person.coverImage.id}/full`)}
                             alt={person.name}
@@ -1949,7 +1944,7 @@ export default function ImageStudio() {
                 </div>
               </div>
             ) : filteredImages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12">
+              <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
                 <EmptyState
                   icon={ImageIconLucide}
                   title="No images yet"
@@ -1957,9 +1952,11 @@ export default function ImageStudio() {
                     ? "No images match your filters"
                     : "Upload images or capture from Street View"}
                 />
-                <div className="flex gap-2 mt-2">
-                  <Button size="sm" onClick={() => setUploadDialogOpen(true)} data-testid="button-upload-empty">
-                    <Upload className="h-4 w-4 mr-1" /> Upload Images
+                {/* flex-wrap so the third action doesn't clip at the phone
+                    edge; outline — the header Upload is the one filled primary. */}
+                <div className="flex flex-wrap justify-center gap-2 mt-2">
+                  <Button size="sm" variant="outline" onClick={() => setUploadDialogOpen(true)} data-testid="button-upload-empty">
+                    <Upload className="h-4 w-4 mr-1" /> Upload images
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setAiGenerateOpen(true)} data-testid="button-ai-generate-empty">
                     <Sparkles className="h-4 w-4 mr-1" /> AI Generate
@@ -2286,7 +2283,7 @@ export default function ImageStudio() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Upload className="h-5 w-5" /> Upload Images
+              <Upload className="h-5 w-5" /> Upload images
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
@@ -3256,7 +3253,7 @@ function ImageListRow({
       data-testid={`row-image-${image.id}`}
     >
       {selectMode && (
-        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${selected ? "bg-primary border-primary" : "border-gray-400"}`}>
+        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${selected ? "bg-primary border-primary" : "border-border"}`}>
           {selected && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
         </div>
       )}

@@ -145,12 +145,12 @@ function GapCommentary({ propertyId }: { propertyId: string }) {
     onSuccess: (fresh) => qc.setQueryData(key, fresh),
   });
   return (
-    <div className="rounded-lg border border-purple-200 bg-purple-50/50 dark:bg-purple-950/20 dark:border-purple-900 p-3">
+    <div className="rounded-lg border border-border bg-muted/40 p-3">
       <div className="flex items-center justify-between mb-1">
-        <div className="text-[11px] font-semibold text-purple-700 dark:text-purple-300 flex items-center gap-1.5">
-          <Sparkles className="w-3.5 h-3.5" /> BGP gap read
+        <div className="text-[11px] font-semibold flex items-center gap-1.5">
+          <Sparkles className="w-3.5 h-3.5 text-primary" /> BGP gap read
           {data?.generatedAt && (
-            <span className="font-normal text-purple-500/70">
+            <span className="font-normal text-muted-foreground">
               — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
             </span>
           )}
@@ -158,11 +158,11 @@ function GapCommentary({ propertyId }: { propertyId: string }) {
         <button
           onClick={() => refresh.mutate()}
           disabled={refresh.isPending}
-          className="p-1 rounded hover:bg-purple-100 dark:hover:bg-purple-900/40"
+          className="p-1 rounded hover:bg-muted"
           title="Regenerate the gap read"
           data-testid="gap-commentary-refresh"
         >
-          <RefreshCw className={`w-3.5 h-3.5 text-purple-500 ${refresh.isPending ? "animate-spin" : ""}`} />
+          <RefreshCw className={`w-3.5 h-3.5 text-muted-foreground ${refresh.isPending ? "animate-spin" : ""}`} />
         </button>
       </div>
       {isLoading || refresh.isPending ? (
@@ -208,12 +208,12 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
   });
   const expanding = (data?.brands || []).filter(b => b.expanding);
   return (
-    <div className="rounded-lg border border-sky-200 bg-sky-50/50 dark:bg-sky-950/20 dark:border-sky-900 p-3" data-testid="gap-live-intel">
-      <div className="flex items-center gap-1.5 mb-1 text-[11px] font-semibold text-sky-700 dark:text-sky-300">
-        <Radar className="w-3.5 h-3.5" /> Live expansion intel
+    <div className="rounded-lg border border-border bg-muted/40 p-3" data-testid="gap-live-intel">
+      <div className="flex items-center gap-1.5 mb-1 text-[11px] font-semibold">
+        <Radar className="w-3.5 h-3.5 text-primary" /> Live expansion intel
         <span className="text-[10px] font-normal text-muted-foreground">web-researched, cited · verify before pitching</span>
         {data?.generatedAt && (
-          <span className="font-normal text-sky-500/70">
+          <span className="font-normal text-muted-foreground">
             — {new Date(data.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
           </span>
         )}
@@ -238,7 +238,7 @@ function LiveExpansionIntel({ propertyId }: { propertyId: string }) {
                   <span className="font-semibold">{b.name}</span>
                   {b.confidence && <span className="text-[10px] text-muted-foreground ml-1">({b.confidence})</span>}
                   {b.source_url && (
-                    <a href={b.source_url} target="_blank" rel="noreferrer" className="inline-flex align-middle ml-1 text-sky-600 hover:text-sky-800" title={b.source_url}>
+                    <a href={b.source_url} target="_blank" rel="noreferrer" className="inline-flex align-middle ml-1 text-primary hover:underline" title={b.source_url}>
                       <ExternalLink className="w-2.5 h-2.5" />
                     </a>
                   )}
@@ -268,7 +268,7 @@ function InternationalWatchlist({ propertyId }: { propertyId: string }) {
     <details className="rounded-lg border p-2.5 group/intl">
       <summary className="text-[11px] font-semibold cursor-pointer list-none flex items-center gap-1.5">
         <ChevronRight className="w-3 h-3 transition-transform group-open/intl:rotate-90" />
-        <Globe2 className="w-3.5 h-3.5 text-sky-500" />
+        <Globe2 className="w-3.5 h-3.5 text-muted-foreground" />
         International watchlist — concepts not yet in the UK
         <span className="text-[10px] font-normal text-muted-foreground">AI-researched · verify before pitching</span>
       </summary>
@@ -321,7 +321,7 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
-            <Target className="w-4 h-4 text-purple-500" />
+            <Target className="w-4 h-4 text-muted-foreground" />
             Brand gap analysis
           </CardTitle>
         </CardHeader>
@@ -337,7 +337,7 @@ export function BrandGapPanel({ propertyId }: { propertyId: string }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
-            <Target className="w-4 h-4 text-purple-500" />
+            <Target className="w-4 h-4 text-muted-foreground" />
             Brand gap analysis
           </CardTitle>
         </CardHeader>
@@ -375,7 +375,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
     <Card data-testid="brand-gap-panel">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
-          <Target className="w-4 h-4 text-purple-500" />
+          <Target className="w-4 h-4 text-muted-foreground" />
           Brand gap analysis
           <span className="text-[11px] font-normal text-muted-foreground">hospitality, F&B, wellness &amp; leisure</span>
           <Badge variant="secondary" className="text-[10px]">
@@ -409,9 +409,9 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
         {detailsOpen && (<>
         {/* Matching brand requirements — active leasing reqs that fit available units */}
         {data.matchingRequirements && data.matchingRequirements.length > 0 && (
-          <div className="rounded-md border border-purple-200 bg-purple-50/60 dark:bg-purple-950/20 dark:border-purple-900 p-2">
-            <div className="text-[11px] text-purple-700 dark:text-purple-300 mb-1 flex items-center gap-1 font-medium">
-              <FileText className="w-3 h-3" />
+          <div className="rounded-md border border-border bg-muted/40 p-2">
+            <div className="text-[11px] mb-1 flex items-center gap-1 font-medium">
+              <FileText className="w-3 h-3 text-primary" />
               Matching brand requirements ({data.matchingRequirements.length}) — use-class fits an available unit
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-0.5">
@@ -452,7 +452,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
           />
           <GapColumn
             icon={AlertCircle}
-            tint="text-amber-500"
+            tint="text-muted-foreground"
             title="At other UK schemes, not here"
             sub={data.peerSchemesConsidered ? `Across ${data.peerSchemesConsidered} major UK schemes` : undefined}
             brands={data.peerGaps || []}
@@ -465,7 +465,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
           />
           <GapColumn
             icon={MapPin}
-            tint="text-blue-500"
+            tint="text-muted-foreground"
             title="In the local market, not on scheme"
             sub="Trading within 5km — operators the scheme could capture"
             brands={data.localMarket || []}
@@ -479,7 +479,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
         {sectors.length > 0 && (
           <div>
             <div className="text-[11px] font-semibold mb-1.5 flex items-center gap-1.5">
-              <Store className="w-3.5 h-3.5 text-teal-500" />
+              <Store className="w-3.5 h-3.5 text-muted-foreground" />
               Sector coverage
               {missing.length > 0 && (
                 <Badge className="text-[10px] bg-amber-100 text-amber-700 border-amber-200">
@@ -567,7 +567,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
 
         {data.onScheme.length === 0 && (data.peerGaps || []).length === 0 && (data.localMarket || []).length === 0 && (
           <p className="text-xs text-muted-foreground italic">
-            No hospitality store data nearby yet. Populate stores for tracked brands via "Find stores" on each brand page.
+            No hospitality store data nearby yet. Populate stores for brands via "Find stores" on each brand page.
           </p>
         )}
         </>)}

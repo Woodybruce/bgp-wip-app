@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Pill, pillTabsList, pillTabsTrigger } from "@/components/ui/pill";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
@@ -664,7 +665,7 @@ function BulkScreenDialog() {
                       <Badge variant="destructive" className="text-xs">Sanctions</Badge>
                     )}
                     {r.riskLevel ? (
-                      <Badge className={`text-xs ${riskColors[r.riskLevel] || ""}`}>
+                      <Badge variant="outline" className={`border-transparent text-xs ${riskColors[r.riskLevel] || ""}`}>
                         {r.riskLevel} {r.riskScore !== undefined ? `(${r.riskScore})` : ""}
                       </Badge>
                     ) : (
@@ -1168,31 +1169,28 @@ export default function KycClouseau() {
         <div className="w-full h-[45vh] lg:h-auto lg:w-80 border-b lg:border-b-0 lg:border-r flex flex-col flex-shrink-0">
           <div className="p-4 border-b space-y-3">
             {/* Search mode tabs */}
-            <div className="flex gap-1 p-0.5 bg-muted rounded-lg">
-              <button
-                className={`flex-1 text-[11px] font-medium py-1.5 px-2 rounded-md transition-colors flex items-center justify-center gap-1 ${searchMode === "company" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+            <div className="flex flex-wrap gap-1.5">
+              <Pill
+                active={searchMode === "company"}
                 onClick={() => setSearchMode("company")}
                 data-testid="mode-company"
               >
-                <Building2 className="h-3 w-3" />
                 Company
-              </button>
-              <button
-                className={`flex-1 text-[11px] font-medium py-1.5 px-2 rounded-md transition-colors flex items-center justify-center gap-1 ${searchMode === "individual" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              </Pill>
+              <Pill
+                active={searchMode === "individual"}
                 onClick={() => setSearchMode("individual")}
                 data-testid="mode-individual"
               >
-                <UserSearch className="h-3 w-3" />
                 Individual
-              </button>
-              <button
-                className={`flex-1 text-[11px] font-medium py-1.5 px-2 rounded-md transition-colors flex items-center justify-center gap-1 ${searchMode === "property" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+              </Pill>
+              <Pill
+                active={searchMode === "property"}
                 onClick={() => setSearchMode("property")}
                 data-testid="mode-property"
               >
-                <Home className="h-3 w-3" />
                 Property
-              </button>
+              </Pill>
             </div>
 
             {searchMode === "company" && (
@@ -1874,14 +1872,14 @@ export default function KycClouseau() {
               )}
 
               <Tabs defaultValue="analysis" className="w-full">
-                <TabsList className="w-full justify-start">
-                  <TabsTrigger value="analysis" data-testid="tab-analysis">AI Analysis</TabsTrigger>
-                  <TabsTrigger value="officers" data-testid="tab-officers">Officers ({investigation.officers?.length || 0})</TabsTrigger>
-                  <TabsTrigger value="pscs" data-testid="tab-pscs">PSCs ({investigation.pscs?.length || 0})</TabsTrigger>
-                  <TabsTrigger value="ownership" data-testid="tab-ownership">Ownership</TabsTrigger>
-                  <TabsTrigger value="charges" data-testid="tab-charges">Charges ({investigation.charges?.length || 0})</TabsTrigger>
-                  <TabsTrigger value="sanctions" data-testid="tab-sanctions">Sanctions</TabsTrigger>
-                  <TabsTrigger value="filings" data-testid="tab-filings">Filings</TabsTrigger>
+                <TabsList className={pillTabsList}>
+                  <TabsTrigger value="analysis" className={pillTabsTrigger} data-testid="tab-analysis">AI Analysis</TabsTrigger>
+                  <TabsTrigger value="officers" className={pillTabsTrigger} data-testid="tab-officers">Officers <span className="font-mono normal-case opacity-70">{investigation.officers?.length || 0}</span></TabsTrigger>
+                  <TabsTrigger value="pscs" className={pillTabsTrigger} data-testid="tab-pscs">PSCs <span className="font-mono normal-case opacity-70">{investigation.pscs?.length || 0}</span></TabsTrigger>
+                  <TabsTrigger value="ownership" className={pillTabsTrigger} data-testid="tab-ownership">Ownership</TabsTrigger>
+                  <TabsTrigger value="charges" className={pillTabsTrigger} data-testid="tab-charges">Charges <span className="font-mono normal-case opacity-70">{investigation.charges?.length || 0}</span></TabsTrigger>
+                  <TabsTrigger value="sanctions" className={pillTabsTrigger} data-testid="tab-sanctions">Sanctions</TabsTrigger>
+                  <TabsTrigger value="filings" className={pillTabsTrigger} data-testid="tab-filings">Filings</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="analysis" className="mt-4 space-y-4">

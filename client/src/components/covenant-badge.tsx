@@ -109,7 +109,7 @@ export function CovenantCommentary({ companyNumber, className = "" }: { companyN
 
   const missing: string[] = data.missing || [];
   return (
-    <div className={`rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-3 ${className}`} data-testid="covenant-commentary">
+    <div className={`rounded-md border border-border bg-muted/40 p-3 ${className}`} data-testid="covenant-commentary">
       {data.verdict ? (
         <p className="text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">{data.verdict}</p>
       ) : (

@@ -99,8 +99,8 @@ export function ClientSharePointBrowser() {
   return (
     <div className="p-4 md:p-6 space-y-4" data-testid="client-sharepoint-page">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <Cloud className="w-6 h-6" /> SharePoint
+        <h1 className="text-2xl font-bold tracking-tight">
+          SharePoint
         </h1>
         <p className="text-sm text-muted-foreground">Your document library — property folder trees, shared by your BGP team.</p>
       </div>
