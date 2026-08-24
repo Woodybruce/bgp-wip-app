@@ -535,10 +535,12 @@ const BRAND_CATEGORIES: TopCat[] = [
       { key: "books", label: "Books & Stationery", icon: BookOpen, match: ["Tenant - Books", "Tenant - Stationery", "Tenant - Books & Stationery"] },
       { key: "financial", label: "Financial Services", icon: Landmark, match: ["Tenant - Financial Services", "Tenant - Bank", "Tenant - Finance"] },
       { key: "services", label: "Services", icon: Briefcase, match: ["Tenant - Services", "Tenant - Optician", "Tenant - Travel", "Tenant - Other Services"] },
+      // "National & Regional" dissolved (Woody, 2026-08-24: "doesn't make
+      // any sense") — its sub-sectors live here so no brand loses a home.
       { key: "grocery", label: "Grocery & Convenience", icon: ShoppingCart, match: ["Tenant - Grocery", "Tenant - Convenience", "Tenant - Supermarket"] },
       { key: "value-retail", label: "Value & Discount", icon: Tag, match: ["Tenant - Value Retail", "Tenant - Discount", "Tenant - Pound Store"] },
       { key: "trade-diy", label: "Trade & DIY", icon: Wrench, match: ["Tenant - Trade", "Tenant - DIY", "Tenant - Hardware", "Tenant - Builders Merchants"] },
-      { key: "high-street", label: "High Street", icon: MapPin, match: ["Tenant - National Retail", "Tenant - High Street"] },
+      { key: "national-other", label: "National Retail", icon: Building2, match: ["Tenant - National Retail", "Tenant - High Street"] },
       { key: "other-retail", label: "Other Retail", icon: Store, match: ["Tenant - Retail", "Tenant - General Retail"] },
     ],
   },

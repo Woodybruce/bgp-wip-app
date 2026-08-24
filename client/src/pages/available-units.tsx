@@ -2071,7 +2071,7 @@ export default function AvailableUnitsPage() {
                               size="sm"
                               className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
                               onClick={() => setSuggestUnit(u)}
-                              title="AI-suggest target brands: live requirements that fit this unit + brands in matching categories, ranked by Fable"
+                              title="AI-suggest target brands: live requirements that fit this unit + brands in matching categories, ranked by AI"
                               data-testid={`button-suggest-targets-${u.id}`}
                             >
                               <Sparkles className="w-3.5 h-3.5 mr-0.5" /> AI
