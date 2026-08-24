@@ -213,7 +213,7 @@ export async function runLogoDevBackfill(limit = 100, hospitalityOnly = false): 
         AND (COALESCE(TRIM(description), '') = '' OR COALESCE(TRIM(instagram_handle), '') = ''
              OR COALESCE(TRIM(tiktok_handle), '') = '' OR COALESCE(TRIM(x_handle), '') = ''
              OR COALESCE(TRIM(linkedin_url), '') = '')
-      ORDER BY is_tracked_brand DESC NULLS LAST, name
+      ORDER BY (company_type ILIKE 'tenant%') DESC, name
       LIMIT $1`,
     params
   );

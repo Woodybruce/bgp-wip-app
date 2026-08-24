@@ -53,8 +53,6 @@ interface BrandProfile {
     employee_count: number | null;
     annual_revenue: number | null;
     founded_year: number | null;
-    is_tracked_brand: boolean;
-    tracking_reason: string | null;
     brand_group_id: string | null;
     parent_company_id: string | null;
     concept_pitch: string | null;
@@ -770,7 +768,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
 
   // All companies — used by the representation picker AND the backer linkifier
   // so any mentioned company name gets a link to its profile.
-  const { data: allCompaniesForPicker = [] } = useQuery<Array<{ id: string; name: string; agent_type: string | null; is_tracked_brand: boolean; domain: string | null; domainUrl: string | null }>>({
+  const { data: allCompaniesForPicker = [] } = useQuery<Array<{ id: string; name: string; agent_type: string | null; domain: string | null; domainUrl: string | null }>>({
     queryKey: ["/api/crm/companies"],
   });
 
@@ -1067,7 +1065,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
   const spacePreferences = data.spacePreferences || null;
   const siblingBrands = data.siblings || [];
   const parentGroup = data.parentGroup || null;
-  const isBrand = !!c.is_tracked_brand;
+  const isBrand = /^tenant/i.test(c.company_type || "");
   const isAgent = !!c.agent_type;
 
   const startEdit = () => {
@@ -1083,9 +1081,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
       hunter_flag: c.hunter_flag ?? false,
       stock_ticker: c.stock_ticker || "",
       uk_entity_name: c.uk_entity_name || "",
-      tracking_reason: c.tracking_reason || "",
       agent_type: c.agent_type || "",
-      is_tracked_brand: c.is_tracked_brand,
     });
     setEditing(true);
   };
@@ -1105,7 +1101,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             if (t.includes("landlord")) return "Landlord Profile";
             return "Brand Profile";
           })()}
-          {c.is_tracked_brand && <Badge variant="secondary" className="text-[10px]">Tracked brand</Badge>}
           {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
           {hunter && hunter.expansionScore >= 40 && (
             <Badge
@@ -1817,7 +1812,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 <div className="col-span-2">
                   <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />
                 </div>
-              ) : c.is_tracked_brand && !isClientViewer ? (
+              ) : isBrand && !isClientViewer ? (
                 <div className="col-span-2">
                   <TickerSuggestPicker
                     companyId={c.id}
@@ -1826,12 +1821,6 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
                 </div>
               ) : null}
             </div>
-
-            {c.tracking_reason && (
-              <div className="text-xs text-muted-foreground italic border-l-2 border-border pl-2">
-                {c.tracking_reason}
-              </div>
-            )}
 
             {/* Parent group */}
             {data.parentGroup && (
@@ -3368,7 +3357,6 @@ function CreateCompetitorInCrmButton({ name, onCreated }: { name: string; onCrea
       const r = await apiRequest("POST", "/api/crm/companies", {
         name,
         companyType: "Tenant - Brand",
-        isTrackedBrand: false,
       });
       const out = await r.json();
       if (!r.ok) throw new Error(out?.error || "Couldn't create CRM record");
@@ -4945,7 +4933,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
     if (!t) return false;
     return t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("reit") || t.includes("fund");
   })();
-  const isBrand = !!c.is_tracked_brand;
+  const isBrand = /^tenant/i.test(c.company_type || "");
   const [newsShowAll, setNewsShowAll] = useState(false);
   const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);
   const [newsTab, setNewsTab] = useState<"press" | "industry">("industry");
@@ -5142,7 +5130,7 @@ function BrandProfileSidebar({ data, companyId }: { data: BrandProfile; companyI
       </div>
 
       {/* BGP relationship card removed — it duplicated the Key contacts card
-          above, the Deal ledger zone and the header's Tracked-brand badge.
+          above and the Deal ledger zone.
           Team membership is now edited in Zone 4's Coverage row (BgpTeamMenu). */}
 
       {/* News + Instagram side by side (Woody, 2026-08-04: "reverse and

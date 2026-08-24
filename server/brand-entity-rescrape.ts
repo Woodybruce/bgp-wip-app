@@ -40,7 +40,7 @@ export async function runWeeklyUkEntityRescrape(opts: { limit?: number } = {}): 
       WHERE merged_into_id IS NULL
         AND (uk_entity_name IS NULL OR uk_entity_name = '')
         AND (domain IS NOT NULL OR domain_url IS NOT NULL)
-      ORDER BY is_tracked_brand DESC, name
+      ORDER BY (company_type ILIKE 'tenant%') DESC, name
       LIMIT $1`,
     [limit]
   );

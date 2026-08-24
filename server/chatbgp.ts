@@ -2589,7 +2589,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "get_brand_profile",
-      description: "Get the full BGP brand bible for a tracked retail brand — covenant (Companies House health, traffic light), rollout velocity (openings/closures last 12m), store footprint, rent affordability vs peer comps, turnover history, active requirements, pitched-to history (every leasing schedule this brand has been a target on), completed + active deals, agent representations, contacts with last touchpoint, and the AI-classified signals timeline. Use this when the user asks 'who should pitch for X', 'is brand Y expanding', 'what's their covenant', 'when did we last touch them', or anything about a specific retail brand.",
+      description: "Get the full BGP brand bible for a retail brand — covenant (Companies House health, traffic light), rollout velocity (openings/closures last 12m), store footprint, rent affordability vs peer comps, turnover history, active requirements, pitched-to history (every leasing schedule this brand has been a target on), completed + active deals, agent representations, contacts with last touchpoint, and the AI-classified signals timeline. Use this when the user asks 'who should pitch for X', 'is brand Y expanding', 'what's their covenant', 'when did we last touch them', or anything about a specific retail brand.",
       parameters: {
         type: "object",
         properties: {
@@ -6040,7 +6040,7 @@ export async function executeCrmToolRaw(
         const fuzzy = await pool.query(
           `SELECT id, name FROM crm_companies
              WHERE name ILIKE $1 AND merged_into_id IS NULL
-             ORDER BY CASE WHEN is_tracked_brand THEN 0 ELSE 1 END
+             ORDER BY CASE WHEN company_type ILIKE 'tenant%' THEN 0 ELSE 1 END
              LIMIT 5`,
           [`%${String(fnArgs.name).trim()}%`]
         );
@@ -6074,7 +6074,6 @@ export async function executeCrmToolRaw(
             storeCount: full.company.store_count,
             rolloutStatus: full.company.rollout_status,
             backers: full.company.backers,
-            isTrackedBrand: full.company.is_tracked_brand,
             leadBroker: full.company.bgp_contact_crm,
             industry: full.company.industry,
             annualRevenue: full.company.annual_revenue,
@@ -10866,7 +10865,7 @@ Be thorough — include every unit row you can classify, across all properties i
       const known = new Map<string, { id: string; name: string; tracked: boolean }>();
       if (domains.length) {
         const { rows } = await pool.query(
-          `SELECT id, name, lower(coalesce(domain, '')) AS domain, coalesce(is_tracked_brand, false) AS tracked
+          `SELECT id, name, lower(coalesce(domain, '')) AS domain, (company_type ILIKE 'tenant%') AS tracked
              FROM crm_companies WHERE lower(coalesce(domain, '')) = ANY($1::text[])`,
           [domains],
         );

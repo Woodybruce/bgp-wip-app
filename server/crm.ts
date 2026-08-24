@@ -1740,7 +1740,7 @@ export function setupCrmRoutes(app: Express) {
           kycStatus, kycCheckedAt, kycApprovedBy, kycExpiresAt,
           amlChecklist, amlRiskLevel, amlPepStatus, amlSourceOfWealth,
           amlSourceOfWealthNotes, amlEddRequired, amlEddReason, amlNotes,
-          companiesHouseOfficers, companiesHouseData, hunterFlag, trackingReason,
+          companiesHouseOfficers, companiesHouseData, hunterFlag,
           lettingHunterFlag, lettingHunterNotes, investmentHunterFlag, investmentHunterNotes,
           distressFlag, distressNotes, acquiringNow, acquiringNowNotes,
           disposingNow, disposingNowNotes, lendingAppetiteNotes, lastInteraction,
@@ -1768,7 +1768,6 @@ export function setupCrmRoutes(app: Express) {
         } else if (!/^tenant\b/i.test(ct)) {
           return res.status(403).json({ error: "Client accounts can only create tenant brands" });
         }
-        (parsed as any).isTrackedBrand = true;
       }
       const company = await storage.createCrmCompany(parsed);
       if (createScope && (company as any)?.id) {
@@ -4744,7 +4743,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
         const seen = new Set(candidates.map((c) => c.companyId).filter(Boolean));
         const brandRows = await pool.query(
           `SELECT id, name, company_type FROM crm_companies
-            WHERE is_tracked_brand = true AND merged_into_id IS NULL
+            WHERE company_type ILIKE 'tenant%' AND merged_into_id IS NULL
               AND company_type ILIKE ANY($1)
             ORDER BY last_enriched_at DESC NULLS LAST LIMIT 12`,
           [catPatterns]
@@ -8055,7 +8054,6 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 ) AS "targetedAt",
                 EXISTS (SELECT 1 FROM crm_contacts ct WHERE ct.company_id = c.id) AS "hasContacts",
                 (COALESCE(c.hunter_flag, false) OR COALESCE(c.letting_hunter_flag, false) OR COALESCE(c.investment_hunter_flag, false)) AS "hunterFlag",
-                COALESCE(c.is_tracked_brand, false) AS "isTracked",
                 EXISTS (SELECT 1 FROM crm_requirements_leasing rl
                          WHERE rl.company_id = c.id AND LOWER(COALESCE(rl.status, '')) = 'active') AS "liveRequirement"
            FROM crm_companies c
@@ -8207,7 +8205,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           c.brand_analysis,
           c.created_at
         FROM crm_companies c
-        WHERE (c.is_tracked_brand = true OR c.hunter_flag = true)
+        WHERE (c.company_type ILIKE 'tenant%' OR c.hunter_flag = true)
           AND c.merged_into_id IS NULL${hunterSliceFilter}
         ORDER BY c.name
       `).then(r => r.rows);
@@ -9715,7 +9713,7 @@ async function runAutoEnrichmentCycle() {
             WHERE source_type = 'google_places'
             GROUP BY brand_company_id
           ) s ON s.brand_company_id = c.id
-          WHERE c.is_tracked_brand = true
+          WHERE c.company_type ILIKE 'tenant%'
             AND (c.ai_disabled IS NULL OR c.ai_disabled = FALSE)
             AND c.merged_into_id IS NULL
             AND (s.last_researched IS NULL OR s.last_researched < NOW() - INTERVAL '30 days')

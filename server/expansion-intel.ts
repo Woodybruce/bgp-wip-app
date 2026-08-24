@@ -246,7 +246,7 @@ export async function nightlyNormalisePass(cap = 25): Promise<{ brands: number; 
   const q = await pool.query(
     `SELECT brand_company_id AS id, count(*) AS pending
        FROM brand_signals s
-       JOIN crm_companies c ON c.id = s.brand_company_id AND c.is_tracked_brand = true
+       JOIN crm_companies c ON c.id = s.brand_company_id AND c.company_type ILIKE 'tenant%'
       WHERE s.ai_generated = true AND s.dedupe_key IS NULL
         AND (s.source IS NULL OR s.source NOT LIKE 'bgp-deal:%')
       GROUP BY brand_company_id

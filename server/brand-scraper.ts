@@ -302,7 +302,7 @@ export async function runDailyBrandScraper(): Promise<{ scanned: number; signals
             FROM brand_scraper_log
            GROUP BY brand_company_id
         ) sl ON sl.brand_company_id = c.id
-       WHERE c.is_tracked_brand = true
+       WHERE c.company_type ILIKE 'tenant%'
          AND c.merged_into_id IS NULL
          AND COALESCE(c.domain, c.domain_url) IS NOT NULL
        ORDER BY sl.last_scrape ASC NULLS FIRST
@@ -356,7 +356,7 @@ function extractInstagramHandle(html: string): string | null {
 //      brand. We only accept the AI's answer if it's a plausible IG
 //      handle string — letters/digits/dot/underscore, 1-30 chars.
 //
-// Covers every brand with a domain (no longer gated on is_tracked_brand)
+// Covers every brand with a domain
 // so we get full coverage rather than the slow auto-enrichment cycle.
 // Scheduled weekly by the Sunday cron in server/index.ts.
 export async function backfillInstagramHandles(limit = 500): Promise<{
@@ -367,7 +367,7 @@ export async function backfillInstagramHandles(limit = 500): Promise<{
       WHERE (instagram_handle IS NULL OR instagram_handle = '')
         AND (domain IS NOT NULL OR domain_url IS NOT NULL)
         AND merged_into_id IS NULL
-      ORDER BY is_tracked_brand DESC, name
+      ORDER BY (company_type ILIKE 'tenant%') DESC, name
       LIMIT $1`,
     [limit]
   );

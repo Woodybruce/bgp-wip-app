@@ -265,9 +265,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               domain, domain_url, head_office_address,
               linkedin_url, phone, industry, employee_count, annual_revenue, founded_year,
               kyc_status, kyc_expires_at, aml_risk_level, aml_pep_status,
-              is_tracked_brand, tracking_reason, brand_group_id, parent_company_id,
+              brand_group_id, parent_company_id,
               concept_pitch, store_count, rollout_status, backers, instagram_handle,
-              tiktok_handle, dept_store_presence, franchise_activity, hunter_flag,
               tiktok_handle, x_handle, dept_store_presence, franchise_activity, hunter_flag,
               stock_ticker, uk_entity_name, agent_type, concept_status,
               last_accounts_doc_id, last_accounts_made_up_to,
@@ -313,7 +312,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // Brands this agent represents (if this company is an agent)
     const brandsForAgentQ = pool.query(
       `SELECT r.id, r.agent_type, r.region, r.start_date,
-              r.brand_company_id, b.name AS brand_name, b.is_tracked_brand
+              r.brand_company_id, b.name AS brand_name, (b.company_type ILIKE 'tenant%') AS is_brand
          FROM brand_agent_representations r
          LEFT JOIN crm_companies b ON b.id = r.brand_company_id
         WHERE r.agent_company_id = $1 AND r.end_date IS NULL
@@ -749,7 +748,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
        SELECT DISTINCT c.id, c.name, c.store_count, c.rollout_status
          FROM crm_companies c
          JOIN crm_comps cm ON (cm.tenant ILIKE c.name OR cm.contact_company ILIKE c.name)
-        WHERE c.is_tracked_brand = true
+        WHERE c.company_type ILIKE 'tenant%'
           AND c.id <> $1
           AND c.merged_into_id IS NULL
           AND cm.use_class IN (SELECT use_class FROM me)
@@ -855,7 +854,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     // Fire-and-forget: if tracked brand has no analysis yet, generate one
     // in the background so next load picks it up. Respects AI on/off.
-    if (c.is_tracked_brand && !c.ai_disabled && !c.brand_analysis) {
+    if (/^tenant/i.test(c.company_type || "") && !c.ai_disabled && !c.brand_analysis) {
       (async () => {
         try {
           const { refreshBrandAnalysis } = await import("./brand-analysis");
@@ -1142,9 +1141,8 @@ router.patch("/api/brand/:companyId", requireAuth, async (req: Request, res: Res
     const { companyId } = req.params;
     const body = req.body || {};
     const allowed = [
-      "is_tracked_brand", "tracking_reason", "brand_group_id",
+      "brand_group_id",
       "concept_pitch", "store_count", "rollout_status", "backers",
-      "instagram_handle", "tiktok_handle", "dept_store_presence",
       "instagram_handle", "tiktok_handle", "x_handle", "dept_store_presence",
       "franchise_activity", "hunter_flag", "stock_ticker", "uk_entity_name", "agent_type",
       "concept_status",
@@ -1462,10 +1460,10 @@ router.post("/api/brand-cull/apply", async (req: Request, res: Response) => {
 router.get("/api/brand/tracked", requireAuth, async (_req: Request, res: Response) => {
   try {
     const { rows } = await pool.query(
-      `SELECT id, name, tracking_reason, store_count, rollout_status, concept_pitch,
+      `SELECT id, name, store_count, rollout_status, concept_pitch,
               brand_group_id, last_enriched_at, instagram_handle
          FROM crm_companies
-        WHERE is_tracked_brand = true AND merged_into_id IS NULL
+        WHERE company_type ILIKE 'tenant%' AND merged_into_id IS NULL
         ORDER BY name ASC`
     );
     res.json({ brands: rows });

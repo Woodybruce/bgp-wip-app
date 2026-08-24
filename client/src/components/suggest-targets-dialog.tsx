@@ -1,5 +1,5 @@
 // AI brand suggestions for a letting unit — the fits engine in reverse:
-// live requirements whose size/use/location fit the unit plus tracked brands
+// live requirements whose size/use/location fit the unit plus brands
 // in matching categories, ranked by Fable with a concrete reason each.
 // Shared surface (letting tracker, property page) so every board offers the
 // same "who should we pitch this to" answer. One click targets the brand on
@@ -17,7 +17,7 @@ import { type BrandPick } from "@/components/brand-search-input";
 
 // ─── AI target suggestions ──────────────────────────────────────────────
 // The fits engine in reverse: live requirements whose size/use/location
-// fit this unit plus tracked brands in matching categories, ranked by
+// fit this unit plus brands in matching categories, ranked by
 // Fable with a concrete reason each. One click adds the brand to the
 // unit's Operator Targeting Brief.
 export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
@@ -60,7 +60,7 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
             Suggested brands — {unit?.unitName}{data?.unit?.sqft ? ` (${Number(data.unit.sqft).toLocaleString()} sq ft)` : ""}
           </DialogTitle>
           <DialogDescription>
-            Live requirements that fit this unit, plus tracked brands in matching categories — ranked by AI.
+            Live requirements that fit this unit, plus brands in matching categories — ranked by AI.
           </DialogDescription>
         </DialogHeader>
         {isFetching ? (
@@ -75,7 +75,7 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
                   <p className="text-sm font-medium truncate">
                     {s.name}
                     <Badge variant="outline" className={`ml-2 text-[9px] ${s.source === "live_requirement" ? "text-emerald-700 border-emerald-200" : "text-blue-700 border-blue-200"}`}>
-                      {s.source === "live_requirement" ? "live requirement" : "tracked brand"}
+                      {s.source === "live_requirement" ? "live requirement" : "brand"}
                     </Badge>
                     {s.aiScore != null && <span className="ml-2 text-[10px] text-muted-foreground tabular-nums">{s.aiScore}</span>}
                   </p>

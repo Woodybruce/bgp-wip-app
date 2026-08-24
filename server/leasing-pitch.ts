@@ -103,7 +103,7 @@ router.put("/api/leasing-pitch/:propertyId", requireAuth, async (req, res) => {
 //
 // Loads the property context + any existing leasing_pitch, asks Claude for a
 // plausible tenant mix (categories + specific brands), then tries to match
-// each brand name against crm_companies (preferring is_tracked_brand=true).
+// each brand name against crm_companies (preferring Tenant-type rows).
 // Returns a structured recommendation the UI can turn into actions (pitch to
 // brand, add to target_brand_ids, etc.).
 
@@ -113,7 +113,7 @@ type Recommendation = {
   brands: Array<{
     name: string;
     why: string;
-    match?: { id: string; name: string; is_tracked_brand: boolean; rollout_status: string | null } | null;
+    match?: { id: string; name: string; rollout_status: string | null } | null;
   }>;
 };
 
@@ -193,22 +193,22 @@ Constraints:
 
 async function matchBrandsToCrm(
   names: string[]
-): Promise<Map<string, { id: string; name: string; is_tracked_brand: boolean; rollout_status: string | null }>> {
+): Promise<Map<string, { id: string; name: string; rollout_status: string | null }>> {
   if (!names.length) return new Map();
   const { rows } = await pool.query(
-    `SELECT id, name, is_tracked_brand, rollout_status
+    `SELECT id, name, rollout_status, (company_type ILIKE 'tenant%') AS is_brand
        FROM crm_companies
       WHERE lower(name) = ANY($1::text[])`,
     [names.map(n => n.toLowerCase())]
   );
   const byKey = new Map<string, any>();
   for (const r of rows) byKey.set(String(r.name).toLowerCase(), r);
-  // Prefer tracked brand if there are duplicates — resolve by re-scanning
+  // Prefer Tenant-type rows if there are duplicates — resolve by re-scanning
   const resolved = new Map<string, any>();
   for (const r of rows) {
     const k = String(r.name).toLowerCase();
     const prior = resolved.get(k);
-    if (!prior || (r.is_tracked_brand && !prior.is_tracked_brand)) resolved.set(k, r);
+    if (!prior || (r.is_brand && !prior.is_brand)) resolved.set(k, r);
   }
   const out = new Map<string, any>();
   for (const n of names) out.set(n, resolved.get(n.toLowerCase()) || null);
@@ -269,7 +269,7 @@ router.post("/api/leasing-pitch/:propertyId/recommend-mix", requireAuth, async (
     res.json({
       headline: parsed.headline || "",
       recommendations,
-      trackedBrandCount: Array.from(matches.values()).filter((m: any) => m?.is_tracked_brand).length,
+      matchedBrandCount: Array.from(matches.values()).filter(Boolean).length,
     });
   } catch (err: any) {
     console.error("[tenant-mix] error:", err);

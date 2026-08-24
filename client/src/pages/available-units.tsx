@@ -2071,7 +2071,7 @@ export default function AvailableUnitsPage() {
                               size="sm"
                               className="h-7 px-2 text-[11px] text-muted-foreground hover:text-foreground"
                               onClick={() => setSuggestUnit(u)}
-                              title="AI-suggest target brands: live requirements that fit this unit + tracked brands in matching categories, ranked by Fable"
+                              title="AI-suggest target brands: live requirements that fit this unit + brands in matching categories, ranked by Fable"
                               data-testid={`button-suggest-targets-${u.id}`}
                             >
                               <Sparkles className="w-3.5 h-3.5 mr-0.5" /> AI
@@ -2660,7 +2660,6 @@ export default function AvailableUnitsPage() {
                 const r = await apiRequest("POST", "/api/crm/companies", {
                   name: name.trim(),
                   companyType: "Tenant",
-                  isTrackedBrand: true,
                 });
                 const created = await r.json();
                 queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });

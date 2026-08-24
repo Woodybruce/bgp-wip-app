@@ -153,7 +153,7 @@ router.post("/api/admin/import-brand-logos", requireAuth, async (req: Request, r
       `SELECT c.id, c.name, c.domain, c.domain_url
          FROM crm_companies c
          ${whereClause}
-         ORDER BY c.is_tracked_brand DESC NULLS LAST, c.name ASC
+         ORDER BY (c.company_type ILIKE 'tenant%') DESC, c.name ASC
          LIMIT $1`,
       [limit]
     );
@@ -238,7 +238,7 @@ router.post("/api/admin/import-brand-logos", requireAuth, async (req: Request, r
             `SELECT c.id, c.name, c.domain, c.domain_url
                FROM crm_companies c
                ${whereClause}
-               ORDER BY c.is_tracked_brand DESC NULLS LAST, c.name ASC
+               ORDER BY (c.company_type ILIKE 'tenant%') DESC, c.name ASC
                LIMIT $1`,
             [limit]
           );

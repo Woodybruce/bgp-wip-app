@@ -1631,7 +1631,6 @@ function SimplifiedCreateBody({
       const r = await apiRequest("POST", "/api/crm/companies", {
         name: name.trim(),
         companyType,
-        isTrackedBrand: companyType.startsWith("Tenant"),
       });
       const created = await r.json();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
@@ -5705,7 +5704,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       const r = await apiRequest("POST", "/api/crm/companies", {
         name: name.trim(),
         companyType,
-        isTrackedBrand: companyType.startsWith("Tenant"),
       });
       const created = await r.json();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });

@@ -155,7 +155,7 @@ export async function refreshBrandAnalysis(companyId: string, force = false): Pr
 export async function refreshStaleBrandAnalyses(limit = 3): Promise<{ processed: number; refreshed: number }> {
   const { rows } = await pool.query(
     `SELECT id FROM crm_companies
-      WHERE is_tracked_brand = true
+      WHERE company_type ILIKE 'tenant%'
         AND (ai_disabled IS NULL OR ai_disabled = FALSE)
         AND merged_into_id IS NULL
         AND (brand_analysis_at IS NULL OR brand_analysis_at < NOW() - INTERVAL '${STALE_AFTER_DAYS} days')

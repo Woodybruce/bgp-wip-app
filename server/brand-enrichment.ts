@@ -104,7 +104,7 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
   const q = await pool.query(
     `SELECT id, name, domain, domain_url, companies_house_number, concept_pitch, store_count,
             rollout_status, backers, instagram_handle, description, industry, employee_count,
-            ai_generated_fields
+            ai_generated_fields, company_type
        FROM crm_companies WHERE id = $1`,
     [companyId]
   );
@@ -212,7 +212,7 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
   );
 
   // Auto-fetch brand images (fire-and-forget — don't block the enrichment response)
-  if (c.is_tracked_brand || updated.includes("concept_pitch")) {
+  if (/^tenant/i.test(c.company_type || "") || updated.includes("concept_pitch")) {
     fetchBrandImages(companyId, c.name, aiOut?.industry || c.industry || undefined).catch(e =>
       console.warn(`[brand-images] Background fetch failed for ${c.name}:`, e?.message)
     );
@@ -273,9 +273,9 @@ router.get("/api/brand/enrich/status", requireAuth, async (_req: Request, res: R
   try {
     const { rows } = await pool.query(
       `SELECT
-         COUNT(*) FILTER (WHERE is_tracked_brand = true AND merged_into_id IS NULL)::int AS tracked_total,
-         COUNT(*) FILTER (WHERE is_tracked_brand = true AND merged_into_id IS NULL AND last_enriched_at IS NULL)::int AS tracked_never,
-         COUNT(*) FILTER (WHERE is_tracked_brand = true AND merged_into_id IS NULL AND last_enriched_at < now() - INTERVAL '30 days')::int AS tracked_stale,
+         COUNT(*) FILTER (WHERE company_type ILIKE 'tenant%' AND merged_into_id IS NULL)::int AS tracked_total,
+         COUNT(*) FILTER (WHERE company_type ILIKE 'tenant%' AND merged_into_id IS NULL AND last_enriched_at IS NULL)::int AS tracked_never,
+         COUNT(*) FILTER (WHERE company_type ILIKE 'tenant%' AND merged_into_id IS NULL AND last_enriched_at < now() - INTERVAL '30 days')::int AS tracked_stale,
          COUNT(*) FILTER (WHERE merged_into_id IS NULL)::int AS all_companies
        FROM crm_companies`
     );
@@ -287,19 +287,19 @@ router.get("/api/brand/enrich/status", requireAuth, async (_req: Request, res: R
 
 async function selectStaleCompanies(limit: number): Promise<string[]> {
   // Priority:
-  //  1. tracked brands that have never been enriched
-  //  2. tracked brands with stale enrichment (>30d)
+  //  1. tenant brands that have never been enriched
+  //  2. tenant brands with stale enrichment (>30d)
   //  3. any brand-like company (company_type ilike '%brand%' or has concept_pitch) never enriched
   const { rows } = await pool.query(
     `SELECT id FROM crm_companies
       WHERE merged_into_id IS NULL
         AND (
-          (is_tracked_brand = true AND last_enriched_at IS NULL)
-          OR (is_tracked_brand = true AND last_enriched_at < now() - INTERVAL '30 days')
+          (company_type ILIKE 'tenant%' AND last_enriched_at IS NULL)
+          OR (company_type ILIKE 'tenant%' AND last_enriched_at < now() - INTERVAL '30 days')
           OR (company_type ILIKE '%brand%' AND last_enriched_at IS NULL)
         )
       ORDER BY
-        is_tracked_brand DESC,
+        (company_type ILIKE 'tenant%') DESC,
         last_enriched_at ASC NULLS FIRST
       LIMIT $1`,
     [limit]

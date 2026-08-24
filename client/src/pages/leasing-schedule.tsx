@@ -869,7 +869,7 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
 
   // Multi-select via the shared picker — clicking an existing option
   // toggles it; the green "Create brand" row at the bottom creates a
-  // tracked brand inline and immediately adds it to the target list.
+  // brand inline and immediately adds it to the target list.
   const toggleId = (newId: string) => {
     const nextIds = ids.includes(newId) ? ids.filter(i => i !== newId) : [...ids, newId];
     onUpdate(unitId, "target_company_ids", JSON.stringify(nextIds));
@@ -936,7 +936,6 @@ function TargetCompaniesCell({ unitId, targetCompanyIds, targetBrands, onUpdate 
           const r = await apiRequest("POST", "/api/crm/companies", {
             name: name.trim(),
             companyType: "Tenant",
-            isTrackedBrand: true,
           });
           const created = await r.json();
           queryClient.invalidateQueries({ queryKey: ["/api/crm/companies-basic"] });

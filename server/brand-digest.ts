@@ -42,7 +42,7 @@ async function loadDigestData(sinceDays = DIGEST_DAYS) {
        FROM brand_signals bs
        JOIN crm_companies c ON c.id = bs.brand_company_id
       WHERE bs.created_at >= $1
-        AND c.is_tracked_brand = true
+        AND c.company_type ILIKE 'tenant%'
         AND c.merged_into_id IS NULL
       ORDER BY c.name`,
     [since]
