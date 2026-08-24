@@ -2265,7 +2265,10 @@ async function markRound(page, cross) {
       if (!hub.ok || !hunter.ok || !dir.ok) return { ok: false, why: `hub ${hub.status} / hunter ${hunter.status} / directory ${dir.status}` };
       const visible = new Set((Array.isArray(dir.body) ? dir.body : []).map((c) => c.id));
       const rows = (x) => (Array.isArray(x) ? x : []).map((b) => ({ id: b.id, name: b.name, type: String(b.company_type || b.companyType || '') }));
-      const served = [...rows(hub.body?.superBrands), ...rows(hub.body?.hotBrands), ...rows(hub.body?.topTurnover), ...rows(hunter.body)];
+      // topTurnover serves turnover_data rows — the brand id/name live in
+      // company_id/company_name (b.id is the turnover row's own id).
+      const turnoverRows = (Array.isArray(hub.body?.topTurnover) ? hub.body.topTurnover : []).map((t) => ({ id: t.company_id, name: t.company_name, type: String(t.company_type || '') }));
+      const served = [...rows(hub.body?.superBrands), ...rows(hub.body?.hotBrands), ...turnoverRows, ...rows(hunter.body)];
       const leaks = served.filter((b) => b.id && !visible.has(b.id));
       return { ok: true, leaks: leaks.slice(0, 3) };
     });

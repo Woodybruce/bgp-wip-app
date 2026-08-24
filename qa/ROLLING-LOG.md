@@ -73,12 +73,40 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r364 · 2026-08-24 · LIGHT — ROUND IN PROGRESS (provisional)
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
-  pg_hba trust fix needed (r205 note). Two-bot round 367 running next;
-  triage to follow. LIGHT round (r363 had the journey) — no exploratory
-  journey; time goes to triage + r363 candidate targets (Turnover
-  Add-entry, WIP report interactions, staff /tasks) if budget allows.
+### r364 · 2026-08-24 · LIGHT (r363 had the journey)
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1;
+  pg_hba trust fix needed, r205 note). Two-bot round 367: exit 0, all
+  scenarios ok, 3 issues all listed noise (rocketreach-400, live-intel 503,
+  commentary-regen 503). Dev-server sweep: 0 raw 500/502/504.
+- Candidate-target probes (staff desktop 1440px, browser + screenshots):
+  Turnover Add-entry end-to-end GREEN (dialog → company select → POST 200 →
+  "Entry added" toast → row on board); WIP report tabs render, Download
+  Excel 200 xlsx (Fee Check / Needs Attention tabs are canSeeAll-gated —
+  intended, victoria doesn't see them); staff /tasks clean ("All clear!"
+  empty state, briefing degrades per known noise). 0 pageerrors.
+- Bugs fixed: 0 app bugs found. Harness growth: staff-turnover-entries
+  (victoria) + client-turnover-slice-guard (mark) — staff logs turnover on
+  an in-slice brand AND on Hammerson; client must see only the slice row
+  and POST /api/turnover must 403. run-round.sh purge now sweeps
+  turnover_data QA-PROBE rows.
+- Confirmation round 368: exit 0; new scenarios green; it EXPOSED a stale
+  assert in client-brand-hub-hunter-scoped — hub topTurnover rows are
+  turnover_data rows (company_id/company_name, b.id = turnover row id), so
+  the first-ever non-empty client Turnover Leaders board (our probe data)
+  false-flagged Honi Poke as a leak. NOT an app bug: verified live that
+  client topTurnover = Honi Poke only, Hammerson excluded server-side
+  (crm.ts hub turnoverScoped filter). Scenario fixed to map
+  company_id/company_name; fixed check dry-run green against the same
+  data. Round 369 next round confirms in-harness.
+- Bugs deferred: none. Suggestions added: UX #86 (WIP Agent Summary blank
+  chart + "Total £0 · 100%" when no deal has an agent — needs empty state),
+  UX #87 (Turnover Add-entry doesn't default Category from the selected
+  brand's type; brand dropdown caps at first 100 unsearchable).
+- New flakes: none.
+- Next journey: r364 was LIGHT → r365 FULL, rotation #1 staff desktop.
+  Candidate tasks: Turnover From-CRM-Comps / By-Brand views, Comps board,
+  staff contacts. Also confirm client-turnover-slice-guard +
+  client-brand-hub-hunter-scoped both green in the r365 two-bot run.
 
 ### r363 · 2026-08-24 · FULL (rotation #4 BGP staff mobile 390px)
 - Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1).
