@@ -92,7 +92,7 @@ export function LeasingPitchPanel({ propertyId }: { propertyId: string }) {
     onSuccess: (r) => {
       setMix(r);
       queryClient.invalidateQueries({ queryKey: ["/api/leasing-pitch", propertyId] });
-      toast({ title: "Tenant mix recommended", description: `${r.trackedBrandCount} matched tracked brands` });
+      toast({ title: "Tenant mix recommended", description: `${r.trackedBrandCount} matched brands` });
     },
     onError: (e: any) => toast({ title: "Recommendation failed", description: e?.message, variant: "destructive" }),
   });
@@ -240,9 +240,6 @@ export function LeasingPitchPanel({ propertyId }: { propertyId: string }) {
                                 </Link>
                               ) : (
                                 <span className="font-medium">{b.name}</span>
-                              )}
-                              {b.match?.is_tracked_brand && (
-                                <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[9px] py-0 px-1.5">Tracked</Badge>
                               )}
                               {b.match?.rollout_status === "scaling" && (
                                 <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-[9px] py-0 px-1.5">Scaling</Badge>

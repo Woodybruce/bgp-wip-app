@@ -60,7 +60,7 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
             Suggested brands — {unit?.unitName}{data?.unit?.sqft ? ` (${Number(data.unit.sqft).toLocaleString()} sq ft)` : ""}
           </DialogTitle>
           <DialogDescription>
-            Live requirements that fit this unit, plus tracked brands in matching categories — ranked by AI.
+            Live requirements that fit this unit, plus brands in matching categories — ranked by AI.
           </DialogDescription>
         </DialogHeader>
         {isFetching ? (
@@ -75,7 +75,7 @@ export function SuggestTargetsDialog({ unit, onClose, onAdd }: {
                   <p className="text-sm font-medium truncate">
                     {s.name}
                     <Badge variant="outline" className={`ml-2 text-[9px] ${s.source === "live_requirement" ? "text-emerald-700 border-emerald-200" : "text-blue-700 border-blue-200"}`}>
-                      {s.source === "live_requirement" ? "live requirement" : "tracked brand"}
+                      {s.source === "live_requirement" ? "live requirement" : "brand"}
                     </Badge>
                     {s.aiScore != null && <span className="ml-2 text-[10px] text-muted-foreground tabular-nums">{s.aiScore}</span>}
                   </p>

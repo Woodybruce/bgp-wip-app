@@ -142,7 +142,7 @@ export function NewsSourcesTab() {
     onSuccess: (data) => {
       toast({
         title: "Brand feeds ensured",
-        description: `${data.created} new Google News feeds created (${data.total} tracked brands total).`,
+        description: `${data.created} new Google News feeds created (${data.total} brands total).`,
       });
       qc.invalidateQueries({ queryKey: ["/api/news-feed/sources"] });
     },
@@ -364,8 +364,8 @@ export function NewsSourcesTab() {
         </CardHeader>
         <CardContent>
           <p className="text-xs text-muted-foreground">
-            One feed per tracked brand, auto-seeded. Articles are linked to <code>brand_signals</code> on each fetch.
-            Use <strong>Ensure brand feeds</strong> to add feeds for any newly-tracked brands.
+            One feed per brand, auto-seeded. Articles are linked to <code>brand_signals</code> on each fetch.
+            Use <strong>Ensure brand feeds</strong> to add feeds for any newly-added brands.
           </p>
         </CardContent>
       </Card>

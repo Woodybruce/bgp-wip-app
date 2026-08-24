@@ -1105,8 +1105,7 @@ export function BrandProfilePanel({ companyId, showPropertiesBoard = false }: { 
             if (t.includes("landlord")) return "Landlord Profile";
             return "Brand Profile";
           })()}
-          {c.is_tracked_brand && <Badge variant="secondary" className="text-[10px]">Tracked brand</Badge>}
-          {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-transparent text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
+          {c.hunter_flag &&<Badge className="bg-amber-50 text-amber-700 border-transparent text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
           {hunter && hunter.expansionScore >= 40 && (
             <Badge
               className={

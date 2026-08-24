@@ -567,7 +567,7 @@ function BrandGapBody({ data, sectors, missing, present, competing, propertyId }
 
         {data.onScheme.length === 0 && (data.peerGaps || []).length === 0 && (data.localMarket || []).length === 0 && (
           <p className="text-xs text-muted-foreground italic">
-            No hospitality store data nearby yet. Populate stores for tracked brands via "Find stores" on each brand page.
+            No hospitality store data nearby yet. Populate stores for brands via "Find stores" on each brand page.
           </p>
         )}
         </>)}

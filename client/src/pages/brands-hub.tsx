@@ -536,6 +536,12 @@ const BRAND_CATEGORIES: TopCat[] = [
       { key: "financial", label: "Financial Services", icon: Landmark, match: ["Tenant - Financial Services", "Tenant - Bank", "Tenant - Finance"] },
       { key: "services", label: "Services", icon: Briefcase, match: ["Tenant - Services", "Tenant - Optician", "Tenant - Travel", "Tenant - Other Services"] },
       { key: "other-retail", label: "Other Retail", icon: Store, match: ["Tenant - Retail", "Tenant - General Retail"] },
+      // "National & Regional" dissolved (Woody, 2026-08-24: "doesn't make
+      // any sense") — its sub-sectors live here so no brand loses a home.
+      { key: "grocery", label: "Grocery & Convenience", icon: ShoppingCart, match: ["Tenant - Grocery", "Tenant - Convenience", "Tenant - Supermarket"] },
+      { key: "value-retail", label: "Value & Discount", icon: Tag, match: ["Tenant - Value Retail", "Tenant - Discount", "Tenant - Pound Store"] },
+      { key: "trade-diy", label: "Trade & DIY", icon: Wrench, match: ["Tenant - Trade", "Tenant - DIY", "Tenant - Hardware", "Tenant - Builders Merchants"] },
+      { key: "national-other", label: "National Retail", icon: Building2, match: ["Tenant - National Retail", "Tenant - High Street"] },
     ],
   },
   {
@@ -569,15 +575,6 @@ const BRAND_CATEGORIES: TopCat[] = [
       { key: "yoga", label: "Yoga & Pilates", icon: HeartPulse, match: ["Tenant - Yoga", "Tenant - Pilates"] },
     ],
   },
-  {
-    key: "national", label: "National & Regional", icon: MapPin, color: "bg-teal-900", gradient: "from-teal-900 to-emerald-950",
-    subs: [
-      { key: "grocery", label: "Grocery & Convenience", icon: ShoppingCart, match: ["Tenant - Grocery", "Tenant - Convenience", "Tenant - Supermarket"] },
-      { key: "value-retail", label: "Value & Discount", icon: Tag, match: ["Tenant - Value Retail", "Tenant - Discount", "Tenant - Pound Store"] },
-      { key: "trade-diy", label: "Trade & DIY", icon: Wrench, match: ["Tenant - Trade", "Tenant - DIY", "Tenant - Hardware", "Tenant - Builders Merchants"] },
-      { key: "national-other", label: "Other National", icon: Building2, match: ["Tenant - National Retail", "Tenant - High Street"] },
-    ],
-  },
 ];
 
 function catMatch(companyType: string, cat: TopCat): boolean {
@@ -596,7 +593,10 @@ function BrandExplorer() {
   const { data: exUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const isClientExplorer = exUser?.role === "Client" || !!exUser?.companyScopeId;
   const [activeCat, setActiveCat] = useState<string | null>(() => {
-    try { return localStorage.getItem("brand-explorer-cat") || null; } catch { return null; }
+    try {
+      const stored = localStorage.getItem("brand-explorer-cat") || null;
+      return stored && BRAND_CATEGORIES.some(c => c.key === stored) ? stored : null;
+    } catch { return null; }
   });
   const [activeSub, setActiveSub] = useState<string | null>(() => {
     try { return localStorage.getItem("brand-explorer-sub") || null; } catch { return null; }
@@ -623,7 +623,6 @@ function BrandExplorer() {
     targetedAt: { propertyId: string; propertyName: string; unitName: string | null }[];
     hasContacts: boolean;
     hunterFlag: boolean;
-    isTracked: boolean;
     liveRequirement: boolean;
   }>>({
     queryKey: ["/api/brands/explorer-flags"],
@@ -707,7 +706,6 @@ function BrandExplorer() {
         if (relFilter === "targeted") return (f.targetedAt || []).length > 0;
         if (relFilter === "contacts") return f.hasContacts;
         if (relFilter === "hunter") return f.hunterFlag;
-        if (relFilter === "tracked") return f.isTracked;
         if (relFilter === "requirement") return f.liveRequirement;
         return true;
       });
@@ -828,7 +826,6 @@ function BrandExplorer() {
                 ["contacts", "With contacts"],
                 ["requirement", "Live requirement"],
                 ["hunter", "Hunter-flagged"],
-                ["tracked", "Tracked"],
               ] as const).map(([key, label]) => (
                 <Pill
                   key={key}

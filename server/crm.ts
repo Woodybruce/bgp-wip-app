@@ -1770,6 +1770,12 @@ export function setupCrmRoutes(app: Express) {
         }
         (parsed as any).isTrackedBrand = true;
       }
+      // Every Tenant-type company is a tracked brand from birth (Woody,
+      // 2026-08-24: "make every brand a tracked brand") — the boot-time heal
+      // in index.ts only catches rows created before the last deploy.
+      if (/^tenant\b/i.test(String(parsed.companyType || ""))) {
+        (parsed as any).isTrackedBrand = true;
+      }
       const company = await storage.createCrmCompany(parsed);
       if (createScope && (company as any)?.id) {
         // Self-add: stamp the new brand into the client's extra-brands list

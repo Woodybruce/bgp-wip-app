@@ -262,7 +262,7 @@ export default function BrandHunterBoard() {
           <Crosshair className="w-10 h-10 mx-auto mb-3 opacity-30" />
           <p className="text-sm">
             {brands.length === 0
-              ? "No tracked brands yet — mark brands as tracked in the brand profile to start scoring."
+              ? "No brands yet — add tenant brands in the CRM to start scoring."
               : "No brands match this filter."}
           </p>
         </div>
