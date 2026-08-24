@@ -73,15 +73,47 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r367 · 2026-08-24 ~20:55 UTC · ROUND IN PROGRESS (FULL, rotation #2 Landsec client desktop)
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1;
-  pg_hba trust fix needed, r205 note). Two-bot round 373: exit 0, all
-  scenarios ok, 3 issues all listed noise (rocketreach-400, live-intel 503,
-  commentary-regen 503). Dev-server sweep: 0 raw 500/502/504 (lone " 500 "
-  = "500 articles" news echo).
-- Triage: nothing to triage beyond listed noise. Journey next: Mark @
-  1440px — client news, tasks board, Add-brand dialog UI flow on /brands,
-  tenancy schedule.
+### r367 · 2026-08-24 · FULL (rotation #2 Landsec client desktop)
+- Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
+  before and after the fix; pg_hba trust fix needed, r205 note). Two-bot
+  rounds 373 + 374: both exit 0, all scenarios ok, 3 issues each all listed
+  noise (rocketreach-400, live-intel 503, commentary-regen 503). Dev-server
+  sweep: 0 raw 500/502/504 (lone " 500 " = "500 articles" news echo).
+- Journey: Mark Warne @ 1440px — "Monday review: tenant news, my tasks, add
+  a brand I'm scouting, check the Bluewater tenancy schedule": dashboard →
+  /news → /tasks → /brands Add-brand dialog UI (search "Testco" → Add →
+  toast + Added badge + hub count 9→10 → in-dialog profile link → Testco
+  Bakery profile renders, Compliance panel visible → Remove → count back
+  to 9) → /tenancy-schedule (redirects to /properties — intended, logged
+  UX #90) → property page → full tenancy board. 0 pageerrors, 0 h-overflow.
+  NOT noise-listed but intended: 404 GET /api/client/sharepoint/root =
+  "no folder linked" degradation on the fixture (fires from the client
+  Properties page; UI degrades cleanly).
+- Bug fixed (1): client tenancy board offered the bulk-delete controls
+  (select-all + per-row ticks + "N rows ticked — Delete selected" bar) but
+  POST /api/tenancy-schedule/bulk-delete is staff-only (403 even on own
+  property, per gateway + two-bot guard) — a client could tick 200 rows and
+  only ever get "Bulk delete failed". Same class as the r223 Import/Re-sync
+  fix: ticks now gated !isClientViewer (PropertyTenancySchedule.tsx).
+  Per-row trash stays — single-row delete IS client-allowed own-property
+  (Landsec audit note in tenancy-schedule.ts). Verified visually both ways:
+  Mark 0 ticks, Victoria select-all + 200 row ticks intact. tsc clean.
+- Harness growth: client-tenancy-bulk-ticks-hidden (mark's board must render
+  no tenancy-select-all and 0 tbody checkboxes) — green in round 374.
+- Journey artefact cleanup: the add-brand UI probe left Testco Jewellers in
+  Landsec's crm_extra_brand_ids mid-journey (Remove clicked a leftover
+  Testco Fashion row from an earlier harness round instead); removed via
+  the client API post-journey, extras back to {}.
+- Bugs deferred: none. Suggestions added: UX #90 (bare /tenancy-schedule
+  silently lands on Properties with no hint), UX #91 (News list shows the
+  same story twice when raw + normalised headlines differ — extend the
+  UX #12 signal dedupe to the News tab).
+- New flakes: none.
+- Next journey: r367 was FULL → r368 LIGHT; then rotation #3 Landsec client
+  mobile 390px. Candidate tasks: phone brand Intel section (UK stores map /
+  Competition card / Instagram board, commit b9b9678e — needs hasTouch:true
+  + iPhone UA + isMobile, Amorino has geocoded stores), client mobile
+  tenancy board post-fix (ticks hidden at 390px too).
 
 ### r366 · 2026-08-24 · LIGHT (r365 was FULL)
 - Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
