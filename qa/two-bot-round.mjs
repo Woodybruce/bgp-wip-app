@@ -4556,11 +4556,20 @@ async function markRound(page, cross) {
       await mobSeedAuth(mob, page);
       await mobGoto(mob, `${BASE}/deals/${deal.id}`, nav);
       await mob.waitForTimeout(3000);
+      // JOGQK 2026-08-24: phone deal detail gates the stacked sections behind
+      // section pills (Overview/Brand/Activity/Files) — drive the pills the
+      // way a user would and assert the sections are still reachable.
+      const filesPill = mob.locator('[data-testid="deal-section-files"]');
+      if (!(await filesPill.count())) throw new Error('mobile deal detail lost its section pills (deal-section-files missing at 390px)');
+      await filesPill.click();
+      await mob.waitForTimeout(800);
       if (!(await mob.locator('[data-testid="deal-sidebar-mobile"]').isVisible().catch(() => false))) {
-        throw new Error('mobile deal detail lost the sidebar sections (deal-sidebar-mobile not visible at 390px)');
+        throw new Error('Files pill did not surface the sidebar sections (deal-sidebar-mobile not visible at 390px)');
       }
-      if (!(await mob.locator('[data-testid="deal-sidebar-mobile"] [data-testid="toggle-sidebar-comments"]').count())) {
-        throw new Error('mobile deal sidebar block is missing the Comments section');
+      await mob.locator('[data-testid="deal-section-activity"]').click();
+      await mob.waitForTimeout(800);
+      if (!(await mob.locator('[data-testid="deal-sidebar-mobile-activity"] [data-testid="toggle-sidebar-comments"]').count())) {
+        throw new Error('Activity pill section is missing the Comments block');
       }
     } finally {
       await mob.close();
@@ -4714,11 +4723,21 @@ async function markRound(page, cross) {
       const nav = { waitUntil: 'domcontentloaded', timeout: 60000 };
       await mob.goto(`${BASE}/`, nav);
       await mobSeedAuth(mob, page);
+      // A BARE /chatbgp open deliberately lands on the Messages LIST
+      // (Woody, 2026-08-23: "the messages page rather than last message");
+      // guard that decision, then enter the chat the deliberate way (?ask=1,
+      // the home "Ask ChatBGP…" path) to reach the composer.
       await mobGoto(mob, `${BASE}/chatbgp`, nav);
       await mob.waitForLoadState('networkidle').catch(() => {});
       await mob.waitForTimeout(2000);
+      if (!await mob.locator('[data-testid="mobile-pinned-chatbgp"]').count()) {
+        throw new Error('bare /chatbgp open lost the Messages list (pinned ChatBGP row missing)');
+      }
+      await mobGoto(mob, `${BASE}/chatbgp?ask=1`, nav);
+      await mob.waitForLoadState('networkidle').catch(() => {});
+      await mob.waitForTimeout(2000);
       const box = mob.locator('textarea, input[placeholder*="Reply" i]').first();
-      if (!await box.count()) throw new Error('chatbgp input missing at client mobile');
+      if (!await box.count()) throw new Error('chatbgp input missing at client mobile (?ask=1 entry)');
       // "QA Thread" prefix keeps the auto-titled thread purgeable next round.
       await box.fill('QA Thread probe — does a rejected send surface an error?');
       await mob.keyboard.press('Enter');
