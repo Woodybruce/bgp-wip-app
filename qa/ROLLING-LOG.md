@@ -73,6 +73,16 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
+### r367 · 2026-08-24 ~20:55 UTC · ROUND IN PROGRESS (FULL, rotation #2 Landsec client desktop)
+- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1;
+  pg_hba trust fix needed, r205 note). Two-bot round 373: exit 0, all
+  scenarios ok, 3 issues all listed noise (rocketreach-400, live-intel 503,
+  commentary-regen 503). Dev-server sweep: 0 raw 500/502/504 (lone " 500 "
+  = "500 articles" news echo).
+- Triage: nothing to triage beyond listed noise. Journey next: Mark @
+  1440px — client news, tasks board, Add-brand dialog UI flow on /brands,
+  tenancy schedule.
+
 ### r366 · 2026-08-24 · LIGHT (r365 was FULL)
 - Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
   before and after the fix). Two-bot round 371: exit 0, all scenarios ok,
