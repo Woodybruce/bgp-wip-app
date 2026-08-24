@@ -16,6 +16,23 @@ what happened · concrete suggested improvement.
 (Woody 2026-08-18, on confirming 50-64: "ignore 46 and 32" — the two entries
 below stay parked, not built. Rounds shouldn't re-log them.)
 
+85. 2026-08-24 · BGP staff / mobile 390px (QA r363) · "look up a brand's
+    contact from my phone" · On the brand profile's Contacts pill, the Key
+    Contacts panel opened with "No property-tier contacts. Click Show all
+    below." + "1 in CRM · no new contacts found" — the one contact the user
+    wanted is behind an extra "Show all 1 contacts" tap. When there are no
+    property-tier contacts but only a handful of CRM contacts, suggest just
+    listing them straight away (keep the Show all gate for long lists).
+
+84. 2026-08-24 · BGP staff / mobile 390px (QA r363) · "open a deal from the
+    Deals tab" · On the phone deal page the header back-arrow button wraps
+    onto its own line below the deal title, landing next to the status chip
+    (title takes the full 390px row, the ghost icon button drops under it) —
+    it reads as a mystery "←" control mid-page rather than page chrome; the
+    breadcrumb above already provides the way back. Suggest hiding the
+    ghost back button below md (breadcrumb + bottom nav cover navigation)
+    or pinning it into the top bar row.
+
 83. 2026-08-21 · Landsec client / mobile 390px (QA r361) · "check my
     property on the PI map from my phone" · On the Map tool at 390px the
     map canvas runs underneath the fixed bottom nav: the Google Maps zoom
