@@ -73,14 +73,39 @@ board, tenancy schedules, ChatBGP, comps, tasks, contacts, news, Image Studio.
 
 ## Rounds
 
-### r366 · 2026-08-24 · LIGHT — ROUND IN PROGRESS (provisional)
-- Regression: run-smoke.sh GREEN (42 checks, 0 failures, FRESH_BUILD=1;
-  pg_hba trust fix needed, r205 note; fixture restore needed -U postgres +
-  ownership handoff — "must be able to SET ROLE postgres" as bgp).
-- Two-bot round 371: exit 0, all scenarios ok, 3 issues all listed noise
-  (rocketreach-400, live-intel 503, commentary-regen 503). Dev-server
-  sweep: 0 raw 500/502/504 (lone " 500 " = "500 articles" news echo).
-- Triage: nothing non-noise. LIGHT round — candidate probes next.
+### r366 · 2026-08-24 · LIGHT (r365 was FULL)
+- Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
+  before and after the fix). Two-bot round 371: exit 0, all scenarios ok,
+  3 issues all listed noise (rocketreach-400, live-intel 503,
+  commentary-regen 503). Dev-server sweep: 0 raw 500/502/504 (lone " 500 "
+  = "500 articles" news echo).
+- Setup note: fixture restore as bgp fails "must be able to SET ROLE
+  postgres" — restore -U postgres into db bgp, then ALTER tables/sequences
+  OWNER TO bgp (pg_hba trust fix still needed, r205 note).
+- Candidate-target probes (client desktop 1440px, r367 journey prep):
+  /news, /tasks, /brands all render clean (0 pageerrors, 0 h-overflow,
+  0 non-noise 4xx/5xx); brand self-add round-trip GREEN via API
+  (global-brands search → add Testco Jewellers → visible in client list
+  (11) → remove → gone (10)).
+- Bug fixed (1): r365's £1000k rounding fix only covered turnover-board —
+  the brands-hub Overview "Turnover Leaders" tile showed "£1000k" for the
+  999999 probe (seen on the client hub in-browser). Applied the same
+  round-before-unit-pick to brands-hub formatTurnover, brand-hunter-board
+  formatCap and brand-profile-panel marketCap capLabel (m branch now
+  toFixed(1), matching turnover-board). tsc clean; verified visually
+  (client hub shows £1.0m).
+- Harness growth: staff-turnover-entries now also opens /brands and fails
+  on any "£1000k"/"£1000m" on the hub. Confirmation round 372: exit 0, all
+  scenarios ok incl. the extended assert, same 3 listed-noise issues
+  (qa/logs/round-372.jsonl).
+- Bugs deferred: none. Suggestions added: UX #89 (Who's Hot "1d" deal-count
+  badge sits directly above a "21d" days-ago timestamp — two meanings of
+  "d" side by side). New flakes: none.
+- Next journey: r366 was LIGHT → r367 FULL, rotation #2 Landsec client
+  desktop. Candidate tasks (r365 list still stands): client news, client
+  tasks board, client tenancy-schedule edits (positioning/bands), brand
+  self-add via the UI (API path covered this round — drive the Add brand
+  dialog on /brands).
 
 ### r365 · 2026-08-24 · FULL (rotation #1 staff desktop)
 - Regression: run-smoke.sh GREEN ×2 (42 checks, 0 failures, FRESH_BUILD=1
