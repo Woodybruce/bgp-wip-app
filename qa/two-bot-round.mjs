@@ -672,6 +672,18 @@ async function victoriaRound(page, cross) {
         const txt = await amlBanner.innerText();
         if (/Only 0 counterparty/.test(txt)) throw new Error(`AML banner regressed to "Only 0 counterparty": ${txt.slice(0, 80)}`);
       }
+      // r363: with no party linked, the Brand section pill must show its
+      // empty state instead of a blank screen, and Delete Deal is gated to
+      // the Overview section on phones.
+      if (!deal.tenantId && !deal.landlordId) {
+        await mob.locator('[data-testid="deal-section-brand"]').click();
+        await mob.waitForTimeout(600);
+        if (!(await mob.locator('[data-testid="deal-brand-empty"]').isVisible())) throw new Error('Brand pill with no linked party missing its empty state');
+        if (await mob.locator('[data-testid="button-delete-deal"]').isVisible()) throw new Error('Delete Deal visible on the Brand phone section');
+        await mob.locator('[data-testid="deal-section-overview"]').click();
+        await mob.waitForTimeout(600);
+        if (!(await mob.locator('[data-testid="button-delete-deal"]').count())) throw new Error('Delete Deal missing from the Overview phone section');
+      }
     } finally {
       await mob.close();
       await mobCtx.close();

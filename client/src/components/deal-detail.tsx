@@ -1132,7 +1132,15 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </CollapsibleCard>
         </div>
       )}
-
+      {/* No party linked: the Brand pill otherwise lands on a blank screen
+          whose only content is the Delete Deal button. */}
+      {!linkedTenant && !linkedLandlord && (
+        <div className={`md:hidden border rounded-md p-4 ${phoneSection === "brand" ? "" : "hidden"}`} data-testid="deal-brand-empty">
+          <p className="text-sm text-muted-foreground">
+            No brand linked yet — link a tenant or landlord from the Parties panel under Overview.
+          </p>
+        </div>
+      )}
 
       {deal.updatedAt && (
         <p className={`text-xs text-muted-foreground items-center gap-1 ${phoneSection === "overview" ? "flex" : "hidden md:flex"}`}>
@@ -1234,7 +1242,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       </div>
 
       {!isClientDeal && (
-      <div className="flex justify-start mt-6 pt-3 border-t">
+      <div className={`justify-start mt-6 pt-3 border-t ${phoneSection === "overview" ? "flex" : "hidden md:flex"}`}>
         <Button variant="outline" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteOpen(true)} data-testid="button-delete-deal">
           <Trash2 className="w-4 h-4 mr-2" />
           Delete Deal
